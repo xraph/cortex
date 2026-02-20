@@ -1,189 +1,270 @@
 ---
-title: Custom Components
-description: Implement custom Chunker, Embedder, Loader, and VectorStore to plug your own backends into Weave.
+title: Custom Store
+description: Implement a custom persistence backend by satisfying the composite store.Store interface.
 ---
 
-Every Weave component is a Go interface. This guide shows how to implement each one so you can plug in custom backends, models, or processing logic.
+Every Cortex persistence operation goes through the composite `store.Store` interface. This guide shows how to implement your own backend — whether that's MySQL, DynamoDB, or an in-memory store for tests.
 
-## Custom Chunker
+## The composite interface
 
-Implement `chunker.Chunker` to split text with your own algorithm:
+The `store.Store` interface embeds 8 domain-specific sub-interfaces plus 3 lifecycle methods:
 
 ```go
-import "github.com/xraph/weave/chunker"
+import "github.com/xraph/cortex/store"
 
-type SentenceChunker struct {
-    maxTokens int
+type Store interface {
+    agent.Store      // 6 methods
+    skill.Store      // 6 methods
+    trait.Store      // 6 methods
+    behavior.Store   // 6 methods
+    persona.Store    // 6 methods
+    run.Store        // 8 methods
+    memory.Store     // 8 methods
+    checkpoint.Store // 4 methods
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
 }
-
-func (c *SentenceChunker) Chunk(_ context.Context, text string, opts *chunker.Options) ([]chunker.ChunkResult, error) {
-    sentences := splitSentences(text)
-    var results []chunker.ChunkResult
-    var current strings.Builder
-    idx := 0
-
-    for _, sentence := range sentences {
-        if estimateTokens(current.String()) + estimateTokens(sentence) > opts.ChunkSize {
-            if current.Len() > 0 {
-                results = append(results, chunker.ChunkResult{
-                    Content:    current.String(),
-                    Index:      idx,
-                    TokenCount: estimateTokens(current.String()),
-                })
-                idx++
-                current.Reset()
-            }
-        }
-        current.WriteString(sentence + " ")
-    }
-    if current.Len() > 0 {
-        results = append(results, chunker.ChunkResult{
-            Content:    strings.TrimSpace(current.String()),
-            Index:      idx,
-            TokenCount: estimateTokens(current.String()),
-        })
-    }
-    return results, nil
-}
-
-// Register:
-eng, _ := engine.New(engine.WithChunker(&SentenceChunker{maxTokens: 256}))
 ```
 
-## Custom Embedder
+**Total: 47 methods** across all sub-interfaces plus 3 lifecycle methods.
 
-Implement `embedder.Embedder` to use any embedding model:
+## Sub-interface breakdown
+
+### agent.Store (6 methods)
 
 ```go
-import "github.com/xraph/weave/embedder"
-
-type CohereEmbedder struct {
-    client *cohere.Client
-    dims   int
+type Store interface {
+    Create(ctx context.Context, config *Config) error
+    Get(ctx context.Context, id id.AgentID) (*Config, error)
+    GetByName(ctx context.Context, appID, name string) (*Config, error)
+    Update(ctx context.Context, config *Config) error
+    Delete(ctx context.Context, id id.AgentID) error
+    List(ctx context.Context, filter *ListFilter) ([]*Config, error)
 }
-
-func (e *CohereEmbedder) Embed(ctx context.Context, texts []string) ([]embedder.EmbedResult, error) {
-    resp, err := e.client.Embed(ctx, &cohere.EmbedRequest{
-        Texts:     texts,
-        Model:     "embed-english-v3.0",
-        InputType: "search_document",
-    })
-    if err != nil {
-        return nil, err
-    }
-    results := make([]embedder.EmbedResult, len(resp.Embeddings))
-    for i, vec := range resp.Embeddings {
-        results[i] = embedder.EmbedResult{Vector: toFloat32(vec)}
-    }
-    return results, nil
-}
-
-func (e *CohereEmbedder) Dimensions() int { return e.dims }
-
-// Register:
-eng, _ := engine.New(engine.WithEmbedder(&CohereEmbedder{client: client, dims: 1024}))
 ```
 
-## Custom Loader
-
-Implement `loader.Loader` to extract text from a custom format:
+### skill.Store (6 methods)
 
 ```go
+type Store interface {
+    CreateSkill(ctx context.Context, s *Skill) error
+    GetSkill(ctx context.Context, id id.SkillID) (*Skill, error)
+    GetSkillByName(ctx context.Context, appID, name string) (*Skill, error)
+    UpdateSkill(ctx context.Context, s *Skill) error
+    DeleteSkill(ctx context.Context, id id.SkillID) error
+    ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
+}
+```
+
+### trait.Store (6 methods)
+
+```go
+type Store interface {
+    CreateTrait(ctx context.Context, t *Trait) error
+    GetTrait(ctx context.Context, id id.TraitID) (*Trait, error)
+    GetTraitByName(ctx context.Context, appID, name string) (*Trait, error)
+    UpdateTrait(ctx context.Context, t *Trait) error
+    DeleteTrait(ctx context.Context, id id.TraitID) error
+    ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
+}
+```
+
+### behavior.Store (6 methods)
+
+```go
+type Store interface {
+    CreateBehavior(ctx context.Context, b *Behavior) error
+    GetBehavior(ctx context.Context, id id.BehaviorID) (*Behavior, error)
+    GetBehaviorByName(ctx context.Context, appID, name string) (*Behavior, error)
+    UpdateBehavior(ctx context.Context, b *Behavior) error
+    DeleteBehavior(ctx context.Context, id id.BehaviorID) error
+    ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
+}
+```
+
+### persona.Store (6 methods)
+
+```go
+type Store interface {
+    CreatePersona(ctx context.Context, p *Persona) error
+    GetPersona(ctx context.Context, id id.PersonaID) (*Persona, error)
+    GetPersonaByName(ctx context.Context, appID, name string) (*Persona, error)
+    UpdatePersona(ctx context.Context, p *Persona) error
+    DeletePersona(ctx context.Context, id id.PersonaID) error
+    ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
+}
+```
+
+### run.Store (8 methods)
+
+```go
+type Store interface {
+    CreateRun(ctx context.Context, r *Run) error
+    GetRun(ctx context.Context, id id.AgentRunID) (*Run, error)
+    UpdateRun(ctx context.Context, r *Run) error
+    ListRuns(ctx context.Context, filter *ListFilter) ([]*Run, error)
+    CreateStep(ctx context.Context, s *Step) error
+    ListSteps(ctx context.Context, runID id.AgentRunID) ([]*Step, error)
+    CreateToolCall(ctx context.Context, tc *ToolCall) error
+    ListToolCalls(ctx context.Context, stepID id.StepID) ([]*ToolCall, error)
+}
+```
+
+### memory.Store (8 methods)
+
+```go
+type Store interface {
+    SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, msgs []Message) error
+    LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]Message, error)
+    ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error
+    SaveWorking(ctx context.Context, agentID id.AgentID, tenantID string, data map[string]any) error
+    LoadWorking(ctx context.Context, agentID id.AgentID, tenantID string) (map[string]any, error)
+    ClearWorking(ctx context.Context, agentID id.AgentID, tenantID string) error
+    SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error
+    LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error)
+}
+```
+
+### checkpoint.Store (4 methods)
+
+```go
+type Store interface {
+    CreateCheckpoint(ctx context.Context, cp *Checkpoint) error
+    GetCheckpoint(ctx context.Context, id id.CheckpointID) (*Checkpoint, error)
+    Resolve(ctx context.Context, id id.CheckpointID, decision Decision) error
+    ListPending(ctx context.Context, filter *ListFilter) ([]*Checkpoint, error)
+}
+```
+
+## Skeleton implementation
+
+```go
+package mystore
+
 import (
-    "io"
-    "github.com/xraph/weave/loader"
+    "context"
+
+    "github.com/xraph/cortex/agent"
+    "github.com/xraph/cortex/behavior"
+    "github.com/xraph/cortex/checkpoint"
+    "github.com/xraph/cortex/id"
+    "github.com/xraph/cortex/memory"
+    "github.com/xraph/cortex/persona"
+    "github.com/xraph/cortex/run"
+    "github.com/xraph/cortex/skill"
+    "github.com/xraph/cortex/store"
+    "github.com/xraph/cortex/trait"
 )
 
-type DocxLoader struct{}
-
-func (l *DocxLoader) Supports(mime string) bool {
-    return mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+// MyStore implements the composite store.Store interface.
+type MyStore struct {
+    // your database client, connection pool, etc.
 }
 
-func (l *DocxLoader) Load(ctx context.Context, r io.Reader) (*loader.LoadResult, error) {
-    data, err := io.ReadAll(r)
-    if err != nil {
-        return nil, err
-    }
-    text, meta, err := extractDocx(data)
-    if err != nil {
-        return nil, fmt.Errorf("docx: %w", err)
-    }
-    return &loader.LoadResult{
-        Content:  text,
-        MimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        Metadata: meta,
-    }, nil
-}
+// Compile-time check.
+var _ store.Store = (*MyStore)(nil)
 
-// Register:
-eng, _ := engine.New(engine.WithLoader(&DocxLoader{}))
+// Migrate creates tables or runs schema migrations.
+func (s *MyStore) Migrate(ctx context.Context) error { return nil }
+
+// Ping verifies database connectivity.
+func (s *MyStore) Ping(ctx context.Context) error { return nil }
+
+// Close releases any held resources.
+func (s *MyStore) Close() error { return nil }
+
+// ── Agent methods (6) ────────────────────────────
+func (s *MyStore) Create(ctx context.Context, config *agent.Config) error { /* ... */ }
+func (s *MyStore) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) { /* ... */ }
+func (s *MyStore) GetByName(ctx context.Context, appID, name string) (*agent.Config, error) { /* ... */ }
+func (s *MyStore) Update(ctx context.Context, config *agent.Config) error { /* ... */ }
+func (s *MyStore) Delete(ctx context.Context, agentID id.AgentID) error { /* ... */ }
+func (s *MyStore) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) { /* ... */ }
+
+// ── Skill methods (6) ────────────────────────────
+func (s *MyStore) CreateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
+func (s *MyStore) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) { /* ... */ }
+func (s *MyStore) GetSkillByName(ctx context.Context, appID, name string) (*skill.Skill, error) { /* ... */ }
+func (s *MyStore) UpdateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
+func (s *MyStore) DeleteSkill(ctx context.Context, skillID id.SkillID) error { /* ... */ }
+func (s *MyStore) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) { /* ... */ }
+
+// ── Trait methods (6) ────────────────────────────
+func (s *MyStore) CreateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
+func (s *MyStore) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) { /* ... */ }
+func (s *MyStore) GetTraitByName(ctx context.Context, appID, name string) (*trait.Trait, error) { /* ... */ }
+func (s *MyStore) UpdateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
+func (s *MyStore) DeleteTrait(ctx context.Context, traitID id.TraitID) error { /* ... */ }
+func (s *MyStore) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) { /* ... */ }
+
+// ── Behavior methods (6) ─────────────────────────
+func (s *MyStore) CreateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
+func (s *MyStore) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) GetBehaviorByName(ctx context.Context, appID, name string) (*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
+func (s *MyStore) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error { /* ... */ }
+func (s *MyStore) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) { /* ... */ }
+
+// ── Persona methods (6) ──────────────────────────
+func (s *MyStore) CreatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
+func (s *MyStore) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) { /* ... */ }
+func (s *MyStore) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) { /* ... */ }
+func (s *MyStore) UpdatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
+func (s *MyStore) DeletePersona(ctx context.Context, personaID id.PersonaID) error { /* ... */ }
+func (s *MyStore) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) { /* ... */ }
+
+// ── Run methods (8) ──────────────────────────────
+func (s *MyStore) CreateRun(ctx context.Context, r *run.Run) error { /* ... */ }
+func (s *MyStore) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) { /* ... */ }
+func (s *MyStore) UpdateRun(ctx context.Context, r *run.Run) error { /* ... */ }
+func (s *MyStore) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) { /* ... */ }
+func (s *MyStore) CreateStep(ctx context.Context, step *run.Step) error { /* ... */ }
+func (s *MyStore) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) { /* ... */ }
+func (s *MyStore) CreateToolCall(ctx context.Context, tc *run.ToolCall) error { /* ... */ }
+func (s *MyStore) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) { /* ... */ }
+
+// ── Memory methods (8) ───────────────────────────
+func (s *MyStore) SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, msgs []memory.Message) error { /* ... */ }
+func (s *MyStore) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) { /* ... */ }
+func (s *MyStore) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error { /* ... */ }
+func (s *MyStore) SaveWorking(ctx context.Context, agentID id.AgentID, tenantID string, data map[string]any) error { /* ... */ }
+func (s *MyStore) LoadWorking(ctx context.Context, agentID id.AgentID, tenantID string) (map[string]any, error) { /* ... */ }
+func (s *MyStore) ClearWorking(ctx context.Context, agentID id.AgentID, tenantID string) error { /* ... */ }
+func (s *MyStore) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error { /* ... */ }
+func (s *MyStore) LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error) { /* ... */ }
+
+// ── Checkpoint methods (4) ───────────────────────
+func (s *MyStore) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error { /* ... */ }
+func (s *MyStore) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) { /* ... */ }
+func (s *MyStore) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error { /* ... */ }
+func (s *MyStore) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) { /* ... */ }
 ```
 
-When ingesting a `.docx` file, set `SourceType` to trigger the loader:
+## Register with the engine
 
 ```go
-eng.Ingest(ctx, &engine.IngestInput{
-    CollectionID: colID,
-    Content:      string(docxBytes),
-    SourceType:   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-})
+eng, err := engine.New(
+    engine.WithStore(&MyStore{db: myDB}),
+)
 ```
 
-## Custom VectorStore
+## Key implementation notes
 
-Implement `vectorstore.VectorStore` to use any vector database:
+1. **Tenant isolation** — Every query must filter by `tenant_id` and `app_id` from context. Use `cortex.TenantFromContext(ctx)` and `cortex.AppFromContext(ctx)`.
 
-```go
-import "github.com/xraph/weave/vectorstore"
+2. **ID generation** — Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
 
-type WeaviateStore struct {
-    client *weaviate.Client
-}
+3. **JSONB columns** — Complex nested structures (tools, dimensions, triggers, etc.) should be serialized as JSON. The PostgreSQL store uses `bun:"type:jsonb"` annotations.
 
-func (s *WeaviateStore) Upsert(ctx context.Context, entries []vectorstore.Entry) error {
-    objects := make([]*models.Object, len(entries))
-    for i, e := range entries {
-        objects[i] = &models.Object{
-            ID:         strfmt.UUID(e.ID),
-            Class:      "WeaveChunk",
-            Vector:     toFloat64(e.Vector),
-            Properties: e.Metadata,
-        }
-    }
-    _, err := s.client.Batch().ObjectsBatcher().WithObjects(objects...).Do(ctx)
-    return err
-}
+4. **Migrate()** — Should be idempotent. Create tables if they don't exist, add columns if missing.
 
-func (s *WeaviateStore) Search(ctx context.Context, vector []float32, opts *vectorstore.SearchOptions) ([]vectorstore.SearchResult, error) {
-    // ... weaviate nearVector query
-}
+5. **Compile-time check** — Always include `var _ store.Store = (*MyStore)(nil)` to catch missing methods at compile time.
 
-func (s *WeaviateStore) Delete(ctx context.Context, ids []string) error { /* ... */ }
-func (s *WeaviateStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error { /* ... */ }
+## Existing implementations
 
-// Register:
-eng, _ := engine.New(engine.WithVectorStore(&WeaviateStore{client: weaviateClient}))
-```
-
-## Custom MetadataStore
-
-Implement `store.Store` (which embeds `collection.Store`, `document.Store`, `chunk.Store`) to use a different database:
-
-```go
-import "github.com/xraph/weave/store"
-
-// Your struct must implement all methods from:
-// - collection.Store (CreateCollection, GetCollection, ListCollections, DeleteCollection, ...)
-// - document.Store (CreateDocument, GetDocument, UpdateDocument, ListDocuments, DeleteDocument, ...)
-// - chunk.Store (CreateChunkBatch, ListChunksByDocument, DeleteChunksByDocument, ...)
-// - store.Store (Migrate, Ping, Close)
-
-type MyStore struct{ /* ... */ }
-
-var _ store.Store = (*MyStore)(nil) // compile-time check
-
-eng, _ := engine.New(engine.WithStore(&MyStore{}))
-```
-
-See [store/store.go](https://github.com/xraph/weave/blob/main/store/store.go) for the full interface definition.
+| Package | Backend | Notes |
+|---------|---------|-------|
+| `store/postgres` | PostgreSQL | Production-ready, bun ORM, embedded migrations |
+| `store/memory` | In-memory maps | For testing only |

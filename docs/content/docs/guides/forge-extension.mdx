@@ -1,14 +1,14 @@
 ---
 title: Forge Extension
-description: Mount Weave into a Forge application as a first-class extension with automatic route registration and migrations.
+description: Mount Cortex into a Forge application as a first-class extension with automatic route registration, migrations, and DI.
 ---
 
-Weave ships a ready-made Forge extension in the `extension` package. It wires the engine, HTTP API, and lifecycle management into Forge's extension system with one call.
+Cortex ships a ready-made Forge extension in the `extension` package. It wires the engine, HTTP API, and lifecycle management into Forge's extension system with one call.
 
 ## Installation
 
 ```go
-import "github.com/xraph/weave/extension"
+import "github.com/xraph/cortex/extension"
 ```
 
 ## Registering the extension
@@ -18,24 +18,18 @@ package main
 
 import (
     "github.com/xraph/forge"
-    pgstore "github.com/xraph/weave/store/postgres"
-    pgvec "github.com/xraph/weave/vectorstore/pgvector"
-    "github.com/xraph/weave/embedder"
-    "github.com/xraph/weave/extension"
+    "github.com/xraph/cortex/extension"
+    pgstore "github.com/xraph/cortex/store/postgres"
 )
 
 func main() {
     app := forge.New()
 
-    weaveExt := extension.New(
+    cortexExt := extension.New(
         extension.WithStore(pgstore.New(bunDB)),
-        extension.WithVectorStore(pgvec.New(pgxPool)),
-        extension.WithEmbedder(embedder.NewOpenAI(
-            embedder.WithOpenAIKey(os.Getenv("OPENAI_API_KEY")),
-        )),
     )
 
-    app.RegisterExtension(weaveExt)
+    app.RegisterExtension(cortexExt)
     app.Run()
 }
 ```
@@ -44,55 +38,88 @@ func main() {
 
 | Lifecycle event | Behaviour |
 |----------------|-----------|
-| `Register` | Creates the engine from the provided options |
-| `Start` | Runs `store.Migrate` and `vectorstore.Migrate` (unless disabled) |
-| `RegisterRoutes` | Mounts all 12 Weave HTTP endpoints under `/v1` |
-| `Stop` | Calls `engine.Stop` → emits `OnShutdown` to all extensions |
+| `Register` | Creates the engine, builds the API handler, registers the engine in the DI container via `vessel.Provide`, mounts all HTTP routes (unless disabled) |
+| `Start` | Runs `store.Migrate(ctx)` (unless disabled), then calls `engine.Start(ctx)` |
+| `Stop` | Calls `engine.Stop(ctx)` which emits `OnShutdown` to all plugins |
+| `Health` | Calls `store.Ping(ctx)` to verify database connectivity |
 
 ## Extension options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `WithStore(s)` | `store.Store` | — | **Required.** MetadataStore |
-| `WithVectorStore(v)` | `vectorstore.VectorStore` | — | **Required.** VectorStore |
-| `WithEmbedder(e)` | `embedder.Embedder` | — | **Required.** Embedder |
-| `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Logger |
-| `WithDisableRoutes(b)` | `bool` | `false` | Skip HTTP route registration |
-| `WithDisableMigrate(b)` | `bool` | `false` | Skip migrations on Start |
+| `WithStore(s)` | `store.Store` | — | **Required.** Composite persistence store |
+| `WithExtension(x)` | `plugin.Extension` | — | Register a Cortex plugin (lifecycle hooks) |
+| `WithEngineOption(o)` | `engine.Option` | — | Pass any engine option through |
+| `WithConfig(c)` | `extension.Config` | — | Set the full extension config |
+| `WithDisableRoutes()` | — | `false` | Skip HTTP route registration |
+| `WithDisableMigrate()` | — | `false` | Skip auto-migration on Start |
+| `WithBasePath(p)` | `string` | `""` | URL prefix for all Cortex routes |
+| `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Structured logger |
+
+## Extension config struct
+
+```go
+type Config struct {
+    DisableRoutes  bool   // Skip HTTP route registration
+    DisableMigrate bool   // Skip auto-migration on start
+    BasePath       string // URL prefix for all cortex routes
+}
+```
 
 ## Disabling auto-migration
 
 If you manage migrations separately (e.g. with a migration tool), disable auto-migration:
 
 ```go
-weaveExt := extension.New(
+cortexExt := extension.New(
     extension.WithStore(store),
-    extension.WithVectorStore(vecStore),
-    extension.WithEmbedder(emb),
-    extension.WithDisableMigrate(true),
+    extension.WithDisableMigrate(),
+)
+```
+
+## Disabling routes
+
+If you only need the engine (e.g. using Cortex programmatically from another extension), disable route registration:
+
+```go
+cortexExt := extension.New(
+    extension.WithStore(store),
+    extension.WithDisableRoutes(),
 )
 ```
 
 ## Accessing the engine from other extensions
 
-After `Register` is called by Forge, `weaveExt.Engine()` returns the fully initialised engine:
+After `Register` is called by Forge, `cortexExt.Engine()` returns the fully initialised engine:
 
 ```go
-eng := weaveExt.Engine()
-// use eng.Ingest, eng.Retrieve, etc. from another extension or handler
+eng := cortexExt.Engine()
+// Use eng.CreateAgent, eng.ListSkills, etc. from another extension
+```
+
+The engine is also available via Forge's DI container (powered by `vessel`):
+
+```go
+import "github.com/xraph/cortex/engine"
+
+// Inside another extension's Register:
+var eng *engine.Engine
+if err := vessel.Resolve(fapp.Container(), &eng); err != nil {
+    return err
+}
 ```
 
 ## Tenant middleware
 
-In a Forge app, tenant scope is typically set by middleware that reads the JWT or API key. Implement a Forge middleware that calls `weave.WithTenant` and `weave.WithApp` before passing the request to the Weave handlers:
+In a Forge app, tenant scope is typically set by middleware that reads the JWT or API key:
 
 ```go
 func tenantMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         tenantID := r.Header.Get("X-Tenant-ID")
         appID := r.Header.Get("X-App-ID")
-        ctx := weave.WithTenant(r.Context(), tenantID)
-        ctx = weave.WithApp(ctx, appID)
+        ctx := cortex.WithTenant(r.Context(), tenantID)
+        ctx = cortex.WithApp(ctx, appID)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
 }
@@ -100,19 +127,76 @@ func tenantMiddleware(next http.Handler) http.Handler {
 router.Use(tenantMiddleware)
 ```
 
-## Adding metrics
+## Adding plugins
 
-Register the observability extension alongside the Weave engine extension:
+Register Cortex plugins (observability, audit hooks, etc.) alongside the extension:
 
 ```go
-import "github.com/xraph/weave/observability"
+import (
+    "github.com/xraph/cortex/extension"
+    "github.com/xraph/cortex/observability"
+    audithook "github.com/xraph/cortex/audit_hook"
+)
 
-metricsExt := observability.NewMetricsExtensionWithFactory(fapp.Metrics())
+metricsPlugin := observability.NewMetricsExtension()
+auditPlugin := audithook.New(myRecorder)
 
-weaveExt := extension.New(
+cortexExt := extension.New(
     extension.WithStore(store),
-    extension.WithVectorStore(vecStore),
-    extension.WithEmbedder(emb),
-    extension.WithEngineExtension(metricsExt), // passed to engine.New internally
+    extension.WithExtension(metricsPlugin),
+    extension.WithExtension(auditPlugin),
 )
 ```
+
+## Health checks
+
+The extension implements `forge.Extension`'s `Health` method by pinging the store:
+
+```go
+func (e *Extension) Health(ctx context.Context) error {
+    return e.eng.Store().Ping(ctx)
+}
+```
+
+Forge surfaces this automatically in its health endpoint.
+
+## Complete example
+
+```go
+package main
+
+import (
+    "log/slog"
+    "os"
+
+    "github.com/uptrace/bun"
+    "github.com/xraph/forge"
+    "github.com/xraph/cortex/extension"
+    "github.com/xraph/cortex/observability"
+    pgstore "github.com/xraph/cortex/store/postgres"
+)
+
+func main() {
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    app := forge.New()
+
+    db := connectDB() // your *bun.DB connection
+    store := pgstore.New(db)
+
+    cortexExt := extension.New(
+        extension.WithStore(store),
+        extension.WithExtension(observability.NewMetricsExtension()),
+        extension.WithLogger(logger),
+    )
+
+    app.RegisterExtension(cortexExt)
+    app.Run()
+}
+```
+
+This gives you a production-ready Cortex deployment with:
+- All 36 REST endpoints mounted
+- Auto-migration on startup
+- Health checks via `store.Ping`
+- Prometheus-compatible metrics
+- Graceful shutdown with plugin notification

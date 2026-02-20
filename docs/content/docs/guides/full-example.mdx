@@ -1,9 +1,9 @@
 ---
-title: End-to-End RAG Pipeline
-description: Complete walkthrough — create a collection, ingest documents, retrieve context, and build a prompt for an LLM.
+title: Full Example
+description: Build a customer-support agent end-to-end — skills, traits, behaviors, persona, agent config, engine wiring, and API usage.
 ---
 
-This guide builds a complete RAG pipeline from scratch using PostgreSQL, pgvector, and the OpenAI embedder.
+This guide builds a complete Cortex agent from scratch — a customer-support bot with a persona, skills, traits, and behaviors — using PostgreSQL for persistence.
 
 ## 1. Set up the engine
 
@@ -17,186 +17,291 @@ import (
     "log"
     "os"
 
-    "github.com/jackc/pgx/v5/pgxpool"
     "github.com/uptrace/bun"
     "github.com/uptrace/bun/dialect/pgdialect"
     "github.com/uptrace/bun/driver/pgdriver"
 
-    "github.com/xraph/weave"
-    "github.com/xraph/weave/assembler"
-    "github.com/xraph/weave/embedder"
-    "github.com/xraph/weave/engine"
-    "github.com/xraph/weave/collection"
-    pgstore "github.com/xraph/weave/store/postgres"
-    pgvec "github.com/xraph/weave/vectorstore/pgvector"
+    "github.com/xraph/cortex"
+    "github.com/xraph/cortex/engine"
+    pgstore "github.com/xraph/cortex/store/postgres"
 )
 
 func main() {
     ctx := context.Background()
 
-    // PostgreSQL metadata store
+    // Connect to PostgreSQL
     sqldb := sql.OpenDB(pgdriver.NewConnector(
         pgdriver.WithDSN(os.Getenv("DATABASE_URL")),
     ))
     db := bun.NewDB(sqldb, pgdialect.New())
-    metaStore := pgstore.New(db)
 
-    // pgvector store
-    pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
-    if err != nil {
-        log.Fatal(err)
-    }
-    vecStore := pgvec.New(pool)
+    // Create the composite store
+    st := pgstore.New(db)
 
-    // OpenAI embedder
-    emb := embedder.NewOpenAI(
-        embedder.WithOpenAIKey(os.Getenv("OPENAI_API_KEY")),
-    )
-
-    // Build engine
+    // Build the engine
     eng, err := engine.New(
-        engine.WithStore(metaStore),
-        engine.WithVectorStore(vecStore),
-        engine.WithEmbedder(emb),
+        engine.WithStore(st),
+        engine.WithConfig(cortex.Config{
+            DefaultModel:        "gpt-4o",
+            DefaultMaxSteps:     25,
+            DefaultMaxTokens:    4096,
+            DefaultTemperature:  0.7,
+            DefaultReasoningLoop: "react",
+        }),
     )
     if err != nil {
         log.Fatal(err)
     }
 
     // Run migrations
-    if err := metaStore.Migrate(ctx); err != nil {
+    if err := st.Migrate(ctx); err != nil {
         log.Fatal("migrate:", err)
-    }
-    if err := vecStore.Migrate(ctx); err != nil {
-        log.Fatal("migrate vectors:", err)
     }
 
     // Set tenant scope
-    ctx = weave.WithTenant(ctx, "acme-corp")
-    ctx = weave.WithApp(ctx, "support-bot")
+    ctx = cortex.WithTenant(ctx, "acme-corp")
+    ctx = cortex.WithApp(ctx, "support-bot")
 
-    run(ctx, eng)
+    buildAgent(ctx, eng)
 }
 ```
 
-## 2. Create a collection
+## 2. Create a skill
+
+Skills define what an agent can do — the tools it can use and the knowledge it can reference.
 
 ```go
-func run(ctx context.Context, eng *engine.Engine) {
-    col := &collection.Collection{
-        Name:           "product-docs",
-        EmbeddingModel: "text-embedding-3-small",
-        EmbeddingDims:  1536,
-        ChunkStrategy:  "recursive",
-        ChunkSize:      512,
-        ChunkOverlap:   50,
+import "github.com/xraph/cortex/skill"
+
+func buildAgent(ctx context.Context, eng *engine.Engine) {
+    // Create a "customer-support" skill with two tool bindings
+    supportSkill := &skill.Skill{
+        AppID:       "support-bot",
+        Name:        "customer-support",
+        Description: "Handle customer inquiries using CRM tools",
+        Tools: []skill.ToolBinding{
+            {
+                ToolName: "lookup_order",
+                Mastery:  skill.Expert,
+                Guidance: "Always verify the order ID format before lookup",
+            },
+            {
+                ToolName: "create_ticket",
+                Mastery:  skill.Proficient,
+                Guidance: "Classify ticket priority based on customer sentiment",
+            },
+        },
+        Knowledge: []skill.KnowledgeRef{
+            {Source: "policies://return-policy", InjectMode: "always", Priority: 1},
+            {Source: "policies://warranty",      InjectMode: "on_demand", Priority: 2},
+        },
+        SystemPromptFragment: "You are an expert support agent. Always be empathetic.",
+        DefaultProficiency:   skill.Proficient,
     }
-    if err := eng.CreateCollection(ctx, col); err != nil {
-        log.Fatal("create collection:", err)
+    if err := eng.CreateSkill(ctx, supportSkill); err != nil {
+        log.Fatal("create skill:", err)
     }
-    fmt.Println("created collection:", col.ID)
+    fmt.Println("created skill:", supportSkill.ID)
 ```
 
-## 3. Ingest documents
+## 3. Create a trait
+
+Traits define personality dimensions — bipolar axes that shape agent behavior.
 
 ```go
-    documents := []struct{ title, content string }{
-        {
-            title:   "Return Policy",
-            content: "Our return policy allows returns within 30 days of purchase. Items must be in original condition with all tags attached. Refunds are processed within 5-7 business days.",
-        },
-        {
-            title:   "Shipping Policy",
-            content: "Standard shipping takes 5-7 business days. Expedited shipping takes 2-3 business days. We ship to all 50 US states and internationally to 45 countries.",
-        },
-        {
-            title:   "Warranty Information",
-            content: "All products come with a 1-year limited warranty. The warranty covers manufacturing defects but not accidental damage. Contact support@acme.com to file a warranty claim.",
-        },
-    }
+    import "github.com/xraph/cortex/trait"
 
-    for _, doc := range documents {
-        result, err := eng.Ingest(ctx, &engine.IngestInput{
-            CollectionID: col.ID,
-            Title:        doc.title,
-            Content:      doc.content,
-        })
-        if err != nil {
-            log.Printf("ingest %q: %v", doc.title, err)
-            continue
-        }
-        fmt.Printf("ingested %q: %d chunks\n", doc.title, result.ChunkCount)
+    // Create an "empathy" trait
+    empathyTrait := &trait.Trait{
+        AppID:       "support-bot",
+        Name:        "empathy",
+        Description: "Ability to understand and share customer feelings",
+        Category:    trait.Emotional,
+        Dimensions: []trait.Dimension{
+            {
+                Name:      "emotional-awareness",
+                LowLabel:  "detached",
+                HighLabel: "empathetic",
+                Value:     0.85,
+            },
+            {
+                Name:      "patience",
+                LowLabel:  "hurried",
+                HighLabel: "patient",
+                Value:     0.9,
+            },
+        },
+        Influences: []trait.Influence{
+            {Target: "tone",       Value: "warm and understanding", Weight: 0.8},
+            {Target: "vocabulary", Value: "supportive phrases",     Weight: 0.6},
+        },
     }
+    if err := eng.CreateTrait(ctx, empathyTrait); err != nil {
+        log.Fatal("create trait:", err)
+    }
+    fmt.Println("created trait:", empathyTrait.ID)
 ```
 
-## 4. Retrieve relevant context
+## 4. Create a behavior
+
+Behaviors define automatic reactions to triggers — like habits an agent follows.
 
 ```go
-    userQuery := "How long do I have to return a product?"
+    import "github.com/xraph/cortex/behavior"
 
-    results, err := eng.Retrieve(ctx, userQuery,
-        engine.WithCollection(col.ID),
-        engine.WithTopK(5),
-        engine.WithMinScore(0.7),
+    escalationBehavior := &behavior.Behavior{
+        AppID:       "support-bot",
+        Name:        "auto-escalate",
+        Description: "Escalate angry customers to a human agent",
+        Priority:    10,
+        Triggers: []behavior.Trigger{
+            {Type: behavior.SentimentBelow, Pattern: "0.3"},
+            {Type: behavior.KeywordMatch,   Pattern: "speak to manager|supervisor|escalate"},
+        },
+        Actions: []behavior.Action{
+            {Type: behavior.ModifyTone,   Target: "tone", Value: "extra empathetic"},
+            {Type: behavior.InjectPrompt, Value: "Acknowledge the customer's frustration before proceeding."},
+        },
+    }
+    if err := eng.CreateBehavior(ctx, escalationBehavior); err != nil {
+        log.Fatal("create behavior:", err)
+    }
+    fmt.Println("created behavior:", escalationBehavior.ID)
+```
+
+## 5. Create a persona
+
+A persona composes skills, traits, and behaviors into a coherent identity.
+
+```go
+    import (
+        "github.com/xraph/cortex/persona"
+        "github.com/xraph/cortex/cognitive"
+        "github.com/xraph/cortex/communication"
+        "github.com/xraph/cortex/perception"
     )
-    if err != nil {
-        log.Fatal("retrieve:", err)
-    }
 
-    fmt.Printf("retrieved %d chunks\n", len(results))
-    for _, r := range results {
-        fmt.Printf("  [%.2f] %s\n", r.Score, r.Chunk.Content[:60])
+    supportPersona := &persona.Persona{
+        AppID:       "support-bot",
+        Name:        "helpful-agent",
+        Description: "A warm, knowledgeable customer support agent",
+        Identity:    "I am a customer support specialist who genuinely cares about solving problems.",
+
+        Skills: []persona.SkillAssignment{
+            {SkillName: "customer-support", Proficiency: skill.Expert},
+        },
+        Traits: []persona.TraitAssignment{
+            {TraitName: "empathy", DimensionValues: map[string]float64{
+                "emotional-awareness": 0.85,
+                "patience":            0.9,
+            }},
+        },
+        Behaviors: []string{"auto-escalate"},
+
+        CognitiveStyle: &cognitive.Style{
+            Phases: []cognitive.Phase{
+                {Name: "understand", Strategy: cognitive.Analytical, Prompt: "Understand the customer's issue"},
+                {Name: "resolve",    Strategy: cognitive.Creative,   Prompt: "Find the best solution"},
+                {Name: "confirm",    Strategy: cognitive.Methodical, Prompt: "Verify the customer is satisfied"},
+            },
+        },
+        CommunicationStyle: &communication.Style{
+            Tone:            "warm",
+            Formality:       "professional-casual",
+            Verbosity:       "concise",
+            TechnicalLevel:  "low",
+            EmojiUsage:      "minimal",
+            PreferredFormat: "conversational",
+            AdaptToUser:     true,
+        },
+        Perception: &perception.Model{
+            AttentionFilter: perception.AttentionFilter{
+                Name:     "support-focus",
+                Keywords: []string{"order", "return", "refund", "complaint", "issue"},
+            },
+            ContextWindow:     "recent",
+            DetailOrientation: "high",
+        },
     }
+    if err := eng.CreatePersona(ctx, supportPersona); err != nil {
+        log.Fatal("create persona:", err)
+    }
+    fmt.Println("created persona:", supportPersona.ID)
 ```
 
-## 5. Assemble context and call LLM
+## 6. Create an agent
+
+The agent config ties everything together — specifying the model, persona, and execution parameters.
 
 ```go
-    // Convert to retriever.Result for the assembler
-    retResults := make([]retriever.Result, len(results))
-    for i, r := range results {
-        retResults[i] = retriever.Result{Chunk: r.Chunk, Score: r.Score}
+    import "github.com/xraph/cortex/agent"
+
+    agentCfg := &agent.Config{
+        AppID:        "support-bot",
+        Name:         "support-agent",
+        Description:  "Primary customer support agent",
+        SystemPrompt: "You are a helpful customer support agent for Acme Corp.",
+        Model:        "gpt-4o",
+        PersonaRef:   "helpful-agent",
+        MaxSteps:     15,
+        MaxTokens:    4096,
+        Temperature:  0.7,
     }
-
-    // Assemble with 3000-token budget
-    a := assembler.New(assembler.WithMaxTokens(3000))
-    assembled, err := a.Assemble(ctx, retResults)
-    if err != nil {
-        log.Fatal("assemble:", err)
+    if err := eng.CreateAgent(ctx, agentCfg); err != nil {
+        log.Fatal("create agent:", err)
     }
-
-    // Build the final prompt
-    prompt := fmt.Sprintf(`You are a helpful customer support assistant.
-
-Context:
-%s
-
-Question: %s
-
-Answer based only on the context above.`, assembled.Context, userQuery)
-
-    fmt.Println("--- PROMPT ---")
-    fmt.Println(prompt)
-    // Pass prompt to your LLM of choice
+    fmt.Println("created agent:", agentCfg.ID)
 }
 ```
 
-## 6. Cross-collection search
+## 7. Run via API
 
-For applications with multiple collections (e.g. per-product-line docs), use `HybridSearch`:
+Once the engine is wired up with the HTTP API, you can interact through REST:
 
-```go
-results, err := eng.HybridSearch(ctx, userQuery,
-    &engine.HybridSearchParams{
-        Collections: []id.CollectionID{col1ID, col2ID},
-        TopK:        10,
-        MinScore:    0.7,
-    },
-)
+```bash
+# List agents
+curl http://localhost:8080/cortex/agents
+
+# Run the agent
+curl -X POST http://localhost:8080/cortex/agents/support-agent/run \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: acme-corp" \
+  -H "X-App-ID: support-bot" \
+  -d '{"input": "I want to return order #12345, the product arrived damaged"}'
+
+# Check run status
+curl http://localhost:8080/cortex/runs/{run_id}
+
+# Stream a run
+curl -N -X POST http://localhost:8080/cortex/agents/support-agent/stream \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What is your return policy?"}'
+
+# View conversation history
+curl http://localhost:8080/cortex/agents/support-agent/conversation?limit=20
 ```
 
-Results are merged and re-ranked by score before being returned.
+## 8. Wiring with Forge
 
-## Complete code
+For production, use the Forge extension to get automatic lifecycle management:
 
-The full runnable example is in `examples/rag-pipeline/main.go` in the Weave repository.
+```go
+import (
+    "github.com/xraph/forge"
+    "github.com/xraph/cortex/extension"
+    pgstore "github.com/xraph/cortex/store/postgres"
+)
+
+func main() {
+    app := forge.New()
+
+    cortexExt := extension.New(
+        extension.WithStore(pgstore.New(bunDB)),
+    )
+
+    app.RegisterExtension(cortexExt)
+    app.Run()
+}
+```
+
+The Forge extension handles migrations, route registration, health checks, and graceful shutdown automatically. See the [Forge Extension guide](/docs/guides/forge-extension) for details.
