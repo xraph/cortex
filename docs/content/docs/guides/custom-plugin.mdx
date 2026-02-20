@@ -1,0 +1,202 @@
+---
+title: Custom Plugin
+description: Write custom Cortex plugins that react to lifecycle events — runs, steps, tool calls, persona resolution, checkpoints, and more.
+---
+
+The Cortex plugin system lets you react to lifecycle events without modifying core code. Plugins implement opt-in hook interfaces — the registry dispatches only to plugins that care about each event.
+
+## How plugins work
+
+1. Define a struct that implements `plugin.Extension` (the base interface — just `Name() string`)
+2. Implement any hook interfaces you need (e.g. `plugin.RunCompleted`, `plugin.ToolFailed`)
+3. Register the plugin with the engine via `engine.WithExtension()`
+4. The registry type-caches your plugin at registration time — emit calls are zero-cost for hooks you don't implement
+
+## Base interface
+
+Every plugin must implement the base `Extension` interface:
+
+```go
+import "github.com/xraph/cortex/plugin"
+
+type Extension interface {
+    Name() string
+}
+```
+
+## Available hooks (16 total)
+
+### Agent lifecycle (3 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `RunStarted` | `OnRunStarted(ctx, agentID, runID, input)` | Agent run begins |
+| `RunCompleted` | `OnRunCompleted(ctx, agentID, runID, output, elapsed)` | Run finishes successfully |
+| `RunFailed` | `OnRunFailed(ctx, agentID, runID, err)` | Run terminates with error |
+
+### Reasoning lifecycle (2 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `StepStarted` | `OnStepStarted(ctx, runID, stepIndex)` | Reasoning step begins |
+| `StepCompleted` | `OnStepCompleted(ctx, runID, stepIndex, elapsed)` | Reasoning step finishes |
+
+### Tool lifecycle (3 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `ToolCalled` | `OnToolCalled(ctx, runID, toolName, args)` | Tool invocation begins |
+| `ToolCompleted` | `OnToolCompleted(ctx, runID, toolName, result, elapsed)` | Tool finishes successfully |
+| `ToolFailed` | `OnToolFailed(ctx, runID, toolName, err)` | Tool invocation fails |
+
+### Persona lifecycle (3 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `PersonaResolved` | `OnPersonaResolved(ctx, agentID, personaName)` | Persona loaded for a run |
+| `BehaviorTriggered` | `OnBehaviorTriggered(ctx, runID, behaviorName)` | Behavior fires during a run |
+| `CognitivePhaseChanged` | `OnCognitivePhaseChanged(ctx, runID, fromPhase, toPhase)` | Cognitive phase transition |
+
+### Checkpoint lifecycle (2 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `CheckpointCreated` | `OnCheckpointCreated(ctx, cpID, runID, reason)` | Checkpoint created |
+| `CheckpointResolved` | `OnCheckpointResolved(ctx, cpID, decision)` | Checkpoint approved/rejected |
+
+### Orchestration lifecycle (2 hooks)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `OrchestrationStarted` | `OnOrchestrationStarted(ctx, orchID, strategy)` | Multi-agent orchestration begins |
+| `OrchestrationCompleted` | `OnOrchestrationCompleted(ctx, orchID, elapsed)` | Orchestration finishes |
+
+### Shutdown (1 hook)
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `Shutdown` | `OnShutdown(ctx)` | Engine graceful shutdown |
+
+## Example: Slack notifier
+
+This plugin sends Slack notifications when runs fail:
+
+```go
+package slacknotifier
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/xraph/cortex/id"
+    "github.com/xraph/cortex/plugin"
+)
+
+// Compile-time checks.
+var (
+    _ plugin.Extension   = (*SlackNotifier)(nil)
+    _ plugin.RunStarted  = (*SlackNotifier)(nil)
+    _ plugin.RunFailed   = (*SlackNotifier)(nil)
+    _ plugin.RunCompleted = (*SlackNotifier)(nil)
+)
+
+// SlackNotifier sends Slack messages on run lifecycle events.
+type SlackNotifier struct {
+    webhookURL string
+    channel    string
+}
+
+// New creates a SlackNotifier plugin.
+func New(webhookURL, channel string) *SlackNotifier {
+    return &SlackNotifier{
+        webhookURL: webhookURL,
+        channel:    channel,
+    }
+}
+
+// Name returns the plugin name.
+func (s *SlackNotifier) Name() string { return "slack-notifier" }
+
+// OnRunStarted is called when a run begins.
+func (s *SlackNotifier) OnRunStarted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, input string) error {
+    return nil // optional: log or track run starts
+}
+
+// OnRunFailed sends a Slack alert when a run fails.
+func (s *SlackNotifier) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, err error) error {
+    msg := fmt.Sprintf("Agent run failed\nAgent: %s\nRun: %s\nError: %s",
+        agentID, runID, err.Error())
+    return sendSlackMessage(s.webhookURL, s.channel, msg)
+}
+
+// OnRunCompleted alerts on slow runs.
+func (s *SlackNotifier) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, output string, elapsed time.Duration) error {
+    if elapsed > 30*time.Second {
+        msg := fmt.Sprintf("Slow run completed\nAgent: %s\nRun: %s\nDuration: %s",
+            agentID, runID, elapsed)
+        return sendSlackMessage(s.webhookURL, s.channel, msg)
+    }
+    return nil
+}
+
+func sendSlackMessage(url, channel, text string) error {
+    // Your Slack webhook implementation here
+    return nil
+}
+```
+
+## Register the plugin
+
+```go
+import (
+    "github.com/xraph/cortex/engine"
+    "yourproject/slacknotifier"
+)
+
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExtension(slacknotifier.New(
+        "https://hooks.slack.com/services/...",
+        "#agent-alerts",
+    )),
+)
+```
+
+Or with the Forge extension:
+
+```go
+import "github.com/xraph/cortex/extension"
+
+cortexExt := extension.New(
+    extension.WithStore(store),
+    extension.WithExtension(slacknotifier.New(webhookURL, channel)),
+)
+```
+
+## Error handling
+
+Hook errors are **never propagated** — they must not block the agent pipeline. The registry logs errors as warnings:
+
+```
+WARN extension hook error hook=OnRunFailed extension=slack-notifier error="webhook timeout"
+```
+
+If your plugin needs to guarantee delivery, implement internal retry/queue logic.
+
+## Registration order
+
+Plugins are notified in registration order. If plugin A is registered before plugin B, A's hooks fire first for every event.
+
+## Built-in plugins
+
+| Plugin | Package | Hooks implemented |
+|--------|---------|-------------------|
+| Metrics | `observability` | 11 hooks (run, step, tool, persona, checkpoint, orchestration, shutdown) |
+| Audit | `audit_hook` | Configurable — records structured audit events |
+
+## Tips
+
+- **Keep hooks fast** — hooks run synchronously in the engine's hot path. Offload heavy work to goroutines or channels.
+- **Use compile-time checks** — `var _ plugin.RunFailed = (*MyPlugin)(nil)` catches interface drift at compile time.
+- **Implement only what you need** — the registry only dispatches to hooks you implement. An empty `Extension` has zero overhead.
