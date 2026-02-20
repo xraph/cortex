@@ -10,22 +10,27 @@ export function ThemedLogo() {
         className="size-8"
         aria-hidden="true"
       >
-        {/* Arrow/relay symbol */}
+        {/* Brain / neural network symbol */}
         <rect
           x="2"
           y="2"
           width="28"
           height="28"
           rx="6"
-          className="fill-teal-500 dark:fill-teal-400"
+          className="fill-violet-500 dark:fill-violet-400"
         />
-        <path
-          d="M10 16L15 11L15 14L22 14L22 18L15 18L15 21L10 16Z"
-          className="fill-white"
-        />
-        <circle cx="8" cy="16" r="1.5" className="fill-white/60" />
-        <circle cx="24" cy="12" r="1.5" className="fill-white/60" />
-        <circle cx="24" cy="20" r="1.5" className="fill-white/60" />
+        {/* Central node */}
+        <circle cx="16" cy="16" r="3" className="fill-white" />
+        {/* Satellite nodes */}
+        <circle cx="9" cy="10" r="2" className="fill-white/80" />
+        <circle cx="23" cy="10" r="2" className="fill-white/80" />
+        <circle cx="9" cy="22" r="2" className="fill-white/80" />
+        <circle cx="23" cy="22" r="2" className="fill-white/80" />
+        {/* Connections */}
+        <line x1="12" y1="12" x2="14" y2="14" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
+        <line x1="20" y1="12" x2="18" y2="14" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
+        <line x1="12" y1="20" x2="14" y2="18" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
+        <line x1="20" y1="20" x2="18" y2="18" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
       </svg>
     </div>
   );

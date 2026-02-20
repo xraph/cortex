@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/cn";
 
-const words = ["Weave", " your", " context"];
+const words = ["Cortex", " for", " agents"];
 
 const charVariants = {
   hidden: {

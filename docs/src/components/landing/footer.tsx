@@ -10,39 +10,39 @@ const footerLinks = {
     { label: "Architecture", href: "/docs/architecture" },
     { label: "Configuration", href: "/docs/concepts/configuration" },
   ],
-  Components: [
-    { label: "Ingestion", href: "/docs/subsystems/recording" },
-    { label: "Retrieval", href: "/docs/subsystems/verification" },
-    { label: "Chunker", href: "/docs/subsystems/erasure" },
-    { label: "Embedder", href: "/docs/subsystems/compliance" },
-    { label: "Extensions", href: "/docs/subsystems/plugins" },
+  "Core Concepts": [
+    { label: "Agents", href: "/docs/concepts/agents" },
+    { label: "Skills", href: "/docs/concepts/skills" },
+    { label: "Personas", href: "/docs/concepts/personas" },
+    { label: "Traits", href: "/docs/human-model/traits" },
+    { label: "Behaviors", href: "/docs/human-model/behaviors" },
   ],
-  Stores: [
-    { label: "Memory", href: "/docs/stores/memory" },
-    { label: "PostgreSQL", href: "/docs/stores/postgres" },
-    { label: "SQLite", href: "/docs/stores/sqlite" },
-    { label: "pgvector", href: "/docs/stores/bun" },
+  Guides: [
+    { label: "Full Example", href: "/docs/guides/full-example" },
+    { label: "Forge Extension", href: "/docs/guides/forge-extension" },
     { label: "Custom Store", href: "/docs/guides/custom-store" },
+    { label: "Custom Plugin", href: "/docs/guides/custom-plugin" },
+    { label: "HTTP API", href: "/docs/api-reference/http-api" },
   ],
   Community: [
     {
       label: "GitHub",
-      href: "https://github.com/xraph/weave",
+      href: "https://github.com/xraph/cortex",
       external: true,
     },
     {
       label: "Issues",
-      href: "https://github.com/xraph/weave/issues",
+      href: "https://github.com/xraph/cortex/issues",
       external: true,
     },
     {
       label: "Discussions",
-      href: "https://github.com/xraph/weave/discussions",
+      href: "https://github.com/xraph/cortex/discussions",
       external: true,
     },
     {
       label: "Contributing",
-      href: "https://github.com/xraph/weave/blob/main/CONTRIBUTING.md",
+      href: "https://github.com/xraph/cortex/blob/main/CONTRIBUTING.md",
       external: true,
     },
   ],
@@ -58,16 +58,16 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="inline-flex items-center gap-2 mb-4">
               <ThemedLogo />
-              <span className="font-bold text-lg">Weave</span>
+              <span className="font-bold text-lg">Cortex</span>
             </Link>
             <p className="text-sm text-fd-muted-foreground leading-relaxed max-w-xs">
-              Composable RAG pipeline engine for Go. Ingest documents, generate
-              embeddings, and retrieve semantic context at scale.
+              Human-emulating agent orchestration framework for Go. Build AI
+              agents with skills, traits, behaviors, and personas.
             </p>
             {/* Social links */}
             <div className="flex items-center gap-3 mt-6">
               <a
-                href="https://github.com/xraph/weave"
+                href="https://github.com/xraph/cortex"
                 target="_blank"
                 rel="noreferrer"
                 className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"

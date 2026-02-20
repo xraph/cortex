@@ -33,7 +33,7 @@ export function SectionHeader({
       {badge && (
         <div
           className={cn(
-            "inline-flex items-center rounded-full border border-teal-500/20 bg-teal-500/10 px-3 py-1 text-xs font-medium text-teal-600 dark:text-teal-400 mb-4",
+            "inline-flex items-center rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 mb-4",
           )}
         >
           {badge}

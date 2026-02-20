@@ -20,12 +20,12 @@ export function CTA() {
           className="max-w-2xl mx-auto text-center"
         >
           <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
-            Start building with Weave
+            Start building with Cortex
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground leading-relaxed">
-            Add production-grade RAG pipelines to your Go service in minutes.
-            Weave handles ingestion, chunking, embedding, and semantic retrieval
-            out of the box.
+            Add human-emulating AI agents to your Go service in minutes.
+            Cortex handles personas, skills, reasoning loops, and multi-tenant
+            orchestration out of the box.
           </p>
 
           {/* Install command */}
@@ -38,7 +38,7 @@ export function CTA() {
           >
             <span className="text-fd-muted-foreground select-none">$</span>
             <code className="text-fd-foreground">
-              go get github.com/xraph/weave
+              go get github.com/xraph/cortex
             </code>
           </motion.div>
 

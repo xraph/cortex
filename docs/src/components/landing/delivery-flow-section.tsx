@@ -5,15 +5,15 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { SectionHeader } from "./section-header";
 
-// ─── Cycling Ingestion Action ─────────────────────────────────
-const pipelineActions = ["doc.ingest", "query.retrieve", "col.reindex"];
+// ─── Cycling Agent Action ────────────────────────────────────
+const agentActions = ["agent.run", "tool.execute", "step.reason"];
 
-function CyclingPipelineAction() {
+function CyclingAgentAction() {
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setIndex((prev) => (prev + 1) % pipelineActions.length);
+      setIndex((prev) => (prev + 1) % agentActions.length);
     }, 3500);
     return () => clearInterval(interval);
   }, []);
@@ -22,14 +22,14 @@ function CyclingPipelineAction() {
     <div className="relative h-5 overflow-hidden">
       <AnimatePresence mode="wait">
         <motion.span
-          key={pipelineActions[index]}
+          key={agentActions[index]}
           initial={{ y: 12, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: -12, opacity: 0 }}
           transition={{ duration: 0.3 }}
           className="absolute inset-0 text-violet-500 dark:text-violet-400 font-mono text-xs font-medium"
         >
-          {pipelineActions[index]}
+          {agentActions[index]}
         </motion.span>
       </AnimatePresence>
     </div>
@@ -203,8 +203,8 @@ function EventRow({
   );
 }
 
-// ─── RAG Pipeline Diagram ─────────────────────────────────────
-function RAGPipelineDiagram() {
+// ─── Agent Reasoning Loop Diagram ────────────────────────────
+function AgentReasoningDiagram() {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
@@ -227,11 +227,11 @@ function RAGPipelineDiagram() {
 
       <div className="relative p-3 sm:p-6 rounded-2xl border border-fd-border/50 bg-fd-card/30 backdrop-blur-sm">
         <div className="flex flex-col items-center gap-4">
-          {/* Pipeline stages */}
+          {/* ReAct loop stages */}
           <div className="flex items-center gap-0 flex-wrap justify-center">
             <Stage
-              label="Ingest()"
-              sublabel={<CyclingPipelineAction />}
+              label="Perceive"
+              sublabel={<CyclingAgentAction />}
               color="text-violet-600 dark:text-violet-400"
               borderColor="border-violet-500/30"
               bgColor="bg-violet-500/5"
@@ -239,8 +239,8 @@ function RAGPipelineDiagram() {
             />
             <Connection color="violet" delay={0} />
             <Stage
-              label="Chunker"
-              sublabel="recursive"
+              label="Reason"
+              sublabel="ReAct"
               color="text-purple-600 dark:text-purple-400"
               borderColor="border-purple-500/30"
               bgColor="bg-purple-500/5"
@@ -248,8 +248,8 @@ function RAGPipelineDiagram() {
             />
             <Connection color="violet" delay={0.5} />
             <Stage
-              label="Embedder"
-              sublabel="text-emb-3"
+              label="Act"
+              sublabel="tool call"
               color="text-violet-600 dark:text-violet-400"
               borderColor="border-violet-500/30"
               bgColor="bg-violet-500/8"
@@ -264,23 +264,23 @@ function RAGPipelineDiagram() {
           {/* Event rows with outcomes */}
           <div className="flex flex-col items-start gap-2.5">
             <EventRow
-              action="doc.loaded"
+              action="persona.resolved"
               status="success"
-              statusLabel="✓ Parsed"
+              statusLabel="&#10003; Loaded"
               lineColor="green"
               delay={0.5}
             />
             <EventRow
-              action="chunks.created"
+              action="step.completed"
               status={phase === 1 ? "indexed" : "processing"}
-              statusLabel={phase === 1 ? "✓ 12 chunks" : "⟳ Chunking"}
+              statusLabel={phase === 1 ? "&#10003; 3 steps" : "&#8635; Reasoning"}
               lineColor={phase === 1 ? "green" : "violet"}
               delay={0.6}
             />
             <EventRow
-              action="vec.stored"
+              action="run.completed"
               status="indexed"
-              statusLabel="✓ Indexed"
+              statusLabel="&#10003; Done"
               lineColor="green"
               delay={0.7}
             />
@@ -290,15 +290,15 @@ function RAGPipelineDiagram() {
           <div className="flex items-center gap-4 mt-4 text-[10px] text-fd-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-green-500" />
-              <span>Ready</span>
+              <span>Completed</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-violet-500" />
-              <span>Processing</span>
+              <span>Reasoning</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-purple-400" />
-              <span>Chunking</span>
+              <span>Tool Call</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-red-500" />
@@ -355,7 +355,7 @@ function FeatureBullet({
   );
 }
 
-// ─── RAG Ingestion Pipeline Section ──────────────────────────
+// ─── Agent Reasoning Loop Section ────────────────────────────
 export function DeliveryFlowSection() {
   return (
     <section className="relative w-full py-20 sm:py-28 overflow-hidden">
@@ -367,26 +367,26 @@ export function DeliveryFlowSection() {
           {/* Left: Text content */}
           <div className="flex flex-col">
             <SectionHeader
-              badge="RAG Ingestion Pipeline"
-              title="From document to searchable context."
-              description="Weave orchestrates the entire ingestion lifecycle — tenant scoping, text chunking, embedding generation, and vector storage."
+              badge="Agent Reasoning Loop"
+              title="From input to intelligent action."
+              description="Cortex orchestrates the entire agent lifecycle — persona resolution, multi-step reasoning, tool execution, and checkpoint approvals."
               align="left"
             />
 
             <div className="mt-8 space-y-5">
               <FeatureBullet
                 title="Automatic Tenant Scoping"
-                description="Every ingestion and retrieval is stamped with TenantID and AppID from context. Collection and chunk isolation is enforced at the store layer — no tenant can access another's data."
+                description="Every agent run is stamped with TenantID and AppID from context. Agent, skill, and persona isolation is enforced at the store layer — no tenant can access another's data."
                 delay={0.2}
               />
               <FeatureBullet
-                title="Configurable Chunk Strategies"
-                description="Recursive or fixed-size chunking with configurable token size and overlap. Per-collection strategy overrides let you tune chunking for different document types."
+                title="Composable Persona System"
+                description="Compose personas from skills (with tool mastery), traits (with dimensional values), and behaviors (with trigger-action rules). Each persona gives the agent a distinct personality."
                 delay={0.3}
               />
               <FeatureBullet
-                title="Lifecycle Extension Hooks"
-                description="OnIngestCompleted, OnRetrievalFailed, and 12 other lifecycle events. Wire in metrics, audit trails, or custom processing logic without modifying engine code."
+                title="Lifecycle Plugin Hooks"
+                description="OnRunCompleted, OnToolFailed, OnBehaviorTriggered, and 16 other lifecycle events. Wire in metrics, audit trails, or custom logic without modifying engine code."
                 delay={0.4}
               />
             </div>
@@ -421,9 +421,9 @@ export function DeliveryFlowSection() {
             </motion.div>
           </div>
 
-          {/* Right: Pipeline diagram */}
+          {/* Right: Agent reasoning diagram */}
           <div className="relative">
-            <RAGPipelineDiagram />
+            <AgentReasoningDiagram />
           </div>
         </div>
       </div>
