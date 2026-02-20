@@ -1,15 +1,15 @@
 ---
 title: Go Packages
-description: Quick reference for all Weave Go packages and their public APIs.
+description: Quick reference for all Cortex Go packages and their public APIs.
 ---
 
-All Weave packages are importable from `github.com/xraph/weave`.
+All Cortex packages are importable from `github.com/xraph/cortex`.
 
 ## Core packages
 
-### `github.com/xraph/weave`
+### `github.com/xraph/cortex`
 
-Root package. Exports context helpers, error constants, and shared types.
+Root package. Exports context helpers, error constants, configuration, and shared types.
 
 | Export | Description |
 |--------|-------------|
@@ -19,161 +19,389 @@ Root package. Exports context helpers, error constants, and shared types.
 | `AppFromContext(ctx)` | Read app ID from context |
 | `Config` | Engine configuration struct |
 | `DefaultConfig()` | Returns default Config values |
-| `ErrNoStore`, `ErrNoEmbedder`, `ErrNoVectorStore`, `ErrNoChunker` | Missing-component errors |
-| `ErrEmptyContent`, `ErrInvalidInput` | Input validation errors |
+| `Entity` | Base entity with common fields |
+| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, ... | 20+ sentinel errors |
 
-### `github.com/xraph/weave/engine`
+### `github.com/xraph/cortex/engine`
 
-The central Engine and all ingestion/retrieval operations.
+The central Engine coordinator and all CRUD passthroughs.
 
 | Export | Description |
 |--------|-------------|
 | `New(...Option) (*Engine, error)` | Create an engine |
-| `Engine.CreateCollection` | Create a collection |
-| `Engine.GetCollection` | Get collection by ID |
-| `Engine.GetCollectionByName` | Get collection by name |
-| `Engine.ListCollections` | List collections |
-| `Engine.DeleteCollection` | Delete collection and all contents |
-| `Engine.CollectionStats` | Aggregate stats for a collection |
-| `Engine.Ingest` | Ingest a single document |
-| `Engine.IngestBatch` | Ingest multiple documents |
-| `Engine.GetDocument` | Get document by ID |
-| `Engine.ListDocuments` | List documents |
-| `Engine.DeleteDocument` | Delete document and chunks |
-| `Engine.Retrieve` | Semantic retrieval |
-| `Engine.HybridSearch` | Cross-collection search |
-| `Engine.ReindexCollection` | Re-embed all chunks |
-| `Engine.Stop` | Graceful shutdown |
-| `IngestInput` | Input struct for Ingest |
-| `IngestResult` | Output struct from Ingest |
-| `ScoredChunk` | Retrieved chunk with score |
-| `RetrieveOption` | Functional option for Retrieve |
-| `WithCollection`, `WithTopK`, `WithMinScore`, `WithStrategy`, `WithTenantID` | Retrieve options |
+| `Engine.Start(ctx)` | Initialize the engine |
+| `Engine.Stop(ctx)` | Graceful shutdown (emits `OnShutdown`) |
+| `Engine.Store()` | Access the composite store |
+| `Engine.Extensions()` | Access the plugin registry |
+| `Engine.Config()` | Access the configuration |
+| `Engine.CreateAgent`, `GetAgent`, `ListAgents`, ... | Agent CRUD (6 methods) |
+| `Engine.CreateSkill`, `GetSkillByName`, `ListSkills`, ... | Skill CRUD (5 methods) |
+| `Engine.CreateTrait`, `GetTraitByName`, `ListTraits`, ... | Trait CRUD (5 methods) |
+| `Engine.CreateBehavior`, `GetBehaviorByName`, ... | Behavior CRUD (5 methods) |
+| `Engine.CreatePersona`, `GetPersonaByName`, ... | Persona CRUD (5 methods) |
+| `Engine.GetRun`, `ListRuns` | Run reads (2 methods) |
+| `Engine.LoadConversation`, `ClearConversation` | Memory (2 methods) |
+| `Engine.ListPendingCheckpoints`, `ResolveCheckpoint` | Checkpoint (2 methods) |
+| `Option`, `WithStore`, `WithExtension`, `WithLogger`, `WithConfig` | Engine options |
 
-## Interface packages
+## Domain packages
 
-### `github.com/xraph/weave/chunker`
+### `github.com/xraph/cortex/agent`
+
+Agent configuration and store interface.
 
 ```go
-type Chunker interface {
-    Chunk(ctx context.Context, text string, opts *Options) ([]ChunkResult, error)
+type Config struct {
+    cortex.Entity
+    ID, AppID, Name, Description, SystemPrompt, Model string
+    Tools []string                    // flat mode
+    PersonaRef string                 // persona mode
+    MaxSteps, MaxTokens int
+    Temperature float64
+    ReasoningLoop string
+    InlineSkills, InlineTraits, InlineBehaviors []string
+    Guardrails, Metadata map[string]any
+}
+
+type Store interface {  // 6 methods
+    Create, Get, GetByName, Update, Delete, List
 }
 ```
 
-### `github.com/xraph/weave/embedder`
+### `github.com/xraph/cortex/skill`
+
+Skills, tool bindings, knowledge references, and proficiency levels.
 
 ```go
-type Embedder interface {
-    Embed(ctx context.Context, texts []string) ([]EmbedResult, error)
-    Dimensions() int
+type Skill struct {
+    cortex.Entity
+    ID, AppID, Name, Description string
+    Tools []ToolBinding
+    Knowledge []KnowledgeRef
+    SystemPromptFragment, DefaultProficiency string
+    Dependencies []string
+}
+
+// Proficiency levels: Novice (0.2), Beginner (0.4),
+// Competent (0.6), Proficient (0.8), Expert (1.0)
+
+type Store interface {  // 6 methods
+    CreateSkill, GetSkill, GetSkillByName, UpdateSkill, DeleteSkill, ListSkills
 }
 ```
 
-### `github.com/xraph/weave/loader`
+### `github.com/xraph/cortex/trait`
+
+Personality traits with bipolar dimensions and influences.
 
 ```go
-type Loader interface {
-    Load(ctx context.Context, reader io.Reader) (*LoadResult, error)
-    Supports(mimeType string) bool
+type Trait struct {
+    cortex.Entity
+    ID, AppID, Name, Description string
+    Dimensions []Dimension    // bipolar axes (e.g. detached - empathetic)
+    Influences []Influence    // 5 targets: tone, vocabulary, reasoning, etc.
+    Category TraitCategory    // cognitive, emotional, social, behavioral
+}
+
+type Store interface {  // 6 methods
+    CreateTrait, GetTrait, GetTraitByName, UpdateTrait, DeleteTrait, ListTraits
 }
 ```
 
-### `github.com/xraph/weave/retriever`
+### `github.com/xraph/cortex/behavior`
+
+Reactive behaviors with triggers and actions.
 
 ```go
-type Retriever interface {
-    Retrieve(ctx context.Context, query string, opts *Options) ([]Result, error)
+type Behavior struct {
+    cortex.Entity
+    ID, AppID, Name, Description string
+    Triggers []Trigger      // 6 types: keyword_match, sentiment_below, etc.
+    Actions  []Action       // 6 types: inject_prompt, modify_tone, etc.
+    Priority int
+    RequiresSkill, RequiresTrait string
+}
+
+type Store interface {  // 6 methods
+    CreateBehavior, GetBehavior, GetBehaviorByName, UpdateBehavior, DeleteBehavior, ListBehaviors
 }
 ```
 
-### `github.com/xraph/weave/store`
+### `github.com/xraph/cortex/persona`
+
+Persona composition — skills, traits, behaviors, and styles.
+
+```go
+type Persona struct {
+    cortex.Entity
+    ID, AppID, Name, Description, Identity string
+    Skills []SkillAssignment
+    Traits []TraitAssignment
+    Behaviors []string
+    CognitiveStyle *cognitive.Style
+    CommunicationStyle *communication.Style
+    Perception *perception.Model
+}
+
+type Store interface {  // 6 methods
+    CreatePersona, GetPersona, GetPersonaByName, UpdatePersona, DeletePersona, ListPersonas
+}
+```
+
+### `github.com/xraph/cortex/cognitive`
+
+Cognitive processing styles.
+
+```go
+type Style struct {
+    Phases []Phase
+}
+type Phase struct {
+    Name, Prompt string
+    Strategy Strategy      // analytical, creative, methodical, intuitive, critical, collaborative
+    TransitionCondition    // on_complete, on_confidence, on_timeout, on_external
+}
+```
+
+### `github.com/xraph/cortex/communication`
+
+Communication style configuration.
+
+```go
+type Style struct {
+    Tone, Formality, Verbosity string
+    TechnicalLevel, EmojiUsage, PreferredFormat string
+    AdaptToUser bool
+}
+```
+
+### `github.com/xraph/cortex/perception`
+
+Perception and attention models.
+
+```go
+type Model struct {
+    AttentionFilter AttentionFilter
+    ContextWindow, DetailOrientation string
+}
+type AttentionFilter struct {
+    Name string
+    Keywords, Patterns []string
+    Prompt string
+}
+```
+
+## Execution packages
+
+### `github.com/xraph/cortex/run`
+
+Run tracking — runs, steps, and tool calls.
+
+```go
+type Run struct {
+    ID id.AgentRunID
+    AgentID, TenantID, State, Input, Output, Error string
+    StepCount, TokensUsed int
+    StartedAt, CompletedAt *time.Time
+}
+// RunStates: created, running, completed, failed, cancelled, paused
+
+type Step struct { ID, RunID, Index, Type, Input, Output, TokensUsed, ... }
+type ToolCall struct { ID, StepID, RunID, ToolName, Arguments, Result, Error, ... }
+
+type Store interface {  // 8 methods
+    CreateRun, GetRun, UpdateRun, ListRuns,
+    CreateStep, ListSteps,
+    CreateToolCall, ListToolCalls
+}
+```
+
+### `github.com/xraph/cortex/memory`
+
+Conversation, working memory, and summaries.
+
+```go
+type Message struct {
+    Role, Content string
+    ToolCalls []ToolCallRef
+    Metadata map[string]any
+    Timestamp time.Time
+}
+
+type Store interface {  // 8 methods
+    SaveConversation, LoadConversation, ClearConversation,
+    SaveWorking, LoadWorking, ClearWorking,
+    SaveSummary, LoadSummaries
+}
+```
+
+### `github.com/xraph/cortex/checkpoint`
+
+Human-in-the-loop checkpoints.
+
+```go
+type Checkpoint struct {
+    ID id.CheckpointID
+    RunID, AgentID, TenantID string
+    Reason, State string
+    Decision *Decision
+}
+type Decision struct {
+    Approved bool
+    DecidedBy, Reason string
+    DecidedAt time.Time
+}
+
+type Store interface {  // 4 methods
+    CreateCheckpoint, GetCheckpoint, Resolve, ListPending
+}
+```
+
+## Identity package
+
+### `github.com/xraph/cortex/id`
+
+TypeID-based identifiers (UUIDv7, K-sortable).
+
+```go
+// 12 type aliases
+type AgentID, SkillID, TraitID, BehaviorID, PersonaID string
+type AgentRunID, StepID, ToolCallID, CheckpointID string
+type MemoryID, OrchestrationID, HandoffID string
+
+// Constructors: NewAgentID(), NewSkillID(), ...
+// Parsers: ParseAgentID(s), ParseSkillID(s), ...
+
+// Prefixes: agt_, skl_, trt_, bhv_, prs_, arun_, astp_, tcall_, cp_, mem_, orch_, hoff_
+```
+
+## Infrastructure packages
+
+### `github.com/xraph/cortex/store`
+
+Composite store interface embedding all 8 domain stores.
 
 ```go
 type Store interface {
-    collection.Store
-    document.Store
-    chunk.Store
-    Migrate(ctx context.Context) error
-    Ping(ctx context.Context) error
+    agent.Store      // 6 methods
+    skill.Store      // 6 methods
+    trait.Store      // 6 methods
+    behavior.Store   // 6 methods
+    persona.Store    // 6 methods
+    run.Store        // 8 methods
+    memory.Store     // 8 methods
+    checkpoint.Store // 4 methods
+    Migrate(ctx) error
+    Ping(ctx) error
     Close() error
 }
 ```
 
-### `github.com/xraph/weave/vectorstore`
+### `github.com/xraph/cortex/store/postgres`
+
+Production PostgreSQL store using bun ORM with embedded migrations.
 
 ```go
-type VectorStore interface {
-    Upsert(ctx context.Context, entries []Entry) error
-    Search(ctx context.Context, vector []float32, opts *SearchOptions) ([]SearchResult, error)
-    Delete(ctx context.Context, ids []string) error
-    DeleteByMetadata(ctx context.Context, filter map[string]string) error
-}
+func New(db *bun.DB) *Store
 ```
 
-## Extension packages
+### `github.com/xraph/cortex/store/memory`
 
-### `github.com/xraph/weave/ext`
+In-memory store for testing.
 
-All lifecycle hook interfaces: `CollectionCreated`, `CollectionDeleted`, `IngestStarted`, `IngestChunked`, `IngestEmbedded`, `IngestCompleted`, `IngestFailed`, `RetrievalStarted`, `RetrievalCompleted`, `RetrievalFailed`, `DocumentDeleted`, `ReindexStarted`, `ReindexCompleted`, `Shutdown`.
+```go
+func New() *Store
+```
 
-### `github.com/xraph/weave/observability`
+### `github.com/xraph/cortex/plugin`
+
+Plugin system — base interface, 16 lifecycle hook interfaces, and the Registry.
+
+```go
+type Extension interface { Name() string }
+
+// 16 hook interfaces: RunStarted, RunCompleted, RunFailed,
+// StepStarted, StepCompleted, ToolCalled, ToolCompleted, ToolFailed,
+// PersonaResolved, BehaviorTriggered, CognitivePhaseChanged,
+// CheckpointCreated, CheckpointResolved,
+// OrchestrationStarted, OrchestrationCompleted, AgentHandoff,
+// Shutdown
+
+type Registry struct { ... }
+func NewRegistry(logger) *Registry
+func (r *Registry) Register(Extension)
+func (r *Registry) Extensions() []Extension
+// 16 Emit methods: EmitRunStarted, EmitRunCompleted, ...
+```
+
+### `github.com/xraph/cortex/observability`
+
+Prometheus-compatible metrics plugin (11 counters).
 
 ```go
 func NewMetricsExtension() *MetricsExtension
 func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension
 ```
 
-## Assembler
+### `github.com/xraph/cortex/audit_hook`
 
-### `github.com/xraph/weave/assembler`
-
-```go
-func New(...Option) *Assembler
-func (a *Assembler) Assemble(ctx, []retriever.Result) (*AssembleResult, error)
-func AssembleSimple(results []retriever.Result) string
-```
-
-## Implementations
-
-| Package | Implements | Notes |
-|---------|-----------|-------|
-| `store/memory` | `store.Store` | In-memory, for tests |
-| `store/postgres` | `store.Store` | PostgreSQL via bun |
-| `store/sqlite` | `store.Store` | SQLite via bun |
-| `vectorstore/memory` | `vectorstore.VectorStore` | Brute-force cosine similarity |
-| `vectorstore/pgvector` | `vectorstore.VectorStore` | PostgreSQL + pgvector |
-| `chunker/recursive` | `chunker.Chunker` | Default — splits on paragraph/sentence/word |
-| `chunker/fixed` | `chunker.Chunker` | Fixed token-size chunks |
-| `chunker/sliding` | `chunker.Chunker` | Sliding window |
-| `chunker/semantic` | `chunker.Chunker` | Topic-coherent groups |
-| `chunker/code` | `chunker.Chunker` | Function/class boundary splits |
-| `embedder/openai` | `embedder.Embedder` | OpenAI text-embedding-* models |
-| `embedder/local` | `embedder.Embedder` | Local model wrapper |
-| `retriever/similarity` | `retriever.Retriever` | Cosine similarity |
-| `retriever/mmr` | `retriever.Retriever` | Maximal Marginal Relevance |
-| `retriever/hybrid` | `retriever.Retriever` | Dense + keyword |
-| `retriever/reranker` | `retriever.Retriever` | Two-stage cross-encoder |
-| `loader/text` | `loader.Loader` | Plain text |
-| `loader/markdown` | `loader.Loader` | Markdown |
-| `loader/html` | `loader.Loader` | HTML |
-| `loader/csv` | `loader.Loader` | CSV |
-| `loader/json` | `loader.Loader` | JSON |
-| `loader/url` | `loader.Loader` | Fetches URL |
-| `loader/directory` | `loader.Loader` | Recursive directory |
-| `extension` | `forge.Extension` | Forge integration |
-
-## ID package
-
-### `github.com/xraph/weave/id`
+Structured audit trail plugin.
 
 ```go
-func NewCollectionID() CollectionID
-func NewDocumentID() DocumentID
-func NewChunkID() ChunkID
-
-func ParseCollectionID(s string) (CollectionID, error)
-func ParseDocumentID(s string) (DocumentID, error)
-func ParseChunkID(s string) (ChunkID, error)
+func New(recorder Recorder, opts ...Option) *Extension
+type Recorder interface { Record(ctx, AuditEvent) error }
+type RecorderFunc func(ctx, AuditEvent) error   // adapter
+// Options: WithActions(...), WithLogger(...)
+// 18 action constants, 8 resource constants
 ```
 
-All IDs implement `String() string` and are based on TypeID (UUIDv7, K-sortable).
+### `github.com/xraph/cortex/api`
+
+HTTP API handlers for all 36 routes.
+
+```go
+func New(eng *engine.Engine, router forge.Router) *API
+func (a *API) Handler() http.Handler
+func (a *API) RegisterRoutes(router forge.Router)
+```
+
+### `github.com/xraph/cortex/extension`
+
+Forge integration extension.
+
+```go
+func New(opts ...ExtOption) *Extension
+func (e *Extension) Engine() *engine.Engine
+func (e *Extension) API() *api.API
+// Implements forge.Extension: Name, Description, Version, Dependencies,
+// Register, Start, Stop, Health, RegisterRoutes, Handler
+// Options: WithStore, WithExtension, WithEngineOption, WithConfig,
+// WithDisableRoutes, WithDisableMigrate, WithBasePath, WithLogger
+```
+
+## Package index
+
+| Package | Type | Description |
+|---------|------|-------------|
+| `cortex` | Core | Root — context helpers, errors, config |
+| `engine` | Core | Central coordinator |
+| `agent` | Domain | Agent configuration |
+| `skill` | Domain | Skills and tool bindings |
+| `trait` | Domain | Personality traits |
+| `behavior` | Domain | Reactive behaviors |
+| `persona` | Domain | Persona composition |
+| `cognitive` | Domain | Cognitive styles |
+| `communication` | Domain | Communication styles |
+| `perception` | Domain | Perception models |
+| `run` | Execution | Run tracking |
+| `memory` | Execution | Conversation memory |
+| `checkpoint` | Execution | Human-in-the-loop |
+| `id` | Identity | TypeID identifiers |
+| `store` | Infrastructure | Composite store interface |
+| `store/postgres` | Infrastructure | PostgreSQL implementation |
+| `store/memory` | Infrastructure | In-memory implementation |
+| `plugin` | Infrastructure | Plugin system |
+| `observability` | Infrastructure | Metrics plugin |
+| `audit_hook` | Infrastructure | Audit plugin |
+| `api` | API | HTTP handlers |
+| `extension` | Integration | Forge extension |

@@ -1,277 +1,495 @@
 ---
 title: HTTP API Reference
-description: Complete reference for all 12 Weave REST endpoints — collections, documents, retrieval, and search.
+description: Complete reference for all 36 Cortex REST endpoints — agents, runs, skills, traits, behaviors, personas, checkpoints, memory, and tools.
 ---
 
-All endpoints are under `/v1` and return JSON. Authentication and tenant resolution depend on your Forge middleware configuration.
+All endpoints are under `/cortex` and return JSON. Authentication and tenant resolution depend on your middleware configuration. Set `X-Tenant-ID` and `X-App-ID` headers for multi-tenant deployments.
 
-## Collections
+## Agents (7 routes)
 
-### `POST /v1/collections`
+### `POST /cortex/agents`
 
-Create a collection.
+Create an agent configuration.
 
 **Request**
 
 ```json
 {
-  "name": "string (required)",
-  "description": "string",
-  "embedding_model": "string (default: text-embedding-3-small)",
-  "embedding_dims": 1536,
-  "chunk_strategy": "recursive | fixed | sliding | semantic | code",
-  "chunk_size": 512,
-  "chunk_overlap": 50,
-  "metadata": { "key": "value" }
+  "name": "support-agent",
+  "description": "Customer support agent",
+  "system_prompt": "You are a helpful support agent.",
+  "model": "gpt-4o",
+  "tools": ["lookup_order", "create_ticket"],
+  "max_steps": 15,
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "reasoning_loop": "react",
+  "persona_ref": "helpful-agent",
+  "inline_skills": ["customer-support"],
+  "inline_traits": ["empathy"],
+  "inline_behaviors": ["auto-escalate"],
+  "guardrails": {},
+  "metadata": {}
 }
 ```
 
-**Response** `201 Created`
-
-```json
-{
-  "id": "col_01h455vbjdx6ycf56rnatbxqkh",
-  "tenant_id": "tenant-1",
-  "app_id": "myapp",
-  "name": "product-docs",
-  "embedding_model": "text-embedding-3-small",
-  "embedding_dims": 1536,
-  "chunk_strategy": "recursive",
-  "chunk_size": 512,
-  "chunk_overlap": 50,
-  "document_count": 0,
-  "chunk_count": 0,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:00Z"
-}
-```
+**Response** `201 Created` — Agent object with generated `id` (e.g. `agt_01h455...`).
 
 ---
 
-### `GET /v1/collections`
+### `GET /cortex/agents`
 
-List collections for the current tenant.
+List all agents for the current tenant/app.
 
 **Query parameters**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `limit` | int | Max results (default: 20) |
-| `offset` | int | Pagination offset |
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int | 50 | Max results |
+| `offset` | int | 0 | Pagination offset |
 
-**Response** `200 OK` — array of Collection objects.
-
----
-
-### `GET /v1/collections/:collectionId`
-
-Get a collection by ID.
-
-**Response** `200 OK` — Collection object.
-
-**Error** `404 Not Found` if collection does not exist for the current tenant.
+**Response** `200 OK` — Array of Agent objects.
 
 ---
 
-### `DELETE /v1/collections/:collectionId`
+### `GET /cortex/agents/:name`
 
-Delete a collection and all associated documents, chunks, and vectors.
+Get an agent by name.
+
+**Response** `200 OK` — Agent object.
+
+**Error** `404 Not Found` if agent does not exist.
+
+---
+
+### `PUT /cortex/agents/:name`
+
+Update an agent configuration. Only provided fields are updated.
+
+**Request** — Same shape as create, all fields optional except `name` (path).
+
+**Response** `200 OK` — Updated Agent object.
+
+---
+
+### `DELETE /cortex/agents/:name`
+
+Delete an agent configuration.
 
 **Response** `204 No Content`
 
 ---
 
-### `GET /v1/collections/:collectionId/stats`
+### `POST /cortex/agents/:name/run`
 
-Get aggregate statistics for a collection.
+Execute an agent synchronously. Returns when the run completes.
+
+**Request**
+
+```json
+{
+  "input": "I want to return order #12345"
+}
+```
 
 **Response** `200 OK`
 
 ```json
 {
-  "collection_id": "col_01h455...",
-  "collection_name": "product-docs",
-  "document_count": 42,
-  "chunk_count": 1204,
-  "embedding_model": "text-embedding-3-small",
-  "chunk_strategy": "recursive"
+  "run_id": "arun_01h455...",
+  "state": "completed",
+  "output": "I'd be happy to help with your return...",
+  "step_count": 3,
+  "tokens_used": 1240
 }
 ```
 
 ---
 
-### `POST /v1/collections/:collectionId/reindex`
+### `POST /cortex/agents/:name/stream`
 
-Re-embed and re-store all chunks in a collection. Use after changing the embedding model.
+Execute an agent with Server-Sent Events (SSE) streaming.
 
-**Response** `204 No Content`
+**Request** — Same as `/run`.
 
----
-
-## Documents
-
-### `POST /v1/collections/:collectionId/documents`
-
-Ingest a document — runs the full load → chunk → embed → store pipeline synchronously.
-
-**Request**
-
-```json
-{
-  "title": "string",
-  "content": "string (required)",
-  "source": "string",
-  "source_type": "string (MIME type)",
-  "metadata": { "key": "value" }
-}
-```
-
-**Response** `201 Created`
-
-```json
-{
-  "document_id": "doc_01h455vbjdx6ycf56rnatbxqki",
-  "chunk_count": 12,
-  "state": "ready"
-}
-```
-
-**Error** `400 Bad Request` if content is empty.
+**Response** `200 OK` with `Content-Type: text/event-stream`.
 
 ---
 
-### `POST /v1/collections/:collectionId/documents/batch`
+## Runs (3 routes)
 
-Ingest multiple documents.
+### `GET /cortex/agents/:name/runs`
 
-**Request**
-
-```json
-{
-  "documents": [
-    { "title": "Doc A", "content": "..." },
-    { "title": "Doc B", "content": "..." }
-  ]
-}
-```
-
-**Response** `201 Created` — array of IngestResult objects.
-
----
-
-### `GET /v1/collections/:collectionId/documents`
-
-List documents in a collection.
+List runs for a specific agent.
 
 **Query parameters**
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `state` | string | Filter by state: `pending`, `processing`, `ready`, `failed` |
-| `limit` | int | Max results (default: 20) |
-| `offset` | int | Pagination offset |
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int | 50 | Max results |
+| `offset` | int | 0 | Pagination offset |
 
-**Response** `200 OK` — array of Document objects.
+**Response** `200 OK` — Array of Run objects.
 
 ---
 
-### `GET /v1/documents/:documentId`
+### `GET /cortex/runs/:id`
 
-Get a document by ID.
+Get a specific run by ID.
 
 **Response** `200 OK`
 
 ```json
 {
-  "id": "doc_01h455...",
-  "collection_id": "col_01h455...",
-  "tenant_id": "tenant-1",
-  "title": "Return Policy",
-  "source": "policy.md",
-  "source_type": "text/markdown",
-  "content_hash": "sha256:abc...",
-  "content_length": 1024,
-  "chunk_count": 12,
-  "state": "ready",
+  "id": "arun_01h455...",
+  "agent_id": "agt_01h455...",
+  "tenant_id": "acme-corp",
+  "state": "completed",
+  "input": "I want to return order #12345",
+  "output": "I'd be happy to help...",
   "error": "",
-  "metadata": {},
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:05Z"
+  "step_count": 3,
+  "tokens_used": 1240,
+  "started_at": "2024-01-15T10:30:00Z",
+  "completed_at": "2024-01-15T10:30:05Z",
+  "persona_ref": "helpful-agent",
+  "metadata": {}
 }
 ```
 
 ---
 
-### `DELETE /v1/documents/:documentId`
+### `POST /cortex/runs/:id/cancel`
 
-Delete a document and all its chunks from both metadata and vector stores.
+Cancel a running run. Sets state to `cancelled`.
+
+**Response** `200 OK`
+
+---
+
+## Skills (5 routes)
+
+### `POST /cortex/skills`
+
+Create a skill.
+
+**Request**
+
+```json
+{
+  "name": "customer-support",
+  "description": "Handle customer inquiries",
+  "tools": [
+    {"tool_name": "lookup_order", "mastery": "expert", "guidance": "Verify order ID format"},
+    {"tool_name": "create_ticket", "mastery": "proficient"}
+  ],
+  "knowledge": [
+    {"source": "policies://return-policy", "inject_mode": "always", "priority": 1}
+  ],
+  "system_prompt_fragment": "You are an expert support agent.",
+  "dependencies": [],
+  "default_proficiency": "proficient",
+  "metadata": {}
+}
+```
+
+**Response** `201 Created` — Skill object with generated `id` (e.g. `skl_01h455...`).
+
+---
+
+### `GET /cortex/skills`
+
+List all skills.
+
+**Query parameters** — `limit`, `offset`.
+
+**Response** `200 OK` — Array of Skill objects.
+
+---
+
+### `GET /cortex/skills/:name`
+
+Get a skill by name.
+
+**Response** `200 OK` — Skill object.
+
+---
+
+### `PUT /cortex/skills/:name`
+
+Update a skill.
+
+**Response** `200 OK` — Updated Skill object.
+
+---
+
+### `DELETE /cortex/skills/:name`
+
+Delete a skill.
 
 **Response** `204 No Content`
 
 ---
 
-## Retrieval
+## Traits (5 routes)
 
-### `POST /v1/collections/:collectionId/retrieve`
+### `POST /cortex/traits`
 
-Semantic retrieval within a collection.
+Create a trait.
 
 **Request**
 
 ```json
 {
-  "query": "string (required)",
-  "top_k": 5,
-  "min_score": 0.75,
-  "strategy": "similarity | mmr | hybrid"
+  "name": "empathy",
+  "description": "Emotional awareness and patience",
+  "category": "emotional",
+  "dimensions": [
+    {"name": "emotional-awareness", "low_label": "detached", "high_label": "empathetic", "value": 0.85}
+  ],
+  "influences": [
+    {"target": "tone", "value": "warm", "weight": 0.8}
+  ],
+  "metadata": {}
+}
+```
+
+**Response** `201 Created` — Trait object with generated `id` (e.g. `trt_01h455...`).
+
+---
+
+### `GET /cortex/traits`
+
+List all traits.
+
+**Query parameters** — `limit`, `offset`, `category` (filter by trait category).
+
+**Response** `200 OK` — Array of Trait objects.
+
+---
+
+### `GET /cortex/traits/:name`
+
+Get a trait by name.
+
+**Response** `200 OK` — Trait object.
+
+---
+
+### `PUT /cortex/traits/:name`
+
+Update a trait.
+
+**Response** `200 OK` — Updated Trait object.
+
+---
+
+### `DELETE /cortex/traits/:name`
+
+Delete a trait.
+
+**Response** `204 No Content`
+
+---
+
+## Behaviors (5 routes)
+
+### `POST /cortex/behaviors`
+
+Create a behavior.
+
+**Request**
+
+```json
+{
+  "name": "auto-escalate",
+  "description": "Escalate on negative sentiment",
+  "priority": 10,
+  "triggers": [
+    {"type": "sentiment_below", "pattern": "0.3"},
+    {"type": "keyword_match", "pattern": "speak to manager"}
+  ],
+  "actions": [
+    {"type": "modify_tone", "target": "tone", "value": "extra empathetic"},
+    {"type": "inject_prompt", "value": "Acknowledge frustration first."}
+  ],
+  "requires_skill": "",
+  "requires_trait": "",
+  "metadata": {}
+}
+```
+
+**Response** `201 Created` — Behavior object with generated `id` (e.g. `bhv_01h455...`).
+
+---
+
+### `GET /cortex/behaviors`
+
+List all behaviors.
+
+**Query parameters** — `limit`, `offset`.
+
+**Response** `200 OK` — Array of Behavior objects.
+
+---
+
+### `GET /cortex/behaviors/:name`
+
+Get a behavior by name.
+
+**Response** `200 OK` — Behavior object.
+
+---
+
+### `PUT /cortex/behaviors/:name`
+
+Update a behavior.
+
+**Response** `200 OK` — Updated Behavior object.
+
+---
+
+### `DELETE /cortex/behaviors/:name`
+
+Delete a behavior.
+
+**Response** `204 No Content`
+
+---
+
+## Personas (5 routes)
+
+### `POST /cortex/personas`
+
+Create a persona.
+
+**Request**
+
+```json
+{
+  "name": "helpful-agent",
+  "description": "Warm customer support persona",
+  "identity": "I am a support specialist who genuinely cares.",
+  "skills": [
+    {"skill_name": "customer-support", "proficiency": "expert"}
+  ],
+  "traits": [
+    {"trait_name": "empathy", "dimension_values": {"emotional-awareness": 0.85}}
+  ],
+  "behaviors": ["auto-escalate"],
+  "cognitive_style": {},
+  "communication_style": {},
+  "perception": {},
+  "metadata": {}
+}
+```
+
+**Response** `201 Created` — Persona object with generated `id` (e.g. `prs_01h455...`).
+
+---
+
+### `GET /cortex/personas`
+
+List all personas.
+
+**Query parameters** — `limit`, `offset`.
+
+**Response** `200 OK` — Array of Persona objects.
+
+---
+
+### `GET /cortex/personas/:name`
+
+Get a persona by name.
+
+**Response** `200 OK` — Persona object.
+
+---
+
+### `PUT /cortex/personas/:name`
+
+Update a persona.
+
+**Response** `200 OK` — Updated Persona object.
+
+---
+
+### `DELETE /cortex/personas/:name`
+
+Delete a persona.
+
+**Response** `204 No Content`
+
+---
+
+## Checkpoints (2 routes)
+
+### `GET /cortex/checkpoints`
+
+List pending checkpoints (runs paused for human approval).
+
+**Query parameters** — `limit`, `offset`.
+
+**Response** `200 OK` — Array of Checkpoint objects.
+
+---
+
+### `POST /cortex/checkpoints/:id/resolve`
+
+Resolve a checkpoint.
+
+**Request**
+
+```json
+{
+  "decision": "approved",
+  "decided_by": "admin@acme.com"
 }
 ```
 
 **Response** `200 OK`
 
-```json
-[
-  {
-    "chunk": {
-      "id": "chunk_01h455...",
-      "document_id": "doc_01h455...",
-      "collection_id": "col_01h455...",
-      "tenant_id": "tenant-1",
-      "content": "Our return policy allows...",
-      "index": 0,
-      "start_offset": 0,
-      "end_offset": 312,
-      "token_count": 48,
-      "metadata": {}
-    },
-    "score": 0.94
-  }
-]
-```
+---
 
-Results are sorted by `score` descending.
+## Memory (2 routes)
+
+### `GET /cortex/agents/:name/conversation`
+
+Get conversation history for an agent.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int | 50 | Max messages to return |
+
+**Response** `200 OK` — Array of Message objects.
 
 ---
 
-### `POST /v1/search`
+### `DELETE /cortex/agents/:name/conversation`
 
-Hybrid search across one or more collections.
+Clear conversation history for an agent.
 
-**Request**
+**Response** `204 No Content`
 
-```json
-{
-  "query": "string (required)",
-  "collections": ["col_01h455...", "col_02x..."],
-  "top_k": 10,
-  "min_score": 0.7,
-  "strategy": "similarity | mmr | hybrid"
-}
-```
+---
 
-When `collections` is omitted, searches all collections visible to the current tenant.
+## Tools (2 routes)
 
-**Response** `200 OK` — array of ScoredChunk objects, merged and sorted by score.
+### `GET /cortex/tools`
+
+List all registered tools.
+
+**Response** `200 OK` — Array of tool descriptors.
+
+---
+
+### `GET /cortex/tools/:name/schema`
+
+Get the JSON Schema for a specific tool.
+
+**Response** `200 OK` — JSON Schema object.
 
 ---
 
@@ -288,6 +506,22 @@ All error responses use a consistent JSON envelope:
 
 | HTTP status | `code` | Cause |
 |-------------|--------|-------|
-| `400` | `BAD_REQUEST` | Missing required field, empty content |
-| `404` | `NOT_FOUND` | Collection or document not found for tenant |
-| `500` | `INTERNAL_ERROR` | Store, embedder, or vector store failure |
+| `400` | `BAD_REQUEST` | Missing required field, invalid input |
+| `404` | `NOT_FOUND` | Entity not found for tenant |
+| `409` | `ALREADY_EXISTS` | Entity with that name already exists |
+| `500` | `INTERNAL_ERROR` | Store or engine failure |
+
+## Route summary
+
+| Resource | Routes | Methods |
+|----------|--------|---------|
+| Agents | 7 | POST, GET, GET, PUT, DELETE, POST (run), POST (stream) |
+| Runs | 3 | GET (list), GET (by ID), POST (cancel) |
+| Skills | 5 | POST, GET, GET, PUT, DELETE |
+| Traits | 5 | POST, GET, GET, PUT, DELETE |
+| Behaviors | 5 | POST, GET, GET, PUT, DELETE |
+| Personas | 5 | POST, GET, GET, PUT, DELETE |
+| Checkpoints | 2 | GET (list), POST (resolve) |
+| Memory | 2 | GET, DELETE |
+| Tools | 2 | GET (list), GET (schema) |
+| **Total** | **36** | |
