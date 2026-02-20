@@ -1,61 +1,75 @@
 ---
 title: Identity (TypeID)
-description: How Weave uses type-safe, prefix-qualified identifiers for every entity.
+description: How Cortex uses type-safe, prefix-qualified identifiers for every entity.
 ---
 
-Weave uses [TypeID](https://github.com/jetify-com/typeid) for all entity identifiers. TypeIDs are type-prefixed, K-sortable, UUIDv7-based identifiers.
+Every entity in Cortex gets a type-prefixed, K-sortable, UUIDv7-based identifier using the [TypeID](https://github.com/jetify-com/typeid) specification. IDs are validated at parse time to ensure the prefix matches the expected type.
 
-## What TypeID looks like
+## Prefix table
 
-```
-col_01h455vbjdx6ycf56rnatbxqkh
-doc_01h455vbjdx6ycf56rnatbxqki
-chunk_01h455vbjdx6ycf56rnatbxqkj
-```
+| Type | Prefix | Go type | Example |
+|------|--------|---------|---------|
+| Agent | `agt_` | `id.AgentID` | `agt_01h2xcejqtf2nbrexx3vqjhp41` |
+| Agent Run | `arun_` | `id.AgentRunID` | `arun_01h2xcejqtf2nbrexx3vqjhp41` |
+| Tool | `tool_` | `id.ToolID` | `tool_01h2xcejqtf2nbrexx3vqjhp41` |
+| Tool Call | `tcall_` | `id.ToolCallID` | `tcall_01h2xcejqtf2nbrexx3vqjhp41` |
+| Step | `astp_` | `id.StepID` | `astp_01h2xcejqtf2nbrexx3vqjhp41` |
+| Memory | `mem_` | `id.MemoryID` | `mem_01h2xcejqtf2nbrexx3vqjhp41` |
+| Checkpoint | `acp_` | `id.CheckpointID` | `acp_01h2xcejqtf2nbrexx3vqjhp41` |
+| Orchestration | `orch_` | `id.OrchestrationID` | `orch_01h2xcejqtf2nbrexx3vqjhp41` |
+| Skill | `skl_` | `id.SkillID` | `skl_01h455vb4pex5vsknk084sn02q` |
+| Trait | `trt_` | `id.TraitID` | `trt_01h455vb4pex5vsknk084sn02q` |
+| Behavior | `bhv_` | `id.BehaviorID` | `bhv_01h455vb4pex5vsknk084sn02q` |
+| Persona | `prs_` | `id.PersonaID` | `prs_01h455vb4pex5vsknk084sn02q` |
 
-The prefix encodes the entity type. The suffix is a base32-encoded UUIDv7, which is K-sortable (lexicographically ordered by creation time) and globally unique.
+## Constructors
 
-## Entity prefixes
-
-| Entity | Prefix | Example |
-|--------|--------|---------|
-| Collection | `col_` | `col_01h455vbjdx6ycf56rnatbxqkh` |
-| Document | `doc_` | `doc_01h455vbjdx6ycf56rnatbxqki` |
-| Chunk | `chunk_` | `chunk_01h455vbjdx6ycf56rnatbxqkj` |
-
-## Type safety
-
-The `id` package provides typed ID functions. Passing a `doc_` ID where a `col_` ID is expected is a compile-time error:
-
-```go
-import "github.com/xraph/weave/id"
-
-colID := id.NewCollection()  // returns id.CollectionID
-docID := id.NewDocument()    // returns id.DocumentID
-
-// This is a compile error — type mismatch
-engine.GetDocument(ctx, colID) // colID is not id.DocumentID
-```
-
-## Parsing and validating IDs
+Each type has a constructor that generates a new UUIDv7-based ID with the correct prefix:
 
 ```go
-import "github.com/xraph/weave/id"
+import "github.com/xraph/cortex/id"
 
-// Parse an ID from a string (e.g. from HTTP request)
-colID, err := id.ParseCollection("col_01h455vbjdx6ycf56rnatbxqkh")
-if err != nil {
-    // not a valid collection ID
-}
+agentID  := id.NewAgentID()     // agt_01h...
+runID    := id.NewAgentRunID()  // arun_01h...
+skillID  := id.NewSkillID()    // skl_01h...
+traitID  := id.NewTraitID()    // trt_01h...
+personaID := id.NewPersonaID() // prs_01h...
+```
 
-// Convert to string for storage or response
-fmt.Println(colID.String())
+## Parsing
+
+Parse functions validate both the format and the prefix:
+
+```go
+agentID, err := id.ParseAgentID("agt_01h2xcejqtf2nbrexx3vqjhp41")
+// err is nil — prefix matches
+
+_, err = id.ParseAgentID("skl_01h455vb4pex5vsknk084sn02q")
+// err: id: expected prefix "agt", got "skl"
+```
+
+Use `id.ParseAny` when you need to accept any valid TypeID regardless of prefix:
+
+```go
+anyID, err := id.ParseAny("skl_01h455vb4pex5vsknk084sn02q")
+// anyID.Prefix() == "skl"
 ```
 
 ## K-sortability
 
-Because TypeIDs embed UUIDv7, they are K-sortable: IDs created later sort after IDs created earlier. This means:
-- Database indexes on ID columns are naturally insertion-ordered.
-- You can range scan by ID to page through results in creation order without a separate `created_at` index.
+TypeIDs embed UUIDv7 timestamps, making them naturally sortable by creation time. This means:
 
-Weave's store implementations rely on this property for efficient pagination.
+- Database indexes on TypeID columns are efficient for time-range queries
+- IDs created later always sort after earlier IDs
+- No need for separate `created_at` indexes for ordering
+
+## Type safety
+
+All ID types are aliases for `typeid.TypeID`. While Go does not enforce alias-level type safety at compile time, the prefix validation at parse time catches mismatches:
+
+```go
+type AgentID = typeid.TypeID
+type SkillID = typeid.TypeID
+```
+
+Passing a skill ID where an agent ID is expected will succeed at compile time but fail at parse time if the prefix is validated.

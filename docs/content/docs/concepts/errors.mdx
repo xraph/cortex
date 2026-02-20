@@ -1,52 +1,73 @@
 ---
 title: Error Handling
-description: Sentinel errors returned by Weave operations.
+description: Sentinel errors returned by Cortex operations.
 ---
 
-## Sentinel errors
-
-Weave defines sentinel errors in the root package. Use `errors.Is` to check for them:
-
-```go
-import (
-    "errors"
-    "github.com/xraph/weave"
-)
-
-doc, err := engine.Ingest(ctx, col.ID, input)
-if errors.Is(err, weave.ErrCollectionNotFound) {
-    // collection does not exist for this tenant
-}
-```
-
-| Error | Description |
-|-------|-------------|
-| `weave.ErrCollectionNotFound` | No collection with the given ID exists for the current tenant |
-| `weave.ErrDocumentNotFound` | No document with the given ID exists |
-| `weave.ErrChunkNotFound` | No chunk with the given ID exists |
-| `weave.ErrEmptyContent` | Ingest was called with empty content |
-| `weave.ErrInvalidInput` | Required field is missing or malformed |
-| `weave.ErrEmbedderRequired` | No embedder was configured on the engine |
-| `weave.ErrStoreRequired` | No metadata store was configured on the engine |
-| `weave.ErrVectorStoreRequired` | No vector store was configured on the engine |
-
-## Document state errors
-
-When `doc.State == "failed"`, the ingestion error is persisted in `doc.Error`:
-
-```go
-doc, _ := engine.GetDocument(ctx, docID)
-if doc.State == "failed" {
-    fmt.Println("ingestion failed:", doc.Error)
-}
-```
-
-This allows you to inspect failure reasons without polling or relying on in-process error propagation, which is useful when ingestion runs asynchronously.
+Cortex defines sentinel errors in the root `cortex` package. All errors are created with `errors.New` and can be checked with `errors.Is`.
 
 ## Store errors
 
-Metadata and vector store implementations may return their own errors (e.g. database connection errors). These are propagated directly from `engine.Ingest` or `engine.Retrieve` without wrapping, so you can inspect them with the driver-specific error types if needed.
+| Error | Description |
+|-------|-------------|
+| `ErrNoStore` | No store was configured on the engine |
+| `ErrStoreClosed` | The store has been closed |
+| `ErrMigrationFailed` | Database migration failed |
 
-## Extension hook errors
+## Not-found errors
 
-Extension hooks that return errors do not abort the ingestion pipeline — errors from `OnIngestCompleted` and similar hooks are logged but not surfaced to the caller. The `OnIngestFailed` hook receives ingestion errors for observability.
+| Error | Description |
+|-------|-------------|
+| `ErrAgentNotFound` | Agent with the given ID does not exist |
+| `ErrRunNotFound` | Run with the given ID does not exist |
+| `ErrStepNotFound` | Step with the given ID does not exist |
+| `ErrToolCallNotFound` | Tool call with the given ID does not exist |
+| `ErrSkillNotFound` | Skill with the given ID does not exist |
+| `ErrTraitNotFound` | Trait with the given ID does not exist |
+| `ErrBehaviorNotFound` | Behavior with the given ID does not exist |
+| `ErrPersonaNotFound` | Persona with the given ID does not exist |
+| `ErrCheckpointNotFound` | Checkpoint with the given ID does not exist |
+
+## Conflict errors
+
+| Error | Description |
+|-------|-------------|
+| `ErrAlreadyExists` | A resource with the same name already exists in this app |
+
+## State errors
+
+| Error | Description |
+|-------|-------------|
+| `ErrInvalidState` | Invalid state transition (e.g., completing an already-failed run) |
+| `ErrRunCancelled` | The run was cancelled |
+| `ErrRunAlreadyDone` | The run has already completed |
+| `ErrBudgetExhausted` | Token or cost budget exhausted |
+| `ErrMaxStepsReached` | Maximum reasoning steps reached |
+| `ErrMaxTokensReached` | Maximum output tokens reached |
+
+## Error wrapping
+
+Store implementations wrap these sentinel errors with additional context:
+
+```go
+return fmt.Errorf("postgres: get agent %s: %w", agentID, cortex.ErrAgentNotFound)
+```
+
+Check errors using `errors.Is`:
+
+```go
+agent, err := eng.GetAgent(ctx, agentID)
+if errors.Is(err, cortex.ErrAgentNotFound) {
+    // handle not found
+}
+```
+
+## API error mapping
+
+The HTTP API maps sentinel errors to HTTP status codes:
+
+| Sentinel error | HTTP status |
+|----------------|-------------|
+| `ErrAgentNotFound`, `ErrRunNotFound`, etc. | `404 Not Found` |
+| `ErrAlreadyExists` | `409 Conflict` |
+| `ErrInvalidState`, `ErrRunCancelled`, etc. | `400 Bad Request` |
+| `ErrNoStore` | `500 Internal Server Error` |

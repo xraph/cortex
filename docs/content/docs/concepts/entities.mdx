@@ -1,112 +1,126 @@
 ---
 title: Entities
-description: The core data types in Weave — Collection, Document, and Chunk.
+description: The core data types in Cortex — Agents, Skills, Traits, Behaviors, Personas, Runs, and more.
 ---
 
-Weave operates on three primary entities. All entities embed a `BaseEntity` with `CreatedAt` and `UpdatedAt` timestamps.
+All Cortex entities embed the `cortex.Entity` base type and carry a TypeID identifier. This page provides an overview of every entity and how they relate.
 
-## Collection
-
-A collection is a named container for documents with shared embedding and chunking configuration.
+## Base entity
 
 ```go
-type Collection struct {
-    ID             string            // TypeID prefix: col_
-    TenantID       string
-    AppID          string
-    Name           string
-    Description    string
-    EmbeddingModel string            // e.g. "text-embedding-3-small"
-    EmbeddingDims  int               // e.g. 1536
-    ChunkStrategy  string            // "recursive" or "fixed"
-    ChunkSize      int               // tokens
-    ChunkOverlap   int               // tokens
-    Metadata       map[string]string // custom key-value pairs
-    DocumentCount  int               // denormalized counter
-    ChunkCount     int               // denormalized counter
-    CreatedAt      time.Time
-    UpdatedAt      time.Time
+type Entity struct {
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
 }
 ```
 
-Collections are scoped to a tenant — a collection ID from one tenant cannot be accessed by another tenant even if the caller knows the ID.
+Every entity struct embeds `cortex.Entity` to get automatic timestamp tracking.
 
-## Document
+## Entity overview
 
-A document represents a piece of content ingested into a collection. It tracks the ingestion lifecycle through a state machine.
+### Agent Config
+
+The top-level entity. An agent can operate in **flat mode** (system prompt + tools list) or **persona mode** (referencing a Persona for its identity).
 
 ```go
-type Document struct {
-    ID            string            // TypeID prefix: doc_
-    CollectionID  string
-    TenantID      string
-    AppID         string
-    Title         string
-    Source        string            // filename, URL, or identifier
-    SourceType    string            // MIME type hint
-    ContentHash   string            // SHA-256 of raw content
-    ContentLength int64             // bytes
-    ChunkCount    int               // number of chunks created
-    State         string            // pending | processing | ready | failed
-    Error         string            // set on State=failed
-    Metadata      map[string]string
-    CreatedAt     time.Time
-    UpdatedAt     time.Time
+type Config struct {
+    cortex.Entity
+    ID              id.AgentID
+    Name            string
+    Description     string
+    AppID           string
+    SystemPrompt    string         // flat mode
+    Model           string
+    Tools           []string       // flat mode
+    MaxSteps        int
+    MaxTokens       int
+    Temperature     float64
+    PersonaRef      string         // persona mode
+    InlineSkills    []string       // persona mode (inline)
+    InlineTraits    []string
+    InlineBehaviors []string
+    Enabled         bool
 }
 ```
 
-### Document states
+### Skill
 
-| State | Description |
-|-------|-------------|
-| `pending` | Document created, awaiting processing |
-| `processing` | Currently being chunked and embedded |
-| `ready` | Fully processed and searchable |
-| `failed` | Ingestion failed; `Error` field contains reason |
+Defines what an agent **can do**. Bundles tools, knowledge sources, and system prompt fragments. See [Skills](/docs/human-model/skills).
 
-Documents transition `pending → processing → ready` on success, or `pending → processing → failed` on error. The `ContentHash` (SHA-256 of the raw content) enables deduplication detection — Weave does not automatically deduplicate, but you can check hashes.
+### Trait
 
-## Chunk
+Defines who an agent **is**. Personality dimensions on bipolar axes that influence runtime parameters. See [Traits](/docs/human-model/traits).
 
-A chunk is a text fragment created from a document during ingestion. Chunks are the unit of vector storage and semantic retrieval.
+### Behavior
 
-```go
-type Chunk struct {
-    ID           string            // TypeID prefix: chunk_
-    DocumentID   string
-    CollectionID string
-    TenantID     string
-    AppID        string
-    Content      string            // the chunk text
-    Index        int               // position within the document
-    StartOffset  int               // byte offset in original content
-    EndOffset    int               // byte offset in original content
-    TokenCount   int               // number of tokens in chunk
-    ParentID     string            // parent chunk ID (hierarchical chunking)
-    Metadata     map[string]string
-    CreatedAt    time.Time
-}
+Defines what an agent **does habitually**. Condition-triggered action patterns. See [Behaviors](/docs/human-model/behaviors).
+
+### Persona
+
+The composition entity that brings everything together. See [Personas](/docs/human-model/personas).
+
+### Run, Step, ToolCall
+
+Execution entities that record an agent's reasoning process:
+
+- **Run** — A single execution of an agent with 6 lifecycle states
+- **Step** — One reasoning step within a run
+- **ToolCall** — A tool invocation within a step
+
+See [Runs](/docs/execution/runs).
+
+### Message
+
+A conversation message with role, content, and timestamp. See [Memory](/docs/execution/memory).
+
+### Checkpoint
+
+A point where a run pauses for human approval. See [Checkpoints](/docs/execution/checkpoints).
+
+## Entity relationship diagram
+
+```
+Persona
+  ├── SkillAssignment[] ──→ Skill
+  │                           └── ToolBinding[]
+  │                           └── KnowledgeRef[]
+  ├── TraitAssignment[] ──→ Trait
+  │                           └── Dimension[]
+  │                           └── Influence[]
+  ├── Behavior[]         ──→ Behavior
+  │                           └── Trigger[]
+  │                           └── Action[]
+  ├── CognitiveStyle
+  ├── CommunicationStyle
+  └── Perception
+
+Agent Config
+  ├── PersonaRef ──→ Persona (persona mode)
+  ├── SystemPrompt + Tools (flat mode)
+  └── Run[]
+        ├── Step[]
+        │     └── ToolCall[]
+        ├── Checkpoint[]
+        └── Message[] (via Memory)
 ```
 
-Chunks are immutable after creation. To update a document's chunks, delete the document and re-ingest. To change the embedding model, use `engine.Reindex(ctx, collectionID)`.
+## Store interfaces
 
-## ScoredChunk
-
-`engine.Retrieve` returns `[]weave.ScoredChunk`, which wraps a `Chunk` with a relevance score:
+Each entity type defines its own store interface. These are composed into the single `store.Store` composite:
 
 ```go
-type ScoredChunk struct {
-    Chunk
-    Score float32 // cosine similarity score, range 0–1
+type Store interface {
+    agent.Store      // Create, Get, GetByName, Update, Delete, List
+    skill.Store      // CreateSkill, GetSkill, GetSkillByName, ...
+    trait.Store      // CreateTrait, GetTrait, GetTraitByName, ...
+    behavior.Store   // CreateBehavior, GetBehavior, ...
+    persona.Store    // CreatePersona, GetPersona, ...
+    run.Store        // CreateRun, GetRun, UpdateRun, ListRuns, ...
+    memory.Store     // SaveConversation, LoadConversation, ...
+    checkpoint.Store // CreateCheckpoint, GetCheckpoint, ...
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
 }
-```
-
-Results are sorted by `Score` descending. Use `RetrieveInput.MinScore` to filter out low-confidence results:
-
-```go
-results, _ := engine.Retrieve(ctx, col.ID, &weave.RetrieveInput{
-    Query:    "refund timeline",
-    TopK:     10,
-    MinScore: 0.75, // only return chunks with score >= 0.75
-})
 ```
