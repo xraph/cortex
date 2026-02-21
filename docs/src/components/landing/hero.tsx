@@ -51,7 +51,13 @@ function MiniAgentPipeline() {
                 fill="none"
                 aria-hidden="true"
               >
-                <circle cx="6" cy="4" r="2.5" stroke="currentColor" strokeWidth="1.2" />
+                <circle
+                  cx="6"
+                  cy="4"
+                  r="2.5"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
                 <path
                   d="M2 10.5c0-2.2 1.8-4 4-4s4 1.8 4 4"
                   stroke="currentColor"
@@ -66,7 +72,13 @@ function MiniAgentPipeline() {
           <FlowLine length={24} color="violet" delay={2} />
           <FlowNode label="Reason" color="violet" size="sm" delay={0.7} />
           <FlowLine length={24} color="violet" delay={3} />
-          <FlowNode label="Execute" color="violet" size="sm" pulse delay={0.85} />
+          <FlowNode
+            label="Execute"
+            color="violet"
+            size="sm"
+            pulse
+            delay={0.85}
+          />
         </div>
 
         {/* Row 2: Agent lifecycle events */}
@@ -80,7 +92,12 @@ function MiniAgentPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="green" delay={3} />
-              <FlowNode label="persona.resolved" color="gray" size="sm" delay={1.1} />
+              <FlowNode
+                label="persona.resolved"
+                color="gray"
+                size="sm"
+                delay={1.1}
+              />
               <FlowLine length={24} color="green" delay={4} />
               <StatusBadge status="delivered" label="loaded" />
             </motion.div>
@@ -93,12 +110,7 @@ function MiniAgentPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="violet" delay={5} />
-              <FlowNode
-                label="step.3"
-                color="gray"
-                size="sm"
-                delay={1.3}
-              />
+              <FlowNode label="step.3" color="gray" size="sm" delay={1.3} />
               <FlowLine length={24} color="violet" delay={6} />
               <StatusBadge status="retry" label="reasoning" />
             </motion.div>
@@ -111,12 +123,7 @@ function MiniAgentPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="green" delay={7} />
-              <FlowNode
-                label="run.done"
-                color="gray"
-                size="sm"
-                delay={1.5}
-              />
+              <FlowNode label="run.done" color="gray" size="sm" delay={1.5} />
               <FlowLine length={24} color="green" delay={8} />
               <StatusBadge status="delivered" label="completed" />
             </motion.div>

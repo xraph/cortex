@@ -273,7 +273,9 @@ function AgentReasoningDiagram() {
             <EventRow
               action="step.completed"
               status={phase === 1 ? "indexed" : "processing"}
-              statusLabel={phase === 1 ? "&#10003; 3 steps" : "&#8635; Reasoning"}
+              statusLabel={
+                phase === 1 ? "&#10003; 3 steps" : "&#8635; Reasoning"
+              }
               lineColor={phase === 1 ? "green" : "violet"}
               delay={0.6}
             />

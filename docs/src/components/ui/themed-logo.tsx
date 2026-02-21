@@ -27,10 +27,42 @@ export function ThemedLogo() {
         <circle cx="9" cy="22" r="2" className="fill-white/80" />
         <circle cx="23" cy="22" r="2" className="fill-white/80" />
         {/* Connections */}
-        <line x1="12" y1="12" x2="14" y2="14" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
-        <line x1="20" y1="12" x2="18" y2="14" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
-        <line x1="12" y1="20" x2="14" y2="18" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
-        <line x1="20" y1="20" x2="18" y2="18" stroke="white" strokeWidth="1.2" strokeOpacity="0.6" />
+        <line
+          x1="12"
+          y1="12"
+          x2="14"
+          y2="14"
+          stroke="white"
+          strokeWidth="1.2"
+          strokeOpacity="0.6"
+        />
+        <line
+          x1="20"
+          y1="12"
+          x2="18"
+          y2="14"
+          stroke="white"
+          strokeWidth="1.2"
+          strokeOpacity="0.6"
+        />
+        <line
+          x1="12"
+          y1="20"
+          x2="14"
+          y2="18"
+          stroke="white"
+          strokeWidth="1.2"
+          strokeOpacity="0.6"
+        />
+        <line
+          x1="20"
+          y1="20"
+          x2="18"
+          y2="18"
+          stroke="white"
+          strokeWidth="1.2"
+          strokeOpacity="0.6"
+        />
       </svg>
     </div>
   );

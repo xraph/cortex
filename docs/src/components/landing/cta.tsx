@@ -23,8 +23,8 @@ export function CTA() {
             Start building with Cortex
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground leading-relaxed">
-            Add human-emulating AI agents to your Go service in minutes.
-            Cortex handles personas, skills, reasoning loops, and multi-tenant
+            Add human-emulating AI agents to your Go service in minutes. Cortex
+            handles personas, skills, reasoning loops, and multi-tenant
             orchestration out of the box.
           </p>
 
