@@ -257,16 +257,16 @@ type DeleteBehaviorRequest struct {
 
 // CreatePersonaRequest is the request body for creating a persona.
 type CreatePersonaRequest struct {
-	Name               string                `json:"name" description:"Unique persona name"`
-	Description        string                `json:"description,omitempty"`
-	Identity           string                `json:"identity" description:"Self-description for system prompt"`
-	Skills             []SkillAssignmentReq  `json:"skills,omitempty"`
-	Traits             []TraitAssignmentReq  `json:"traits,omitempty"`
-	Behaviors          []string              `json:"behaviors,omitempty"`
-	CognitiveStyle     map[string]any        `json:"cognitive_style,omitempty"`
-	CommunicationStyle map[string]any        `json:"communication_style,omitempty"`
-	Perception         map[string]any        `json:"perception,omitempty"`
-	Metadata           map[string]any        `json:"metadata,omitempty"`
+	Name               string               `json:"name" description:"Unique persona name"`
+	Description        string               `json:"description,omitempty"`
+	Identity           string               `json:"identity" description:"Self-description for system prompt"`
+	Skills             []SkillAssignmentReq `json:"skills,omitempty"`
+	Traits             []TraitAssignmentReq `json:"traits,omitempty"`
+	Behaviors          []string             `json:"behaviors,omitempty"`
+	CognitiveStyle     map[string]any       `json:"cognitive_style,omitempty"`
+	CommunicationStyle map[string]any       `json:"communication_style,omitempty"`
+	Perception         map[string]any       `json:"perception,omitempty"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
 }
 
 // SkillAssignmentReq is the request representation of a skill assignment.
@@ -294,16 +294,16 @@ type ListPersonasRequest struct {
 
 // UpdatePersonaRequest is the request body for updating a persona.
 type UpdatePersonaRequest struct {
-	Name               string                `path:"name" description:"Persona name"`
-	Description        string                `json:"description,omitempty"`
-	Identity           string                `json:"identity,omitempty"`
-	Skills             []SkillAssignmentReq  `json:"skills,omitempty"`
-	Traits             []TraitAssignmentReq  `json:"traits,omitempty"`
-	Behaviors          []string              `json:"behaviors,omitempty"`
-	CognitiveStyle     map[string]any        `json:"cognitive_style,omitempty"`
-	CommunicationStyle map[string]any        `json:"communication_style,omitempty"`
-	Perception         map[string]any        `json:"perception,omitempty"`
-	Metadata           map[string]any        `json:"metadata,omitempty"`
+	Name               string               `path:"name" description:"Persona name"`
+	Description        string               `json:"description,omitempty"`
+	Identity           string               `json:"identity,omitempty"`
+	Skills             []SkillAssignmentReq `json:"skills,omitempty"`
+	Traits             []TraitAssignmentReq `json:"traits,omitempty"`
+	Behaviors          []string             `json:"behaviors,omitempty"`
+	CognitiveStyle     map[string]any       `json:"cognitive_style,omitempty"`
+	CommunicationStyle map[string]any       `json:"communication_style,omitempty"`
+	Perception         map[string]any       `json:"perception,omitempty"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
 }
 
 // DeletePersonaRequest is the request for deleting a persona.

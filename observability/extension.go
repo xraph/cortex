@@ -30,17 +30,17 @@ var (
 
 // MetricsExtension records lifecycle metrics via go-utils MetricFactory.
 type MetricsExtension struct {
-	RunStartedCount          gu.Counter
-	RunCompletedCount        gu.Counter
-	RunFailedCount           gu.Counter
-	ToolCalledCount          gu.Counter
-	ToolCompletedCount       gu.Counter
-	ToolFailedCount          gu.Counter
-	PersonaResolvedCount     gu.Counter
-	BehaviorTriggeredCount   gu.Counter
+	RunStartedCount            gu.Counter
+	RunCompletedCount          gu.Counter
+	RunFailedCount             gu.Counter
+	ToolCalledCount            gu.Counter
+	ToolCompletedCount         gu.Counter
+	ToolFailedCount            gu.Counter
+	PersonaResolvedCount       gu.Counter
+	BehaviorTriggeredCount     gu.Counter
 	CognitivePhaseChangedCount gu.Counter
-	CheckpointCreatedCount   gu.Counter
-	CheckpointResolvedCount  gu.Counter
+	CheckpointCreatedCount     gu.Counter
+	CheckpointResolvedCount    gu.Counter
 }
 
 // NewMetricsExtension creates a MetricsExtension with a default metrics collector.

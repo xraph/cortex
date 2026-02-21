@@ -12,16 +12,16 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ plugin.Extension         = (*Extension)(nil)
-	_ plugin.RunStarted        = (*Extension)(nil)
-	_ plugin.RunCompleted      = (*Extension)(nil)
-	_ plugin.RunFailed         = (*Extension)(nil)
-	_ plugin.ToolCalled        = (*Extension)(nil)
-	_ plugin.ToolCompleted     = (*Extension)(nil)
-	_ plugin.ToolFailed        = (*Extension)(nil)
-	_ plugin.PersonaResolved   = (*Extension)(nil)
-	_ plugin.BehaviorTriggered = (*Extension)(nil)
-	_ plugin.CheckpointCreated = (*Extension)(nil)
+	_ plugin.Extension          = (*Extension)(nil)
+	_ plugin.RunStarted         = (*Extension)(nil)
+	_ plugin.RunCompleted       = (*Extension)(nil)
+	_ plugin.RunFailed          = (*Extension)(nil)
+	_ plugin.ToolCalled         = (*Extension)(nil)
+	_ plugin.ToolCompleted      = (*Extension)(nil)
+	_ plugin.ToolFailed         = (*Extension)(nil)
+	_ plugin.PersonaResolved    = (*Extension)(nil)
+	_ plugin.BehaviorTriggered  = (*Extension)(nil)
+	_ plugin.CheckpointCreated  = (*Extension)(nil)
 	_ plugin.CheckpointResolved = (*Extension)(nil)
 )
 

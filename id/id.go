@@ -60,35 +60,37 @@ type AnyID = typeid.TypeID
 // Constructors
 // ──────────────────────────────────────────────────
 
-func NewAgentID() AgentID               { return must(typeid.Generate(PrefixAgent)) }
-func NewAgentRunID() AgentRunID         { return must(typeid.Generate(PrefixAgentRun)) }
-func NewToolID() ToolID                 { return must(typeid.Generate(PrefixTool)) }
-func NewToolCallID() ToolCallID         { return must(typeid.Generate(PrefixToolCall)) }
-func NewStepID() StepID                 { return must(typeid.Generate(PrefixStep)) }
-func NewMemoryID() MemoryID             { return must(typeid.Generate(PrefixMemory)) }
-func NewCheckpointID() CheckpointID     { return must(typeid.Generate(PrefixCheckpoint)) }
+func NewAgentID() AgentID                 { return must(typeid.Generate(PrefixAgent)) }
+func NewAgentRunID() AgentRunID           { return must(typeid.Generate(PrefixAgentRun)) }
+func NewToolID() ToolID                   { return must(typeid.Generate(PrefixTool)) }
+func NewToolCallID() ToolCallID           { return must(typeid.Generate(PrefixToolCall)) }
+func NewStepID() StepID                   { return must(typeid.Generate(PrefixStep)) }
+func NewMemoryID() MemoryID               { return must(typeid.Generate(PrefixMemory)) }
+func NewCheckpointID() CheckpointID       { return must(typeid.Generate(PrefixCheckpoint)) }
 func NewOrchestrationID() OrchestrationID { return must(typeid.Generate(PrefixOrchestration)) }
-func NewSkillID() SkillID               { return must(typeid.Generate(PrefixSkill)) }
-func NewTraitID() TraitID               { return must(typeid.Generate(PrefixTrait)) }
-func NewBehaviorID() BehaviorID         { return must(typeid.Generate(PrefixBehavior)) }
-func NewPersonaID() PersonaID           { return must(typeid.Generate(PrefixPersona)) }
+func NewSkillID() SkillID                 { return must(typeid.Generate(PrefixSkill)) }
+func NewTraitID() TraitID                 { return must(typeid.Generate(PrefixTrait)) }
+func NewBehaviorID() BehaviorID           { return must(typeid.Generate(PrefixBehavior)) }
+func NewPersonaID() PersonaID             { return must(typeid.Generate(PrefixPersona)) }
 
 // ──────────────────────────────────────────────────
 // Parsing (validates prefix at parse time)
 // ──────────────────────────────────────────────────
 
-func ParseAgentID(s string) (AgentID, error)               { return parseWithPrefix(PrefixAgent, s) }
-func ParseAgentRunID(s string) (AgentRunID, error)         { return parseWithPrefix(PrefixAgentRun, s) }
-func ParseToolCallID(s string) (ToolCallID, error)         { return parseWithPrefix(PrefixToolCall, s) }
-func ParseStepID(s string) (StepID, error)                 { return parseWithPrefix(PrefixStep, s) }
-func ParseMemoryID(s string) (MemoryID, error)             { return parseWithPrefix(PrefixMemory, s) }
-func ParseCheckpointID(s string) (CheckpointID, error)     { return parseWithPrefix(PrefixCheckpoint, s) }
-func ParseOrchestrationID(s string) (OrchestrationID, error) { return parseWithPrefix(PrefixOrchestration, s) }
-func ParseSkillID(s string) (SkillID, error)               { return parseWithPrefix(PrefixSkill, s) }
-func ParseTraitID(s string) (TraitID, error)               { return parseWithPrefix(PrefixTrait, s) }
-func ParseBehaviorID(s string) (BehaviorID, error)         { return parseWithPrefix(PrefixBehavior, s) }
-func ParsePersonaID(s string) (PersonaID, error)           { return parseWithPrefix(PrefixPersona, s) }
-func ParseAny(s string) (AnyID, error)                     { return typeid.Parse(s) }
+func ParseAgentID(s string) (AgentID, error)           { return parseWithPrefix(PrefixAgent, s) }
+func ParseAgentRunID(s string) (AgentRunID, error)     { return parseWithPrefix(PrefixAgentRun, s) }
+func ParseToolCallID(s string) (ToolCallID, error)     { return parseWithPrefix(PrefixToolCall, s) }
+func ParseStepID(s string) (StepID, error)             { return parseWithPrefix(PrefixStep, s) }
+func ParseMemoryID(s string) (MemoryID, error)         { return parseWithPrefix(PrefixMemory, s) }
+func ParseCheckpointID(s string) (CheckpointID, error) { return parseWithPrefix(PrefixCheckpoint, s) }
+func ParseOrchestrationID(s string) (OrchestrationID, error) {
+	return parseWithPrefix(PrefixOrchestration, s)
+}
+func ParseSkillID(s string) (SkillID, error)       { return parseWithPrefix(PrefixSkill, s) }
+func ParseTraitID(s string) (TraitID, error)       { return parseWithPrefix(PrefixTrait, s) }
+func ParseBehaviorID(s string) (BehaviorID, error) { return parseWithPrefix(PrefixBehavior, s) }
+func ParsePersonaID(s string) (PersonaID, error)   { return parseWithPrefix(PrefixPersona, s) }
+func ParseAny(s string) (AnyID, error)             { return typeid.Parse(s) }
 
 // ──────────────────────────────────────────────────
 // Helpers

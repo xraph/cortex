@@ -18,7 +18,7 @@ import (
 
 // SkillAssignment assigns a skill to a persona with an optional proficiency override.
 type SkillAssignment struct {
-	SkillName   string           `json:"skill_name"`
+	SkillName   string            `json:"skill_name"`
 	Proficiency skill.Proficiency `json:"proficiency,omitempty"`
 }
 

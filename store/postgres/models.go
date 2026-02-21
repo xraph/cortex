@@ -23,27 +23,27 @@ import (
 // ──────────────────────────────────────────────────
 
 type agentModel struct {
-	bun.BaseModel `bun:"table:cortex_agents"`
-	ID            string    `bun:"id,pk"`
-	Name          string    `bun:"name,notnull"`
-	Description   string    `bun:"description"`
-	AppID         string    `bun:"app_id,notnull"`
-	SystemPrompt  string    `bun:"system_prompt"`
-	Model         string    `bun:"model"`
-	Tools         string    `bun:"tools,type:jsonb"`
-	MaxSteps      int       `bun:"max_steps"`
-	MaxTokens     int       `bun:"max_tokens"`
-	Temperature   float64   `bun:"temperature"`
-	ReasoningLoop string    `bun:"reasoning_loop"`
-	Guardrails    string    `bun:"guardrails,type:jsonb"`
-	Metadata      string    `bun:"metadata,type:jsonb"`
-	Enabled       bool      `bun:"enabled"`
-	PersonaRef    string    `bun:"persona_ref"`
-	InlineSkills  string    `bun:"inline_skills,type:jsonb"`
-	InlineTraits  string    `bun:"inline_traits,type:jsonb"`
-	InlineBehaviors string  `bun:"inline_behaviors,type:jsonb"`
-	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull,default:current_timestamp"`
+	bun.BaseModel   `bun:"table:cortex_agents"`
+	ID              string    `bun:"id,pk"`
+	Name            string    `bun:"name,notnull"`
+	Description     string    `bun:"description"`
+	AppID           string    `bun:"app_id,notnull"`
+	SystemPrompt    string    `bun:"system_prompt"`
+	Model           string    `bun:"model"`
+	Tools           string    `bun:"tools,type:jsonb"`
+	MaxSteps        int       `bun:"max_steps"`
+	MaxTokens       int       `bun:"max_tokens"`
+	Temperature     float64   `bun:"temperature"`
+	ReasoningLoop   string    `bun:"reasoning_loop"`
+	Guardrails      string    `bun:"guardrails,type:jsonb"`
+	Metadata        string    `bun:"metadata,type:jsonb"`
+	Enabled         bool      `bun:"enabled"`
+	PersonaRef      string    `bun:"persona_ref"`
+	InlineSkills    string    `bun:"inline_skills,type:jsonb"`
+	InlineTraits    string    `bun:"inline_traits,type:jsonb"`
+	InlineBehaviors string    `bun:"inline_behaviors,type:jsonb"`
+	CreatedAt       time.Time `bun:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time `bun:"updated_at,notnull,default:current_timestamp"`
 }
 
 func agentToModel(c *agent.Config) *agentModel {
