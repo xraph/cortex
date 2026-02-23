@@ -3,7 +3,7 @@ module github.com/xraph/cortex
 go 1.25.7
 
 require (
-	github.com/uptrace/bun v1.2.16
+	github.com/uptrace/bun v1.2.17
 	github.com/xraph/forge v0.9.12
 	github.com/xraph/go-utils v0.0.11
 	github.com/xraph/vessel v0.0.5
@@ -73,7 +73,7 @@ require (
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
