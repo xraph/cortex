@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*beh
 	m := new(behaviorModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", behaviorID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrBehaviorNotFound
 		}
 		return nil, fmt.Errorf("cortex: get behavior: %w", err)
 	}
-	return behaviorFromModel(m), nil
+	return behaviorFromModel(m)
 }
 
 func (s *Store) GetBehaviorByName(ctx context.Context, appID, name string) (*behavior.Behavior, error) {
@@ -42,12 +43,12 @@ func (s *Store) GetBehaviorByName(ctx context.Context, appID, name string) (*beh
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrBehaviorNotFound
 		}
 		return nil, fmt.Errorf("cortex: get behavior by name: %w", err)
 	}
-	return behaviorFromModel(m), nil
+	return behaviorFromModel(m)
 }
 
 func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error {
@@ -57,7 +58,10 @@ func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error 
 	if err != nil {
 		return fmt.Errorf("cortex: update behavior: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update behavior rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrBehaviorNotFound
 	}
@@ -71,7 +75,10 @@ func (s *Store) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) er
 	if err != nil {
 		return fmt.Errorf("cortex: delete behavior: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: delete behavior rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrBehaviorNotFound
 	}
@@ -97,7 +104,11 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 	}
 	result := make([]*behavior.Behavior, len(models))
 	for i := range models {
-		result[i] = behaviorFromModel(&models[i])
+		b, err := behaviorFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list behaviors: %w", err)
+		}
+		result[i] = b
 	}
 	return result, nil
 }

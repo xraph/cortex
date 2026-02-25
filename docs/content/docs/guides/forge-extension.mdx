@@ -61,11 +61,65 @@ func main() {
 
 ```go
 type Config struct {
-    GroveDatabase  string // Name of the grove.DB to resolve from DI; empty uses the default DB
-    DisableRoutes  bool   // Skip HTTP route registration
-    DisableMigrate bool   // Skip auto-migration on start
-    BasePath       string // URL prefix for all cortex routes
+    DisableRoutes        bool          // Skip HTTP route registration
+    DisableMigrate       bool          // Skip auto-migration on start
+    BasePath             string        // URL prefix for all cortex routes
+    DefaultModel         string        // LLM model (default: "smart")
+    DefaultMaxSteps      int           // Max reasoning steps per run (default: 25)
+    DefaultMaxTokens     int           // Max output tokens per LLM call (default: 4096)
+    DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
+    DefaultReasoningLoop string        // Reasoning loop strategy (default: "react")
+    ShutdownTimeout      time.Duration // Graceful shutdown timeout (default: 30s)
+    RunConcurrency       int           // Max concurrent runs (default: 4)
+    GroveDatabase        string        // Name of the grove.DB to resolve from DI
 }
+```
+
+## YAML configuration
+
+Cortex can be configured via YAML files under the `extensions.cortex` or `cortex` key. YAML configuration is merged with programmatic options (YAML takes precedence for most fields).
+
+```yaml
+# config.yaml
+extensions:
+  cortex:
+    disable_routes: false
+    disable_migrate: false
+    base_path: "/cortex"
+    default_model: "gpt-4o"
+    default_max_steps: 50
+    default_max_tokens: 8192
+    default_temperature: 0.7
+    default_reasoning_loop: "react"
+    shutdown_timeout: "30s"
+    run_concurrency: 8
+    grove_database: "cortex"
+```
+
+Alternatively, the legacy top-level key is supported:
+
+```yaml
+# config.yaml
+cortex:
+  grove_database: "default"
+  default_model: "claude-3-opus"
+  run_concurrency: 4
+```
+
+### Config resolution order
+
+1. YAML file values are loaded first (from `extensions.cortex` or `cortex` key).
+2. Programmatic options (`WithConfig`, `WithDisableRoutes`, etc.) fill in any zero-valued fields.
+3. Any remaining zero-valued fields are filled with defaults from `DefaultConfig()`.
+
+### Requiring configuration
+
+If you want Cortex to fail when no YAML config is found:
+
+```go
+cortexExt := extension.New(
+    extension.WithRequireConfig(true),
+)
 ```
 
 ## Disabling auto-migration
@@ -202,31 +256,33 @@ The extension resolves its store in this order:
 package main
 
 import (
-    "log/slog"
-    "os"
+    "log"
 
-    "github.com/uptrace/bun"
     "github.com/xraph/forge"
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
     "github.com/xraph/cortex/extension"
     "github.com/xraph/cortex/observability"
     pgstore "github.com/xraph/cortex/store/postgres"
 )
 
 func main() {
-    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
     app := forge.New()
 
-    db := connectDB() // your *bun.DB connection
+    db := grove.Open(pgdriver.New(
+        pgdriver.WithDSN("postgres://user:pass@localhost:5432/cortex?sslmode=disable"),
+    ))
     store := pgstore.New(db)
 
     cortexExt := extension.New(
         extension.WithStore(store),
         extension.WithExtension(observability.NewMetricsExtension()),
-        extension.WithLogger(logger),
     )
 
     app.RegisterExtension(cortexExt)
-    app.Run()
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 

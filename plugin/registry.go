@@ -248,7 +248,7 @@ func (r *Registry) EmitToolCalled(ctx context.Context, runID id.AgentRunID, tool
 	}
 }
 
-func (r *Registry) EmitToolCompleted(ctx context.Context, runID id.AgentRunID, toolName string, result string, elapsed time.Duration) {
+func (r *Registry) EmitToolCompleted(ctx context.Context, runID id.AgentRunID, toolName, result string, elapsed time.Duration) {
 	for _, e := range r.toolCompleted {
 		if err := e.hook.OnToolCompleted(ctx, runID, toolName, result, elapsed); err != nil {
 			r.logHookError("OnToolCompleted", e.name, err)
@@ -332,7 +332,7 @@ func (r *Registry) EmitOrchestrationCompleted(ctx context.Context, orchID id.Orc
 	}
 }
 
-func (r *Registry) EmitAgentHandoff(ctx context.Context, orchID id.OrchestrationID, fromAgent, toAgent string, payload string) {
+func (r *Registry) EmitAgentHandoff(ctx context.Context, orchID id.OrchestrationID, fromAgent, toAgent, payload string) {
 	for _, e := range r.agentHandoff {
 		if err := e.hook.OnAgentHandoff(ctx, orchID, fromAgent, toAgent, payload); err != nil {
 			r.logHookError("OnAgentHandoff", e.name, err)

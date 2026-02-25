@@ -45,6 +45,8 @@ if err := s.Migrate(ctx); err != nil {
 | `cortex_runs` | Runs | `id`, `agent_id`, `tenant_id`, `state`, `input`, `output` |
 | `cortex_steps` | Steps | `id`, `run_id`, `index`, `type` |
 | `cortex_tool_calls` | Tool calls | `id`, `step_id`, `run_id`, `tool_name` |
+| `cortex_memories` | Memories | `id`, `agent_id`, `tenant_id`, `kind`, `key` |
+| `cortex_checkpoints` | Checkpoints | `id`, `run_id`, `agent_id`, `state`, `decision` (JSONB) |
 
 ## JSONB columns
 

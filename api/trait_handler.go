@@ -4,53 +4,66 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/trait"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerTraitRoutes(router forge.Router) {
+func (a *API) registerTraitRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("traits"))
 
-	_ = g.POST("/traits", a.createTrait,
+	if err := g.POST("/traits", a.createTrait,
 		forge.WithSummary("Create trait"),
 		forge.WithDescription("Creates a new personality trait with dimensions and influences."),
 		forge.WithOperationID("createTrait"),
 		forge.WithRequestSchema(CreateTraitRequest{}),
 		forge.WithCreatedResponse(&trait.Trait{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register trait routes: %w", err)
+	}
 
-	_ = g.GET("/traits", a.listTraits,
+	if err := g.GET("/traits", a.listTraits,
 		forge.WithSummary("List traits"),
 		forge.WithOperationID("listTraits"),
 		forge.WithRequestSchema(ListTraitsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Trait list", []*trait.Trait{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register trait routes: %w", err)
+	}
 
-	_ = g.GET("/traits/:name", a.getTrait,
+	if err := g.GET("/traits/:name", a.getTrait,
 		forge.WithSummary("Get trait"),
 		forge.WithOperationID("getTrait"),
 		forge.WithResponseSchema(http.StatusOK, "Trait details", &trait.Trait{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register trait routes: %w", err)
+	}
 
-	_ = g.PUT("/traits/:name", a.updateTrait,
+	if err := g.PUT("/traits/:name", a.updateTrait,
 		forge.WithSummary("Update trait"),
 		forge.WithOperationID("updateTrait"),
 		forge.WithRequestSchema(UpdateTraitRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated trait", &trait.Trait{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register trait routes: %w", err)
+	}
 
-	_ = g.DELETE("/traits/:name", a.deleteTrait,
+	if err := g.DELETE("/traits/:name", a.deleteTrait,
 		forge.WithSummary("Delete trait"),
 		forge.WithOperationID("deleteTrait"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register trait routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) createTrait(ctx forge.Context, req *CreateTraitRequest) (*trait.Trait, error) {
@@ -86,7 +99,7 @@ func (a *API) createTrait(ctx forge.Context, req *CreateTraitRequest) (*trait.Tr
 		AppID:       cortex.AppFromContext(ctx.Context()),
 		Dimensions:  dims,
 		Influences:  infls,
-		Category:    trait.TraitCategory(req.Category),
+		Category:    trait.Category(req.Category),
 		Metadata:    req.Metadata,
 	}
 
@@ -108,7 +121,7 @@ func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, err
 func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) ([]*trait.Trait, error) {
 	traits, err := a.eng.ListTraits(ctx.Context(), &trait.ListFilter{
 		AppID:    cortex.AppFromContext(ctx.Context()),
-		Category: trait.TraitCategory(req.Category),
+		Category: trait.Category(req.Category),
 		Limit:    defaultLimit(req.Limit),
 		Offset:   req.Offset,
 	})
@@ -128,7 +141,7 @@ func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Tr
 		t.Description = req.Description
 	}
 	if req.Category != "" {
-		t.Category = trait.TraitCategory(req.Category)
+		t.Category = trait.Category(req.Category)
 	}
 	if req.Metadata != nil {
 		t.Metadata = req.Metadata

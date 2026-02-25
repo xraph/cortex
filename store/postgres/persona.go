@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*person
 	m := new(personaModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", personaID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrPersonaNotFound
 		}
 		return nil, fmt.Errorf("cortex: get persona: %w", err)
 	}
-	return personaFromModel(m), nil
+	return personaFromModel(m)
 }
 
 func (s *Store) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) {
@@ -42,12 +43,12 @@ func (s *Store) GetPersonaByName(ctx context.Context, appID, name string) (*pers
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrPersonaNotFound
 		}
 		return nil, fmt.Errorf("cortex: get persona by name: %w", err)
 	}
-	return personaFromModel(m), nil
+	return personaFromModel(m)
 }
 
 func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
@@ -57,7 +58,10 @@ func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
 	if err != nil {
 		return fmt.Errorf("cortex: update persona: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update persona rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrPersonaNotFound
 	}
@@ -71,7 +75,10 @@ func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error
 	if err != nil {
 		return fmt.Errorf("cortex: delete persona: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: delete persona rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrPersonaNotFound
 	}
@@ -97,7 +104,11 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 	}
 	result := make([]*persona.Persona, len(models))
 	for i := range models {
-		result[i] = personaFromModel(&models[i])
+		p, err := personaFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list personas: %w", err)
+		}
+		result[i] = p
 	}
 	return result, nil
 }

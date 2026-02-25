@@ -24,7 +24,7 @@ type Store interface {
 type ListFilter struct {
 	AgentID  string
 	TenantID string
-	State    RunState
+	State    State
 	Limit    int
 	Offset   int
 }

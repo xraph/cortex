@@ -4,38 +4,47 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerRunRoutes(router forge.Router) {
+func (a *API) registerRunRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("runs"))
 
-	_ = g.GET("/runs", a.listRuns,
+	if err := g.GET("/runs", a.listRuns,
 		forge.WithSummary("List runs"),
 		forge.WithDescription("Returns agent runs with optional pagination."),
 		forge.WithOperationID("listRuns"),
 		forge.WithRequestSchema(ListRunsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run list", []*run.Run{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register run routes: %w", err)
+	}
 
-	_ = g.GET("/runs/:id", a.getRun,
+	if err := g.GET("/runs/:id", a.getRun,
 		forge.WithSummary("Get run"),
 		forge.WithDescription("Returns details of a specific run."),
 		forge.WithOperationID("getRun"),
 		forge.WithResponseSchema(http.StatusOK, "Run details", &run.Run{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register run routes: %w", err)
+	}
 
-	_ = g.POST("/runs/:id/cancel", a.cancelRun,
+	if err := g.POST("/runs/:id/cancel", a.cancelRun,
 		forge.WithSummary("Cancel run"),
 		forge.WithDescription("Cancels a running agent execution."),
 		forge.WithOperationID("cancelRun"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register run routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {

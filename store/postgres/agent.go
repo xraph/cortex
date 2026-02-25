@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, err
 	m := new(agentModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", agentID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrAgentNotFound
 		}
 		return nil, fmt.Errorf("cortex: get agent: %w", err)
 	}
-	return agentFromModel(m), nil
+	return agentFromModel(m)
 }
 
 func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Config, error) {
@@ -42,12 +43,12 @@ func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Confi
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrAgentNotFound
 		}
 		return nil, fmt.Errorf("cortex: get agent by name: %w", err)
 	}
-	return agentFromModel(m), nil
+	return agentFromModel(m)
 }
 
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
@@ -57,7 +58,10 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	if err != nil {
 		return fmt.Errorf("cortex: update agent: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update agent rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrAgentNotFound
 	}
@@ -71,7 +75,10 @@ func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
 	if err != nil {
 		return fmt.Errorf("cortex: delete agent: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: delete agent rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrAgentNotFound
 	}
@@ -97,7 +104,11 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 	}
 	result := make([]*agent.Config, len(models))
 	for i := range models {
-		result[i] = agentFromModel(&models[i])
+		c, err := agentFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list agents: %w", err)
+		}
+		result[i] = c
 	}
 	return result, nil
 }

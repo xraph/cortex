@@ -4,31 +4,38 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerCheckpointRoutes(router forge.Router) {
+func (a *API) registerCheckpointRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("checkpoints"))
 
-	_ = g.GET("/checkpoints", a.listCheckpoints,
+	if err := g.GET("/checkpoints", a.listCheckpoints,
 		forge.WithSummary("List pending checkpoints"),
 		forge.WithDescription("Returns checkpoints awaiting human decision."),
 		forge.WithOperationID("listCheckpoints"),
 		forge.WithRequestSchema(ListCheckpointsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Checkpoint list", []*checkpoint.Checkpoint{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register checkpoint routes: %w", err)
+	}
 
-	_ = g.POST("/checkpoints/:id/resolve", a.resolveCheckpoint,
+	if err := g.POST("/checkpoints/:id/resolve", a.resolveCheckpoint,
 		forge.WithSummary("Resolve checkpoint"),
 		forge.WithDescription("Approves or rejects a pending checkpoint."),
 		forge.WithOperationID("resolveCheckpoint"),
 		forge.WithRequestSchema(ResolveCheckpointRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register checkpoint routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) ([]*checkpoint.Checkpoint, error) {

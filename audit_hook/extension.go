@@ -80,7 +80,7 @@ func (e *Extension) OnRunStarted(ctx context.Context, agentID id.AgentID, runID 
 	)
 }
 
-func (e *Extension) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, output string, elapsed time.Duration) error {
+func (e *Extension) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, _ string, elapsed time.Duration) error {
 	return e.record(ctx, ActionRunCompleted, SeverityInfo, OutcomeSuccess,
 		ResourceRun, runID.String(), CategoryAgent, nil,
 		"agent_id", agentID.String(),
@@ -102,7 +102,7 @@ func (e *Extension) OnToolCalled(ctx context.Context, runID id.AgentRunID, toolN
 	)
 }
 
-func (e *Extension) OnToolCompleted(ctx context.Context, runID id.AgentRunID, toolName string, _ string, elapsed time.Duration) error {
+func (e *Extension) OnToolCompleted(ctx context.Context, runID id.AgentRunID, toolName, _ string, elapsed time.Duration) error {
 	return e.record(ctx, ActionToolCompleted, SeverityInfo, OutcomeSuccess,
 		ResourceTool, runID.String(), CategoryTool, nil,
 		"tool_name", toolName,

@@ -51,7 +51,7 @@ func New(opts ...Option) (*Engine, error) {
 }
 
 // Start initializes the engine for operation.
-func (e *Engine) Start(ctx context.Context) error {
+func (e *Engine) Start(_ context.Context) error {
 	e.logger.Info("cortex engine started")
 	return nil
 }

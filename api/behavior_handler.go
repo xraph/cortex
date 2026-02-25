@@ -4,53 +4,66 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerBehaviorRoutes(router forge.Router) {
+func (a *API) registerBehaviorRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("behaviors"))
 
-	_ = g.POST("/behaviors", a.createBehavior,
+	if err := g.POST("/behaviors", a.createBehavior,
 		forge.WithSummary("Create behavior"),
 		forge.WithDescription("Creates a new condition-triggered behavior pattern."),
 		forge.WithOperationID("createBehavior"),
 		forge.WithRequestSchema(CreateBehaviorRequest{}),
 		forge.WithCreatedResponse(&behavior.Behavior{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register behavior routes: %w", err)
+	}
 
-	_ = g.GET("/behaviors", a.listBehaviors,
+	if err := g.GET("/behaviors", a.listBehaviors,
 		forge.WithSummary("List behaviors"),
 		forge.WithOperationID("listBehaviors"),
 		forge.WithRequestSchema(ListBehaviorsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Behavior list", []*behavior.Behavior{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register behavior routes: %w", err)
+	}
 
-	_ = g.GET("/behaviors/:name", a.getBehavior,
+	if err := g.GET("/behaviors/:name", a.getBehavior,
 		forge.WithSummary("Get behavior"),
 		forge.WithOperationID("getBehavior"),
 		forge.WithResponseSchema(http.StatusOK, "Behavior details", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register behavior routes: %w", err)
+	}
 
-	_ = g.PUT("/behaviors/:name", a.updateBehavior,
+	if err := g.PUT("/behaviors/:name", a.updateBehavior,
 		forge.WithSummary("Update behavior"),
 		forge.WithOperationID("updateBehavior"),
 		forge.WithRequestSchema(UpdateBehaviorRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated behavior", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register behavior routes: %w", err)
+	}
 
-	_ = g.DELETE("/behaviors/:name", a.deleteBehavior,
+	if err := g.DELETE("/behaviors/:name", a.deleteBehavior,
 		forge.WithSummary("Delete behavior"),
 		forge.WithOperationID("deleteBehavior"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register behavior routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) createBehavior(ctx forge.Context, req *CreateBehaviorRequest) (*behavior.Behavior, error) {

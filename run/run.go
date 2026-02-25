@@ -8,16 +8,16 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// RunState represents the lifecycle state of an agent run.
-type RunState string
+// State represents the lifecycle state of an agent run.
+type State string
 
 const (
-	StateCreated   RunState = "created"
-	StateRunning   RunState = "running"
-	StateCompleted RunState = "completed"
-	StateFailed    RunState = "failed"
-	StateCancelled RunState = "cancelled"
-	StatePaused    RunState = "paused"
+	StateCreated   State = "created"
+	StateRunning   State = "running"
+	StateCompleted State = "completed"
+	StateFailed    State = "failed"
+	StateCancelled State = "cancelled"
+	StatePaused    State = "paused"
 )
 
 // Run represents a single execution of an agent.
@@ -26,7 +26,7 @@ type Run struct {
 	ID          id.AgentRunID  `json:"id"`
 	AgentID     id.AgentID     `json:"agent_id"`
 	TenantID    string         `json:"tenant_id,omitempty"`
-	State       RunState       `json:"state"`
+	State       State          `json:"state"`
 	Input       string         `json:"input"`
 	Output      string         `json:"output,omitempty"`
 	Error       string         `json:"error,omitempty"`

@@ -236,7 +236,7 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 		Name:        m.Name,
 		Description: m.Description,
 		AppID:       m.AppID,
-		Category:    trait.TraitCategory(m.Category),
+		Category:    trait.Category(m.Category),
 	}
 	for _, f := range []struct {
 		name string
@@ -453,7 +453,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		ID:          runID,
 		AgentID:     agentID,
 		TenantID:    m.TenantID,
-		State:       run.RunState(m.State),
+		State:       run.State(m.State),
 		Input:       m.Input,
 		Output:      m.Output,
 		Error:       m.Error,

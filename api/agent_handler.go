@@ -4,73 +4,90 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerAgentRoutes(router forge.Router) {
+func (a *API) registerAgentRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("agents"))
 
-	_ = g.POST("/agents", a.createAgent,
+	if err := g.POST("/agents", a.createAgent,
 		forge.WithSummary("Create agent"),
 		forge.WithDescription("Creates a new agent with the specified configuration."),
 		forge.WithOperationID("createAgent"),
 		forge.WithRequestSchema(CreateAgentRequest{}),
 		forge.WithCreatedResponse(&agent.Config{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.GET("/agents", a.listAgents,
+	if err := g.GET("/agents", a.listAgents,
 		forge.WithSummary("List agents"),
 		forge.WithDescription("Returns agents with optional pagination."),
 		forge.WithOperationID("listAgents"),
 		forge.WithRequestSchema(ListAgentsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Agent list", []*agent.Config{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.GET("/agents/:name", a.getAgent,
+	if err := g.GET("/agents/:name", a.getAgent,
 		forge.WithSummary("Get agent"),
 		forge.WithDescription("Returns details of a specific agent by name."),
 		forge.WithOperationID("getAgent"),
 		forge.WithResponseSchema(http.StatusOK, "Agent details", &agent.Config{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.PUT("/agents/:name", a.updateAgent,
+	if err := g.PUT("/agents/:name", a.updateAgent,
 		forge.WithSummary("Update agent"),
 		forge.WithDescription("Updates an existing agent configuration."),
 		forge.WithOperationID("updateAgent"),
 		forge.WithRequestSchema(UpdateAgentRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated agent", &agent.Config{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.DELETE("/agents/:name", a.deleteAgent,
+	if err := g.DELETE("/agents/:name", a.deleteAgent,
 		forge.WithSummary("Delete agent"),
 		forge.WithDescription("Deletes an agent configuration."),
 		forge.WithOperationID("deleteAgent"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.POST("/agents/:name/run", a.runAgent,
+	if err := g.POST("/agents/:name/run", a.runAgent,
 		forge.WithSummary("Run agent"),
 		forge.WithDescription("Executes an agent with the given input and returns the result."),
 		forge.WithOperationID("runAgent"),
 		forge.WithRequestSchema(RunAgentRequest{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
 
-	_ = g.POST("/agents/:name/stream", a.streamAgent,
+	if err := g.POST("/agents/:name/stream", a.streamAgent,
 		forge.WithSummary("Stream agent"),
 		forge.WithDescription("Executes an agent with streaming SSE output."),
 		forge.WithOperationID("streamAgent"),
 		forge.WithRequestSchema(StreamAgentRequest{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) createAgent(ctx forge.Context, req *CreateAgentRequest) (*agent.Config, error) {

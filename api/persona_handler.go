@@ -4,54 +4,67 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/skill"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerPersonaRoutes(router forge.Router) {
+func (a *API) registerPersonaRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("personas"))
 
-	_ = g.POST("/personas", a.createPersona,
+	if err := g.POST("/personas", a.createPersona,
 		forge.WithSummary("Create persona"),
 		forge.WithDescription("Creates a new persona composing skills, traits, behaviors, and styles."),
 		forge.WithOperationID("createPersona"),
 		forge.WithRequestSchema(CreatePersonaRequest{}),
 		forge.WithCreatedResponse(&persona.Persona{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
 
-	_ = g.GET("/personas", a.listPersonas,
+	if err := g.GET("/personas", a.listPersonas,
 		forge.WithSummary("List personas"),
 		forge.WithOperationID("listPersonas"),
 		forge.WithRequestSchema(ListPersonasRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Persona list", []*persona.Persona{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
 
-	_ = g.GET("/personas/:name", a.getPersona,
+	if err := g.GET("/personas/:name", a.getPersona,
 		forge.WithSummary("Get persona"),
 		forge.WithOperationID("getPersona"),
 		forge.WithResponseSchema(http.StatusOK, "Persona details", &persona.Persona{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
 
-	_ = g.PUT("/personas/:name", a.updatePersona,
+	if err := g.PUT("/personas/:name", a.updatePersona,
 		forge.WithSummary("Update persona"),
 		forge.WithOperationID("updatePersona"),
 		forge.WithRequestSchema(UpdatePersonaRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated persona", &persona.Persona{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
 
-	_ = g.DELETE("/personas/:name", a.deletePersona,
+	if err := g.DELETE("/personas/:name", a.deletePersona,
 		forge.WithSummary("Delete persona"),
 		forge.WithOperationID("deletePersona"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) createPersona(ctx forge.Context, req *CreatePersonaRequest) (*persona.Persona, error) {

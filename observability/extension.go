@@ -88,7 +88,7 @@ func (m *MetricsExtension) OnToolCalled(_ context.Context, _ id.AgentRunID, _ st
 	return nil
 }
 
-func (m *MetricsExtension) OnToolCompleted(_ context.Context, _ id.AgentRunID, _ string, _ string, _ time.Duration) error {
+func (m *MetricsExtension) OnToolCompleted(_ context.Context, _ id.AgentRunID, _, _ string, _ time.Duration) error {
 	m.ToolCompletedCount.Inc()
 	return nil
 }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill,
 	m := new(skillModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", skillID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrSkillNotFound
 		}
 		return nil, fmt.Errorf("cortex: get skill: %w", err)
 	}
-	return skillFromModel(m), nil
+	return skillFromModel(m)
 }
 
 func (s *Store) GetSkillByName(ctx context.Context, appID, name string) (*skill.Skill, error) {
@@ -42,12 +43,12 @@ func (s *Store) GetSkillByName(ctx context.Context, appID, name string) (*skill.
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrSkillNotFound
 		}
 		return nil, fmt.Errorf("cortex: get skill by name: %w", err)
 	}
-	return skillFromModel(m), nil
+	return skillFromModel(m)
 }
 
 func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
@@ -57,7 +58,10 @@ func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
 	if err != nil {
 		return fmt.Errorf("cortex: update skill: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update skill rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrSkillNotFound
 	}
@@ -71,7 +75,10 @@ func (s *Store) DeleteSkill(ctx context.Context, skillID id.SkillID) error {
 	if err != nil {
 		return fmt.Errorf("cortex: delete skill: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: delete skill rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrSkillNotFound
 	}
@@ -97,7 +104,11 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 	}
 	result := make([]*skill.Skill, len(models))
 	for i := range models {
-		result[i] = skillFromModel(&models[i])
+		sk, err := skillFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list skills: %w", err)
+		}
+		result[i] = sk
 	}
 	return result, nil
 }

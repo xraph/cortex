@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/xraph/grove"
@@ -17,6 +18,17 @@ import (
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
 )
+
+// unmarshalField unmarshals a JSON string field into dest.
+func unmarshalField(field, data string, dest any) error {
+	if data == "" || data == "null" {
+		return nil
+	}
+	if err := json.Unmarshal([]byte(data), dest); err != nil {
+		return fmt.Errorf("unmarshal %s: %w", field, err)
+	}
+	return nil
+}
 
 // ──────────────────────────────────────────────────
 // Agent model
@@ -71,8 +83,11 @@ func agentToModel(c *agent.Config) *agentModel {
 	}
 }
 
-func agentFromModel(m *agentModel) *agent.Config {
-	agentID, _ := id.ParseAgentID(m.ID)
+func agentFromModel(m *agentModel) (*agent.Config, error) {
+	agentID, err := id.ParseAgentID(m.ID)
+	if err != nil {
+		return nil, err
+	}
 	c := &agent.Config{
 		Entity:        cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:            agentID,
@@ -88,13 +103,23 @@ func agentFromModel(m *agentModel) *agent.Config {
 		Enabled:       m.Enabled,
 		PersonaRef:    m.PersonaRef,
 	}
-	_ = json.Unmarshal([]byte(m.Tools), &c.Tools)
-	_ = json.Unmarshal([]byte(m.Guardrails), &c.Guardrails)
-	_ = json.Unmarshal([]byte(m.Metadata), &c.Metadata)
-	_ = json.Unmarshal([]byte(m.InlineSkills), &c.InlineSkills)
-	_ = json.Unmarshal([]byte(m.InlineTraits), &c.InlineTraits)
-	_ = json.Unmarshal([]byte(m.InlineBehaviors), &c.InlineBehaviors)
-	return c
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"tools", m.Tools, &c.Tools},
+		{"guardrails", m.Guardrails, &c.Guardrails},
+		{"metadata", m.Metadata, &c.Metadata},
+		{"inline_skills", m.InlineSkills, &c.InlineSkills},
+		{"inline_traits", m.InlineTraits, &c.InlineTraits},
+		{"inline_behaviors", m.InlineBehaviors, &c.InlineBehaviors},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -134,8 +159,11 @@ func skillToModel(s *skill.Skill) *skillModel {
 	}
 }
 
-func skillFromModel(m *skillModel) *skill.Skill {
-	skillID, _ := id.ParseSkillID(m.ID)
+func skillFromModel(m *skillModel) (*skill.Skill, error) {
+	skillID, err := id.ParseSkillID(m.ID)
+	if err != nil {
+		return nil, err
+	}
 	s := &skill.Skill{
 		Entity:               cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                   skillID,
@@ -145,11 +173,21 @@ func skillFromModel(m *skillModel) *skill.Skill {
 		SystemPromptFragment: m.SystemPromptFragment,
 		DefaultProficiency:   skill.Proficiency(m.DefaultProficiency),
 	}
-	_ = json.Unmarshal([]byte(m.Tools), &s.Tools)
-	_ = json.Unmarshal([]byte(m.Knowledge), &s.Knowledge)
-	_ = json.Unmarshal([]byte(m.Dependencies), &s.Dependencies)
-	_ = json.Unmarshal([]byte(m.Metadata), &s.Metadata)
-	return s
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"tools", m.Tools, &s.Tools},
+		{"knowledge", m.Knowledge, &s.Knowledge},
+		{"dependencies", m.Dependencies, &s.Dependencies},
+		{"metadata", m.Metadata, &s.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -185,20 +223,33 @@ func traitToModel(t *trait.Trait) *traitModel {
 	}
 }
 
-func traitFromModel(m *traitModel) *trait.Trait {
-	traitID, _ := id.ParseTraitID(m.ID)
+func traitFromModel(m *traitModel) (*trait.Trait, error) {
+	traitID, err := id.ParseTraitID(m.ID)
+	if err != nil {
+		return nil, err
+	}
 	t := &trait.Trait{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          traitID,
 		Name:        m.Name,
 		Description: m.Description,
 		AppID:       m.AppID,
-		Category:    trait.TraitCategory(m.Category),
+		Category:    trait.Category(m.Category),
 	}
-	_ = json.Unmarshal([]byte(m.Dimensions), &t.Dimensions)
-	_ = json.Unmarshal([]byte(m.Influences), &t.Influences)
-	_ = json.Unmarshal([]byte(m.Metadata), &t.Metadata)
-	return t
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"dimensions", m.Dimensions, &t.Dimensions},
+		{"influences", m.Influences, &t.Influences},
+		{"metadata", m.Metadata, &t.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return t, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -238,8 +289,11 @@ func behaviorToModel(b *behavior.Behavior) *behaviorModel {
 	}
 }
 
-func behaviorFromModel(m *behaviorModel) *behavior.Behavior {
-	behaviorID, _ := id.ParseBehaviorID(m.ID)
+func behaviorFromModel(m *behaviorModel) (*behavior.Behavior, error) {
+	behaviorID, err := id.ParseBehaviorID(m.ID)
+	if err != nil {
+		return nil, err
+	}
 	b := &behavior.Behavior{
 		Entity:        cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:            behaviorID,
@@ -250,10 +304,20 @@ func behaviorFromModel(m *behaviorModel) *behavior.Behavior {
 		RequiresSkill: m.RequiresSkill,
 		RequiresTrait: m.RequiresTrait,
 	}
-	_ = json.Unmarshal([]byte(m.Triggers), &b.Triggers)
-	_ = json.Unmarshal([]byte(m.Actions), &b.Actions)
-	_ = json.Unmarshal([]byte(m.Metadata), &b.Metadata)
-	return b
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"triggers", m.Triggers, &b.Triggers},
+		{"actions", m.Actions, &b.Actions},
+		{"metadata", m.Metadata, &b.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -297,8 +361,11 @@ func personaToModel(p *persona.Persona) *personaModel {
 	}
 }
 
-func personaFromModel(m *personaModel) *persona.Persona {
-	personaID, _ := id.ParsePersonaID(m.ID)
+func personaFromModel(m *personaModel) (*persona.Persona, error) {
+	personaID, err := id.ParsePersonaID(m.ID)
+	if err != nil {
+		return nil, err
+	}
 	p := &persona.Persona{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          personaID,
@@ -307,14 +374,24 @@ func personaFromModel(m *personaModel) *persona.Persona {
 		AppID:       m.AppID,
 		Identity:    m.Identity,
 	}
-	_ = json.Unmarshal([]byte(m.Skills), &p.Skills)
-	_ = json.Unmarshal([]byte(m.Traits), &p.Traits)
-	_ = json.Unmarshal([]byte(m.Behaviors), &p.Behaviors)
-	_ = json.Unmarshal([]byte(m.CognitiveStyle), &p.CognitiveStyle)
-	_ = json.Unmarshal([]byte(m.CommunicationStyle), &p.CommunicationStyle)
-	_ = json.Unmarshal([]byte(m.Perception), &p.Perception)
-	_ = json.Unmarshal([]byte(m.Metadata), &p.Metadata)
-	return p
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"skills", m.Skills, &p.Skills},
+		{"traits", m.Traits, &p.Traits},
+		{"behaviors", m.Behaviors, &p.Behaviors},
+		{"cognitive_style", m.CognitiveStyle, &p.CognitiveStyle},
+		{"communication_style", m.CommunicationStyle, &p.CommunicationStyle},
+		{"perception", m.Perception, &p.Perception},
+		{"metadata", m.Metadata, &p.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -360,15 +437,21 @@ func runToModel(r *run.Run) *runModel {
 	}
 }
 
-func runFromModel(m *runModel) *run.Run {
-	runID, _ := id.ParseAgentRunID(m.ID)
-	agentID, _ := id.ParseAgentID(m.AgentID)
+func runFromModel(m *runModel) (*run.Run, error) {
+	runID, err := id.ParseAgentRunID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
 	r := &run.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AgentID:     agentID,
 		TenantID:    m.TenantID,
-		State:       run.RunState(m.State),
+		State:       run.State(m.State),
 		Input:       m.Input,
 		Output:      m.Output,
 		Error:       m.Error,
@@ -378,8 +461,10 @@ func runFromModel(m *runModel) *run.Run {
 		CompletedAt: m.CompletedAt,
 		PersonaRef:  m.PersonaRef,
 	}
-	_ = json.Unmarshal([]byte(m.Metadata), &r.Metadata)
-	return r
+	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -419,9 +504,15 @@ func stepToModel(s *run.Step) *stepModel {
 	}
 }
 
-func stepFromModel(m *stepModel) *run.Step {
-	stepID, _ := id.ParseStepID(m.ID)
-	runID, _ := id.ParseAgentRunID(m.RunID)
+func stepFromModel(m *stepModel) (*run.Step, error) {
+	stepID, err := id.ParseStepID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := id.ParseAgentRunID(m.RunID)
+	if err != nil {
+		return nil, err
+	}
 	s := &run.Step{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          stepID,
@@ -434,8 +525,10 @@ func stepFromModel(m *stepModel) *run.Step {
 		StartedAt:   m.StartedAt,
 		CompletedAt: m.CompletedAt,
 	}
-	_ = json.Unmarshal([]byte(m.Metadata), &s.Metadata)
-	return s
+	if err := unmarshalField("metadata", m.Metadata, &s.Metadata); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -475,10 +568,19 @@ func toolCallToModel(tc *run.ToolCall) *toolCallModel {
 	}
 }
 
-func toolCallFromModel(m *toolCallModel) *run.ToolCall {
-	tcID, _ := id.ParseToolCallID(m.ID)
-	stepID, _ := id.ParseStepID(m.StepID)
-	runID, _ := id.ParseAgentRunID(m.RunID)
+func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
+	tcID, err := id.ParseToolCallID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	stepID, err := id.ParseStepID(m.StepID)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := id.ParseAgentRunID(m.RunID)
+	if err != nil {
+		return nil, err
+	}
 	tc := &run.ToolCall{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          tcID,
@@ -491,8 +593,10 @@ func toolCallFromModel(m *toolCallModel) *run.ToolCall {
 		StartedAt:   m.StartedAt,
 		CompletedAt: m.CompletedAt,
 	}
-	_ = json.Unmarshal([]byte(m.Metadata), &tc.Metadata)
-	return tc
+	if err := unmarshalField("metadata", m.Metadata, &tc.Metadata); err != nil {
+		return nil, err
+	}
+	return tc, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -556,10 +660,19 @@ func checkpointToModel(cp *checkpoint.Checkpoint) *checkpointModel {
 	}
 }
 
-func checkpointFromModel(m *checkpointModel) *checkpoint.Checkpoint {
-	cpID, _ := id.ParseCheckpointID(m.ID)
-	runID, _ := id.ParseAgentRunID(m.RunID)
-	agentID, _ := id.ParseAgentID(m.AgentID)
+func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
+	cpID, err := id.ParseCheckpointID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := id.ParseAgentRunID(m.RunID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
 	cp := &checkpoint.Checkpoint{
 		Entity:    cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:        cpID,
@@ -570,9 +683,13 @@ func checkpointFromModel(m *checkpointModel) *checkpoint.Checkpoint {
 		StepIndex: m.StepIndex,
 		State:     m.State,
 	}
-	_ = json.Unmarshal([]byte(m.Decision), &cp.Decision)
-	_ = json.Unmarshal([]byte(m.Metadata), &cp.Metadata)
-	return cp
+	if err := unmarshalField("decision", m.Decision, &cp.Decision); err != nil {
+		return nil, err
+	}
+	if err := unmarshalField("metadata", m.Metadata, &cp.Metadata); err != nil {
+		return nil, err
+	}
+	return cp, nil
 }
 
 // ──────────────────────────────────────────────────

@@ -87,7 +87,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		return nil, fmt.Errorf("cortex: load working memory: %w", err)
 	}
 	var v any
-	_ = json.Unmarshal([]byte(m.Content), &v)
+	if err := json.Unmarshal([]byte(m.Content), &v); err != nil {
+		return nil, fmt.Errorf("cortex: unmarshal working memory: %w", err)
+	}
 	return v, nil
 }
 
@@ -102,7 +104,7 @@ func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
 	return nil
 }
 
-func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error {
+func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, summary string) error {
 	m := &memoryModel{
 		AgentID:  agentID.String(),
 		TenantID: tenantID,

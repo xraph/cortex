@@ -111,7 +111,9 @@ func (e *Extension) init(fapp forge.App) error {
 	e.apiHandler = api.New(e.eng, fapp.Router())
 
 	if !e.config.DisableRoutes {
-		e.apiHandler.RegisterRoutes(fapp.Router())
+		if err := e.apiHandler.RegisterRoutes(fapp.Router()); err != nil {
+			return fmt.Errorf("cortex: register routes: %w", err)
+		}
 	}
 
 	return nil
@@ -176,10 +178,11 @@ func (e *Extension) Handler() http.Handler {
 }
 
 // RegisterRoutes registers all Cortex API routes into a Forge router.
-func (e *Extension) RegisterRoutes(router forge.Router) {
+func (e *Extension) RegisterRoutes(router forge.Router) error {
 	if e.apiHandler != nil {
-		e.apiHandler.RegisterRoutes(router)
+		return e.apiHandler.RegisterRoutes(router)
 	}
+	return nil
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---

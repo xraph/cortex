@@ -159,7 +159,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		ID:          runID,
 		AgentID:     agentID,
 		TenantID:    m.TenantID,
-		State:       run.RunState(m.State),
+		State:       run.State(m.State),
 		Input:       m.Input,
 		Output:      m.Output,
 		Error:       m.Error,
@@ -489,7 +489,7 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 		AppID:       m.AppID,
 		Dimensions:  m.Dimensions,
 		Influences:  m.Influences,
-		Category:    trait.TraitCategory(m.Category),
+		Category:    trait.Category(m.Category),
 		Metadata:    m.Metadata,
 	}, nil
 }

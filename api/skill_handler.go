@@ -4,53 +4,66 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/skill"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerSkillRoutes(router forge.Router) {
+func (a *API) registerSkillRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("skills"))
 
-	_ = g.POST("/skills", a.createSkill,
+	if err := g.POST("/skills", a.createSkill,
 		forge.WithSummary("Create skill"),
 		forge.WithDescription("Creates a new skill with tool bindings, knowledge refs, and proficiency config."),
 		forge.WithOperationID("createSkill"),
 		forge.WithRequestSchema(CreateSkillRequest{}),
 		forge.WithCreatedResponse(&skill.Skill{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register skill routes: %w", err)
+	}
 
-	_ = g.GET("/skills", a.listSkills,
+	if err := g.GET("/skills", a.listSkills,
 		forge.WithSummary("List skills"),
 		forge.WithOperationID("listSkills"),
 		forge.WithRequestSchema(ListSkillsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Skill list", []*skill.Skill{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register skill routes: %w", err)
+	}
 
-	_ = g.GET("/skills/:name", a.getSkill,
+	if err := g.GET("/skills/:name", a.getSkill,
 		forge.WithSummary("Get skill"),
 		forge.WithOperationID("getSkill"),
 		forge.WithResponseSchema(http.StatusOK, "Skill details", &skill.Skill{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register skill routes: %w", err)
+	}
 
-	_ = g.PUT("/skills/:name", a.updateSkill,
+	if err := g.PUT("/skills/:name", a.updateSkill,
 		forge.WithSummary("Update skill"),
 		forge.WithOperationID("updateSkill"),
 		forge.WithRequestSchema(UpdateSkillRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated skill", &skill.Skill{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register skill routes: %w", err)
+	}
 
-	_ = g.DELETE("/skills/:name", a.deleteSkill,
+	if err := g.DELETE("/skills/:name", a.deleteSkill,
 		forge.WithSummary("Delete skill"),
 		forge.WithOperationID("deleteSkill"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register skill routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) createSkill(ctx forge.Context, req *CreateSkillRequest) (*skill.Skill, error) {

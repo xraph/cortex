@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 	m := new(runModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrRunNotFound
 		}
 		return nil, fmt.Errorf("cortex: get run: %w", err)
 	}
-	return runFromModel(m), nil
+	return runFromModel(m)
 }
 
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
@@ -42,7 +43,10 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	if err != nil {
 		return fmt.Errorf("cortex: update run: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update run rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrRunNotFound
 	}
@@ -74,7 +78,11 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	}
 	result := make([]*run.Run, len(models))
 	for i := range models {
-		result[i] = runFromModel(&models[i])
+		r, err := runFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list runs: %w", err)
+		}
+		result[i] = r
 	}
 	return result, nil
 }
@@ -102,7 +110,11 @@ func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step
 	}
 	result := make([]*run.Step, len(models))
 	for i := range models {
-		result[i] = stepFromModel(&models[i])
+		st, err := stepFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list steps: %w", err)
+		}
+		result[i] = st
 	}
 	return result, nil
 }
@@ -130,7 +142,11 @@ func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.Too
 	}
 	result := make([]*run.ToolCall, len(models))
 	for i := range models {
-		result[i] = toolCallFromModel(&models[i])
+		tc, err := toolCallFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list tool calls: %w", err)
+		}
+		result[i] = tc
 	}
 	return result, nil
 }

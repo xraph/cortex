@@ -4,30 +4,37 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/memory"
-	"github.com/xraph/forge"
 )
 
-func (a *API) registerMemoryRoutes(router forge.Router) {
+func (a *API) registerMemoryRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("memory"))
 
-	_ = g.GET("/agents/:name/memory", a.getConversation,
+	if err := g.GET("/agents/:name/memory", a.getConversation,
 		forge.WithSummary("Get conversation"),
 		forge.WithDescription("Returns conversation history for an agent."),
 		forge.WithOperationID("getConversation"),
 		forge.WithRequestSchema(GetConversationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Conversation messages", []memory.Message{}),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register memory routes: %w", err)
+	}
 
-	_ = g.DELETE("/agents/:name/memory", a.clearConversation,
+	if err := g.DELETE("/agents/:name/memory", a.clearConversation,
 		forge.WithSummary("Clear conversation"),
 		forge.WithDescription("Clears conversation history for an agent."),
 		forge.WithOperationID("clearConversation"),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register memory routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) ([]memory.Message, error) {

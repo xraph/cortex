@@ -40,14 +40,14 @@ type Influence struct {
 	Weight    float64         `json:"weight,omitempty"`
 }
 
-// TraitCategory groups related traits.
-type TraitCategory string
+// Category groups related traits.
+type Category string
 
 const (
-	CategoryPersonality   TraitCategory = "personality"
-	CategoryWorkstyle     TraitCategory = "workstyle"
-	CategoryCommunication TraitCategory = "communication"
-	CategoryRisk          TraitCategory = "risk"
+	CategoryPersonality   Category = "personality"
+	CategoryWorkstyle     Category = "workstyle"
+	CategoryCommunication Category = "communication"
+	CategoryRisk          Category = "risk"
 )
 
 // Trait represents a personality dimension that influences agent behavior.
@@ -59,7 +59,7 @@ type Trait struct {
 	AppID       string         `json:"app_id"`
 	Dimensions  []Dimension    `json:"dimensions,omitempty"`
 	Influences  []Influence    `json:"influences,omitempty"`
-	Category    TraitCategory  `json:"category,omitempty"`
+	Category    Category       `json:"category,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
@@ -76,7 +76,7 @@ type Store interface {
 // ListFilter controls pagination and filtering for trait listing.
 type ListFilter struct {
 	AppID    string
-	Category TraitCategory
+	Category Category
 	Limit    int
 	Offset   int
 }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,12 +28,12 @@ func (s *Store) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait,
 	m := new(traitModel)
 	err := s.pgdb.NewSelect(m).Where("id = ?", traitID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrTraitNotFound
 		}
 		return nil, fmt.Errorf("cortex: get trait: %w", err)
 	}
-	return traitFromModel(m), nil
+	return traitFromModel(m)
 }
 
 func (s *Store) GetTraitByName(ctx context.Context, appID, name string) (*trait.Trait, error) {
@@ -42,12 +43,12 @@ func (s *Store) GetTraitByName(ctx context.Context, appID, name string) (*trait.
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrTraitNotFound
 		}
 		return nil, fmt.Errorf("cortex: get trait by name: %w", err)
 	}
-	return traitFromModel(m), nil
+	return traitFromModel(m)
 }
 
 func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
@@ -57,7 +58,10 @@ func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
 	if err != nil {
 		return fmt.Errorf("cortex: update trait: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: update trait rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrTraitNotFound
 	}
@@ -71,7 +75,10 @@ func (s *Store) DeleteTrait(ctx context.Context, traitID id.TraitID) error {
 	if err != nil {
 		return fmt.Errorf("cortex: delete trait: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: delete trait rows affected: %w", err)
+	}
 	if n == 0 {
 		return cortex.ErrTraitNotFound
 	}
@@ -100,7 +107,11 @@ func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*tr
 	}
 	result := make([]*trait.Trait, len(models))
 	for i := range models {
-		result[i] = traitFromModel(&models[i])
+		t, err := traitFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex: list traits: %w", err)
+		}
+		result[i] = t
 	}
 	return result, nil
 }

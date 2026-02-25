@@ -75,13 +75,21 @@ If an agent field is zero-valued, the engine default applies.
 
 ## Extension configuration
 
-The Forge extension wrapper has its own `Config`:
+The Forge extension wrapper has its own `Config` that can be set programmatically or via YAML:
 
 ```go
 type Config struct {
-    DisableRoutes  bool   // prevents HTTP route registration
-    DisableMigrate bool   // prevents auto-migration on start
-    BasePath       string // URL prefix for all cortex routes
+    DisableRoutes        bool          // prevents HTTP route registration
+    DisableMigrate       bool          // prevents auto-migration on start
+    BasePath             string        // URL prefix for all cortex routes
+    DefaultModel         string        // LLM model (default: "smart")
+    DefaultMaxSteps      int           // max reasoning steps per run (default: 25)
+    DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
+    DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
+    DefaultReasoningLoop string        // reasoning loop strategy (default: "react")
+    ShutdownTimeout      time.Duration // graceful shutdown timeout (default: 30s)
+    RunConcurrency       int           // max concurrent runs (default: 4)
+    GroveDatabase        string        // grove.DB name for DI resolution
 }
 ```
 
@@ -96,4 +104,36 @@ type Config struct {
 | `extension.WithDisableRoutes()` | Disables HTTP route registration |
 | `extension.WithDisableMigrate()` | Disables auto-migration |
 | `extension.WithBasePath(path)` | Sets the URL prefix |
-| `extension.WithLogger(l)` | Sets the structured logger |
+| `extension.WithGroveDatabase(name)` | Sets the grove.DB to resolve from DI |
+| `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
+
+## YAML configuration
+
+Cortex supports YAML-based configuration under the `extensions.cortex` or `cortex` key in your Forge config file:
+
+```yaml
+# config.yaml
+extensions:
+  cortex:
+    disable_routes: false
+    disable_migrate: false
+    base_path: "/cortex"
+    default_model: "gpt-4o"
+    default_max_steps: 50
+    default_max_tokens: 8192
+    default_temperature: 0.7
+    default_reasoning_loop: "react"
+    shutdown_timeout: "30s"
+    run_concurrency: 8
+    grove_database: "cortex"
+```
+
+### Merge behaviour
+
+YAML values take precedence for most fields. Programmatic options fill in any gaps. Remaining zero-valued fields are filled with `DefaultConfig()` defaults.
+
+| Source | Priority |
+|--------|----------|
+| YAML config file | Highest |
+| Programmatic options (`WithConfig`, etc.) | Fills zero-valued fields |
+| `DefaultConfig()` | Fills remaining zero-valued fields |

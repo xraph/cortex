@@ -1,27 +1,34 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/xraph/forge"
 )
 
-func (a *API) registerToolRoutes(router forge.Router) {
+func (a *API) registerToolRoutes(router forge.Router) error {
 	g := router.Group("/cortex", forge.WithGroupTags("tools"))
 
-	_ = g.GET("/tools", a.listTools,
+	if err := g.GET("/tools", a.listTools,
 		forge.WithSummary("List tools"),
 		forge.WithDescription("Returns all registered tools."),
 		forge.WithOperationID("listTools"),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register tool routes: %w", err)
+	}
 
-	_ = g.GET("/tools/:name/schema", a.getToolSchema,
+	if err := g.GET("/tools/:name/schema", a.getToolSchema,
 		forge.WithSummary("Get tool schema"),
 		forge.WithDescription("Returns the JSON Schema for a specific tool."),
 		forge.WithOperationID("getToolSchema"),
 		forge.WithErrorResponses(),
-	)
+	); err != nil {
+		return fmt.Errorf("register tool routes: %w", err)
+	}
+
+	return nil
 }
 
 func (a *API) listTools(ctx forge.Context, _ *ListToolsRequest) ([]map[string]any, error) {
@@ -29,8 +36,7 @@ func (a *API) listTools(ctx forge.Context, _ *ListToolsRequest) ([]map[string]an
 	return []map[string]any{}, ctx.JSON(http.StatusOK, []map[string]any{})
 }
 
-func (a *API) getToolSchema(ctx forge.Context, _ *GetToolSchemaRequest) (*struct{}, error) {
+func (a *API) getToolSchema(_ forge.Context, _ *GetToolSchemaRequest) (*struct{}, error) {
 	// TODO: implement tool schema lookup in phase 2
-	_ = ctx.Param("name")
 	return nil, forge.NotFound("tool schema not yet implemented")
 }
