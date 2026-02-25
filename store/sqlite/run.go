@@ -1,8 +1,7 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -16,33 +15,36 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	r.CreatedAt = now
 	r.UpdatedAt = now
 	m := runToModel(r)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create run: %w", err)
+		return fmt.Errorf("cortex/sqlite: create run: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
 	m := new(runModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrRunNotFound
 		}
-		return nil, fmt.Errorf("cortex: get run: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get run: %w", err)
 	}
-	return runFromModel(m), nil
+	return runFromModel(m)
 }
 
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	r.UpdatedAt = time.Now().UTC()
 	m := runToModel(r)
-	res, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: update run: %w", err)
+		return fmt.Errorf("cortex/sqlite: update run: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: update run rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrRunNotFound
 	}
@@ -51,7 +53,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 
 func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) {
 	var models []runModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 	if filter != nil {
 		if filter.AgentID != "" {
 			q = q.Where("agent_id = ?", filter.AgentID)
@@ -70,11 +72,15 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 		}
 	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: list runs: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list runs: %w", err)
 	}
 	result := make([]*run.Run, len(models))
 	for i := range models {
-		result[i] = runFromModel(&models[i])
+		r, convErr := runFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = r
 	}
 	return result, nil
 }
@@ -84,25 +90,29 @@ func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 	step.CreatedAt = now
 	step.UpdatedAt = now
 	m := stepToModel(step)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create step: %w", err)
+		return fmt.Errorf("cortex/sqlite: create step: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
 	var models []stepModel
-	err := s.pgdb.NewSelect(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("run_id = ?", runID.String()).
-		OrderExpr(`"index" ASC`).
+		OrderExpr("\"index\" ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("cortex: list steps: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list steps: %w", err)
 	}
 	result := make([]*run.Step, len(models))
 	for i := range models {
-		result[i] = stepFromModel(&models[i])
+		st, convErr := stepFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = st
 	}
 	return result, nil
 }
@@ -112,25 +122,29 @@ func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 	tc.CreatedAt = now
 	tc.UpdatedAt = now
 	m := toolCallToModel(tc)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create tool call: %w", err)
+		return fmt.Errorf("cortex/sqlite: create tool call: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) {
 	var models []toolCallModel
-	err := s.pgdb.NewSelect(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("step_id = ?", stepID.String()).
 		OrderExpr("created_at ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("cortex: list tool calls: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list tool calls: %w", err)
 	}
 	result := make([]*run.ToolCall, len(models))
 	for i := range models {
-		result[i] = toolCallFromModel(&models[i])
+		tc, convErr := toolCallFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = tc
 	}
 	return result, nil
 }

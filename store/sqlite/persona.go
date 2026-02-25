@@ -1,8 +1,7 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -16,48 +15,51 @@ func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	m := personaToModel(p)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create persona: %w", err)
+		return fmt.Errorf("cortex/sqlite: create persona: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) {
 	m := new(personaModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", personaID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", personaID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrPersonaNotFound
 		}
-		return nil, fmt.Errorf("cortex: get persona: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get persona: %w", err)
 	}
-	return personaFromModel(m), nil
+	return personaFromModel(m)
 }
 
 func (s *Store) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) {
 	m := new(personaModel)
-	err := s.pgdb.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrPersonaNotFound
 		}
-		return nil, fmt.Errorf("cortex: get persona by name: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get persona by name: %w", err)
 	}
-	return personaFromModel(m), nil
+	return personaFromModel(m)
 }
 
 func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
 	p.UpdatedAt = time.Now().UTC()
 	m := personaToModel(p)
-	res, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: update persona: %w", err)
+		return fmt.Errorf("cortex/sqlite: update persona: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: update persona rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrPersonaNotFound
 	}
@@ -65,13 +67,16 @@ func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
 }
 
 func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error {
-	res, err := s.pgdb.NewDelete((*personaModel)(nil)).
+	res, err := s.sdb.NewDelete((*personaModel)(nil)).
 		Where("id = ?", personaID.String()).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: delete persona: %w", err)
+		return fmt.Errorf("cortex/sqlite: delete persona: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: delete persona rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrPersonaNotFound
 	}
@@ -80,7 +85,7 @@ func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error
 
 func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) {
 	var models []personaModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
@@ -93,11 +98,15 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 		}
 	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: list personas: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list personas: %w", err)
 	}
 	result := make([]*persona.Persona, len(models))
 	for i := range models {
-		result[i] = personaFromModel(&models[i])
+		p, convErr := personaFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = p
 	}
 	return result, nil
 }

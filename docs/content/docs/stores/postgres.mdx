@@ -1,0 +1,96 @@
+---
+title: PostgreSQL Store
+description: Production-ready persistence with PostgreSQL using Grove ORM with pgdriver.
+---
+
+The `store/postgres` package provides a production-ready implementation of the composite `store.Store` interface using PostgreSQL with the [Grove ORM](https://github.com/xraph/grove) and `pgdriver`.
+
+## Setup
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/cortex/store/postgres"
+)
+
+// Open a PostgreSQL connection via Grove's pgdriver.
+db := grove.Open(pgdriver.New(
+    pgdriver.WithDSN("postgres://user:pass@localhost:5432/cortex?sslmode=disable"),
+))
+
+s := postgres.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove ORM with `pgdriver` (PostgreSQL) |
+| Migrations | Embedded programmatic migrations |
+| Transactions | Database-level ACID transactions |
+
+## Tables
+
+| Table | Entity | Key columns |
+|-------|--------|-------------|
+| `cortex_agents` | Agent configs | `id`, `app_id`, `name`, `system_prompt`, `persona_ref` |
+| `cortex_skills` | Skills | `id`, `app_id`, `name`, `tools` (JSONB), `knowledge` (JSONB) |
+| `cortex_traits` | Traits | `id`, `app_id`, `name`, `dimensions` (JSONB), `influences` (JSONB) |
+| `cortex_behaviors` | Behaviors | `id`, `app_id`, `name`, `triggers` (JSONB), `actions` (JSONB) |
+| `cortex_personas` | Personas | `id`, `app_id`, `name`, `identity`, embedded styles (JSONB) |
+| `cortex_runs` | Runs | `id`, `agent_id`, `tenant_id`, `state`, `input`, `output` |
+| `cortex_steps` | Steps | `id`, `run_id`, `index`, `type` |
+| `cortex_tool_calls` | Tool calls | `id`, `step_id`, `run_id`, `tool_name` |
+
+## JSONB columns
+
+Complex nested structures are stored as JSONB columns:
+
+- Skill tools and knowledge -- `tools JSONB`, `knowledge JSONB`
+- Trait dimensions and influences -- `dimensions JSONB`, `influences JSONB`
+- Behavior triggers and actions -- `triggers JSONB`, `actions JSONB`
+- Persona styles -- `cognitive_style JSONB`, `communication_style JSONB`, `perception JSONB`
+- All entities -- `metadata JSONB`
+
+## Composite store interface
+
+The PostgreSQL store implements all 8 sub-interfaces:
+
+```go
+type Store interface {
+    agent.Store      // 6 methods
+    skill.Store      // 6 methods
+    trait.Store      // 6 methods
+    behavior.Store   // 6 methods
+    persona.Store    // 6 methods
+    run.Store        // 8 methods
+    memory.Store     // 8 methods
+    checkpoint.Store // 4 methods
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
+}
+```
+
+## Embedded migrations
+
+Migrations are embedded in the binary and run automatically when `Migrate()` is called. There is no need for external migration tools.
+
+## Usage with engine
+
+```go
+eng, err := engine.New(
+    engine.WithStore(s),
+)
+```
+
+## When to use
+
+- **Production deployments** -- durable, ACID-compliant storage with connection pooling.
+- **Multi-instance deployments** -- all application instances share the same database.
+- **Teams already using PostgreSQL** -- leverage existing infrastructure and expertise.

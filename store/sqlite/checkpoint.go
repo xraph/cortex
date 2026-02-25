@@ -1,8 +1,7 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -17,37 +16,43 @@ func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint)
 	cp.CreatedAt = now
 	cp.UpdatedAt = now
 	m := checkpointToModel(cp)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create checkpoint: %w", err)
+		return fmt.Errorf("cortex/sqlite: create checkpoint: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) {
 	m := new(checkpointModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", cpID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", cpID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrCheckpointNotFound
 		}
-		return nil, fmt.Errorf("cortex: get checkpoint: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get checkpoint: %w", err)
 	}
-	return checkpointFromModel(m), nil
+	return checkpointFromModel(m)
 }
 
 func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
-	decisionJSON, _ := json.Marshal(decision)
-	res, err := s.pgdb.NewUpdate((*checkpointModel)(nil)).
+	decisionJSON, marshalErr := json.Marshal(decision)
+	if marshalErr != nil {
+		return fmt.Errorf("cortex/sqlite: marshal decision: %w", marshalErr)
+	}
+	res, err := s.sdb.NewUpdate((*checkpointModel)(nil)).
 		Set("state = ?", "resolved").
 		Set("decision = ?", string(decisionJSON)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", cpID.String()).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: resolve checkpoint: %w", err)
+		return fmt.Errorf("cortex/sqlite: resolve checkpoint: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: resolve checkpoint rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrCheckpointNotFound
 	}
@@ -56,7 +61,7 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 
 func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) {
 	var models []checkpointModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.sdb.NewSelect(&models).
 		Where("state = ?", "pending").
 		OrderExpr("created_at ASC")
 	if filter != nil {
@@ -74,11 +79,15 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 		}
 	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: list pending checkpoints: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list pending checkpoints: %w", err)
 	}
 	result := make([]*checkpoint.Checkpoint, len(models))
 	for i := range models {
-		result[i] = checkpointFromModel(&models[i])
+		cp, convErr := checkpointFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = cp
 	}
 	return result, nil
 }

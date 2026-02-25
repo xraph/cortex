@@ -1,4 +1,4 @@
-package postgres
+package sqlite
 
 import (
 	"context"
@@ -17,16 +17,16 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, tenant
 	for i, msg := range messages {
 		models[i] = *messageToModel(agentID.String(), tenantID, msg)
 	}
-	_, err := s.pgdb.NewInsert(&models).Exec(ctx)
+	_, err := s.sdb.NewInsert(&models).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: save conversation: %w", err)
+		return fmt.Errorf("cortex/sqlite: save conversation: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) {
 	var models []memoryModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.sdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
 		Where("tenant_id = ?", tenantID).
 		Where("kind = ?", "conversation").
@@ -35,7 +35,7 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenant
 		q = q.Limit(limit)
 	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: load conversation: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: load conversation: %w", err)
 	}
 	messages := make([]memory.Message, 0, len(models))
 	for _, m := range models {
@@ -48,13 +48,13 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenant
 }
 
 func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error {
-	_, err := s.pgdb.NewDelete((*memoryModel)(nil)).
+	_, err := s.sdb.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", agentID.String()).
 		Where("tenant_id = ?", tenantID).
 		Where("kind = ?", "conversation").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: clear conversation: %w", err)
+		return fmt.Errorf("cortex/sqlite: clear conversation: %w", err)
 	}
 	return nil
 }
@@ -66,66 +66,68 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 		Key:     key,
 		Content: mustJSON(value),
 	}
-	_, err := s.pgdb.NewInsert(m).
+	_, err := s.sdb.NewInsert(m).
 		OnConflict("(agent_id, kind, key) DO UPDATE").
 		Set("content = EXCLUDED.content").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: save working memory: %w", err)
+		return fmt.Errorf("cortex/sqlite: save working memory: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) {
 	m := new(memoryModel)
-	err := s.pgdb.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("agent_id = ?", runID.String()).
 		Where("kind = ?", "working").
-		Where(`"key" = ?`, key).
+		Where("\"key\" = ?", key).
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("cortex: load working memory: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: load working memory: %w", err)
 	}
 	var v any
-	_ = json.Unmarshal([]byte(m.Content), &v)
+	if err := json.Unmarshal([]byte(m.Content), &v); err != nil {
+		return nil, fmt.Errorf("cortex/sqlite: unmarshal working memory: %w", err)
+	}
 	return v, nil
 }
 
 func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
-	_, err := s.pgdb.NewDelete((*memoryModel)(nil)).
+	_, err := s.sdb.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", runID.String()).
 		Where("kind = ?", "working").
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: clear working memory: %w", err)
+		return fmt.Errorf("cortex/sqlite: clear working memory: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error {
+func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, summary string) error {
 	m := &memoryModel{
 		AgentID:  agentID.String(),
 		TenantID: tenantID,
 		Kind:     "summary",
 		Content:  summary,
 	}
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: save summary: %w", err)
+		return fmt.Errorf("cortex/sqlite: save summary: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error) {
 	var models []memoryModel
-	err := s.pgdb.NewSelect(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
 		Where("tenant_id = ?", tenantID).
 		Where("kind = ?", "summary").
 		OrderExpr("created_at ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("cortex: load summaries: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: load summaries: %w", err)
 	}
 	summaries := make([]string, len(models))
 	for i, m := range models {

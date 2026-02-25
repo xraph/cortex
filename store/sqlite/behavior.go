@@ -1,8 +1,7 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -16,48 +15,51 @@ func (s *Store) CreateBehavior(ctx context.Context, b *behavior.Behavior) error 
 	b.CreatedAt = now
 	b.UpdatedAt = now
 	m := behaviorToModel(b)
-	_, err := s.pgdb.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: create behavior: %w", err)
+		return fmt.Errorf("cortex/sqlite: create behavior: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) {
 	m := new(behaviorModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", behaviorID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", behaviorID.String()).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrBehaviorNotFound
 		}
-		return nil, fmt.Errorf("cortex: get behavior: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get behavior: %w", err)
 	}
-	return behaviorFromModel(m), nil
+	return behaviorFromModel(m)
 }
 
 func (s *Store) GetBehaviorByName(ctx context.Context, appID, name string) (*behavior.Behavior, error) {
 	m := new(behaviorModel)
-	err := s.pgdb.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if isNoRows(err) {
 			return nil, cortex.ErrBehaviorNotFound
 		}
-		return nil, fmt.Errorf("cortex: get behavior by name: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: get behavior by name: %w", err)
 	}
-	return behaviorFromModel(m), nil
+	return behaviorFromModel(m)
 }
 
 func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error {
 	b.UpdatedAt = time.Now().UTC()
 	m := behaviorToModel(b)
-	res, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: update behavior: %w", err)
+		return fmt.Errorf("cortex/sqlite: update behavior: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: update behavior rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrBehaviorNotFound
 	}
@@ -65,13 +67,16 @@ func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error 
 }
 
 func (s *Store) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error {
-	res, err := s.pgdb.NewDelete((*behaviorModel)(nil)).
+	res, err := s.sdb.NewDelete((*behaviorModel)(nil)).
 		Where("id = ?", behaviorID.String()).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex: delete behavior: %w", err)
+		return fmt.Errorf("cortex/sqlite: delete behavior: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("cortex/sqlite: delete behavior rows affected: %w", rowsErr)
+	}
 	if n == 0 {
 		return cortex.ErrBehaviorNotFound
 	}
@@ -80,7 +85,7 @@ func (s *Store) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) er
 
 func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) {
 	var models []behaviorModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
@@ -93,11 +98,15 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 		}
 	}
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: list behaviors: %w", err)
+		return nil, fmt.Errorf("cortex/sqlite: list behaviors: %w", err)
 	}
 	result := make([]*behavior.Behavior, len(models))
 	for i := range models {
-		result[i] = behaviorFromModel(&models[i])
+		b, convErr := behaviorFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = b
 	}
 	return result, nil
 }

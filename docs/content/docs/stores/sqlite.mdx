@@ -1,0 +1,83 @@
+---
+title: SQLite Store
+description: Lightweight SQLite backend using Grove ORM with sqlitedriver.
+---
+
+The SQLite store (`store/sqlite`) provides a lightweight, embedded backend using the [Grove ORM](https://github.com/xraph/grove) with `sqlitedriver`. It implements the full `store.Store` composite interface and is well-suited for single-process deployments, local development, and testing.
+
+## Setup
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/cortex/store/sqlite"
+)
+
+// Open a SQLite connection via Grove's sqlitedriver.
+db := grove.Open(sqlitedriver.New("cortex.db"))
+
+s := sqlite.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove ORM with `sqlitedriver` (SQLite) |
+| Migrations | Grove migration orchestrator with programmatic migrations |
+| Transactions | Database-level transactions via SQLite |
+
+## Tables
+
+The SQLite store creates the same tables as the PostgreSQL store:
+
+| Table | Entity |
+|-------|--------|
+| `cortex_agents` | Agent configs |
+| `cortex_skills` | Skills |
+| `cortex_traits` | Traits |
+| `cortex_behaviors` | Behaviors |
+| `cortex_personas` | Personas |
+| `cortex_runs` | Runs |
+| `cortex_steps` | Steps |
+| `cortex_tool_calls` | Tool calls |
+
+## Composite store interface
+
+The SQLite store implements all 8 sub-interfaces:
+
+```go
+type Store interface {
+    agent.Store
+    skill.Store
+    trait.Store
+    behavior.Store
+    persona.Store
+    run.Store
+    memory.Store
+    checkpoint.Store
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
+}
+```
+
+## Usage with engine
+
+```go
+eng, err := engine.New(
+    engine.WithStore(s),
+)
+```
+
+## When to use
+
+- **Local development** -- single-file database, no server process required.
+- **Testing** -- fast, isolated store with no external dependencies.
+- **Embedded / single-process** -- CLI tools, desktop apps, or edge deployments.
+- **CI pipelines** -- deterministic tests without a database container.

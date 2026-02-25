@@ -1,0 +1,86 @@
+---
+title: MongoDB Store
+description: Document store using Grove ORM with mongodriver for MongoDB.
+---
+
+The MongoDB store (`store/mongo`) provides a document-oriented backend using the [Grove ORM](https://github.com/xraph/grove) with `mongodriver`. It stores Cortex entities in 10 MongoDB collections with compound indexes for efficient queries scoped by app and tenant.
+
+## Setup
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/mongodriver"
+    "github.com/xraph/cortex/store/mongo"
+)
+
+// Open a MongoDB connection via Grove's mongodriver.
+db := grove.Open(mongodriver.New(
+    mongodriver.WithURI("mongodb://localhost:27017"),
+    mongodriver.WithDatabase("cortex"),
+))
+
+s := mongo.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | Grove ORM with `mongodriver` (MongoDB) |
+| Migrations | Creates compound and unique indexes on all collections |
+| Transactions | Individual operations are atomic; multi-document transactions require explicit sessions |
+
+## Collections
+
+| Collection | Entity |
+|------------|--------|
+| `cortex_agents` | Agent configs |
+| `cortex_skills` | Skills |
+| `cortex_traits` | Traits |
+| `cortex_behaviors` | Behaviors |
+| `cortex_personas` | Personas |
+| `cortex_runs` | Runs |
+| `cortex_steps` | Steps |
+| `cortex_tool_calls` | Tool calls |
+| `cortex_memories` | Memories |
+| `cortex_checkpoints` | Checkpoints |
+
+## Composite store interface
+
+The MongoDB store implements all 8 sub-interfaces:
+
+```go
+type Store interface {
+    agent.Store
+    skill.Store
+    trait.Store
+    behavior.Store
+    persona.Store
+    run.Store
+    memory.Store
+    checkpoint.Store
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
+}
+```
+
+## Usage with engine
+
+```go
+eng, err := engine.New(
+    engine.WithStore(s),
+)
+```
+
+## When to use
+
+- **Document-oriented workloads** -- flexible schemas that evolve with your application.
+- **Horizontal scaling** -- MongoDB sharding for large-scale deployments.
+- **Cloud-native** -- MongoDB Atlas for fully managed deployments.
+- **Teams familiar with MongoDB** -- leverage existing document database expertise.
