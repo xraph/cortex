@@ -1,0 +1,81 @@
+package pages
+
+import (
+	"strconv"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+)
+
+templ KnowledgeDetailPage(stats *shared.KnowledgeCollectionStats) {
+	<div class="space-y-6">
+		@components.PageHeader(stats.Name, "", "Knowledge collection details") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/knowledge",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+		}
+		<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			@components.StatCard("file-text", "Documents", strconv.FormatInt(stats.DocumentCount, 10), "In collection")
+			@components.StatCard("puzzle", "Chunks", strconv.FormatInt(stats.ChunkCount, 10), "Total chunks")
+			@components.StatCard("sparkles", "Embedding Model", knowledgeModelLabel(stats.EmbeddingModel), "")
+			@components.StatCard("scissors", "Chunk Strategy", knowledgeStrategyLabel(stats.ChunkStrategy), "")
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Collection Information }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+						<dt class="text-muted-foreground">Collection ID</dt>
+						<dd><code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ stats.ID }</code></dd>
+						<dt class="text-muted-foreground">Name</dt>
+						<dd class="font-medium">{ stats.Name }</dd>
+						<dt class="text-muted-foreground">Documents</dt>
+						<dd class="font-medium">{ strconv.FormatInt(stats.DocumentCount, 10) }</dd>
+						<dt class="text-muted-foreground">Chunks</dt>
+						<dd class="font-medium">{ strconv.FormatInt(stats.ChunkCount, 10) }</dd>
+						if stats.EmbeddingModel != "" {
+							<dt class="text-muted-foreground">Embedding Model</dt>
+							<dd>
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ stats.EmbeddingModel }
+								}
+							</dd>
+						}
+						if stats.ChunkStrategy != "" {
+							<dt class="text-muted-foreground">Chunk Strategy</dt>
+							<dd>
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+									{ stats.ChunkStrategy }
+								}
+							</dd>
+						}
+					</dl>
+				}
+			}
+		</div>
+	</div>
+}
+
+func knowledgeModelLabel(model string) string {
+	if model == "" {
+		return "-"
+	}
+	return model
+}
+
+func knowledgeStrategyLabel(strategy string) string {
+	if strategy == "" {
+		return "-"
+	}
+	return strategy
+}

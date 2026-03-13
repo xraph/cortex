@@ -58,16 +58,38 @@ type DeleteAgentRequest struct {
 
 // ── Run requests ──────────────────────────────────────
 
+// AgentOverrides allows overriding agent configuration for a single run.
+type AgentOverrides struct {
+	Model           string   `json:"model,omitempty" description:"Override LLM model"`
+	Temperature     *float64 `json:"temperature,omitempty" description:"Override temperature"`
+	MaxSteps        int      `json:"max_steps,omitempty" description:"Override max steps"`
+	MaxTokens       int      `json:"max_tokens,omitempty" description:"Override max tokens"`
+	ReasoningLoop   string   `json:"reasoning_loop,omitempty" description:"Override reasoning loop"`
+	SystemPrompt    string   `json:"system_prompt,omitempty" description:"Override system prompt"`
+	PersonaRef      string   `json:"persona_ref,omitempty" description:"Override persona reference"`
+	InlineSkills    []string `json:"inline_skills,omitempty" description:"Override inline skills"`
+	InlineTraits    []string `json:"inline_traits,omitempty" description:"Override inline traits"`
+	InlineBehaviors []string `json:"inline_behaviors,omitempty" description:"Override inline behaviors"`
+	Tools           []string `json:"tools,omitempty" description:"Override tool list"`
+}
+
 // RunAgentRequest is the request body for running an agent.
 type RunAgentRequest struct {
-	Name  string `path:"name" description:"Agent name"`
-	Input string `json:"input" description:"User input"`
+	Name      string          `path:"name" description:"Agent name"`
+	Input     string          `json:"input" description:"User input"`
+	Overrides *AgentOverrides `json:"overrides,omitempty" description:"Configuration overrides"`
 }
 
 // StreamAgentRequest is the request body for streaming an agent run.
 type StreamAgentRequest struct {
-	Name  string `path:"name" description:"Agent name"`
-	Input string `json:"input" description:"User input"`
+	Name      string          `path:"name" description:"Agent name"`
+	Input     string          `json:"input" description:"User input"`
+	Overrides *AgentOverrides `json:"overrides,omitempty" description:"Configuration overrides"`
+}
+
+// PreviewPromptRequest is the request for previewing the computed system prompt.
+type PreviewPromptRequest struct {
+	Name string `path:"name" description:"Agent name"`
 }
 
 // GetRunRequest is the request for getting a run by ID.

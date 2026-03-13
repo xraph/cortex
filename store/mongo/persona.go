@@ -102,8 +102,14 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 	var models []personaModel
 
 	f := bson.M{}
-	if filter != nil && filter.AppID != "" {
-		f["app_id"] = filter.AppID
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -134,4 +140,27 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 	}
 
 	return result, nil
+}
+
+// CountPersonas returns the total number of personas matching the filter.
+func (s *Store) CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error) {
+	f := bson.M{}
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
+	}
+
+	count, err := s.mdb.NewFind((*personaModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count personas: %w", err)
+	}
+
+	return count, nil
 }

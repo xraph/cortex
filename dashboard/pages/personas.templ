@@ -1,0 +1,127 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ PersonasPage(personas []*persona.Persona, search string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Personas", fmt.Sprintf("%d", pg.Total), "Manage agent identity templates") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/personas/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Persona
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search personas...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/personas",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(personas) == 0 {
+			@components.EmptyState("user-circle", "No personas found", "Create your first persona to define an agent identity")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Description }
+						@table.Head() { Skills }
+						@table.Head() { Traits }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, p := range personas {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/personas/detail?name=" + p.Name }
+									hx-target="#content">
+									{ p.Name }
+								</a>
+							}
+							@table.Cell() {
+								if p.Description != "" {
+									<span class="text-sm text-muted-foreground">{ p.Description }</span>
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(p.Skills)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(p.Traits)) }
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/personas/detail?name=" + p.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/personas/edit?name=" + p.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-persona-row-%s')", p.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-persona-row-" + p.Name,
+										Title:        "Delete Persona",
+										Description:  "Are you sure you want to delete persona \"" + p.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/cortex/personas/" + p.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/personas?search=" + search)
+		}
+		@components.DialogHelpers()
+	</div>
+}

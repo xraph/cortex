@@ -92,6 +92,9 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
 		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -111,4 +114,21 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 		result[i] = b
 	}
 	return result, nil
+}
+
+func (s *Store) CountBehaviors(ctx context.Context, filter *behavior.ListFilter) (int64, error) {
+	q := s.pgdb.NewSelect((*behaviorModel)(nil))
+	if filter != nil {
+		if filter.AppID != "" {
+			q = q.Where("app_id = ?", filter.AppID)
+		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex: count behaviors: %w", err)
+	}
+	return count, nil
 }

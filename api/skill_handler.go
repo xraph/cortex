@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerSkillRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("skills"))
+	g := router.Group("", forge.WithGroupTags("skills"))
 
 	if err := g.POST("/skills", a.createSkill,
 		forge.WithSummary("Create skill"),
@@ -119,7 +119,7 @@ func (a *API) getSkill(ctx forge.Context, _ *GetSkillRequest) (*skill.Skill, err
 	return s, ctx.JSON(http.StatusOK, s)
 }
 
-func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) ([]*skill.Skill, error) {
+func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) (*ListSkillsResponse, error) {
 	skills, err := a.eng.ListSkills(ctx.Context(), &skill.ListFilter{
 		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
@@ -128,7 +128,8 @@ func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) ([]*skill.Sk
 	if err != nil {
 		return nil, fmt.Errorf("list skills: %w", err)
 	}
-	return skills, ctx.JSON(http.StatusOK, skills)
+	resp := &ListSkillsResponse{Items: skills}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) updateSkill(ctx forge.Context, req *UpdateSkillRequest) (*skill.Skill, error) {

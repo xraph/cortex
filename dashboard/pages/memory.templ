@@ -1,0 +1,166 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+)
+
+templ MemoryPage(agents []*agent.Config, selectedAgent string, messages []memory.Message) {
+	<div class="space-y-6">
+		@components.PageHeader("Memory", "", "View agent conversation memory") {
+			if selectedAgent != "" && len(messages) > 0 {
+				@button.Button(button.Props{
+					Variant: button.VariantDestructive,
+					Attributes: templ.Attributes{
+						"onclick": fmt.Sprintf("tuiOpenDialog('clear-memory-%s')", selectedAgent),
+					},
+				}) {
+					Clear Memory
+				}
+			}
+		}
+		<div class="flex gap-4 items-center">
+			<select name="agent" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[200px]"
+				hx-get="/memory"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="this">
+				<option value="">Select an agent...</option>
+				for _, a := range agents {
+					<option value={ a.ID.String() } selected?={ selectedAgent == a.ID.String() }>{ a.Name }</option>
+				}
+			</select>
+			if selectedAgent != "" && len(messages) > 0 {
+				{{ roleCounts := countRoles(messages) }}
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.Itoa(len(messages)) + " messages" }
+				}
+				if roleCounts["user"] > 0 {
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+						{ strconv.Itoa(roleCounts["user"]) + " user" }
+					}
+				}
+				if roleCounts["assistant"] > 0 {
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+						{ strconv.Itoa(roleCounts["assistant"]) + " assistant" }
+					}
+				}
+				if roleCounts["system"] > 0 {
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+						{ strconv.Itoa(roleCounts["system"]) + " system" }
+					}
+				}
+				if roleCounts["tool"] > 0 {
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+						{ strconv.Itoa(roleCounts["tool"]) + " tool" }
+					}
+				}
+			}
+		</div>
+		if selectedAgent == "" {
+			@components.EmptyState("database", "Select an agent", "Choose an agent to view its conversation memory")
+		} else if len(messages) == 0 {
+			@components.EmptyState("database", "No messages", "No conversation history found for this agent")
+		} else {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Conversation History }
+					@card.Description() { Messages for agent: { selectedAgent } }
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						for _, msg := range messages {
+							<div class={ "rounded-lg p-4", messageContainerClass(msg.Role) }>
+								<div class="flex items-center justify-between mb-2">
+									<div class="flex items-center gap-2">
+										@roleBadge(msg.Role)
+									</div>
+									{{ ts := msg.Timestamp.Format("Jan 02 15:04:05") }}
+									<span class="text-xs text-muted-foreground">{ ts }</span>
+								</div>
+								<div class="text-sm whitespace-pre-wrap">{ msg.Content }</div>
+							</div>
+						}
+					</div>
+				}
+			}
+		}
+		if selectedAgent != "" {
+			@clearMemoryDialog(selectedAgent, agents)
+		}
+		@components.DialogHelpers()
+		{ children... }
+	</div>
+}
+
+templ clearMemoryDialog(agentID string, agents []*agent.Config) {
+	{{ agentName := agentID }}
+	for _, a := range agents {
+		if a.ID.String() == agentID {
+			{{ agentName = a.Name }}
+		}
+	}
+	@components.ConfirmDialog(components.ConfirmDialogProps{
+		ID:           "clear-memory-" + agentID,
+		Title:        "Clear Memory",
+		Description:  "Are you sure you want to clear all conversation memory for agent \"" + agentName + "\"? This action cannot be undone.",
+		ConfirmLabel: "Clear",
+		HxEndpoint:   "/cortex/agents/" + agentName + "/memory",
+		HxMethod:     "delete",
+	})
+}
+
+templ roleBadge(role string) {
+	switch role {
+		case "user":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				User
+			}
+		case "assistant":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Assistant
+			}
+		case "system":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				System
+			}
+		case "tool":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Tool
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ role }
+			}
+	}
+}
+
+func messageContainerClass(role string) string {
+	switch role {
+	case "user":
+		return "bg-muted/50 border border-border"
+	case "assistant":
+		return "bg-primary/5 border border-primary/20"
+	case "system":
+		return "bg-muted border border-border"
+	case "tool":
+		return "bg-muted/30 border border-border"
+	default:
+		return "bg-muted/50 border border-border"
+	}
+}
+
+func countRoles(messages []memory.Message) map[string]int {
+	counts := make(map[string]int)
+	for _, msg := range messages {
+		counts[msg.Role]++
+	}
+	return counts
+}

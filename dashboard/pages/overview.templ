@@ -1,0 +1,134 @@
+package pages
+
+import (
+	"strconv"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/button"
+)
+
+templ OverviewPage(agents, personas, skills, traits, behaviors, runs, checkpoints int64, recentRuns []*run.Run, pendingCPs []*checkpoint.Checkpoint, agentNames map[string]string) {
+	<div class="space-y-8">
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Overview</h1>
+			<p class="text-muted-foreground mt-1">Cortex agent orchestration dashboard</p>
+		</div>
+		<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			@components.StatCard("bot", "Agents", strconv.FormatInt(agents, 10), "Configured agents")
+			@components.StatCard("user-circle", "Personas", strconv.FormatInt(personas, 10), "Identity templates")
+			@components.StatCard("wrench", "Skills", strconv.FormatInt(skills, 10), "Capabilities")
+			@components.StatCard("brain", "Traits", strconv.FormatInt(traits, 10), "Personality dims")
+			@components.StatCard("zap", "Behaviors", strconv.FormatInt(behaviors, 10), "Action patterns")
+			@components.StatCard("play", "Runs", strconv.FormatInt(runs, 10), "Agent runs")
+			@components.StatCard("shield-check", "Checkpoints", strconv.FormatInt(checkpoints, 10), "Pending reviews")
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Recent Runs }
+					@card.Description() { Last 10 agent runs }
+				}
+				@card.Content() {
+					if len(recentRuns) == 0 {
+						@components.EmptyState("play", "No runs yet", "Agent runs will appear here")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Agent }
+									@table.Head() { State }
+									@table.Head() { Steps }
+									@table.Head() { Created }
+								}
+							}
+							@table.Body() {
+								for _, r := range recentRuns {
+									{{ name := lookupAgentName(r.AgentID.String(), agentNames) }}
+									@table.Row() {
+										@table.Cell() {
+											<a class="text-sm font-medium hover:underline cursor-pointer"
+												hx-get={ "/agents/detail?name=" + name }
+												hx-target="#content">
+												{ name }
+											</a>
+										}
+										@table.Cell() {
+											@components.StateBadge(string(r.State))
+										}
+										@table.Cell() {
+											{ strconv.Itoa(r.StepCount) }
+										}
+										@table.Cell() {
+											{{ created := r.CreatedAt.Format("Jan 02 15:04") }}
+											<span class="text-xs text-muted-foreground">{ created }</span>
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Pending Checkpoints }
+					@card.Description() { Awaiting human review }
+				}
+				@card.Content() {
+					if len(pendingCPs) == 0 {
+						@components.EmptyState("shield-check", "No pending checkpoints", "All clear")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Reason }
+									@table.Head() { Run }
+									@table.Head() { Step }
+									@table.Head() { Action }
+								}
+							}
+							@table.Body() {
+								for _, cp := range pendingCPs {
+									@table.Row() {
+										@table.Cell() {
+											<span class="text-sm">{ cp.Reason }</span>
+										}
+										@table.Cell() {
+											<code class="text-xs bg-muted px-1 py-0.5 rounded">{ cp.RunID.String() }</code>
+										}
+										@table.Cell() {
+											{ strconv.Itoa(cp.StepIndex) }
+										}
+										@table.Cell() {
+											@button.Button(button.Props{
+												Variant: button.VariantOutline,
+												Size:    button.SizeSm,
+												Attributes: templ.Attributes{
+													"hx-get":    "/checkpoints/detail?id=" + cp.ID.String(),
+													"hx-target": "#content",
+												},
+											}) {
+												Review
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		{ children... }
+	</div>
+}
+
+func lookupAgentName(agentIDStr string, nameMap map[string]string) string {
+	if name, ok := nameMap[agentIDStr]; ok {
+		return name
+	}
+	return agentIDStr
+}

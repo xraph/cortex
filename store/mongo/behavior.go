@@ -102,8 +102,14 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 	var models []behaviorModel
 
 	f := bson.M{}
-	if filter != nil && filter.AppID != "" {
-		f["app_id"] = filter.AppID
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -134,4 +140,27 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 	}
 
 	return result, nil
+}
+
+// CountBehaviors returns the total number of behaviors matching the filter.
+func (s *Store) CountBehaviors(ctx context.Context, filter *behavior.ListFilter) (int64, error) {
+	f := bson.M{}
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
+	}
+
+	count, err := s.mdb.NewFind((*behaviorModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count behaviors: %w", err)
+	}
+
+	return count, nil
 }

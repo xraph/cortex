@@ -1,0 +1,15 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/cortex/dashboard/components"
+)
+
+templ KnowledgeStatsWidget(collections, documents, chunks int64) {
+	<div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+		@components.StatCard("book-open", "Collections", strconv.FormatInt(collections, 10), "Knowledge bases")
+		@components.StatCard("file-text", "Documents", strconv.FormatInt(documents, 10), "Total documents")
+		@components.StatCard("puzzle", "Chunks", strconv.FormatInt(chunks, 10), "Total chunks")
+	</div>
+}

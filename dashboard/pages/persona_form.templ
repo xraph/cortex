@@ -1,0 +1,453 @@
+package pages
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	switchcomp "github.com/xraph/forgeui/components/switch"
+	"github.com/xraph/forgeui/components/form"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ PersonaFormPage(p *persona.Persona, skills []*skill.Skill, traits []*trait.Trait, behaviors []*behavior.Behavior) {
+	{{ isEdit := p != nil }}
+	{{ title := "Create Persona" }}
+	if isEdit {
+		{{ title = "Edit Persona: " + p.Name }}
+	}
+	<div
+		class="space-y-6"
+		x-data={ personaFormAlpineData(p) }
+	>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/personas",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				<span x-show="!submitting">
+					if isEdit {
+						Save Changes
+					} else {
+						Create Persona
+					}
+				</span>
+				<span x-show="submitting">Saving...</span>
+			}
+		}
+
+		<div x-show="error" x-cloak class="p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Basic Information }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "persona-name"}) { Name }
+						@input.Input(input.Props{
+							ID: "persona-name",
+							Attributes: templ.Attributes{
+								"x-model": "formData.name",
+								"required": "true",
+							},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "persona-desc"}) { Description }
+						@input.Input(input.Props{
+							ID: "persona-desc",
+							Attributes: templ.Attributes{"x-model": "formData.description"},
+						})
+					}
+				</div>
+			}
+		}
+
+		<!-- Identity -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Identity }
+			}
+			@card.Content() {
+				<div class="space-y-2">
+					@textarea.Textarea(textarea.Props{
+						ID: "persona-identity", Class: "font-mono min-h-32",
+						Attributes: templ.Attributes{"x-model": "formData.identity", "required": "true"},
+					})
+					<p class="text-xs text-muted-foreground">Describe who this persona is. This forms the core of the agent's self-concept.</p>
+				</div>
+			}
+		}
+
+		<!-- Skills -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Skills }
+						@card.Description() { Assign skills with proficiency levels. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.skills.push({skill_name:'',proficiency:'competent'})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Skill</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(sa, i) in formData.skills" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Skill Name</label>
+								if len(skills) > 0 {
+									<select x-model="sa.skill_name"
+										class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+										<option value="">Select skill...</option>
+										for _, sk := range skills {
+											<option value={ sk.Name }>{ sk.Name }</option>
+										}
+									</select>
+								} else {
+									<input x-model="sa.skill_name" placeholder="skill-name"
+										class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+								}
+							</div>
+							<div class="w-40">
+								<label class="text-xs text-muted-foreground">Proficiency</label>
+								<select x-model="sa.proficiency"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="novice">Novice</option>
+									<option value="apprentice">Apprentice</option>
+									<option value="competent">Competent</option>
+									<option value="proficient">Proficient</option>
+									<option value="expert">Expert</option>
+								</select>
+							</div>
+							<button type="button" @click="formData.skills.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.skills.length === 0" class="text-sm text-muted-foreground text-center py-2">No skills assigned.</p>
+				</div>
+			}
+		}
+
+		<!-- Traits -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Traits }
+						@card.Description() { Assign traits to this persona. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.traits.push({trait_name:''})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Trait</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(ta, i) in formData.traits" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Trait Name</label>
+								if len(traits) > 0 {
+									<select x-model="ta.trait_name"
+										class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+										<option value="">Select trait...</option>
+										for _, tr := range traits {
+											<option value={ tr.Name }>{ tr.Name }</option>
+										}
+									</select>
+								} else {
+									<input x-model="ta.trait_name" placeholder="trait-name"
+										class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+								}
+							</div>
+							<button type="button" @click="formData.traits.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.traits.length === 0" class="text-sm text-muted-foreground text-center py-2">No traits assigned.</p>
+				</div>
+			}
+		}
+
+		<!-- Behaviors -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Behaviors }
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<p class="text-sm text-muted-foreground">Select behaviors to assign to this persona.</p>
+					if len(behaviors) == 0 {
+						<p class="text-sm text-muted-foreground">No behaviors available. Create behaviors first.</p>
+					} else {
+						<div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+							for _, bh := range behaviors {
+								<label class="flex items-center gap-2 p-3 border rounded-md hover:bg-muted cursor-pointer">
+									<input type="checkbox" :checked={ "formData.behaviors.includes('" + bh.Name + "')" }
+										@change={ "if($event.target.checked) { formData.behaviors.push('" + bh.Name + "') } else { formData.behaviors = formData.behaviors.filter(b => b !== '" + bh.Name + "') }" }
+										class="rounded"/>
+									<div>
+										<span class="text-sm font-medium">{ bh.Name }</span>
+										if bh.Description != "" {
+											<p class="text-xs text-muted-foreground">{ bh.Description }</p>
+										}
+									</div>
+								</label>
+							}
+						</div>
+					}
+				</div>
+			}
+		}
+
+		<!-- Cognitive Style (Collapsible) -->
+		@card.Card() {
+			@card.Header() {
+				<div x-data="{open: false}" class="w-full">
+					<button type="button" @click="open = !open" class="flex items-center justify-between w-full text-left">
+						<div>
+							@card.Title() { Cognitive Style }
+							@card.Description() { How this persona thinks and processes information. }
+						</div>
+						<span x-text="open ? '−' : '+'" class="text-xl text-muted-foreground"></span>
+					</button>
+					<div x-show="open" x-cloak class="mt-4 space-y-4">
+						<div class="grid grid-cols-3 gap-4">
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Depth Preference }
+								<input type="range" x-model.number="formData.cognitive_style.depth_preference"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.cognitive_style.depth_preference.toFixed(1)"></span>
+							}
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Focus Preference }
+								<input type="range" x-model.number="formData.cognitive_style.focus_preference"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.cognitive_style.focus_preference.toFixed(1)"></span>
+							}
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Reflection Frequency }
+								<input type="range" x-model.number="formData.cognitive_style.reflection_frequency"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.cognitive_style.reflection_frequency.toFixed(1)"></span>
+							}
+						</div>
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Communication Style (Collapsible) -->
+		@card.Card() {
+			@card.Header() {
+				<div x-data="{open: false}" class="w-full">
+					<button type="button" @click="open = !open" class="flex items-center justify-between w-full text-left">
+						<div>
+							@card.Title() { Communication Style }
+							@card.Description() { How this persona communicates. }
+						</div>
+						<span x-text="open ? '−' : '+'" class="text-xl text-muted-foreground"></span>
+					</button>
+					<div x-show="open" x-cloak class="mt-4 space-y-4">
+						<div class="grid grid-cols-2 gap-4">
+							@form.Item() {
+								@form.Label(form.LabelProps{For: "persona-tone"}) { Tone }
+								@input.Input(input.Props{
+									ID: "persona-tone", Placeholder: "e.g. friendly, professional",
+									Attributes: templ.Attributes{"x-model": "formData.communication_style.tone"},
+								})
+							}
+							@form.Item() {
+								@form.Label(form.LabelProps{For: "persona-format"}) { Preferred Format }
+								<select id="persona-format" x-model="formData.communication_style.preferred_format"
+									class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+									<option value="">Default</option>
+									<option value="markdown">Markdown</option>
+									<option value="plain">Plain</option>
+									<option value="html">HTML</option>
+									<option value="json">JSON</option>
+								</select>
+							}
+						</div>
+						<div class="grid grid-cols-3 gap-4">
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Formality }
+								<input type="range" x-model.number="formData.communication_style.formality"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.communication_style.formality.toFixed(1)"></span>
+							}
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Verbosity }
+								<input type="range" x-model.number="formData.communication_style.verbosity"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.communication_style.verbosity.toFixed(1)"></span>
+							}
+							@form.Item() {
+								@form.Label(form.LabelProps{}) { Technical Level }
+								<input type="range" x-model.number="formData.communication_style.technical_level"
+									min="0" max="1" step="0.1" class="w-full"/>
+								<span class="text-xs text-muted-foreground" x-text="formData.communication_style.technical_level.toFixed(1)"></span>
+							}
+						</div>
+						<div class="flex gap-6">
+							@form.ItemFlex() {
+								@form.Label(form.LabelProps{For: "persona-emoji"}) { Emoji Usage }
+								@switchcomp.Switch(switchcomp.Props{
+									ID: "persona-emoji",
+									Attributes: templ.Attributes{"x-model": "formData.communication_style.emoji_usage"},
+								})
+							}
+							@form.ItemFlex() {
+								@form.Label(form.LabelProps{For: "persona-adapt"}) { Adapt to User }
+								@switchcomp.Switch(switchcomp.Props{
+									ID: "persona-adapt",
+									Attributes: templ.Attributes{"x-model": "formData.communication_style.adapt_to_user"},
+								})
+							}
+						</div>
+					</div>
+				</div>
+			}
+		}
+	</div>
+}
+
+func personaFormAlpineData(p *persona.Persona) string {
+	if p == nil {
+		return `{
+			formData: {
+				name: '', description: '', identity: '',
+				skills: [], traits: [], behaviors: [],
+				cognitive_style: {depth_preference:0.5, focus_preference:0.5, reflection_frequency:0.3},
+				communication_style: {tone:'', formality:0.5, verbosity:0.5, technical_level:0.5, emoji_usage:false, preferred_format:'', adapt_to_user:true}
+			},
+			error: '',
+			submitting: false,
+			async submitForm() {
+				this.submitting = true;
+				this.error = '';
+				const data = {...this.formData};
+				data.skills = data.skills.filter(s => s.skill_name.trim() !== '');
+				data.traits = data.traits.filter(t => t.trait_name.trim() !== '');
+				try {
+					const resp = await fetch('/cortex/personas', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+					if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/personas', {target: '#content'}); }
+					else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to create persona'; }
+				} catch(e) { this.error = e.message; }
+				this.submitting = false;
+			}
+		}`
+	}
+
+	skillsJSON := buildSkillAssignmentsJSON(p.Skills)
+	traitsJSON := buildTraitAssignmentsJSON(p.Traits)
+	behaviorsJSON := buildBehaviorsArrayJSON(p.Behaviors)
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q, description: %q, identity: %q,
+			skills: %s, traits: %s, behaviors: %s,
+			cognitive_style: {depth_preference:%s, focus_preference:%s, reflection_frequency:%s},
+			communication_style: {tone:%q, formality:%s, verbosity:%s, technical_level:%s, emoji_usage:%v, preferred_format:%q, adapt_to_user:%v}
+		},
+		error: '',
+		submitting: false,
+		async submitForm() {
+			this.submitting = true;
+			this.error = '';
+			const data = {...this.formData};
+			data.skills = data.skills.filter(s => s.skill_name.trim() !== '');
+			data.traits = data.traits.filter(t => t.trait_name.trim() !== '');
+			try {
+				const resp = await fetch('/cortex/personas/%s', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+				if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/personas/detail?name=%s', {target: '#content'}); }
+				else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to update persona'; }
+			} catch(e) { this.error = e.message; }
+			this.submitting = false;
+		}
+	}`,
+		p.Name, p.Description, p.Identity,
+		skillsJSON, traitsJSON, behaviorsJSON,
+		fmt.Sprintf("%.1f", p.CognitiveStyle.DepthPreference),
+		fmt.Sprintf("%.1f", p.CognitiveStyle.FocusPreference),
+		fmt.Sprintf("%.1f", p.CognitiveStyle.ReflectionFrequency),
+		p.CommunicationStyle.Tone,
+		fmt.Sprintf("%.1f", p.CommunicationStyle.Formality),
+		fmt.Sprintf("%.1f", p.CommunicationStyle.Verbosity),
+		fmt.Sprintf("%.1f", p.CommunicationStyle.TechnicalLevel),
+		p.CommunicationStyle.EmojiUsage,
+		p.CommunicationStyle.PreferredFormat,
+		p.CommunicationStyle.AdaptToUser,
+		p.Name, p.Name,
+	)
+}
+
+func buildSkillAssignmentsJSON(skills []persona.SkillAssignment) string {
+	if len(skills) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(skills))
+	for _, sa := range skills {
+		parts = append(parts, fmt.Sprintf(`{"skill_name":%q,"proficiency":%q}`, sa.SkillName, string(sa.Proficiency)))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func buildTraitAssignmentsJSON(traits []persona.TraitAssignment) string {
+	if len(traits) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(traits))
+	for _, ta := range traits {
+		parts = append(parts, fmt.Sprintf(`{"trait_name":%q}`, ta.TraitName))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func buildBehaviorsArrayJSON(behaviors []string) string {
+	if len(behaviors) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(behaviors))
+	for _, b := range behaviors {
+		parts = append(parts, fmt.Sprintf("%q", b))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}

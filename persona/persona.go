@@ -53,11 +53,13 @@ type Store interface {
 	UpdatePersona(ctx context.Context, persona *Persona) error
 	DeletePersona(ctx context.Context, personaID id.PersonaID) error
 	ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
+	CountPersonas(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination for persona listing.
+// ListFilter controls pagination and filtering for persona listing.
 type ListFilter struct {
 	AppID  string
+	Search string
 	Limit  int
 	Offset int
 }

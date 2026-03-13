@@ -1,0 +1,172 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/icons"
+)
+
+// ChatMessageBubble renders a single chat message with role-based styling.
+templ ChatMessageBubble(role string, content string, timestamp string) {
+	<div class={ chatBubbleContainerClass(role) }>
+		<div class={ chatBubbleClass(role) }>
+			<div class="flex items-center gap-2 mb-1">
+				@chatRoleBadge(role)
+				if timestamp != "" {
+					<span class="text-xs text-muted-foreground ml-auto">{ timestamp }</span>
+				}
+			</div>
+			<div class="text-sm whitespace-pre-wrap leading-relaxed">{ content }</div>
+		</div>
+	</div>
+}
+
+// ChatToolCallCard renders an inline collapsible tool call card.
+templ ChatToolCallCard(toolName string, arguments string, result string, toolError string) {
+	<div class="mx-4 my-2" x-data="{expanded: false}">
+		<div class="border border-border rounded-lg overflow-hidden bg-muted/30">
+			<button type="button" @click="expanded = !expanded"
+				class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 transition-colors">
+				<span class="text-muted-foreground">
+					@icons.Wrench(icons.WithSize(14))
+				</span>
+				<span class="font-medium">{ toolName }</span>
+				if toolError != "" {
+					@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+						Error
+					}
+				} else {
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						OK
+					}
+				}
+				<span class="ml-auto text-muted-foreground transition-transform" :class="expanded ? 'rotate-180' : ''">
+					@icons.ChevronDown(icons.WithSize(14))
+				</span>
+			</button>
+			<div x-show="expanded" x-cloak class="border-t border-border">
+				if arguments != "" {
+					<div class="px-3 py-2">
+						<p class="text-xs font-medium text-muted-foreground mb-1">Arguments</p>
+						<pre class="text-xs bg-muted p-2 rounded overflow-x-auto">{ arguments }</pre>
+					</div>
+				}
+				if result != "" {
+					<div class="px-3 py-2 border-t border-border">
+						<p class="text-xs font-medium text-muted-foreground mb-1">Result</p>
+						<pre class="text-xs bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">{ result }</pre>
+					</div>
+				}
+				if toolError != "" {
+					<div class="px-3 py-2 border-t border-border">
+						<p class="text-xs font-medium text-destructive mb-1">Error</p>
+						<pre class="text-xs bg-destructive/10 text-destructive p-2 rounded overflow-x-auto">{ toolError }</pre>
+					</div>
+				}
+			</div>
+		</div>
+	</div>
+}
+
+// ChatThinkingDots renders an animated thinking indicator.
+templ ChatThinkingDots() {
+	<div class="flex justify-start px-4 py-2">
+		<div class="bg-primary/5 border border-primary/20 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]">
+			<div class="flex items-center gap-2">
+				@chatRoleBadge("assistant")
+			</div>
+			<div class="flex items-center gap-1 mt-2">
+				<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+				<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+				<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+			</div>
+		</div>
+	</div>
+}
+
+// ChatCheckpointCard renders an inline checkpoint approval card.
+templ ChatCheckpointCard(reason string, checkpointID string) {
+	<div class="mx-4 my-2">
+		<div class="border-2 border-yellow-500/50 bg-yellow-50/10 rounded-lg p-4">
+			<div class="flex items-center gap-2 mb-2">
+				@icons.ShieldCheck(icons.WithSize(16))
+				<span class="font-medium text-sm">Checkpoint</span>
+			</div>
+			<p class="text-sm text-muted-foreground mb-3">{ reason }</p>
+			<div class="flex gap-2">
+				@button.Button(button.Props{
+					Size: button.SizeSm,
+					Attributes: templ.Attributes{
+						"@click": `resolveCheckpoint('` + checkpointID + `', true)`,
+					},
+				}) {
+					Approve
+				}
+				@button.Button(button.Props{
+					Variant: button.VariantDestructive, Size: button.SizeSm,
+					Attributes: templ.Attributes{
+						"@click": `resolveCheckpoint('` + checkpointID + `', false)`,
+					},
+				}) {
+					Reject
+				}
+			</div>
+		</div>
+	</div>
+}
+
+// ChatEmptyState renders the empty state for the chat.
+templ ChatEmptyState() {
+	<div class="flex flex-col items-center justify-center h-full min-h-[400px] text-center">
+		<div class="text-muted-foreground mb-4">
+			@icons.MessageSquare(icons.WithSize(48))
+		</div>
+		<h3 class="text-lg font-medium mb-1">Start a conversation</h3>
+		<p class="text-sm text-muted-foreground max-w-sm">Select an agent and type a message to begin testing.</p>
+	</div>
+}
+
+templ chatRoleBadge(role string) {
+	switch role {
+		case "user":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				You
+			}
+		case "assistant":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Agent
+			}
+		case "system":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				System
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ role }
+			}
+	}
+}
+
+func chatBubbleContainerClass(role string) string {
+	switch role {
+	case "user":
+		return "flex justify-end px-4 py-1.5"
+	case "assistant":
+		return "flex justify-start px-4 py-1.5"
+	default:
+		return "flex justify-center px-4 py-1"
+	}
+}
+
+func chatBubbleClass(role string) string {
+	switch role {
+	case "user":
+		return "bg-muted/70 border border-border rounded-2xl rounded-br-md px-4 py-3 max-w-[80%]"
+	case "assistant":
+		return "bg-primary/5 border border-primary/20 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]"
+	case "system":
+		return "bg-muted/30 border border-border rounded-lg px-3 py-2 text-xs text-muted-foreground max-w-[60%]"
+	default:
+		return "bg-muted/50 border border-border rounded-2xl px-4 py-3 max-w-[80%]"
+	}
+}

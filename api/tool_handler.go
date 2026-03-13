@@ -8,7 +8,7 @@ import (
 )
 
 func (a *API) registerToolRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("tools"))
+	g := router.Group("", forge.WithGroupTags("tools"))
 
 	if err := g.GET("/tools", a.listTools,
 		forge.WithSummary("List tools"),
@@ -31,9 +31,10 @@ func (a *API) registerToolRoutes(router forge.Router) error {
 	return nil
 }
 
-func (a *API) listTools(ctx forge.Context, _ *ListToolsRequest) ([]map[string]any, error) {
+func (a *API) listTools(ctx forge.Context, _ *ListToolsRequest) (*ListToolsResponse, error) {
 	// TODO: implement tool registry in phase 2
-	return []map[string]any{}, ctx.JSON(http.StatusOK, []map[string]any{})
+	resp := &ListToolsResponse{Items: []map[string]any{}}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) getToolSchema(_ forge.Context, _ *GetToolSchemaRequest) (*struct{}, error) {

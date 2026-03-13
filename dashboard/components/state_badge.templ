@@ -1,0 +1,98 @@
+package components
+
+import "github.com/xraph/forgeui/components/badge"
+
+templ StateBadge(state string) {
+	switch state {
+		case "running":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Running
+			}
+		case "completed":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Completed
+			}
+		case "failed":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Failed
+			}
+		case "cancelled":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Cancelled
+			}
+		case "pending":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Pending
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ state }
+			}
+	}
+}
+
+templ ProficiencyBadge(proficiency string) {
+	switch proficiency {
+		case "expert":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Expert
+			}
+		case "proficient":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Proficient
+			}
+		case "competent":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Competent
+			}
+		case "apprentice":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Apprentice
+			}
+		case "novice":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Novice
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ proficiency }
+			}
+	}
+}
+
+templ CategoryBadge(category string) {
+	switch category {
+		case "personality":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Personality
+			}
+		case "workstyle":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Workstyle
+			}
+		case "communication":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Communication
+			}
+		case "risk":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Risk
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ category }
+			}
+	}
+}
+
+templ EnabledBadge(enabled bool) {
+	if enabled {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Enabled
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			Disabled
+		}
+	}
+}

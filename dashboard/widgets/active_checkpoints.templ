@@ -1,0 +1,49 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ ActiveCheckpointsWidget(cps []*checkpoint.Checkpoint) {
+	if len(cps) == 0 {
+		<p class="text-sm text-muted-foreground py-4 text-center">No pending checkpoints.</p>
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Reason }
+					@table.Head() { Step }
+					@table.Head() { Action }
+				}
+			}
+			@table.Body() {
+				for _, cp := range cps {
+					@table.Row() {
+						@table.Cell() {
+							<span class="text-sm">{ cp.Reason }</span>
+						}
+						@table.Cell() {
+							{ strconv.Itoa(cp.StepIndex) }
+						}
+						@table.Cell() {
+							@button.Button(button.Props{
+								Variant: button.VariantOutline,
+								Size:    button.SizeSm,
+								Attributes: templ.Attributes{
+									"hx-get":    "/checkpoints/detail?id=" + cp.ID.String(),
+									"hx-target": "#content",
+								},
+							}) {
+								Review
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

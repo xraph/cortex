@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerCheckpointRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("checkpoints"))
+	g := router.Group("", forge.WithGroupTags("checkpoints"))
 
 	if err := g.GET("/checkpoints", a.listCheckpoints,
 		forge.WithSummary("List pending checkpoints"),
@@ -38,7 +38,7 @@ func (a *API) registerCheckpointRoutes(router forge.Router) error {
 	return nil
 }
 
-func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) ([]*checkpoint.Checkpoint, error) {
+func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) (*ListCheckpointsResponse, error) {
 	cps, err := a.eng.ListPendingCheckpoints(ctx.Context(), &checkpoint.ListFilter{
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
@@ -46,7 +46,8 @@ func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) ([
 	if err != nil {
 		return nil, fmt.Errorf("list checkpoints: %w", err)
 	}
-	return cps, ctx.JSON(http.StatusOK, cps)
+	resp := &ListCheckpointsResponse{Items: cps}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest) (*struct{}, error) {

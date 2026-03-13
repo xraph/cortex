@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerBehaviorRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("behaviors"))
+	g := router.Group("", forge.WithGroupTags("behaviors"))
 
 	if err := g.POST("/behaviors", a.createBehavior,
 		forge.WithSummary("Create behavior"),
@@ -117,7 +117,7 @@ func (a *API) getBehavior(ctx forge.Context, _ *GetBehaviorRequest) (*behavior.B
 	return b, ctx.JSON(http.StatusOK, b)
 }
 
-func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) ([]*behavior.Behavior, error) {
+func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) (*ListBehaviorsResponse, error) {
 	behaviors, err := a.eng.ListBehaviors(ctx.Context(), &behavior.ListFilter{
 		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
@@ -126,7 +126,8 @@ func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) ([]*be
 	if err != nil {
 		return nil, fmt.Errorf("list behaviors: %w", err)
 	}
-	return behaviors, ctx.JSON(http.StatusOK, behaviors)
+	resp := &ListBehaviorsResponse{Items: behaviors}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) updateBehavior(ctx forge.Context, req *UpdateBehaviorRequest) (*behavior.Behavior, error) {

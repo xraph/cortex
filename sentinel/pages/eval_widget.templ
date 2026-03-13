@@ -1,0 +1,59 @@
+package pages
+
+import (
+	"fmt"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/icons"
+)
+
+// EvalWidgetData holds the stats for the eval widget on the Cortex dashboard.
+type EvalWidgetData struct {
+	TotalEvals   int
+	AvgPassRate  float64
+	RecentFails  int
+	TotalSuites  int
+}
+
+// EvalStatsWidget renders the Sentinel evaluation stats widget for the Cortex overview.
+templ EvalStatsWidget(data *EvalWidgetData) {
+	<div class="grid grid-cols-2 gap-4">
+		@evalWidgetStatCard("check-circle", "Total Evals", fmt.Sprintf("%d", data.TotalEvals), "Evaluation runs")
+		@evalWidgetStatCard("target", "Avg Pass Rate", fmt.Sprintf("%.0f%%", data.AvgPassRate*100), "Across all suites")
+		@evalWidgetStatCard("x-circle", "Recent Failures", fmt.Sprintf("%d", data.RecentFails), "Last 7 days")
+		@evalWidgetStatCard("folders", "Eval Suites", fmt.Sprintf("%d", data.TotalSuites), "Configured suites")
+	</div>
+}
+
+templ evalWidgetStatCard(iconName string, label string, value string, subtitle string) {
+	@card.Card() {
+		@card.Content(card.ContentProps{Class: "flex flex-col gap-1 p-4"}) {
+			<div class="flex items-center justify-between">
+				<span class="text-xs text-muted-foreground">{ label }</span>
+				<span class="text-muted-foreground">
+					@evalWidgetResolveIcon(iconName)
+				</span>
+			</div>
+			<div class="text-xl font-bold">{ value }</div>
+			if subtitle != "" {
+				<span class="text-xs text-muted-foreground">{ subtitle }</span>
+			}
+		}
+	}
+}
+
+func evalWidgetResolveIcon(name string) templ.Component {
+	opts := []icons.Option{icons.WithSize(14)}
+	switch name {
+	case "check-circle":
+		return icons.CircleCheck(opts...)
+	case "target":
+		return icons.Target(opts...)
+	case "x-circle":
+		return icons.CircleX(opts...)
+	case "folders":
+		return icons.Folders(opts...)
+	default:
+		return icons.Info(opts...)
+	}
+}

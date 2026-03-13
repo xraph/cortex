@@ -1,0 +1,304 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/forgeui/components/form"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ BehaviorFormPage(bh *behavior.Behavior) {
+	{{ isEdit := bh != nil }}
+	{{ title := "Create Behavior" }}
+	if isEdit {
+		{{ title = "Edit Behavior: " + bh.Name }}
+	}
+	<div
+		class="space-y-6"
+		x-data={ behaviorFormAlpineData(bh) }
+	>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/behaviors",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				<span x-show="!submitting">
+					if isEdit {
+						Save Changes
+					} else {
+						Create Behavior
+					}
+				</span>
+				<span x-show="submitting">Saving...</span>
+			}
+		}
+
+		<div x-show="error" x-cloak class="p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Basic Information }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "bh-name"}) { Name }
+						@input.Input(input.Props{
+							ID: "bh-name",
+							Attributes: templ.Attributes{
+								"x-model": "formData.name",
+								"required": "true",
+							},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "bh-priority"}) { Priority }
+						@input.Input(input.Props{
+							ID: "bh-priority", Type: input.TypeNumber,
+							Attributes: templ.Attributes{
+								"x-model.number": "formData.priority",
+								"min": "0",
+							},
+						})
+					}
+					<div class="col-span-2">
+						@form.Item() {
+							@form.Label(form.LabelProps{For: "bh-desc"}) { Description }
+							@textarea.Textarea(textarea.Props{
+								ID: "bh-desc", Rows: 2,
+								Attributes: templ.Attributes{"x-model": "formData.description"},
+							})
+						}
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Requirements -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Requirements }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "bh-req-skill"}) { Requires Skill }
+						@form.Description() { Only activates if the agent has this skill. }
+						@input.Input(input.Props{
+							ID: "bh-req-skill", Placeholder: "Optional skill name",
+							Attributes: templ.Attributes{"x-model": "formData.requires_skill"},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "bh-req-trait"}) { Requires Trait }
+						@form.Description() { Only activates if the agent has this trait. }
+						@input.Input(input.Props{
+							ID: "bh-req-trait", Placeholder: "Optional trait name",
+							Attributes: templ.Attributes{"x-model": "formData.requires_trait"},
+						})
+					}
+				</div>
+			}
+		}
+
+		<!-- Triggers -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Triggers }
+						@card.Description() { Define when this behavior activates. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.triggers.push({type:'on_input',pattern:''})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Trigger</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(trig, i) in formData.triggers" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="w-44">
+								<label class="text-xs text-muted-foreground">Type</label>
+								<select x-model="trig.type"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="on_input">On Input</option>
+									<option value="on_tool_result">On Tool Result</option>
+									<option value="on_error">On Error</option>
+									<option value="on_step_count">On Step Count</option>
+									<option value="on_context">On Context</option>
+									<option value="always">Always</option>
+								</select>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Pattern</label>
+								<input x-model="trig.pattern" placeholder="Optional pattern"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<button type="button" @click="formData.triggers.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.triggers.length === 0" class="text-sm text-muted-foreground text-center py-2">No triggers configured.</p>
+				</div>
+			}
+		}
+
+		<!-- Actions -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Actions }
+						@card.Description() { Define what happens when triggered. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.actions.push({type:'inject_prompt',target:'',value:''})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Action</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(act, i) in formData.actions" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="w-44">
+								<label class="text-xs text-muted-foreground">Type</label>
+								<select x-model="act.type"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="inject_prompt">Inject Prompt</option>
+									<option value="prefer_skill">Prefer Skill</option>
+									<option value="require_tool">Require Tool</option>
+									<option value="modify_param">Modify Param</option>
+									<option value="switch_cognitive">Switch Cognitive</option>
+									<option value="add_guardrail">Add Guardrail</option>
+								</select>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Target</label>
+								<input x-model="act.target" placeholder="Target"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Value</label>
+								<input x-model="act.value" placeholder="Value"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<button type="button" @click="formData.actions.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.actions.length === 0" class="text-sm text-muted-foreground text-center py-2">No actions configured.</p>
+				</div>
+			}
+		}
+	</div>
+}
+
+func behaviorFormAlpineData(bh *behavior.Behavior) string {
+	if bh == nil {
+		return `{
+			formData: {
+				name: '', description: '', priority: 0,
+				requires_skill: '', requires_trait: '',
+				triggers: [], actions: []
+			},
+			error: '',
+			submitting: false,
+			async submitForm() {
+				this.submitting = true;
+				this.error = '';
+				const data = {...this.formData};
+				try {
+					const resp = await fetch('/cortex/behaviors', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+					if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/behaviors', {target: '#content'}); }
+					else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to create behavior'; }
+				} catch(e) { this.error = e.message; }
+				this.submitting = false;
+			}
+		}`
+	}
+
+	triggersJSON := buildTriggersJSON(bh.Triggers)
+	actionsJSON := buildActionsJSON(bh.Actions)
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q, description: %q, priority: %s,
+			requires_skill: %q, requires_trait: %q,
+			triggers: %s, actions: %s
+		},
+		error: '',
+		submitting: false,
+		async submitForm() {
+			this.submitting = true;
+			this.error = '';
+			const data = {...this.formData};
+			try {
+				const resp = await fetch('/cortex/behaviors/%s', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+				if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/behaviors/detail?name=%s', {target: '#content'}); }
+				else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to update behavior'; }
+			} catch(e) { this.error = e.message; }
+			this.submitting = false;
+		}
+	}`,
+		bh.Name, bh.Description, strconv.Itoa(bh.Priority),
+		bh.RequiresSkill, bh.RequiresTrait,
+		triggersJSON, actionsJSON,
+		bh.Name, bh.Name,
+	)
+}
+
+func buildTriggersJSON(triggers []behavior.Trigger) string {
+	if len(triggers) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(triggers))
+	for _, t := range triggers {
+		parts = append(parts, fmt.Sprintf(`{"type":%q,"pattern":%q}`, string(t.Type), t.Pattern))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func buildActionsJSON(actions []behavior.Action) string {
+	if len(actions) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(actions))
+	for _, a := range actions {
+		parts = append(parts, fmt.Sprintf(`{"type":%q,"target":%q,"value":%q}`,
+			string(a.Type), a.Target, fmt.Sprintf("%v", a.Value)))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}

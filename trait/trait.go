@@ -71,12 +71,14 @@ type Store interface {
 	UpdateTrait(ctx context.Context, trait *Trait) error
 	DeleteTrait(ctx context.Context, traitID id.TraitID) error
 	ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
+	CountTraits(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
 // ListFilter controls pagination and filtering for trait listing.
 type ListFilter struct {
 	AppID    string
 	Category Category
+	Search   string
 	Limit    int
 	Offset   int
 }

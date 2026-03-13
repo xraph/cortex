@@ -102,8 +102,14 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 	var models []agentModel
 
 	f := bson.M{}
-	if filter != nil && filter.AppID != "" {
-		f["app_id"] = filter.AppID
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -134,4 +140,27 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 	}
 
 	return result, nil
+}
+
+// CountAgents returns the total number of agents matching the filter.
+func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
+	f := bson.M{}
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
+	}
+
+	count, err := s.mdb.NewFind((*agentModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count agents: %w", err)
+	}
+
+	return count, nil
 }

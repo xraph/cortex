@@ -12,6 +12,7 @@ type Store interface {
 	GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*Checkpoint, error)
 	Resolve(ctx context.Context, cpID id.CheckpointID, decision Decision) error
 	ListPending(ctx context.Context, filter *ListFilter) ([]*Checkpoint, error)
+	CountPending(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
 // ListFilter controls pagination for checkpoint listing.

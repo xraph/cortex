@@ -1,0 +1,127 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ SkillsPage(skills []*skill.Skill, search string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Skills", fmt.Sprintf("%d", pg.Total), "Manage agent capabilities") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/skills/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Skill
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search skills...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/skills",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(skills) == 0 {
+			@components.EmptyState("wrench", "No skills found", "Create your first skill to define a capability")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Description }
+						@table.Head() { Proficiency }
+						@table.Head() { Tools }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, sk := range skills {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/skills/detail?name=" + sk.Name }
+									hx-target="#content">
+									{ sk.Name }
+								</a>
+							}
+							@table.Cell() {
+								if sk.Description != "" {
+									<span class="text-sm text-muted-foreground">{ sk.Description }</span>
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								@components.ProficiencyBadge(string(sk.DefaultProficiency))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(sk.Tools)) }
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/skills/detail?name=" + sk.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/skills/edit?name=" + sk.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-skill-row-%s')", sk.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-skill-row-" + sk.Name,
+										Title:        "Delete Skill",
+										Description:  "Are you sure you want to delete skill \"" + sk.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/cortex/skills/" + sk.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/skills?search=" + search)
+		}
+		@components.DialogHelpers()
+	</div>
+}

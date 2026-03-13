@@ -1,0 +1,19 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/cortex/dashboard/components"
+)
+
+templ StatsWidget(agents, personas, skills, traits, behaviors, runs, checkpoints int64) {
+	<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		@components.StatCard("bot", "Agents", strconv.FormatInt(agents, 10), "Configured agents")
+		@components.StatCard("user-circle", "Personas", strconv.FormatInt(personas, 10), "Identity templates")
+		@components.StatCard("wrench", "Skills", strconv.FormatInt(skills, 10), "Capabilities")
+		@components.StatCard("brain", "Traits", strconv.FormatInt(traits, 10), "Personality dims")
+		@components.StatCard("zap", "Behaviors", strconv.FormatInt(behaviors, 10), "Action patterns")
+		@components.StatCard("play", "Runs", strconv.FormatInt(runs, 10), "Agent runs")
+		@components.StatCard("shield-check", "Checkpoints", strconv.FormatInt(checkpoints, 10), "Pending reviews")
+	</div>
+}

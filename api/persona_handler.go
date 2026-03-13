@@ -13,7 +13,7 @@ import (
 )
 
 func (a *API) registerPersonaRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("personas"))
+	g := router.Group("", forge.WithGroupTags("personas"))
 
 	if err := g.POST("/personas", a.createPersona,
 		forge.WithSummary("Create persona"),
@@ -116,7 +116,7 @@ func (a *API) getPersona(ctx forge.Context, _ *GetPersonaRequest) (*persona.Pers
 	return p, ctx.JSON(http.StatusOK, p)
 }
 
-func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) ([]*persona.Persona, error) {
+func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) (*ListPersonasResponse, error) {
 	personas, err := a.eng.ListPersonas(ctx.Context(), &persona.ListFilter{
 		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
@@ -125,7 +125,8 @@ func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) ([]*pers
 	if err != nil {
 		return nil, fmt.Errorf("list personas: %w", err)
 	}
-	return personas, ctx.JSON(http.StatusOK, personas)
+	resp := &ListPersonasResponse{Items: personas}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) updatePersona(ctx forge.Context, req *UpdatePersonaRequest) (*persona.Persona, error) {

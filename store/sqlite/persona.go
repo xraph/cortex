@@ -90,6 +90,9 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
 		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -109,4 +112,21 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 		result[i] = p
 	}
 	return result, nil
+}
+
+func (s *Store) CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error) {
+	q := s.sdb.NewSelect((*personaModel)(nil))
+	if filter != nil {
+		if filter.AppID != "" {
+			q = q.Where("app_id = ?", filter.AppID)
+		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/sqlite: count personas: %w", err)
+	}
+	return count, nil
 }

@@ -1,0 +1,18 @@
+package widgets
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+)
+
+templ SafetyStatsWidget(summary *shared.ScanSummary) {
+	<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		@components.StatCard("scan-line", "Total Scans", strconv.FormatInt(summary.TotalScans, 10), "All time")
+		@components.StatCard("check-circle", "Allowed", strconv.FormatInt(summary.AllowedScans, 10), "Passed checks")
+		@components.StatCard("shield-alert", "Blocked", strconv.FormatInt(summary.BlockedScans, 10), fmt.Sprintf("%.1f%%", summary.BlockRate))
+		@components.StatCard("flag", "Flagged", strconv.FormatInt(summary.FlaggedScans, 10), "For review")
+	</div>
+}

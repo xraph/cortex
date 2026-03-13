@@ -1,0 +1,127 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ BehaviorsPage(behaviors []*behavior.Behavior, search string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Behaviors", fmt.Sprintf("%d", pg.Total), "Manage condition-triggered action patterns") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/behaviors/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Behavior
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search behaviors...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/behaviors",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(behaviors) == 0 {
+			@components.EmptyState("zap", "No behaviors found", "Create your first behavior to define an action pattern")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Description }
+						@table.Head() { Priority }
+						@table.Head() { Triggers }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, bh := range behaviors {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/behaviors/detail?name=" + bh.Name }
+									hx-target="#content">
+									{ bh.Name }
+								</a>
+							}
+							@table.Cell() {
+								if bh.Description != "" {
+									<span class="text-sm text-muted-foreground">{ bh.Description }</span>
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								{ strconv.Itoa(bh.Priority) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(bh.Triggers)) }
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/behaviors/detail?name=" + bh.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/behaviors/edit?name=" + bh.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-behavior-row-%s')", bh.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-behavior-row-" + bh.Name,
+										Title:        "Delete Behavior",
+										Description:  "Are you sure you want to delete behavior \"" + bh.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/cortex/behaviors/" + bh.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/behaviors?search=" + search)
+		}
+		@components.DialogHelpers()
+	</div>
+}

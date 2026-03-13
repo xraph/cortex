@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerRunRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("runs"))
+	g := router.Group("", forge.WithGroupTags("runs"))
 
 	if err := g.GET("/runs", a.listRuns,
 		forge.WithSummary("List runs"),
@@ -60,7 +60,7 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 	return r, ctx.JSON(http.StatusOK, r)
 }
 
-func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) ([]*run.Run, error) {
+func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
 	runs, err := a.eng.ListRuns(ctx.Context(), &run.ListFilter{
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
@@ -68,10 +68,29 @@ func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) ([]*run.Run, err
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
-	return runs, ctx.JSON(http.StatusOK, runs)
+	resp := &ListRunsResponse{Items: runs}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) cancelRun(_ forge.Context, _ *CancelRunRequest) (*struct{}, error) {
-	// TODO: implement run cancellation in phase 2
-	return nil, forge.NotFound("run cancellation not yet implemented")
+func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, error) {
+	runID, err := id.ParseAgentRunID(ctx.Param("id"))
+	if err != nil {
+		return nil, forge.BadRequest(fmt.Sprintf("invalid run ID: %v", err))
+	}
+
+	r, err := a.eng.GetRun(ctx.Context(), runID)
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
+
+	if r.State != run.StateRunning && r.State != run.StatePaused {
+		return nil, forge.BadRequest("run is not in a cancellable state")
+	}
+
+	r.State = run.StateCancelled
+	if err := a.eng.UpdateRun(ctx.Context(), r); err != nil {
+		return nil, fmt.Errorf("cancel run: %w", err)
+	}
+
+	return nil, ctx.NoContent(http.StatusNoContent)
 }

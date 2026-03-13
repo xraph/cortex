@@ -12,6 +12,7 @@ type Store interface {
 	GetRun(ctx context.Context, runID id.AgentRunID) (*Run, error)
 	UpdateRun(ctx context.Context, run *Run) error
 	ListRuns(ctx context.Context, filter *ListFilter) ([]*Run, error)
+	CountRuns(ctx context.Context, filter *ListFilter) (int64, error)
 
 	CreateStep(ctx context.Context, step *Step) error
 	ListSteps(ctx context.Context, runID id.AgentRunID) ([]*Step, error)

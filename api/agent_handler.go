@@ -8,11 +8,12 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 )
 
 func (a *API) registerAgentRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("agents"))
+	g := router.Group("", forge.WithGroupTags("agents"))
 
 	if err := g.POST("/agents", a.createAgent,
 		forge.WithSummary("Create agent"),
@@ -87,6 +88,16 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 		return fmt.Errorf("register agent routes: %w", err)
 	}
 
+	if err := g.POST("/agents/:name/preview-prompt", a.previewPrompt,
+		forge.WithSummary("Preview prompt"),
+		forge.WithDescription("Returns the computed system prompt for the agent without executing."),
+		forge.WithOperationID("previewPrompt"),
+		forge.WithResponseSchema(http.StatusOK, "Computed prompt", &PreviewPromptResponse{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
+
 	return nil
 }
 
@@ -132,7 +143,7 @@ func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, er
 	return cfg, ctx.JSON(http.StatusOK, cfg)
 }
 
-func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) ([]*agent.Config, error) {
+func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
 	agents, err := a.eng.ListAgents(ctx.Context(), &agent.ListFilter{
 		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
@@ -141,7 +152,8 @@ func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) ([]*agent.Co
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
 	}
-	return agents, ctx.JSON(http.StatusOK, agents)
+	resp := &ListAgentsResponse{Items: agents}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Config, error) {
@@ -210,12 +222,91 @@ func (a *API) deleteAgent(ctx forge.Context, _ *DeleteAgentRequest) (*struct{}, 
 	return nil, ctx.NoContent(http.StatusNoContent)
 }
 
-func (a *API) runAgent(_ forge.Context, _ *RunAgentRequest) (*struct{}, error) {
-	// TODO: implement agent execution in phase 2
-	return nil, forge.NotFound("agent execution not yet implemented")
+func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentResponse, error) {
+	if req.Input == "" {
+		return nil, forge.BadRequest("input is required")
+	}
+
+	appID := cortex.AppFromContext(ctx.Context())
+	r, err := a.eng.RunAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides))
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
+
+	var durationMs int64
+	if r.StartedAt != nil && r.CompletedAt != nil {
+		durationMs = r.CompletedAt.Sub(*r.StartedAt).Milliseconds()
+	}
+
+	resp := &RunAgentResponse{
+		RunID:      r.ID.String(),
+		Output:     r.Output,
+		State:      string(r.State),
+		StepCount:  r.StepCount,
+		TokensUsed: r.TokensUsed,
+		DurationMs: durationMs,
+	}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) streamAgent(_ forge.Context, _ *StreamAgentRequest) (*struct{}, error) {
-	// TODO: implement streaming agent execution in phase 2
-	return nil, forge.NotFound("agent streaming not yet implemented")
+func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}, error) {
+	if req.Input == "" {
+		return nil, forge.BadRequest("input is required")
+	}
+
+	ctx.SetHeader("Content-Type", "text/event-stream")
+	ctx.SetHeader("Cache-Control", "no-cache")
+	ctx.SetHeader("Connection", "keep-alive")
+	ctx.SetHeader("X-Accel-Buffering", "no")
+
+	appID := cortex.AppFromContext(ctx.Context())
+	events := make(chan engine.StreamEvent, 64)
+
+	if err := a.eng.StreamAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
+		return nil, mapStoreError(err)
+	}
+
+	for evt := range events {
+		if err := ctx.WriteSSE(string(evt.Type), evt.Data); err != nil {
+			break
+		}
+	}
+
+	return nil, nil
+}
+
+func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*PreviewPromptResponse, error) {
+	appID := cortex.AppFromContext(ctx.Context())
+	ag, err := a.eng.GetAgentByName(ctx.Context(), appID, ctx.Param("name"))
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
+
+	// Use the engine's prompt builder for a consistent preview.
+	prompt := a.eng.BuildSystemPrompt(ctx.Context(), ag, nil)
+
+	resp := &PreviewPromptResponse{
+		Prompt: prompt,
+	}
+	return resp, ctx.JSON(http.StatusOK, resp)
+}
+
+// mapOverrides converts API-layer overrides to engine-layer overrides.
+func mapOverrides(o *AgentOverrides) *engine.RunOverrides {
+	if o == nil {
+		return nil
+	}
+	return &engine.RunOverrides{
+		Model:           o.Model,
+		Temperature:     o.Temperature,
+		MaxSteps:        o.MaxSteps,
+		MaxTokens:       o.MaxTokens,
+		ReasoningLoop:   o.ReasoningLoop,
+		SystemPrompt:    o.SystemPrompt,
+		PersonaRef:      o.PersonaRef,
+		InlineSkills:    o.InlineSkills,
+		InlineTraits:    o.InlineTraits,
+		InlineBehaviors: o.InlineBehaviors,
+		Tools:           o.Tools,
+	}
 }

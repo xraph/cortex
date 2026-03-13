@@ -1,0 +1,285 @@
+package pages
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/forgeui/components/form"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ TraitFormPage(tr *trait.Trait) {
+	{{ isEdit := tr != nil }}
+	{{ title := "Create Trait" }}
+	if isEdit {
+		{{ title = "Edit Trait: " + tr.Name }}
+	}
+	<div
+		class="space-y-6"
+		x-data={ traitFormAlpineData(tr) }
+	>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/traits",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				<span x-show="!submitting">
+					if isEdit {
+						Save Changes
+					} else {
+						Create Trait
+					}
+				</span>
+				<span x-show="submitting">Saving...</span>
+			}
+		}
+
+		<div x-show="error" x-cloak class="p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Basic Information }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "trait-name"}) { Name }
+						@input.Input(input.Props{
+							ID: "trait-name",
+							Attributes: templ.Attributes{
+								"x-model": "formData.name",
+								"required": "true",
+							},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "trait-category"}) { Category }
+						<select id="trait-category" x-model="formData.category"
+							class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+							<option value="personality">Personality</option>
+							<option value="workstyle">Workstyle</option>
+							<option value="communication">Communication</option>
+							<option value="risk">Risk</option>
+						</select>
+					}
+					<div class="col-span-2">
+						@form.Item() {
+							@form.Label(form.LabelProps{For: "trait-desc"}) { Description }
+							@textarea.Textarea(textarea.Props{
+								ID: "trait-desc", Rows: 2,
+								Attributes: templ.Attributes{"x-model": "formData.description"},
+							})
+						}
+					</div>
+				</div>
+			}
+		}
+
+		<!-- Dimensions -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Dimensions }
+						@card.Description() { Bipolar personality axes (0.0 to 1.0). }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.dimensions.push({name:'',low_label:'',high_label:'',value:0.5})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Dimension</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(dim, i) in formData.dimensions" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Name</label>
+								<input x-model="dim.name" placeholder="e.g. caution"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Low Label</label>
+								<input x-model="dim.low_label" placeholder="e.g. Reckless"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">High Label</label>
+								<input x-model="dim.high_label" placeholder="e.g. Cautious"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="w-32">
+								<label class="text-xs text-muted-foreground">Value: <span x-text="dim.value.toFixed(2)"></span></label>
+								<input type="range" x-model.number="dim.value" min="0" max="1" step="0.01"
+									class="w-full h-9"/>
+							</div>
+							<button type="button" @click="formData.dimensions.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.dimensions.length === 0" class="text-sm text-muted-foreground text-center py-2">No dimensions configured.</p>
+				</div>
+			}
+		}
+
+		<!-- Influences -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Influences }
+						@card.Description() { Runtime modifications applied by this trait. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.influences.push({target:'prompt_injection',value:'',condition:'',weight:1.0})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Influence</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(inf, i) in formData.influences" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="w-44">
+								<label class="text-xs text-muted-foreground">Target</label>
+								<select x-model="inf.target"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="prompt_injection">Prompt Injection</option>
+									<option value="temperature">Temperature</option>
+									<option value="max_steps">Max Steps</option>
+									<option value="tool_selection">Tool Selection</option>
+									<option value="response_style">Response Style</option>
+								</select>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Value</label>
+								<input x-model="inf.value" placeholder="Value"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Condition</label>
+								<input x-model="inf.condition" placeholder="Optional"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="w-24">
+								<label class="text-xs text-muted-foreground">Weight</label>
+								<input type="number" x-model.number="inf.weight" min="0" max="1" step="0.1"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<button type="button" @click="formData.influences.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.influences.length === 0" class="text-sm text-muted-foreground text-center py-2">No influences configured.</p>
+				</div>
+			}
+		}
+	</div>
+}
+
+func traitFormAlpineData(tr *trait.Trait) string {
+	if tr == nil {
+		return `{
+			formData: {
+				name: '', description: '', category: 'personality',
+				dimensions: [], influences: []
+			},
+			error: '',
+			submitting: false,
+			async submitForm() {
+				this.submitting = true;
+				this.error = '';
+				const data = {...this.formData};
+				data.dimensions = data.dimensions.filter(d => d.name.trim() !== '');
+				data.influences = data.influences.filter(inf => inf.target !== '');
+				try {
+					const resp = await fetch('/cortex/traits', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+					if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/traits', {target: '#content'}); }
+					else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to create trait'; }
+				} catch(e) { this.error = e.message; }
+				this.submitting = false;
+			}
+		}`
+	}
+
+	dimsJSON := buildDimensionsJSON(tr.Dimensions)
+	infsJSON := buildInfluencesJSON(tr.Influences)
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q, description: %q, category: %q,
+			dimensions: %s, influences: %s
+		},
+		error: '',
+		submitting: false,
+		async submitForm() {
+			this.submitting = true;
+			this.error = '';
+			const data = {...this.formData};
+			data.dimensions = data.dimensions.filter(d => d.name.trim() !== '');
+			data.influences = data.influences.filter(inf => inf.target !== '');
+			try {
+				const resp = await fetch('/cortex/traits/%s', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+				if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/traits/detail?name=%s', {target: '#content'}); }
+				else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to update trait'; }
+			} catch(e) { this.error = e.message; }
+			this.submitting = false;
+		}
+	}`,
+		tr.Name, tr.Description, string(tr.Category),
+		dimsJSON, infsJSON,
+		tr.Name, tr.Name,
+	)
+}
+
+func buildDimensionsJSON(dims []trait.Dimension) string {
+	if len(dims) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(dims))
+	for _, d := range dims {
+		parts = append(parts, fmt.Sprintf(`{"name":%q,"low_label":%q,"high_label":%q,"value":%s}`,
+			d.Name, d.LowLabel, d.HighLabel, fmt.Sprintf("%.2f", d.Value)))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func buildInfluencesJSON(infs []trait.Influence) string {
+	if len(infs) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(infs))
+	for _, inf := range infs {
+		parts = append(parts, fmt.Sprintf(`{"target":%q,"value":%q,"condition":%q,"weight":%s}`,
+			string(inf.Target), fmt.Sprintf("%v", inf.Value), inf.Condition, fmt.Sprintf("%.2f", inf.Weight)))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}

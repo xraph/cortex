@@ -1,0 +1,106 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ KnowledgePage(collections []shared.KnowledgeCollectionInfo, search string) {
+	<div class="space-y-6">
+		@components.PageHeader("Knowledge", fmt.Sprintf("%d", len(collections)), "Knowledge collections managed by Weave RAG engine")
+		<div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+			@components.StatCard("book-open", "Collections", strconv.Itoa(len(collections)), "")
+			@components.StatCard("file-text", "Documents", strconv.FormatInt(sumDocs(collections), 10), "Total across collections")
+			@components.StatCard("puzzle", "Chunks", strconv.FormatInt(sumChunks(collections), 10), "Total across collections")
+		</div>
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search collections...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/knowledge",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(collections) == 0 {
+			@components.EmptyState("book-open", "No collections found", "Create knowledge collections in Weave to see them here")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Documents }
+						@table.Head() { Chunks }
+						@table.Head() { Embedding Model }
+						@table.Head() { Chunk Strategy }
+					}
+				}
+				@table.Body() {
+					for _, col := range collections {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/knowledge/detail?id=" + col.ID }
+									hx-target="#content">
+									{ col.Name }
+								</a>
+							}
+							@table.Cell() {
+								{ strconv.FormatInt(col.DocumentCount, 10) }
+							}
+							@table.Cell() {
+								{ strconv.FormatInt(col.ChunkCount, 10) }
+							}
+							@table.Cell() {
+								if col.EmbeddingModel != "" {
+									@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+										{ col.EmbeddingModel }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								if col.ChunkStrategy != "" {
+									@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+										{ col.ChunkStrategy }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+func sumDocs(collections []shared.KnowledgeCollectionInfo) int64 {
+	var total int64
+	for _, c := range collections {
+		total += c.DocumentCount
+	}
+	return total
+}
+
+func sumChunks(collections []shared.KnowledgeCollectionInfo) int64 {
+	var total int64
+	for _, c := range collections {
+		total += c.ChunkCount
+	}
+	return total
+}

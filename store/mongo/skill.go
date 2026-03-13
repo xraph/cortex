@@ -102,8 +102,14 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 	var models []skillModel
 
 	f := bson.M{}
-	if filter != nil && filter.AppID != "" {
-		f["app_id"] = filter.AppID
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -134,4 +140,27 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 	}
 
 	return result, nil
+}
+
+// CountSkills returns the total number of skills matching the filter.
+func (s *Store) CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error) {
+	f := bson.M{}
+	if filter != nil {
+		if filter.AppID != "" {
+			f["app_id"] = filter.AppID
+		}
+
+		if filter.Search != "" {
+			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
+		}
+	}
+
+	count, err := s.mdb.NewFind((*skillModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count skills: %w", err)
+	}
+
+	return count, nil
 }

@@ -1,0 +1,325 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/forgeui/components/form"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ SkillFormPage(sk *skill.Skill) {
+	{{ isEdit := sk != nil }}
+	{{ title := "Create Skill" }}
+	if isEdit {
+		{{ title = "Edit Skill: " + sk.Name }}
+	}
+	<div
+		class="space-y-6"
+		x-data={ skillFormAlpineData(sk) }
+	>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/skills",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				<span x-show="!submitting">
+					if isEdit {
+						Save Changes
+					} else {
+						Create Skill
+					}
+				</span>
+				<span x-show="submitting">Saving...</span>
+			}
+		}
+
+		<div x-show="error" x-cloak class="p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Basic Information }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "skill-name"}) { Name }
+						@input.Input(input.Props{
+							ID: "skill-name",
+							Attributes: templ.Attributes{
+								"x-model": "formData.name",
+								"required": "true",
+							},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "skill-proficiency"}) { Default Proficiency }
+						<select id="skill-proficiency" x-model="formData.default_proficiency"
+							class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+							<option value="novice">Novice</option>
+							<option value="apprentice">Apprentice</option>
+							<option value="competent">Competent</option>
+							<option value="proficient">Proficient</option>
+							<option value="expert">Expert</option>
+						</select>
+					}
+					<div class="col-span-2">
+						@form.Item() {
+							@form.Label(form.LabelProps{For: "skill-desc"}) { Description }
+							@textarea.Textarea(textarea.Props{
+								ID: "skill-desc", Rows: 2,
+								Attributes: templ.Attributes{"x-model": "formData.description"},
+							})
+						}
+					</div>
+				</div>
+			}
+		}
+
+		<!-- System Prompt Fragment -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { System Prompt Fragment }
+			}
+			@card.Content() {
+				<div class="space-y-2">
+					@textarea.Textarea(textarea.Props{
+						ID: "skill-prompt", Class: "font-mono min-h-32",
+						Attributes: templ.Attributes{"x-model": "formData.system_prompt_fragment"},
+					})
+					<p class="text-xs text-muted-foreground">Injected into the system prompt when this skill is active.</p>
+				</div>
+			}
+		}
+
+		<!-- Dependencies -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Dependencies }
+			}
+			@card.Content() {
+				@form.Item() {
+					@form.Label(form.LabelProps{For: "skill-deps"}) { Skill Dependencies }
+					@form.Description() { Comma-separated list of skill names this skill depends on. }
+					@input.Input(input.Props{
+						ID: "skill-deps", Placeholder: "skill-a, skill-b",
+						Attributes: templ.Attributes{"x-model": "dependenciesText"},
+					})
+				}
+			}
+		}
+
+		<!-- Tool Bindings -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Tool Bindings }
+						@card.Description() { Bind tools with mastery levels and contextual guidance. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.tools.push({tool_name:'',mastery:'competent',guidance:'',prefer_when:''})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Tool</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(tb, i) in formData.tools" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Tool Name</label>
+								<input x-model="tb.tool_name" placeholder="tool-name"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="w-36">
+								<label class="text-xs text-muted-foreground">Mastery</label>
+								<select x-model="tb.mastery"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="novice">Novice</option>
+									<option value="apprentice">Apprentice</option>
+									<option value="competent">Competent</option>
+									<option value="proficient">Proficient</option>
+									<option value="expert">Expert</option>
+								</select>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Guidance</label>
+								<input x-model="tb.guidance" placeholder="Optional guidance"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Prefer When</label>
+								<input x-model="tb.prefer_when" placeholder="Condition"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<button type="button" @click="formData.tools.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.tools.length === 0" class="text-sm text-muted-foreground text-center py-2">No tool bindings configured.</p>
+				</div>
+			}
+		}
+
+		<!-- Knowledge References -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Knowledge References }
+						@card.Description() { Knowledge sources to inject when this skill is active. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.knowledge.push({source:'',inject_mode:'',priority:0})"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Reference</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(kr, i) in formData.knowledge" :key="i">
+						<div class="flex items-end gap-3 p-3 bg-muted/50 rounded-md">
+							<div class="flex-1">
+								<label class="text-xs text-muted-foreground">Source</label>
+								<input x-model="kr.source" placeholder="knowledge-source"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<div class="w-40">
+								<label class="text-xs text-muted-foreground">Inject Mode</label>
+								<select x-model="kr.inject_mode"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+									<option value="">Default</option>
+									<option value="prepend">Prepend</option>
+									<option value="append">Append</option>
+									<option value="context">Context</option>
+								</select>
+							</div>
+							<div class="w-24">
+								<label class="text-xs text-muted-foreground">Priority</label>
+								<input type="number" x-model.number="kr.priority" min="0"
+									class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							</div>
+							<button type="button" @click="formData.knowledge.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.knowledge.length === 0" class="text-sm text-muted-foreground text-center py-2">No knowledge references configured.</p>
+				</div>
+			}
+		}
+	</div>
+}
+
+func skillFormAlpineData(sk *skill.Skill) string {
+	if sk == nil {
+		return `{
+			formData: {
+				name: '', description: '', default_proficiency: 'competent',
+				system_prompt_fragment: '', tools: [], knowledge: []
+			},
+			dependenciesText: '',
+			error: '',
+			submitting: false,
+			async submitForm() {
+				this.submitting = true;
+				this.error = '';
+				const data = {...this.formData};
+				data.dependencies = this.dependenciesText ? this.dependenciesText.split(',').map(s => s.trim()).filter(Boolean) : [];
+				data.tools = data.tools.filter(t => t.tool_name.trim() !== '');
+				data.knowledge = data.knowledge.filter(k => k.source.trim() !== '');
+				try {
+					const resp = await fetch('/cortex/skills', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+					if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/skills', {target: '#content'}); }
+					else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to create skill'; }
+				} catch(e) { this.error = e.message; }
+				this.submitting = false;
+			}
+		}`
+	}
+
+	toolsJSON := buildToolBindingsJSON(sk.Tools)
+	knowledgeJSON := buildKnowledgeRefsJSON(sk.Knowledge)
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q, description: %q, default_proficiency: %q,
+			system_prompt_fragment: %q, tools: %s, knowledge: %s
+		},
+		dependenciesText: %q,
+		error: '',
+		submitting: false,
+		async submitForm() {
+			this.submitting = true;
+			this.error = '';
+			const data = {...this.formData};
+			data.dependencies = this.dependenciesText ? this.dependenciesText.split(',').map(s => s.trim()).filter(Boolean) : [];
+			data.tools = data.tools.filter(t => t.tool_name.trim() !== '');
+			data.knowledge = data.knowledge.filter(k => k.source.trim() !== '');
+			try {
+				const resp = await fetch('/cortex/skills/%s', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+				if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/skills/detail?name=%s', {target: '#content'}); }
+				else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to update skill'; }
+			} catch(e) { this.error = e.message; }
+			this.submitting = false;
+		}
+	}`,
+		sk.Name, sk.Description, string(sk.DefaultProficiency),
+		sk.SystemPromptFragment, toolsJSON, knowledgeJSON,
+		strings.Join(sk.Dependencies, ", "),
+		sk.Name, sk.Name,
+	)
+}
+
+func buildToolBindingsJSON(tools []skill.ToolBinding) string {
+	if len(tools) == 0 {
+		return "[]"
+	}
+	items := make([]string, 0, len(tools))
+	for _, t := range tools {
+		items = append(items, fmt.Sprintf(`{"tool_name":%q,"mastery":%q,"guidance":%q,"prefer_when":%q}`,
+			t.ToolName, string(t.Mastery), t.Guidance, t.PreferWhen))
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
+func buildKnowledgeRefsJSON(refs []skill.KnowledgeRef) string {
+	if len(refs) == 0 {
+		return "[]"
+	}
+	items := make([]string, 0, len(refs))
+	for _, r := range refs {
+		b, _ := json.Marshal(r)
+		items = append(items, string(b))
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}

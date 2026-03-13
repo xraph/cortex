@@ -1,0 +1,138 @@
+package pages
+
+import (
+	"fmt"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/badge"
+)
+
+templ AgentsPage(agents []*agent.Config, search string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Agents", fmt.Sprintf("%d", pg.Total), "Manage AI agent configurations") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/agents/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Agent
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search agents...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/agents",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(agents) == 0 {
+			@components.EmptyState("bot", "No agents found", "Create your first agent to get started")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Model }
+						@table.Head() { Status }
+						@table.Head() { Persona }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, a := range agents {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/agents/detail?name=" + a.Name }
+									hx-target="#content">
+									{ a.Name }
+								</a>
+								if a.Description != "" {
+									<p class="text-xs text-muted-foreground">{ a.Description }</p>
+								}
+							}
+							@table.Cell() {
+								if a.Model != "" {
+									@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+										{ a.Model }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">default</span>
+								}
+							}
+							@table.Cell() {
+								@components.EnabledBadge(a.Enabled)
+							}
+							@table.Cell() {
+								if a.PersonaRef != "" {
+									@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+										{ a.PersonaRef }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/agents/detail?name=" + a.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/agents/edit?name=" + a.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-agent-row-%s')", a.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-agent-row-" + a.Name,
+										Title:        "Delete Agent",
+										Description:  "Are you sure you want to delete agent \"" + a.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/cortex/agents/" + a.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/agents?search=" + search)
+		}
+		@components.DialogHelpers()
+	</div>
+}

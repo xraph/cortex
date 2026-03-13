@@ -78,11 +78,13 @@ type Store interface {
 	UpdateSkill(ctx context.Context, skill *Skill) error
 	DeleteSkill(ctx context.Context, skillID id.SkillID) error
 	ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
+	CountSkills(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination for skill listing.
+// ListFilter controls pagination and filtering for skill listing.
 type ListFilter struct {
 	AppID  string
+	Search string
 	Limit  int
 	Offset int
 }

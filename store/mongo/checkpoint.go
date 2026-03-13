@@ -109,3 +109,26 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 
 	return result, nil
 }
+
+// CountPending returns the total number of pending checkpoints matching the filter.
+func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) {
+	f := bson.M{"state": "pending"}
+	if filter != nil {
+		if filter.RunID != "" {
+			f["run_id"] = filter.RunID
+		}
+
+		if filter.TenantID != "" {
+			f["tenant_id"] = filter.TenantID
+		}
+	}
+
+	count, err := s.mdb.NewFind((*checkpointModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count pending checkpoints: %w", err)
+	}
+
+	return count, nil
+}

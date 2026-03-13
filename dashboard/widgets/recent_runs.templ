@@ -1,0 +1,53 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ RecentRunsWidget(runs []*run.Run, agentNames map[string]string) {
+	if len(runs) == 0 {
+		<p class="text-sm text-muted-foreground py-4 text-center">No recent runs.</p>
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Agent }
+					@table.Head() { State }
+					@table.Head() { Steps }
+					@table.Head() { Time }
+				}
+			}
+			@table.Body() {
+				for _, r := range runs {
+					{{ agentName := lookupName(r.AgentID.String(), agentNames) }}
+					@table.Row() {
+						@table.Cell() {
+							<span class="text-sm font-medium">{ agentName }</span>
+						}
+						@table.Cell() {
+							@components.StateBadge(string(r.State))
+						}
+						@table.Cell() {
+							{ strconv.Itoa(r.StepCount) }
+						}
+						@table.Cell() {
+							{{ created := r.CreatedAt.Format("15:04:05") }}
+							<span class="text-xs text-muted-foreground">{ created }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func lookupName(agentIDStr string, nameMap map[string]string) string {
+	if name, ok := nameMap[agentIDStr]; ok {
+		return name
+	}
+	return agentIDStr
+}

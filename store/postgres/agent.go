@@ -92,6 +92,9 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
 		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -111,4 +114,21 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 		result[i] = c
 	}
 	return result, nil
+}
+
+func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
+	q := s.pgdb.NewSelect((*agentModel)(nil))
+	if filter != nil {
+		if filter.AppID != "" {
+			q = q.Where("app_id = ?", filter.AppID)
+		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex: count agents: %w", err)
+	}
+	return count, nil
 }

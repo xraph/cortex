@@ -1,0 +1,199 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ BehaviorDetailPage(bh *behavior.Behavior, usageCount int) {
+	<div class="space-y-6">
+		@components.PageHeader(bh.Name, "", bh.Description) {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/behaviors",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/behaviors/edit?name=" + bh.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-behavior-%s')", bh.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Configuration }
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+					<dt class="text-muted-foreground">ID</dt>
+					<dd><code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ bh.ID.String() }</code></dd>
+					<dt class="text-muted-foreground">Priority</dt>
+					<dd class="font-medium">{ strconv.Itoa(bh.Priority) }</dd>
+					<dt class="text-muted-foreground">Referenced By</dt>
+					<dd class="font-medium">
+						{ strconv.Itoa(usageCount) }
+						if usageCount == 1 {
+							<span class="text-muted-foreground"> agent/persona</span>
+						} else {
+							<span class="text-muted-foreground"> agents/personas</span>
+						}
+					</dd>
+					<dt class="text-muted-foreground">Requires Skill</dt>
+					<dd class="font-medium">
+						if bh.RequiresSkill != "" {
+							<a class="cursor-pointer"
+								hx-get={ "/skills/detail?name=" + bh.RequiresSkill }
+								hx-target="#content">
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ bh.RequiresSkill }
+								}
+							</a>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					</dd>
+					<dt class="text-muted-foreground">Requires Trait</dt>
+					<dd class="font-medium">
+						if bh.RequiresTrait != "" {
+							<a class="cursor-pointer"
+								hx-get={ "/traits/detail?name=" + bh.RequiresTrait }
+								hx-target="#content">
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ bh.RequiresTrait }
+								}
+							</a>
+						} else {
+							<span class="text-muted-foreground">-</span>
+						}
+					</dd>
+				</dl>
+			}
+		}
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Triggers }
+				}
+				@card.Content() {
+					if len(bh.Triggers) == 0 {
+						@components.EmptyState("zap", "No triggers", "Triggers define when this behavior activates")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Type }
+									@table.Head() { Pattern }
+								}
+							}
+							@table.Body() {
+								for _, trig := range bh.Triggers {
+									@table.Row() {
+										@table.Cell() {
+											@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+												{ string(trig.Type) }
+											}
+										}
+										@table.Cell() {
+											if trig.Pattern != "" {
+												<code class="text-xs bg-muted px-1 py-0.5 rounded">{ trig.Pattern }</code>
+											} else {
+												<span class="text-xs text-muted-foreground">-</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Actions }
+				}
+				@card.Content() {
+					if len(bh.Actions) == 0 {
+						@components.EmptyState("zap", "No actions", "Actions define what happens when triggered")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Type }
+									@table.Head() { Target }
+									@table.Head() { Value }
+								}
+							}
+							@table.Body() {
+								for _, act := range bh.Actions {
+									@table.Row() {
+										@table.Cell() {
+											@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+												{ string(act.Type) }
+											}
+										}
+										@table.Cell() {
+											if act.Target != "" {
+												<code class="text-xs bg-muted px-1 py-0.5 rounded">{ act.Target }</code>
+											} else {
+												<span class="text-xs text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											if act.Value != nil {
+												<span class="text-sm">{ fmt.Sprintf("%v", act.Value) }</span>
+											} else {
+												<span class="text-xs text-muted-foreground">-</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		if len(bh.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Metadata }
+				}
+				@card.Content() {
+					@components.JsonViewer(bh.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-behavior-" + bh.Name,
+			Title:        "Delete Behavior",
+			Description:  "Are you sure you want to delete behavior \"" + bh.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/cortex/behaviors/" + bh.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+		{ children... }
+	</div>
+}

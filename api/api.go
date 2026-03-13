@@ -59,5 +59,8 @@ func (a *API) RegisterRoutes(router forge.Router) error {
 	if err := a.registerMemoryRoutes(router); err != nil {
 		return err
 	}
-	return a.registerToolRoutes(router)
+	if err := a.registerToolRoutes(router); err != nil {
+		return err
+	}
+	return a.registerConfigRoutes(router)
 }

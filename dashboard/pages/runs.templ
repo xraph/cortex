@@ -1,0 +1,133 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"time"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ RunsPage(runs []*run.Run, agentFilter string, stateFilter string, agents []*agent.Config, agentNames map[string]string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Runs", fmt.Sprintf("%d", pg.Total), "View agent execution history") {
+		}
+		<div class="flex gap-4">
+			<select name="state" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/runs"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='state'],[name='agent']">
+				<option value="">All States</option>
+				<option value="created" selected?={ stateFilter == "created" }>Created</option>
+				<option value="running" selected?={ stateFilter == "running" }>Running</option>
+				<option value="completed" selected?={ stateFilter == "completed" }>Completed</option>
+				<option value="failed" selected?={ stateFilter == "failed" }>Failed</option>
+				<option value="cancelled" selected?={ stateFilter == "cancelled" }>Cancelled</option>
+				<option value="paused" selected?={ stateFilter == "paused" }>Paused</option>
+			</select>
+			<select name="agent" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/runs"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='state'],[name='agent']">
+				<option value="">All Agents</option>
+				for _, a := range agents {
+					<option value={ a.Name } selected?={ agentFilter == a.Name }>{ a.Name }</option>
+				}
+			</select>
+		</div>
+		if len(runs) == 0 {
+			@components.EmptyState("play", "No runs found", "Agent runs will appear here when agents are executed")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Agent }
+						@table.Head() { State }
+						@table.Head() { Steps }
+						@table.Head() { Tokens }
+						@table.Head() { Duration }
+						@table.Head() { Created }
+						@table.Head() { Action }
+					}
+				}
+				@table.Body() {
+					for _, r := range runs {
+						{{ name := resolveRunAgentName(r.AgentID.String(), agentNames) }}
+						@table.Row() {
+							@table.Cell() {
+								<a class="text-sm font-medium hover:underline cursor-pointer"
+									hx-get={ "/agents/detail?name=" + name }
+									hx-target="#content">
+									{ name }
+								</a>
+							}
+							@table.Cell() {
+								@components.StateBadge(string(r.State))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(r.StepCount) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(r.TokensUsed) }
+							}
+							@table.Cell() {
+								{{ dur := computeDuration(r.StartedAt, r.CompletedAt) }}
+								<span class="text-xs text-muted-foreground">{ dur }</span>
+							}
+							@table.Cell() {
+								{{ created := r.CreatedAt.Format("Jan 02 15:04") }}
+								<span class="text-xs text-muted-foreground">{ created }</span>
+							}
+							@table.Cell() {
+								@button.Button(button.Props{
+									Variant: button.VariantOutline,
+									Size:    button.SizeSm,
+									Attributes: templ.Attributes{
+										"hx-get":    "/runs/detail?id=" + r.ID.String(),
+										"hx-target": "#content",
+									},
+								}) {
+									View
+								}
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/runs?state=" + stateFilter + "&agent=" + agentFilter }}
+			@Pagination(pg, baseURL)
+		}
+	</div>
+}
+
+func resolveRunAgentName(agentIDStr string, nameMap map[string]string) string {
+	if name, ok := nameMap[agentIDStr]; ok {
+		return name
+	}
+	return agentIDStr
+}
+
+func computeDuration(start, end *time.Time) string {
+	if start == nil || end == nil {
+		return "-"
+	}
+	d := end.Sub(*start)
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}

@@ -1,0 +1,126 @@
+package settings
+
+import (
+	"strconv"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+)
+
+templ ConfigPanel(cfg cortex.Config, pluginNames []string) {
+	<div class="space-y-6">
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Engine Configuration }
+				@card.Description() { Cortex engine settings and defaults. Changes are applied at runtime (in-memory). }
+			}
+			@card.Content() {
+				<div x-data={ settingsFormData(cfg) }>
+					<div id="settings-feedback" class="hidden text-sm mb-4 p-2 rounded"></div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Default Model</label>
+							<input type="text" x-model="form.default_model"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Default Max Steps</label>
+							<input type="number" x-model.number="form.default_max_steps" min="1"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Default Max Tokens</label>
+							<input type="number" x-model.number="form.default_max_tokens" min="1"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Default Temperature</label>
+							<input type="number" x-model.number="form.default_temperature" min="0" max="2" step="0.1"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Reasoning Loop</label>
+							<select x-model="form.default_reasoning_loop"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+								<option value="react">ReAct</option>
+								<option value="cot">Chain of Thought</option>
+								<option value="plan-execute">Plan & Execute</option>
+								<option value="reflexion">Reflexion</option>
+							</select>
+						</div>
+					</div>
+					<div class="mt-4 flex items-center gap-3">
+						<button @click="saveSettings()"
+							:disabled="saving"
+							class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+							<span x-show="!saving">Save Changes</span>
+							<span x-show="saving">Saving...</span>
+						</button>
+						<span x-show="saved" x-transition class="text-sm text-green-600">Settings saved</span>
+					</div>
+				</div>
+			}
+		}
+		if len(pluginNames) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Registered Extensions }
+					@card.Description() { Active cortex plugin extensions }
+				}
+				@card.Content() {
+					<div class="flex flex-wrap gap-2">
+						for _, name := range pluginNames {
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ name }
+							}
+						}
+					</div>
+				}
+			}
+		}
+		@separator.Separator()
+		{ children... }
+	</div>
+}
+
+func settingsFormData(cfg cortex.Config) string {
+	return `{
+		form: {
+			default_model: '` + cfg.DefaultModel + `',
+			default_max_steps: ` + strconv.Itoa(cfg.DefaultMaxSteps) + `,
+			default_max_tokens: ` + strconv.Itoa(cfg.DefaultMaxTokens) + `,
+			default_temperature: ` + strconv.FormatFloat(cfg.DefaultTemperature, 'f', 2, 64) + `,
+			default_reasoning_loop: '` + cfg.DefaultReasoningLoop + `'
+		},
+		saving: false,
+		saved: false,
+		async saveSettings() {
+			this.saving = true;
+			this.saved = false;
+			try {
+				const resp = await fetch('/cortex/config', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(this.form)
+				});
+				if (resp.ok) {
+					this.saved = true;
+					setTimeout(() => { this.saved = false; }, 3000);
+				} else {
+					const el = document.getElementById('settings-feedback');
+					el.textContent = 'Failed to save settings';
+					el.className = 'text-sm mb-4 p-2 rounded bg-destructive/10 text-destructive';
+					setTimeout(() => { el.className = 'hidden text-sm mb-4 p-2 rounded'; }, 3000);
+				}
+			} catch (e) {
+				const el = document.getElementById('settings-feedback');
+				el.textContent = 'Network error';
+				el.className = 'text-sm mb-4 p-2 rounded bg-destructive/10 text-destructive';
+				setTimeout(() => { el.className = 'hidden text-sm mb-4 p-2 rounded'; }, 3000);
+			}
+			this.saving = false;
+		}
+	}`
+}

@@ -1,0 +1,357 @@
+package pages
+
+import (
+	"fmt"
+	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/separator"
+)
+
+templ PersonaDetailPage(p *persona.Persona) {
+	<div class="space-y-6">
+		@components.PageHeader(p.Name, "", p.Description) {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/personas",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/personas/edit?name=" + p.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-persona-%s')", p.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Identity }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-4">
+						<dt class="text-muted-foreground">ID</dt>
+						<dd><code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ p.ID.String() }</code></dd>
+					</dl>
+					if p.Identity != "" {
+						<pre class="bg-muted rounded-md p-3 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">{ p.Identity }</pre>
+					} else {
+						<p class="text-sm text-muted-foreground">No identity defined</p>
+					}
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Skills }
+				}
+				@card.Content() {
+					@personaSkillsContent(p)
+				}
+			}
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Traits }
+				}
+				@card.Content() {
+					@personaTraitsContent(p)
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Behaviors }
+				}
+				@card.Content() {
+					if len(p.Behaviors) == 0 {
+						<p class="text-sm text-muted-foreground">No behaviors assigned</p>
+					} else {
+						<div class="flex flex-wrap gap-2">
+							for _, bName := range p.Behaviors {
+								<a class="cursor-pointer"
+									hx-get={ "/behaviors/detail?name=" + bName }
+									hx-target="#content">
+									@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+										{ bName }
+									}
+								</a>
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Cognitive Style }
+				}
+				@card.Content() {
+					@cognitiveStyleContent(p)
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Communication Style }
+				}
+				@card.Content() {
+					@communicationStyleContent(p)
+				}
+			}
+		</div>
+		if len(p.Perception.AttentionFilters) > 0 || p.Perception.ContextWindow > 0 || p.Perception.DetailOrientation > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Perception }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+						if p.Perception.ContextWindow > 0 {
+							<dt class="text-muted-foreground">Context Window</dt>
+							<dd class="font-medium">{ fmt.Sprintf("%.1f", p.Perception.ContextWindow) }</dd>
+						}
+						if p.Perception.DetailOrientation > 0 {
+							<dt class="text-muted-foreground">Detail Orientation</dt>
+							<dd class="font-medium">{ fmt.Sprintf("%.1f", p.Perception.DetailOrientation) }</dd>
+						}
+					</dl>
+					if len(p.Perception.AttentionFilters) > 0 {
+						@separator.Separator()
+						<div class="mt-4 space-y-2">
+							<span class="text-sm font-medium">Attention Filters</span>
+							for _, af := range p.Perception.AttentionFilters {
+								<div class="p-3 bg-muted/50 rounded-md space-y-1">
+									<span class="text-sm font-medium">{ af.Name }</span>
+									if len(af.Keywords) > 0 {
+										<div class="flex flex-wrap gap-1">
+											for _, kw := range af.Keywords {
+												@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+													{ kw }
+												}
+											}
+										</div>
+									}
+									if af.Prompt != "" {
+										<p class="text-xs text-muted-foreground">{ af.Prompt }</p>
+									}
+								</div>
+							}
+						</div>
+					}
+				}
+			}
+		}
+		if len(p.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Metadata }
+				}
+				@card.Content() {
+					@components.JsonViewer(p.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-persona-" + p.Name,
+			Title:        "Delete Persona",
+			Description:  "Are you sure you want to delete persona \"" + p.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/cortex/personas/" + p.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+		{ children... }
+	</div>
+}
+
+templ personaSkillsContent(p *persona.Persona) {
+	if len(p.Skills) == 0 {
+		<p class="text-sm text-muted-foreground">No skills assigned</p>
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Skill }
+					@table.Head() { Proficiency }
+				}
+			}
+			@table.Body() {
+				for _, sa := range p.Skills {
+					@table.Row() {
+						@table.Cell() {
+							<a class="cursor-pointer"
+								hx-get={ "/skills/detail?name=" + sa.SkillName }
+								hx-target="#content">
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+									{ sa.SkillName }
+								}
+							</a>
+						}
+						@table.Cell() {
+							if sa.Proficiency != "" {
+								@components.ProficiencyBadge(string(sa.Proficiency))
+							} else {
+								<span class="text-xs text-muted-foreground">default</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+templ personaTraitsContent(p *persona.Persona) {
+	if len(p.Traits) == 0 {
+		<p class="text-sm text-muted-foreground">No traits assigned</p>
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Trait }
+					@table.Head() { Overrides }
+				}
+			}
+			@table.Body() {
+				for _, ta := range p.Traits {
+					@table.Row() {
+						@table.Cell() {
+							<a class="cursor-pointer"
+								hx-get={ "/traits/detail?name=" + ta.TraitName }
+								hx-target="#content">
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+									{ ta.TraitName }
+								}
+							</a>
+						}
+						@table.Cell() {
+							if len(ta.DimensionValues) > 0 {
+								<div class="flex flex-wrap gap-1">
+									for dimName, dimVal := range ta.DimensionValues {
+										@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+											{ fmt.Sprintf("%s: %.1f", dimName, dimVal) }
+										}
+									}
+								</div>
+							} else {
+								<span class="text-xs text-muted-foreground">defaults</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+templ cognitiveStyleContent(p *persona.Persona) {
+	if p.CognitiveStyle.DepthPreference == 0 && p.CognitiveStyle.FocusPreference == 0 {
+		<p class="text-sm text-muted-foreground">No cognitive style configured</p>
+	} else {
+		<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+			<dt class="text-muted-foreground">Depth Preference</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CognitiveStyle.DepthPreference) }</dd>
+			<dt class="text-muted-foreground">Focus Preference</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CognitiveStyle.FocusPreference) }</dd>
+			<dt class="text-muted-foreground">Reflection Frequency</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CognitiveStyle.ReflectionFrequency) }</dd>
+		</dl>
+		if len(p.CognitiveStyle.Phases) > 0 {
+			@separator.Separator()
+			<div class="mt-4 space-y-2">
+				<span class="text-sm font-medium">Phases</span>
+				@cognitivePhaseTable(p)
+			</div>
+		}
+	}
+}
+
+templ cognitivePhaseTable(p *persona.Persona) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() { Strategy }
+				@table.Head() { Max Steps }
+				@table.Head() { Transition }
+			}
+		}
+		@table.Body() {
+			for _, phase := range p.CognitiveStyle.Phases {
+				@table.Row() {
+					@table.Cell() {
+						@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+							{ string(phase.Strategy) }
+						}
+					}
+					@table.Cell() {
+						{ fmt.Sprintf("%d", phase.MaxSteps) }
+					}
+					@table.Cell() {
+						if phase.Transition != "" {
+							{ string(phase.Transition) }
+						} else {
+							<span class="text-xs text-muted-foreground">-</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+templ communicationStyleContent(p *persona.Persona) {
+	if p.CommunicationStyle.Tone == "" && p.CommunicationStyle.Formality == 0 {
+		<p class="text-sm text-muted-foreground">No communication style configured</p>
+	} else {
+		<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+			if p.CommunicationStyle.Tone != "" {
+				<dt class="text-muted-foreground">Tone</dt>
+				<dd class="font-medium">{ p.CommunicationStyle.Tone }</dd>
+			}
+			<dt class="text-muted-foreground">Formality</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CommunicationStyle.Formality) }</dd>
+			<dt class="text-muted-foreground">Verbosity</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CommunicationStyle.Verbosity) }</dd>
+			<dt class="text-muted-foreground">Technical Level</dt>
+			<dd class="font-medium">{ fmt.Sprintf("%.1f", p.CommunicationStyle.TechnicalLevel) }</dd>
+			if p.CommunicationStyle.PreferredFormat != "" {
+				<dt class="text-muted-foreground">Preferred Format</dt>
+				<dd class="font-medium">{ p.CommunicationStyle.PreferredFormat }</dd>
+			}
+			<dt class="text-muted-foreground">Emoji Usage</dt>
+			<dd class="font-medium">
+				if p.CommunicationStyle.EmojiUsage {
+					Yes
+				} else {
+					No
+				}
+			</dd>
+			<dt class="text-muted-foreground">Adapt to User</dt>
+			<dd class="font-medium">
+				if p.CommunicationStyle.AdaptToUser {
+					Yes
+				} else {
+					No
+				}
+			</dd>
+		</dl>
+	}
+}

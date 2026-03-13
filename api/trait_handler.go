@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerTraitRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("traits"))
+	g := router.Group("", forge.WithGroupTags("traits"))
 
 	if err := g.POST("/traits", a.createTrait,
 		forge.WithSummary("Create trait"),
@@ -118,7 +118,7 @@ func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, err
 	return t, ctx.JSON(http.StatusOK, t)
 }
 
-func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) ([]*trait.Trait, error) {
+func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) (*ListTraitsResponse, error) {
 	traits, err := a.eng.ListTraits(ctx.Context(), &trait.ListFilter{
 		AppID:    cortex.AppFromContext(ctx.Context()),
 		Category: trait.Category(req.Category),
@@ -128,7 +128,8 @@ func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) ([]*trait.Tr
 	if err != nil {
 		return nil, fmt.Errorf("list traits: %w", err)
 	}
-	return traits, ctx.JSON(http.StatusOK, traits)
+	resp := &ListTraitsResponse{Items: traits}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Trait, error) {

@@ -85,6 +85,26 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	return result, nil
 }
 
+func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
+	q := s.sdb.NewSelect((*runModel)(nil))
+	if filter != nil {
+		if filter.AgentID != "" {
+			q = q.Where("agent_id = ?", filter.AgentID)
+		}
+		if filter.TenantID != "" {
+			q = q.Where("tenant_id = ?", filter.TenantID)
+		}
+		if filter.State != "" {
+			q = q.Where("state = ?", string(filter.State))
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/sqlite: count runs: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 	now := time.Now().UTC()
 	step.CreatedAt = now

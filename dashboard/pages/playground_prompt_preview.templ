@@ -1,0 +1,6 @@
+package pages
+
+// PlaygroundPromptPreview renders the computed system prompt as an HTMX fragment.
+templ PlaygroundPromptPreview(prompt string) {
+	<pre id="prompt-preview-content" class="text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-[300px] overflow-y-auto font-mono leading-relaxed">{ prompt }</pre>
+}

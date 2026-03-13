@@ -50,11 +50,13 @@ type Store interface {
 	Update(ctx context.Context, config *Config) error
 	Delete(ctx context.Context, agentID id.AgentID) error
 	List(ctx context.Context, filter *ListFilter) ([]*Config, error)
+	CountAgents(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination for agent listing.
+// ListFilter controls pagination and filtering for agent listing.
 type ListFilter struct {
 	AppID  string
+	Search string
 	Limit  int
 	Offset int
 }

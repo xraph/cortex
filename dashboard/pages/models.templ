@@ -1,0 +1,171 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ ModelsPage(models []shared.ModelInfo, providers []shared.ProviderInfo, search, providerFilter string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Models", fmt.Sprintf("%d", pg.Total), "LLM models available via Nexus gateway")
+		<div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+			@components.StatCard("sparkles", "Total Models", strconv.Itoa(int(pg.Total)), "")
+			@components.StatCard("bot", "Providers", strconv.Itoa(len(providers)), "")
+			@components.StatCard("activity", "Healthy", strconv.Itoa(countHealthyProviders(providers)), fmt.Sprintf("of %d providers", len(providers)))
+		</div>
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search models...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/models",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+			if len(providers) > 0 {
+				<select
+					name="provider"
+					class="h-9 rounded border border-input bg-background px-3 text-sm max-w-[200px]"
+					hx-get="/models"
+					hx-target="#content"
+					hx-trigger="change"
+					hx-push-url="true"
+					hx-include="[name='search']"
+				>
+					<option value="">All Providers</option>
+					for _, p := range providers {
+						if p.Name == providerFilter {
+							<option value={ p.Name } selected>{ p.Name }</option>
+						} else {
+							<option value={ p.Name }>{ p.Name }</option>
+						}
+					}
+				</select>
+			}
+		</div>
+		if len(models) == 0 {
+			@components.EmptyState("sparkles", "No models found", "Models from connected LLM providers will appear here")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Model }
+						@table.Head() { Provider }
+						@table.Head() { Context }
+						@table.Head() { Max Output }
+						@table.Head() { Input $/M }
+						@table.Head() { Output $/M }
+						@table.Head() { Capabilities }
+					}
+				}
+				@table.Body() {
+					for _, m := range models {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/models/detail?id=" + m.ID }
+									hx-target="#content">
+									<code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ m.ID }</code>
+								</a>
+								if m.Name != "" && m.Name != m.ID {
+									<div class="text-xs text-muted-foreground mt-0.5">{ m.Name }</div>
+								}
+							}
+							@table.Cell() {
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ m.Provider }
+								}
+							}
+							@table.Cell() {
+								if m.ContextWindow > 0 {
+									{ formatTokenCount(m.ContextWindow) }
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								if m.MaxOutput > 0 {
+									{ formatTokenCount(m.MaxOutput) }
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								if m.InputPricing > 0 {
+									{ fmt.Sprintf("$%.2f", m.InputPricing) }
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								if m.OutputPricing > 0 {
+									{ fmt.Sprintf("$%.2f", m.OutputPricing) }
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								<div class="flex flex-wrap gap-1">
+									@modelCapBadges(m.Capabilities)
+								</div>
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/models?search=" + search + "&provider=" + providerFilter)
+		}
+	</div>
+}
+
+func countHealthyProviders(providers []shared.ProviderInfo) int {
+	c := 0
+	for _, p := range providers {
+		if p.Healthy {
+			c++
+		}
+	}
+	return c
+}
+
+func formatTokenCount(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%dk", n/1_000)
+	}
+	return strconv.Itoa(n)
+}
+
+templ modelCapBadges(caps shared.ModelCapabilities) {
+	if caps.Chat {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { chat }
+	}
+	if caps.Vision {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { vision }
+	}
+	if caps.Tools {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { tools }
+	}
+	if caps.Thinking {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { thinking }
+	}
+	if caps.JSON {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { json }
+	}
+	if caps.Streaming {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) { stream }
+	}
+}

@@ -1,0 +1,109 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+)
+
+templ ModelDetailPage(model *shared.ModelInfo) {
+	<div class="space-y-6">
+		@components.PageHeader(model.ID, "", "Model details and capabilities") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/models",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+		}
+		<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			@components.StatCard("database", "Context Window", formatTokenCount(model.ContextWindow), "tokens")
+			@components.StatCard("terminal", "Max Output", formatTokenCount(model.MaxOutput), "tokens")
+			@components.StatCard("zap", "Input Price", formatPrice(model.InputPricing), "per million tokens")
+			@components.StatCard("zap", "Output Price", formatPrice(model.OutputPricing), "per million tokens")
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Model Information }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+						<dt class="text-muted-foreground">Model ID</dt>
+						<dd><code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ model.ID }</code></dd>
+						<dt class="text-muted-foreground">Provider</dt>
+						<dd>
+							@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+								{ model.Provider }
+							}
+						</dd>
+						if model.Name != "" {
+							<dt class="text-muted-foreground">Display Name</dt>
+							<dd class="font-medium">{ model.Name }</dd>
+						}
+						<dt class="text-muted-foreground">Context Window</dt>
+						<dd class="font-medium">{ strconv.Itoa(model.ContextWindow) } tokens</dd>
+						<dt class="text-muted-foreground">Max Output</dt>
+						<dd class="font-medium">{ strconv.Itoa(model.MaxOutput) } tokens</dd>
+						if model.InputPricing > 0 {
+							<dt class="text-muted-foreground">Input Pricing</dt>
+							<dd class="font-medium">{ fmt.Sprintf("$%.4f", model.InputPricing) } / M tokens</dd>
+						}
+						if model.OutputPricing > 0 {
+							<dt class="text-muted-foreground">Output Pricing</dt>
+							<dd class="font-medium">{ fmt.Sprintf("$%.4f", model.OutputPricing) } / M tokens</dd>
+						}
+					</dl>
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Capabilities }
+				}
+				@card.Content() {
+					<div class="grid grid-cols-2 gap-3">
+						@capabilityRow("Chat", model.Capabilities.Chat)
+						@capabilityRow("Streaming", model.Capabilities.Streaming)
+						@capabilityRow("Embeddings", model.Capabilities.Embeddings)
+						@capabilityRow("Images", model.Capabilities.Images)
+						@capabilityRow("Vision", model.Capabilities.Vision)
+						@capabilityRow("Tools", model.Capabilities.Tools)
+						@capabilityRow("JSON Output", model.Capabilities.JSON)
+						@capabilityRow("Audio", model.Capabilities.Audio)
+						@capabilityRow("Thinking", model.Capabilities.Thinking)
+						@capabilityRow("Batch", model.Capabilities.Batch)
+					</div>
+				}
+			}
+		</div>
+	</div>
+}
+
+func formatPrice(price float64) string {
+	if price <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("$%.2f", price)
+}
+
+templ capabilityRow(name string, supported bool) {
+	<div class="flex items-center justify-between text-sm">
+		<span class="text-muted-foreground">{ name }</span>
+		if supported {
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Supported
+			}
+		} else {
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				<span class="text-muted-foreground">Not available</span>
+			}
+		}
+	</div>
+}

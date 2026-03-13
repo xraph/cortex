@@ -1,0 +1,80 @@
+name: cortex
+display_name: "Cortex"
+icon: bot
+version: 0.1.0
+type: templ
+build:
+  mode: local
+
+nav:
+  - label: Overview
+    path: /
+    icon: layout-dashboard
+    group: Cortex
+    priority: 0
+  - label: Agents
+    path: /agents
+    icon: bot
+    group: Design
+    priority: 1
+  - label: Personas
+    path: /personas
+    icon: user-circle
+    group: Design
+    priority: 2
+  - label: Skills
+    path: /skills
+    icon: wrench
+    group: Composition
+    priority: 3
+  - label: Traits
+    path: /traits
+    icon: brain
+    group: Composition
+    priority: 4
+  - label: Behaviors
+    path: /behaviors
+    icon: zap
+    group: Composition
+    priority: 5
+  - label: Runs
+    path: /runs
+    icon: play
+    group: Operations
+    priority: 6
+  - label: Checkpoints
+    path: /checkpoints
+    icon: shield-check
+    group: Operations
+    priority: 7
+  - label: Memory
+    path: /memory
+    icon: database
+    group: Operations
+    priority: 8
+
+widgets:
+  - id: cortex-stats
+    title: "Entity Stats"
+    description: "Cortex entity counts"
+    size: md
+    refresh_sec: 60
+  - id: cortex-recent-runs
+    title: "Recent Runs"
+    description: "Recent agent run results"
+    size: lg
+    refresh_sec: 15
+  - id: cortex-active-checkpoints
+    title: "Active Checkpoints"
+    description: "Pending human-in-the-loop checkpoints"
+    size: md
+    refresh_sec: 10
+
+settings:
+  - id: cortex-config
+    title: "Engine Settings"
+    description: "Configure Cortex engine behavior"
+    group: Cortex
+    icon: bot
+
+searchable: true

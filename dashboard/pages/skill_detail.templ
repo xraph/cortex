@@ -1,0 +1,206 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/components/separator"
+)
+
+templ SkillDetailPage(sk *skill.Skill, usageCount int) {
+	<div class="space-y-6">
+		@components.PageHeader(sk.Name, "", sk.Description) {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/skills",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/skills/edit?name=" + sk.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-skill-%s')", sk.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Configuration }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+						<dt class="text-muted-foreground">ID</dt>
+						<dd><code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ sk.ID.String() }</code></dd>
+						<dt class="text-muted-foreground">Default Proficiency</dt>
+						<dd>@components.ProficiencyBadge(string(sk.DefaultProficiency))</dd>
+						<dt class="text-muted-foreground">Referenced By</dt>
+						<dd class="font-medium">
+							{ strconv.Itoa(usageCount) }
+							if usageCount == 1 {
+								<span class="text-muted-foreground"> agent/persona</span>
+							} else {
+								<span class="text-muted-foreground"> agents/personas</span>
+							}
+						</dd>
+					</dl>
+					if len(sk.Dependencies) > 0 {
+						@separator.Separator()
+						<div class="mt-4 space-y-2">
+							<span class="text-sm font-medium">Dependencies</span>
+							<div class="flex flex-wrap gap-1">
+								for _, dep := range sk.Dependencies {
+									<a class="cursor-pointer"
+										hx-get={ "/skills/detail?name=" + dep }
+										hx-target="#content">
+										@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+											{ dep }
+										}
+									</a>
+								}
+							</div>
+						</div>
+					}
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { System Prompt Fragment }
+				}
+				@card.Content() {
+					if sk.SystemPromptFragment != "" {
+						<pre class="bg-muted rounded-md p-3 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">{ sk.SystemPromptFragment }</pre>
+					} else {
+						<p class="text-sm text-muted-foreground">No system prompt fragment configured</p>
+					}
+				}
+			}
+		</div>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Tool Bindings }
+			}
+			@card.Content() {
+				if len(sk.Tools) == 0 {
+					@components.EmptyState("wrench", "No tool bindings", "Tools bound to this skill will appear here")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Tool Name }
+								@table.Head() { Mastery }
+								@table.Head() { Guidance }
+								@table.Head() { Prefer When }
+							}
+						}
+						@table.Body() {
+							for _, tb := range sk.Tools {
+								@table.Row() {
+									@table.Cell() {
+										<code class="text-xs bg-muted px-1 py-0.5 rounded">{ tb.ToolName }</code>
+									}
+									@table.Cell() {
+										@components.ProficiencyBadge(string(tb.Mastery))
+									}
+									@table.Cell() {
+										if tb.Guidance != "" {
+											<span class="text-sm">{ tb.Guidance }</span>
+										} else {
+											<span class="text-xs text-muted-foreground">-</span>
+										}
+									}
+									@table.Cell() {
+										if tb.PreferWhen != "" {
+											<span class="text-sm">{ tb.PreferWhen }</span>
+										} else {
+											<span class="text-xs text-muted-foreground">-</span>
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if len(sk.Knowledge) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Knowledge References }
+				}
+				@card.Content() {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Source }
+								@table.Head() { Inject Mode }
+								@table.Head() { Priority }
+							}
+						}
+						@table.Body() {
+							for _, kr := range sk.Knowledge {
+								@table.Row() {
+									@table.Cell() {
+										<code class="text-xs bg-muted px-1 py-0.5 rounded">{ kr.Source }</code>
+									}
+									@table.Cell() {
+										if kr.InjectMode != "" {
+											@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+												{ kr.InjectMode }
+											}
+										} else {
+											<span class="text-xs text-muted-foreground">default</span>
+										}
+									}
+									@table.Cell() {
+										{{ priority := fmt.Sprintf("%d", kr.Priority) }}
+										{ priority }
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if len(sk.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Metadata }
+				}
+				@card.Content() {
+					@components.JsonViewer(sk.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-skill-" + sk.Name,
+			Title:        "Delete Skill",
+			Description:  "Are you sure you want to delete skill \"" + sk.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/cortex/skills/" + sk.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+		{ children... }
+	</div>
+}

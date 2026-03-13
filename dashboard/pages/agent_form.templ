@@ -1,0 +1,331 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	switchcomp "github.com/xraph/forgeui/components/switch"
+	"github.com/xraph/forgeui/components/form"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ AgentFormPage(ag *agent.Config, personas []*persona.Persona, skills []*skill.Skill, traits []*trait.Trait, behaviors []*behavior.Behavior) {
+	{{ isEdit := ag != nil }}
+	{{ title := "Create Agent" }}
+	if isEdit {
+		{{ title = "Edit Agent: " + ag.Name }}
+	}
+	<div
+		class="space-y-6"
+		x-data={ agentFormAlpineData(ag) }
+	>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/agents",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				<span x-show="!submitting">
+					if isEdit {
+						Save Changes
+					} else {
+						Create Agent
+					}
+				</span>
+				<span x-show="submitting">Saving...</span>
+			}
+		}
+
+		<!-- Error display -->
+		<div x-show="error" x-cloak class="p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Basic Information }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-name"}) { Name }
+						@input.Input(input.Props{
+							ID: "agent-name",
+							Attributes: templ.Attributes{
+								"x-model": "formData.name",
+								"required": "true",
+							},
+						})
+						if isEdit {
+							<input type="hidden" x-model="formData.name"/>
+						}
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-model"}) { Model }
+						@input.Input(input.Props{
+							ID: "agent-model", Placeholder: "smart",
+							Attributes: templ.Attributes{"x-model": "formData.model"},
+						})
+					}
+					<div class="col-span-2">
+						@form.Item() {
+							@form.Label(form.LabelProps{For: "agent-desc"}) { Description }
+							@textarea.Textarea(textarea.Props{
+								ID: "agent-desc", Rows: 2,
+								Attributes: templ.Attributes{"x-model": "formData.description"},
+							})
+						}
+					</div>
+					@form.ItemFlex() {
+						@form.Label(form.LabelProps{For: "agent-enabled"}) { Enabled }
+						@switchcomp.Switch(switchcomp.Props{
+							ID: "agent-enabled",
+							Attributes: templ.Attributes{"x-model": "formData.enabled"},
+						})
+					}
+				</div>
+			}
+		}
+
+		<!-- System Prompt -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { System Prompt }
+			}
+			@card.Content() {
+				@textarea.Textarea(textarea.Props{
+					ID: "agent-system-prompt", Class: "font-mono min-h-32",
+					Attributes: templ.Attributes{"x-model": "formData.system_prompt"},
+				})
+			}
+		}
+
+		<!-- Parameters -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Parameters }
+			}
+			@card.Content() {
+				<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-max-steps"}) { Max Steps }
+						@input.Input(input.Props{
+							ID: "agent-max-steps", Type: input.TypeNumber,
+							Attributes: templ.Attributes{"x-model.number": "formData.max_steps"},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-max-tokens"}) { Max Tokens }
+						@input.Input(input.Props{
+							ID: "agent-max-tokens", Type: input.TypeNumber,
+							Attributes: templ.Attributes{"x-model.number": "formData.max_tokens"},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-temp"}) { Temperature }
+						@input.Input(input.Props{
+							ID: "agent-temp", Type: input.TypeNumber,
+							Attributes: templ.Attributes{
+								"x-model.number": "formData.temperature",
+								"step": "0.1", "min": "0", "max": "2",
+							},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-reasoning"}) { Reasoning Loop }
+						<select id="agent-reasoning" x-model="formData.reasoning_loop"
+							class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+							<option value="">Default</option>
+							<option value="react">ReAct</option>
+							<option value="plan-execute">Plan-Execute</option>
+							<option value="tree-of-thought">Tree of Thought</option>
+						</select>
+					}
+				</div>
+			}
+		}
+
+		<!-- Persona Reference -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Persona }
+			}
+			@card.Content() {
+				@form.Item() {
+					@form.Label(form.LabelProps{For: "agent-persona"}) { Persona Reference }
+					<select id="agent-persona" x-model="formData.persona_ref"
+						class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+						<option value="">None</option>
+						for _, p := range personas {
+							<option value={ p.Name }>{ p.Name }</option>
+						}
+					</select>
+				}
+			}
+		}
+
+		<!-- Tools -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Tools }
+						@card.Description() { Tool names available to this agent (flat mode). }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{"@click": "formData.tools.push('')"},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Tool</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-3">
+					<template x-for="(tool, i) in formData.tools" :key="i">
+						<div class="flex items-center gap-3">
+							<input x-model="formData.tools[i]" placeholder="tool-name"
+								class="flex h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm"/>
+							<button type="button" @click="formData.tools.splice(i, 1)"
+								class="h-9 w-9 flex items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+								@icons.X(icons.WithSize(16))
+							</button>
+						</div>
+					</template>
+					<p x-show="formData.tools.length === 0" class="text-sm text-muted-foreground text-center py-2">No tools configured.</p>
+				</div>
+			}
+		}
+
+		<!-- Inline Skills / Traits / Behaviors -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Inline Persona Overrides }
+				@card.Description() { Assign skills, traits, and behaviors directly (without a persona reference). }
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-inline-skills"}) { Inline Skills }
+						@form.Description() { Comma-separated skill names }
+						@input.Input(input.Props{
+							ID: "agent-inline-skills", Placeholder: "skill-a, skill-b",
+							Attributes: templ.Attributes{"x-model": "inlineSkillsText"},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-inline-traits"}) { Inline Traits }
+						@form.Description() { Comma-separated trait names }
+						@input.Input(input.Props{
+							ID: "agent-inline-traits", Placeholder: "trait-a, trait-b",
+							Attributes: templ.Attributes{"x-model": "inlineTraitsText"},
+						})
+					}
+					@form.Item() {
+						@form.Label(form.LabelProps{For: "agent-inline-behaviors"}) { Inline Behaviors }
+						@form.Description() { Comma-separated behavior names }
+						@input.Input(input.Props{
+							ID: "agent-inline-behaviors", Placeholder: "behavior-a, behavior-b",
+							Attributes: templ.Attributes{"x-model": "inlineBehaviorsText"},
+						})
+					}
+				</div>
+			}
+		}
+	</div>
+}
+
+func agentFormAlpineData(ag *agent.Config) string {
+	if ag == nil {
+		return `{
+			formData: {
+				name: '', description: '', model: '', system_prompt: '',
+				max_steps: 0, max_tokens: 0, temperature: 0, reasoning_loop: '',
+				persona_ref: '', tools: [], enabled: true
+			},
+			inlineSkillsText: '',
+			inlineTraitsText: '',
+			inlineBehaviorsText: '',
+			error: '',
+			submitting: false,
+			async submitForm() {
+				this.submitting = true;
+				this.error = '';
+				const data = {...this.formData};
+				data.tools = data.tools.filter(t => t.trim() !== '');
+				data.inline_skills = this.inlineSkillsText ? this.inlineSkillsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+				data.inline_traits = this.inlineTraitsText ? this.inlineTraitsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+				data.inline_behaviors = this.inlineBehaviorsText ? this.inlineBehaviorsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+				try {
+					const resp = await fetch('/cortex/agents', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+					if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/agents', {target: '#content'}); }
+					else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to create agent'; }
+				} catch(e) { this.error = e.message; }
+				this.submitting = false;
+			}
+		}`
+	}
+
+	toolsJSON, _ := json.Marshal(ag.Tools)
+	if ag.Tools == nil {
+		toolsJSON = []byte("[]")
+	}
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q, description: %q, model: %q, system_prompt: %q,
+			max_steps: %d, max_tokens: %d, temperature: %s, reasoning_loop: %q,
+			persona_ref: %q, tools: %s, enabled: %v
+		},
+		inlineSkillsText: %q,
+		inlineTraitsText: %q,
+		inlineBehaviorsText: %q,
+		error: '',
+		submitting: false,
+		async submitForm() {
+			this.submitting = true;
+			this.error = '';
+			const data = {...this.formData};
+			data.tools = data.tools.filter(t => t.trim() !== '');
+			data.inline_skills = this.inlineSkillsText ? this.inlineSkillsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+			data.inline_traits = this.inlineTraitsText ? this.inlineTraitsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+			data.inline_behaviors = this.inlineBehaviorsText ? this.inlineBehaviorsText.split(',').map(s => s.trim()).filter(Boolean) : [];
+			try {
+				const resp = await fetch('/cortex/agents/%s', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+				if (resp.ok) { htmx.ajax('GET', '/ext/cortex/pages/agents/detail?name=%s', {target: '#content'}); }
+				else { const r = await resp.json().catch(() => ({})); this.error = r.error || r.message || 'Failed to update agent'; }
+			} catch(e) { this.error = e.message; }
+			this.submitting = false;
+		}
+	}`,
+		ag.Name, ag.Description, ag.Model, ag.SystemPrompt,
+		ag.MaxSteps, ag.MaxTokens, strconv.FormatFloat(ag.Temperature, 'f', 2, 64), ag.ReasoningLoop,
+		ag.PersonaRef, string(toolsJSON), ag.Enabled,
+		strings.Join(ag.InlineSkills, ", "),
+		strings.Join(ag.InlineTraits, ", "),
+		strings.Join(ag.InlineBehaviors, ", "),
+		ag.Name, ag.Name,
+	)
+}

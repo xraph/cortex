@@ -1,0 +1,73 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ CheckpointsPage(checkpoints []*checkpoint.Checkpoint, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Checkpoints", fmt.Sprintf("%d", pg.Total), "Human-in-the-loop review queue") {
+		}
+		if len(checkpoints) == 0 {
+			@components.EmptyState("shield-check", "No pending checkpoints", "Checkpoints awaiting review will appear here")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { ID }
+						@table.Head() { Reason }
+						@table.Head() { Run }
+						@table.Head() { Step }
+						@table.Head() { State }
+						@table.Head() { Created }
+						@table.Head() { Action }
+					}
+				}
+				@table.Body() {
+					for _, cp := range checkpoints {
+						@table.Row() {
+							@table.Cell() {
+								<code class="text-xs bg-muted px-1 py-0.5 rounded">{ cp.ID.String() }</code>
+							}
+							@table.Cell() {
+								<span class="text-sm">{ cp.Reason }</span>
+							}
+							@table.Cell() {
+								<code class="text-xs bg-muted px-1 py-0.5 rounded">{ cp.RunID.String() }</code>
+							}
+							@table.Cell() {
+								{ strconv.Itoa(cp.StepIndex) }
+							}
+							@table.Cell() {
+								@components.StateBadge(cp.State)
+							}
+							@table.Cell() {
+								{{ created := cp.CreatedAt.Format("Jan 02 15:04") }}
+								<span class="text-xs text-muted-foreground">{ created }</span>
+							}
+							@table.Cell() {
+								@button.Button(button.Props{
+									Variant: button.VariantOutline,
+									Size:    button.SizeSm,
+									Attributes: templ.Attributes{
+										"hx-get":    "/checkpoints/detail?id=" + cp.ID.String(),
+										"hx-target": "#content",
+									},
+								}) {
+									Review
+								}
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/checkpoints?")
+		}
+	</div>
+}

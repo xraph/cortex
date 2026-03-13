@@ -93,3 +93,21 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 	}
 	return result, nil
 }
+
+func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) {
+	q := s.pgdb.NewSelect((*checkpointModel)(nil)).
+		Where("state = ?", "pending")
+	if filter != nil {
+		if filter.RunID != "" {
+			q = q.Where("run_id = ?", filter.RunID)
+		}
+		if filter.TenantID != "" {
+			q = q.Where("tenant_id = ?", filter.TenantID)
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex: count pending checkpoints: %w", err)
+	}
+	return count, nil
+}

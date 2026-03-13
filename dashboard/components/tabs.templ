@@ -1,0 +1,43 @@
+package components
+
+// TabDef describes a single tab.
+type TabDef struct {
+	ID    string
+	Label string
+	Icon  string
+}
+
+templ Tabs(tabs []TabDef, defaultTab string) {
+	<div x-data={ `{activeTab: '` + defaultTab + `'}` }>
+		<!-- Tab bar -->
+		<div class="border-b border-border mb-4">
+			<nav class="flex gap-0 -mb-px">
+				for _, tab := range tabs {
+					<button
+						type="button"
+						@click={ `activeTab = '` + tab.ID + `'` }
+						:class={ `activeTab === '` + tab.ID + `' ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'` }
+						class="px-4 py-2.5 text-sm border-b-2 transition-colors whitespace-nowrap"
+					>
+						if tab.Icon != "" {
+							<span class="inline-flex items-center gap-1.5">
+								@resolveIcon(tab.Icon, )
+								{ tab.Label }
+							</span>
+						} else {
+							{ tab.Label }
+						}
+					</button>
+				}
+			</nav>
+		</div>
+		<!-- Tab content rendered via children -->
+		{ children... }
+	</div>
+}
+
+templ TabContent(tabID string) {
+	<div x-show={ `activeTab === '` + tabID + `'` } x-cloak>
+		{ children... }
+	</div>
+}

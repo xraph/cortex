@@ -1,0 +1,149 @@
+package pages
+
+import (
+	"fmt"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+)
+
+// RunEvalData holds the evaluation data for a Cortex run.
+type RunEvalData struct {
+	HasEval      bool
+	RunID        string
+	EvalRunID    string
+	PassRate     float64
+	AvgScore     float64
+	TotalCases   int
+	Passed       int
+	Failed       int
+	CaseResults  []RunEvalCaseResult
+}
+
+// RunEvalCaseResult holds a single case result for the run eval section.
+type RunEvalCaseResult struct {
+	CaseName string
+	Status   string
+	Score    float64
+}
+
+// RunEvalSection renders the eval results section on a Cortex run detail page.
+templ RunEvalSection(data *RunEvalData) {
+	@card.Card(card.Props{}) {
+		@card.Header() {
+			<div class="flex items-center justify-between">
+				@card.Title() {
+					Evaluation Results
+				}
+				if data.HasEval {
+					@runEvalStatusBadge(data.PassRate)
+				}
+			</div>
+			@card.Description() {
+				Sentinel evaluation results for this agent run
+			}
+		}
+		@card.Content() {
+			if !data.HasEval {
+				<div class="text-center py-6 text-muted-foreground">
+					<p class="text-sm">This run has not been evaluated.</p>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"class": "mt-3",
+						},
+					}) {
+						Run Evaluation
+					}
+				</div>
+			} else {
+				<div class="space-y-4">
+					<div class="grid grid-cols-4 gap-4">
+						<div class="text-center">
+							<div class="text-xl font-bold">{ fmt.Sprintf("%.0f%%", data.PassRate*100) }</div>
+							<div class="text-xs text-muted-foreground">Pass Rate</div>
+						</div>
+						<div class="text-center">
+							<div class="text-xl font-bold">{ fmt.Sprintf("%.3f", data.AvgScore) }</div>
+							<div class="text-xs text-muted-foreground">Avg Score</div>
+						</div>
+						<div class="text-center">
+							<div class="text-xl font-bold text-green-600">{ fmt.Sprintf("%d", data.Passed) }</div>
+							<div class="text-xs text-muted-foreground">Passed</div>
+						</div>
+						<div class="text-center">
+							<div class="text-xl font-bold text-red-600">{ fmt.Sprintf("%d", data.Failed) }</div>
+							<div class="text-xs text-muted-foreground">Failed</div>
+						</div>
+					</div>
+					if len(data.CaseResults) > 0 {
+						@table.Table(table.Props{}) {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Case }
+									@table.Head() { Status }
+									@table.Head() { Score }
+								}
+							}
+							@table.Body() {
+								for _, cr := range data.CaseResults {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium text-sm">{ cr.CaseName }</span>
+										}
+										@table.Cell() {
+											@runEvalCaseStatusBadge(cr.Status)
+										}
+										@table.Cell() {
+											<span class="text-sm font-mono">{ fmt.Sprintf("%.3f", cr.Score) }</span>
+										}
+									}
+								}
+							}
+						}
+					}
+					<div class="flex gap-2 pt-2">
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Size:    button.SizeSm,
+						}) {
+							View Full Results
+						}
+					</div>
+				</div>
+			}
+		}
+	}
+}
+
+templ runEvalStatusBadge(passRate float64) {
+	if passRate >= 0.8 {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Pass
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+			Fail
+		}
+	}
+}
+
+templ runEvalCaseStatusBadge(status string) {
+	switch status {
+		case "pass":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Pass
+			}
+		case "fail":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Fail
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ status }
+			}
+	}
+}

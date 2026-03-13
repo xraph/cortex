@@ -112,6 +112,33 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	return result, nil
 }
 
+// CountRuns returns the total number of runs matching the filter.
+func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
+	f := bson.M{}
+	if filter != nil {
+		if filter.AgentID != "" {
+			f["agent_id"] = filter.AgentID
+		}
+
+		if filter.TenantID != "" {
+			f["tenant_id"] = filter.TenantID
+		}
+
+		if filter.State != "" {
+			f["state"] = string(filter.State)
+		}
+	}
+
+	count, err := s.mdb.NewFind((*runModel)(nil)).
+		Filter(f).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/mongo: count runs: %w", err)
+	}
+
+	return count, nil
+}
+
 // CreateStep persists a new step.
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 	t := now()

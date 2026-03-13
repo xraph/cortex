@@ -90,6 +90,9 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
 		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -109,4 +112,21 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 		result[i] = sk
 	}
 	return result, nil
+}
+
+func (s *Store) CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error) {
+	q := s.sdb.NewSelect((*skillModel)(nil))
+	if filter != nil {
+		if filter.AppID != "" {
+			q = q.Where("app_id = ?", filter.AppID)
+		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex/sqlite: count skills: %w", err)
+	}
+	return count, nil
 }

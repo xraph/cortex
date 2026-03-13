@@ -31,7 +31,7 @@ if err := s.Migrate(ctx); err != nil {
 | Aspect | Detail |
 |--------|--------|
 | Driver | Grove ORM with `mongodriver` (MongoDB) |
-| Migrations | Creates compound and unique indexes on all collections |
+| Migrations | Grove migrations with JSON Schema validation + indexes |
 | Transactions | Individual operations are atomic; multi-document transactions require explicit sessions |
 
 ## Collections
@@ -76,6 +76,17 @@ type Store interface {
 eng, err := engine.New(
     engine.WithStore(s),
 )
+```
+
+## Grove Migrations
+
+The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+
+```go
+import mongostore "github.com/xraph/cortex/store/mongo"
+
+// mongostore.Migrations is a migrate.Group for the cortex mongo store.
+// Register it with the grove migration orchestrator for coordinated migrations.
 ```
 
 ## When to use

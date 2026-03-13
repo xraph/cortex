@@ -71,11 +71,13 @@ type Store interface {
 	UpdateBehavior(ctx context.Context, behavior *Behavior) error
 	DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error
 	ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
+	CountBehaviors(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination for behavior listing.
+// ListFilter controls pagination and filtering for behavior listing.
 type ListFilter struct {
 	AppID  string
+	Search string
 	Limit  int
 	Offset int
 }

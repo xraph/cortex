@@ -1,0 +1,52 @@
+package components
+
+// PathRewriter adds an HTMX configRequest interceptor that rewrites bare page paths
+// (e.g. "/personas/create") to fully-qualified dashboard extension paths
+// (e.g. "/dashboard/ext/cortex/pages/personas/create").
+//
+// It also handles htmx.ajax() calls that use partial paths like
+// "/ext/cortex/pages/..." by prepending the dashboard base path.
+//
+// This component should wrap the outermost page content once.
+templ PathRewriter(pagesBase string) {
+	<div data-cortex-pages-base={ pagesBase }>
+		{ children... }
+	</div>
+	<script>
+	(function(){
+		if (window.__cortexPathRewriterAttached) return;
+		window.__cortexPathRewriterAttached = true;
+
+		document.addEventListener('htmx:configRequest', function(e) {
+			var el = e.detail.elt;
+			var wrapper = el.closest('[data-cortex-pages-base]');
+			if (!wrapper && document.querySelector('[data-cortex-pages-base]')) {
+				wrapper = document.querySelector('[data-cortex-pages-base]');
+			}
+			if (!wrapper) return;
+
+			var base = wrapper.getAttribute('data-cortex-pages-base');
+			if (!base) return;
+
+			var dashBase = base.replace(/\/ext\/[^/]+\/pages$/, '');
+			var path = e.detail.path;
+			if (!path || !path.startsWith('/')) return;
+
+			// Already fully qualified
+			if (path.startsWith(base)) return;
+
+			// API paths — do not rewrite
+			if (path.startsWith('/cortex/')) return;
+
+			// Partial ext path (from htmx.ajax calls) — add dashboard prefix
+			if (path.startsWith('/ext/')) {
+				e.detail.path = dashBase + path;
+				return;
+			}
+
+			// Bare page path — add full prefix
+			e.detail.path = base + path;
+		});
+	})();
+	</script>
+}

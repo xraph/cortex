@@ -15,15 +15,27 @@ import (
 	"net/http"
 
 	"github.com/xraph/forge"
+	"github.com/xraph/forge/extensions/dashboard"
+	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/cortex/api"
+	cortexdash "github.com/xraph/cortex/dashboard"
 	"github.com/xraph/cortex/engine"
+	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
+	nexusllm "github.com/xraph/cortex/llm/nexus"
+	"github.com/xraph/cortex/plugin"
+	shieldsafety "github.com/xraph/cortex/safety/shield"
+	sentineladapter "github.com/xraph/cortex/sentinel"
 	"github.com/xraph/cortex/store"
 	mongostore "github.com/xraph/cortex/store/mongo"
 	pgstore "github.com/xraph/cortex/store/postgres"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
+
+	"github.com/xraph/nexus"
+	shieldengine "github.com/xraph/shield/engine"
+	weaveengine "github.com/xraph/weave/engine"
 )
 
 // ExtensionName is the name registered with Forge.
@@ -35,18 +47,24 @@ const ExtensionDescription = "Human-emulating AI agent orchestration"
 // ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
-// Ensure Extension implements forge.Extension at compile time.
-var _ forge.Extension = (*Extension)(nil)
+// Ensure Extension implements forge.Extension and dashboard.DashboardAware at compile time.
+var (
+	_ forge.Extension          = (*Extension)(nil)
+	_ dashboard.DashboardAware = (*Extension)(nil)
+)
 
 // Extension adapts Cortex as a Forge extension.
 type Extension struct {
 	*forge.BaseExtension
 
-	config     Config
-	eng        *engine.Engine
-	apiHandler *api.API
-	engineOpts []engine.Option
-	useGrove   bool
+	config          Config
+	eng             *engine.Engine
+	apiHandler      *api.API
+	engineOpts      []engine.Option
+	useGrove        bool
+	modelSource     cortexdash.ModelSource
+	safetySource    cortexdash.SafetySource
+	knowledgeSource cortexdash.KnowledgeSource
 }
 
 // New creates a Cortex Forge extension with the given options.
@@ -100,6 +118,46 @@ func (e *Extension) init(fapp forge.App) error {
 			return err
 		}
 		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+		// Auto-discover default grove.DB from container (matches warden/authsome pattern).
+		s, err := e.buildStoreFromGroveDB(db)
+		if err != nil {
+			return err
+		}
+		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+		e.Logger().Info("cortex: auto-discovered grove.DB from container",
+			forge.F("driver", db.Driver().Name()),
+		)
+	}
+
+	// Optional: discover nexus gateway for dashboard model listing.
+	if gw, err := vessel.Inject[*nexus.Gateway](fapp.Container()); err == nil {
+		e.modelSource = cortexdash.NewNexusModelSource(gw)
+		e.Logger().Info("cortex: discovered nexus gateway, models page enabled")
+	}
+
+	// Optional: auto-discover Nexus LLM and Shield safety scanner from DI (no-op if not available).
+	e.engineOpts = append(e.engineOpts,
+		nexusllm.EngineOption(fapp.Container()),
+		shieldsafety.EngineOption(fapp.Container()),
+	)
+
+	// Discover Shield engine for dashboard safety sections.
+	if shieldEng, err := vessel.Inject[*shieldengine.Engine](fapp.Container()); err == nil {
+		e.safetySource = cortexdash.NewShieldSafetySource(shieldEng)
+		e.Logger().Info("cortex: discovered shield engine, safety scanning enabled")
+	}
+
+	// Optional: auto-discover Weave knowledge and Sentinel evaluation from DI (no-op if not available).
+	e.engineOpts = append(e.engineOpts,
+		weaveknowledge.EngineOption(fapp.Container()),
+		sentineladapter.EngineOption(fapp.Container()),
+	)
+
+	// Discover Weave engine for dashboard knowledge sections.
+	if weng, err := vessel.Inject[*weaveengine.Engine](fapp.Container()); err == nil {
+		e.knowledgeSource = cortexdash.NewWeaveKnowledgeSource(weng)
+		e.Logger().Info("cortex: discovered weave engine, knowledge page enabled")
 	}
 
 	eng, err := engine.New(e.engineOpts...)
@@ -111,7 +169,11 @@ func (e *Extension) init(fapp forge.App) error {
 	e.apiHandler = api.New(e.eng, fapp.Router())
 
 	if !e.config.DisableRoutes {
-		if err := e.apiHandler.RegisterRoutes(fapp.Router()); err != nil {
+		basePath := e.config.BasePath
+		if basePath == "" {
+			basePath = "/cortex"
+		}
+		if err := e.apiHandler.RegisterRoutes(fapp.Router().Group(basePath)); err != nil {
 			return fmt.Errorf("cortex: register routes: %w", err)
 		}
 	}
@@ -359,4 +421,29 @@ func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
 	default:
 		return nil, fmt.Errorf("cortex: unsupported grove driver %q", driverName)
 	}
+}
+
+// DashboardContributor implements dashboard.DashboardAware. It returns a
+// LocalContributor that renders cortex pages, widgets, and settings in the
+// Forge dashboard using templ + ForgeUI.
+func (e *Extension) DashboardContributor() contributor.LocalContributor {
+	var plugins []plugin.Extension
+	if e.eng != nil && e.eng.Extensions() != nil {
+		plugins = e.eng.Extensions().Extensions()
+	}
+
+	manifest := cortexdash.NewManifest(e.eng, plugins, e.modelSource, e.safetySource, e.knowledgeSource)
+
+	var opts []cortexdash.ContributorOption
+	if e.modelSource != nil {
+		opts = append(opts, cortexdash.WithModelSource(e.modelSource))
+	}
+	if e.safetySource != nil {
+		opts = append(opts, cortexdash.WithSafetySource(e.safetySource))
+	}
+	if e.knowledgeSource != nil {
+		opts = append(opts, cortexdash.WithKnowledgeSource(e.knowledgeSource))
+	}
+
+	return cortexdash.New(manifest, e.eng, plugins, opts...)
 }

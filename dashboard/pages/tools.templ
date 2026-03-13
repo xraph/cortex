@@ -1,0 +1,108 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ ToolsPage(tools []shared.DiscoveredTool, search string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Tools", fmt.Sprintf("%d", pg.Total), "Discovered tools across agents and skills")
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search tools...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/tools",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(tools) == 0 {
+			@components.EmptyState("terminal", "No tools found", "Tools referenced by agents or skills will appear here")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Source }
+						@table.Head() { Agents }
+						@table.Head() { Skills }
+						@table.Head() { Total Calls }
+						@table.Head() { Error Rate }
+					}
+				}
+				@table.Body() {
+					for _, tool := range tools {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/tools/detail?name=" + tool.Name }
+									hx-target="#content">
+									<code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ tool.Name }</code>
+								</a>
+							}
+							@table.Cell() {
+								@toolSourceBadge(tool.Source())
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(tool.AgentRefs)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(tool.SkillBindings)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(tool.TotalCalls) }
+							}
+							@table.Cell() {
+								if tool.TotalCalls > 0 {
+									{{ errRate := fmt.Sprintf("%.1f%%", tool.ErrorRate()) }}
+									if tool.ErrorRate() > 10 {
+										<span class="text-destructive font-medium">{ errRate }</span>
+									} else {
+										<span class="text-muted-foreground">{ errRate }</span>
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+						}
+					}
+				}
+			}
+			@Pagination(pg, "/tools?search=" + search)
+		}
+	</div>
+}
+
+templ toolSourceBadge(source string) {
+	switch source {
+		case "both":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				agents + skills
+			}
+		case "agents":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				agents
+			}
+		case "skills":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				skills
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				runs
+			}
+	}
+}

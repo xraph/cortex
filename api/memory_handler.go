@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerMemoryRoutes(router forge.Router) error {
-	g := router.Group("/cortex", forge.WithGroupTags("memory"))
+	g := router.Group("", forge.WithGroupTags("memory"))
 
 	if err := g.GET("/agents/:name/memory", a.getConversation,
 		forge.WithSummary("Get conversation"),
@@ -37,7 +37,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 	return nil
 }
 
-func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) ([]memory.Message, error) {
+func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*GetConversationResponse, error) {
 	appID := cortex.AppFromContext(ctx.Context())
 	cfg, err := a.eng.GetAgentByName(ctx.Context(), appID, ctx.Param("name"))
 	if err != nil {
@@ -51,7 +51,8 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) ([
 	if err != nil {
 		return nil, fmt.Errorf("load conversation: %w", err)
 	}
-	return messages, ctx.JSON(http.StatusOK, messages)
+	resp := &GetConversationResponse{Messages: messages}
+	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
 func (a *API) clearConversation(ctx forge.Context, _ *ClearConversationRequest) (*struct{}, error) {

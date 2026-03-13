@@ -1,0 +1,93 @@
+package pages
+
+import (
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+)
+
+// PlaygroundEvalData holds eval configuration for the playground panel.
+type PlaygroundEvalData struct {
+	Suites []PlaygroundSuiteOption
+}
+
+// PlaygroundSuiteOption represents an eval suite available in the playground.
+type PlaygroundSuiteOption struct {
+	ID   string
+	Name string
+}
+
+// PlaygroundEvalResultData holds eval results for the playground tab.
+type PlaygroundEvalResultData struct {
+	HasResults bool
+	PassRate   float64
+	AvgScore   float64
+	TotalCases int
+	Passed     int
+	Failed     int
+}
+
+// PlaygroundEvalPanel renders the eval configuration sidebar in the Cortex playground.
+templ PlaygroundEvalPanel(data *PlaygroundEvalData) {
+	@card.Card(card.Props{}) {
+		@card.Header() {
+			@card.Title() {
+				Evaluation
+			}
+			@card.Description() {
+				Run Sentinel evaluation
+			}
+		}
+		@card.Content() {
+			<div class="space-y-4">
+				<div class="space-y-1">
+					<label class="text-sm font-medium text-muted-foreground">Suite</label>
+					<select class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm" id="sentinel-eval-suite">
+						<option value="">Select suite...</option>
+						for _, s := range data.Suites {
+							<option value={ s.ID }>{ s.Name }</option>
+						}
+					</select>
+				</div>
+				@button.Button(button.Props{
+					Variant: button.VariantDefault,
+					Size:    button.SizeSm,
+					Attributes: templ.Attributes{
+						"class": "w-full",
+					},
+				}) {
+					Run Evaluation
+				}
+			</div>
+		}
+	}
+}
+
+// PlaygroundEvalTab renders the eval results tab in the Cortex playground.
+templ PlaygroundEvalTab(data *PlaygroundEvalResultData) {
+	if !data.HasResults {
+		<div class="text-center py-8 text-muted-foreground">
+			<p class="text-sm">No evaluation results yet.</p>
+			<p class="text-xs mt-1">Select a suite and run an evaluation from the sidebar.</p>
+		</div>
+	} else {
+		<div class="space-y-4 p-4">
+			<div class="grid grid-cols-2 gap-4">
+				<div class="text-center">
+					<div class="text-xl font-bold">{ fmt.Sprintf("%.0f%%", data.PassRate*100) }</div>
+					<div class="text-xs text-muted-foreground">Pass Rate</div>
+				</div>
+				<div class="text-center">
+					<div class="text-xl font-bold">{ fmt.Sprintf("%.3f", data.AvgScore) }</div>
+					<div class="text-xs text-muted-foreground">Avg Score</div>
+				</div>
+			</div>
+			<div class="flex justify-between text-sm">
+				<span class="text-green-600">{ fmt.Sprintf("%d passed", data.Passed) }</span>
+				<span class="text-red-600">{ fmt.Sprintf("%d failed", data.Failed) }</span>
+				<span class="text-muted-foreground">{ fmt.Sprintf("%d total", data.TotalCases) }</span>
+			</div>
+		</div>
+	}
+}

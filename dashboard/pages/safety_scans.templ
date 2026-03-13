@@ -1,0 +1,130 @@
+package pages
+
+import (
+	"fmt"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ SafetyScansPage(scans []shared.ScanInfo, summary *shared.ScanSummary, runFilter string) {
+	<div class="space-y-6">
+		@components.PageHeader("Safety Scans", fmt.Sprintf("%d", summary.TotalScans), "Shield scan results from agent runs")
+		<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			@components.StatCard("scan-line", "Total Scans", formatInt64(summary.TotalScans), "All time")
+			@components.StatCard("check-circle", "Allowed", formatInt64(summary.AllowedScans), "Passed safety checks")
+			@components.StatCard("shield-alert", "Blocked", formatInt64(summary.BlockedScans), fmt.Sprintf("%.1f%% block rate", summary.BlockRate))
+			@components.StatCard("flag", "Flagged", formatInt64(summary.FlaggedScans), "Flagged for review")
+		</div>
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Filter by run ID...",
+				Value:       runFilter,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "run",
+					"hx-get":      "/safety/scans",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "this",
+				},
+			})
+		</div>
+		if len(scans) == 0 {
+			@components.EmptyState("scan-line", "No scans found", "Safety scans will appear here as agents process content")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { ID }
+						@table.Head() { Direction }
+						@table.Head() { Decision }
+						@table.Head() { Findings }
+						@table.Head() { PII }
+						@table.Head() { Profile }
+						@table.Head() { Duration }
+						@table.Head() { Created }
+					}
+				}
+				@table.Body() {
+					for _, sc := range scans {
+						@table.Row() {
+							@table.Cell() {
+								<code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ sc.ID }</code>
+							}
+							@table.Cell() {
+								@scanDirectionBadge(sc.Direction)
+							}
+							@table.Cell() {
+								@scanDecisionBadge(sc.Decision, sc.Blocked)
+							}
+							@table.Cell() {
+								if sc.FindingCount > 0 {
+									@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+										{ fmt.Sprintf("%d", sc.FindingCount) }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">0</span>
+								}
+							}
+							@table.Cell() {
+								if sc.PIICount > 0 {
+									@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+										{ fmt.Sprintf("%d", sc.PIICount) }
+									}
+								} else {
+									<span class="text-xs text-muted-foreground">0</span>
+								}
+							}
+							@table.Cell() {
+								if sc.ProfileUsed != "" {
+									<span class="text-sm">{ sc.ProfileUsed }</span>
+								} else {
+									<span class="text-xs text-muted-foreground">default</span>
+								}
+							}
+							@table.Cell() {
+								<span class="text-xs text-muted-foreground">{ fmt.Sprintf("%dms", sc.DurationMs) }</span>
+							}
+							@table.Cell() {
+								<span class="text-xs text-muted-foreground">{ sc.CreatedAt }</span>
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+templ scanDirectionBadge(direction string) {
+	if direction == "input" {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+			input
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+			output
+		}
+	}
+}
+
+templ scanDecisionBadge(decision string, blocked bool) {
+	if blocked {
+		@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+			{ decision }
+		}
+	} else if decision == "flag" {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			{ decision }
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			{ decision }
+		}
+	}
+}

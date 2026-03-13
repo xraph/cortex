@@ -1,0 +1,92 @@
+package pages
+
+import (
+	"fmt"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+)
+
+// EvalSummaryData holds the evaluation summary data for an agent.
+type EvalSummaryData struct {
+	HasEvals   bool
+	SuiteName  string
+	SuiteID    string
+	PassRate   float64
+	AvgScore   float64
+	TotalRuns  int
+	LastRunID  string
+	Dimensions map[string]float64
+}
+
+// AgentEvalSummary renders the eval summary section on a Cortex agent detail page.
+templ AgentEvalSummary(data *EvalSummaryData) {
+	@card.Card(card.Props{}) {
+		@card.Header() {
+			<div class="flex items-center justify-between">
+				@card.Title() {
+					Evaluation Summary
+				}
+				if data.HasEvals {
+					@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+						Sentinel
+					}
+				}
+			</div>
+			@card.Description() {
+				Sentinel evaluation results for this agent
+			}
+		}
+		@card.Content() {
+			if !data.HasEvals {
+				<div class="text-center py-8 text-muted-foreground">
+					<p class="text-sm">No evaluations found for this agent.</p>
+					<p class="text-xs mt-1">Configure an evaluation suite in Sentinel to get started.</p>
+				</div>
+			} else {
+				<div class="space-y-4">
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+						<div class="text-center">
+							<div class="text-2xl font-bold">{ fmt.Sprintf("%.0f%%", data.PassRate*100) }</div>
+							<div class="text-xs text-muted-foreground">Pass Rate</div>
+						</div>
+						<div class="text-center">
+							<div class="text-2xl font-bold">{ fmt.Sprintf("%.3f", data.AvgScore) }</div>
+							<div class="text-xs text-muted-foreground">Avg Score</div>
+						</div>
+						<div class="text-center">
+							<div class="text-2xl font-bold">{ fmt.Sprintf("%d", data.TotalRuns) }</div>
+							<div class="text-xs text-muted-foreground">Eval Runs</div>
+						</div>
+						<div class="text-center">
+							<div class="text-2xl font-bold">{ data.SuiteName }</div>
+							<div class="text-xs text-muted-foreground">Suite</div>
+						</div>
+					</div>
+					if len(data.Dimensions) > 0 {
+						<div class="border-t pt-4">
+							<h4 class="text-sm font-medium mb-2">Dimension Scores</h4>
+							<div class="grid grid-cols-2 gap-2">
+								for dim, score := range data.Dimensions {
+									<div class="flex items-center justify-between text-sm">
+										<span class="text-muted-foreground">{ dim }</span>
+										<span class="font-medium">{ fmt.Sprintf("%.2f", score) }</span>
+									</div>
+								}
+							</div>
+						</div>
+					}
+					<div class="flex gap-2 pt-2">
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Size:    button.SizeSm,
+						}) {
+							View in Sentinel
+						}
+					</div>
+				</div>
+			}
+		}
+	}
+}

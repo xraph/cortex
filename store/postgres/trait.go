@@ -95,6 +95,9 @@ func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*tr
 		if filter.Category != "" {
 			q = q.Where("category = ?", string(filter.Category))
 		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -114,4 +117,24 @@ func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*tr
 		result[i] = t
 	}
 	return result, nil
+}
+
+func (s *Store) CountTraits(ctx context.Context, filter *trait.ListFilter) (int64, error) {
+	q := s.pgdb.NewSelect((*traitModel)(nil))
+	if filter != nil {
+		if filter.AppID != "" {
+			q = q.Where("app_id = ?", filter.AppID)
+		}
+		if filter.Category != "" {
+			q = q.Where("category = ?", string(filter.Category))
+		}
+		if filter.Search != "" {
+			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+		}
+	}
+	count, err := q.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cortex: count traits: %w", err)
+	}
+	return count, nil
 }

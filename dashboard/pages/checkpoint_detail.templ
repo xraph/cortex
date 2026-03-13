@@ -1,0 +1,160 @@
+package pages
+
+import (
+	"strconv"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/forgeui/components/separator"
+)
+
+templ CheckpointDetailPage(cp *checkpoint.Checkpoint, agentName string) {
+	<div class="space-y-6">
+		@components.PageHeader("Checkpoint Review", "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/checkpoints",
+					"hx-target": "#content",
+				},
+			}) {
+				Back to Checkpoints
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Checkpoint Information }
+			}
+			@card.Content() {
+				<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+					<dt class="text-muted-foreground">Checkpoint ID</dt>
+					<dd>
+						<code class="text-xs bg-muted px-1 py-0.5 rounded">{ cp.ID.String() }</code>
+					</dd>
+					<dt class="text-muted-foreground">Run ID</dt>
+					<dd>
+						<a class="text-xs bg-muted px-1 py-0.5 rounded hover:underline cursor-pointer"
+							hx-get={ "/runs/detail?id=" + cp.RunID.String() }
+							hx-target="#content">
+							{ cp.RunID.String() }
+						</a>
+					</dd>
+					<dt class="text-muted-foreground">Agent</dt>
+					<dd>
+						<a class="text-sm font-medium hover:underline cursor-pointer"
+							hx-get={ "/agents/detail?name=" + agentName }
+							hx-target="#content">
+							{ agentName }
+						</a>
+					</dd>
+					<dt class="text-muted-foreground">Step Index</dt>
+					<dd class="font-medium">{ strconv.Itoa(cp.StepIndex) }</dd>
+					<dt class="text-muted-foreground">State</dt>
+					<dd>@components.StateBadge(cp.State)</dd>
+					<dt class="text-muted-foreground">Created</dt>
+					<dd>
+						{{ created := cp.CreatedAt.Format("Jan 02, 2006 15:04:05") }}
+						<span class="text-xs text-muted-foreground">{ created }</span>
+					</dd>
+				</dl>
+				@separator.Separator()
+				<div class="mt-4 space-y-2">
+					<span class="text-sm font-medium">Reason</span>
+					<pre class="bg-muted rounded-md p-3 text-sm whitespace-pre-wrap">{ cp.Reason }</pre>
+				</div>
+			}
+		}
+		if cp.Decision != nil {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Decision }
+				}
+				@card.Content() {
+					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+						<dt class="text-muted-foreground">Approved</dt>
+						<dd class="font-medium">
+							if cp.Decision.Approved {
+								<span class="text-green-600">Yes</span>
+							} else {
+								<span class="text-destructive">No</span>
+							}
+						</dd>
+						<dt class="text-muted-foreground">Decided By</dt>
+						<dd class="font-medium">{ cp.Decision.DecidedBy }</dd>
+						<dt class="text-muted-foreground">Decided At</dt>
+						<dd>
+							{{ decidedAt := cp.Decision.DecidedAt.Format("Jan 02, 2006 15:04:05") }}
+							<span class="text-xs text-muted-foreground">{ decidedAt }</span>
+						</dd>
+						if cp.Decision.Reason != "" {
+							<dt class="text-muted-foreground">Reason</dt>
+							<dd class="font-medium">{ cp.Decision.Reason }</dd>
+						}
+					</dl>
+				}
+			}
+		} else {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { Review Decision }
+					@card.Description() { Approve or reject this checkpoint to continue the run. }
+				}
+				@card.Content() {
+					<form id="checkpoint-form" class="space-y-4">
+						<div id="checkpoint-form-errors" class="text-sm text-destructive"></div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Decided By</label>
+							@input.Input(input.Props{
+								Name:        "decided_by",
+								Placeholder: "Your name or identifier",
+								Attributes: templ.Attributes{"required": true},
+							})
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Reason</label>
+							@textarea.Textarea(textarea.Props{
+								Name:        "reason",
+								Placeholder: "Optional reason for your decision...",
+							})
+						</div>
+						<div class="flex gap-2">
+							@button.Button(button.Props{
+								Variant: button.VariantDefault,
+								Attributes: templ.Attributes{
+									"hx-post":              "/cortex/checkpoints/" + cp.ID.String() + "/resolve",
+									"hx-target":            "#checkpoint-form-errors",
+									"hx-swap":              "innerHTML",
+									"hx-include":           "#checkpoint-form",
+									"hx-ext":               "json-enc",
+									"hx-vals":              `{"decision":"approved"}`,
+									"hx-on::after-request": "if(event.detail.successful) htmx.ajax('GET', '/ext/cortex/pages/checkpoints/detail?id=" + cp.ID.String() + "', {target:'#content'})",
+								},
+							}) {
+								Approve
+							}
+							@button.Button(button.Props{
+								Variant: button.VariantDestructive,
+								Attributes: templ.Attributes{
+									"hx-post":              "/cortex/checkpoints/" + cp.ID.String() + "/resolve",
+									"hx-target":            "#checkpoint-form-errors",
+									"hx-swap":              "innerHTML",
+									"hx-include":           "#checkpoint-form",
+									"hx-ext":               "json-enc",
+									"hx-vals":              `{"decision":"rejected"}`,
+									"hx-on::after-request": "if(event.detail.successful) htmx.ajax('GET', '/ext/cortex/pages/checkpoints/detail?id=" + cp.ID.String() + "', {target:'#content'})",
+								},
+							}) {
+								Reject
+							}
+						</div>
+					</form>
+				}
+			}
+		}
+		@components.DialogHelpers()
+		{ children... }
+	</div>
+}

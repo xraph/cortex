@@ -1,0 +1,1092 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/behavior"
+	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/icons"
+)
+
+templ PlaygroundPage(agents []*agent.Config, personas []*persona.Persona, skills []*skill.Skill, traits []*trait.Trait, behaviors []*behavior.Behavior, cfg cortex.Config, selectedAgent string) {
+	<div class="h-full" x-data={ playgroundAlpineData(agents, personas, skills, traits, behaviors, cfg, selectedAgent) }>
+		@components.PageHeader("Playground", "", "Experiment with agent configurations") {
+			<div class="flex items-center gap-2">
+				<template x-if="agentName && messages.length > 0">
+					@button.Button(button.Props{
+						Variant: button.VariantOutline, Size: button.SizeSm,
+						Attributes: templ.Attributes{
+							"@click": "clearChat()",
+						},
+					}) {
+						@icons.Trash2(icons.WithSize(14))
+						<span class="ml-1">Clear</span>
+					}
+				</template>
+				@button.Button(button.Props{
+					Variant: button.VariantOutline, Size: button.SizeSm,
+					Attributes: templ.Attributes{
+						"@click": "sidebarCollapsed = !sidebarCollapsed",
+					},
+				}) {
+					@icons.Settings(icons.WithSize(14))
+					<span class="ml-1" x-text="sidebarCollapsed ? 'Show Config' : 'Hide Config'"></span>
+				}
+			</div>
+		}
+
+		<div class="flex gap-4 h-[calc(100vh-200px)] min-h-[600px]">
+			<!-- LEFT SIDEBAR -->
+			<div class="w-[350px] flex-shrink-0 space-y-4 overflow-y-auto" x-show="!sidebarCollapsed" x-transition>
+				<!-- Agent Selection -->
+				@card.Card() {
+					@card.Header() {
+						@card.Title() { Agent }
+						@card.Description() { Select an agent or use custom config }
+					}
+					@card.Content() {
+						<div class="space-y-3">
+							<select
+								name="pg-agent"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+								x-model="agentName"
+								@change="loadAgentConfig($event.target.value)"
+							>
+								<option value="">Select an agent...</option>
+								for _, a := range agents {
+									<option value={ a.Name } selected?={ selectedAgent == a.Name }>{ a.Name }</option>
+								}
+							</select>
+							<label class="flex items-center gap-2 text-sm cursor-pointer">
+								<input type="checkbox" x-model="useCustomConfig" class="rounded border-input" />
+								<span>Override configuration</span>
+							</label>
+						</div>
+					}
+				}
+
+				<!-- Configuration Overrides -->
+				<div x-show="useCustomConfig" x-transition>
+					@components.ConfigOverridePanel()
+				</div>
+
+				<!-- Persona Composition -->
+				<div x-show="useCustomConfig" x-transition>
+					@card.Card() {
+						@card.Header() {
+							@card.Title() { Persona Composition }
+							@card.Description() { Override persona, skills, traits, behaviors }
+						}
+						@card.Content() {
+							<div class="space-y-3">
+								<div>
+									<label class="text-sm font-medium mb-1 block">Persona</label>
+									<select x-model="overrides.persona_ref"
+										class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+										<option value="">Default</option>
+										for _, p := range personas {
+											<option value={ p.Name }>{ p.Name }</option>
+										}
+									</select>
+								</div>
+
+								<div>
+									<label class="text-sm font-medium mb-1 block">Skills</label>
+									<div class="space-y-1 max-h-[150px] overflow-y-auto border border-border rounded-md p-2">
+										for _, sk := range skills {
+											<label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded">
+												<input type="checkbox" :value={ `'` + sk.Name + `'` } x-model="selectedSkills" class="rounded border-input" />
+												<span>{ sk.Name }</span>
+											</label>
+										}
+										if len(skills) == 0 {
+											<p class="text-xs text-muted-foreground">No skills available</p>
+										}
+									</div>
+								</div>
+
+								<div>
+									<label class="text-sm font-medium mb-1 block">Traits</label>
+									<div class="space-y-1 max-h-[150px] overflow-y-auto border border-border rounded-md p-2">
+										for _, tr := range traits {
+											<label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded">
+												<input type="checkbox" :value={ `'` + tr.Name + `'` } x-model="selectedTraits" class="rounded border-input" />
+												<span>{ tr.Name }</span>
+												@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+													{ string(tr.Category) }
+												}
+											</label>
+										}
+										if len(traits) == 0 {
+											<p class="text-xs text-muted-foreground">No traits available</p>
+										}
+									</div>
+								</div>
+
+								<div>
+									<label class="text-sm font-medium mb-1 block">Behaviors</label>
+									<div class="space-y-1 max-h-[150px] overflow-y-auto border border-border rounded-md p-2">
+										for _, bh := range behaviors {
+											<label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded">
+												<input type="checkbox" :value={ `'` + bh.Name + `'` } x-model="selectedBehaviors" class="rounded border-input" />
+												<span>{ bh.Name }</span>
+											</label>
+										}
+										if len(behaviors) == 0 {
+											<p class="text-xs text-muted-foreground">No behaviors available</p>
+										}
+									</div>
+								</div>
+							</div>
+						}
+					}
+				</div>
+
+				<!-- System Prompt Preview -->
+				<div x-show="agentName || useCustomConfig" x-transition>
+					@card.Card() {
+						@card.Header() {
+							<div class="flex items-center justify-between w-full">
+								<div>
+									@card.Title() { System Prompt }
+									@card.Description() { Computed prompt preview }
+								</div>
+								@button.Button(button.Props{
+									Variant: button.VariantOutline, Size: button.SizeSm,
+									Attributes: templ.Attributes{
+										"@click": "refreshPromptPreview()",
+									},
+								}) {
+									@icons.RefreshCw(icons.WithSize(14))
+								}
+							</div>
+						}
+						@card.Content() {
+							<div id="prompt-preview-container"
+								hx-get=""
+								hx-trigger="none"
+								hx-target="#prompt-preview-content"
+								hx-swap="outerHTML"
+							>
+								<pre id="prompt-preview-content" class="text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap max-h-[300px] overflow-y-auto font-mono leading-relaxed">(Select an agent or configure overrides)</pre>
+							</div>
+						}
+					}
+				</div>
+			</div>
+
+			<!-- RIGHT MAIN AREA -->
+			<div class="flex-1 min-w-0">
+				<!-- Tab bar -->
+				<div class="border-b border-border mb-4">
+					<nav class="flex gap-0 -mb-px">
+						<button type="button" @click="activeTab = 'chat'"
+							:class="activeTab === 'chat' ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"
+							class="px-4 py-2.5 text-sm border-b-2 transition-colors whitespace-nowrap inline-flex items-center gap-1.5">
+							@icons.MessageSquare(icons.WithSize(14))
+							Chat
+						</button>
+						<button type="button" @click="activeTab = 'history'"
+							:class="activeTab === 'history' ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"
+							class="px-4 py-2.5 text-sm border-b-2 transition-colors whitespace-nowrap inline-flex items-center gap-1.5">
+							@icons.Activity(icons.WithSize(14))
+							Run History
+							<template x-if="runs.length > 0">
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									<span x-text="runs.length"></span>
+								}
+							</template>
+						</button>
+						<button type="button" @click="activeTab = 'compare'"
+							:class="activeTab === 'compare' ? 'border-primary text-primary font-medium' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"
+							class="px-4 py-2.5 text-sm border-b-2 transition-colors whitespace-nowrap inline-flex items-center gap-1.5">
+							@icons.Columns2(icons.WithSize(14))
+							Compare
+						</button>
+					</nav>
+				</div>
+
+				<!-- TAB: Chat -->
+				<div x-show="activeTab === 'chat'" x-cloak class="h-[calc(100%-50px)]">
+					@card.Card() {
+						@card.Content(card.ContentProps{Class: "p-0"}) {
+							<!-- Messages Area -->
+							<div id="pg-chat-messages" class="h-[400px] overflow-y-auto" x-ref="messageContainer">
+								<template x-if="!agentName">
+									<div class="flex flex-col items-center justify-center h-full text-center">
+										<div class="text-muted-foreground mb-4">
+											@icons.MessageSquare(icons.WithSize(48))
+										</div>
+										<h3 class="text-lg font-medium mb-1">Start a conversation</h3>
+										<p class="text-sm text-muted-foreground max-w-sm">Select an agent to begin testing.</p>
+									</div>
+								</template>
+
+								<template x-if="agentName && messages.length === 0 && !isStreaming">
+									<div class="flex flex-col items-center justify-center h-full text-center">
+										<div class="text-muted-foreground mb-4">
+											@icons.Send(icons.WithSize(48))
+										</div>
+										<h3 class="text-lg font-medium mb-1">Ready to chat</h3>
+										<p class="text-sm text-muted-foreground max-w-sm">Type a message below to start testing.</p>
+									</div>
+								</template>
+
+								<div class="py-4">
+									<template x-for="(msg, i) in messages" :key="i">
+										<div>
+											<template x-if="msg.role === 'user'">
+												<div class="flex justify-end px-4 py-1.5">
+													<div class="bg-muted/70 border border-border rounded-2xl rounded-br-md px-4 py-3 max-w-[80%]">
+														<div class="flex items-center gap-2 mb-1">
+															<span class="text-xs font-medium text-muted-foreground">You</span>
+															<span class="text-xs text-muted-foreground ml-auto" x-text="msg.timestamp || ''"></span>
+														</div>
+														<div class="text-sm whitespace-pre-wrap leading-relaxed" x-text="msg.content"></div>
+													</div>
+												</div>
+											</template>
+											<template x-if="msg.role === 'assistant'">
+												<div class="flex justify-start px-4 py-1.5">
+													<div class="bg-primary/5 border border-primary/20 rounded-2xl rounded-bl-md px-4 py-3 max-w-[80%]">
+														<div class="flex items-center gap-2 mb-1">
+															<span class="text-xs font-medium text-primary">Agent</span>
+															<span class="text-xs text-muted-foreground ml-auto" x-text="msg.timestamp || ''"></span>
+														</div>
+														<div class="text-sm whitespace-pre-wrap leading-relaxed" x-text="msg.content"></div>
+													</div>
+												</div>
+											</template>
+											<template x-if="msg.role === 'tool_call'">
+												<div class="mx-4 my-2">
+													<div class="border border-border rounded-lg overflow-hidden bg-muted/30">
+														<button type="button" @click="msg._expanded = !msg._expanded"
+															class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 transition-colors">
+															<span class="text-muted-foreground">
+																@icons.Wrench(icons.WithSize(14))
+															</span>
+															<span class="font-medium" x-text="msg.tool_name || 'tool'"></span>
+															<span class="ml-auto text-muted-foreground transition-transform" :class="msg._expanded ? 'rotate-180' : ''">
+																@icons.ChevronDown(icons.WithSize(14))
+															</span>
+														</button>
+														<div x-show="msg._expanded" x-cloak class="border-t border-border px-3 py-2">
+															<pre class="text-xs bg-muted p-2 rounded overflow-x-auto" x-text="msg.content"></pre>
+														</div>
+													</div>
+												</div>
+											</template>
+											<template x-if="msg.role === 'checkpoint'">
+												<div class="mx-4 my-2">
+													<div class="border-2 border-yellow-500/50 bg-yellow-50/10 rounded-lg p-4">
+														<div class="flex items-center gap-2 mb-2">
+															@icons.ShieldCheck(icons.WithSize(16))
+															<span class="font-medium text-sm">Checkpoint</span>
+														</div>
+														<p class="text-sm text-muted-foreground mb-3" x-text="msg.content"></p>
+														<div class="flex gap-2" x-show="!msg._resolved">
+															<button @click="resolveCheckpoint(msg.checkpoint_id, true)" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 px-3 bg-primary text-primary-foreground hover:bg-primary/90">Approve</button>
+															<button @click="resolveCheckpoint(msg.checkpoint_id, false)" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 px-3 bg-destructive text-destructive-foreground hover:bg-destructive/90">Reject</button>
+														</div>
+														<div x-show="msg._resolved" class="text-xs text-muted-foreground" x-text="'Resolved: ' + (msg._decision || '')"></div>
+													</div>
+												</div>
+											</template>
+										</div>
+									</template>
+
+									<template x-if="isThinking">
+										<div class="flex justify-start px-4 py-2">
+											<div class="bg-primary/5 border border-primary/20 rounded-2xl rounded-bl-md px-4 py-3">
+												<div class="flex items-center gap-2 mb-2">
+													<span class="text-xs font-medium text-primary">Agent</span>
+												</div>
+												<div class="flex items-center gap-1">
+													<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+													<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+													<span class="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+												</div>
+											</div>
+										</div>
+									</template>
+								</div>
+							</div>
+
+							<!-- Input Area -->
+							<div class="border-t border-border p-4" x-show="agentName">
+								<div class="flex gap-2 items-end">
+									<textarea
+										x-model="inputText"
+										@keydown.ctrl.enter="sendMessage()"
+										@keydown.meta.enter="sendMessage()"
+										placeholder="Type a message... (Ctrl+Enter to send)"
+										rows="2"
+										class="flex-1 min-h-[60px] max-h-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+										:disabled="isStreaming"
+									></textarea>
+									<div class="flex flex-col gap-1">
+										<template x-if="!isStreaming">
+											@button.Button(button.Props{
+												Size: button.SizeSm,
+												Attributes: templ.Attributes{
+													"@click":    "sendMessage()",
+													":disabled": "!inputText.trim() || isStreaming",
+												},
+											}) {
+												@icons.Send(icons.WithSize(14))
+												<span class="ml-1">Send</span>
+											}
+										</template>
+										<template x-if="isStreaming">
+											@button.Button(button.Props{
+												Variant: button.VariantDestructive, Size: button.SizeSm,
+												Attributes: templ.Attributes{
+													"@click": "cancelRun()",
+												},
+											}) {
+												@icons.Square(icons.WithSize(14))
+												<span class="ml-1">Stop</span>
+											}
+										</template>
+									</div>
+								</div>
+								<div class="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+									<span>Ctrl+Enter to send</span>
+									<template x-if="useCustomConfig">
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											Custom Config
+										}
+									</template>
+									<template x-if="currentRunId">
+										<span class="ml-auto font-mono" x-text="'Run: ' + currentRunId"></span>
+									</template>
+								</div>
+							</div>
+						}
+					}
+				</div>
+
+				<!-- TAB: Run History -->
+				<div x-show="activeTab === 'history'" x-cloak>
+					<template x-if="runs.length === 0">
+						<div class="flex flex-col items-center justify-center py-16 text-center">
+							<div class="text-muted-foreground mb-4">
+								@icons.Activity(icons.WithSize(48))
+							</div>
+							<h3 class="text-lg font-medium mb-1">No runs yet</h3>
+							<p class="text-sm text-muted-foreground max-w-sm">Send a message in the Chat tab to create your first run.</p>
+						</div>
+					</template>
+
+					<div class="space-y-2">
+						<template x-for="(r, ri) in runs" :key="ri">
+							@card.Card() {
+								@card.Content() {
+									<div class="flex items-center justify-between cursor-pointer" @click="r._expanded = !r._expanded">
+										<div class="flex items-center gap-3">
+											<span class="text-sm font-mono" x-text="'#' + (ri + 1)"></span>
+											<span class="text-sm" x-text="r.agent_name || 'Unknown'"></span>
+											<span class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold"
+												:class="r.state === 'completed' ? 'border-green-500/30 bg-green-500/10 text-green-600' : r.state === 'failed' ? 'border-red-500/30 bg-red-500/10 text-red-600' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-600'"
+												x-text="r.state"></span>
+										</div>
+										<div class="flex items-center gap-3 text-xs text-muted-foreground">
+											<span x-text="r.step_count + ' steps'"></span>
+											<span x-text="r.duration_ms + 'ms'"></span>
+											<span x-text="r.timestamp"></span>
+											<span class="transition-transform" :class="r._expanded ? 'rotate-180' : ''">
+												@icons.ChevronDown(icons.WithSize(14))
+											</span>
+										</div>
+									</div>
+									<div x-show="r._expanded" x-cloak class="mt-3 pt-3 border-t border-border">
+										<div class="grid grid-cols-3 gap-4 mb-3">
+											<div>
+												<p class="text-xs text-muted-foreground">Run ID</p>
+												<p class="text-sm font-mono" x-text="r.run_id"></p>
+											</div>
+											<div>
+												<p class="text-xs text-muted-foreground">Input</p>
+												<p class="text-sm truncate" x-text="r.input"></p>
+											</div>
+											<div>
+												<p class="text-xs text-muted-foreground">Output</p>
+												<p class="text-sm truncate" x-text="r.output"></p>
+											</div>
+										</div>
+										<template x-if="r.overrides_used">
+											<div class="bg-muted/50 rounded-md p-2 text-xs">
+												<p class="font-medium mb-1">Config Overrides Applied</p>
+												<pre class="overflow-x-auto" x-text="JSON.stringify(r.overrides, null, 2)"></pre>
+											</div>
+										</template>
+									</div>
+								}
+							}
+						</template>
+					</div>
+				</div>
+
+				<!-- TAB: Compare -->
+				<div x-show="activeTab === 'compare'" x-cloak>
+					<!-- Compare Controls -->
+					<div class="flex items-center justify-between mb-4">
+						<div class="flex items-center gap-3">
+							<label class="flex items-center gap-2 text-sm cursor-pointer">
+								<input type="checkbox" x-model="compare.syncInput" class="rounded border-input" />
+								<span>Sync Input</span>
+							</label>
+						</div>
+						<div class="flex items-center gap-2">
+							@button.Button(button.Props{
+								Variant: button.VariantOutline, Size: button.SizeSm,
+								Attributes: templ.Attributes{
+									"@click": "clearBothPanels()",
+								},
+							}) {
+								@icons.Trash2(icons.WithSize(14))
+								<span class="ml-1">Clear Both</span>
+							}
+						</div>
+					</div>
+
+					<!-- Side-by-side panels -->
+					<div class="grid grid-cols-2 gap-4">
+						<!-- Panel A -->
+						<div>
+							@card.Card() {
+								@card.Header() {
+									<div class="flex items-center justify-between w-full">
+										@card.Title() { Config A }
+										<template x-if="compare.panelA.messages.length > 0">
+											@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+												<span x-text="compare.panelA.messages.length + ' msgs'"></span>
+											}
+										</template>
+									</div>
+								}
+								@card.Content(card.ContentProps{Class: "p-0"}) {
+									<!-- Panel A Agent selector -->
+									<div class="p-3 border-b border-border">
+										<select x-model="compare.panelA.agentName" @change="onCompareAgentChange('A')"
+											class="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm">
+											<option value="">Select agent...</option>
+											for _, a := range agents {
+												<option value={ a.Name }>{ a.Name }</option>
+											}
+										</select>
+									</div>
+
+									<!-- Panel A Messages -->
+									<div class="h-[300px] overflow-y-auto" x-ref="comparePanelAMessages">
+										<template x-if="!compare.panelA.agentName">
+											<div class="flex items-center justify-center h-full text-sm text-muted-foreground">Select an agent</div>
+										</template>
+										<div class="py-2">
+											<template x-for="(msg, i) in compare.panelA.messages" :key="i">
+												<div>
+													<template x-if="msg.role === 'user'">
+														<div class="flex justify-end px-3 py-1">
+															<div class="bg-muted/70 border border-border rounded-xl px-3 py-2 max-w-[85%]">
+																<div class="text-xs whitespace-pre-wrap" x-text="msg.content"></div>
+															</div>
+														</div>
+													</template>
+													<template x-if="msg.role === 'assistant'">
+														<div class="flex justify-start px-3 py-1">
+															<div class="bg-primary/5 border border-primary/20 rounded-xl px-3 py-2 max-w-[85%]">
+																<div class="text-xs whitespace-pre-wrap" x-text="msg.content"></div>
+															</div>
+														</div>
+													</template>
+												</div>
+											</template>
+											<template x-if="compare.panelA.isThinking">
+												<div class="flex justify-start px-3 py-1">
+													<div class="bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+														<div class="flex items-center gap-1">
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+														</div>
+													</div>
+												</div>
+											</template>
+										</div>
+									</div>
+
+									<!-- Panel A Stats -->
+									<div class="border-t border-border px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
+										<template x-if="compare.panelA.lastDuration">
+											<span x-text="compare.panelA.lastDuration + 'ms'"></span>
+										</template>
+										<template x-if="compare.panelA.lastTokens">
+											<span x-text="compare.panelA.lastTokens + ' chars'"></span>
+										</template>
+									</div>
+
+									<!-- Panel A Input -->
+									<div class="border-t border-border p-3" x-show="compare.panelA.agentName">
+										<div class="flex gap-2">
+											<input
+												type="text"
+												x-model="compare.panelA.inputText"
+												@keydown.enter="sendCompareMessage('A')"
+												placeholder="Type a message..."
+												class="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm"
+												:disabled="compare.panelA.isStreaming"
+											/>
+											@button.Button(button.Props{
+												Size: button.SizeSm,
+												Attributes: templ.Attributes{
+													"@click":    "sendCompareMessage('A')",
+													":disabled": "!compare.panelA.inputText.trim() || compare.panelA.isStreaming",
+												},
+											}) {
+												@icons.Send(icons.WithSize(12))
+											}
+										</div>
+									</div>
+								}
+							}
+						</div>
+
+						<!-- Panel B -->
+						<div>
+							@card.Card() {
+								@card.Header() {
+									<div class="flex items-center justify-between w-full">
+										@card.Title() { Config B }
+										<template x-if="compare.panelB.messages.length > 0">
+											@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+												<span x-text="compare.panelB.messages.length + ' msgs'"></span>
+											}
+										</template>
+									</div>
+								}
+								@card.Content(card.ContentProps{Class: "p-0"}) {
+									<!-- Panel B Agent selector -->
+									<div class="p-3 border-b border-border">
+										<select x-model="compare.panelB.agentName" @change="onCompareAgentChange('B')"
+											class="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm">
+											<option value="">Select agent...</option>
+											for _, a := range agents {
+												<option value={ a.Name }>{ a.Name }</option>
+											}
+										</select>
+									</div>
+
+									<!-- Panel B Messages -->
+									<div class="h-[300px] overflow-y-auto" x-ref="comparePanelBMessages">
+										<template x-if="!compare.panelB.agentName">
+											<div class="flex items-center justify-center h-full text-sm text-muted-foreground">Select an agent</div>
+										</template>
+										<div class="py-2">
+											<template x-for="(msg, i) in compare.panelB.messages" :key="i">
+												<div>
+													<template x-if="msg.role === 'user'">
+														<div class="flex justify-end px-3 py-1">
+															<div class="bg-muted/70 border border-border rounded-xl px-3 py-2 max-w-[85%]">
+																<div class="text-xs whitespace-pre-wrap" x-text="msg.content"></div>
+															</div>
+														</div>
+													</template>
+													<template x-if="msg.role === 'assistant'">
+														<div class="flex justify-start px-3 py-1">
+															<div class="bg-primary/5 border border-primary/20 rounded-xl px-3 py-2 max-w-[85%]">
+																<div class="text-xs whitespace-pre-wrap" x-text="msg.content"></div>
+															</div>
+														</div>
+													</template>
+												</div>
+											</template>
+											<template x-if="compare.panelB.isThinking">
+												<div class="flex justify-start px-3 py-1">
+													<div class="bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+														<div class="flex items-center gap-1">
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+															<span class="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+														</div>
+													</div>
+												</div>
+											</template>
+										</div>
+									</div>
+
+									<!-- Panel B Stats -->
+									<div class="border-t border-border px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
+										<template x-if="compare.panelB.lastDuration">
+											<span x-text="compare.panelB.lastDuration + 'ms'"></span>
+										</template>
+										<template x-if="compare.panelB.lastTokens">
+											<span x-text="compare.panelB.lastTokens + ' chars'"></span>
+										</template>
+									</div>
+
+									<!-- Panel B Input -->
+									<div class="border-t border-border p-3" x-show="compare.panelB.agentName">
+										<div class="flex gap-2">
+											<input
+												type="text"
+												x-model="compare.panelB.inputText"
+												@keydown.enter="sendCompareMessage('B')"
+												placeholder="Type a message..."
+												class="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm"
+												:disabled="compare.panelB.isStreaming"
+											/>
+											@button.Button(button.Props{
+												Size: button.SizeSm,
+												Attributes: templ.Attributes{
+													"@click":    "sendCompareMessage('B')",
+													":disabled": "!compare.panelB.inputText.trim() || compare.panelB.isStreaming",
+												},
+											}) {
+												@icons.Send(icons.WithSize(12))
+											}
+										</div>
+									</div>
+								}
+							}
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Error display -->
+		<div x-show="error" x-cloak class="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm" x-text="error"></div>
+
+		{ children... }
+	</div>
+}
+
+func playgroundAlpineData(agents []*agent.Config, personas []*persona.Persona, skills []*skill.Skill, traits []*trait.Trait, behaviors []*behavior.Behavior, cfg cortex.Config, selectedAgent string) string {
+	// Build agent config lookup map for client-side agent loading.
+	type agentJS struct {
+		Name          string   `json:"name"`
+		Model         string   `json:"model"`
+		Temperature   float64  `json:"temperature"`
+		MaxSteps      int      `json:"max_steps"`
+		MaxTokens     int      `json:"max_tokens"`
+		ReasoningLoop string   `json:"reasoning_loop"`
+		PersonaRef    string   `json:"persona_ref"`
+		Skills        []string `json:"skills"`
+		Traits        []string `json:"traits"`
+		Behaviors     []string `json:"behaviors"`
+	}
+
+	agentMap := make(map[string]agentJS, len(agents))
+	for _, a := range agents {
+		agentMap[a.Name] = agentJS{
+			Name:          a.Name,
+			Model:         a.Model,
+			Temperature:   a.Temperature,
+			MaxSteps:      a.MaxSteps,
+			MaxTokens:     a.MaxTokens,
+			ReasoningLoop: a.ReasoningLoop,
+			PersonaRef:    a.PersonaRef,
+			Skills:        a.InlineSkills,
+			Traits:        a.InlineTraits,
+			Behaviors:     a.InlineBehaviors,
+		}
+	}
+	agentMapJSON, _ := json.Marshal(agentMap)
+
+	return fmt.Sprintf(`{
+		agentName: %q,
+		agentConfigs: %s,
+		activeTab: 'chat',
+		sidebarCollapsed: false,
+		useCustomConfig: false,
+
+		messages: [],
+		inputText: '',
+		isStreaming: false,
+		isThinking: false,
+		currentRunId: null,
+		error: '',
+		abortController: null,
+
+		overrides: {
+			model: %q,
+			temperature: %s,
+			max_steps: %d,
+			max_tokens: %d,
+			reasoning_loop: %q,
+			persona_ref: '',
+		},
+
+		selectedSkills: [],
+		selectedTraits: [],
+		selectedBehaviors: [],
+
+		runs: [],
+
+		compare: {
+			syncInput: false,
+			panelA: {
+				agentName: '',
+				messages: [],
+				inputText: '',
+				isStreaming: false,
+				isThinking: false,
+				abortController: null,
+				lastDuration: null,
+				lastTokens: null,
+			},
+			panelB: {
+				agentName: '',
+				messages: [],
+				inputText: '',
+				isStreaming: false,
+				isThinking: false,
+				abortController: null,
+				lastDuration: null,
+				lastTokens: null,
+			},
+		},
+
+		loadAgentConfig(name) {
+			this.agentName = name;
+			this.messages = [];
+			this.currentRunId = null;
+			this.error = '';
+			if (name && this.agentConfigs[name]) {
+				const ac = this.agentConfigs[name];
+				this.overrides.model = ac.model || %q;
+				this.overrides.temperature = ac.temperature || %s;
+				this.overrides.max_steps = ac.max_steps || %d;
+				this.overrides.max_tokens = ac.max_tokens || %d;
+				this.overrides.reasoning_loop = ac.reasoning_loop || %q;
+				this.overrides.persona_ref = ac.persona_ref || '';
+				this.selectedSkills = ac.skills || [];
+				this.selectedTraits = ac.traits || [];
+				this.selectedBehaviors = ac.behaviors || [];
+			}
+			this.refreshPromptPreview();
+		},
+
+		async sendMessage() {
+			if (!this.inputText.trim() || this.isStreaming || !this.agentName) return;
+			const userMsg = this.inputText.trim();
+			this.inputText = '';
+			this.error = '';
+			const now = new Date().toLocaleTimeString('en-US', {hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
+			this.messages.push({role: 'user', content: userMsg, timestamp: now});
+			this.scrollToBottom();
+			this.isStreaming = true;
+			this.isThinking = true;
+			const startTime = Date.now();
+
+			const body = {input: userMsg};
+			if (this.useCustomConfig) {
+				body.overrides = {
+					model: this.overrides.model,
+					temperature: this.overrides.temperature,
+					max_steps: this.overrides.max_steps,
+					max_tokens: this.overrides.max_tokens,
+					reasoning_loop: this.overrides.reasoning_loop,
+					persona_ref: this.overrides.persona_ref,
+					inline_skills: this.selectedSkills,
+					inline_traits: this.selectedTraits,
+					inline_behaviors: this.selectedBehaviors,
+				};
+			}
+
+			try {
+				this.abortController = new AbortController();
+				const resp = await fetch('/cortex/agents/' + encodeURIComponent(this.agentName) + '/stream', {
+					method: 'POST',
+					headers: {'Content-Type': 'application/json'},
+					body: JSON.stringify(body),
+					signal: this.abortController.signal
+				});
+
+				if (!resp.ok) {
+					const err = await resp.json().catch(() => ({}));
+					throw new Error(err.error || err.message || 'Request failed: ' + resp.status);
+				}
+
+				const reader = resp.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+				let assistantMsg = null;
+				let currentEvent = '';
+				let output = '';
+				let stepCount = 0;
+
+				while (true) {
+					const {done, value} = await reader.read();
+					if (done) break;
+					buffer += decoder.decode(value, {stream: true});
+
+					const lines = buffer.split('\n');
+					buffer = lines.pop();
+
+					for (const line of lines) {
+						if (line.startsWith('event: ')) {
+							currentEvent = line.slice(7).trim();
+							continue;
+						}
+						if (line.startsWith('data: ')) {
+							const data = JSON.parse(line.slice(6));
+							switch (currentEvent) {
+								case 'run_started':
+									this.currentRunId = data.run_id;
+									break;
+								case 'step':
+									stepCount++;
+									break;
+								case 'token':
+									if (this.isThinking) {
+										this.isThinking = false;
+										const ts = new Date().toLocaleTimeString('en-US', {hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
+										assistantMsg = {role: 'assistant', content: '', timestamp: ts};
+										this.messages.push(assistantMsg);
+									}
+									if (assistantMsg) {
+										assistantMsg.content += data.content || '';
+										output = assistantMsg.content;
+									}
+									break;
+								case 'tool_call':
+									this.messages.push({role: 'tool_call', tool_name: data.tool_name, content: data.arguments || '', _expanded: false});
+									break;
+								case 'checkpoint':
+									this.messages.push({role: 'checkpoint', content: data.reason, checkpoint_id: data.checkpoint_id, _resolved: false, _decision: ''});
+									break;
+								case 'done':
+									break;
+								case 'error':
+									this.error = data.message || 'Unknown error';
+									break;
+							}
+							this.scrollToBottom();
+						}
+					}
+				}
+
+				// Record run in history.
+				const elapsed = Date.now() - startTime;
+				this.runs.unshift({
+					run_id: this.currentRunId || 'unknown',
+					agent_name: this.agentName,
+					state: this.error ? 'failed' : 'completed',
+					input: userMsg,
+					output: output,
+					step_count: stepCount,
+					duration_ms: elapsed,
+					timestamp: now,
+					overrides_used: this.useCustomConfig,
+					overrides: this.useCustomConfig ? {...this.overrides} : null,
+					_expanded: false,
+				});
+			} catch(e) {
+				if (e.name !== 'AbortError') {
+					this.error = e.message;
+					if (this.isThinking) {
+						this.isThinking = false;
+					}
+				}
+			}
+			this.isStreaming = false;
+			this.isThinking = false;
+			this.abortController = null;
+		},
+
+		async cancelRun() {
+			if (this.abortController) {
+				this.abortController.abort();
+			}
+			if (this.currentRunId) {
+				await fetch('/cortex/runs/' + this.currentRunId + '/cancel', {method: 'POST'}).catch(() => {});
+			}
+			this.isStreaming = false;
+			this.isThinking = false;
+		},
+
+		async clearChat() {
+			if (this.agentName) {
+				await fetch('/cortex/agents/' + encodeURIComponent(this.agentName) + '/memory', {method: 'DELETE'}).catch(() => {});
+			}
+			this.messages = [];
+			this.currentRunId = null;
+			this.error = '';
+		},
+
+		async resolveCheckpoint(cpId, approved) {
+			try {
+				await fetch('/cortex/checkpoints/' + cpId + '/resolve', {
+					method: 'POST',
+					headers: {'Content-Type': 'application/json'},
+					body: JSON.stringify({decision: approved ? 'approved' : 'rejected', decided_by: 'playground'})
+				});
+				for (const msg of this.messages) {
+					if (msg.checkpoint_id === cpId) {
+						msg._resolved = true;
+						msg._decision = approved ? 'Approved' : 'Rejected';
+					}
+				}
+			} catch(e) {
+				this.error = 'Failed to resolve checkpoint: ' + e.message;
+			}
+		},
+
+		refreshPromptPreview() {
+			const params = new URLSearchParams();
+			if (this.agentName) params.set('agent', this.agentName);
+			if (this.overrides.persona_ref) params.set('persona', this.overrides.persona_ref);
+			if (this.selectedSkills.length) params.set('skills', this.selectedSkills.join(','));
+			if (this.selectedTraits.length) params.set('traits', this.selectedTraits.join(','));
+			const container = document.getElementById('prompt-preview-container');
+			if (container) {
+				container.setAttribute('hx-get', '/playground/preview-prompt?' + params.toString());
+				htmx.trigger(container, 'htmx:trigger');
+				htmx.ajax('GET', '/playground/preview-prompt?' + params.toString(), {target: '#prompt-preview-content', swap: 'outerHTML'});
+			}
+		},
+
+		// --- Compare Panel Methods ---
+
+		onCompareAgentChange(panel) {
+			const p = panel === 'A' ? this.compare.panelA : this.compare.panelB;
+			p.messages = [];
+			p.lastDuration = null;
+			p.lastTokens = null;
+		},
+
+		async sendCompareMessage(panel) {
+			const p = panel === 'A' ? this.compare.panelA : this.compare.panelB;
+			if (!p.inputText.trim() || p.isStreaming || !p.agentName) return;
+			const userMsg = p.inputText.trim();
+			p.inputText = '';
+
+			// If sync is on, send to both panels.
+			if (this.compare.syncInput) {
+				const other = panel === 'A' ? this.compare.panelB : this.compare.panelA;
+				if (other.agentName && !other.isStreaming) {
+					other.inputText = '';
+					this._streamToPanel(other, userMsg);
+				}
+			}
+
+			await this._streamToPanel(p, userMsg);
+		},
+
+		async _streamToPanel(p, userMsg) {
+			p.messages.push({role: 'user', content: userMsg});
+			p.isStreaming = true;
+			p.isThinking = true;
+			const startTime = Date.now();
+
+			try {
+				p.abortController = new AbortController();
+				const resp = await fetch('/cortex/agents/' + encodeURIComponent(p.agentName) + '/stream', {
+					method: 'POST',
+					headers: {'Content-Type': 'application/json'},
+					body: JSON.stringify({input: userMsg}),
+					signal: p.abortController.signal
+				});
+
+				if (!resp.ok) {
+					const err = await resp.json().catch(() => ({}));
+					throw new Error(err.error || 'Request failed: ' + resp.status);
+				}
+
+				const reader = resp.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+				let assistantMsg = null;
+				let currentEvent = '';
+
+				while (true) {
+					const {done, value} = await reader.read();
+					if (done) break;
+					buffer += decoder.decode(value, {stream: true});
+
+					const lines = buffer.split('\n');
+					buffer = lines.pop();
+
+					for (const line of lines) {
+						if (line.startsWith('event: ')) {
+							currentEvent = line.slice(7).trim();
+							continue;
+						}
+						if (line.startsWith('data: ')) {
+							const data = JSON.parse(line.slice(6));
+							switch (currentEvent) {
+								case 'token':
+									if (p.isThinking) {
+										p.isThinking = false;
+										assistantMsg = {role: 'assistant', content: ''};
+										p.messages.push(assistantMsg);
+									}
+									if (assistantMsg) {
+										assistantMsg.content += data.content || '';
+									}
+									break;
+								case 'done':
+									break;
+								case 'error':
+									this.error = data.message || 'Unknown error';
+									break;
+							}
+						}
+					}
+				}
+
+				const elapsed = Date.now() - startTime;
+				p.lastDuration = elapsed;
+				p.lastTokens = assistantMsg ? assistantMsg.content.length : 0;
+			} catch(e) {
+				if (e.name !== 'AbortError') {
+					this.error = e.message;
+				}
+			}
+			p.isStreaming = false;
+			p.isThinking = false;
+			p.abortController = null;
+		},
+
+		clearBothPanels() {
+			this.compare.panelA.messages = [];
+			this.compare.panelA.lastDuration = null;
+			this.compare.panelA.lastTokens = null;
+			this.compare.panelB.messages = [];
+			this.compare.panelB.lastDuration = null;
+			this.compare.panelB.lastTokens = null;
+		},
+
+		scrollToBottom() {
+			this.$nextTick(() => {
+				const el = this.$refs.messageContainer;
+				if (el) el.scrollTop = el.scrollHeight;
+			});
+		}
+	}`,
+		selectedAgent,
+		string(agentMapJSON),
+		cfg.DefaultModel,
+		strconv.FormatFloat(cfg.DefaultTemperature, 'f', 1, 64),
+		cfg.DefaultMaxSteps,
+		cfg.DefaultMaxTokens,
+		cfg.DefaultReasoningLoop,
+		// loadAgentConfig defaults
+		cfg.DefaultModel,
+		strconv.FormatFloat(cfg.DefaultTemperature, 'f', 1, 64),
+		cfg.DefaultMaxSteps,
+		cfg.DefaultMaxTokens,
+		cfg.DefaultReasoningLoop,
+	)
+}

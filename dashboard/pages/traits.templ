@@ -1,0 +1,140 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/dashboard/components"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ TraitsPage(traits []*trait.Trait, search string, category string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Traits", fmt.Sprintf("%d", pg.Total), "Manage personality dimensions") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/traits/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Trait
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search traits...",
+				Value:       search,
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/traits",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='category']",
+				},
+			})
+			<select name="category" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/traits"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='category']">
+				<option value="">All Categories</option>
+				<option value="personality" selected?={ category == "personality" }>Personality</option>
+				<option value="workstyle" selected?={ category == "workstyle" }>Workstyle</option>
+				<option value="communication" selected?={ category == "communication" }>Communication</option>
+				<option value="risk" selected?={ category == "risk" }>Risk</option>
+			</select>
+		</div>
+		if len(traits) == 0 {
+			@components.EmptyState("brain", "No traits found", "Create your first trait to define a personality dimension")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Description }
+						@table.Head() { Category }
+						@table.Head() { Dimensions }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, tr := range traits {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/traits/detail?name=" + tr.Name }
+									hx-target="#content">
+									{ tr.Name }
+								</a>
+							}
+							@table.Cell() {
+								if tr.Description != "" {
+									<span class="text-sm text-muted-foreground">{ tr.Description }</span>
+								} else {
+									<span class="text-xs text-muted-foreground">-</span>
+								}
+							}
+							@table.Cell() {
+								@components.CategoryBadge(string(tr.Category))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(tr.Dimensions)) }
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/traits/detail?name=" + tr.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/traits/edit?name=" + tr.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-trait-row-%s')", tr.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-trait-row-" + tr.Name,
+										Title:        "Delete Trait",
+										Description:  "Are you sure you want to delete trait \"" + tr.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/cortex/traits/" + tr.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/traits?search=" + search + "&category=" + category }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}
