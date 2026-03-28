@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerTraitRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("traits"))
+	g := router.Group("/v1", forge.WithGroupTags("traits"))
 
 	if err := g.POST("/traits", a.createTrait,
 		forge.WithSummary("Create trait"),

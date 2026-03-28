@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerCheckpointRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("checkpoints"))
+	g := router.Group("/v1", forge.WithGroupTags("checkpoints"))
 
 	if err := g.GET("/checkpoints", a.listCheckpoints,
 		forge.WithSummary("List pending checkpoints"),

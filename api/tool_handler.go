@@ -8,7 +8,7 @@ import (
 )
 
 func (a *API) registerToolRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("tools"))
+	g := router.Group("/v1", forge.WithGroupTags("tools"))
 
 	if err := g.GET("/tools", a.listTools,
 		forge.WithSummary("List tools"),

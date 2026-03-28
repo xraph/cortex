@@ -13,7 +13,7 @@ import (
 )
 
 func (a *API) registerPersonaRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("personas"))
+	g := router.Group("/v1", forge.WithGroupTags("personas"))
 
 	if err := g.POST("/personas", a.createPersona,
 		forge.WithSummary("Create persona"),

@@ -13,7 +13,7 @@ import (
 )
 
 func (a *API) registerAgentRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("agents"))
+	g := router.Group("/v1", forge.WithGroupTags("agents"))
 
 	if err := g.POST("/agents", a.createAgent,
 		forge.WithSummary("Create agent"),

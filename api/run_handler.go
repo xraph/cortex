@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerRunRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("runs"))
+	g := router.Group("/v1", forge.WithGroupTags("runs"))
 
 	if err := g.GET("/runs", a.listRuns,
 		forge.WithSummary("List runs"),

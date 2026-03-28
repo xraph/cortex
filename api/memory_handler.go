@@ -11,7 +11,7 @@ import (
 )
 
 func (a *API) registerMemoryRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("memory"))
+	g := router.Group("/v1", forge.WithGroupTags("memory"))
 
 	if err := g.GET("/agents/:name/memory", a.getConversation,
 		forge.WithSummary("Get conversation"),

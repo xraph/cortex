@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerBehaviorRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("behaviors"))
+	g := router.Group("/v1", forge.WithGroupTags("behaviors"))
 
 	if err := g.POST("/behaviors", a.createBehavior,
 		forge.WithSummary("Create behavior"),

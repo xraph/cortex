@@ -12,7 +12,7 @@ import (
 )
 
 func (a *API) registerSkillRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("skills"))
+	g := router.Group("/v1", forge.WithGroupTags("skills"))
 
 	if err := g.POST("/skills", a.createSkill,
 		forge.WithSummary("Create skill"),

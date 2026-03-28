@@ -19,7 +19,7 @@ type UpdateConfigRequest struct {
 }
 
 func (a *API) registerConfigRoutes(router forge.Router) error {
-	g := router.Group("", forge.WithGroupTags("config"))
+	g := router.Group("/v1", forge.WithGroupTags("config"))
 
 	if err := g.GET("/config", a.getConfig,
 		forge.WithSummary("Get config"),
