@@ -17,7 +17,7 @@ require (
 	github.com/xraph/vessel v1.0.2
 	github.com/xraph/weave v1.5.0
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
-	go.mongodb.org/mongo-driver/v2 v2.5.0
+	go.mongodb.org/mongo-driver/v2 v2.5.1
 )
 
 require (
