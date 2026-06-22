@@ -3,6 +3,7 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 type rememberer interface {
 	Remember(ctx context.Context, req agent.RememberRequest) (command.Result, error)
 }
+
+// opCreate is the fabriq command op the learning-loop plugin uses for memory writes.
+const opCreate = "create"
 
 // Plugin is a cortex extension that writes agent run activity back into the
 // fabric so fabriq's embed + distillation workers turn it into future recall
@@ -49,12 +53,21 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 	input, _ := p.inflight.LoadAndDelete(runID.String())
 	in, _ := input.(string)
 
+	content := strings.TrimSpace(in + "\n" + output)
+	if content == "" {
+		p.cfg.logger.Warn("fabriq-brain: empty run content; skipping memory write")
+		return nil
+	}
 	payload, err := json.Marshal(map[string]any{
-		"agentId":   agentID.String(),
-		"runId":     runID.String(),
-		"input":     in,
-		"output":    output,
-		"elapsedMs": elapsed.Milliseconds(),
+		"content": content,
+		"meta": map[string]any{
+			"kind":      "completed",
+			"agentId":   agentID.String(),
+			"runId":     runID.String(),
+			"input":     in,
+			"output":    output,
+			"elapsedMs": elapsed.Milliseconds(),
+		},
 	})
 	if err != nil {
 		p.cfg.logger.Warn("fabriq-brain: marshal memory payload failed", log.String("error", err.Error()))
@@ -62,7 +75,7 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 	}
 	if _, rerr := p.rem.Remember(ctx, agent.RememberRequest{
 		Entity:  p.cfg.memoryEntity,
-		Op:      "create",
+		Op:      opCreate,
 		Payload: payload,
 	}); rerr != nil {
 		p.cfg.logger.Warn("fabriq-brain: memory write failed", log.String("error", rerr.Error()))
@@ -81,12 +94,21 @@ func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.A
 	if runErr != nil {
 		errStr = runErr.Error()
 	}
+	content := strings.TrimSpace(in + "\n" + errStr)
+	if content == "" {
+		p.cfg.logger.Warn("fabriq-brain: empty run content; skipping memory write")
+		return nil
+	}
 	payload, err := json.Marshal(map[string]any{
-		"agentId": agentID.String(),
-		"runId":   runID.String(),
-		"input":   in,
-		"error":   errStr,
-		"failed":  true,
+		"content": content,
+		"meta": map[string]any{
+			"kind":    "failed",
+			"agentId": agentID.String(),
+			"runId":   runID.String(),
+			"input":   in,
+			"error":   errStr,
+			"failed":  true,
+		},
 	})
 	if err != nil {
 		p.cfg.logger.Warn("fabriq-brain: marshal failure payload failed", log.String("error", err.Error()))
@@ -94,7 +116,7 @@ func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.A
 	}
 	if _, rerr := p.rem.Remember(ctx, agent.RememberRequest{
 		Entity:  p.cfg.memoryEntity,
-		Op:      "create",
+		Op:      opCreate,
 		Payload: payload,
 	}); rerr != nil {
 		p.cfg.logger.Warn("fabriq-brain: failure memory write failed", log.String("error", rerr.Error()))

@@ -3,6 +3,7 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +56,16 @@ func TestPlugin_WritesMemoryOnRunCompleted(t *testing.T) {
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["input"] != "what is fabriq?" || payload["output"] != "a data fabric" {
-		t.Fatalf("payload = %v", payload)
+	content, _ := payload["content"].(string)
+	if !strings.Contains(content, "what is fabriq?") || !strings.Contains(content, "a data fabric") {
+		t.Fatalf("content = %q, want it to contain the input and output", content)
+	}
+	meta, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("meta missing or not an object: %v", payload["meta"])
+	}
+	if meta["input"] != "what is fabriq?" || meta["output"] != "a data fabric" {
+		t.Fatalf("meta = %v", meta)
 	}
 }
 
@@ -67,6 +76,19 @@ func TestPlugin_SwallowsWriteErrors(t *testing.T) {
 	// but returning nil keeps run completion clean and matches our intent).
 	if err := p.OnRunCompleted(context.Background(), id.AgentID{}, id.AgentRunID{}, "out", 0); err != nil {
 		t.Fatalf("OnRunCompleted returned error %v, want nil", err)
+	}
+}
+
+func TestPlugin_SkipsEmptyContent(t *testing.T) {
+	rem := &fakeRememberer{}
+	p := NewPlugin(rem)
+	// OnRunCompleted with no prior OnRunStarted (inflight miss → input "") and
+	// empty output → content is empty → no write attempted.
+	if err := p.OnRunCompleted(context.Background(), id.AgentID{}, id.AgentRunID{}, "", 0); err != nil {
+		t.Fatalf("OnRunCompleted: %v", err)
+	}
+	if len(rem.reqs) != 0 {
+		t.Fatalf("expected no Remember call for empty content, got %d", len(rem.reqs))
 	}
 }
 
@@ -91,7 +113,11 @@ func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
 	if err := json.Unmarshal(rem.reqs[0].Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["failed"] != true || payload["error"] != context.DeadlineExceeded.Error() {
-		t.Fatalf("payload = %v", payload)
+	meta, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("meta missing: %v", payload["meta"])
+	}
+	if meta["failed"] != true || meta["error"] != context.DeadlineExceeded.Error() {
+		t.Fatalf("meta = %v", meta)
 	}
 }

@@ -23,10 +23,24 @@
 //	    )...,
 //	)...)
 //
-// Host requirements for the learning loop: register the memory entity (default
-// "agent_memory") in fabriq's registry WITH a vector index so the proj:embed
-// worker vectorizes new rows, and allow {memoryEntity: {create}} in the write
-// policy.
+// Host setup for the learning loop (turnkey):
+//
+//	// 1. Register the memory entity (dynamic, content vector-indexed).
+//	reg.MustRegister(fabriqbrain.MemorySpec("agent_memory"))
+//	// 2. Provision its table once (migration, or postgres.Adapter.EnsureDynamic
+//	//    in setup) — fabriq.Open does not auto-create dynamic tables.
+//	// 3. Allow writes to it. WithMemoryEntity must match the name passed to
+//	//    MemorySpec above; hosts using a non-default entity name MUST pass it
+//	//    explicitly (the default is "agent_memory").
+//	opts := fabriqbrain.EngineOptions(container,
+//	    fabriqbrain.WithEmbedder(emb),
+//	    fabriqbrain.WithEntities("agent_memory"),
+//	    fabriqbrain.WithMemoryEntity("agent_memory"),
+//	    fabriqbrain.WithWritePolicy(fabriqbrain.MemoryWritePolicy("agent_memory")),
+//	)
+//
+// The plugin writes {content, meta} rows; fabriq's embed worker vectorizes
+// `content` and distillation rolls them up, so future recall surfaces them.
 //
 // The package directory is integrations/fabriq; the package name is fabriqbrain
 // to avoid colliding with github.com/xraph/fabriq.
