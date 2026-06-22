@@ -55,13 +55,28 @@ returns `nil`, so the call is always safe to include. Use `EngineOption`
 | `WithTenantMapper(func(ctx) ctx)` | Translate cortex request context to fabriq scope (default identity). |
 | `WithRenderer(func(agent.ContextItem) string)` | Override how a recalled row becomes chunk text. |
 
-## Learning loop requirements
+## Learning loop setup
 
-For run activity to become recall material, the host must:
+To turn run activity into recall material, use the turnkey helpers in your setup:
 
-1. Register the memory entity (default `agent_memory`) in fabriq's registry
-   **with a vector index** so the `proj:embed` worker vectorizes new rows.
-2. Allow `{memoryEntity: {create}}` in the write policy.
+```go
+import fabriqbrain "github.com/xraph/cortex/integrations/fabriq"
 
-Distillation rolls the growing memory corpus into summaries, so recall stays
-within budget as history accumulates.
+// 1. Register the memory entity (dynamic, content vector-indexed).
+reg.MustRegister(fabriqbrain.MemorySpec("agent_memory"))
+
+// 2. Provision its table once (migration, or postgres.Adapter.EnsureDynamic
+//    in setup) — fabriq.Open does not auto-create dynamic tables.
+
+// 3. Allow writes to it.
+opts := fabriqbrain.EngineOptions(container,
+	fabriqbrain.WithEmbedder(emb),
+	fabriqbrain.WithEntities("agent_memory"),
+	fabriqbrain.WithWritePolicy(fabriqbrain.MemoryWritePolicy("agent_memory")),
+)
+```
+
+The plugin writes `{content, meta}` rows to the registered entity; fabriq's
+`proj:embed` worker vectorizes `content`, and distillation rolls them up so
+future recall surfaces them. As the memory corpus grows, distillation keeps
+recall within budget by summarizing historical context.
