@@ -3,6 +3,7 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,12 +50,17 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 	input, _ := p.inflight.LoadAndDelete(runID.String())
 	in, _ := input.(string)
 
+	content := strings.TrimSpace(in + "\n" + output)
 	payload, err := json.Marshal(map[string]any{
-		"agentId":   agentID.String(),
-		"runId":     runID.String(),
-		"input":     in,
-		"output":    output,
-		"elapsedMs": elapsed.Milliseconds(),
+		"content": content,
+		"meta": map[string]any{
+			"kind":      "completed",
+			"agentId":   agentID.String(),
+			"runId":     runID.String(),
+			"input":     in,
+			"output":    output,
+			"elapsedMs": elapsed.Milliseconds(),
+		},
 	})
 	if err != nil {
 		p.cfg.logger.Warn("fabriq-brain: marshal memory payload failed", log.String("error", err.Error()))
@@ -81,12 +87,17 @@ func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.A
 	if runErr != nil {
 		errStr = runErr.Error()
 	}
+	content := strings.TrimSpace(in + "\n" + errStr)
 	payload, err := json.Marshal(map[string]any{
-		"agentId": agentID.String(),
-		"runId":   runID.String(),
-		"input":   in,
-		"error":   errStr,
-		"failed":  true,
+		"content": content,
+		"meta": map[string]any{
+			"kind":    "failed",
+			"agentId": agentID.String(),
+			"runId":   runID.String(),
+			"input":   in,
+			"error":   errStr,
+			"failed":  true,
+		},
 	})
 	if err != nil {
 		p.cfg.logger.Warn("fabriq-brain: marshal failure payload failed", log.String("error", err.Error()))

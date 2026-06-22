@@ -3,6 +3,7 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +56,16 @@ func TestPlugin_WritesMemoryOnRunCompleted(t *testing.T) {
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["input"] != "what is fabriq?" || payload["output"] != "a data fabric" {
-		t.Fatalf("payload = %v", payload)
+	content, _ := payload["content"].(string)
+	if !strings.Contains(content, "what is fabriq?") || !strings.Contains(content, "a data fabric") {
+		t.Fatalf("content = %q, want it to contain the input and output", content)
+	}
+	meta, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("meta missing or not an object: %v", payload["meta"])
+	}
+	if meta["input"] != "what is fabriq?" || meta["output"] != "a data fabric" {
+		t.Fatalf("meta = %v", meta)
 	}
 }
 
@@ -91,7 +100,11 @@ func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
 	if err := json.Unmarshal(rem.reqs[0].Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["failed"] != true || payload["error"] != context.DeadlineExceeded.Error() {
-		t.Fatalf("payload = %v", payload)
+	meta, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("meta missing: %v", payload["meta"])
+	}
+	if meta["failed"] != true || meta["error"] != context.DeadlineExceeded.Error() {
+		t.Fatalf("meta = %v", meta)
 	}
 }
