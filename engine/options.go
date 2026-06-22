@@ -2,6 +2,8 @@
 package engine
 
 import (
+	"context"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
@@ -72,6 +74,22 @@ func WithSafety(scanner safety.Scanner) Option {
 func WithKnowledge(provider knowledge.Provider) Option {
 	return func(e *Engine) error {
 		e.knowledge = provider
+		return nil
+	}
+}
+
+// ToolHandler executes a registered tool. arguments is the raw JSON argument
+// string from the LLM tool call; the return string is the tool result fed back
+// to the model.
+type ToolHandler func(ctx context.Context, arguments string) (string, error)
+
+// WithTool registers an externally-provided executable tool. The def is
+// advertised to the LLM (resolveTools); the handler runs when the model calls
+// it (executeTool). Registering tools with the same name appends both; the
+// first match wins at dispatch.
+func WithTool(def llm.Tool, h ToolHandler) Option {
+	return func(e *Engine) error {
+		e.tools = append(e.tools, registeredTool{def: def, handler: h})
 		return nil
 	}
 }
