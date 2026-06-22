@@ -82,8 +82,12 @@ func (a *Adapter) Retrieve(ctx context.Context, query string, p *knowledge.Retri
 	return out, nil
 }
 
-// ListCollections returns available knowledge collections derived from the
-// configured entities. Full implementation comes in Task 4.
+// ListCollections reports the configured recall-able entities as collections.
+// Counts are best-effort (0) — fabriq entities are not document collections.
 func (a *Adapter) ListCollections(_ context.Context) ([]knowledge.CollectionInfo, error) {
-	return nil, nil
+	out := make([]knowledge.CollectionInfo, 0, len(a.cfg.entities))
+	for _, e := range a.cfg.entities {
+		out = append(out, knowledge.CollectionInfo{ID: e, Name: e})
+	}
+	return out, nil
 }

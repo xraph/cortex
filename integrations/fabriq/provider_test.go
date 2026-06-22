@@ -105,3 +105,17 @@ func TestRetrieve_NilParamsUsesDefaults(t *testing.T) {
 		t.Fatalf("budget = %d, want default 4096", rec.got.Budget)
 	}
 }
+
+func TestListCollections_FromConfiguredEntities(t *testing.T) {
+	a := NewProvider(&fakeRecaller{}, WithEntities("doc", "note"))
+	cols, err := a.ListCollections(context.Background())
+	if err != nil {
+		t.Fatalf("ListCollections: %v", err)
+	}
+	if len(cols) != 2 {
+		t.Fatalf("got %d collections, want 2", len(cols))
+	}
+	if cols[0].ID != "doc" || cols[0].Name != "doc" {
+		t.Fatalf("collection[0] = %+v", cols[0])
+	}
+}
