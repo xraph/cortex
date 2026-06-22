@@ -497,13 +497,26 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 
 // resolveTools converts tool name references to llm.Tool definitions.
 func (e *Engine) resolveTools(_ []string) []llm.Tool {
-	return e.builtinTools()
+	tools := e.builtinTools()
+	for _, rt := range e.tools {
+		tools = append(tools, rt.def)
+	}
+	return tools
 }
 
 // executeTool executes a tool call and returns the result.
 func (e *Engine) executeTool(ctx context.Context, tc llm.ToolCall) string {
 	if result, handled := e.executeBuiltinTool(ctx, tc.Name, tc.Arguments); handled {
 		return result
+	}
+	for _, rt := range e.tools {
+		if rt.def.Name == tc.Name {
+			out, err := rt.handler(ctx, tc.Arguments)
+			if err != nil {
+				return jsonResult("error", err.Error())
+			}
+			return out
+		}
 	}
 	return jsonResult("error", fmt.Sprintf("unknown tool %q", tc.Name))
 }

@@ -24,6 +24,12 @@ import (
 	"github.com/xraph/cortex/trait"
 )
 
+// registeredTool pairs an externally-registered tool definition with its handler.
+type registeredTool struct {
+	def     llm.Tool
+	handler ToolHandler
+}
+
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
 	config      cortex.Config
@@ -34,6 +40,7 @@ type Engine struct {
 	knowledge   knowledge.Provider
 	extensions  *plugin.Registry
 	pendingExts []plugin.Extension
+	tools       []registeredTool
 }
 
 // LLM returns the configured LLM client, or nil if none is set.
