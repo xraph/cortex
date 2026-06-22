@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/command"
+	log "github.com/xraph/go-utils/log"
 )
 
 // rememberer is the narrow slice of *agent.Toolkit the plugin needs.
@@ -56,13 +57,47 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 		"elapsedMs": elapsed.Milliseconds(),
 	})
 	if err != nil {
+		p.cfg.logger.Warn("fabriq-brain: marshal memory payload failed", log.String("error", err.Error()))
 		return nil
 	}
-
-	_, _ = p.rem.Remember(ctx, agent.RememberRequest{
+	if _, rerr := p.rem.Remember(ctx, agent.RememberRequest{
 		Entity:  p.cfg.memoryEntity,
 		Op:      "create",
 		Payload: payload,
+	}); rerr != nil {
+		p.cfg.logger.Warn("fabriq-brain: memory write failed", log.String("error", rerr.Error()))
+	}
+	return nil
+}
+
+// OnRunFailed removes the run's stashed input (preventing an inflight-map leak)
+// and records the failure as memory so the brain can learn from failed runs.
+// Write/marshal errors are logged and swallowed.
+func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, runErr error) error {
+	ctx = p.cfg.tenant(ctx)
+	input, _ := p.inflight.LoadAndDelete(runID.String())
+	in, _ := input.(string)
+	errStr := ""
+	if runErr != nil {
+		errStr = runErr.Error()
+	}
+	payload, err := json.Marshal(map[string]any{
+		"agentId": agentID.String(),
+		"runId":   runID.String(),
+		"input":   in,
+		"error":   errStr,
+		"failed":  true,
 	})
+	if err != nil {
+		p.cfg.logger.Warn("fabriq-brain: marshal failure payload failed", log.String("error", err.Error()))
+		return nil
+	}
+	if _, rerr := p.rem.Remember(ctx, agent.RememberRequest{
+		Entity:  p.cfg.memoryEntity,
+		Op:      "create",
+		Payload: payload,
+	}); rerr != nil {
+		p.cfg.logger.Warn("fabriq-brain: failure memory write failed", log.String("error", rerr.Error()))
+	}
 	return nil
 }

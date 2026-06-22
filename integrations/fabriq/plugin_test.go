@@ -26,6 +26,7 @@ func TestPlugin_ImplementsExtensionAndHooks(t *testing.T) {
 	var _ plugin.Extension = (*Plugin)(nil)
 	var _ plugin.RunStarted = (*Plugin)(nil)
 	var _ plugin.RunCompleted = (*Plugin)(nil)
+	var _ plugin.RunFailed = (*Plugin)(nil)
 }
 
 func TestPlugin_WritesMemoryOnRunCompleted(t *testing.T) {
@@ -66,5 +67,31 @@ func TestPlugin_SwallowsWriteErrors(t *testing.T) {
 	// but returning nil keeps run completion clean and matches our intent).
 	if err := p.OnRunCompleted(context.Background(), id.AgentID{}, id.AgentRunID{}, "out", 0); err != nil {
 		t.Fatalf("OnRunCompleted returned error %v, want nil", err)
+	}
+}
+
+func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
+	rem := &fakeRememberer{}
+	p := NewPlugin(rem)
+	runID := id.AgentRunID{}
+	ctx := context.Background()
+	if err := p.OnRunStarted(ctx, id.AgentID{}, runID, "do a thing"); err != nil {
+		t.Fatalf("OnRunStarted: %v", err)
+	}
+	if err := p.OnRunFailed(ctx, id.AgentID{}, runID, context.DeadlineExceeded); err != nil {
+		t.Fatalf("OnRunFailed: %v", err)
+	}
+	if _, ok := p.inflight.Load(runID.String()); ok {
+		t.Fatalf("inflight entry should be deleted after OnRunFailed")
+	}
+	if len(rem.reqs) != 1 {
+		t.Fatalf("got %d Remember calls, want 1", len(rem.reqs))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rem.reqs[0].Payload, &payload); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if payload["failed"] != true || payload["error"] != context.DeadlineExceeded.Error() {
+		t.Fatalf("payload = %v", payload)
 	}
 }

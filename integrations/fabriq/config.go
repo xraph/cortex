@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/xraph/fabriq/core/agent"
+	log "github.com/xraph/go-utils/log"
 )
 
 // config holds bridge configuration shared by the provider, tools, and plugin.
@@ -19,6 +20,7 @@ type config struct {
 	writePolicy  agent.WritePolicy
 	tenant       func(context.Context) context.Context
 	render       func(agent.ContextItem) string
+	logger       log.Logger
 }
 
 // Option configures the bridge.
@@ -29,6 +31,7 @@ func defaultConfig() config {
 		budget:       4096,
 		memoryEntity: "agent_memory",
 		tenant:       func(ctx context.Context) context.Context { return ctx },
+		logger:       log.NewNoopLogger(),
 	}
 }
 
@@ -78,4 +81,14 @@ func WithTenantMapper(fn func(context.Context) context.Context) Option {
 // renders the row JSON verbatim.
 func WithRenderer(fn func(agent.ContextItem) string) Option {
 	return func(c *config) { c.render = fn }
+}
+
+// WithLogger sets the logger used to report swallowed memory-write failures in
+// the learning-loop plugin. Default is a no-op logger.
+func WithLogger(l log.Logger) Option {
+	return func(c *config) {
+		if l != nil {
+			c.logger = l
+		}
+	}
 }
