@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xraph/cortex/engine"
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/command"
 	"github.com/xraph/vessel"
+
+	"github.com/xraph/cortex/engine"
 )
 
 func TestEngineOptions_NoFabriqFacadeIsNoop(t *testing.T) {

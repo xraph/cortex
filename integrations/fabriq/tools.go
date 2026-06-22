@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/xraph/fabriq/core/agent"
+
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/llm"
-	"github.com/xraph/fabriq/core/agent"
 )
 
 // toolLister is the narrow slice of *agent.Toolkit the tool adapter needs.

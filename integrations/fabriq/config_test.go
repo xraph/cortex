@@ -41,3 +41,15 @@ func TestOptionsApply(t *testing.T) {
 		t.Fatalf("memoryEntity = %q, want mem", c.memoryEntity)
 	}
 }
+
+func TestWithVectorDims(t *testing.T) {
+	// Default leaves vectorDims at 0 so fabriq applies its own 768 default.
+	if c := defaultConfig(); c.vectorDims != 0 {
+		t.Fatalf("default vectorDims = %d, want 0 (defer to fabriq)", c.vectorDims)
+	}
+	c := defaultConfig()
+	WithVectorDims(1536)(&c)
+	if c.vectorDims != 1536 {
+		t.Fatalf("vectorDims = %d, want 1536", c.vectorDims)
+	}
+}

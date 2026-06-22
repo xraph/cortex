@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/xraph/cortex/engine"
 	"github.com/xraph/fabriq/core/agent"
+
+	"github.com/xraph/cortex/engine"
 )
 
 type fakeToolLister struct{ tools []agent.Tool }

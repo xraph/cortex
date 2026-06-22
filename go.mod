@@ -4,19 +4,19 @@ go 1.25.7
 
 require (
 	github.com/a-h/templ v0.3.1001
-	github.com/xraph/fabriq v0.0.0-00010101000000-000000000000
+	github.com/xraph/fabriq v0.0.3
 	github.com/xraph/forge v1.8.0
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.1
-	github.com/xraph/grove v1.5.7
-	github.com/xraph/grove/drivers/mongodriver v1.5.7
-	github.com/xraph/grove/drivers/pgdriver v1.5.7
-	github.com/xraph/grove/drivers/sqlitedriver v1.5.7
-	github.com/xraph/nexus v1.5.3
+	github.com/xraph/grove v1.5.8
+	github.com/xraph/grove/drivers/mongodriver v1.5.8
+	github.com/xraph/grove/drivers/pgdriver v1.5.8
+	github.com/xraph/grove/drivers/sqlitedriver v1.5.8
+	github.com/xraph/nexus v1.5.5
 	github.com/xraph/sentinel v1.5.2
 	github.com/xraph/shield v1.5.2
 	github.com/xraph/vessel v1.0.2
-	github.com/xraph/weave v1.5.3
+	github.com/xraph/weave v1.5.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 )
@@ -193,5 +193,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/xraph/fabriq => ../../../TwinOS/fabriq

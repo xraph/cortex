@@ -21,6 +21,7 @@ type config struct {
 	tenant       func(context.Context) context.Context
 	render       func(agent.ContextItem) string
 	logger       log.Logger
+	vectorDims   int
 }
 
 // Option configures the bridge.
@@ -84,7 +85,8 @@ func WithRenderer(fn func(agent.ContextItem) string) Option {
 }
 
 // WithLogger sets the logger used to report swallowed memory-write failures in
-// the learning-loop plugin. Default is a no-op logger.
+// the learning-loop plugin and toolkit-build failures during wiring. Default is
+// a no-op logger.
 func WithLogger(l log.Logger) Option {
 	return func(c *config) {
 		if l != nil {
@@ -92,3 +94,11 @@ func WithLogger(l log.Logger) Option {
 		}
 	}
 }
+
+// WithVectorDims sets the embedding dimensionality the toolkit expects, which
+// MUST match the configured embedder's Dims (e.g. 1536 for OpenAI
+// text-embedding-3-small). Default 0 leaves it unset so fabriq applies its own
+// 768 default — correct for 768-dim embedders. Setting this wrong (or leaving
+// the default with a non-768 embedder) makes NewToolkit fail with a dims
+// mismatch, which the wiring path now surfaces via the configured logger.
+func WithVectorDims(n int) Option { return func(c *config) { c.vectorDims = n } }

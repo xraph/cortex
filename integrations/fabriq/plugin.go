@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xraph/cortex/id"
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/command"
 	log "github.com/xraph/go-utils/log"
+
+	"github.com/xraph/cortex/id"
 )
 
 // rememberer is the narrow slice of *agent.Toolkit the plugin needs.
@@ -50,8 +51,11 @@ func (p *Plugin) OnRunStarted(_ context.Context, _ id.AgentID, runID id.AgentRun
 func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, output string, elapsed time.Duration) error {
 	ctx = p.cfg.tenant(ctx)
 
-	input, _ := p.inflight.LoadAndDelete(runID.String())
-	in, _ := input.(string)
+	v, _ := p.inflight.LoadAndDelete(runID.String())
+	var in string
+	if s, ok := v.(string); ok {
+		in = s
+	}
 
 	content := strings.TrimSpace(in + "\n" + output)
 	if content == "" {
@@ -88,8 +92,11 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 // Write/marshal errors are logged and swallowed.
 func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, runErr error) error {
 	ctx = p.cfg.tenant(ctx)
-	input, _ := p.inflight.LoadAndDelete(runID.String())
-	in, _ := input.(string)
+	v, _ := p.inflight.LoadAndDelete(runID.String())
+	var in string
+	if s, ok := v.(string); ok {
+		in = s
+	}
 	errStr := ""
 	if runErr != nil {
 		errStr = runErr.Error()

@@ -5,8 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/fabriq/core/agent"
+
+	"github.com/xraph/cortex/knowledge"
 )
 
 // recaller is the narrow slice of *agent.Toolkit the provider needs.

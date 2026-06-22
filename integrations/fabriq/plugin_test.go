@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/plugin"
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/command"
+
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/plugin"
 )
 
 type fakeRememberer struct {
@@ -23,7 +24,7 @@ func (f *fakeRememberer) Remember(_ context.Context, req agent.RememberRequest) 
 	return command.Result{}, f.err
 }
 
-func TestPlugin_ImplementsExtensionAndHooks(t *testing.T) {
+func TestPlugin_ImplementsExtensionAndHooks(_ *testing.T) {
 	var _ plugin.Extension = (*Plugin)(nil)
 	var _ plugin.RunStarted = (*Plugin)(nil)
 	var _ plugin.RunCompleted = (*Plugin)(nil)

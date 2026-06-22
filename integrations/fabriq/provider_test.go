@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/fabriq/core/agent"
+
+	"github.com/xraph/cortex/knowledge"
 )
 
 // fakeRecaller returns a canned ContextPack and records the request it saw.
@@ -21,13 +22,13 @@ func (f *fakeRecaller) Recall(_ context.Context, req agent.RecallRequest) (agent
 	return f.pack, f.err
 }
 
-func item(entity, id string, score float64, row string, sources ...string) agent.ContextItem {
-	return agent.ContextItem{Entity: entity, ID: id, Row: json.RawMessage(row), Score: score, Source: sources}
+func item(id string, score float64, row string, sources ...string) agent.ContextItem {
+	return agent.ContextItem{Entity: "doc", ID: id, Row: json.RawMessage(row), Score: score, Source: sources}
 }
 
 func TestRetrieve_MapsItemsToChunks(t *testing.T) {
 	rec := &fakeRecaller{pack: agent.ContextPack{Items: []agent.ContextItem{
-		item("doc", "d1", 0.9, `{"t":"hello"}`, "vector", "graph"),
+		item("d1", 0.9, `{"t":"hello"}`, "vector", "graph"),
 	}}}
 	a := NewProvider(rec, WithEntities("doc"), WithBudget(1234))
 
@@ -77,9 +78,9 @@ func TestRetrieve_CollectionOverridesEntities(t *testing.T) {
 
 func TestRetrieve_FiltersByMinScoreAndCapsTopK(t *testing.T) {
 	rec := &fakeRecaller{pack: agent.ContextPack{Items: []agent.ContextItem{
-		item("doc", "a", 0.95, `{}`),
-		item("doc", "b", 0.40, `{}`),
-		item("doc", "c", 0.80, `{}`),
+		item("a", 0.95, `{}`),
+		item("b", 0.40, `{}`),
+		item("c", 0.80, `{}`),
 	}}}
 	a := NewProvider(rec, WithEntities("doc"))
 	chunks, err := a.Retrieve(context.Background(), "q", &knowledge.RetrieveParams{TopK: 1, MinScore: 0.5})
