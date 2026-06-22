@@ -1,0 +1,67 @@
+---
+title: Fabriq Brain
+description: Plug fabriq in as a living brain for cortex agents — recall, rich tools, and a learning loop.
+---
+
+## Overview
+
+`fabriqbrain` (`github.com/xraph/cortex/integrations/fabriq`) adapts the
+[fabriq](https://github.com/xraph/fabriq) data fabric to cortex as a
+plug-n-play brain. With one wiring call your agents gain fabriq-backed:
+
+- **Recall** — multi-channel retrieval (vector + full-text + graph, RRF-fused,
+  distillation-aware) via the engine's `knowledge_search` tool.
+- **Rich tools** — `graph_traverse`, guarded `remember`, and the distillation
+  tools `map`/`digest`/`resolve`, registered as native cortex tools.
+- **Learning loop** — a plugin that writes each run back into the fabric, where
+  fabriq's embed + distillation workers turn it into future recall material.
+
+## Wiring
+
+```go
+import (
+	"github.com/xraph/cortex/engine"
+	fabriqbrain "github.com/xraph/cortex/integrations/fabriq"
+	"github.com/xraph/fabriq/core/agent"
+	"github.com/xraph/fabriq/core/command"
+)
+
+eng, err := engine.New(append(
+	[]engine.Option{engine.WithStore(store), engine.WithLLM(client)},
+	fabriqbrain.EngineOptions(container,
+		fabriqbrain.WithEmbedder(emb),
+		fabriqbrain.WithEntities("doc", "note", "agent_memory"),
+		fabriqbrain.WithWritePolicy(agent.WritePolicy{
+			Allow: map[string][]command.Op{"agent_memory": {command.OpCreate}},
+		}),
+	)...,
+)...)
+```
+
+`EngineOptions` auto-discovers the `*fabriq.Fabriq` facade from the DI
+container (provided by fabriq's Forge extension). If no facade is present it
+returns `nil`, so the call is always safe to include. Use `EngineOption`
+(singular) to wire only the knowledge provider, mirroring the weave adapter.
+
+## Options
+
+| Option | Purpose |
+|---|---|
+| `WithEmbedder(agent.Embedder)` | Embedding model for recall's vector channel. Must match the embedder fabriq indexed with. |
+| `WithEntities(...string)` | Entity types recall searches and `ListCollections` reports. |
+| `WithBudget(int)` | Token budget per recall (default 4096). |
+| `WithMemoryEntity(string)` | Entity the learning loop writes to (default `agent_memory`). |
+| `WithWritePolicy(agent.WritePolicy)` | Allowlist for the `remember` tool and learning-loop writes (deny-by-default). |
+| `WithTenantMapper(func(ctx) ctx)` | Translate cortex request context to fabriq scope (default identity). |
+| `WithRenderer(func(agent.ContextItem) string)` | Override how a recalled row becomes chunk text. |
+
+## Learning loop requirements
+
+For run activity to become recall material, the host must:
+
+1. Register the memory entity (default `agent_memory`) in fabriq's registry
+   **with a vector index** so the `proj:embed` worker vectorizes new rows.
+2. Allow `{memoryEntity: {create}}` in the write policy.
+
+Distillation rolls the growing memory corpus into summaries, so recall stays
+within budget as history accumulates.
