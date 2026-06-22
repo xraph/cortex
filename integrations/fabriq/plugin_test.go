@@ -79,6 +79,19 @@ func TestPlugin_SwallowsWriteErrors(t *testing.T) {
 	}
 }
 
+func TestPlugin_SkipsEmptyContent(t *testing.T) {
+	rem := &fakeRememberer{}
+	p := NewPlugin(rem)
+	// OnRunCompleted with no prior OnRunStarted (inflight miss → input "") and
+	// empty output → content is empty → no write attempted.
+	if err := p.OnRunCompleted(context.Background(), id.AgentID{}, id.AgentRunID{}, "", 0); err != nil {
+		t.Fatalf("OnRunCompleted: %v", err)
+	}
+	if len(rem.reqs) != 0 {
+		t.Fatalf("expected no Remember call for empty content, got %d", len(rem.reqs))
+	}
+}
+
 func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
 	rem := &fakeRememberer{}
 	p := NewPlugin(rem)

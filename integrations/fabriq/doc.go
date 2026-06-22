@@ -29,10 +29,13 @@
 //	reg.MustRegister(fabriqbrain.MemorySpec("agent_memory"))
 //	// 2. Provision its table once (migration, or postgres.Adapter.EnsureDynamic
 //	//    in setup) — fabriq.Open does not auto-create dynamic tables.
-//	// 3. Allow writes to it.
+//	// 3. Allow writes to it. WithMemoryEntity must match the name passed to
+//	//    MemorySpec above; hosts using a non-default entity name MUST pass it
+//	//    explicitly (the default is "agent_memory").
 //	opts := fabriqbrain.EngineOptions(container,
 //	    fabriqbrain.WithEmbedder(emb),
 //	    fabriqbrain.WithEntities("agent_memory"),
+//	    fabriqbrain.WithMemoryEntity("agent_memory"),
 //	    fabriqbrain.WithWritePolicy(fabriqbrain.MemoryWritePolicy("agent_memory")),
 //	)
 //
