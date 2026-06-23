@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -72,6 +73,12 @@ func (h *recordingHooks) AgentHandoff(context.Context, id.OrchestrationID, strin
 	h.handoffs++
 }
 
+type errRunner struct{}
+
+func (errRunner) RunAgent(_ context.Context, _, _, _ string, _ *RunOpts) (*AgentResult, error) {
+	return nil, errors.New("boom")
+}
+
 // --- test ---
 
 func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
@@ -121,5 +128,43 @@ func TestServiceRunUnknownConfig(t *testing.T) {
 	_, err := svc.Run(context.Background(), "app1", "missing", "go")
 	if err == nil {
 		t.Fatal("expected error for missing config")
+	}
+}
+
+func TestServiceRunFailed(t *testing.T) {
+	runner := &errRunner{}
+	cfg := &Config{
+		ID:           id.NewOrchestrationConfigID(),
+		Name:         "team",
+		AppID:        "app1",
+		Strategy:     StrategySequential,
+		Participants: []Participant{{AgentName: "a"}},
+	}
+	configs := &fakeConfigStore{byName: map[string]*Config{"team": cfg}}
+	runs := &fakeRunStore{}
+	hooks := &recordingHooks{}
+	svc := NewService(runner, configs, runs, hooks)
+
+	rec, err := svc.Run(context.Background(), "app1", "team", "go")
+	if err == nil {
+		t.Fatal("expected error from failing runner")
+	}
+	if rec == nil {
+		t.Fatal("expected record to be returned on failure")
+	}
+	if rec.Status != StatusFailed {
+		t.Fatalf("status = %q, want %q", rec.Status, StatusFailed)
+	}
+	if rec.Error == "" {
+		t.Fatal("error not captured in record")
+	}
+	if runs.updated == nil {
+		t.Fatal("run not persisted on failure")
+	}
+	if runs.updated.Status != StatusFailed {
+		t.Fatalf("persisted status = %q, want %q", runs.updated.Status, StatusFailed)
+	}
+	if hooks.started != 1 || hooks.completed != 1 {
+		t.Fatalf("hooks started=%d completed=%d, want 1/1", hooks.started, hooks.completed)
 	}
 }

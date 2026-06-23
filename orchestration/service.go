@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/xraph/cortex/id"
@@ -91,7 +92,7 @@ func (s *Service) Run(ctx context.Context, appID, name, input string) (*Run, err
 		rec.Status = StatusCompleted
 	}
 	if err := s.runs.UpdateOrchestrationRun(ctx, rec); err != nil {
-		return nil, err
+		return rec, errors.Join(runErr, err)
 	}
 	s.hooks.OrchestrationCompleted(ctx, orchID, completed.Sub(started))
 
