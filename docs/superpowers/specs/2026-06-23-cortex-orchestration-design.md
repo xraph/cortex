@@ -17,7 +17,7 @@ Concretely, after this lands:
 1. **Five working strategies** — sequential, parallel, hierarchical, router, debate.
 2. **Communication + awareness** — a shared, scoped `Blackboard` every participant can read/write, plus explicit `from→to→payload` handoffs that fire the `AgentHandoff` hook. A `Roster` of participants (name/role/skills) gives each agent awareness of who else is in the orchestration.
 3. **Both definition styles** — programmatic Go constructors (`orchestration.NewSequential(runner, ...)`) AND stored, named `OrchestrationConfig` entities with CRUD and a `POST /cortex/orchestrations/:name/run` endpoint.
-4. **Full persistence** — an `OrchestrationRun` execution record (mirrors `run/`) and an `OrchestrationConfig` definition (mirrors `persona/`), persisted across postgres, sqlite, and memory stores.
+4. **Full persistence** — an `OrchestrationRun` execution record (mirrors `run/`) and an `OrchestrationConfig` definition (mirrors `persona/`), persisted across the three real store backends: **sqlite, postgres, mongo**.
 
 ### Non-goals
 
@@ -102,18 +102,24 @@ orchestration/
   *_test.go            # per-strategy unit tests (fake runner + MockClient)
 ```
 
-Store implementations and wiring land in existing packages:
+Store implementations and wiring land in existing packages. Migrations are **programmatic grove migrations** (a `migrate.Migration` with a `Version` string registered in each backend's `migrations.go`) — there are no raw `.sql` files:
 
 ```
-store/store.go                         # fold OrchestrationConfig.Store + OrchestrationRun.Store into composite
-store/postgres/orchestration.go        # postgres impl
-store/postgres/migrations/009_orchestrations.sql
-store/sqlite/store.go                  # sqlite impl (extend existing)
-store/memory/store.go                  # memory impl (extend existing)
-engine/orchestration.go                # RunOrchestration + CRUD methods + AgentRunner adapter + hook emission
-api/orchestration_handler.go           # CRUD + run handlers
-api/requests.go                        # orchestration request structs (extend)
-id/id.go                               # add PrefixOrchestrationConfig ("orchcfg") + constructors/parsers
+store/store.go                  # fold the two Stores into the composite interface
+store/sqlite/orchestration.go   # sqlite CRUD impl
+store/sqlite/models.go          # add orchestration models + converters (extend)
+store/sqlite/migrations.go      # add migration version "20240101000009" (extend)
+store/postgres/orchestration.go # postgres CRUD impl
+store/postgres/models.go        # add orchestration models + converters (extend)
+store/postgres/migrations.go    # add migration version "20240101000009" (extend)
+store/mongo/orchestration.go    # mongo CRUD impl
+store/mongo/models.go           # add orchestration models + converters (extend)
+store/mongo/migrations.go       # add collection-create migration (extend)
+engine/orchestration.go         # RunOrchestration + CRUD methods + AgentRunner adapter + hook emission
+api/orchestration_handler.go    # CRUD + run handlers
+api/requests.go                 # orchestration request structs (extend)
+id/id.go                        # add PrefixOrchestrationConfig ("orchcfg") + constructors/parsers
+errors.go                       # add ErrOrchestrationNotFound, ErrOrchestrationRunNotFound
 ```
 
 ---
@@ -233,8 +239,8 @@ Robustness rules common to all:
 
 - **New IDs:** add `PrefixOrchestrationConfig = "orchcfg"` with `NewOrchestrationConfigID` / `ParseOrchestrationConfigID` to `id/id.go` (mirrors existing constructors). `OrchestrationID` (`orch_`) already exists and is reused for run records.
 - **Store interfaces:** `OrchestrationConfig.Store` (Create/Get/GetByName/Update/Delete/List/Count) and `OrchestrationRun.Store` (Create/Get/Update/List/Count) — both shapes copied from persona/run. Folded into `store.Store`.
-- **Migration** `009_orchestrations.sql`: two tables, `cortex_orchestration_configs` and `cortex_orchestration_runs`, app-scoped, JSON columns for participants/settings/agent_run_ids, indexed on `(app_id, name)` and `(app_id, status)`.
-- **Implementations:** postgres (`store/postgres/orchestration.go`), memory and sqlite extended in place. All three must pass the same round-trip tests.
+- **Migration:** a programmatic grove migration, version `20240101000009`, registered in each backend's `migrations.go` (sqlite/postgres add a `migrate.Migration` creating tables `cortex_orchestration_configs` and `cortex_orchestration_runs`; mongo adds a collection-create migration). App-scoped; JSON/JSONB columns for participants/settings/agent_run_ids; indexed on `(app_id, name)` and `(app_id, status)`.
+- **Implementations:** sqlite, postgres, and mongo each get an `orchestration.go` plus model structs + converters in `models.go`. Correctness is guarded at compile time by the existing `var _ store.Store = (*Store)(nil)` assertion in each backend — adding the two Stores to the composite forces all three backends to implement them or the build fails.
 
 ---
 
@@ -265,24 +271,34 @@ Request structs added to `api/requests.go` with `path:`/`query:`/`json:` tags, f
 
 ## 9. Testing
 
-- **Strategy unit tests** — each of the five with a deterministic fake `AgentRunner` (records calls, returns canned outputs). Router/hierarchical/debate use `llm.MockClient` for the meta-decision. Assert: agent invocation order, blackboard contents, handoff log, final output.
-- **Blackboard tests** — concurrent read/write safety, snapshot rendering, roster, handoff callback fires.
-- **Store round-trip** — `OrchestrationConfig` and `OrchestrationRun` CRUD against the memory store (postgres/sqlite covered by the shared store conformance suite if present).
-- **Engine integration** — `RunOrchestration` end-to-end with `MockClient` + memory store: config in → run record out, status transitions, hooks fired (assert via a recording test plugin), `AgentRunID`s linked.
+The repo currently has **no store-backend unit tests** — the store layer is guarded by compile-time `var _ store.Store` interface assertions, and the meaningful logic lives in the orchestration package, which is fully testable without a database. Testing posture follows that reality:
+
+- **Strategy unit tests** — each of the five with a deterministic fake `AgentRunner` (records calls, returns canned outputs). Router/hierarchical/debate use `llm.MockClient` for the meta-decision. Assert: agent invocation order, blackboard contents, handoff log, final output. No DB.
+- **Blackboard tests** — concurrent read/write safety, snapshot rendering, roster, handoff callback fires. No DB.
+- **Core type / ID tests** — `orchcfg` prefix round-trips; `Result`/`Participant` construction. Extends `id/id_test.go`.
+- **Store backends** — guarded at compile time by the existing `var _ store.Store = (*Store)(nil)` assertion in each backend (a missing method fails `go build`). No new DB test harness is introduced (the repo has none to follow).
+- **Engine integration** — `RunOrchestration` exercised with a fake `AgentRunner` and `llm.MockClient`, asserting hooks fire (via a recording test plugin) and the `Result` is assembled. Store interactions are covered through a lightweight in-package fake store, not a real DB.
 - **API** — handler tests for create + run, asserting the run endpoint resolves a stored config and returns an `OrchestrationRun`.
-- **Backwards compatibility** — existing single-agent `RunAgent` path untouched; full suite green.
+- **Backwards compatibility** — existing single-agent `RunAgent` path untouched; full suite green (`go build ./... && go test ./...`).
 
 ---
 
 ## 10. Build sequence (for the implementation plan)
 
-1. IDs (`orchcfg` prefix) + `orchestration/` core types (`orchestrator.go`, `blackboard.go`) + tests.
-2. Entities (`config.go`, `run.go`) + store interfaces + fold into `store.Store`.
-3. Store implementations: memory → sqlite → postgres + migration `009`.
-4. Strategies in order of dependency: sequential → parallel → router → hierarchical → debate, each with tests, plus `builder.go` constructors.
-5. Engine: `AgentRunner` adapter, `RunOrchestration`, CRUD, hook emission.
-6. API: handler + request structs + route registration.
-7. Integration tests, example under `_examples/multi-agent/`, docs.
+**Plan 1 — Foundation & Persistence:**
+1. IDs (`orchcfg` prefix) + `errors.go` sentinels.
+2. `orchestration/` core types (`orchestrator.go`, `blackboard.go`) + tests.
+3. Entities (`config.go`, `run.go`) + store interfaces + fold into `store.Store`.
+4. Store implementations + programmatic migrations: sqlite → postgres → mongo (compile-time `store.Store` guard forces all three).
+5. Engine CRUD methods.
+
+**Plan 2 — Strategies & Execution:**
+6. Strategies in order of dependency: sequential → parallel → router → hierarchical → debate, each with tests, plus `builder.go` constructors.
+7. Engine: `AgentRunner` adapter, `RunOrchestration`, hook emission, integration test.
+
+**Plan 3 — API & Examples:**
+8. API: handler + request structs + route registration.
+9. Example under `_examples/multi-agent/`, docs.
 
 ---
 
