@@ -1,0 +1,99 @@
+---
+title: Orchestration
+description: Run multiple agents together — sequential, parallel, router, hierarchical, and debate strategies with a shared blackboard and handoffs.
+---
+
+Cortex orchestration coordinates **multiple agents working together**. An
+orchestration is a stored config — a strategy plus the participant agents and
+their settings — that you run by name. During a run, agents share a **blackboard**
+(roster + prior contributions) and pass work through recorded **handoffs**.
+
+## Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `sequential` | Agents run in order; each sees the prior outputs and the final answer is the last agent's. |
+| `parallel` | All agents run concurrently on the same input; an optional aggregator agent synthesizes one answer. |
+| `router` | A static rule map or a router agent picks one agent to handle the input. |
+| `hierarchical` | A manager agent delegates subtasks to workers (JSON plan), then synthesizes the result. |
+| `debate` | Debater agents argue over N rounds, then a judge agent renders a verdict. |
+
+## Awareness and communication
+
+Every participant sees a **roster** of the others (name + role) and the running
+log of contributions via the blackboard snapshot prepended to its input. When one
+agent hands off to another, an `AgentHandoff` plugin hook fires (and is recorded
+on the run), so audit and metrics extensions observe the collaboration.
+
+## Settings
+
+```json
+{
+  "max_concurrency": 4,
+  "rounds": 2,
+  "manager": "lead",
+  "judge": "referee",
+  "aggregator": "summarizer",
+  "router_agent": "dispatcher",
+  "router_rules": { "refund": "billing", "bug": "support" },
+  "model": "smart"
+}
+```
+
+Each strategy reads only the settings it needs; the rest are ignored.
+
+## Create and run over HTTP
+
+```bash
+# Create a debate orchestration
+curl -X POST /v1/orchestrations -H 'Content-Type: application/json' -d '{
+  "name": "should-we-ship",
+  "strategy": "debate",
+  "participants": [
+    {"agent_name": "optimist", "role": "debater"},
+    {"agent_name": "skeptic", "role": "debater"},
+    {"agent_name": "referee", "role": "judge"}
+  ],
+  "settings": {"rounds": 2, "judge": "referee"}
+}'
+
+# Run it
+curl -X POST /v1/orchestrations/should-we-ship/run \
+  -H 'Content-Type: application/json' \
+  -d '{"input": "Should we ship the feature this week?"}'
+```
+
+The run returns a summary:
+
+```json
+{
+  "run_id": "orch_01...",
+  "status": "completed",
+  "strategy": "debate",
+  "output": "...the judge's verdict...",
+  "duration_ms": 4213
+}
+```
+
+Run history is available at `GET /v1/orchestration-runs` and
+`GET /v1/orchestration-runs/:id`.
+
+## In Go
+
+```go
+// Persist a config once...
+cfg := &orchestration.Config{
+    ID:       id.NewOrchestrationConfigID(),
+    Name:     "research-team",
+    AppID:    "my-app",
+    Strategy: orchestration.StrategySequential,
+    Participants: []orchestration.Participant{
+        {AgentName: "researcher", Role: "worker"},
+        {AgentName: "writer", Role: "worker"},
+    },
+}
+_ = eng.CreateOrchestration(ctx, cfg)
+
+// ...then run it by name.
+run, err := eng.RunOrchestration(ctx, "my-app", "research-team", "Summarize CRDTs")
+```
