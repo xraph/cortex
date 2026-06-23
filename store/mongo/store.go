@@ -16,16 +16,18 @@ import (
 
 // Collection name constants.
 const (
-	colAgents      = "cortex_agents"
-	colRuns        = "cortex_runs"
-	colSteps       = "cortex_steps"
-	colToolCalls   = "cortex_tool_calls"
-	colMemories    = "cortex_memories"
-	colCheckpoints = "cortex_checkpoints"
-	colSkills      = "cortex_skills"
-	colTraits      = "cortex_traits"
-	colBehaviors   = "cortex_behaviors"
-	colPersonas    = "cortex_personas"
+	colAgents                 = "cortex_agents"
+	colRuns                   = "cortex_runs"
+	colSteps                  = "cortex_steps"
+	colToolCalls              = "cortex_tool_calls"
+	colMemories               = "cortex_memories"
+	colCheckpoints            = "cortex_checkpoints"
+	colSkills                 = "cortex_skills"
+	colTraits                 = "cortex_traits"
+	colBehaviors              = "cortex_behaviors"
+	colPersonas               = "cortex_personas"
+	colOrchestrationConfigs   = "cortex_orchestration_configs"
+	colOrchestrationRuns      = "cortex_orchestration_runs"
 )
 
 // Compile-time interface check.

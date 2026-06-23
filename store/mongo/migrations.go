@@ -307,6 +307,51 @@ func init() {
 				return mexec.DropCollection(ctx, (*personaModel)(nil))
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_cortex_orchestrations",
+			Version: "20240101000011",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+
+				if err := mexec.CreateCollection(ctx, (*orchestrationConfigModel)(nil)); err != nil {
+					return err
+				}
+
+				if err := mexec.CreateIndexes(ctx, colOrchestrationConfigs, []mongo.IndexModel{
+					{
+						Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+						Options: options.Index().SetUnique(true),
+					},
+					{Keys: bson.D{{Key: "app_id", Value: 1}}},
+					{Keys: bson.D{{Key: "created_at", Value: 1}}},
+				}); err != nil {
+					return err
+				}
+
+				if err := mexec.CreateCollection(ctx, (*orchestrationRunModel)(nil)); err != nil {
+					return err
+				}
+
+				return mexec.CreateIndexes(ctx, colOrchestrationRuns, []mongo.IndexModel{
+					{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "status", Value: 1}}},
+					{Keys: bson.D{{Key: "config_id", Value: 1}}},
+					{Keys: bson.D{{Key: "created_at", Value: -1}}},
+				})
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				if err := mexec.DropCollection(ctx, (*orchestrationRunModel)(nil)); err != nil {
+					return err
+				}
+				return mexec.DropCollection(ctx, (*orchestrationConfigModel)(nil))
+			},
+		},
 	)
 }
 
@@ -382,6 +427,19 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+		},
+		colOrchestrationConfigs: {
+			{
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true),
+			},
+			{Keys: bson.D{{Key: "app_id", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+		},
+		colOrchestrationRuns: {
+			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "config_id", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
 		},
 	}
 }
