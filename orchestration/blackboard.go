@@ -13,7 +13,7 @@ import (
 // wires this to plugin hook emission; tests pass their own.
 type HandoffFunc func(ctx context.Context, h Handoff)
 
-// Entry is one timestamp-ordered contribution recorded on the blackboard.
+// Entry is one insertion-ordered contribution recorded on the blackboard.
 type Entry struct {
 	AgentName string
 	Content   string

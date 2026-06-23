@@ -201,7 +201,7 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 	}
 	appID := cortex.AppFromContext(ctx.Context())
 	r, err := a.eng.RunOrchestration(ctx.Context(), appID, req.Name, req.Input)
-	if err != nil {
+	if r == nil {
 		return nil, mapStoreError(err)
 	}
 
