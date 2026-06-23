@@ -1,7 +1,7 @@
 // Package orchestration coordinates multiple Cortex agents working together —
 // in sequence, in parallel, hierarchically, via a router, or in a debate.
 //
-// It is a leaf package: it depends only on id, cortex, and llm, and reaches
+// It is a leaf package: it depends only on id and cortex, and reaches
 // host capabilities (running an agent, emitting plugin hooks) through injected
 // interfaces and callbacks, never by importing the engine or plugin packages.
 package orchestration
@@ -84,4 +84,11 @@ type Result struct {
 	Handoffs        []Handoff          `json:"handoffs,omitempty"`
 	Elapsed         time.Duration      `json:"elapsed"`
 	Err             error              `json:"-"`
+}
+
+// Orchestrator is one multi-agent execution strategy. Implementations live in
+// Plan 2 (sequential.go, parallel.go, router.go, hierarchical.go, debate.go).
+type Orchestrator interface {
+	Strategy() string
+	Run(ctx context.Context, input string, bb *Blackboard) (*Result, error)
 }
