@@ -1,5 +1,16 @@
 package orchestration
 
+import (
+	"context"
+	"time"
+
+	"github.com/xraph/cortex"
+)
+
+func nowUTC() time.Time { return time.Now().UTC() }
+
+func cortexTenant(ctx context.Context) string { return cortex.TenantFromContext(ctx) }
+
 const defaultMaxConcurrency = 4
 
 // runOptsFromSettings derives per-agent run options from orchestration settings.
