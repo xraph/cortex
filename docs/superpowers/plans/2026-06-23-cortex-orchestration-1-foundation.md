@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Establish the `orchestration/` package's core types and shared Blackboard, the two persisted entities (`OrchestrationConfig`, `OrchestrationRun`), their storage across all three backends (sqlite, postgres, mongo), and engine CRUD — with nothing executing yet.
+**Goal:** Establish the `orchestration/` package's core types and shared Blackboard, the two persisted entities (`Config`, `Run`), their storage across all three backends (sqlite, postgres, mongo), and engine CRUD — with nothing executing yet.
 
 **Architecture:** A new leaf package `orchestration/` defines strategy-agnostic types (`Orchestrator`, `AgentRunner`, `Result`, `Participant`, `Blackboard`) plus the two entities and their `Store` interfaces. The entities are persisted by mirroring the existing persona/run store pattern (bun/grove models + converters + programmatic migrations) across `store/sqlite`, `store/postgres`, `store/mongo`. The two `Store` interfaces are folded into the composite `store.Store` only after all three backends implement them, keeping the build green at every task boundary. The engine gains thin CRUD pass-throughs.
 
@@ -28,8 +28,8 @@
 **Created:**
 - `orchestration/orchestrator.go` — `Strategy`/`Status` consts, `Participant`, `Handoff`, `AgentResult`, `RunOpts`, `AgentRunner`, `Orchestrator`, `Result`, `Settings`.
 - `orchestration/blackboard.go` — `Blackboard` (shared state + entry log + roster + handoff callback).
-- `orchestration/config.go` — `OrchestrationConfig` entity + `ConfigStore` interface + `ConfigListFilter`.
-- `orchestration/run.go` — `OrchestrationRun` entity + `RunStore` interface + `RunListFilter`.
+- `orchestration/config.go` — `Config` entity + `ConfigStore` interface + `ConfigListFilter`.
+- `orchestration/run.go` — `Run` entity + `RunStore` interface + `RunListFilter`.
 - `orchestration/orchestrator_test.go`, `orchestration/blackboard_test.go`, `orchestration/config_test.go`, `orchestration/run_test.go`.
 - `store/sqlite/orchestration.go`, `store/postgres/orchestration.go`, `store/mongo/orchestration.go` — CRUD impls.
 - `engine/orchestration_crud.go` — engine CRUD pass-throughs.
@@ -43,7 +43,7 @@
 
 ---
 
-## Task 1: OrchestrationConfig ID prefix + error sentinels
+## Task 1: Config ID prefix + error sentinels
 
 **Files:**
 - Modify: `id/id.go`
@@ -218,7 +218,7 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// Strategy identifiers. A stored OrchestrationConfig.Strategy is one of these.
+// Strategy identifiers. A stored Config.Strategy is one of these.
 const (
 	StrategySequential   = "sequential"
 	StrategyParallel     = "parallel"
@@ -582,7 +582,7 @@ git commit -m "feat(orchestration): add shared Blackboard with roster and handof
 
 ---
 
-## Task 4: OrchestrationConfig entity + Store interface
+## Task 4: Config entity + Store interface
 
 **Files:**
 - Create: `orchestration/config.go`
@@ -590,7 +590,7 @@ git commit -m "feat(orchestration): add shared Blackboard with roster and handof
 
 **Interfaces:**
 - Consumes: `Participant`, `Settings` (Task 2); `id.OrchestrationConfigID` (Task 1); `cortex.Entity`.
-- Produces: `OrchestrationConfig`, `ConfigStore`, `ConfigListFilter`.
+- Produces: `Config`, `ConfigStore`, `ConfigListFilter`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -608,7 +608,7 @@ import (
 )
 
 func TestOrchestrationConfigFields(t *testing.T) {
-	c := &orchestration.OrchestrationConfig{
+	c := &orchestration.Config{
 		Entity:   cortex.NewEntity(),
 		ID:       id.NewOrchestrationConfigID(),
 		Name:     "research-team",
@@ -633,7 +633,7 @@ func TestOrchestrationConfigFields(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./orchestration/ -run TestOrchestrationConfigFields -v`
-Expected: FAIL — `undefined: orchestration.OrchestrationConfig`.
+Expected: FAIL — `undefined: orchestration.Config`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -649,9 +649,9 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// OrchestrationConfig is a stored, named definition of a multi-agent
+// Config is a stored, named definition of a multi-agent
 // orchestration: a strategy plus its participant agents and tunables.
-type OrchestrationConfig struct {
+type Config struct {
 	cortex.Entity
 	ID           id.OrchestrationConfigID `json:"id"`
 	Name         string                   `json:"name"`
@@ -665,12 +665,12 @@ type OrchestrationConfig struct {
 
 // ConfigStore defines persistence for orchestration configs.
 type ConfigStore interface {
-	CreateOrchestration(ctx context.Context, c *OrchestrationConfig) error
-	GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*OrchestrationConfig, error)
-	GetOrchestrationByName(ctx context.Context, appID, name string) (*OrchestrationConfig, error)
-	UpdateOrchestration(ctx context.Context, c *OrchestrationConfig) error
+	CreateOrchestration(ctx context.Context, c *Config) error
+	GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*Config, error)
+	GetOrchestrationByName(ctx context.Context, appID, name string) (*Config, error)
+	UpdateOrchestration(ctx context.Context, c *Config) error
 	DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error
-	ListOrchestrations(ctx context.Context, filter *ConfigListFilter) ([]*OrchestrationConfig, error)
+	ListOrchestrations(ctx context.Context, filter *ConfigListFilter) ([]*Config, error)
 	CountOrchestrations(ctx context.Context, filter *ConfigListFilter) (int64, error)
 }
 
@@ -692,12 +692,12 @@ Expected: PASS.
 
 ```bash
 git add orchestration/config.go orchestration/config_test.go
-git commit -m "feat(orchestration): add OrchestrationConfig entity and ConfigStore"
+git commit -m "feat(orchestration): add Config entity and ConfigStore"
 ```
 
 ---
 
-## Task 5: OrchestrationRun entity + Store interface
+## Task 5: Run entity + Store interface
 
 **Files:**
 - Create: `orchestration/run.go`
@@ -705,7 +705,7 @@ git commit -m "feat(orchestration): add OrchestrationConfig entity and ConfigSto
 
 **Interfaces:**
 - Consumes: `id.OrchestrationID`, `id.OrchestrationConfigID`, `id.AgentRunID`; `cortex.Entity`.
-- Produces: `Status*` consts, `OrchestrationRun`, `RunStore`, `RunListFilter`.
+- Produces: `Status*` consts, `Run`, `RunStore`, `RunListFilter`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -723,7 +723,7 @@ import (
 )
 
 func TestOrchestrationRunFields(t *testing.T) {
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.NewEntity(),
 		ID:          id.NewOrchestrationID(),
 		ConfigID:    id.NewOrchestrationConfigID(),
@@ -745,7 +745,7 @@ func TestOrchestrationRunFields(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./orchestration/ -run TestOrchestrationRunFields -v`
-Expected: FAIL — `undefined: orchestration.OrchestrationRun`.
+Expected: FAIL — `undefined: orchestration.Run`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -769,8 +769,8 @@ const (
 	StatusFailed    = "failed"
 )
 
-// OrchestrationRun is the persisted execution record of one orchestration.
-type OrchestrationRun struct {
+// Run is the persisted execution record of one orchestration.
+type Run struct {
 	cortex.Entity
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
@@ -788,10 +788,10 @@ type OrchestrationRun struct {
 
 // RunStore defines persistence for orchestration run records.
 type RunStore interface {
-	CreateOrchestrationRun(ctx context.Context, r *OrchestrationRun) error
-	GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*OrchestrationRun, error)
-	UpdateOrchestrationRun(ctx context.Context, r *OrchestrationRun) error
-	ListOrchestrationRuns(ctx context.Context, filter *RunListFilter) ([]*OrchestrationRun, error)
+	CreateOrchestrationRun(ctx context.Context, r *Run) error
+	GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*Run, error)
+	UpdateOrchestrationRun(ctx context.Context, r *Run) error
+	ListOrchestrationRuns(ctx context.Context, filter *RunListFilter) ([]*Run, error)
 	CountOrchestrationRuns(ctx context.Context, filter *RunListFilter) (int64, error)
 }
 
@@ -813,7 +813,7 @@ Expected: PASS (all orchestration tests).
 
 ```bash
 git add orchestration/run.go orchestration/run_test.go
-git commit -m "feat(orchestration): add OrchestrationRun entity and RunStore"
+git commit -m "feat(orchestration): add Run entity and RunStore"
 ```
 
 ---
@@ -826,7 +826,7 @@ git commit -m "feat(orchestration): add OrchestrationRun entity and RunStore"
 - Create: `store/sqlite/orchestration.go`
 
 **Interfaces:**
-- Consumes: `orchestration.OrchestrationConfig`, `orchestration.OrchestrationRun`, `*orchestration.ConfigListFilter`, `*orchestration.RunListFilter`; `id.ParseOrchestrationConfigID`, `id.ParseOrchestrationID`; `cortex.ErrOrchestrationNotFound`, `cortex.ErrOrchestrationRunNotFound`.
+- Consumes: `orchestration.Config`, `orchestration.Run`, `*orchestration.ConfigListFilter`, `*orchestration.RunListFilter`; `id.ParseOrchestrationConfigID`, `id.ParseOrchestrationID`; `cortex.ErrOrchestrationNotFound`, `cortex.ErrOrchestrationRunNotFound`.
 - Produces: methods on `*sqlite.Store` matching `orchestration.ConfigStore` + `orchestration.RunStore`.
 
 - [ ] **Step 1: Add model structs + converters**
@@ -852,7 +852,7 @@ type orchestrationConfigModel struct {
 	UpdatedAt       time.Time `grove:"updated_at"`
 }
 
-func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestrationConfigModel {
+func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
 	return &orchestrationConfigModel{
 		ID:           c.ID.String(),
 		Name:         c.Name,
@@ -867,12 +867,12 @@ func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestra
 	}
 }
 
-func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.OrchestrationConfig, error) {
+func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.Config, error) {
 	cfgID, err := id.ParseOrchestrationConfigID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	c := &orchestration.OrchestrationConfig{
+	c := &orchestration.Config{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          cfgID,
 		Name:        m.Name,
@@ -918,7 +918,7 @@ type orchestrationRunModel struct {
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
-func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRunModel {
+func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
 		runIDs[i] = rid.String()
@@ -941,12 +941,12 @@ func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRu
 	}
 }
 
-func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.OrchestrationRun, error) {
+func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, error) {
 	runID, err := id.ParseOrchestrationID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,
@@ -1059,7 +1059,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 )
 
-func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	now := time.Now().UTC()
 	c.CreatedAt = now
 	c.UpdatedAt = now
@@ -1069,7 +1069,7 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Orches
 	return nil
 }
 
-func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	if err := s.sdb.NewSelect(m).Where("id = ?", orchID.String()).Scan(ctx); err != nil {
 		if isNoRows(err) {
@@ -1080,7 +1080,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	err := s.sdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name).Scan(ctx)
 	if err != nil {
@@ -1092,7 +1092,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	c.UpdatedAt = time.Now().UTC()
 	res, err := s.sdb.NewUpdate(orchestrationConfigToModel(c)).WherePK().Exec(ctx)
 	if err != nil {
@@ -1123,7 +1123,7 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 	return nil
 }
 
-func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	var models []orchestrationConfigModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
 	if filter != nil {
@@ -1143,7 +1143,7 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list orchestrations: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationConfig, len(models))
+	result := make([]*orchestration.Config, len(models))
 	for i := range models {
 		c, convErr := orchestrationConfigFromModel(&models[i])
 		if convErr != nil {
@@ -1171,7 +1171,7 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 	return count, nil
 }
 
-func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
@@ -1181,7 +1181,7 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	m := new(orchestrationRunModel)
 	if err := s.sdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx); err != nil {
 		if isNoRows(err) {
@@ -1192,7 +1192,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 	return orchestrationRunFromModel(m)
 }
 
-func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	r.UpdatedAt = time.Now().UTC()
 	res, err := s.sdb.NewUpdate(orchestrationRunToModel(r)).WherePK().Exec(ctx)
 	if err != nil {
@@ -1208,7 +1208,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	var models []orchestrationRunModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 	if filter != nil {
@@ -1228,7 +1228,7 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list orchestration runs: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationRun, len(models))
+	result := make([]*orchestration.Run, len(models))
 	for i := range models {
 		r, convErr := orchestrationRunFromModel(&models[i])
 		if convErr != nil {
@@ -1309,7 +1309,7 @@ type orchestrationConfigModel struct {
 	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
-func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestrationConfigModel {
+func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
 	return &orchestrationConfigModel{
 		ID:           c.ID.String(),
 		Name:         c.Name,
@@ -1324,12 +1324,12 @@ func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestra
 	}
 }
 
-func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.OrchestrationConfig, error) {
+func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.Config, error) {
 	cfgID, err := id.ParseOrchestrationConfigID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	c := &orchestration.OrchestrationConfig{
+	c := &orchestration.Config{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          cfgID,
 		Name:        m.Name,
@@ -1375,7 +1375,7 @@ type orchestrationRunModel struct {
 	UpdatedAt       time.Time  `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
-func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRunModel {
+func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
 		runIDs[i] = rid.String()
@@ -1398,12 +1398,12 @@ func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRu
 	}
 }
 
-func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.OrchestrationRun, error) {
+func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, error) {
 	runID, err := id.ParseOrchestrationID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,
@@ -1516,7 +1516,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 )
 
-func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	now := time.Now().UTC()
 	c.CreatedAt = now
 	c.UpdatedAt = now
@@ -1526,7 +1526,7 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Orches
 	return nil
 }
 
-func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	if err := s.pgdb.NewSelect(m).Where("id = ?", orchID.String()).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1537,7 +1537,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	err := s.pgdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name).Scan(ctx)
 	if err != nil {
@@ -1549,7 +1549,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	c.UpdatedAt = time.Now().UTC()
 	res, err := s.pgdb.NewUpdate(orchestrationConfigToModel(c)).WherePK().Exec(ctx)
 	if err != nil {
@@ -1580,7 +1580,7 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 	return nil
 }
 
-func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	var models []orchestrationConfigModel
 	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
 	if filter != nil {
@@ -1600,7 +1600,7 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list orchestrations: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationConfig, len(models))
+	result := make([]*orchestration.Config, len(models))
 	for i := range models {
 		c, convErr := orchestrationConfigFromModel(&models[i])
 		if convErr != nil {
@@ -1628,7 +1628,7 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 	return count, nil
 }
 
-func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
@@ -1638,7 +1638,7 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	m := new(orchestrationRunModel)
 	if err := s.pgdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1649,7 +1649,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 	return orchestrationRunFromModel(m)
 }
 
-func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	r.UpdatedAt = time.Now().UTC()
 	res, err := s.pgdb.NewUpdate(orchestrationRunToModel(r)).WherePK().Exec(ctx)
 	if err != nil {
@@ -1665,7 +1665,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	var models []orchestrationRunModel
 	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
 	if filter != nil {
@@ -1685,7 +1685,7 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list orchestration runs: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationRun, len(models))
+	result := make([]*orchestration.Run, len(models))
 	for i := range models {
 		r, convErr := orchestrationRunFromModel(&models[i])
 		if convErr != nil {
@@ -1762,7 +1762,7 @@ type orchestrationConfigModel struct {
 	UpdatedAt       time.Time                  `grove:"updated_at"   bson:"updated_at"`
 }
 
-func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestrationConfigModel {
+func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
 	return &orchestrationConfigModel{
 		ID:           c.ID.String(),
 		Name:         c.Name,
@@ -1777,12 +1777,12 @@ func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestra
 	}
 }
 
-func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.OrchestrationConfig, error) {
+func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.Config, error) {
 	cfgID, err := id.ParseOrchestrationConfigID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	return &orchestration.OrchestrationConfig{
+	return &orchestration.Config{
 		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:           cfgID,
 		Name:         m.Name,
@@ -1813,7 +1813,7 @@ type orchestrationRunModel struct {
 	UpdatedAt       time.Time  `grove:"updated_at"    bson:"updated_at"`
 }
 
-func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRunModel {
+func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
 		runIDs[i] = rid.String()
@@ -1836,12 +1836,12 @@ func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRu
 	}
 }
 
-func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.OrchestrationRun, error) {
+func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, error) {
 	runID, err := id.ParseOrchestrationID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,
@@ -1916,7 +1916,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 )
 
-func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	t := now()
 	c.CreatedAt = t
 	c.UpdatedAt = t
@@ -1926,7 +1926,7 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Orches
 	return nil
 }
 
-func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	var m orchestrationConfigModel
 	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": orchID.String()}).Scan(ctx)
 	if err != nil {
@@ -1938,7 +1938,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(&m)
 }
 
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	var m orchestrationConfigModel
 	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
 	if err != nil {
@@ -1950,7 +1950,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 	return orchestrationConfigFromModel(&m)
 }
 
-func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	c.UpdatedAt = now()
 	m := orchestrationConfigToModel(c)
 	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
@@ -1974,7 +1974,7 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 	return nil
 }
 
-func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	var models []orchestrationConfigModel
 	f := bson.M{}
 	if filter != nil {
@@ -1997,7 +1997,7 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/mongo: list orchestrations: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationConfig, len(models))
+	result := make([]*orchestration.Config, len(models))
 	for i := range models {
 		c, convErr := orchestrationConfigFromModel(&models[i])
 		if convErr != nil {
@@ -2025,7 +2025,7 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 	return count, nil
 }
 
-func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	t := now()
 	r.CreatedAt = t
 	r.UpdatedAt = t
@@ -2035,7 +2035,7 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	var m orchestrationRunModel
 	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": runID.String()}).Scan(ctx)
 	if err != nil {
@@ -2047,7 +2047,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 	return orchestrationRunFromModel(&m)
 }
 
-func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	r.UpdatedAt = now()
 	m := orchestrationRunToModel(r)
 	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
@@ -2060,7 +2060,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	var models []orchestrationRunModel
 	f := bson.M{}
 	if filter != nil {
@@ -2083,7 +2083,7 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/mongo: list orchestration runs: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationRun, len(models))
+	result := make([]*orchestration.Run, len(models))
 	for i := range models {
 		r, convErr := orchestrationRunFromModel(&models[i])
 		if convErr != nil {
@@ -2213,7 +2213,7 @@ func TestOrchestrationCRUDNoStore(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if err := e.CreateOrchestration(ctx, &orchestration.OrchestrationConfig{}); !errors.Is(err, cortex.ErrNoStore) {
+	if err := e.CreateOrchestration(ctx, &orchestration.Config{}); !errors.Is(err, cortex.ErrNoStore) {
 		t.Errorf("CreateOrchestration err = %v, want ErrNoStore", err)
 	}
 	if _, err := e.GetOrchestration(ctx, id.NewOrchestrationConfigID()); !errors.Is(err, cortex.ErrNoStore) {
@@ -2249,7 +2249,7 @@ import (
 )
 
 // CreateOrchestration stores a new orchestration config.
-func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
@@ -2257,7 +2257,7 @@ func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.Orche
 }
 
 // GetOrchestration returns an orchestration config by ID.
-func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -2265,7 +2265,7 @@ func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationCo
 }
 
 // GetOrchestrationByName returns an orchestration config by app-scoped name.
-func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -2273,7 +2273,7 @@ func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string)
 }
 
 // UpdateOrchestration updates an existing orchestration config.
-func (e *Engine) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (e *Engine) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
@@ -2289,7 +2289,7 @@ func (e *Engine) DeleteOrchestration(ctx context.Context, orchID id.Orchestratio
 }
 
 // ListOrchestrations lists orchestration configs.
-func (e *Engine) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (e *Engine) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -2305,7 +2305,7 @@ func (e *Engine) CountOrchestrations(ctx context.Context, filter *orchestration.
 }
 
 // GetOrchestrationRun returns an orchestration run record by ID.
-func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -2313,7 +2313,7 @@ func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.Orchestration
 }
 
 // ListOrchestrationRuns lists orchestration run records.
-func (e *Engine) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (e *Engine) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -2348,7 +2348,7 @@ git commit -m "feat(engine): add orchestration config and run CRUD pass-throughs
 - [ ] `go build ./...` succeeds.
 - [ ] `go test ./...` passes, including `./orchestration/` (`-race` clean).
 - [ ] The `orchestration` package exposes core types, `Blackboard`, and both entities + Store interfaces.
-- [ ] All three store backends persist `OrchestrationConfig` and `OrchestrationRun` (compile-guarded by `store.Store`).
+- [ ] All three store backends persist `Config` and `Run` (compile-guarded by `store.Store`).
 - [ ] The engine exposes orchestration CRUD; `RunOrchestration` and the strategies are deliberately deferred to Plan 2.
 
 Next: **Plan 2 — Strategies & Execution** (the five orchestrators, `builder.go`, the `AgentRunner` adapter, `RunOrchestration` with hook emission, integration test).

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the five orchestration strategies (sequential, parallel, router, hierarchical, debate), a builder/factory, an in-package `Service` that runs a stored config end-to-end (persisting an `OrchestrationRun` and firing plugin hooks), and the engine glue (`AgentRunner` adapter + `RunOrchestration`).
+**Goal:** Implement the five orchestration strategies (sequential, parallel, router, hierarchical, debate), a builder/factory, an in-package `Service` that runs a stored config end-to-end (persisting a `Run` and firing plugin hooks), and the engine glue (`AgentRunner` adapter + `RunOrchestration`).
 
-**Architecture:** Each strategy implements `orchestration.Orchestrator` and drives agents only through the `AgentRunner` seam — **including meta-decisions**: the router, hierarchical-manager, and debate-judge are ordinary participant agents run via `AgentRunner`, not a raw `llm.Client`. This keeps `orchestration` dependency-free of `llm` and makes every strategy unit-testable with a fake runner. A `Service` (in-package) loads a config, builds the orchestrator, creates/updates the `OrchestrationRun`, wires the `Blackboard` handoff callback to a `HookEmitter`, and fires start/complete hooks. The engine's `RunOrchestration` is a thin wrapper that injects real dependencies (the run adapter, the composite store, and a plugin-registry-backed `HookEmitter`).
+**Architecture:** Each strategy implements `orchestration.Orchestrator` and drives agents only through the `AgentRunner` seam — **including meta-decisions**: the router, hierarchical-manager, and debate-judge are ordinary participant agents run via `AgentRunner`, not a raw `llm.Client`. This keeps `orchestration` dependency-free of `llm` and makes every strategy unit-testable with a fake runner. A `Service` (in-package) loads a config, builds the orchestrator, creates/updates the `Run`, wires the `Blackboard` handoff callback to a `HookEmitter`, and fires start/complete hooks. The engine's `RunOrchestration` is a thin wrapper that injects real dependencies (the run adapter, the composite store, and a plugin-registry-backed `HookEmitter`).
 
 **Tech Stack:** Go 1.25, standard library only for orchestration (`context`, `sync`, `strings`, `encoding/json`, `time`). Tests use fakes — no DB, no real LLM.
 
@@ -1263,7 +1263,7 @@ import (
 var ErrUnknownStrategy = errors.New("orchestration: unknown strategy")
 
 // Build constructs the Orchestrator for a strategy name. appID is the app scope
-// passed to every agent run; parts and settings come from the OrchestrationConfig.
+// passed to every agent run; parts and settings come from the Config.
 func Build(strategy string, runner AgentRunner, appID string, parts []Participant, settings Settings) (Orchestrator, error) {
 	switch strategy {
 	case StrategySequential:
@@ -1304,7 +1304,7 @@ git commit -m "feat(orchestration): add strategy builder/factory"
 
 **Interfaces:**
 - Consumes: `Build`, `ConfigStore`, `RunStore`, `AgentRunner`, `Blackboard`, entities, `Status*`.
-- Produces: `HookEmitter` interface; `Service`; `NewService(runner, configs, runs, hooks) *Service`; `(*Service).Run(ctx, appID, name, input) (*OrchestrationRun, error)`.
+- Produces: `HookEmitter` interface; `Service`; `NewService(runner, configs, runs, hooks) *Service`; `(*Service).Run(ctx, appID, name, input) (*Run, error)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1324,23 +1324,23 @@ import (
 
 // --- fakes ---
 
-type fakeConfigStore struct{ byName map[string]*OrchestrationConfig }
+type fakeConfigStore struct{ byName map[string]*Config }
 
-func (f *fakeConfigStore) CreateOrchestration(context.Context, *OrchestrationConfig) error { return nil }
-func (f *fakeConfigStore) GetOrchestration(context.Context, id.OrchestrationConfigID) (*OrchestrationConfig, error) {
+func (f *fakeConfigStore) CreateOrchestration(context.Context, *Config) error { return nil }
+func (f *fakeConfigStore) GetOrchestration(context.Context, id.OrchestrationConfigID) (*Config, error) {
 	return nil, cortex.ErrOrchestrationNotFound
 }
-func (f *fakeConfigStore) GetOrchestrationByName(_ context.Context, _, name string) (*OrchestrationConfig, error) {
+func (f *fakeConfigStore) GetOrchestrationByName(_ context.Context, _, name string) (*Config, error) {
 	if c, ok := f.byName[name]; ok {
 		return c, nil
 	}
 	return nil, cortex.ErrOrchestrationNotFound
 }
-func (f *fakeConfigStore) UpdateOrchestration(context.Context, *OrchestrationConfig) error { return nil }
+func (f *fakeConfigStore) UpdateOrchestration(context.Context, *Config) error { return nil }
 func (f *fakeConfigStore) DeleteOrchestration(context.Context, id.OrchestrationConfigID) error {
 	return nil
 }
-func (f *fakeConfigStore) ListOrchestrations(context.Context, *ConfigListFilter) ([]*OrchestrationConfig, error) {
+func (f *fakeConfigStore) ListOrchestrations(context.Context, *ConfigListFilter) ([]*Config, error) {
 	return nil, nil
 }
 func (f *fakeConfigStore) CountOrchestrations(context.Context, *ConfigListFilter) (int64, error) {
@@ -1348,22 +1348,22 @@ func (f *fakeConfigStore) CountOrchestrations(context.Context, *ConfigListFilter
 }
 
 type fakeRunStore struct {
-	created *OrchestrationRun
-	updated *OrchestrationRun
+	created *Run
+	updated *Run
 }
 
-func (f *fakeRunStore) CreateOrchestrationRun(_ context.Context, r *OrchestrationRun) error {
+func (f *fakeRunStore) CreateOrchestrationRun(_ context.Context, r *Run) error {
 	f.created = r
 	return nil
 }
-func (f *fakeRunStore) GetOrchestrationRun(context.Context, id.OrchestrationID) (*OrchestrationRun, error) {
+func (f *fakeRunStore) GetOrchestrationRun(context.Context, id.OrchestrationID) (*Run, error) {
 	return f.created, nil
 }
-func (f *fakeRunStore) UpdateOrchestrationRun(_ context.Context, r *OrchestrationRun) error {
+func (f *fakeRunStore) UpdateOrchestrationRun(_ context.Context, r *Run) error {
 	f.updated = r
 	return nil
 }
-func (f *fakeRunStore) ListOrchestrationRuns(context.Context, *RunListFilter) ([]*OrchestrationRun, error) {
+func (f *fakeRunStore) ListOrchestrationRuns(context.Context, *RunListFilter) ([]*Run, error) {
 	return nil, nil
 }
 func (f *fakeRunStore) CountOrchestrationRuns(context.Context, *RunListFilter) (int64, error) {
@@ -1388,14 +1388,14 @@ func (h *recordingHooks) AgentHandoff(context.Context, id.OrchestrationID, strin
 func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"a": "AA", "b": "BB"}
-	cfg := &OrchestrationConfig{
+	cfg := &Config{
 		ID:       id.NewOrchestrationConfigID(),
 		Name:     "team",
 		AppID:    "app1",
 		Strategy: StrategySequential,
 		Participants: []Participant{{AgentName: "a"}, {AgentName: "b"}},
 	}
-	configs := &fakeConfigStore{byName: map[string]*OrchestrationConfig{"team": cfg}}
+	configs := &fakeConfigStore{byName: map[string]*Config{"team": cfg}}
 	runs := &fakeRunStore{}
 	hooks := &recordingHooks{}
 	svc := NewService(runner, configs, runs, hooks)
@@ -1428,7 +1428,7 @@ func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
 }
 
 func TestServiceRunUnknownConfig(t *testing.T) {
-	svc := NewService(newFakeRunner(), &fakeConfigStore{byName: map[string]*OrchestrationConfig{}}, &fakeRunStore{}, &recordingHooks{})
+	svc := NewService(newFakeRunner(), &fakeConfigStore{byName: map[string]*Config{}}, &fakeRunStore{}, &recordingHooks{})
 	_, err := svc.Run(context.Background(), "app1", "missing", "go")
 	if err == nil {
 		t.Fatal("expected error for missing config")
@@ -1486,9 +1486,9 @@ func NewService(runner AgentRunner, configs ConfigStore, runs RunStore, hooks Ho
 	return &Service{runner: runner, configs: configs, runs: runs, hooks: hooks}
 }
 
-// Run loads the named config, executes the strategy, persists an OrchestrationRun,
+// Run loads the named config, executes the strategy, persists an Run,
 // and fires lifecycle hooks. The returned run reflects the final state.
-func (s *Service) Run(ctx context.Context, appID, name, input string) (*OrchestrationRun, error) {
+func (s *Service) Run(ctx context.Context, appID, name, input string) (*Run, error) {
 	cfg, err := s.configs.GetOrchestrationByName(ctx, appID, name)
 	if err != nil {
 		return nil, err
@@ -1500,7 +1500,7 @@ func (s *Service) Run(ctx context.Context, appID, name, input string) (*Orchestr
 	}
 
 	started := nowUTC()
-	rec := &OrchestrationRun{
+	rec := &Run{
 		ID:        id.NewOrchestrationID(),
 		ConfigID:  cfg.ID,
 		AppID:     cfg.AppID,
@@ -1586,7 +1586,7 @@ git commit -m "feat(orchestration): add Service that runs, persists, and emits h
 
 **Interfaces:**
 - Consumes: `orchestration.AgentRunner`, `orchestration.HookEmitter`, `orchestration.NewService`, `orchestration.RunOpts`/`AgentResult`; engine `e.RunAgent`, `e.store`, `e.extensions`, `RunOverrides`; `run.Run`.
-- Produces: `(*Engine).RunOrchestration(ctx, appID, name, input) (*orchestration.OrchestrationRun, error)`.
+- Produces: `(*Engine).RunOrchestration(ctx, appID, name, input) (*orchestration.Run, error)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1688,8 +1688,8 @@ func (h registryHookEmitter) AgentHandoff(ctx context.Context, orchID id.Orchest
 }
 
 // RunOrchestration loads a stored orchestration config by name and executes it,
-// persisting an OrchestrationRun and firing orchestration lifecycle hooks.
-func (e *Engine) RunOrchestration(ctx context.Context, appID, name, input string) (*orchestration.OrchestrationRun, error) {
+// persisting an Run and firing orchestration lifecycle hooks.
+func (e *Engine) RunOrchestration(ctx context.Context, appID, name, input string) (*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -1726,7 +1726,7 @@ git commit -m "feat(engine): add RunOrchestration with runner adapter and hook e
 
 - [ ] All five strategies implemented and unit-tested with a fake `AgentRunner` (`-race` clean).
 - [ ] `Build` factory covers all strategies + unknown-strategy error.
-- [ ] `Service` loads a config, runs it, persists an `OrchestrationRun` (running → completed/failed), links agent run IDs, and fires `OrchestrationStarted`/`Completed`/`AgentHandoff` — verified with fakes.
+- [ ] `Service` loads a config, runs it, persists a `Run` (running → completed/failed), links agent run IDs, and fires `OrchestrationStarted`/`Completed`/`AgentHandoff` — verified with fakes.
 - [ ] `engine.RunOrchestration` wires real dependencies; the dormant plugin hooks are now actually emitted.
 - [ ] `go build ./... && go test ./... -race` green.
 

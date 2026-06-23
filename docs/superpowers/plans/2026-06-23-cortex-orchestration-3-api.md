@@ -42,7 +42,7 @@
 - Modify: `api/responses.go`
 
 **Interfaces:**
-- Consumes: `orchestration.Participant`, `orchestration.Settings`, `orchestration.OrchestrationConfig`, `orchestration.OrchestrationRun`.
+- Consumes: `orchestration.Participant`, `orchestration.Settings`, `orchestration.Config`, `orchestration.Run`.
 - Produces: `CreateOrchestrationRequest`, `GetOrchestrationRequest`, `ListOrchestrationsRequest`, `UpdateOrchestrationRequest`, `DeleteOrchestrationRequest`, `RunOrchestrationRequest`, `GetOrchestrationRunRequest`, `ListOrchestrationRunsRequest`; `ListOrchestrationsResponse`, `ListOrchestrationRunsResponse`, `RunOrchestrationResponse`.
 
 - [ ] **Step 1: Add request structs**
@@ -112,12 +112,12 @@ Append to `api/responses.go` (ensure `"github.com/xraph/cortex/orchestration"` i
 ```go
 // ListOrchestrationsResponse wraps a list of orchestration configs.
 type ListOrchestrationsResponse struct {
-	Items []*orchestration.OrchestrationConfig `json:"items"`
+	Items []*orchestration.Config `json:"items"`
 }
 
 // ListOrchestrationRunsResponse wraps a list of orchestration runs.
 type ListOrchestrationRunsResponse struct {
-	Items []*orchestration.OrchestrationRun `json:"items"`
+	Items []*orchestration.Run `json:"items"`
 }
 
 // RunOrchestrationResponse summarizes a completed orchestration run.
@@ -221,7 +221,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 		forge.WithDescription("Creates a multi-agent orchestration config (strategy + participants + settings)."),
 		forge.WithOperationID("createOrchestration"),
 		forge.WithRequestSchema(CreateOrchestrationRequest{}),
-		forge.WithCreatedResponse(&orchestration.OrchestrationConfig{}),
+		forge.WithCreatedResponse(&orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -231,7 +231,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 		forge.WithSummary("List orchestrations"),
 		forge.WithOperationID("listOrchestrations"),
 		forge.WithRequestSchema(ListOrchestrationsRequest{}),
-		forge.WithResponseSchema(http.StatusOK, "Orchestration list", []*orchestration.OrchestrationConfig{}),
+		forge.WithResponseSchema(http.StatusOK, "Orchestration list", []*orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -240,7 +240,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.GET("/orchestrations/:name", a.getOrchestration,
 		forge.WithSummary("Get orchestration"),
 		forge.WithOperationID("getOrchestration"),
-		forge.WithResponseSchema(http.StatusOK, "Orchestration details", &orchestration.OrchestrationConfig{}),
+		forge.WithResponseSchema(http.StatusOK, "Orchestration details", &orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -250,7 +250,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 		forge.WithSummary("Update orchestration"),
 		forge.WithOperationID("updateOrchestration"),
 		forge.WithRequestSchema(UpdateOrchestrationRequest{}),
-		forge.WithResponseSchema(http.StatusOK, "Updated orchestration", &orchestration.OrchestrationConfig{}),
+		forge.WithResponseSchema(http.StatusOK, "Updated orchestration", &orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -280,7 +280,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 		forge.WithSummary("List orchestration runs"),
 		forge.WithOperationID("listOrchestrationRuns"),
 		forge.WithRequestSchema(ListOrchestrationRunsRequest{}),
-		forge.WithResponseSchema(http.StatusOK, "Run list", []*orchestration.OrchestrationRun{}),
+		forge.WithResponseSchema(http.StatusOK, "Run list", []*orchestration.Run{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -289,7 +289,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.GET("/orchestration-runs/:id", a.getOrchestrationRun,
 		forge.WithSummary("Get orchestration run"),
 		forge.WithOperationID("getOrchestrationRun"),
-		forge.WithResponseSchema(http.StatusOK, "Run details", &orchestration.OrchestrationRun{}),
+		forge.WithResponseSchema(http.StatusOK, "Run details", &orchestration.Run{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register orchestration routes: %w", err)
@@ -306,7 +306,7 @@ var knownStrategies = map[string]bool{
 	orchestration.StrategyDebate:       true,
 }
 
-func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationRequest) (*orchestration.OrchestrationConfig, error) {
+func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationRequest) (*orchestration.Config, error) {
 	if req.Name == "" {
 		return nil, forge.BadRequest("name is required")
 	}
@@ -317,7 +317,7 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 		return nil, forge.BadRequest("at least one participant is required")
 	}
 
-	c := &orchestration.OrchestrationConfig{
+	c := &orchestration.Config{
 		Entity:       cortex.NewEntity(),
 		ID:           id.NewOrchestrationConfigID(),
 		Name:         req.Name,
@@ -334,7 +334,7 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 	return c, ctx.JSON(http.StatusCreated, c)
 }
 
-func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*orchestration.OrchestrationConfig, error) {
+func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*orchestration.Config, error) {
 	c, err := a.eng.GetOrchestrationByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
@@ -355,7 +355,7 @@ func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsReque
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationRequest) (*orchestration.OrchestrationConfig, error) {
+func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationRequest) (*orchestration.Config, error) {
 	c, err := a.eng.GetOrchestrationByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
@@ -435,7 +435,7 @@ func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRun
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunRequest) (*orchestration.OrchestrationRun, error) {
+func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunRequest) (*orchestration.Run, error) {
 	runID, err := id.ParseOrchestrationID(ctx.Param("id"))
 	if err != nil {
 		return nil, forge.BadRequest("invalid orchestration run id")
@@ -580,7 +580,7 @@ Run history is available at `GET /v1/orchestration-runs` and
 
 ```go
 // Persist a config once...
-cfg := &orchestration.OrchestrationConfig{
+cfg := &orchestration.Config{
     ID:       id.NewOrchestrationConfigID(),
     Name:     "research-team",
     AppID:    "my-app",

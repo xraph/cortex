@@ -16,8 +16,8 @@ Concretely, after this lands:
 
 1. **Five working strategies** — sequential, parallel, hierarchical, router, debate.
 2. **Communication + awareness** — a shared, scoped `Blackboard` every participant can read/write, plus explicit `from→to→payload` handoffs that fire the `AgentHandoff` hook. A `Roster` of participants (name/role/skills) gives each agent awareness of who else is in the orchestration.
-3. **Both definition styles** — programmatic Go constructors (`orchestration.Build(...)` / strategy `new*` factories) AND stored, named `OrchestrationConfig` entities with CRUD and a `POST /v1/orchestrations/:name/run` endpoint (route group is `/v1`, matching every existing handler — the design-doc's `/cortex` prefix does not reflect the code).
-4. **Full persistence** — an `OrchestrationRun` execution record (mirrors `run/`) and an `OrchestrationConfig` definition (mirrors `persona/`), persisted across the three real store backends: **sqlite, postgres, mongo**.
+3. **Both definition styles** — programmatic Go constructors (`orchestration.Build(...)` / strategy `new*` factories) AND stored, named `Config` entities with CRUD and a `POST /v1/orchestrations/:name/run` endpoint (route group is `/v1`, matching every existing handler — the design-doc's `/cortex` prefix does not reflect the code).
+4. **Full persistence** — a `Run` execution record (mirrors `run/`) and a `Config` definition (mirrors `persona/`), persisted across the three real store backends: **sqlite, postgres, mongo**.
 
 ### Non-goals
 
@@ -32,7 +32,7 @@ Concretely, after this lands:
 ```
 cortex engine
   ├── RunAgent(appID, name, input, overrides) → *run.Run        ← single-agent (exists today)
-  └── RunOrchestration(appID, name, input)    → *OrchestrationRun ← NEW (this spec)
+  └── RunOrchestration(appID, name, input)    → *Run ← NEW (this spec)
          │
          └── orchestration/  (strategies drive RunAgent via the AgentRunner seam)
                  Blackboard (shared state) · Roster (awareness) · Handoffs (comms)
@@ -93,8 +93,8 @@ The engine provides an adapter (in `engine/`, not `orchestration/`) that wraps `
 orchestration/
   orchestrator.go      # Orchestrator interface, AgentRunner, RunOpts, AgentResult, Result, Participant
   blackboard.go        # Blackboard: shared scoped state + ordered entry log + Roster + handoff helper
-  config.go            # OrchestrationConfig entity + Store interface + ListFilter (stored form)
-  run.go               # OrchestrationRun execution record + Store interface + ListFilter
+  config.go            # Config entity + Store interface + ListFilter (stored form)
+  run.go               # Run execution record + Store interface + ListFilter
   builder.go           # programmatic constructors: NewSequential / NewParallel / NewRouter / NewHierarchical / NewDebate
   sequential.go        # strategy: ordered chain
   parallel.go          # strategy: concurrent fan-out + merge
@@ -181,10 +181,10 @@ Hook emission is injected, not imported: the `Blackboard` holds a `func(ctx, fro
 
 ### Entities
 
-`OrchestrationConfig` (definition, stored) and `OrchestrationRun` (execution record, stored) both follow the persona pattern exactly:
+`Config` (definition, stored) and `Run` (execution record, stored) both follow the persona pattern exactly:
 
 ```go
-type OrchestrationConfig struct {
+type Config struct {
     cortex.Entity
     ID           id.OrchestrationConfigID `json:"id"`
     Name         string                   `json:"name"`
@@ -196,7 +196,7 @@ type OrchestrationConfig struct {
     Metadata     map[string]any           `json:"metadata,omitempty"`
 }
 
-type OrchestrationRun struct {
+type Run struct {
     cortex.Entity
     ID           id.OrchestrationID `json:"id"`
     ConfigID     id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
@@ -240,7 +240,7 @@ Robustness rules common to all:
 ## 7. Persistence
 
 - **New IDs:** add `PrefixOrchestrationConfig = "orchcfg"` with `NewOrchestrationConfigID` / `ParseOrchestrationConfigID` to `id/id.go` (mirrors existing constructors). `OrchestrationID` (`orch_`) already exists and is reused for run records.
-- **Store interfaces:** `OrchestrationConfig.Store` (Create/Get/GetByName/Update/Delete/List/Count) and `OrchestrationRun.Store` (Create/Get/Update/List/Count) — both shapes copied from persona/run. Folded into `store.Store`.
+- **Store interfaces:** `Config.Store` (Create/Get/GetByName/Update/Delete/List/Count) and `Run.Store` (Create/Get/Update/List/Count) — both shapes copied from persona/run. Folded into `store.Store`.
 - **Migration:** a programmatic grove migration, version `20240101000009`, registered in each backend's `migrations.go` (sqlite/postgres add a `migrate.Migration` creating tables `cortex_orchestration_configs` and `cortex_orchestration_runs`; mongo adds a collection-create migration). App-scoped; JSON/JSONB columns for participants/settings/agent_run_ids; indexed on `(app_id, name)` and `(app_id, status)`.
 - **Implementations:** sqlite, postgres, and mongo each get an `orchestration.go` plus model structs + converters in `models.go`. Correctness is guarded at compile time by the existing `var _ store.Store = (*Store)(nil)` assertion in each backend — adding the two Stores to the composite forces all three backends to implement them or the build fails.
 
@@ -250,8 +250,8 @@ Robustness rules common to all:
 
 **Engine** (`engine/orchestration.go`):
 
-- `RunOrchestration(ctx, appID, name, input string) (*OrchestrationRun, error)` — loads the stored `OrchestrationConfig`, builds the matching `Orchestrator`, creates an `OrchestrationRun` (status `running`), wires a `Blackboard` whose handoff callback calls `e.extensions.EmitAgentHandoff`, fires `EmitOrchestrationStarted` before and `EmitOrchestrationCompleted` after, persists the final record, and links underlying `AgentRunID`s.
-- CRUD methods for `OrchestrationConfig` mirroring the persona methods (`CreateOrchestration`, `GetOrchestration`, `GetOrchestrationByName`, `UpdateOrchestration`, `DeleteOrchestration`, `ListOrchestrations`, `CountOrchestrations`) and read methods for `OrchestrationRun` (`GetOrchestrationRun`, `ListOrchestrationRuns`, `CountOrchestrationRuns`).
+- `RunOrchestration(ctx, appID, name, input string) (*Run, error)` — loads the stored `Config`, builds the matching `Orchestrator`, creates a `Run` (status `running`), wires a `Blackboard` whose handoff callback calls `e.extensions.EmitAgentHandoff`, fires `EmitOrchestrationStarted` before and `EmitOrchestrationCompleted` after, persists the final record, and links underlying `AgentRunID`s.
+- CRUD methods for `Config` mirroring the persona methods (`CreateOrchestration`, `GetOrchestration`, `GetOrchestrationByName`, `UpdateOrchestration`, `DeleteOrchestration`, `ListOrchestrations`, `CountOrchestrations`) and read methods for `Run` (`GetOrchestrationRun`, `ListOrchestrationRuns`, `CountOrchestrationRuns`).
 - An unexported `agentRunnerAdapter` wrapping `e.RunAgent` → `orchestration.AgentRunner`.
 
 **API** (`api/orchestration_handler.go`), registered through the existing `registerOrchestrationRoutes` slot:
@@ -280,7 +280,7 @@ The repo currently has **no store-backend unit tests** — the store layer is gu
 - **Core type / ID tests** — `orchcfg` prefix round-trips; `Result`/`Participant` construction. Extends `id/id_test.go`.
 - **Store backends** — guarded at compile time by the existing `var _ store.Store = (*Store)(nil)` assertion in each backend (a missing method fails `go build`). No new DB test harness is introduced (the repo has none to follow).
 - **Service/engine integration** — the in-package `Service` is exercised with a fake `AgentRunner`, fake config/run stores, and a recording `HookEmitter`, asserting hooks fire, the run record transitions running→completed/failed, and agent run IDs are linked. The engine's `RunOrchestration` is a thin wrapper verified by a no-store guard test plus `go build`.
-- **API** — handler tests for create + run, asserting the run endpoint resolves a stored config and returns an `OrchestrationRun`.
+- **API** — handler tests for create + run, asserting the run endpoint resolves a stored config and returns a `Run`.
 - **Backwards compatibility** — existing single-agent `RunAgent` path untouched; full suite green (`go build ./... && go test ./...`).
 
 ---
