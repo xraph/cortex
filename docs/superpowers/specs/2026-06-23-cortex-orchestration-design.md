@@ -16,7 +16,7 @@ Concretely, after this lands:
 
 1. **Five working strategies** — sequential, parallel, hierarchical, router, debate.
 2. **Communication + awareness** — a shared, scoped `Blackboard` every participant can read/write, plus explicit `from→to→payload` handoffs that fire the `AgentHandoff` hook. A `Roster` of participants (name/role/skills) gives each agent awareness of who else is in the orchestration.
-3. **Both definition styles** — programmatic Go constructors (`orchestration.NewSequential(runner, ...)`) AND stored, named `OrchestrationConfig` entities with CRUD and a `POST /cortex/orchestrations/:name/run` endpoint.
+3. **Both definition styles** — programmatic Go constructors (`orchestration.Build(...)` / strategy `new*` factories) AND stored, named `OrchestrationConfig` entities with CRUD and a `POST /v1/orchestrations/:name/run` endpoint (route group is `/v1`, matching every existing handler — the design-doc's `/cortex` prefix does not reflect the code).
 4. **Full persistence** — an `OrchestrationRun` execution record (mirrors `run/`) and an `OrchestrationConfig` definition (mirrors `persona/`), persisted across the three real store backends: **sqlite, postgres, mongo**.
 
 ### Non-goals
@@ -44,7 +44,7 @@ Facts the design builds on (verified in code):
 - Plugin hooks `OrchestrationStarted` / `OrchestrationCompleted` / `AgentHandoff` and their emitters exist but are **never called** — [plugin/plugin.go:113](../../../plugin/plugin.go), [plugin/registry.go:317](../../../plugin/registry.go). This spec is their first caller.
 - Engine exposes `RunAgent(ctx, appID, agentName, input, *RunOverrides) (*run.Run, error)` — the primitive every strategy drives.
 - Entities follow a fixed pattern: embed `cortex.Entity`, carry `AppID`, expose a `Store` interface + `ListFilter`, fold into the composite `store.Store`. Persona is the reference (`persona/persona.go`).
-- The API has a reserved `registerOrchestrationRoutes` slot in the design doc; the run endpoint is `POST /cortex/orchestrations/:name/run`.
+- The API `registerOrchestrationRoutes` method does **not** exist yet (added in Plan 3); every existing handler registers under the `/v1` route group, so the run endpoint is `POST /v1/orchestrations/:name/run`.
 
 ---
 
@@ -81,7 +81,9 @@ type AgentResult struct {
 }
 ```
 
-The engine provides an adapter (in `engine/`, not `orchestration/`) that wraps `e.RunAgent` and maps `*run.Run` → `*AgentResult`. Because `orchestration` imports only `id`, `cortex`, and `llm` (all leaf packages) — and reaches the plugin hooks through an injected callback rather than importing `plugin` (see §5) — there is no cycle. Every strategy is unit-testable with a fake `AgentRunner` and `llm.MockClient`, with no real LLM or store.
+The engine provides an adapter (in `engine/`, not `orchestration/`) that wraps `e.RunAgent` and maps `*run.Run` → `*AgentResult`. Because `orchestration` imports only `id` and `cortex` (leaf packages) — reaching the plugin hooks through an injected callback rather than importing `plugin` (see §5), and routing every decision through `AgentRunner` rather than importing `llm` — there is no cycle. Every strategy is unit-testable with a fake `AgentRunner` alone, with no real LLM or store.
+
+> **Meta-decision refinement (vs original spec):** router/hierarchical/debate make their LLM-driven decisions through **dedicated participant agents** (a router agent, a manager agent, a judge agent) run via the same `AgentRunner`, not a raw `llm.Client`. This keeps decisions consistent with the agent model, removes the `llm` import, and makes the decisions unit-testable with a fake runner. The router additionally supports an LLM-free static rule map.
 
 ---
 
@@ -217,15 +219,15 @@ type OrchestrationRun struct {
 
 ## 6. The five strategies
 
-All strategies receive an `AgentRunner`, a `[]Participant`, a `Settings`, and (for router/hierarchical/debate) an `llm.Client` for their meta-decision. All drive `runner.RunAgent` and record handoffs/contributions on the blackboard.
+All strategies receive an `AgentRunner`, a `[]Participant`, and a `Settings`. All drive `runner.RunAgent` and record handoffs/contributions on the blackboard. Meta-decisions are made by dedicated participant agents (see refinement note in §3).
 
 | Strategy | Behavior | Meta-decision | Handoffs recorded |
 |---|---|---|---|
 | **Sequential** | Run participants in order. Each agent's input = original input + blackboard snapshot (prior outputs). Final output = last agent's output. | none | between each consecutive pair |
-| **Parallel** | All participants run concurrently on the same input (bounded `errgroup`, `Settings.MaxConcurrency`). Outputs appended to blackboard. Optional aggregator agent synthesizes; else outputs concatenated. | optional aggregator | none (fan-out) |
-| **Router** | A routing decision selects exactly ONE participant to handle the input. Decision via `llm.Client` (classify input against participant roster) or a static rule map in `Settings`. | LLM or rules | router→chosen |
-| **Hierarchical** | A "manager" participant produces a JSON delegation plan (sub-task → worker). Workers execute (sequential or parallel sub-run). Manager composes the final answer from worker outputs. | LLM (manager plan) | manager→each worker |
-| **Debate** | N participants respond over `Settings.Rounds` rounds; each round each agent sees others' prior arguments via the blackboard. A "judge" participant aggregates a final verdict. | LLM (judge) | round transitions + judge |
+| **Parallel** | All participants run concurrently on the same input (bounded by `Settings.MaxConcurrency`, stdlib semaphore). Outputs appended to blackboard. Optional aggregator agent synthesizes; else outputs concatenated. | optional aggregator agent | none (fan-out) |
+| **Router** | A routing decision selects exactly ONE participant to handle the input — via a static `RouterRules` map (keyword→agent) or a `RouterAgent` that names the choice. | router agent or rules | router→chosen |
+| **Hierarchical** | A "manager" participant produces a JSON delegation plan (sub-task → worker). Workers execute (bounded concurrency). Manager runs again to compose the final answer; invalid plans fall back to all-workers-on-input. | manager agent plan | manager→each worker |
+| **Debate** | N participants respond over `Settings.Rounds` rounds; each round each agent sees others' prior arguments via the blackboard. A "judge" participant aggregates a final verdict (else last argument). | judge agent | round transitions + judge |
 
 Robustness rules common to all:
 
@@ -255,14 +257,14 @@ Robustness rules common to all:
 **API** (`api/orchestration_handler.go`), registered through the existing `registerOrchestrationRoutes` slot:
 
 ```
-POST   /cortex/orchestrations                 createOrchestration
-GET    /cortex/orchestrations                 listOrchestrations
-GET    /cortex/orchestrations/:id             getOrchestration
-PUT    /cortex/orchestrations/:id             updateOrchestration
-DELETE /cortex/orchestrations/:id             deleteOrchestration
-POST   /cortex/orchestrations/:name/run       runOrchestration   ← design-doc endpoint
-GET    /cortex/orchestration-runs             listOrchestrationRuns
-GET    /cortex/orchestration-runs/:id         getOrchestrationRun
+POST   /v1/orchestrations                 createOrchestration
+GET    /v1/orchestrations                 listOrchestrations
+GET    /v1/orchestrations/:name           getOrchestration
+PUT    /v1/orchestrations/:name           updateOrchestration
+DELETE /v1/orchestrations/:name           deleteOrchestration
+POST   /v1/orchestrations/:name/run       runOrchestration
+GET    /v1/orchestration-runs             listOrchestrationRuns
+GET    /v1/orchestration-runs/:id         getOrchestrationRun
 ```
 
 Request structs added to `api/requests.go` with `path:`/`query:`/`json:` tags, following the existing handler pattern.
@@ -273,11 +275,11 @@ Request structs added to `api/requests.go` with `path:`/`query:`/`json:` tags, f
 
 The repo currently has **no store-backend unit tests** — the store layer is guarded by compile-time `var _ store.Store` interface assertions, and the meaningful logic lives in the orchestration package, which is fully testable without a database. Testing posture follows that reality:
 
-- **Strategy unit tests** — each of the five with a deterministic fake `AgentRunner` (records calls, returns canned outputs). Router/hierarchical/debate use `llm.MockClient` for the meta-decision. Assert: agent invocation order, blackboard contents, handoff log, final output. No DB.
+- **Strategy unit tests** — each of the five with a deterministic fake `AgentRunner` (records calls, returns canned outputs keyed by agent name, including the router/manager/judge decision agents). Assert: agent invocation order, blackboard contents, handoff log, final output. No DB, no LLM.
 - **Blackboard tests** — concurrent read/write safety, snapshot rendering, roster, handoff callback fires. No DB.
 - **Core type / ID tests** — `orchcfg` prefix round-trips; `Result`/`Participant` construction. Extends `id/id_test.go`.
 - **Store backends** — guarded at compile time by the existing `var _ store.Store = (*Store)(nil)` assertion in each backend (a missing method fails `go build`). No new DB test harness is introduced (the repo has none to follow).
-- **Engine integration** — `RunOrchestration` exercised with a fake `AgentRunner` and `llm.MockClient`, asserting hooks fire (via a recording test plugin) and the `Result` is assembled. Store interactions are covered through a lightweight in-package fake store, not a real DB.
+- **Service/engine integration** — the in-package `Service` is exercised with a fake `AgentRunner`, fake config/run stores, and a recording `HookEmitter`, asserting hooks fire, the run record transitions running→completed/failed, and agent run IDs are linked. The engine's `RunOrchestration` is a thin wrapper verified by a no-store guard test plus `go build`.
 - **API** — handler tests for create + run, asserting the run endpoint resolves a stored config and returns an `OrchestrationRun`.
 - **Backwards compatibility** — existing single-agent `RunAgent` path untouched; full suite green (`go build ./... && go test ./...`).
 
