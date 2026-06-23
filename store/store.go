@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
@@ -24,6 +25,8 @@ type Store interface {
 	trait.Store
 	behavior.Store
 	persona.Store
+	orchestration.ConfigStore
+	orchestration.RunStore
 
 	Migrate(ctx context.Context) error
 	Ping(ctx context.Context) error
