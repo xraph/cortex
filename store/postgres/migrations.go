@@ -301,6 +301,56 @@ DROP TABLE IF EXISTS cortex_behaviors CASCADE;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_orchestrations",
+			Version: "20240101000009",
+			Comment: "Create cortex_orchestration_configs and cortex_orchestration_runs tables",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_orchestration_configs (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT DEFAULT '',
+    app_id        TEXT NOT NULL,
+    strategy      TEXT DEFAULT '',
+    participants  JSONB DEFAULT '[]',
+    settings      JSONB DEFAULT '{}',
+    metadata      JSONB DEFAULT '{}',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_app_name ON cortex_orchestration_configs (app_id, name);
+
+CREATE TABLE IF NOT EXISTS cortex_orchestration_runs (
+    id             TEXT PRIMARY KEY,
+    config_id      TEXT DEFAULT '',
+    app_id         TEXT NOT NULL,
+    tenant_id      TEXT DEFAULT '',
+    strategy       TEXT DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'running',
+    input          TEXT DEFAULT '',
+    output         TEXT DEFAULT '',
+    error          TEXT DEFAULT '',
+    agent_run_ids  JSONB DEFAULT '[]',
+    started_at     TIMESTAMPTZ,
+    completed_at   TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_orchestration_runs_app_status ON cortex_orchestration_runs (app_id, status);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP TABLE IF EXISTS cortex_orchestration_runs;
+DROP TABLE IF EXISTS cortex_orchestration_configs;
+`)
+				return err
+			},
+		},
 	)
 	return g
 }()
