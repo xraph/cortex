@@ -24,18 +24,19 @@ type Prefix string
 
 // Prefix constants for all Cortex entity types.
 const (
-	PrefixAgent         Prefix = "agt"
-	PrefixAgentRun      Prefix = "arun"
-	PrefixTool          Prefix = "tool"
-	PrefixToolCall      Prefix = "tcall"
-	PrefixStep          Prefix = "astp"
-	PrefixMemory        Prefix = "mem"
-	PrefixCheckpoint    Prefix = "acp"
-	PrefixOrchestration Prefix = "orch"
-	PrefixSkill         Prefix = "skl"
-	PrefixTrait         Prefix = "trt"
-	PrefixBehavior      Prefix = "bhv"
-	PrefixPersona       Prefix = "prs"
+	PrefixAgent                Prefix = "agt"
+	PrefixAgentRun             Prefix = "arun"
+	PrefixTool                 Prefix = "tool"
+	PrefixToolCall             Prefix = "tcall"
+	PrefixStep                 Prefix = "astp"
+	PrefixMemory               Prefix = "mem"
+	PrefixCheckpoint           Prefix = "acp"
+	PrefixOrchestration        Prefix = "orch"
+	PrefixOrchestrationConfig  Prefix = "orchcfg"
+	PrefixSkill                Prefix = "skl"
+	PrefixTrait                Prefix = "trt"
+	PrefixBehavior             Prefix = "bhv"
+	PrefixPersona              Prefix = "prs"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -140,6 +141,9 @@ type CheckpointID = ID
 // OrchestrationID is a type-safe identifier for orchestrations (prefix: "orch").
 type OrchestrationID = ID
 
+// OrchestrationConfigID is a type-safe identifier for orchestration configs (prefix: "orchcfg").
+type OrchestrationConfigID = ID
+
 // SkillID is a type-safe identifier for skills (prefix: "skl").
 type SkillID = ID
 
@@ -183,6 +187,9 @@ func NewCheckpointID() ID { return New(PrefixCheckpoint) }
 // NewOrchestrationID generates a new unique orchestration ID.
 func NewOrchestrationID() ID { return New(PrefixOrchestration) }
 
+// NewOrchestrationConfigID generates a new unique orchestration config ID.
+func NewOrchestrationConfigID() ID { return New(PrefixOrchestrationConfig) }
+
 // NewSkillID generates a new unique skill ID.
 func NewSkillID() ID { return New(PrefixSkill) }
 
@@ -222,6 +229,9 @@ func ParseCheckpointID(s string) (ID, error) { return ParseWithPrefix(s, PrefixC
 
 // ParseOrchestrationID parses a string and validates the "orch" prefix.
 func ParseOrchestrationID(s string) (ID, error) { return ParseWithPrefix(s, PrefixOrchestration) }
+
+// ParseOrchestrationConfigID parses a string and validates the "orchcfg" prefix.
+func ParseOrchestrationConfigID(s string) (ID, error) { return ParseWithPrefix(s, PrefixOrchestrationConfig) }
 
 // ParseSkillID parses a string and validates the "skl" prefix.
 func ParseSkillID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSkill) }

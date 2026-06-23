@@ -292,3 +292,24 @@ func TestBSONUnmarshalInvalidType(t *testing.T) {
 		t.Error("expected error for invalid BSON type, got nil")
 	}
 }
+
+func TestOrchestrationConfigID(t *testing.T) {
+	got := id.NewOrchestrationConfigID()
+	if got.Prefix() != id.PrefixOrchestrationConfig {
+		t.Fatalf("prefix = %q, want %q", got.Prefix(), id.PrefixOrchestrationConfig)
+	}
+	if !strings.HasPrefix(got.String(), "orchcfg_") {
+		t.Fatalf("string = %q, want orchcfg_ prefix", got.String())
+	}
+	parsed, err := id.ParseOrchestrationConfigID(got.String())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.String() != got.String() {
+		t.Fatalf("round-trip mismatch: %q != %q", parsed.String(), got.String())
+	}
+	// orch_ (run) ids must be rejected by the config parser.
+	if _, err := id.ParseOrchestrationConfigID(id.NewOrchestrationID().String()); err == nil {
+		t.Fatal("expected ParseOrchestrationConfigID to reject an orch_ id")
+	}
+}
