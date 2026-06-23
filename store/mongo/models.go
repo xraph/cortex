@@ -616,7 +616,7 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 }
 
 // ──────────────────────────────────────────────────
-// OrchestrationConfig model
+// Config model
 // ──────────────────────────────────────────────────
 
 type orchestrationConfigModel struct {
@@ -633,7 +633,7 @@ type orchestrationConfigModel struct {
 	UpdatedAt       time.Time                   `grove:"updated_at"   bson:"updated_at"`
 }
 
-func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestrationConfigModel {
+func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
 	return &orchestrationConfigModel{
 		ID:           c.ID.String(),
 		Name:         c.Name,
@@ -648,12 +648,12 @@ func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestra
 	}
 }
 
-func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.OrchestrationConfig, error) {
+func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.Config, error) {
 	cfgID, err := id.ParseOrchestrationConfigID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	return &orchestration.OrchestrationConfig{
+	return &orchestration.Config{
 		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:           cfgID,
 		Name:         m.Name,
@@ -667,7 +667,7 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.O
 }
 
 // ──────────────────────────────────────────────────
-// OrchestrationRun model
+// Run model
 // ──────────────────────────────────────────────────
 
 type orchestrationRunModel struct {
@@ -688,7 +688,7 @@ type orchestrationRunModel struct {
 	UpdatedAt       time.Time  `grove:"updated_at"    bson:"updated_at"`
 }
 
-func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRunModel {
+func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
 		runIDs[i] = rid.String()
@@ -711,12 +711,12 @@ func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRu
 	}
 }
 
-func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.OrchestrationRun, error) {
+func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, error) {
 	runID, err := id.ParseOrchestrationID(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,

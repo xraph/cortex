@@ -9,7 +9,7 @@ import (
 )
 
 func TestOrchestrationConfigFields(t *testing.T) {
-	c := &orchestration.OrchestrationConfig{
+	c := &orchestration.Config{
 		Entity:   cortex.NewEntity(),
 		ID:       id.NewOrchestrationConfigID(),
 		Name:     "research-team",

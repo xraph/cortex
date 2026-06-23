@@ -13,7 +13,7 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// Strategy identifiers. A stored OrchestrationConfig.Strategy is one of these.
+// Strategy identifiers. A stored Config.Strategy is one of these.
 const (
 	StrategySequential   = "sequential"
 	StrategyParallel     = "parallel"

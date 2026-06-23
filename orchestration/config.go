@@ -7,9 +7,9 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// OrchestrationConfig is a stored, named definition of a multi-agent
+// Config is a stored, named definition of a multi-agent
 // orchestration: a strategy plus its participant agents and tunables.
-type OrchestrationConfig struct {
+type Config struct {
 	cortex.Entity
 	ID           id.OrchestrationConfigID `json:"id"`
 	Name         string                   `json:"name"`
@@ -23,12 +23,12 @@ type OrchestrationConfig struct {
 
 // ConfigStore defines persistence for orchestration configs.
 type ConfigStore interface {
-	CreateOrchestration(ctx context.Context, c *OrchestrationConfig) error
-	GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*OrchestrationConfig, error)
-	GetOrchestrationByName(ctx context.Context, appID, name string) (*OrchestrationConfig, error)
-	UpdateOrchestration(ctx context.Context, c *OrchestrationConfig) error
+	CreateOrchestration(ctx context.Context, c *Config) error
+	GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*Config, error)
+	GetOrchestrationByName(ctx context.Context, appID, name string) (*Config, error)
+	UpdateOrchestration(ctx context.Context, c *Config) error
 	DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error
-	ListOrchestrations(ctx context.Context, filter *ConfigListFilter) ([]*OrchestrationConfig, error)
+	ListOrchestrations(ctx context.Context, filter *ConfigListFilter) ([]*Config, error)
 	CountOrchestrations(ctx context.Context, filter *ConfigListFilter) (int64, error)
 }
 

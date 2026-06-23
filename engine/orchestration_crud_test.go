@@ -18,7 +18,7 @@ func TestOrchestrationCRUDNoStore(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if err := e.CreateOrchestration(ctx, &orchestration.OrchestrationConfig{}); !errors.Is(err, cortex.ErrNoStore) {
+	if err := e.CreateOrchestration(ctx, &orchestration.Config{}); !errors.Is(err, cortex.ErrNoStore) {
 		t.Errorf("CreateOrchestration err = %v, want ErrNoStore", err)
 	}
 	if _, err := e.GetOrchestration(ctx, id.NewOrchestrationConfigID()); !errors.Is(err, cortex.ErrNoStore) {

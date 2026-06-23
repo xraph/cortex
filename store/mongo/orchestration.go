@@ -12,7 +12,7 @@ import (
 )
 
 // CreateOrchestration persists a new orchestration config.
-func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	t := now()
 	c.CreatedAt = t
 	c.UpdatedAt = t
@@ -25,7 +25,7 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Orches
 }
 
 // GetOrchestration returns an orchestration config by ID.
-func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	var m orchestrationConfigModel
 
 	err := s.mdb.NewFind(&m).
@@ -43,7 +43,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 }
 
 // GetOrchestrationByName returns an orchestration config by app ID and name.
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	var m orchestrationConfigModel
 
 	err := s.mdb.NewFind(&m).
@@ -61,7 +61,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 }
 
 // UpdateOrchestration modifies an existing orchestration config.
-func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	c.UpdatedAt = now()
 	m := orchestrationConfigToModel(c)
 
@@ -96,7 +96,7 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 }
 
 // ListOrchestrations returns orchestration configs, optionally filtered.
-func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	var models []orchestrationConfigModel
 
 	f := bson.M{}
@@ -128,7 +128,7 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 		return nil, fmt.Errorf("cortex/mongo: list orchestrations: %w", err)
 	}
 
-	result := make([]*orchestration.OrchestrationConfig, len(models))
+	result := make([]*orchestration.Config, len(models))
 	for i := range models {
 		c, convErr := orchestrationConfigFromModel(&models[i])
 		if convErr != nil {
@@ -164,7 +164,7 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 }
 
 // CreateOrchestrationRun persists a new orchestration run.
-func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	t := now()
 	r.CreatedAt = t
 	r.UpdatedAt = t
@@ -177,7 +177,7 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 }
 
 // GetOrchestrationRun returns an orchestration run by ID.
-func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	var m orchestrationRunModel
 
 	err := s.mdb.NewFind(&m).
@@ -195,7 +195,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 }
 
 // UpdateOrchestrationRun modifies an existing orchestration run.
-func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	r.UpdatedAt = now()
 	m := orchestrationRunToModel(r)
 
@@ -214,7 +214,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 }
 
 // ListOrchestrationRuns returns orchestration runs, optionally filtered.
-func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	var models []orchestrationRunModel
 
 	f := bson.M{}
@@ -246,7 +246,7 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 		return nil, fmt.Errorf("cortex/mongo: list orchestration runs: %w", err)
 	}
 
-	result := make([]*orchestration.OrchestrationRun, len(models))
+	result := make([]*orchestration.Run, len(models))
 	for i := range models {
 		r, convErr := orchestrationRunFromModel(&models[i])
 		if convErr != nil {

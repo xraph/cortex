@@ -9,7 +9,7 @@ import (
 )
 
 // CreateOrchestration stores a new orchestration config.
-func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
@@ -17,7 +17,7 @@ func (e *Engine) CreateOrchestration(ctx context.Context, c *orchestration.Orche
 }
 
 // GetOrchestration returns an orchestration config by ID.
-func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -25,7 +25,7 @@ func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationCo
 }
 
 // GetOrchestrationByName returns an orchestration config by app-scoped name.
-func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -33,7 +33,7 @@ func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string)
 }
 
 // UpdateOrchestration updates an existing orchestration config.
-func (e *Engine) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (e *Engine) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
@@ -49,7 +49,7 @@ func (e *Engine) DeleteOrchestration(ctx context.Context, orchID id.Orchestratio
 }
 
 // ListOrchestrations lists orchestration configs.
-func (e *Engine) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (e *Engine) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -65,7 +65,7 @@ func (e *Engine) CountOrchestrations(ctx context.Context, filter *orchestration.
 }
 
 // GetOrchestrationRun returns an orchestration run record by ID.
-func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -73,7 +73,7 @@ func (e *Engine) GetOrchestrationRun(ctx context.Context, runID id.Orchestration
 }
 
 // ListOrchestrationRuns lists orchestration run records.
-func (e *Engine) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (e *Engine) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}

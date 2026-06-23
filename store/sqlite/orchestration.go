@@ -10,7 +10,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 )
 
-func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	now := time.Now().UTC()
 	c.CreatedAt = now
 	c.UpdatedAt = now
@@ -20,7 +20,7 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Orches
 	return nil
 }
 
-func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	if err := s.sdb.NewSelect(m).Where("id = ?", orchID.String()).Scan(ctx); err != nil {
 		if isNoRows(err) {
@@ -31,7 +31,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.OrchestrationConfig, error) {
+func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
 	m := new(orchestrationConfigModel)
 	err := s.sdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name).Scan(ctx)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 	return orchestrationConfigFromModel(m)
 }
 
-func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.OrchestrationConfig) error {
+func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	c.UpdatedAt = time.Now().UTC()
 	res, err := s.sdb.NewUpdate(orchestrationConfigToModel(c)).WherePK().Exec(ctx)
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 	return nil
 }
 
-func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.OrchestrationConfig, error) {
+func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
 	var models []orchestrationConfigModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
 	if filter != nil {
@@ -94,7 +94,7 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list orchestrations: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationConfig, len(models))
+	result := make([]*orchestration.Config, len(models))
 	for i := range models {
 		c, convErr := orchestrationConfigFromModel(&models[i])
 		if convErr != nil {
@@ -122,7 +122,7 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 	return count, nil
 }
 
-func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
@@ -132,7 +132,7 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.OrchestrationRun, error) {
+func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
 	m := new(orchestrationRunModel)
 	if err := s.sdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx); err != nil {
 		if isNoRows(err) {
@@ -143,7 +143,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 	return orchestrationRunFromModel(m)
 }
 
-func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.OrchestrationRun) error {
+func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	r.UpdatedAt = time.Now().UTC()
 	res, err := s.sdb.NewUpdate(orchestrationRunToModel(r)).WherePK().Exec(ctx)
 	if err != nil {
@@ -159,7 +159,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Orc
 	return nil
 }
 
-func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.OrchestrationRun, error) {
+func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
 	var models []orchestrationRunModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 	if filter != nil {
@@ -179,7 +179,7 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list orchestration runs: %w", err)
 	}
-	result := make([]*orchestration.OrchestrationRun, len(models))
+	result := make([]*orchestration.Run, len(models))
 	for i := range models {
 		r, convErr := orchestrationRunFromModel(&models[i])
 		if convErr != nil {

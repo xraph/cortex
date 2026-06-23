@@ -9,7 +9,7 @@ import (
 )
 
 func TestOrchestrationRunFields(t *testing.T) {
-	r := &orchestration.OrchestrationRun{
+	r := &orchestration.Run{
 		Entity:      cortex.NewEntity(),
 		ID:          id.NewOrchestrationID(),
 		ConfigID:    id.NewOrchestrationConfigID(),

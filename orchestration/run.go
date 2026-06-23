@@ -15,8 +15,8 @@ const (
 	StatusFailed    = "failed"
 )
 
-// OrchestrationRun is the persisted execution record of one orchestration.
-type OrchestrationRun struct {
+// Run is the persisted execution record of one orchestration.
+type Run struct {
 	cortex.Entity
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
@@ -34,10 +34,10 @@ type OrchestrationRun struct {
 
 // RunStore defines persistence for orchestration run records.
 type RunStore interface {
-	CreateOrchestrationRun(ctx context.Context, r *OrchestrationRun) error
-	GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*OrchestrationRun, error)
-	UpdateOrchestrationRun(ctx context.Context, r *OrchestrationRun) error
-	ListOrchestrationRuns(ctx context.Context, filter *RunListFilter) ([]*OrchestrationRun, error)
+	CreateOrchestrationRun(ctx context.Context, r *Run) error
+	GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*Run, error)
+	UpdateOrchestrationRun(ctx context.Context, r *Run) error
+	ListOrchestrationRuns(ctx context.Context, filter *RunListFilter) ([]*Run, error)
 	CountOrchestrationRuns(ctx context.Context, filter *RunListFilter) (int64, error)
 }
 
