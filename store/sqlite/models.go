@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
@@ -692,6 +693,152 @@ func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
 		return nil, err
 	}
 	return cp, nil
+}
+
+// ──────────────────────────────────────────────────
+// Orchestration config model
+// ──────────────────────────────────────────────────
+
+type orchestrationConfigModel struct {
+	grove.BaseModel `grove:"table:cortex_orchestration_configs"`
+	ID              string    `grove:"id,pk"`
+	Name            string    `grove:"name,notnull"`
+	Description     string    `grove:"description"`
+	AppID           string    `grove:"app_id,notnull"`
+	Strategy        string    `grove:"strategy"`
+	Participants    string    `grove:"participants"`
+	Settings        string    `grove:"settings"`
+	Metadata        string    `grove:"metadata"`
+	CreatedAt       time.Time `grove:"created_at"`
+	UpdatedAt       time.Time `grove:"updated_at"`
+}
+
+func orchestrationConfigToModel(c *orchestration.OrchestrationConfig) *orchestrationConfigModel {
+	return &orchestrationConfigModel{
+		ID:           c.ID.String(),
+		Name:         c.Name,
+		Description:  c.Description,
+		AppID:        c.AppID,
+		Strategy:     c.Strategy,
+		Participants: mustJSON(c.Participants),
+		Settings:     mustJSON(c.Settings),
+		Metadata:     mustJSON(c.Metadata),
+		CreatedAt:    c.CreatedAt,
+		UpdatedAt:    c.UpdatedAt,
+	}
+}
+
+func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.OrchestrationConfig, error) {
+	cfgID, err := id.ParseOrchestrationConfigID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	c := &orchestration.OrchestrationConfig{
+		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:          cfgID,
+		Name:        m.Name,
+		Description: m.Description,
+		AppID:       m.AppID,
+		Strategy:    m.Strategy,
+	}
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"participants", m.Participants, &c.Participants},
+		{"settings", m.Settings, &c.Settings},
+		{"metadata", m.Metadata, &c.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+// ──────────────────────────────────────────────────
+// Orchestration run model
+// ──────────────────────────────────────────────────
+
+type orchestrationRunModel struct {
+	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
+	ID              string     `grove:"id,pk"`
+	ConfigID        string     `grove:"config_id"`
+	AppID           string     `grove:"app_id,notnull"`
+	TenantID        string     `grove:"tenant_id"`
+	Strategy        string     `grove:"strategy"`
+	Status          string     `grove:"status,notnull"`
+	Input           string     `grove:"input"`
+	Output          string     `grove:"output"`
+	Error           string     `grove:"error"`
+	AgentRunIDs     string     `grove:"agent_run_ids"`
+	StartedAt       time.Time  `grove:"started_at"`
+	CompletedAt     *time.Time `grove:"completed_at"`
+	CreatedAt       time.Time  `grove:"created_at"`
+	UpdatedAt       time.Time  `grove:"updated_at"`
+}
+
+func orchestrationRunToModel(r *orchestration.OrchestrationRun) *orchestrationRunModel {
+	runIDs := make([]string, len(r.AgentRunIDs))
+	for i, rid := range r.AgentRunIDs {
+		runIDs[i] = rid.String()
+	}
+	return &orchestrationRunModel{
+		ID:          r.ID.String(),
+		ConfigID:    r.ConfigID.String(),
+		AppID:       r.AppID,
+		TenantID:    r.TenantID,
+		Strategy:    r.Strategy,
+		Status:      r.Status,
+		Input:       r.Input,
+		Output:      r.Output,
+		Error:       r.Error,
+		AgentRunIDs: mustJSON(runIDs),
+		StartedAt:   r.StartedAt,
+		CompletedAt: r.CompletedAt,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}
+
+func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.OrchestrationRun, error) {
+	runID, err := id.ParseOrchestrationID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	r := &orchestration.OrchestrationRun{
+		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:          runID,
+		AppID:       m.AppID,
+		TenantID:    m.TenantID,
+		Strategy:    m.Strategy,
+		Status:      m.Status,
+		Input:       m.Input,
+		Output:      m.Output,
+		Error:       m.Error,
+		StartedAt:   m.StartedAt,
+		CompletedAt: m.CompletedAt,
+	}
+	if m.ConfigID != "" {
+		cfgID, cerr := id.ParseOrchestrationConfigID(m.ConfigID)
+		if cerr != nil {
+			return nil, cerr
+		}
+		r.ConfigID = cfgID
+	}
+	var runIDStrings []string
+	if err := unmarshalField("agent_run_ids", m.AgentRunIDs, &runIDStrings); err != nil {
+		return nil, err
+	}
+	for _, s := range runIDStrings {
+		rid, perr := id.ParseAgentRunID(s)
+		if perr != nil {
+			return nil, perr
+		}
+		r.AgentRunIDs = append(r.AgentRunIDs, rid)
+	}
+	return r, nil
 }
 
 // ──────────────────────────────────────────────────

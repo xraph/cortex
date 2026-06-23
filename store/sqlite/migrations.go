@@ -301,5 +301,55 @@ DROP TABLE IF EXISTS cortex_behaviors;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_orchestrations",
+			Version: "20240101000009",
+			Comment: "Create cortex_orchestration_configs and cortex_orchestration_runs tables",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_orchestration_configs (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    app_id        TEXT NOT NULL,
+    strategy      TEXT NOT NULL DEFAULT '',
+    participants  TEXT NOT NULL DEFAULT '[]',
+    settings      TEXT NOT NULL DEFAULT '{}',
+    metadata      TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_app_name ON cortex_orchestration_configs (app_id, name);
+
+CREATE TABLE IF NOT EXISTS cortex_orchestration_runs (
+    id             TEXT PRIMARY KEY,
+    config_id      TEXT NOT NULL DEFAULT '',
+    app_id         TEXT NOT NULL,
+    tenant_id      TEXT NOT NULL DEFAULT '',
+    strategy       TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'running',
+    input          TEXT NOT NULL DEFAULT '',
+    output         TEXT NOT NULL DEFAULT '',
+    error          TEXT NOT NULL DEFAULT '',
+    agent_run_ids  TEXT NOT NULL DEFAULT '[]',
+    started_at     TEXT,
+    completed_at   TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_orchestration_runs_app_status ON cortex_orchestration_runs (app_id, status);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP TABLE IF EXISTS cortex_orchestration_runs;
+DROP TABLE IF EXISTS cortex_orchestration_configs;
+`)
+				return err
+			},
+		},
 	)
 }
