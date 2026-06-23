@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"sort"
 	"strings"
 )
 
@@ -31,10 +32,17 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	switch {
 	case len(o.settings.RouterRules) > 0:
 		lower := strings.ToLower(input)
-		for keyword, agentName := range o.settings.RouterRules {
+		// Match rules in sorted-keyword order for deterministic tie-breaking
+		// when an input matches more than one rule.
+		keywords := make([]string, 0, len(o.settings.RouterRules))
+		for k := range o.settings.RouterRules {
+			keywords = append(keywords, k)
+		}
+		sort.Strings(keywords)
+		for _, keyword := range keywords {
 			if strings.Contains(lower, strings.ToLower(keyword)) {
-				if _, ok := findParticipant(o.parts, agentName); ok {
-					chosen = agentName
+				if _, ok := findParticipant(o.parts, o.settings.RouterRules[keyword]); ok {
+					chosen = o.settings.RouterRules[keyword]
 				}
 				break
 			}

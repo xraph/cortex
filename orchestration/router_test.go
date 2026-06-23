@@ -63,3 +63,55 @@ func TestRouterFallsBackToFirst(t *testing.T) {
 		t.Fatalf("output = %q, want AA (first participant)", res.Output)
 	}
 }
+
+func TestRouterRuleUnknownAgentFallsBack(t *testing.T) {
+	runner := newFakeRunner()
+	runner.outputs = map[string]string{"a": "AA"}
+	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}}
+	// RouterRules has "bug" keyword mapping to "unknown_agent" (not in participants)
+	o := newRouter(runner, "app1", parts, Settings{
+		RouterRules: map[string]string{"bug": "unknown_agent"},
+	})
+
+	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
+	res, err := o.Run(context.Background(), "there is a bug in the system", bb)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Should fall back to first participant since the matched rule maps to unknown agent
+	if res.Output != "AA" {
+		t.Fatalf("output = %q, want AA (first participant fallback)", res.Output)
+	}
+	if got := runner.callNames(); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("calls = %v, want [a]", got)
+	}
+}
+
+func TestRouterRulesDeterministicOnMultiMatch(t *testing.T) {
+	runner := newFakeRunner()
+	runner.outputs = map[string]string{"billing": "BILL", "support": "SUPP"}
+	parts := []Participant{{AgentName: "billing"}, {AgentName: "support"}}
+	// Rules: "refund" → billing, "payment" → support
+	// Input "refund payment issue" matches both keywords.
+	// Alphabetically, "payment" < "refund", so "payment" → support should win.
+	o := newRouter(runner, "app1", parts, Settings{
+		RouterRules: map[string]string{"refund": "billing", "payment": "support"},
+	})
+
+	// Run multiple times to ensure determinism
+	for i := 0; i < 5; i++ {
+		runner.calls = nil // clear calls for each iteration
+		bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
+		res, err := o.Run(context.Background(), "refund payment issue", bb)
+		if err != nil {
+			t.Fatalf("Run %d: %v", i, err)
+		}
+		// "payment" comes before "refund" alphabetically, so it should match first
+		if res.Output != "SUPP" {
+			t.Fatalf("Run %d: output = %q, want SUPP (support matched 'payment' keyword)", i, res.Output)
+		}
+		if got := runner.callNames(); len(got) != 1 || got[0] != "support" {
+			t.Fatalf("Run %d: calls = %v, want [support]", i, got)
+		}
+	}
+}
