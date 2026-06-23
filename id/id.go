@@ -24,19 +24,19 @@ type Prefix string
 
 // Prefix constants for all Cortex entity types.
 const (
-	PrefixAgent                Prefix = "agt"
-	PrefixAgentRun             Prefix = "arun"
-	PrefixTool                 Prefix = "tool"
-	PrefixToolCall             Prefix = "tcall"
-	PrefixStep                 Prefix = "astp"
-	PrefixMemory               Prefix = "mem"
-	PrefixCheckpoint           Prefix = "acp"
-	PrefixOrchestration        Prefix = "orch"
-	PrefixOrchestrationConfig  Prefix = "orchcfg"
-	PrefixSkill                Prefix = "skl"
-	PrefixTrait                Prefix = "trt"
-	PrefixBehavior             Prefix = "bhv"
-	PrefixPersona              Prefix = "prs"
+	PrefixAgent               Prefix = "agt"
+	PrefixAgentRun            Prefix = "arun"
+	PrefixTool                Prefix = "tool"
+	PrefixToolCall            Prefix = "tcall"
+	PrefixStep                Prefix = "astp"
+	PrefixMemory              Prefix = "mem"
+	PrefixCheckpoint          Prefix = "acp"
+	PrefixOrchestration       Prefix = "orch"
+	PrefixOrchestrationConfig Prefix = "orchcfg"
+	PrefixSkill               Prefix = "skl"
+	PrefixTrait               Prefix = "trt"
+	PrefixBehavior            Prefix = "bhv"
+	PrefixPersona             Prefix = "prs"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -231,7 +231,9 @@ func ParseCheckpointID(s string) (ID, error) { return ParseWithPrefix(s, PrefixC
 func ParseOrchestrationID(s string) (ID, error) { return ParseWithPrefix(s, PrefixOrchestration) }
 
 // ParseOrchestrationConfigID parses a string and validates the "orchcfg" prefix.
-func ParseOrchestrationConfigID(s string) (ID, error) { return ParseWithPrefix(s, PrefixOrchestrationConfig) }
+func ParseOrchestrationConfigID(s string) (ID, error) {
+	return ParseWithPrefix(s, PrefixOrchestrationConfig)
+}
 
 // ParseSkillID parses a string and validates the "skl" prefix.
 func ParseSkillID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSkill) }
