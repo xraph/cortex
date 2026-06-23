@@ -134,3 +134,8 @@ func (b *Blackboard) Snapshot() string {
 	}
 	return sb.String()
 }
+
+// OrchestrationID returns the ID of the orchestration this blackboard belongs to.
+func (b *Blackboard) OrchestrationID() id.OrchestrationID {
+	return b.orchID
+}
