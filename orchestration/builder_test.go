@@ -8,15 +8,15 @@ import (
 func TestBuildAllStrategies(t *testing.T) {
 	runner := newFakeRunner()
 	parts := []Participant{{AgentName: "a"}}
-	for _, strat := range []string{
+	for _, strategyName := range []string{
 		StrategySequential, StrategyParallel, StrategyRouter, StrategyHierarchical, StrategyDebate,
 	} {
-		o, err := Build(strat, runner, "app1", parts, Settings{})
+		o, err := Build(strategyName, runner, "app1", parts, Settings{})
 		if err != nil {
-			t.Fatalf("Build(%q): %v", strat, err)
+			t.Fatalf("Build(%q): %v", strategyName, err)
 		}
-		if o.Strategy() != strat {
-			t.Fatalf("Build(%q).Strategy() = %q", strat, o.Strategy())
+		if o.Strategy() != strategyName {
+			t.Fatalf("Build(%q).Strategy() = %q, want %q", strategyName, o.Strategy(), strategyName)
 		}
 	}
 }

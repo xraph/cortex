@@ -56,7 +56,7 @@ func TestHierarchicalDelegatesPerPlan(t *testing.T) {
 
 func TestHierarchicalFallbackWhenPlanInvalid(t *testing.T) {
 	runner := newFakeRunner()
-	runner.respond = func(agent, input string) string {
+	runner.respond = func(agent, _ string) string {
 		if agent == "boss" {
 			return "not json"
 		}

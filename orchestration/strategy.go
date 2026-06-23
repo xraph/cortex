@@ -32,14 +32,14 @@ func composeInput(task, snapshot string) string {
 	return snapshot + "\n\nYour task: " + task
 }
 
-// findParticipant returns the participant with the given agent name.
-func findParticipant(parts []Participant, name string) (Participant, bool) {
+// findParticipant reports whether a participant with the given agent name exists.
+func findParticipant(parts []Participant, name string) bool {
 	for _, p := range parts {
 		if p.AgentName == name {
-			return p, true
+			return true
 		}
 	}
-	return Participant{}, false
+	return false
 }
 
 // nonManagerParticipants returns participants excluding the named manager.

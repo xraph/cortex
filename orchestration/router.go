@@ -41,7 +41,7 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		sort.Strings(keywords)
 		for _, keyword := range keywords {
 			if strings.Contains(lower, strings.ToLower(keyword)) {
-				if _, ok := findParticipant(o.parts, o.settings.RouterRules[keyword]); ok {
+				if findParticipant(o.parts, o.settings.RouterRules[keyword]) {
 					chosen = o.settings.RouterRules[keyword]
 				}
 				break
@@ -95,7 +95,7 @@ func buildRoutingPrompt(parts []Participant, input string) string {
 func matchParticipant(parts []Participant, output string) (string, bool) {
 	trimmed := strings.TrimSpace(output)
 	// exact match first
-	if _, ok := findParticipant(parts, trimmed); ok {
+	if findParticipant(parts, trimmed) {
 		return trimmed, true
 	}
 	// substring match (router may add prose)

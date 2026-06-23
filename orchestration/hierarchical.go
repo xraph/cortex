@@ -110,7 +110,9 @@ func parsePlan(output string, workers []Participant, input string) []delegation 
 	var plan []delegation
 	if start := strings.Index(output, "["); start >= 0 {
 		if end := strings.LastIndex(output, "]"); end > start {
-			_ = json.Unmarshal([]byte(output[start:end+1]), &plan)
+			if jsonErr := json.Unmarshal([]byte(output[start:end+1]), &plan); jsonErr != nil {
+				plan = nil
+			}
 		}
 	}
 	var valid []delegation
@@ -118,7 +120,7 @@ func parsePlan(output string, workers []Participant, input string) []delegation 
 		if d.Agent == "" || d.Task == "" {
 			continue
 		}
-		if _, ok := findParticipant(workers, d.Agent); ok {
+		if findParticipant(workers, d.Agent) {
 			valid = append(valid, d)
 		}
 	}
