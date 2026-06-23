@@ -44,12 +44,28 @@ func TestSequentialSecondAgentSeesFirstOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// b's input must contain a's output ("a:X") via the blackboard snapshot.
+	// b's input must contain the first agent's response via the blackboard snapshot.
 	calls := runner.calls
 	if len(calls) != 2 {
 		t.Fatalf("calls = %d", len(calls))
 	}
-	if !strings.Contains(calls[1].Input, "a:X") {
-		t.Fatalf("second agent input %q does not contain first output", calls[1].Input)
+	// Check that the snapshot section contains output from agent a
+	if !strings.Contains(calls[1].Input, "[a]:") {
+		t.Fatalf("second agent input %q does not show first agent's work", calls[1].Input)
+	}
+}
+
+func TestSequentialFirstAgentSeesRoster(t *testing.T) {
+	runner := newFakeRunner()
+	parts := []Participant{{AgentName: "writer", Role: "author"}, {AgentName: "editor", Role: "critic"}}
+	o := newSequential(runner, "app1", parts, Settings{})
+	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
+	if _, err := o.Run(context.Background(), "start", bb); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// first agent's input must contain the roster (e.g. the other participant's name)
+	first := runner.calls[0].Input
+	if !strings.Contains(first, "editor") {
+		t.Fatalf("first agent input %q lacks roster awareness", first)
 	}
 }

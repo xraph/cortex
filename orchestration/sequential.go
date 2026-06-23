@@ -21,12 +21,7 @@ func (o *sequential) Run(ctx context.Context, input string, bb *Blackboard) (*Re
 
 	last := input
 	for i, p := range o.parts {
-		// First agent gets no prior context (no snapshot); subsequent agents see prior work.
-		var snapshot string
-		if i > 0 {
-			snapshot = bb.Snapshot()
-		}
-		agentInput := composeInput(input, snapshot)
+		agentInput := composeInput(input, bb.Snapshot())
 		ar, err := o.runner.RunAgent(ctx, o.appID, p.AgentName, agentInput, opts)
 		if err != nil {
 			res.AgentResults = append(res.AgentResults, AgentResult{AgentName: p.AgentName, Err: err})
