@@ -5,6 +5,7 @@ import (
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
@@ -78,4 +79,25 @@ type PreviewPromptResponse struct {
 type StreamEvent struct {
 	Event string `json:"event"`
 	Data  any    `json:"data"`
+}
+
+// ── Orchestration response wrappers ─────────────────────
+
+// ListOrchestrationsResponse wraps a list of orchestration configs.
+type ListOrchestrationsResponse struct {
+	Items []*orchestration.Config `json:"items"`
+}
+
+// ListOrchestrationRunsResponse wraps a list of orchestration runs.
+type ListOrchestrationRunsResponse struct {
+	Items []*orchestration.Run `json:"items"`
+}
+
+// RunOrchestrationResponse summarizes a completed orchestration run.
+type RunOrchestrationResponse struct {
+	RunID      string `json:"run_id"`
+	Status     string `json:"status"`
+	Strategy   string `json:"strategy"`
+	Output     string `json:"output"`
+	DurationMs int64  `json:"duration_ms"`
 }

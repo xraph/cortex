@@ -1,5 +1,9 @@
 package api
 
+import (
+	"github.com/xraph/cortex/orchestration"
+)
+
 // ── Agent requests ────────────────────────────────────
 
 // CreateAgentRequest is the request body for creating an agent.
@@ -369,4 +373,60 @@ type ListToolsRequest struct{}
 // GetToolSchemaRequest is the request for getting a tool's schema.
 type GetToolSchemaRequest struct {
 	Name string `path:"name" description:"Tool name"`
+}
+
+// ── Orchestration requests ────────────────────────────
+
+// CreateOrchestrationRequest is the request body for creating an orchestration config.
+type CreateOrchestrationRequest struct {
+	Name         string                      `json:"name" description:"Unique orchestration name"`
+	Description  string                      `json:"description,omitempty"`
+	Strategy     string                      `json:"strategy" description:"sequential|parallel|router|hierarchical|debate"`
+	Participants []orchestration.Participant `json:"participants" description:"Agents taking part, with optional roles"`
+	Settings     orchestration.Settings      `json:"settings,omitempty"`
+	Metadata     map[string]any              `json:"metadata,omitempty"`
+}
+
+// GetOrchestrationRequest addresses an orchestration config by name.
+type GetOrchestrationRequest struct {
+	Name string `path:"name" description:"Orchestration name"`
+}
+
+// ListOrchestrationsRequest paginates orchestration configs.
+type ListOrchestrationsRequest struct {
+	Limit  int `query:"limit" description:"Max results (default: 50)"`
+	Offset int `query:"offset" description:"Results to skip"`
+}
+
+// UpdateOrchestrationRequest is the request body for updating an orchestration config.
+type UpdateOrchestrationRequest struct {
+	Name         string                      `path:"name" description:"Orchestration name"`
+	Description  string                      `json:"description,omitempty"`
+	Strategy     string                      `json:"strategy,omitempty"`
+	Participants []orchestration.Participant `json:"participants,omitempty"`
+	Settings     *orchestration.Settings     `json:"settings,omitempty"`
+	Metadata     map[string]any              `json:"metadata,omitempty"`
+}
+
+// DeleteOrchestrationRequest addresses an orchestration config by name.
+type DeleteOrchestrationRequest struct {
+	Name string `path:"name" description:"Orchestration name"`
+}
+
+// RunOrchestrationRequest runs a stored orchestration by name.
+type RunOrchestrationRequest struct {
+	Name  string `path:"name" description:"Orchestration name"`
+	Input string `json:"input" description:"Initial input for the orchestration"`
+}
+
+// GetOrchestrationRunRequest addresses an orchestration run by ID.
+type GetOrchestrationRunRequest struct {
+	ID string `path:"id" description:"Orchestration run ID"`
+}
+
+// ListOrchestrationRunsRequest paginates and filters orchestration runs.
+type ListOrchestrationRunsRequest struct {
+	Status string `query:"status" description:"Filter by status: running|completed|failed"`
+	Limit  int    `query:"limit"`
+	Offset int    `query:"offset"`
 }
