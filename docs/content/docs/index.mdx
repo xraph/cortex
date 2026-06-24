@@ -25,6 +25,8 @@ Cortex models AI agents the way you would describe a person:
 
 - **Declarative personality** — Define agents via composable Skills, Traits, and Behaviors instead of imperative prompt engineering.
 - **Persona composition** — Bundle skills, traits, behaviors, cognitive style, communication style, and perception into a reusable Persona. Assign it to any agent with one field.
+- **Multi-agent orchestration** — Coordinate several agents with five strategies (sequential, parallel, router, hierarchical, debate). Agents share a blackboard, see a roster of collaborators, and hand work off to one another.
+- **Cloning** — Duplicate any agent or persona into an independent copy with one call (`POST .../clone`), with smart auto-naming and no runtime history carried over.
 - **Execution tracking** — Every agent run is recorded as a Run with Steps and ToolCalls, providing full observability into reasoning chains.
 - **Human-in-the-loop** — Checkpoints pause a run for human approval before proceeding with sensitive actions.
 - **Multi-tenant isolation**: every entity is scoped via context to a hierarchy the host defines (tenant, workspace, app, whatever it needs); cross-scope access is structurally impossible.
@@ -32,7 +34,7 @@ Cortex models AI agents the way you would describe a person:
 - **Memory management** — Conversation history, working memory, and summary memory per agent per tenant.
 - **PostgreSQL store** — Production-ready persistence with embedded migrations and JSONB columns for flexible metadata.
 - **Forge integration** — Drop-in `forge.Extension` with DI-injected Engine and auto-registered HTTP routes.
-- **REST API** — 36 endpoints for managing agents, personas, skills, traits, behaviors, runs, checkpoints, and memory.
+- **REST API** — 46 endpoints for managing agents, personas, skills, traits, behaviors, runs, checkpoints, memory, and orchestrations (plus agent/persona cloning).
 
 ## Design philosophy
 
@@ -91,5 +93,6 @@ func main() {
   <Card title="Getting started" href="/docs/getting-started" description="Install Cortex and create your first agent in minutes." />
   <Card title="Architecture" href="/docs/architecture" description="Understand how the packages fit together." />
   <Card title="The Human Model" href="/docs/human-model/overview" description="Learn how Skills, Traits, and Personas compose an agent." />
-  <Card title="HTTP API reference" href="/docs/api-reference/http-api" description="Full HTTP API documentation for all 36 endpoints." />
+  <Card title="Orchestration" href="/docs/execution/orchestration" description="Run multiple agents together with five coordination strategies." />
+  <Card title="HTTP API reference" href="/docs/api-reference/http-api" description="Full HTTP API documentation for all 46 endpoints." />
 </Cards>

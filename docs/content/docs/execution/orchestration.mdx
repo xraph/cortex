@@ -46,7 +46,7 @@ Each strategy reads only the settings it needs; the rest are ignored.
 
 ```bash
 # Create a debate orchestration
-curl -X POST /v1/orchestrations -H 'Content-Type: application/json' -d '{
+curl -X POST /cortex/v1/orchestrations -H 'Content-Type: application/json' -d '{
   "name": "should-we-ship",
   "strategy": "debate",
   "participants": [
@@ -58,7 +58,7 @@ curl -X POST /v1/orchestrations -H 'Content-Type: application/json' -d '{
 }'
 
 # Run it
-curl -X POST /v1/orchestrations/should-we-ship/run \
+curl -X POST /cortex/v1/orchestrations/should-we-ship/run \
   -H 'Content-Type: application/json' \
   -d '{"input": "Should we ship the feature this week?"}'
 ```
@@ -75,8 +75,8 @@ The run returns a summary:
 }
 ```
 
-Run history is available at `GET /v1/orchestration-runs` and
-`GET /v1/orchestration-runs/:id`.
+Run history is available at `GET /cortex/v1/orchestration-runs` and
+`GET /cortex/v1/orchestration-runs/:id`.
 
 ## In Go
 

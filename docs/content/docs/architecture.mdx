@@ -24,20 +24,25 @@ Cortex is organized as a set of focused Go packages. The `engine` package is the
 │  6. Record results, emit plugin hooks                             │
 ├──────────────────────┬───────────────────────────────────────────┤
 │  plugin.Registry      │  api.API (Forge HTTP handlers)            │
-│  OnRunStarted         │  36 REST endpoints:                       │
-│  OnRunCompleted       │  - Agents (7 routes)                      │
-│  OnRunFailed          │  - Skills, Traits, Behaviors,             │
-│  OnToolCalled         │    Personas (5 routes each)               │
-│  OnPersonaResolved    │  - Runs (3), Checkpoints (2),             │
+│  OnRunStarted         │  55 REST endpoints:                       │
+│  OnRunCompleted       │  - Agents (8, incl. clone)                │
+│  OnRunFailed          │  - Personas (6, incl. clone)              │
+│  OnToolCalled         │  - Skills, Traits, Behaviors (5 each)     │
+│  OnOrchestration*     │  - Orchestrations (8)                     │
+│  OnAgentHandoff       │  - Runs (3), Checkpoints (2),             │
 │  (16 total hooks)     │    Memory (2), Tools (2)                  │
 ├──────────────────────┴───────────────────────────────────────────┤
+│                  orchestration (multi-agent)                      │
+│  sequential │ parallel │ router │ hierarchical │ debate           │
+│  Blackboard (shared state) · Roster (awareness) · Handoffs        │
+├──────────────────────┬───────────────────────────────────────────┤
 │                        store.Store                                │
-│  (composite: agent.Store + skill.Store + trait.Store +            │
-│   behavior.Store + persona.Store + run.Store + memory.Store +     │
-│   checkpoint.Store + Migrate/Ping/Close)                          │
+│  (composite: agent + skill + trait + behavior + persona +         │
+│   run + memory + checkpoint + orchestration.ConfigStore +         │
+│   orchestration.RunStore + Migrate/Ping/Close)                    │
 ├──────────────────────────────────────────────────────────────────┤
-│                      store/postgres                               │
-│  (PostgreSQL backend with bun ORM + embedded migrations)          │
+│              store/sqlite · store/postgres · store/mongo          │
+│  (grove ORM backends with programmatic migrations)                │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -128,10 +133,13 @@ Built-in extensions:
 | `run` | `.../run` | Run, Step, ToolCall entities and store |
 | `memory` | `.../memory` | Message entity and memory store |
 | `checkpoint` | `.../checkpoint` | Checkpoint entity for human-in-the-loop |
+| `orchestration` | `.../orchestration` | Multi-agent strategies, Blackboard, Config/Run entities |
 | `store` | `.../store` | Composite store interface |
-| `store/postgres` | `.../store/postgres` | PostgreSQL backend (bun ORM) |
+| `store/sqlite` | `.../store/sqlite` | SQLite backend (grove ORM) |
+| `store/postgres` | `.../store/postgres` | PostgreSQL backend (grove ORM) |
+| `store/mongo` | `.../store/mongo` | MongoDB backend (grove ORM) |
 | `plugin` | `.../plugin` | Extension interfaces and Registry |
 | `observability` | `.../observability` | Metrics extension (11 counters) |
 | `audit_hook` | `.../audit_hook` | Audit trail extension |
-| `api` | `.../api` | Forge-native HTTP handlers (36 routes) |
+| `api` | `.../api` | Forge-native HTTP handlers (46 routes) |
 | `extension` | `.../extension` | Forge framework extension adapter |
