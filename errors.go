@@ -9,16 +9,16 @@ var (
 	ErrMigrationFailed = errors.New("cortex: migration failed")
 
 	// Not found errors.
-	ErrAgentNotFound           = errors.New("cortex: agent not found")
-	ErrRunNotFound             = errors.New("cortex: run not found")
-	ErrStepNotFound            = errors.New("cortex: step not found")
-	ErrToolCallNotFound        = errors.New("cortex: tool call not found")
-	ErrSkillNotFound           = errors.New("cortex: skill not found")
-	ErrTraitNotFound           = errors.New("cortex: trait not found")
-	ErrBehaviorNotFound        = errors.New("cortex: behavior not found")
-	ErrPersonaNotFound         = errors.New("cortex: persona not found")
-	ErrCheckpointNotFound      = errors.New("cortex: checkpoint not found")
-	ErrOrchestrationNotFound   = errors.New("cortex: orchestration not found")
+	ErrAgentNotFound            = errors.New("cortex: agent not found")
+	ErrRunNotFound              = errors.New("cortex: run not found")
+	ErrStepNotFound             = errors.New("cortex: step not found")
+	ErrToolCallNotFound         = errors.New("cortex: tool call not found")
+	ErrSkillNotFound            = errors.New("cortex: skill not found")
+	ErrTraitNotFound            = errors.New("cortex: trait not found")
+	ErrBehaviorNotFound         = errors.New("cortex: behavior not found")
+	ErrPersonaNotFound          = errors.New("cortex: persona not found")
+	ErrCheckpointNotFound       = errors.New("cortex: checkpoint not found")
+	ErrOrchestrationNotFound    = errors.New("cortex: orchestration not found")
 	ErrOrchestrationRunNotFound = errors.New("cortex: orchestration run not found")
 
 	// Conflict errors.
