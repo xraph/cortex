@@ -430,3 +430,17 @@ type ListOrchestrationRunsRequest struct {
 	Limit  int    `query:"limit"`
 	Offset int    `query:"offset"`
 }
+
+// ── Clone requests ───────────────────────────────────
+
+// CloneAgentRequest is the request for cloning an agent.
+type CloneAgentRequest struct {
+	Name    string `path:"name" description:"Source agent name"`
+	NewName string `json:"new_name,omitempty" description:"Name for the clone; auto-generated if omitted"`
+}
+
+// ClonePersonaRequest is the request for cloning a persona.
+type ClonePersonaRequest struct {
+	Name    string `path:"name" description:"Source persona name"`
+	NewName string `json:"new_name,omitempty" description:"Name for the clone; auto-generated if omitted"`
+}

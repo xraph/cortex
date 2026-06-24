@@ -64,6 +64,17 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 		return fmt.Errorf("register persona routes: %w", err)
 	}
 
+	if err := g.POST("/personas/:name/clone", a.clonePersona,
+		forge.WithSummary("Clone persona"),
+		forge.WithDescription("Creates an independent copy of a persona with a fresh ID and name."),
+		forge.WithOperationID("clonePersona"),
+		forge.WithRequestSchema(ClonePersonaRequest{}),
+		forge.WithCreatedResponse(&persona.Persona{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register persona routes: %w", err)
+	}
+
 	return nil
 }
 
@@ -183,4 +194,13 @@ func (a *API) deletePersona(ctx forge.Context, _ *DeletePersonaRequest) (*struct
 		return nil, mapStoreError(err)
 	}
 	return nil, ctx.NoContent(http.StatusNoContent)
+}
+
+func (a *API) clonePersona(ctx forge.Context, req *ClonePersonaRequest) (*persona.Persona, error) {
+	appID := cortex.AppFromContext(ctx.Context())
+	clone, err := a.eng.ClonePersona(ctx.Context(), appID, req.Name, req.NewName)
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
+	return clone, ctx.JSON(http.StatusCreated, clone)
 }

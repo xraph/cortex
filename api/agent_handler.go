@@ -98,6 +98,17 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 		return fmt.Errorf("register agent routes: %w", err)
 	}
 
+	if err := g.POST("/agents/:name/clone", a.cloneAgent,
+		forge.WithSummary("Clone agent"),
+		forge.WithDescription("Creates an independent copy of an agent with a fresh ID and name."),
+		forge.WithOperationID("cloneAgent"),
+		forge.WithRequestSchema(CloneAgentRequest{}),
+		forge.WithCreatedResponse(&agent.Config{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register agent routes: %w", err)
+	}
+
 	return nil
 }
 
@@ -289,6 +300,15 @@ func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*Previe
 		Prompt: prompt,
 	}
 	return resp, ctx.JSON(http.StatusOK, resp)
+}
+
+func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Config, error) {
+	appID := cortex.AppFromContext(ctx.Context())
+	clone, err := a.eng.CloneAgent(ctx.Context(), appID, req.Name, req.NewName)
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
+	return clone, ctx.JSON(http.StatusCreated, clone)
 }
 
 // mapOverrides converts API-layer overrides to engine-layer overrides.
