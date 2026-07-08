@@ -17,6 +17,9 @@ func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
 	m := personaToModel(p)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex/sqlite: create persona: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex/sqlite: create persona: %w", err)
 	}
 	return nil

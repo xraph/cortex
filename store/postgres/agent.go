@@ -19,6 +19,9 @@ func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 	m := agentToModel(config)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex: create agent: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex: create agent: %w", err)
 	}
 	return nil

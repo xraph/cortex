@@ -4,8 +4,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/migrate"
@@ -50,4 +52,17 @@ func (s *Store) Ping(ctx context.Context) error {
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// pgUniqueViolation is the PostgreSQL SQLSTATE code for unique_violation.
+const pgUniqueViolation = "23505"
+
+// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
+// violation, so callers can translate it into cortex.ErrAlreadyExists.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgUniqueViolation
+	}
+	return false
 }

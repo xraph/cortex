@@ -20,6 +20,9 @@ func (s *Store) CreateBehavior(ctx context.Context, b *behavior.Behavior) error 
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex/mongo: create behavior: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex/mongo: create behavior: %w", err)
 	}
 

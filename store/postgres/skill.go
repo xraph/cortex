@@ -19,6 +19,9 @@ func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
 	m := skillToModel(sk)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex: create skill: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex: create skill: %w", err)
 	}
 	return nil

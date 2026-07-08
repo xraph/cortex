@@ -19,6 +19,9 @@ func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
 	m := traitToModel(t)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex: create trait: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex: create trait: %w", err)
 	}
 	return nil

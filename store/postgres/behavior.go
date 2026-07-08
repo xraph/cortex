@@ -19,6 +19,9 @@ func (s *Store) CreateBehavior(ctx context.Context, b *behavior.Behavior) error 
 	m := behaviorToModel(b)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex: create behavior: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex: create behavior: %w", err)
 	}
 	return nil

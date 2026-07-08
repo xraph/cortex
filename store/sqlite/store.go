@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 	"github.com/xraph/grove/migrate"
+	"modernc.org/sqlite"
 
 	"github.com/xraph/cortex/store"
 )
@@ -56,4 +58,27 @@ func (s *Store) Close() error {
 // isNoRows checks for the standard sql.ErrNoRows sentinel.
 func isNoRows(err error) bool {
 	return errors.Is(err, sql.ErrNoRows)
+}
+
+// SQLite extended result codes for unique-constraint violations.
+const (
+	sqliteConstraintUnique     = 2067 // SQLITE_CONSTRAINT_UNIQUE
+	sqliteConstraintPrimaryKey = 1555 // SQLITE_CONSTRAINT_PRIMARYKEY
+)
+
+// isUniqueViolation reports whether err is a SQLite unique-constraint
+// violation, so callers can translate it into cortex.ErrAlreadyExists.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		switch sqliteErr.Code() {
+		case sqliteConstraintUnique, sqliteConstraintPrimaryKey:
+			return true
+		}
+	}
+	// Fallback in case the typed error is not surfaced by the driver.
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

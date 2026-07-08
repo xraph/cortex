@@ -4,14 +4,15 @@ go 1.25.7
 
 require (
 	github.com/a-h/templ v0.3.1001
-	github.com/xraph/fabriq v0.0.3
+	github.com/jackc/pgx/v5 v5.10.0
+	github.com/xraph/fabriq v0.0.4
 	github.com/xraph/forge v1.8.0
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.1
-	github.com/xraph/grove v1.5.8
-	github.com/xraph/grove/drivers/mongodriver v1.5.8
-	github.com/xraph/grove/drivers/pgdriver v1.5.8
-	github.com/xraph/grove/drivers/sqlitedriver v1.5.8
+	github.com/xraph/grove v1.5.9
+	github.com/xraph/grove/drivers/mongodriver v1.5.9
+	github.com/xraph/grove/drivers/pgdriver v1.5.9
+	github.com/xraph/grove/drivers/sqlitedriver v1.5.9
 	github.com/xraph/nexus v1.5.5
 	github.com/xraph/sentinel v1.5.2
 	github.com/xraph/shield v1.5.2
@@ -19,6 +20,7 @@ require (
 	github.com/xraph/weave v1.5.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
+	modernc.org/sqlite v1.46.1
 )
 
 require go.uber.org/atomic v1.11.0 // indirect
@@ -83,7 +85,6 @@ require (
 	github.com/hashicorp/serf v0.10.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -141,8 +142,8 @@ require (
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xraph/confy v0.5.2 // indirect
-	github.com/xraph/grove/kv v1.5.7 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.5.7 // indirect
+	github.com/xraph/grove/kv v1.5.8 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.5.8 // indirect
 	github.com/xraph/trove v1.5.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
@@ -186,7 +187,6 @@ require (
 	modernc.org/libc v1.68.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.1 // indirect
 	nhooyr.io/websocket v1.8.17 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect

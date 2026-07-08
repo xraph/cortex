@@ -20,6 +20,9 @@ func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex/mongo: create persona: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex/mongo: create persona: %w", err)
 	}
 

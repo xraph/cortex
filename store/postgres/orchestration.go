@@ -17,6 +17,9 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config
 	c.CreatedAt = now
 	c.UpdatedAt = now
 	if _, err := s.pgdb.NewInsert(orchestrationConfigToModel(c)).Exec(ctx); err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex: create orchestration: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex: create orchestration: %w", err)
 	}
 	return nil

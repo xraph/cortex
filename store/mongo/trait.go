@@ -20,6 +20,9 @@ func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex/mongo: create trait: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex/mongo: create trait: %w", err)
 	}
 

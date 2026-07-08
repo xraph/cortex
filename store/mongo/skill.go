@@ -20,6 +20,9 @@ func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("cortex/mongo: create skill: %w", cortex.ErrAlreadyExists)
+		}
 		return fmt.Errorf("cortex/mongo: create skill: %w", err)
 	}
 

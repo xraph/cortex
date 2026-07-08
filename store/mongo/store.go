@@ -84,3 +84,9 @@ func now() time.Time {
 func isNoDocuments(err error) bool {
 	return errors.Is(err, mongo.ErrNoDocuments)
 }
+
+// isUniqueViolation reports whether err is a MongoDB duplicate-key error
+// (code 11000), so callers can translate it into cortex.ErrAlreadyExists.
+func isUniqueViolation(err error) bool {
+	return mongo.IsDuplicateKeyError(err)
+}
