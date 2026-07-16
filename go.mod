@@ -17,7 +17,7 @@ require (
 	github.com/xraph/sentinel v1.5.2
 	github.com/xraph/shield v1.5.2
 	github.com/xraph/vessel v1.0.2
-	github.com/xraph/weave v1.5.4
+	github.com/xraph/weave v1.5.5
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	modernc.org/sqlite v1.46.1
