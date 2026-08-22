@@ -355,14 +355,18 @@ DROP TABLE IF EXISTS cortex_orchestration_configs;
 		&migrate.Migration{
 			Name:    "add_scope_columns",
 			Version: "20260821000001",
-			Comment: "Add host-defined scope columns and backfill from tenant_id/app_id",
+			Comment: "Add host-defined scope columns; pre-v2 rows are left unscoped",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// cortex_orchestration_runs is deliberately excluded: orchestration
+				// is out of this phase's scope, orchestrationRunToModel never
+				// populates the indexed scope levels (only ScopeExtra), and empty
+				// NOT NULL columns that read as coverage and aren't are worse than
+				// no columns at all.
 				for _, table := range []string{
 					"cortex_agents",
 					"cortex_runs",
 					"cortex_memories",
 					"cortex_checkpoints",
-					"cortex_orchestration_runs",
 				} {
 					if _, err := exec.Exec(ctx, `
 ALTER TABLE `+table+`
@@ -381,27 +385,21 @@ CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1,
 					}
 				}
 
-				// Backfill. Agents carry app_id only; runs, memories and
-				// checkpoints carry both, so tenant leads and app follows.
-				if _, err := exec.Exec(ctx, `
-UPDATE cortex_agents
-   SET scope_l0    = 'app=' || app_id,
-       scope_canon = 'app=' || app_id
- WHERE scope_l0 = ''
-`); err != nil {
-					return fmt.Errorf("backfill agents: %w", err)
-				}
-
-				for _, table := range []string{"cortex_runs", "cortex_memories", "cortex_checkpoints"} {
-					if _, err := exec.Exec(ctx, `
-UPDATE `+table+`
-   SET scope_l0    = 'tenant=' || COALESCE(tenant_id, ''),
-       scope_canon = 'tenant=' || COALESCE(tenant_id, '')
- WHERE scope_l0 = ''
-`); err != nil {
-						return fmt.Errorf("backfill %s: %w", table, err)
-					}
-				}
+				// No backfill. tenant_id/app_id used a vocabulary this phase
+				// deliberately doesn't carry forward — a host's scope keys
+				// (e.g. "workspace=", "project=") are its own, and inventing
+				// "tenant=" or "app=" values for old rows would make scope_l0
+				// polysemous per row: some rows keyed by a host-defined level,
+				// others by a fabricated one nothing ever queries for. Worse,
+				// every pre-v2 conversation row had tenant_id = '', so a
+				// literal 'tenant=' backfill would silently orphan all v1
+				// history into an unreachable bucket. Pre-existing rows are
+				// left with empty scope columns instead: every scoped query
+				// requires a non-zero cortex.Scope on the context and applies
+				// scopePredicates, so a row with scope_l0 = '' simply never
+				// matches and is invisible until the host re-scopes it. See
+				// docs/content/docs/concepts/multi-tenancy.mdx for the
+				// cutover note hosts need to read before upgrading.
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
@@ -410,7 +408,6 @@ UPDATE `+table+`
 					"cortex_runs",
 					"cortex_memories",
 					"cortex_checkpoints",
-					"cortex_orchestration_runs",
 				} {
 					if _, err := exec.Exec(ctx, `
 ALTER TABLE `+table+`
@@ -421,41 +418,6 @@ ALTER TABLE `+table+`
     DROP COLUMN IF EXISTS scope_canon
 `); err != nil {
 						return fmt.Errorf("drop scope columns from %s: %w", table, err)
-					}
-				}
-				return nil
-			},
-		},
-		&migrate.Migration{
-			Name:    "drop_tenant_id",
-			Version: "20260821000002",
-			Comment: "Drop tenant_id now that scope carries every host-defined level",
-			Up: func(ctx context.Context, exec migrate.Executor) error {
-				for _, table := range []string{
-					"cortex_runs",
-					"cortex_memories",
-					"cortex_checkpoints",
-					"cortex_orchestration_runs",
-				} {
-					if _, err := exec.Exec(ctx, `
-ALTER TABLE `+table+` DROP COLUMN IF EXISTS tenant_id
-`); err != nil {
-						return fmt.Errorf("drop tenant_id from %s: %w", table, err)
-					}
-				}
-				return nil
-			},
-			Down: func(ctx context.Context, exec migrate.Executor) error {
-				for _, table := range []string{
-					"cortex_runs",
-					"cortex_memories",
-					"cortex_checkpoints",
-					"cortex_orchestration_runs",
-				} {
-					if _, err := exec.Exec(ctx, `
-ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS tenant_id TEXT
-`); err != nil {
-						return fmt.Errorf("re-add tenant_id to %s: %w", table, err)
 					}
 				}
 				return nil

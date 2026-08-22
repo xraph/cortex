@@ -695,28 +695,25 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 
 type orchestrationRunModel struct {
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string            `grove:"id,pk"         bson:"_id"`
-	ConfigID        string            `grove:"config_id"     bson:"config_id"`
-	AppID           string            `grove:"app_id"        bson:"app_id"`
-	Strategy        string            `grove:"strategy"      bson:"strategy"`
-	Status          string            `grove:"status"        bson:"status"`
-	Input           string            `grove:"input"         bson:"input"`
-	Output          string            `grove:"output"        bson:"output"`
-	Error           string            `grove:"error"         bson:"error"`
-	AgentRunIDs     []string          `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
-	StartedAt       time.Time         `grove:"started_at"    bson:"started_at"`
-	CompletedAt     *time.Time        `grove:"completed_at"  bson:"completed_at,omitempty"`
-	ScopeL0         string            `grove:"scope_l0"      bson:"scope_l0"`
-	ScopeL1         string            `grove:"scope_l1"      bson:"scope_l1"`
-	ScopeL2         string            `grove:"scope_l2"      bson:"scope_l2"`
-	ScopeExtra      map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
-	ScopeCanon      string            `grove:"scope_canon"   bson:"scope_canon"`
-	CreatedAt       time.Time         `grove:"created_at"    bson:"created_at"`
-	UpdatedAt       time.Time         `grove:"updated_at"    bson:"updated_at"`
+	ID              string     `grove:"id,pk"         bson:"_id"`
+	ConfigID        string     `grove:"config_id"     bson:"config_id"`
+	AppID           string     `grove:"app_id"        bson:"app_id"`
+	Strategy        string     `grove:"strategy"      bson:"strategy"`
+	Status          string     `grove:"status"        bson:"status"`
+	Input           string     `grove:"input"         bson:"input"`
+	Output          string     `grove:"output"        bson:"output"`
+	Error           string     `grove:"error"         bson:"error"`
+	AgentRunIDs     []string   `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
+	StartedAt       time.Time  `grove:"started_at"    bson:"started_at"`
+	CompletedAt     *time.Time `grove:"completed_at"  bson:"completed_at,omitempty"`
+	CreatedAt       time.Time  `grove:"created_at"    bson:"created_at"`
+	UpdatedAt       time.Time  `grove:"updated_at"    bson:"updated_at"`
 }
 
-// orchestration.Run does not carry a cortex.Scope field yet, so the scope
-// columns simply start empty; Mongo has no NOT NULL to satisfy either way.
+// orchestration.Run does not carry a cortex.Scope field yet, so
+// cortex_orchestration_runs deliberately carries no scope fields:
+// orchestration is out of this phase's scope, and fields nothing ever
+// populates would read as coverage that isn't there.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {

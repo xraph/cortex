@@ -797,18 +797,14 @@ type orchestrationRunModel struct {
 	AgentRunIDs     string     `grove:"agent_run_ids"`
 	StartedAt       time.Time  `grove:"started_at"`
 	CompletedAt     *time.Time `grove:"completed_at"`
-	ScopeL0         string     `grove:"scope_l0,notnull"`
-	ScopeL1         string     `grove:"scope_l1,notnull"`
-	ScopeL2         string     `grove:"scope_l2,notnull"`
-	ScopeExtra      string     `grove:"scope_extra,notnull"`
-	ScopeCanon      string     `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time  `grove:"created_at"`
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
-// orchestration.Run does not carry a cortex.Scope field yet, so the scope
-// columns start empty. scope_extra is a JSON-encoded string here (not a
-// native map), so an empty "{}" is enough to satisfy the NOT NULL column.
+// orchestration.Run does not carry a cortex.Scope field yet, so
+// cortex_orchestration_runs deliberately carries no scope columns:
+// orchestration is out of this phase's scope, and NOT NULL columns nothing
+// ever populates would read as coverage that isn't there.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
@@ -826,7 +822,6 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		AgentRunIDs: mustJSON(runIDs),
 		StartedAt:   r.StartedAt,
 		CompletedAt: r.CompletedAt,
-		ScopeExtra:  mustJSON(map[string]string{}),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}

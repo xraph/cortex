@@ -355,19 +355,21 @@ DROP TABLE IF EXISTS cortex_orchestration_configs;
 		&migrate.Migration{
 			Name:    "add_scope_columns",
 			Version: "20260821000001",
-			Comment: "Add host-defined scope columns and backfill from tenant_id/app_id",
+			Comment: "Add host-defined scope columns; pre-v2 rows are left unscoped",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				// SQLite only allows one column per ALTER TABLE statement,
 				// and its ADD COLUMN doesn't support IF NOT EXISTS, so each
 				// column is its own statement. Mirrors the postgres
 				// migration's columns and index, minus the JSONB type
 				// (scope_extra is a JSON-encoded TEXT column here).
+				//
+				// cortex_orchestration_runs is deliberately excluded: see the
+				// postgres migration of the same version for why.
 				for _, table := range []string{
 					"cortex_agents",
 					"cortex_runs",
 					"cortex_memories",
 					"cortex_checkpoints",
-					"cortex_orchestration_runs",
 				} {
 					if _, err := exec.Exec(ctx, `
 ALTER TABLE `+table+` ADD COLUMN scope_l0    TEXT NOT NULL DEFAULT '';
@@ -385,27 +387,12 @@ CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1,
 					}
 				}
 
-				// Backfill. Agents carry app_id only; runs, memories and
-				// checkpoints carry both, so tenant leads and app follows.
-				if _, err := exec.Exec(ctx, `
-UPDATE cortex_agents
-   SET scope_l0    = 'app=' || app_id,
-       scope_canon = 'app=' || app_id
- WHERE scope_l0 = '';
-`); err != nil {
-					return fmt.Errorf("backfill agents: %w", err)
-				}
-
-				for _, table := range []string{"cortex_runs", "cortex_memories", "cortex_checkpoints"} {
-					if _, err := exec.Exec(ctx, `
-UPDATE `+table+`
-   SET scope_l0    = 'tenant=' || COALESCE(tenant_id, ''),
-       scope_canon = 'tenant=' || COALESCE(tenant_id, '')
- WHERE scope_l0 = '';
-`); err != nil {
-						return fmt.Errorf("backfill %s: %w", table, err)
-					}
-				}
+				// No backfill. See the postgres migration of the same
+				// version for why: inventing "tenant=" / "app=" values for
+				// pre-v2 rows would make scope_l0 polysemous per row and
+				// silently orphan all v1 conversation history. Pre-existing
+				// rows are left with empty scope columns, which every scoped
+				// query already treats as non-matching.
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
@@ -416,7 +403,6 @@ UPDATE `+table+`
 					"cortex_runs",
 					"cortex_memories",
 					"cortex_checkpoints",
-					"cortex_orchestration_runs",
 				} {
 					if _, err := exec.Exec(ctx, `
 DROP INDEX IF EXISTS idx_`+table+`_scope;

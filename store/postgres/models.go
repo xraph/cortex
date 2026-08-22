@@ -799,29 +799,25 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 
 type orchestrationRunModel struct {
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string            `grove:"id,pk"`
-	ConfigID        string            `grove:"config_id"`
-	AppID           string            `grove:"app_id,notnull"`
-	Strategy        string            `grove:"strategy"`
-	Status          string            `grove:"status,notnull"`
-	Input           string            `grove:"input"`
-	Output          string            `grove:"output"`
-	Error           string            `grove:"error"`
-	AgentRunIDs     string            `grove:"agent_run_ids,type:jsonb"`
-	StartedAt       time.Time         `grove:"started_at"`
-	CompletedAt     *time.Time        `grove:"completed_at"`
-	ScopeL0         string            `grove:"scope_l0,notnull"`
-	ScopeL1         string            `grove:"scope_l1,notnull"`
-	ScopeL2         string            `grove:"scope_l2,notnull"`
-	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
-	ScopeCanon      string            `grove:"scope_canon,notnull"`
-	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string     `grove:"id,pk"`
+	ConfigID        string     `grove:"config_id"`
+	AppID           string     `grove:"app_id,notnull"`
+	Strategy        string     `grove:"strategy"`
+	Status          string     `grove:"status,notnull"`
+	Input           string     `grove:"input"`
+	Output          string     `grove:"output"`
+	Error           string     `grove:"error"`
+	AgentRunIDs     string     `grove:"agent_run_ids,type:jsonb"`
+	StartedAt       time.Time  `grove:"started_at"`
+	CompletedAt     *time.Time `grove:"completed_at"`
+	CreatedAt       time.Time  `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time  `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
-// orchestration.Run does not carry a cortex.Scope field yet, so the scope
-// columns start empty here. They still need a non-nil ScopeExtra map: grove
-// writes a nil Go map as SQL NULL, which the NOT NULL constraint rejects.
+// orchestration.Run does not carry a cortex.Scope field yet, so
+// cortex_orchestration_runs deliberately carries no scope columns:
+// orchestration is out of this phase's scope, and NOT NULL columns nothing
+// ever populates would read as coverage that isn't there.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
@@ -839,7 +835,6 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		AgentRunIDs: mustJSON(runIDs),
 		StartedAt:   r.StartedAt,
 		CompletedAt: r.CompletedAt,
-		ScopeExtra:  map[string]string{},
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
