@@ -516,7 +516,11 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
 		e.logger.Error("update run on failure", log.String("error", err.Error()))
 	}
-	e.extensions.EmitRunFailed(ctx, agentID, r.ID, runErr)
+	// Same reasoning as the store write above: a hook subscriber (audit,
+	// for instance) that does its own I/O keyed on ctx would otherwise
+	// silently drop the failure event on an already-cancelled ctx, even
+	// though the store now correctly recorded it.
+	e.extensions.EmitRunFailed(context.WithoutCancel(ctx), agentID, r.ID, runErr)
 }
 
 // resolveTools converts tool name references to llm.Tool definitions.
