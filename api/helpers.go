@@ -40,10 +40,15 @@ func isConflict(err error) bool {
 }
 
 // scopeFromTenant bridges the legacy tenant identifier into a Scope while
-// the host has no scope middleware. Task 9 removes TenantFromContext and
-// this helper with it, at which point the host supplies the scope directly.
+// the host has no scope middleware. An absent tenant yields no scope at
+// all: the store guards then reject the call with ErrNoScope, rather than
+// every untenanted caller sharing one "tenant=" bucket. Task 9 removes
+// TenantFromContext and this helper with it.
 func scopeFromTenant(ctx context.Context) context.Context {
 	t := cortex.TenantFromContext(ctx)
+	if t == "" {
+		return ctx
+	}
 	return cortex.WithScope(ctx, cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: t}}})
 }
 
