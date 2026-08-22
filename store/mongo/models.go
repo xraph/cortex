@@ -208,21 +208,27 @@ func runFromModel(m *runModel) (*run.Run, error) {
 
 type stepModel struct {
 	grove.BaseModel `grove:"table:cortex_steps"`
-	ID              string         `grove:"id,pk"          bson:"_id"`
-	RunID           string         `grove:"run_id"         bson:"run_id"`
-	Index           int            `grove:"index"          bson:"index"`
-	Type            string         `grove:"type"           bson:"type"`
-	Input           string         `grove:"input"          bson:"input"`
-	Output          string         `grove:"output"         bson:"output"`
-	TokensUsed      int            `grove:"tokens_used"    bson:"tokens_used"`
-	StartedAt       *time.Time     `grove:"started_at"     bson:"started_at,omitempty"`
-	CompletedAt     *time.Time     `grove:"completed_at"   bson:"completed_at,omitempty"`
-	Metadata        map[string]any `grove:"metadata"       bson:"metadata,omitempty"`
-	CreatedAt       time.Time      `grove:"created_at"     bson:"created_at"`
-	UpdatedAt       time.Time      `grove:"updated_at"     bson:"updated_at"`
+	ID              string            `grove:"id,pk"          bson:"_id"`
+	RunID           string            `grove:"run_id"         bson:"run_id"`
+	Index           int               `grove:"index"          bson:"index"`
+	Type            string            `grove:"type"           bson:"type"`
+	Input           string            `grove:"input"          bson:"input"`
+	Output          string            `grove:"output"         bson:"output"`
+	TokensUsed      int               `grove:"tokens_used"    bson:"tokens_used"`
+	StartedAt       *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
+	CompletedAt     *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
+	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"     bson:"updated_at"`
 }
 
 func stepToModel(s *run.Step) *stepModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
 	return &stepModel{
 		ID:          s.ID.String(),
 		RunID:       s.RunID.String(),
@@ -234,6 +240,11 @@ func stepToModel(s *run.Step) *stepModel {
 		StartedAt:   s.StartedAt,
 		CompletedAt: s.CompletedAt,
 		Metadata:    s.Metadata,
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  s.Scope.Canonical(),
 		CreatedAt:   s.CreatedAt,
 		UpdatedAt:   s.UpdatedAt,
 	}
@@ -248,10 +259,15 @@ func stepFromModel(m *stepModel) (*run.Step, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("step %s: %w", stepID, err)
+	}
 	return &run.Step{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          stepID,
 		RunID:       runID,
+		Scope:       scope,
 		Index:       m.Index,
 		Type:        m.Type,
 		Input:       m.Input,
@@ -269,21 +285,27 @@ func stepFromModel(m *stepModel) (*run.Step, error) {
 
 type toolCallModel struct {
 	grove.BaseModel `grove:"table:cortex_tool_calls"`
-	ID              string         `grove:"id,pk"          bson:"_id"`
-	StepID          string         `grove:"step_id"        bson:"step_id"`
-	RunID           string         `grove:"run_id"         bson:"run_id"`
-	ToolName        string         `grove:"tool_name"      bson:"tool_name"`
-	Arguments       string         `grove:"arguments"      bson:"arguments"`
-	Result          string         `grove:"result"         bson:"result"`
-	Error           string         `grove:"error"          bson:"error"`
-	StartedAt       *time.Time     `grove:"started_at"     bson:"started_at,omitempty"`
-	CompletedAt     *time.Time     `grove:"completed_at"   bson:"completed_at,omitempty"`
-	Metadata        map[string]any `grove:"metadata"       bson:"metadata,omitempty"`
-	CreatedAt       time.Time      `grove:"created_at"     bson:"created_at"`
-	UpdatedAt       time.Time      `grove:"updated_at"     bson:"updated_at"`
+	ID              string            `grove:"id,pk"          bson:"_id"`
+	StepID          string            `grove:"step_id"        bson:"step_id"`
+	RunID           string            `grove:"run_id"         bson:"run_id"`
+	ToolName        string            `grove:"tool_name"      bson:"tool_name"`
+	Arguments       string            `grove:"arguments"      bson:"arguments"`
+	Result          string            `grove:"result"         bson:"result"`
+	Error           string            `grove:"error"          bson:"error"`
+	StartedAt       *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
+	CompletedAt     *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
+	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"     bson:"updated_at"`
 }
 
 func toolCallToModel(tc *run.ToolCall) *toolCallModel {
+	l0, l1, l2, extra := scopeColumns(tc.Scope)
 	return &toolCallModel{
 		ID:          tc.ID.String(),
 		StepID:      tc.StepID.String(),
@@ -295,6 +317,11 @@ func toolCallToModel(tc *run.ToolCall) *toolCallModel {
 		StartedAt:   tc.StartedAt,
 		CompletedAt: tc.CompletedAt,
 		Metadata:    tc.Metadata,
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  tc.Scope.Canonical(),
 		CreatedAt:   tc.CreatedAt,
 		UpdatedAt:   tc.UpdatedAt,
 	}
@@ -313,11 +340,16 @@ func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("tool call %s: %w", tcID, err)
+	}
 	return &run.ToolCall{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          tcID,
 		StepID:      stepID,
 		RunID:       runID,
+		Scope:       scope,
 		ToolName:    m.ToolName,
 		Arguments:   m.Arguments,
 		Result:      m.Result,

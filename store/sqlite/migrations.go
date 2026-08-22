@@ -418,5 +418,63 @@ ALTER TABLE `+table+` DROP COLUMN scope_canon;
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "add_scope_columns_steps_tool_calls",
+			Version: "20260822000001",
+			Comment: "Add host-defined scope columns to cortex_steps and cortex_tool_calls; pre-existing rows are left unscoped",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Split from the 20260821000001 migration: steps and tool
+				// calls held the same verbatim LLM input/output as
+				// conversation memory but were never brought under scope
+				// guard, so isolation depended on every reader reaching
+				// them through a scoped GetRun first instead of the store
+				// enforcing it directly. Same column shape and index as
+				// every other scoped table.
+				for _, table := range []string{
+					"cortex_steps",
+					"cortex_tool_calls",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+` ADD COLUMN scope_l0    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_l1    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_l2    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_extra TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE `+table+` ADD COLUMN scope_canon TEXT NOT NULL DEFAULT '';
+`); err != nil {
+						return fmt.Errorf("add scope columns to %s: %w", table, err)
+					}
+					if _, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2);
+`); err != nil {
+						return fmt.Errorf("index scope on %s: %w", table, err)
+					}
+				}
+
+				// No backfill, same reasoning as 20260821000001: a
+				// fabricated level for pre-existing rows would make
+				// scope_l0 polysemous per row and silently orphan old
+				// history instead of leaving it correctly invisible to
+				// every scoped query.
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range []string{
+					"cortex_steps",
+					"cortex_tool_calls",
+				} {
+					if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_`+table+`_scope;
+ALTER TABLE `+table+` DROP COLUMN scope_l0;
+ALTER TABLE `+table+` DROP COLUMN scope_l1;
+ALTER TABLE `+table+` DROP COLUMN scope_l2;
+ALTER TABLE `+table+` DROP COLUMN scope_extra;
+ALTER TABLE `+table+` DROP COLUMN scope_canon;
+`); err != nil {
+						return fmt.Errorf("drop scope columns from %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+		},
 	)
 }

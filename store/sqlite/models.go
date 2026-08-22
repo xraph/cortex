@@ -514,11 +514,17 @@ type stepModel struct {
 	StartedAt       *time.Time `grove:"started_at"`
 	CompletedAt     *time.Time `grove:"completed_at"`
 	Metadata        string     `grove:"metadata"`
+	ScopeL0         string     `grove:"scope_l0,notnull"`
+	ScopeL1         string     `grove:"scope_l1,notnull"`
+	ScopeL2         string     `grove:"scope_l2,notnull"`
+	ScopeExtra      string     `grove:"scope_extra,notnull"`
+	ScopeCanon      string     `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time  `grove:"created_at"`
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
 func stepToModel(s *run.Step) *stepModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
 	return &stepModel{
 		ID:          s.ID.String(),
 		RunID:       s.RunID.String(),
@@ -530,6 +536,11 @@ func stepToModel(s *run.Step) *stepModel {
 		StartedAt:   s.StartedAt,
 		CompletedAt: s.CompletedAt,
 		Metadata:    mustJSON(s.Metadata),
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  s.Scope.Canonical(),
 		CreatedAt:   s.CreatedAt,
 		UpdatedAt:   s.UpdatedAt,
 	}
@@ -544,10 +555,15 @@ func stepFromModel(m *stepModel) (*run.Step, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("step %s: %w", stepID, err)
+	}
 	s := &run.Step{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          stepID,
 		RunID:       runID,
+		Scope:       scope,
 		Index:       m.Index,
 		Type:        m.Type,
 		Input:       m.Input,
@@ -578,11 +594,17 @@ type toolCallModel struct {
 	StartedAt       *time.Time `grove:"started_at"`
 	CompletedAt     *time.Time `grove:"completed_at"`
 	Metadata        string     `grove:"metadata"`
+	ScopeL0         string     `grove:"scope_l0,notnull"`
+	ScopeL1         string     `grove:"scope_l1,notnull"`
+	ScopeL2         string     `grove:"scope_l2,notnull"`
+	ScopeExtra      string     `grove:"scope_extra,notnull"`
+	ScopeCanon      string     `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time  `grove:"created_at"`
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
 func toolCallToModel(tc *run.ToolCall) *toolCallModel {
+	l0, l1, l2, extra := scopeColumns(tc.Scope)
 	return &toolCallModel{
 		ID:          tc.ID.String(),
 		StepID:      tc.StepID.String(),
@@ -594,6 +616,11 @@ func toolCallToModel(tc *run.ToolCall) *toolCallModel {
 		StartedAt:   tc.StartedAt,
 		CompletedAt: tc.CompletedAt,
 		Metadata:    mustJSON(tc.Metadata),
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  tc.Scope.Canonical(),
 		CreatedAt:   tc.CreatedAt,
 		UpdatedAt:   tc.UpdatedAt,
 	}
@@ -612,11 +639,16 @@ func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("tool call %s: %w", tcID, err)
+	}
 	tc := &run.ToolCall{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          tcID,
 		StepID:      stepID,
 		RunID:       runID,
+		Scope:       scope,
 		ToolName:    m.ToolName,
 		Arguments:   m.Arguments,
 		Result:      m.Result,

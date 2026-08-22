@@ -12,6 +12,7 @@ type Step struct {
 	cortex.Entity
 	ID          id.StepID      `json:"id"`
 	RunID       id.AgentRunID  `json:"run_id"`
+	Scope       cortex.Scope   `json:"scope"`
 	Index       int            `json:"index"`
 	Type        string         `json:"type,omitempty"`
 	Input       string         `json:"input,omitempty"`

@@ -13,6 +13,7 @@ type ToolCall struct {
 	ID          id.ToolCallID  `json:"id"`
 	StepID      id.StepID      `json:"step_id"`
 	RunID       id.AgentRunID  `json:"run_id"`
+	Scope       cortex.Scope   `json:"scope"`
 	ToolName    string         `json:"tool_name"`
 	Arguments   string         `json:"arguments,omitempty"`
 	Result      string         `json:"result,omitempty"`

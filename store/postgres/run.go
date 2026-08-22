@@ -169,9 +169,14 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 }
 
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	step.CreatedAt = now
 	step.UpdatedAt = now
+	step.Scope = scope
 	m := stepToModel(step)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -181,12 +186,18 @@ func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 }
 
 func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var models []stepModel
-	err := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).
 		Where("run_id = ?", runID.String()).
-		OrderExpr(`"index" ASC`).
-		Scan(ctx)
-	if err != nil {
+		OrderExpr(`"index" ASC`)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list steps: %w", err)
 	}
 	result := make([]*run.Step, len(models))
@@ -201,9 +212,14 @@ func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step
 }
 
 func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	tc.CreatedAt = now
 	tc.UpdatedAt = now
+	tc.Scope = scope
 	m := toolCallToModel(tc)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -213,12 +229,18 @@ func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 }
 
 func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var models []toolCallModel
-	err := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).
 		Where("step_id = ?", stepID.String()).
-		OrderExpr("created_at ASC").
-		Scan(ctx)
-	if err != nil {
+		OrderExpr("created_at ASC")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list tool calls: %w", err)
 	}
 	result := make([]*run.ToolCall, len(models))

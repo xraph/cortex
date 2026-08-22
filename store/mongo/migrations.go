@@ -437,11 +437,13 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 		colSteps: {
 			{Keys: bson.D{{Key: "run_id", Value: 1}, {Key: "index", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colToolCalls: {
 			{Keys: bson.D{{Key: "step_id", Value: 1}}},
 			{Keys: bson.D{{Key: "run_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colMemories: {
 			{Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "kind", Value: 1}}},

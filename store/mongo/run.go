@@ -195,9 +195,14 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 
 // CreateStep persists a new step.
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 	step.CreatedAt = t
 	step.UpdatedAt = t
+	step.Scope = scope
 	m := stepToModel(step)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -208,12 +213,23 @@ func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 	return nil
 }
 
-// ListSteps returns all steps for a run, ordered by index ascending.
+// ListSteps returns all steps for a run, ordered by index ascending, within
+// the caller's scope.
 func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{"run_id": runID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var models []stepModel
 
 	err := s.mdb.NewFind(&models).
-		Filter(bson.M{"run_id": runID.String()}).
+		Filter(filter).
 		Sort(bson.D{{Key: "index", Value: 1}}).
 		Scan(ctx)
 	if err != nil {
@@ -234,9 +250,14 @@ func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step
 
 // CreateToolCall persists a new tool call.
 func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 	tc.CreatedAt = t
 	tc.UpdatedAt = t
+	tc.Scope = scope
 	m := toolCallToModel(tc)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -247,12 +268,23 @@ func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 	return nil
 }
 
-// ListToolCalls returns all tool calls for a step, ordered by creation time.
+// ListToolCalls returns all tool calls for a step, ordered by creation
+// time, within the caller's scope.
 func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{"step_id": stepID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var models []toolCallModel
 
 	err := s.mdb.NewFind(&models).
-		Filter(bson.M{"step_id": stepID.String()}).
+		Filter(filter).
 		Sort(bson.D{{Key: "created_at", Value: 1}}).
 		Scan(ctx)
 	if err != nil {
