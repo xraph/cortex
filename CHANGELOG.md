@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [2.0.0] - Unreleased
+## [1.7.0] - Unreleased
 
 Replaces cortex's tenant/app string pair with `cortex.Scope`, a host-defined
 ordered hierarchy, closing a bug where the ReAct loop passed `""` as the
@@ -12,6 +12,12 @@ tenant on every conversation call and every tenant shared one history
 bucket. This is a breaking release: hosts must migrate to `cortex.Scope`
 before upgrading. See `docs/content/docs/concepts/multi-tenancy.mdx` for the
 full model and a worked middleware example.
+
+This ships inside v1 rather than as v2.0.0. The module path is
+`github.com/xraph/cortex`, with no `/v2` suffix, and migrating it was
+declined. Go rejects a `v2.x` tag on an unsuffixed module path, so the
+breaking changes below ship as a v1 minor release instead. Read the
+breaking-changes list before upgrading.
 
 ### Breaking changes
 
@@ -126,7 +132,7 @@ full model and a worked middleware example.
   the indexed scope levels (only `ScopeExtra`), so the columns would have
   read as coverage that wasn't there. They were removed from the migration
   and the Go model across all three backends before this release shipped.
-- **Mongo hosts: pre-`v2.0.0` `cortex_memories` documents may not decode.**
+- **Mongo hosts: pre-`v1.7.0` `cortex_memories` documents may not decode.**
   The mongo `_id` fix above (under Fixed) closes a bug that predates this
   phase entirely — `memoryModel.ID` was never set on
   `SaveConversation`/`SaveWorking`/`SaveSummary` since that code was first
