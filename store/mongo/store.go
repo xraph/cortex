@@ -69,9 +69,21 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
-// mongoIndexNotFound is the error code Mongo returns for an index name
-// that doesn't exist, which DropOne otherwise reports as a fatal error.
-const mongoIndexNotFound = 27
+// Mongo error codes DropOne can return that this helper treats as
+// "there was nothing to drop" rather than a fatal error.
+const (
+	// mongoIndexNotFound is returned when the named index doesn't exist
+	// on a collection that does exist — a Migrate call that already
+	// dropped it once, or a database that was scoped from the start.
+	mongoIndexNotFound = 27
+	// mongoNamespaceNotFound is returned when the collection itself
+	// doesn't exist yet, which is the normal case on a fresh database:
+	// nothing in this repo pre-creates collections (the mongo migration
+	// group that used to call CreateCollection was deleted as dead code
+	// in an earlier round of this same phase), so cortex_memories is
+	// created implicitly on its first write, not by Migrate.
+	mongoNamespaceNotFound = 26
+)
 
 // dropStaleWorkingMemoryIndex removes the pre-scope working-memory
 // unique index by its Mongo-generated default name
@@ -81,15 +93,22 @@ const mongoIndexNotFound = 27
 // migrationIndexes() replaces it with workingMemoryUniqueIndexName, which
 // also indexes scope_canon, but CreateMany only creates indexes, it
 // never drops a stale one on its own — so this runs first, on every
-// startup, and tolerates the index already being gone (a fresh database,
-// or a Migrate call that already dropped it once).
+// startup, and tolerates both "the index is already gone"
+// (mongoIndexNotFound, e.g. a Migrate call that already dropped it once)
+// and "the collection doesn't exist yet" (mongoNamespaceNotFound, e.g. a
+// genuinely fresh database, where dropIndexes fails before it ever gets
+// to look for the index by name). Running the drop before CreateMany —
+// rather than after, once CreateMany has implicitly brought the
+// collection into existence — keeps the drop-then-create ordering
+// unambiguous rather than depending on collection creation as a side
+// effect of an unrelated call.
 func (s *Store) dropStaleWorkingMemoryIndex(ctx context.Context) error {
 	err := s.mdb.Collection(colMemories).Indexes().DropOne(ctx, staleWorkingMemoryIndexName)
 	if err == nil {
 		return nil
 	}
 	var cmdErr mongo.CommandError
-	if errors.As(err, &cmdErr) && cmdErr.Code == mongoIndexNotFound {
+	if errors.As(err, &cmdErr) && (cmdErr.Code == mongoIndexNotFound || cmdErr.Code == mongoNamespaceNotFound) {
 		return nil
 	}
 	return fmt.Errorf("cortex/mongo: drop stale working-memory index: %w", err)
