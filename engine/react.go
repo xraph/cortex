@@ -505,7 +505,15 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 	r.State = run.StateFailed
 	r.Error = runErr.Error()
 	r.CompletedAt = &completedAt
-	if err := e.store.UpdateRun(ctx, r); err != nil {
+	// A failure can arrive as an error from stream.Next on a ctx that's
+	// already cancelled (as opposed to going through the ctx.Done()
+	// branch above, which was already fixed) — a write using ctx as-is
+	// would then fail before it starts and the run would stay "running"
+	// forever instead of recording StateFailed. WithoutCancel keeps
+	// every context value (including scope) while dropping the
+	// cancellation signal for this one terminal write, exactly like the
+	// cancel branches do.
+	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
 		e.logger.Error("update run on failure", log.String("error", err.Error()))
 	}
 	e.extensions.EmitRunFailed(ctx, agentID, r.ID, runErr)

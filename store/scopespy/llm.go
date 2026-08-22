@@ -99,6 +99,54 @@ func (b *blockingStream) Close() error { return nil }
 
 func (b *blockingStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 0} }
 
+// FailingLLMStream's stream blocks in Next until the test cancels ctx,
+// then returns a plain (non-io.EOF, non-ctx.Err()-derived) error — a
+// stand-in for a real transport failure that happens to race with
+// cancellation. Started is closed the instant Next is entered, so a test
+// can confirm the react loop's ctx.Done() select case was NOT what
+// routed it here (that case can only fire before Next is even called);
+// the failure has to come from the err != nil branch below it instead.
+type FailingLLMStream struct{ Started chan struct{} }
+
+// FailingStreamLLM returns an llm.Client whose stream hangs in Next until
+// ctx is cancelled and then fails with a plain error, for testing that a
+// stream error arriving on an already-cancelled context still reaches
+// failRun and persists.
+func FailingStreamLLM() (llm.Client, *FailingLLMStream) {
+	f := &FailingLLMStream{Started: make(chan struct{})}
+	return f, f
+}
+
+func (f *FailingLLMStream) Complete(_ context.Context, _ *llm.Request) (*llm.Response, error) {
+	return &llm.Response{Content: "unused"}, nil
+}
+
+func (f *FailingLLMStream) CompleteStream(_ context.Context, _ *llm.Request) (llm.Stream, error) {
+	return &failingStream{started: f.Started}, nil
+}
+
+type failingStream struct {
+	started  chan struct{}
+	signaled bool
+}
+
+// Next signals the test that it has been entered (proving the loop's
+// ctx.Done() select case was not what caught the cancellation — that case
+// is only checked before Next is called), then blocks until ctx is
+// cancelled and returns a plain error unrelated to ctx.Err().
+func (f *failingStream) Next(ctx context.Context) (*llm.Chunk, error) {
+	if !f.signaled {
+		f.signaled = true
+		close(f.started)
+	}
+	<-ctx.Done()
+	return nil, errors.New("scopespy: simulated transport failure")
+}
+
+func (f *failingStream) Close() error { return nil }
+
+func (f *failingStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 0} }
+
 // toolCallingLLM answers its first Complete with a call to tool, then a
 // plain "done" on every call after — enough for a single ReAct loop
 // invocation to dispatch a tool and then finish.
