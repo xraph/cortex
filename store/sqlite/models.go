@@ -105,6 +105,7 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 		Name:          m.Name,
 		Description:   m.Description,
 		AppID:         m.AppID,
+		Scope:         cortex.ParseCanonical(m.ScopeCanon),
 		SystemPrompt:  m.SystemPrompt,
 		Model:         m.Model,
 		MaxSteps:      m.MaxSteps,

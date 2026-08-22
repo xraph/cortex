@@ -69,13 +69,43 @@ func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Confi
 	return agentFromModel(&m)
 }
 
-// Update modifies an existing agent configuration.
+// Update modifies an existing agent configuration's mutable fields. The
+// agent store stays app-keyed this phase — no scope filter is added here,
+// Update locates the document exactly as it always has (by _id). Only the
+// write side changes: scope is immutable after creation, so this builds
+// an explicit $set instead of passing the model through. grove's
+// NewUpdate(model).Exec defaults to a full-field $set built from the
+// model struct when no explicit update document is given (confirmed by
+// reading mongodriver's query_update.go), which would otherwise blank
+// scope_l0/l1/l2/extra/canon on every call.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	config.UpdatedAt = now()
 	m := agentToModel(config)
 
-	res, err := s.mdb.NewUpdate(m).
+	set := bson.M{
+		"name":             m.Name,
+		"description":      m.Description,
+		"app_id":           m.AppID,
+		"system_prompt":    m.SystemPrompt,
+		"model":            m.Model,
+		"tools":            m.Tools,
+		"max_steps":        m.MaxSteps,
+		"max_tokens":       m.MaxTokens,
+		"temperature":      m.Temperature,
+		"reasoning_loop":   m.ReasoningLoop,
+		"guardrails":       m.Guardrails,
+		"metadata":         m.Metadata,
+		"enabled":          m.Enabled,
+		"persona_ref":      m.PersonaRef,
+		"inline_skills":    m.InlineSkills,
+		"inline_traits":    m.InlineTraits,
+		"inline_behaviors": m.InlineBehaviors,
+		"updated_at":       m.UpdatedAt,
+	}
+
+	res, err := s.mdb.NewUpdate((*agentModel)(nil)).
 		Filter(bson.M{"_id": m.ID}).
+		SetUpdate(bson.M{"$set": set}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: update agent: %w", err)

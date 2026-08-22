@@ -59,10 +59,44 @@ func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Confi
 	return agentFromModel(m)
 }
 
+// mutableAgentColumns is every cortex_agents column Update is allowed to
+// write. An agent's scope is set once at creation and never rewritten:
+// scope_l0/l1/l2/extra/canon are deliberately absent here. Grove's
+// NewUpdate builds SET from every model field by default, so without this
+// explicit whitelist Update would blank the scope columns on every call
+// (agentToModel always derives them from config.Scope, and nothing
+// populates config.Scope on the Update path).
+var mutableAgentColumns = []string{
+	"name",
+	"description",
+	"app_id",
+	"system_prompt",
+	"model",
+	"tools",
+	"max_steps",
+	"max_tokens",
+	"temperature",
+	"reasoning_loop",
+	"guardrails",
+	"metadata",
+	"enabled",
+	"persona_ref",
+	"inline_skills",
+	"inline_traits",
+	"inline_behaviors",
+	"created_at",
+	"updated_at",
+}
+
+// Update modifies an existing agent config. The agent store stays
+// app-keyed this phase — no scope predicate is added here, Update locates
+// the row exactly as it always has (by primary key). Only the write side
+// changes: scope is immutable after creation, so mutableAgentColumns
+// excludes the five scope columns from what gets written.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	config.UpdatedAt = time.Now().UTC()
 	m := agentToModel(config)
-	res, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.pgdb.NewUpdate(m).Column(mutableAgentColumns...).WherePK().Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: update agent: %w", err)
 	}
