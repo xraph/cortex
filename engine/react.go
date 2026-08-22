@@ -311,7 +311,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 			for {
 				select {
 				case <-ctx.Done():
-					stream.Close()
+					_ = stream.Close()
 					r.State = run.StateCancelled
 					completedAt := time.Now().UTC()
 					r.CompletedAt = &completedAt
@@ -334,7 +334,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					break
 				}
 				if err != nil {
-					stream.Close()
+					_ = stream.Close()
 					e.failRun(ctx, r, ag.ID, err, now)
 					events <- StreamEvent{Type: EventError, Data: map[string]any{
 						"message": err.Error(),
@@ -360,7 +360,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 			if u := stream.Usage(); u != nil {
 				totalTokens += u.TotalTokens
 			}
-			stream.Close()
+			_ = stream.Close()
 
 			// Record the step.
 			stepEnd := time.Now().UTC()
