@@ -62,16 +62,28 @@ func overriddenMethods(t *testing.T) map[string]bool {
 	return overridden
 }
 
-// reachedMethods runs a real RunAgent call — with a tool-calling LLM
-// double so CreateToolCall is exercised too, alongside every method a
-// plain single-step run already reaches — against a fresh Spy, and
-// returns the set of store.Store method names it actually invoked.
+// reachedMethods runs two real scenarios against fresh Spy instances and
+// unions the store.Store method names either one actually invoked:
+//
+//   - RunAgent, with a tool-calling LLM double so CreateToolCall is
+//     exercised too, alongside every method a plain single-step run
+//     already reaches.
+//   - StreamAgent, which runs its store work (LoadConversation,
+//     CreateStep, SaveConversation, UpdateRun, ...) from a goroutine
+//     inside streamReAct — a separate code path from runReAct that could
+//     reach a method the synchronous run above never does, or reach the
+//     same methods through call sites RunAgent alone wouldn't exercise.
+//     Running only RunAgent here would make the equality check in
+//     TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches fail on any
+//     override Spy carries solely for the streaming path.
 func reachedMethods(t *testing.T) map[string]bool {
 	t.Helper()
-	spy := New()
+	reached := make(map[string]bool)
+
 	const toolName = "spy-completeness-tool"
-	e, err := engine.New(
-		engine.WithStore(spy),
+	runSpy := New()
+	runEngine, err := engine.New(
+		engine.WithStore(runSpy),
 		engine.WithLLM(ToolCallingLLM(toolName)),
 		engine.WithTool(
 			llm.Tool{Name: toolName, Description: "test-only tool for completeness coverage"},
@@ -79,20 +91,47 @@ func reachedMethods(t *testing.T) map[string]bool {
 		),
 	)
 	if err != nil {
-		t.Fatalf("engine.New: %v", err)
+		t.Fatalf("engine.New (RunAgent): %v", err)
 	}
-
-	ctx := cortex.WithScope(context.Background(), cortex.Scope{
+	runCtx := cortex.WithScope(context.Background(), cortex.Scope{
 		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
 	})
-	if _, err := e.RunAgent(ctx, "app1", "assistant", "hello", nil); err != nil {
-		t.Fatalf("RunAgent: %v", err)
+	if _, runErr := runEngine.RunAgent(runCtx, "app1", "assistant", "hello", nil); runErr != nil {
+		t.Fatalf("RunAgent: %v", runErr)
 	}
-
-	reached := make(map[string]bool)
-	for _, c := range spy.Calls() {
+	for _, c := range runSpy.Calls() {
 		reached[c.Method] = true
 	}
+
+	streamSpy := New()
+	streamEngine, err := engine.New(
+		engine.WithStore(streamSpy),
+		engine.WithLLM(StaticStreamLLM("done")),
+	)
+	if err != nil {
+		t.Fatalf("engine.New (StreamAgent): %v", err)
+	}
+	streamCtx := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	events := make(chan engine.StreamEvent, 64)
+	if err := streamEngine.StreamAgent(streamCtx, "app1", "assistant", "hello", nil, events); err != nil {
+		t.Fatalf("StreamAgent: %v", err)
+	}
+	var drained int
+	for range events {
+		// Drain to completion: streamReAct closes events once its
+		// goroutine finishes all store work, so this blocks until every
+		// call below has already happened.
+		drained++
+	}
+	if drained == 0 {
+		t.Fatal("no stream events received; StreamAgent may not have run")
+	}
+	for _, c := range streamSpy.Calls() {
+		reached[c.Method] = true
+	}
+
 	return reached
 }
 
@@ -106,13 +145,15 @@ func reachedMethods(t *testing.T) map[string]bool {
 // this test attributed to a completeness gap.
 //
 // overriddenMethods proves what Spy actually overrides; reachedMethods
-// proves what a real RunAgent run actually touches (using a
-// tool-calling LLM double so CreateToolCall, the one call site a plain
-// non-tool run never reaches, is covered too). This test asserts the two
-// sets are equal: if the loop starts calling something Spy doesn't
-// override, or Spy gains an override nothing calls anymore, the mismatch
-// says which side moved instead of a bare nil-pointer panic somewhere
-// else.
+// proves what a real RunAgent run AND a real StreamAgent run actually
+// touch, unioned (a tool-calling LLM double on the RunAgent side covers
+// CreateToolCall, the one call site a plain non-tool run never reaches;
+// StreamAgent covers the goroutine-based streamReAct path, which is a
+// separate code path from the synchronous runReAct one). This test
+// asserts the two sets are equal: if either loop starts calling
+// something Spy doesn't override, or Spy gains an override nothing
+// calls anymore, the mismatch says which side moved instead of a bare
+// nil-pointer panic somewhere else.
 func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 	overridden := overriddenMethods(t)
 	reached := reachedMethods(t)
@@ -123,12 +164,12 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 
 	for name := range reached {
 		if !overridden[name] {
-			t.Errorf("RunAgent called %q, but Spy doesn't override it (overriddenMethods disagrees with reachedMethods — investigate before trusting either)", name)
+			t.Errorf("RunAgent or StreamAgent called %q, but Spy doesn't override it (overriddenMethods disagrees with reachedMethods — investigate before trusting either)", name)
 		}
 	}
 	for name := range overridden {
 		if !reached[name] {
-			t.Errorf("Spy overrides %q, but this test's RunAgent run never called it — either the override is dead, or reachedMethods needs a scenario that reaches it", name)
+			t.Errorf("Spy overrides %q, but neither RunAgent nor StreamAgent called it in this test — either the override is dead, or reachedMethods needs a scenario that reaches it", name)
 		}
 	}
 }
