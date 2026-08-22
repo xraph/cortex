@@ -239,7 +239,7 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 	}
 
 	appID := cortex.AppFromContext(ctx.Context())
-	r, err := a.eng.RunAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides))
+	r, err := a.eng.RunAgent(scopeFromTenant(ctx.Context()), appID, req.Name, req.Input, mapOverrides(req.Overrides))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -273,7 +273,7 @@ func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}
 	appID := cortex.AppFromContext(ctx.Context())
 	events := make(chan engine.StreamEvent, 64)
 
-	if err := a.eng.StreamAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
+	if err := a.eng.StreamAgent(scopeFromTenant(ctx.Context()), appID, req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
 		return nil, mapStoreError(err)
 	}
 

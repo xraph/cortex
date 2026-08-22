@@ -525,6 +525,9 @@ func (e *Engine) RunAgent(ctx context.Context, appID, agentName, input string, o
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
+	if cortex.ScopeFromContext(ctx).IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 
 	ag, err := e.store.GetByName(ctx, appID, agentName)
 	if err != nil {
@@ -548,6 +551,10 @@ func (e *Engine) StreamAgent(ctx context.Context, appID, agentName, input string
 	if e.store == nil {
 		close(events)
 		return cortex.ErrNoStore
+	}
+	if cortex.ScopeFromContext(ctx).IsZero() {
+		close(events)
+		return cortex.ErrNoScope
 	}
 
 	ag, err := e.store.GetByName(ctx, appID, agentName)

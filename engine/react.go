@@ -20,6 +20,8 @@ import (
 
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+
 	cfg := e.effectiveConfig(ag, overrides)
 	systemPrompt := e.BuildSystemPrompt(ctx, ag, overrides)
 
@@ -28,6 +30,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		Entity:     cortex.NewEntity(),
 		ID:         id.NewAgentRunID(),
 		AgentID:    ag.ID,
+		Scope:      scope,
 		State:      run.StateRunning,
 		Input:      input,
 		StartedAt:  &now,
@@ -204,6 +207,8 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 
 // streamReAct executes an agent using the ReAct reasoning loop with streaming.
 func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+	scope := cortex.ScopeFromContext(ctx)
+
 	cfg := e.effectiveConfig(ag, overrides)
 	systemPrompt := e.BuildSystemPrompt(ctx, ag, overrides)
 
@@ -212,6 +217,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		Entity:     cortex.NewEntity(),
 		ID:         id.NewAgentRunID(),
 		AgentID:    ag.ID,
+		Scope:      scope,
 		State:      run.StateRunning,
 		Input:      input,
 		StartedAt:  &now,

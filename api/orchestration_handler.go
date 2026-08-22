@@ -200,7 +200,7 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 		return nil, forge.BadRequest("input is required")
 	}
 	appID := cortex.AppFromContext(ctx.Context())
-	r, err := a.eng.RunOrchestration(ctx.Context(), appID, req.Name, req.Input)
+	r, err := a.eng.RunOrchestration(scopeFromTenant(ctx.Context()), appID, req.Name, req.Input)
 	if r == nil {
 		return nil, mapStoreError(err)
 	}
