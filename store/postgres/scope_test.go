@@ -75,3 +75,30 @@ func TestScopePredicates_ExactPinsUnsetLevels(t *testing.T) {
 		}
 	}
 }
+
+// A zero scope in prefix mode produces no predicates at all, which is an
+// unfiltered query. Callers must reject a zero scope before they get here;
+// this test exists so that contract is visible and cannot drift silently.
+func TestScopePredicates_ZeroScopePrefixMatchesEverything(t *testing.T) {
+	got := scopePredicates(cortex.Scope{}, false)
+	if len(got) != 0 {
+		t.Fatalf("prefix predicates on a zero scope = %v, want none", got)
+	}
+}
+
+func TestScopePredicates_ZeroScopeExactPinsAllLevels(t *testing.T) {
+	got := scopePredicates(cortex.Scope{}, true)
+	want := []scopePredicate{
+		{Column: "scope_l0", Value: ""},
+		{Column: "scope_l1", Value: ""},
+		{Column: "scope_l2", Value: ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("exact predicates on a zero scope = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("predicate %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}

@@ -20,19 +20,22 @@ type scopePredicate struct {
 // an overflow map. Absent levels are the empty string, never NULL, so that
 // they stay comparable and indexable.
 func scopeColumns(s cortex.Scope) (l0, l1, l2 string, extra map[string]string) {
-	cols := make([]string, indexedLevels)
 	extra = make(map[string]string)
 
 	for i, lvl := range s.Levels {
 		encoded := lvl.Key + "=" + lvl.Value
-		if i < indexedLevels {
-			//nolint:gosec // slice bounds check via i < indexedLevels
-			cols[i] = encoded
-			continue
+		switch i {
+		case 0:
+			l0 = encoded
+		case 1:
+			l1 = encoded
+		case 2:
+			l2 = encoded
+		default:
+			extra[lvl.Key] = lvl.Value
 		}
-		extra[lvl.Key] = lvl.Value
 	}
-	return cols[0], cols[1], cols[2], extra
+	return l0, l1, l2, extra
 }
 
 // scopePredicates builds the WHERE clauses for a scope filter.
