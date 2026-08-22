@@ -441,9 +441,12 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("LoadConversation(ctxB, agentID) = %v, want exactly [%q] (scope A's message must not be visible to scope B)", gotB, "from-b")
 		}
 
-		// ClearConversation from the wrong scope must only ever touch
-		// its own scope's rows: scope A's history must still be
-		// readable afterward. This was previously untested entirely —
+		// ClearConversation from B's own scope must only ever touch B's
+		// own rows: scope A's history must survive, and B's own history
+		// must actually be gone — checking only the first half would let
+		// a scope-mismatched no-op on B (i.e. ClearConversation doing
+		// nothing at all) pass silently, since a no-op also leaves A
+		// untouched. This was previously untested entirely —
 		// ClearConversation only appeared in ZeroScopeRejection.
 		if err = s.ClearConversation(ctxB, agentID); err != nil {
 			t.Fatalf("clear conversation (ctxB): %v", err)
@@ -454,6 +457,13 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 		if len(stillThere) != 1 || stillThere[0].Content != "from-a" {
 			t.Fatalf("conversation A after ctxB's ClearConversation = %v, want unchanged [%q] (must not delete another scope's history)", stillThere, "from-a")
+		}
+		bGone, err := s.LoadConversation(ctxB, agentID, 0)
+		if err != nil {
+			t.Fatalf("reload conversation B after ctxB clear: %v", err)
+		}
+		if len(bGone) != 0 {
+			t.Fatalf("conversation B after its own ClearConversation = %v, want empty (clear must actually delete B's own rows, not no-op)", bGone)
 		}
 
 		// Clearing from the correct scope removes that scope's own rows.
