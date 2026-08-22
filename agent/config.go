@@ -16,6 +16,7 @@ type Config struct {
 	Name          string         `json:"name"`
 	Description   string         `json:"description,omitempty"`
 	AppID         string         `json:"app_id"`
+	Scope         cortex.Scope   `json:"scope"`
 	SystemPrompt  string         `json:"system_prompt"`
 	Model         string         `json:"model,omitempty"`
 	Tools         []string       `json:"tools,omitempty"`

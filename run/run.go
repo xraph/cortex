@@ -25,6 +25,7 @@ type Run struct {
 	cortex.Entity
 	ID          id.AgentRunID  `json:"id"`
 	AgentID     id.AgentID     `json:"agent_id"`
+	Scope       cortex.Scope   `json:"scope"`
 	TenantID    string         `json:"tenant_id,omitempty"`
 	State       State          `json:"state"`
 	Input       string         `json:"input"`

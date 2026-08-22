@@ -22,6 +22,7 @@ type Checkpoint struct {
 	ID        id.CheckpointID `json:"id"`
 	RunID     id.AgentRunID   `json:"run_id"`
 	AgentID   id.AgentID      `json:"agent_id"`
+	Scope     cortex.Scope    `json:"scope"`
 	TenantID  string          `json:"tenant_id,omitempty"`
 	Reason    string          `json:"reason"`
 	StepIndex int             `json:"step_index"`
