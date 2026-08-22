@@ -91,18 +91,38 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error
 	return nil
 }
 
+// SaveWorking upserts a working-memory value for a run within the
+// caller's scope. A run ID is a bearer capability, not an isolation
+// boundary — anyone who learns it could otherwise read or clobber another
+// tenant's scratch state — so this is guarded the same as
+// SaveConversation.
 func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error {
-	m := &memoryModel{
-		AgentID: runID.String(),
-		Kind:    "working",
-		Key:     key,
-		Content: mustJSON(value),
-		// scope_extra is NOT NULL; working memory isn't scope-filtered, but
-		// the map still has to be non-nil or grove writes SQL NULL into it.
-		ScopeExtra: map[string]string{},
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
 	}
+	l0, l1, l2, extra := scopeColumns(scope)
+
+	m := &memoryModel{
+		AgentID:    runID.String(),
+		Kind:       "working",
+		Key:        key,
+		Content:    mustJSON(value),
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: scope.Canonical(),
+	}
+	// The conflict target has to restate the partial index's WHERE
+	// clause verbatim (idx_cortex_memories_working is WHERE kind =
+	// 'working') — postgres only accepts a bare "(agent_id, kind, key)"
+	// target for a full unique index, and rejects it here at plan time
+	// for a partial one ("there is no unique or exclusion constraint
+	// matching the ON CONFLICT specification"), which made every upsert
+	// on an existing key fail outright.
 	_, err := s.pgdb.NewInsert(m).
-		OnConflict("(agent_id, kind, key) DO UPDATE").
+		OnConflict("(agent_id, kind, key) WHERE kind = 'working' DO UPDATE").
 		Set("content = EXCLUDED.content").
 		Exec(ctx)
 	if err != nil {
@@ -112,13 +132,19 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 }
 
 func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(memoryModel)
-	err := s.pgdb.NewSelect(m).
+	q := s.pgdb.NewSelect(m).
 		Where("agent_id = ?", runID.String()).
 		Where("kind = ?", "working").
-		Where(`"key" = ?`, key).
-		Scan(ctx)
-	if err != nil {
+		Where(`"key" = ?`, key)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: load working memory: %w", err)
 	}
 	var v any
@@ -129,11 +155,17 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 }
 
 func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
-	_, err := s.pgdb.NewDelete((*memoryModel)(nil)).
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	q := s.pgdb.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", runID.String()).
-		Where("kind = ?", "working").
-		Exec(ctx)
-	if err != nil {
+		Where("kind = ?", "working")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if _, err := q.Exec(ctx); err != nil {
 		return fmt.Errorf("cortex: clear working memory: %w", err)
 	}
 	return nil

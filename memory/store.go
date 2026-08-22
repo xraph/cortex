@@ -8,9 +8,12 @@ import (
 
 // Store defines persistence for agent memory (conversation, working, summaries).
 //
-// Conversation and summary methods carry no tenant or scope parameter: the
-// scope comes from the context via cortex.ScopeFromContext, so there is
-// nothing left for a caller to forget to pass.
+// None of these methods carry a tenant or scope parameter: the scope
+// comes from the context via cortex.ScopeFromContext, so there is nothing
+// left for a caller to forget to pass. This includes the working-memory
+// methods, which are keyed by run ID — a bearer capability, not an
+// isolation boundary on its own — so they need the same guard as
+// everything else here.
 type Store interface {
 	SaveConversation(ctx context.Context, agentID id.AgentID, messages []Message) error
 	LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]Message, error)

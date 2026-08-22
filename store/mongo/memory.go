@@ -164,22 +164,41 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error
 	return nil
 }
 
-// SaveWorking stores a working memory key-value pair, upserting if the key already exists.
+// SaveWorking stores a working memory key-value pair, upserting if the key
+// already exists, within the caller's scope. A run ID is a bearer
+// capability, not an isolation boundary — anyone who learns it could
+// otherwise read or clobber another tenant's scratch state — so this is
+// guarded the same as SaveConversation.
 func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	l0, l1, l2, extra := scopeColumns(scope)
 	t := now()
 
+	filter := bson.M{
+		"agent_id": runID.String(),
+		"kind":     "working",
+		"key":      key,
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	_, err := s.mdb.NewUpdate((*memoryModel)(nil)).
-		Filter(bson.M{
-			"agent_id": runID.String(),
-			"kind":     "working",
-			"key":      key,
-		}).
+		Filter(filter).
 		SetUpdate(bson.M{"$set": bson.M{
-			"agent_id":   runID.String(),
-			"kind":       "working",
-			"key":        key,
-			"content":    mustJSON(value),
-			"created_at": t,
+			"agent_id":    runID.String(),
+			"kind":        "working",
+			"key":         key,
+			"content":     mustJSON(value),
+			"scope_l0":    l0,
+			"scope_l1":    l1,
+			"scope_l2":    l2,
+			"scope_extra": extra,
+			"scope_canon": scope.Canonical(),
+			"created_at":  t,
 		}}).
 		Upsert().
 		Exec(ctx)
@@ -190,16 +209,27 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 	return nil
 }
 
-// LoadWorking returns a working memory value by key.
+// LoadWorking returns a working memory value by key within the caller's
+// scope.
 func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{
+		"agent_id": runID.String(),
+		"kind":     "working",
+		"key":      key,
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var m memoryModel
 
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{
-			"agent_id": runID.String(),
-			"kind":     "working",
-			"key":      key,
-		}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cortex/mongo: load working memory: %w", err)
@@ -213,14 +243,25 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 	return v, nil
 }
 
-// ClearWorking removes all working memory for a run.
+// ClearWorking removes all working memory for a run within the caller's
+// scope.
 func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+
+	filter := bson.M{
+		"agent_id": runID.String(),
+		"kind":     "working",
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	_, err := s.mdb.NewDelete((*memoryModel)(nil)).
 		Many().
-		Filter(bson.M{
-			"agent_id": runID.String(),
-			"kind":     "working",
-		}).
+		Filter(filter).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: clear working memory: %w", err)
