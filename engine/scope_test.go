@@ -16,7 +16,7 @@ import (
 // for now. Task 9 only removes cortex's own tenant vocabulary in favour
 // of the host-defined Scope.
 
-func TestRun_RejectsZeroScope(t *testing.T) {
+func TestRunAgent_RejectsZeroScope(t *testing.T) {
 	spy := scopespy.New()
 	e, err := engine.New(engine.WithStore(spy))
 	if err != nil {
@@ -32,12 +32,12 @@ func TestRun_RejectsZeroScope(t *testing.T) {
 	}
 }
 
-// TestRun_EveryStoreCallCarriesScope is the regression guard for the
+// TestRunAgent_EveryStoreCallCarriesScope is the regression guard for the
 // cross-tenant conversation bleed. The react loop used to pass "" as the
 // tenant on all four conversation calls, so every tenant shared one
 // history bucket. The spy fails the test if any recorded call arrives
 // with a zero scope, which is what a future forgotten call site looks like.
-func TestRun_EveryStoreCallCarriesScope(t *testing.T) {
+func TestRunAgent_EveryStoreCallCarriesScope(t *testing.T) {
 	spy := scopespy.New()
 	e, err := engine.New(engine.WithStore(spy), engine.WithLLM(scopespy.StaticLLM("done")))
 	if err != nil {
@@ -68,9 +68,9 @@ func TestRun_EveryStoreCallCarriesScope(t *testing.T) {
 }
 
 // TestStreamAgent_EveryStoreCallCarriesScope is the streaming sibling of
-// TestRun_EveryStoreCallCarriesScope. streamReAct does its store work
+// TestRunAgent_EveryStoreCallCarriesScope. streamReAct does its store work
 // (LoadConversation, CreateStep, SaveConversation, UpdateRun) on a
-// goroutine that TestRun_EveryStoreCallCarriesScope never exercises — a
+// goroutine that TestRunAgent_EveryStoreCallCarriesScope never exercises — a
 // scope dropped only on that goroutine would pass the synchronous test
 // and reach production unnoticed. This test drains the events channel to
 // completion before touching the spy: reading spy.Calls() while the
