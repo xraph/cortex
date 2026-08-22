@@ -97,8 +97,39 @@ func ParseCanonical(canon string) Scope {
 	return Scope{Levels: levels}
 }
 
-// WithScope attaches a scope to ctx.
+// maxScopeLevels is how many levels a Scope may carry. It mirrors
+// indexedLevels in store/{postgres,sqlite,mongo}: levels beyond this land
+// in the scope_extra overflow and are never matched as a predicate, even
+// in exact mode, so a deeper scope would have its trailing levels
+// silently accepted and then ignored by every store.
+const maxScopeLevels = 3
+
+// WithScope attaches a scope to ctx. Two shapes are refused rather than
+// stored:
+//
+//   - A Level with an empty Key or empty Value. Either flattens to a
+//     "key=" predicate that matches every row sharing that partial key —
+//     a shared bucket, the exact cross-tenant hazard this phase exists to
+//     close.
+//   - A scope deeper than maxScopeLevels. Levels past the indexed columns
+//     are written to scope_extra but never read back as a predicate, so a
+//     value the caller supplied would be accepted and then silently
+//     ignored on every query.
+//
+// Both cases return ctx unchanged rather than panicking or erroring:
+// ScopeFromContext then yields the zero scope, and every store guard
+// already refuses that with ErrNoScope. This mirrors the deleted
+// scopeFromTenant bridge, which returned ctx unchanged for an absent
+// tenant instead of manufacturing a scope for it.
 func WithScope(ctx context.Context, s Scope) context.Context {
+	if len(s.Levels) > maxScopeLevels {
+		return ctx
+	}
+	for _, l := range s.Levels {
+		if l.Key == "" || l.Value == "" {
+			return ctx
+		}
+	}
 	return context.WithValue(ctx, scopeKey, s)
 }
 

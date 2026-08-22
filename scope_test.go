@@ -76,3 +76,66 @@ func TestScopeFromContext_AbsentIsZero(t *testing.T) {
 		t.Error("bare context should yield a zero scope")
 	}
 }
+
+// TestWithScope_RejectsEmptyKeyOrValue pins the phase's core hazard at the
+// type level: a Level with an empty Key or Value would otherwise flatten
+// to a "key=" predicate that matches every row sharing that partial key,
+// i.e. a shared bucket. WithScope must refuse to attach it rather than
+// storing a scope that looks populated and isn't discriminating.
+func TestWithScope_RejectsEmptyKeyOrValue(t *testing.T) {
+	tests := []struct {
+		name   string
+		levels []cortex.Level
+	}{
+		{"empty key", []cortex.Level{{Key: "", Value: "ws_x"}}},
+		{"empty value", []cortex.Level{{Key: "workspace", Value: ""}}},
+		{
+			"empty value in a later level",
+			[]cortex.Level{
+				{Key: "workspace", Value: "ws_x"},
+				{Key: "project", Value: ""},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: tt.levels})
+			if got := cortex.ScopeFromContext(ctx); !got.IsZero() {
+				t.Errorf("ScopeFromContext after invalid WithScope = %+v, want zero scope", got)
+			}
+		})
+	}
+}
+
+// TestWithScope_RejectsTooManyLevels pins the second hole: levels past
+// the indexed columns are written to scope_extra but never read back as a
+// predicate, even in exact mode, so a caller-supplied value would be
+// silently accepted and then ignored by every query.
+func TestWithScope_RejectsTooManyLevels(t *testing.T) {
+	tooDeep := cortex.Scope{Levels: []cortex.Level{
+		{Key: "workspace", Value: "ws_x"},
+		{Key: "project", Value: "proj_y"},
+		{Key: "environment", Value: "prod"},
+		{Key: "region", Value: "us_east"},
+	}}
+	ctx := cortex.WithScope(context.Background(), tooDeep)
+	if got := cortex.ScopeFromContext(ctx); !got.IsZero() {
+		t.Errorf("ScopeFromContext after too-deep WithScope = %+v, want zero scope", got)
+	}
+}
+
+// TestWithScope_AcceptsExactlyMaxLevels proves the boundary itself isn't
+// rejected: three levels all land in indexed columns, so this must still
+// attach normally.
+func TestWithScope_AcceptsExactlyMaxLevels(t *testing.T) {
+	want := cortex.Scope{Levels: []cortex.Level{
+		{Key: "workspace", Value: "ws_x"},
+		{Key: "project", Value: "proj_y"},
+		{Key: "environment", Value: "prod"},
+	}}
+	ctx := cortex.WithScope(context.Background(), want)
+	got := cortex.ScopeFromContext(ctx)
+	if got.Canonical() != want.Canonical() {
+		t.Errorf("ScopeFromContext = %q, want %q", got.Canonical(), want.Canonical())
+	}
+}
