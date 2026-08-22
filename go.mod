@@ -5,6 +5,9 @@ go 1.25.7
 require (
 	github.com/a-h/templ v0.3.1001
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/testcontainers/testcontainers-go v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/mongodb v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/xraph/fabriq v0.0.6
 	github.com/xraph/forge v1.8.0
 	github.com/xraph/forgeui v1.4.1
@@ -148,9 +151,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/testcontainers/testcontainers-go v0.43.0 // indirect
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.43.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 // indirect
 	github.com/testcontainers/testcontainers-go/modules/redis v0.42.0 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
