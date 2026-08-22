@@ -102,6 +102,30 @@ Every store implementation enforces scope on every query:
 - **Cross-scope access** — returns `ErrNotFound` even if the entity exists under a different app or scope
 - **Scope is immutable after creation** — a run's or checkpoint's stored scope is set once and never rewritten by a later update
 
+## Upgrading to v2: rows from before this release carry no scope
+
+The migration that adds `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` does **not**
+backfill them for existing rows. An earlier draft of the migration tried to
+synthesize a scope from the old `tenant_id`/`app_id` columns (e.g.
+`scope_l0 = 'tenant=' || tenant_id`), but that invents a key vocabulary
+("tenant=", "app=") distinct from whatever keys your own scope actually uses (e.g.
+"workspace="), and every pre-v2 conversation row had `tenant_id = ''` — backfilling
+those into a literal `tenant=` bucket would have silently orphaned all v1 history
+into a bucket nothing could ever reach again.
+
+So instead: **rows created before v2 are left with empty scope columns.** Since every
+scoped query requires a non-zero `cortex.Scope` on the context and filters by it, a
+row with `scope_l0 = ''` simply never matches — it is invisible to every scoped read,
+not deleted, and not silently misattributed to whichever scope happens to query first.
+
+If that old data matters to you, you are responsible for re-scoping it yourself before
+your hosts start relying on it being reachable — for example, a one-off script that
+reads each pre-v2 row's old `tenant_id`/`app_id` value, maps it to your own scope
+keys, and issues an `UPDATE` (or the equivalent through your store) to populate
+`scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` accordingly. `tenant_id` and `app_id`
+themselves are not dropped this release — they stay around as read-only columns
+specifically so this kind of backfill is still possible after upgrading.
+
 ## API integration
 
 The REST API does **not** manufacture a scope on the caller's behalf. Cortex ships no
