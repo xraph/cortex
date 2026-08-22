@@ -704,6 +704,7 @@ func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
 		ID:        cpID,
 		RunID:     runID,
 		AgentID:   agentID,
+		Scope:     cortex.ParseCanonical(m.ScopeCanon),
 		Reason:    m.Reason,
 		StepIndex: m.StepIndex,
 		State:     m.State,

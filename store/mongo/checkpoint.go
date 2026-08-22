@@ -13,9 +13,14 @@ import (
 
 // CreateCheckpoint persists a new checkpoint.
 func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 	cp.CreatedAt = t
 	cp.UpdatedAt = t
+	cp.Scope = scope
 	m := checkpointToModel(cp)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -26,12 +31,22 @@ func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint)
 	return nil
 }
 
-// GetCheckpoint returns a checkpoint by ID.
+// GetCheckpoint returns a checkpoint by ID within the caller's scope.
 func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{"_id": cpID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var m checkpointModel
 
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"_id": cpID.String()}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -44,12 +59,22 @@ func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*check
 	return checkpointFromModel(&m)
 }
 
-// Resolve resolves a pending checkpoint with a decision.
+// Resolve resolves a pending checkpoint with a decision, within the
+// caller's scope.
 func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 
+	filter := bson.M{"_id": cpID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	res, err := s.mdb.NewUpdate((*checkpointModel)(nil)).
-		Filter(bson.M{"_id": cpID.String()}).
+		Filter(filter).
 		Set("state", "resolved").
 		Set("decision", decision).
 		Set("updated_at", t).
@@ -65,11 +90,19 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 	return nil
 }
 
-// ListPending returns pending checkpoints, optionally filtered.
+// ListPending returns pending checkpoints within the caller's scope,
+// optionally filtered.
 func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var models []checkpointModel
 
 	f := bson.M{"state": "pending"}
+	for k, v := range scopeFilter(scope, false) {
+		f[k] = v
+	}
 	if filter != nil {
 		if filter.RunID != "" {
 			f["run_id"] = filter.RunID
@@ -106,9 +139,17 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 	return result, nil
 }
 
-// CountPending returns the total number of pending checkpoints matching the filter.
+// CountPending returns the total number of pending checkpoints matching
+// the filter, within the caller's scope.
 func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
 	f := bson.M{"state": "pending"}
+	for k, v := range scopeFilter(scope, false) {
+		f[k] = v
+	}
 	if filter != nil {
 		if filter.RunID != "" {
 			f["run_id"] = filter.RunID

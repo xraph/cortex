@@ -14,9 +14,14 @@ import (
 )
 
 func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	cp.CreatedAt = now
 	cp.UpdatedAt = now
+	cp.Scope = scope
 	m := checkpointToModel(cp)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -26,8 +31,16 @@ func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint)
 }
 
 func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(checkpointModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", cpID.String()).Scan(ctx)
+	q := s.pgdb.NewSelect(m).Where("id = ?", cpID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	err := q.Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrCheckpointNotFound
@@ -38,16 +51,23 @@ func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*check
 }
 
 func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	decisionJSON, err := json.Marshal(decision)
 	if err != nil {
 		return fmt.Errorf("cortex: marshal decision: %w", err)
 	}
-	res, err := s.pgdb.NewUpdate((*checkpointModel)(nil)).
+	q := s.pgdb.NewUpdate((*checkpointModel)(nil)).
 		Set("state = ?", "resolved").
 		Set("decision = ?", string(decisionJSON)).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", cpID.String()).
-		Exec(ctx)
+		Where("id = ?", cpID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: resolve checkpoint: %w", err)
 	}
@@ -62,10 +82,17 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 }
 
 func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var models []checkpointModel
 	q := s.pgdb.NewSelect(&models).
 		Where("state = ?", "pending").
 		OrderExpr("created_at ASC")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
 	if filter != nil {
 		if filter.RunID != "" {
 			q = q.Where("run_id = ?", filter.RunID)
@@ -92,8 +119,15 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 }
 
 func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
 	q := s.pgdb.NewSelect((*checkpointModel)(nil)).
 		Where("state = ?", "pending")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
 	if filter != nil {
 		if filter.RunID != "" {
 			q = q.Where("run_id = ?", filter.RunID)
