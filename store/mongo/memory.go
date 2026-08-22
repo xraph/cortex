@@ -77,6 +77,15 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 			return fmt.Errorf("cortex/mongo: marshal message: %w", err)
 		}
 		models[i] = memoryModel{
+			// ID has to be assigned explicitly: memoryModel's bson tag is
+			// "_id,omitempty", and leaving the Go zero value (an empty
+			// string) omits the field entirely rather than writing it as
+			// "". Mongo then generates its own ObjectID for _id, which
+			// the read path can't decode back into this string-typed
+			// field ("decoding an object ID into a string is not
+			// supported by default") — every LoadConversation call after
+			// a SaveConversation failed outright until this was set.
+			ID:         id.NewMemoryID().String(),
 			AgentID:    agentID.String(),
 			Kind:       "conversation",
 			Content:    string(content),
@@ -196,18 +205,29 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 
 	_, err := s.mdb.NewUpdate((*memoryModel)(nil)).
 		Filter(filter).
-		SetUpdate(bson.M{"$set": bson.M{
-			"agent_id":    runID.String(),
-			"kind":        "working",
-			"key":         key,
-			"content":     mustJSON(value),
-			"scope_l0":    l0,
-			"scope_l1":    l1,
-			"scope_l2":    l2,
-			"scope_extra": extra,
-			"scope_canon": scope.Canonical(),
-			"created_at":  t,
-		}}).
+		SetUpdate(bson.M{
+			"$set": bson.M{
+				"agent_id":    runID.String(),
+				"kind":        "working",
+				"key":         key,
+				"content":     mustJSON(value),
+				"scope_l0":    l0,
+				"scope_l1":    l1,
+				"scope_l2":    l2,
+				"scope_extra": extra,
+				"scope_canon": scope.Canonical(),
+				"created_at":  t,
+			},
+			// _id belongs in $setOnInsert, not $set: Mongo rejects any
+			// attempt to modify _id on an existing document ("Performing
+			// an update on the path '_id' would modify the immutable
+			// field '_id'"), which every re-save of an existing key
+			// would trigger if this were in $set instead. On insert,
+			// leaving _id unset at all falls back to Mongo's own
+			// ObjectID generation, which LoadWorking then can't decode
+			// back into memoryModel's string-typed ID field.
+			"$setOnInsert": bson.M{"_id": id.NewMemoryID().String()},
+		}).
 		Upsert().
 		Exec(ctx)
 	if err != nil {
@@ -287,6 +307,8 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary str
 	l0, l1, l2, extra := scopeColumns(scope)
 
 	m := &memoryModel{
+		// See SaveConversation's comment on why ID must be set explicitly.
+		ID:         id.NewMemoryID().String(),
 		AgentID:    agentID.String(),
 		Kind:       "summary",
 		Content:    summary,

@@ -25,10 +25,17 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 		if err != nil {
 			return fmt.Errorf("cortex: marshal message: %w", err)
 		}
+		// Metadata is jsonb; the Go zero value for the field is "", which
+		// postgres rejects as invalid JSON syntax rather than falling
+		// back to the column's DEFAULT '{}' the way an omitted column
+		// would. Every other model in this package runs its Metadata
+		// field through mustJSON for the same reason — this one just got
+		// missed when memory rows picked up the same jsonb typing.
 		m := &memoryModel{
 			AgentID:    agentID.String(),
 			Kind:       "conversation",
 			Content:    string(content),
+			Metadata:   mustJSON(nil),
 			ScopeL0:    l0,
 			ScopeL1:    l1,
 			ScopeL2:    l2,
@@ -104,10 +111,13 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 	l0, l1, l2, extra := scopeColumns(scope)
 
 	m := &memoryModel{
-		AgentID:    runID.String(),
-		Kind:       "working",
-		Key:        key,
-		Content:    mustJSON(value),
+		AgentID: runID.String(),
+		Kind:    "working",
+		Key:     key,
+		Content: mustJSON(value),
+		// Metadata is jsonb; see SaveConversation's comment on why this
+		// can't be left at the Go zero value.
+		Metadata:   mustJSON(nil),
 		ScopeL0:    l0,
 		ScopeL1:    l1,
 		ScopeL2:    l2,
@@ -190,9 +200,12 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary str
 	l0, l1, l2, extra := scopeColumns(scope)
 
 	m := &memoryModel{
-		AgentID:    agentID.String(),
-		Kind:       "summary",
-		Content:    summary,
+		AgentID: agentID.String(),
+		Kind:    "summary",
+		Content: summary,
+		// Metadata is jsonb; see SaveConversation's comment on why this
+		// can't be left at the Go zero value.
+		Metadata:   mustJSON(nil),
 		ScopeL0:    l0,
 		ScopeL1:    l1,
 		ScopeL2:    l2,
