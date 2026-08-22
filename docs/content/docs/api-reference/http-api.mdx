@@ -143,7 +143,12 @@ Get a specific run by ID.
 {
   "id": "arun_01h455...",
   "agent_id": "agt_01h455...",
-  "tenant_id": "acme-corp",
+  "scope": {
+    "levels": [
+      { "key": "workspace", "value": "acme-corp" },
+      { "key": "project", "value": "support-bot" }
+    ]
+  },
   "state": "completed",
   "input": "I want to return order #12345",
   "output": "I'd be happy to help...",
@@ -156,6 +161,10 @@ Get a specific run by ID.
   "metadata": {}
 }
 ```
+
+`tenant_id` no longer serializes — as of v2.0.0 a run carries `scope`, a
+host-defined ordered hierarchy, instead of a single tenant string. See
+[Multi-tenancy](/docs/concepts/multi-tenancy).
 
 ---
 

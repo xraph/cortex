@@ -7,8 +7,25 @@ Cortex has no built-in notion of tenant, workspace, or organization. Instead, ev
 scope-guarded entity (runs, conversations, checkpoints, and — via `AppID` — agents,
 skills, traits, behaviors, and personas) is scoped by a `cortex.Scope` that **the host
 declares and attaches to the context**. Cortex never interprets what a scope level
-means; it only matches on the `Key` you give it. This is enforced at the store layer —
-cross-scope access is structurally impossible.
+means; it only matches on the `Key` you give it. This is enforced at the store layer
+for the entities listed above — cross-scope access to a run, conversation, or
+checkpoint is structurally impossible, not merely filtered out by a parameter a caller
+could omit.
+
+That guarantee does **not** extend to everything a run touches. Steps, tool calls, and
+working memory carry no scope of their own:
+
+- **Steps and tool calls** are read through `ListSteps`/`ListToolCalls`, keyed by
+  `run_id` with no scope predicate. They're safe in practice because every reader
+  path goes through a scoped `GetRun` first — you can't reach a step or tool call
+  without already having resolved its parent run inside your own scope — but a direct
+  `run_id` (guessed or leaked) issued straight against `ListSteps`/`ListToolCalls`
+  without that upstream check is not rejected by the store itself.
+- **Working memory** (`SaveWorking`/`LoadWorking`/`ClearWorking`) is unscoped
+  entirely; it is not covered by this document's enforcement guarantees.
+
+Both are pre-existing gaps, not something this release introduced, and are called out
+here rather than left implicit.
 
 ## Scope and Level
 
@@ -87,12 +104,78 @@ Every store implementation enforces scope on every query:
 
 ## API integration
 
-The REST API does **not** manufacture a scope on the caller's behalf. A host using the
-Forge extension must install its own middleware that calls `cortex.WithScope` (and
-`cortex.WithApp`) on the request context before it reaches Cortex's handlers. If that
-middleware is missing, every scope-guarded endpoint returns `412 Precondition Failed`
-rather than a raw 500, but requests still fail — installing the middleware is not
-optional in a real deployment.
+The REST API does **not** manufacture a scope on the caller's behalf. Cortex ships no
+scope middleware of its own for `api.API` — every guarded endpoint returns
+`412 Precondition Failed` (not a raw 500) until a host installs one. Installing it is
+not optional in a real deployment; without it, none of `api.API`'s run, conversation,
+or checkpoint endpoints work.
+
+`forge.Router.Use` takes an ordinary `func(http.Handler) http.Handler`, so a scope
+middleware is standard Go HTTP middleware — nothing Cortex-specific about its shape,
+just what it does with the request. Register it on the router **before** calling
+`api.New(...).RegisterRoutes(router)`, so it runs ahead of every Cortex handler:
+
+```go
+package main
+
+import (
+    "net/http"
+
+    "github.com/xraph/forge"
+
+    "github.com/xraph/cortex"
+    "github.com/xraph/cortex/api"
+    "github.com/xraph/cortex/engine"
+)
+
+// scopeMiddleware reads workspace/project off request headers set by an
+// upstream auth gateway and attaches them as the request's scope. A real
+// deployment would more likely derive these from a validated JWT or
+// session, not raw headers — the shape of WithScope/WithApp is what
+// matters here, not the header lookup.
+func scopeMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        ctx := r.Context()
+
+        workspace := r.Header.Get("X-Workspace-ID")
+        if workspace == "" {
+            http.Error(w, "missing X-Workspace-ID", http.StatusPreconditionFailed)
+            return
+        }
+        levels := []cortex.Level{{Key: "workspace", Value: workspace}}
+        if project := r.Header.Get("X-Project-ID"); project != "" {
+            levels = append(levels, cortex.Level{Key: "project", Value: project})
+        }
+        ctx = cortex.WithScope(ctx, cortex.Scope{Levels: levels})
+        ctx = cortex.WithApp(ctx, "myapp")
+
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+func main() {
+    eng, err := engine.New( /* ... */ )
+    if err != nil {
+        panic(err)
+    }
+
+    router := forge.NewRouter()
+    router.Use(scopeMiddleware)
+
+    a := api.New(eng, router)
+    if err := a.RegisterRoutes(router); err != nil {
+        panic(err)
+    }
+
+    http.ListenAndServe(":8080", router.Handler())
+}
+```
+
+A request missing `X-Workspace-ID` never reaches a Cortex handler at all in this
+example — it's rejected by the middleware itself. A request that clears the
+middleware but still ends up with a zero scope (a bug in the middleware, not a
+missing header) is instead caught one layer in, at the store guard, and surfaces as
+the `412` described above.
 
 ## Example: two tenants under one host-defined hierarchy
 

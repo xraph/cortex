@@ -37,16 +37,25 @@ if err := s.Migrate(ctx); err != nil {
 
 | Table | Entity | Key columns |
 |-------|--------|-------------|
-| `cortex_agents` | Agent configs | `id`, `app_id`, `name`, `system_prompt`, `persona_ref` |
+| `cortex_agents` | Agent configs | `id`, `app_id`, `name`, `system_prompt`, `persona_ref`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_skills` | Skills | `id`, `app_id`, `name`, `tools` (JSONB), `knowledge` (JSONB) |
 | `cortex_traits` | Traits | `id`, `app_id`, `name`, `dimensions` (JSONB), `influences` (JSONB) |
 | `cortex_behaviors` | Behaviors | `id`, `app_id`, `name`, `triggers` (JSONB), `actions` (JSONB) |
 | `cortex_personas` | Personas | `id`, `app_id`, `name`, `identity`, embedded styles (JSONB) |
-| `cortex_runs` | Runs | `id`, `agent_id`, `tenant_id`, `state`, `input`, `output` |
+| `cortex_runs` | Runs | `id`, `agent_id`, `state`, `input`, `output`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_steps` | Steps | `id`, `run_id`, `index`, `type` |
 | `cortex_tool_calls` | Tool calls | `id`, `step_id`, `run_id`, `tool_name` |
-| `cortex_memories` | Memories | `id`, `agent_id`, `tenant_id`, `kind`, `key` |
-| `cortex_checkpoints` | Checkpoints | `id`, `run_id`, `agent_id`, `state`, `decision` (JSONB) |
+| `cortex_memories` | Memories | `id`, `agent_id`, `kind`, `key`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+| `cortex_checkpoints` | Checkpoints | `id`, `run_id`, `agent_id`, `state`, `decision` (JSONB), `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+
+`cortex_runs`, `cortex_memories` and `cortex_checkpoints` also still carry a
+`tenant_id` column, and `cortex_agents` still carries `app_id` — both
+survive as read-only holdovers from before `Scope` (see
+[Multi-tenancy](/docs/concepts/multi-tenancy) for why they aren't dropped
+yet). Nothing reads or writes `tenant_id` anymore; `scope_l0`/`scope_l1`/
+`scope_l2` plus the `scope_canon` string are what every scoped query
+actually filters on. `cortex_orchestration_runs` does not get scope
+columns — orchestration is out of scope for the current phase.
 
 ## JSONB columns
 
