@@ -85,6 +85,22 @@ full model and a worked middleware example.
   cancelled, so the write failed before it started and the run stayed
   `running` forever instead of recording `Cancelled`. Both now use
   `context.WithoutCancel(ctx)` for that one terminal write.
+- **Postgres: every `memory.Store` write failed outright.** `SaveConversation`,
+  `SaveWorking` and `SaveSummary` never populated `memoryModel.Metadata`,
+  which is a `jsonb` column; the Go zero value (`""`) is invalid JSON, so
+  postgres rejected every insert with `invalid input syntax for type json`
+  instead of falling back to the column's default. This backend had no
+  executable scope tests before this release, which is why it went
+  undetected. Fixed by running `Metadata` through the same `mustJSON`
+  helper every other model in the package already uses.
+- **Mongo: every `memory.Store` read after a write failed to decode.**
+  The same three methods never set `memoryModel.ID`, so Mongo assigned its
+  own ObjectID to `_id`, which the string-typed `ID` field can't decode
+  (`decoding an object ID into a string is not supported by default`).
+  Fixed by generating an `id.NewMemoryID()` explicitly, matching every
+  other model in the package; `SaveWorking`'s upsert assigns it via
+  `$setOnInsert` so re-saving an existing key never tries to touch the
+  immutable `_id` field.
 
 ### Migration notes
 
@@ -110,3 +126,17 @@ full model and a worked middleware example.
   the indexed scope levels (only `ScopeExtra`), so the columns would have
   read as coverage that wasn't there. They were removed from the migration
   and the Go model across all three backends before this release shipped.
+- **Mongo hosts: pre-`v2.0.0` `cortex_memories` documents may not decode.**
+  The mongo `_id` fix above (under Fixed) closes a bug that predates this
+  phase entirely — `memoryModel.ID` was never set on
+  `SaveConversation`/`SaveWorking`/`SaveSummary` since that code was first
+  written, so any document those methods wrote before this release has a
+  Mongo-generated ObjectID `_id` that the current, correctly-typed decoder
+  still rejects. In practice this should only affect development
+  databases: those same pre-existing rows also predate scope and carry
+  empty `scope_l0/l1/l2`, so a correctly-scoped post-upgrade read will
+  never select them anyway. It only bites a deployment still running old,
+  unscoped code directly against a collection that already has these
+  rows. If that describes your deployment, plan to drop or reconstruct
+  `cortex_memories` rather than assume old documents will read cleanly
+  after upgrading.

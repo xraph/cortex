@@ -336,7 +336,18 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
-	t.Run("Step", func(t *testing.T) {
+	// Step_ScopedListSmoke and ToolCall_ScopedListSmoke are deliberately
+	// NOT named "Step"/"ToolCall": ListSteps/ListToolCalls take the
+	// parent run/step ID as an explicit query parameter, so passing two
+	// distinct run/step IDs here would separate the results on that
+	// parameter alone, whether or not the scope predicate does anything
+	// at all — deleting the scope predicate from either method would
+	// still pass this. These two just confirm the basic scoped
+	// list-and-round-trip path works end to end; the real cross-scope
+	// isolation proof for steps and tool calls (reusing the SAME run/step
+	// ID across two scopes, where the scope predicate is the only thing
+	// left to separate them) lives in SameIdentifierCrossScope below.
+	t.Run("Step_ScopedListSmoke", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
@@ -363,7 +374,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
-	t.Run("ToolCall", func(t *testing.T) {
+	t.Run("ToolCall_ScopedListSmoke", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
@@ -396,30 +407,65 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
-		agentA := id.NewAgentID()
-		agentB := id.NewAgentID()
+		// One shared agent ID, not two distinct ones. Two distinct IDs
+		// would let agent_id alone separate the rows regardless of
+		// whether the scope predicate does anything at all — the same
+		// "two different IDs prove nothing" flaw that already hit this
+		// phase once on working memory, this time on conversation
+		// history, the entity the whole scope refactor exists to
+		// protect. errors.Is-checkable proof this predicate is
+		// load-bearing is in the phase report: deleting it from one
+		// backend's LoadConversation makes this subtest fail.
+		agentID := id.NewAgentID()
 
-		if err := s.SaveConversation(ctxA, agentA, []memory.Message{{Role: "user", Content: "from-a"}}); err != nil {
+		if err := s.SaveConversation(ctxA, agentID, []memory.Message{{Role: "user", Content: "from-a"}}); err != nil {
 			t.Fatalf("save conversation A: %v", err)
 		}
-		if err := s.SaveConversation(ctxB, agentB, []memory.Message{{Role: "user", Content: "from-b"}}); err != nil {
+		if err := s.SaveConversation(ctxB, agentID, []memory.Message{{Role: "user", Content: "from-b"}}); err != nil {
 			t.Fatalf("save conversation B: %v", err)
 		}
 
-		gotA, err := s.LoadConversation(ctxA, agentA, 0)
+		gotA, err := s.LoadConversation(ctxA, agentID, 0)
 		if err != nil {
 			t.Fatalf("load conversation A: %v", err)
 		}
 		if len(gotA) != 1 || gotA[0].Content != "from-a" {
-			t.Fatalf("LoadConversation(ctxA, agentA) = %v, want exactly one message %q", gotA, "from-a")
+			t.Fatalf("LoadConversation(ctxA, agentID) = %v, want exactly [%q] (scope B's message must not be visible to scope A)", gotA, "from-a")
 		}
 
-		gotB, err := s.LoadConversation(ctxB, agentB, 0)
+		gotB, err := s.LoadConversation(ctxB, agentID, 0)
 		if err != nil {
 			t.Fatalf("load conversation B: %v", err)
 		}
 		if len(gotB) != 1 || gotB[0].Content != "from-b" {
-			t.Fatalf("LoadConversation(ctxB, agentB) = %v, want exactly one message %q", gotB, "from-b")
+			t.Fatalf("LoadConversation(ctxB, agentID) = %v, want exactly [%q] (scope A's message must not be visible to scope B)", gotB, "from-b")
+		}
+
+		// ClearConversation from the wrong scope must only ever touch
+		// its own scope's rows: scope A's history must still be
+		// readable afterward. This was previously untested entirely —
+		// ClearConversation only appeared in ZeroScopeRejection.
+		if err = s.ClearConversation(ctxB, agentID); err != nil {
+			t.Fatalf("clear conversation (ctxB): %v", err)
+		}
+		stillThere, err := s.LoadConversation(ctxA, agentID, 0)
+		if err != nil {
+			t.Fatalf("reload conversation A after ctxB clear: %v", err)
+		}
+		if len(stillThere) != 1 || stillThere[0].Content != "from-a" {
+			t.Fatalf("conversation A after ctxB's ClearConversation = %v, want unchanged [%q] (must not delete another scope's history)", stillThere, "from-a")
+		}
+
+		// Clearing from the correct scope removes that scope's own rows.
+		if err = s.ClearConversation(ctxA, agentID); err != nil {
+			t.Fatalf("clear conversation (ctxA): %v", err)
+		}
+		afterClear, err := s.LoadConversation(ctxA, agentID, 0)
+		if err != nil {
+			t.Fatalf("reload conversation A after ctxA clear: %v", err)
+		}
+		if len(afterClear) != 0 {
+			t.Fatalf("conversation A after same-scope ClearConversation = %v, want empty", afterClear)
 		}
 	})
 
@@ -453,8 +499,8 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("LoadWorking(ctxB, runB) = %v, want %q", gotB, "value-b")
 		}
 
-		if _, err := s.LoadWorking(ctxB, runA, "k"); err == nil {
-			t.Error("LoadWorking(ctxB, runA) succeeded; want an error (cross-scope read must not see runA's value)")
+		if _, err := s.LoadWorking(ctxB, runA, "k"); !errors.Is(err, cortex.ErrWorkingMemoryNotFound) {
+			t.Errorf("LoadWorking(ctxB, runA) = %v, want ErrWorkingMemoryNotFound (cross-scope read must not see runA's value)", err)
 		}
 	})
 
@@ -462,30 +508,32 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
-		agentA := id.NewAgentID()
-		agentB := id.NewAgentID()
+		// Shared agent ID, same reasoning as Conversation above: two
+		// distinct IDs would let agent_id alone separate the rows and
+		// never exercise the scope predicate at all.
+		agentID := id.NewAgentID()
 
-		if err := s.SaveSummary(ctxA, agentA, "summary-a"); err != nil {
+		if err := s.SaveSummary(ctxA, agentID, "summary-a"); err != nil {
 			t.Fatalf("save summary A: %v", err)
 		}
-		if err := s.SaveSummary(ctxB, agentB, "summary-b"); err != nil {
+		if err := s.SaveSummary(ctxB, agentID, "summary-b"); err != nil {
 			t.Fatalf("save summary B: %v", err)
 		}
 
-		gotA, err := s.LoadSummaries(ctxA, agentA)
+		gotA, err := s.LoadSummaries(ctxA, agentID)
 		if err != nil {
 			t.Fatalf("load summaries A: %v", err)
 		}
 		if len(gotA) != 1 || gotA[0] != "summary-a" {
-			t.Fatalf("LoadSummaries(ctxA, agentA) = %v, want exactly [%q]", gotA, "summary-a")
+			t.Fatalf("LoadSummaries(ctxA, agentID) = %v, want exactly [%q] (scope B's summary must not be visible to scope A)", gotA, "summary-a")
 		}
 
-		gotB, err := s.LoadSummaries(ctxB, agentB)
+		gotB, err := s.LoadSummaries(ctxB, agentID)
 		if err != nil {
 			t.Fatalf("load summaries B: %v", err)
 		}
 		if len(gotB) != 1 || gotB[0] != "summary-b" {
-			t.Fatalf("LoadSummaries(ctxB, agentB) = %v, want exactly [%q]", gotB, "summary-b")
+			t.Fatalf("LoadSummaries(ctxB, agentID) = %v, want exactly [%q] (scope A's summary must not be visible to scope B)", gotB, "summary-b")
 		}
 	})
 }
@@ -550,8 +598,8 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		if err := s.ClearWorking(ctxA, runID); err != nil {
 			t.Fatalf("clear working (ctxA): %v", err)
 		}
-		if _, err := s.LoadWorking(ctxA, runID, "k"); err == nil {
-			t.Error("LoadWorking(ctxA) after same-scope ClearWorking succeeded; want an error (row should be gone)")
+		if _, err := s.LoadWorking(ctxA, runID, "k"); !errors.Is(err, cortex.ErrWorkingMemoryNotFound) {
+			t.Errorf("LoadWorking(ctxA) after same-scope ClearWorking = %v, want ErrWorkingMemoryNotFound (row should be gone)", err)
 		}
 	})
 
