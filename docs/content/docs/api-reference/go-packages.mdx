@@ -13,14 +13,15 @@ Root package. Exports context helpers, error constants, configuration, and share
 
 | Export | Description |
 |--------|-------------|
-| `WithTenant(ctx, id)` | Inject tenant ID into context |
+| `WithScope(ctx, scope)` | Attach a host-defined `Scope` to context |
+| `ScopeFromContext(ctx)` | Read the `Scope` from context (zero value if absent) |
+| `Scope`, `Level` | Host-defined scope hierarchy; Cortex only matches on `Level.Key`, never interprets it |
 | `WithApp(ctx, id)` | Inject app ID into context |
-| `TenantFromContext(ctx)` | Read tenant ID from context |
 | `AppFromContext(ctx)` | Read app ID from context |
 | `Config` | Engine configuration struct |
 | `DefaultConfig()` | Returns default Config values |
 | `Entity` | Base entity with common fields |
-| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, ... | 20+ sentinel errors |
+| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNoScope`, ... | 20+ sentinel errors |
 
 ### `github.com/xraph/cortex/engine`
 
@@ -200,7 +201,9 @@ Run tracking — runs, steps, and tool calls.
 ```go
 type Run struct {
     ID id.AgentRunID
-    AgentID, TenantID, State, Input, Output, Error string
+    AgentID id.AgentID
+    Scope cortex.Scope
+    State, Input, Output, Error string
     StepCount, TokensUsed int
     StartedAt, CompletedAt *time.Time
 }
@@ -242,7 +245,9 @@ Human-in-the-loop checkpoints.
 ```go
 type Checkpoint struct {
     ID id.CheckpointID
-    RunID, AgentID, TenantID string
+    RunID id.AgentRunID
+    AgentID id.AgentID
+    Scope cortex.Scope
     Reason, State string
     Decision *Decision
 }
@@ -299,18 +304,29 @@ type Store interface {
 
 ### `github.com/xraph/cortex/store/postgres`
 
-Production PostgreSQL store using bun ORM with embedded migrations.
+Production PostgreSQL store with embedded migrations.
 
 ```go
-func New(db *bun.DB) *Store
+func New(db *grove.DB) *Store
+func (s *Store) Migrate(ctx context.Context) error
 ```
 
-### `github.com/xraph/cortex/store/memory`
+### `github.com/xraph/cortex/store/sqlite`
 
-In-memory store for testing.
+SQLite store with embedded migrations.
 
 ```go
-func New() *Store
+func New(db *grove.DB) *Store
+func (s *Store) Migrate(ctx context.Context) error
+```
+
+### `github.com/xraph/cortex/store/mongo`
+
+MongoDB store with embedded migrations.
+
+```go
+func New(db *grove.DB) *Store
+func (s *Store) Migrate(ctx context.Context) error
 ```
 
 ### `github.com/xraph/cortex/plugin`
@@ -399,7 +415,8 @@ func (e *Extension) API() *api.API
 | `id` | Identity | TypeID identifiers |
 | `store` | Infrastructure | Composite store interface |
 | `store/postgres` | Infrastructure | PostgreSQL implementation |
-| `store/memory` | Infrastructure | In-memory implementation |
+| `store/sqlite` | Infrastructure | SQLite implementation |
+| `store/mongo` | Infrastructure | MongoDB implementation |
 | `plugin` | Infrastructure | Plugin system |
 | `observability` | Infrastructure | Metrics plugin |
 | `audit_hook` | Infrastructure | Audit plugin |

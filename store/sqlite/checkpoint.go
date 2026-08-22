@@ -68,9 +68,6 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 		if filter.RunID != "" {
 			q = q.Where("run_id = ?", filter.RunID)
 		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
-		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
 		}
@@ -98,9 +95,6 @@ func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter)
 	if filter != nil {
 		if filter.RunID != "" {
 			q = q.Where("run_id = ?", filter.RunID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 	}
 	count, err := q.Count(ctx)

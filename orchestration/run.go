@@ -21,7 +21,6 @@ type Run struct {
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
 	AppID       string                   `json:"app_id"`
-	TenantID    string                   `json:"tenant_id,omitempty"`
 	Strategy    string                   `json:"strategy"`
 	Status      string                   `json:"status"`
 	Input       string                   `json:"input"`

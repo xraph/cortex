@@ -8,10 +8,10 @@ Cortex is a Go framework for building AI agents with human-like traits. Instead 
 
 - **Human Model** — Skills, Traits, Behaviors, Cognitive Styles, Communication Styles, Perception, and Personas
 - **Execution Tracking** — Runs, Steps, and Tool Calls with full observability
-- **Memory** — Conversation history, working memory, and summaries per agent per tenant
+- **Memory** — Conversation history, working memory, and summaries per agent, scoped to the host's own hierarchy
 - **Checkpoints** — Human-in-the-loop approval gates that pause runs for review
 - **Plugin System** — 16 lifecycle hooks with type-cached dispatch (zero-cost for unimplemented hooks)
-- **Multi-Tenancy** — Context-based tenant and app isolation across all operations
+- **Host-Defined Scope** — Context-based scope and app isolation across all operations; the host declares its own levels (workspace, org, tenant, whatever it needs) and cortex enforces them structurally
 - **36 REST Endpoints** — Full CRUD for all entities, agent execution, streaming, and tools
 - **Forge Integration** — First-class extension for the Forge application framework
 - **TypeID Identifiers** — 12 type-prefixed, UUIDv7-based, K-sortable IDs
@@ -25,20 +25,42 @@ import (
     "context"
     "log"
 
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+
     "github.com/xraph/cortex"
     "github.com/xraph/cortex/agent"
     "github.com/xraph/cortex/engine"
-    "github.com/xraph/cortex/store/memory"
+    sqlitestore "github.com/xraph/cortex/store/sqlite"
 )
 
 func main() {
     ctx := context.Background()
-    ctx = cortex.WithTenant(ctx, "acme-corp")
+
+    // Cortex has no built-in notion of tenant or workspace — the host
+    // defines its own scope hierarchy and attaches it to the context.
+    ctx = cortex.WithScope(ctx, cortex.Scope{
+        Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+    })
     ctx = cortex.WithApp(ctx, "my-app")
 
-    // Create engine with in-memory store
+    // Open a SQLite-backed store and run its migrations. Swap in
+    // store/postgres or store/mongo for production.
+    drv := sqlitedriver.New()
+    if err := drv.Open(ctx, "cortex.db"); err != nil {
+        log.Fatal(err)
+    }
+    db, err := grove.Open(drv)
+    if err != nil {
+        log.Fatal(err)
+    }
+    st := sqlitestore.New(db)
+    if err := st.Migrate(ctx); err != nil {
+        log.Fatal(err)
+    }
+
     eng, err := engine.New(
-        engine.WithStore(memory.New()),
+        engine.WithStore(st),
     )
     if err != nil {
         log.Fatal(err)
@@ -76,8 +98,9 @@ cortex (root)           — Config, context helpers, errors, Entity base type
 ├── checkpoint          — Human-in-the-loop approval gates
 ├── id                  — 12 TypeID types (agt_, skl_, trt_, bhv_, prs_, arun_, ...)
 ├── store               — Composite store interface (8 sub-interfaces, 50 methods)
-│   ├── postgres        — Production PostgreSQL store (bun ORM, embedded migrations)
-│   └── memory          — In-memory store for testing
+│   ├── postgres        — Production PostgreSQL store
+│   ├── sqlite          — SQLite store
+│   └── mongo           — MongoDB store
 ├── plugin              — Extension system, 16 hook interfaces, Registry
 ├── observability       — Prometheus-compatible metrics (11 counters)
 ├── audit_hook          — Structured audit trail (18 actions, 8 resources)
@@ -119,7 +142,8 @@ Cortex agents are built from composable human-model primitives:
 | `github.com/xraph/cortex/id` | TypeID identifiers |
 | `github.com/xraph/cortex/store` | Composite store interface |
 | `github.com/xraph/cortex/store/postgres` | PostgreSQL store |
-| `github.com/xraph/cortex/store/memory` | In-memory store |
+| `github.com/xraph/cortex/store/sqlite` | SQLite store |
+| `github.com/xraph/cortex/store/mongo` | MongoDB store |
 | `github.com/xraph/cortex/plugin` | Plugin system |
 | `github.com/xraph/cortex/observability` | Metrics extension |
 | `github.com/xraph/cortex/audit_hook` | Audit trail extension |

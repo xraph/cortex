@@ -1,8 +1,8 @@
 package api
 
 import (
-	"context"
 	"errors"
+	"net/http"
 
 	"github.com/xraph/forge"
 
@@ -18,7 +18,15 @@ func mapStoreError(err error) error {
 		return forge.NotFound(err.Error())
 	}
 	if isConflict(err) {
-		return forge.NewHTTPError(409, err.Error())
+		return forge.NewHTTPError(http.StatusConflict, err.Error())
+	}
+	if errors.Is(err, cortex.ErrNoScope) {
+		// The host never attached a scope to the request context. That is
+		// a caller/configuration fault (a missing precondition on every
+		// scope-guarded call), not a server fault, so it must not read as
+		// a 500.
+		return forge.NewHTTPError(http.StatusPreconditionFailed,
+			"cortex: request has no scope; the host must attach one with cortex.WithScope")
 	}
 	return err
 }
@@ -37,19 +45,6 @@ func isNotFound(err error) bool {
 
 func isConflict(err error) bool {
 	return errors.Is(err, cortex.ErrAlreadyExists)
-}
-
-// scopeFromTenant bridges the legacy tenant identifier into a Scope while
-// the host has no scope middleware. An absent tenant yields no scope at
-// all: the store guards then reject the call with ErrNoScope, rather than
-// every untenanted caller sharing one "tenant=" bucket. Task 9 removes
-// TenantFromContext and this helper with it.
-func scopeFromTenant(ctx context.Context) context.Context {
-	t := cortex.TenantFromContext(ctx)
-	if t == "" {
-		return ctx
-	}
-	return cortex.WithScope(ctx, cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: t}}})
 }
 
 // defaultLimit returns a safe default page size.

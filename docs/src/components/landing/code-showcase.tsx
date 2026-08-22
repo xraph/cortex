@@ -48,7 +48,9 @@ func runAgent(
   eng *engine.Engine,
   ctx context.Context,
 ) {
-  ctx = cortex.WithTenant(ctx, "acme-corp")
+  ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+  })
 
   // Run the agent synchronously
   result, _ := eng.RunAgent(ctx,

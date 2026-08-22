@@ -116,14 +116,16 @@ type Store interface {
 
 ```go
 type Store interface {
-    SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, msgs []Message) error
-    LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]Message, error)
-    ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error
-    SaveWorking(ctx context.Context, agentID id.AgentID, tenantID string, data map[string]any) error
-    LoadWorking(ctx context.Context, agentID id.AgentID, tenantID string) (map[string]any, error)
-    ClearWorking(ctx context.Context, agentID id.AgentID, tenantID string) error
-    SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error
-    LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error)
+    // Conversation and summary methods carry no tenant or scope parameter:
+    // the scope comes from the context via cortex.ScopeFromContext.
+    SaveConversation(ctx context.Context, agentID id.AgentID, msgs []Message) error
+    LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]Message, error)
+    ClearConversation(ctx context.Context, agentID id.AgentID) error
+    SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error
+    LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error)
+    ClearWorking(ctx context.Context, runID id.AgentRunID) error
+    SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error
+    LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error)
 }
 ```
 
@@ -226,14 +228,14 @@ func (s *MyStore) CreateToolCall(ctx context.Context, tc *run.ToolCall) error { 
 func (s *MyStore) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) { /* ... */ }
 
 // ── Memory methods (8) ───────────────────────────
-func (s *MyStore) SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, msgs []memory.Message) error { /* ... */ }
-func (s *MyStore) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) { /* ... */ }
-func (s *MyStore) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error { /* ... */ }
-func (s *MyStore) SaveWorking(ctx context.Context, agentID id.AgentID, tenantID string, data map[string]any) error { /* ... */ }
-func (s *MyStore) LoadWorking(ctx context.Context, agentID id.AgentID, tenantID string) (map[string]any, error) { /* ... */ }
-func (s *MyStore) ClearWorking(ctx context.Context, agentID id.AgentID, tenantID string) error { /* ... */ }
-func (s *MyStore) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error { /* ... */ }
-func (s *MyStore) LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error) { /* ... */ }
+func (s *MyStore) SaveConversation(ctx context.Context, agentID id.AgentID, msgs []memory.Message) error { /* ... */ }
+func (s *MyStore) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) { /* ... */ }
+func (s *MyStore) ClearConversation(ctx context.Context, agentID id.AgentID) error { /* ... */ }
+func (s *MyStore) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error { /* ... */ }
+func (s *MyStore) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) { /* ... */ }
+func (s *MyStore) ClearWorking(ctx context.Context, runID id.AgentRunID) error { /* ... */ }
+func (s *MyStore) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error { /* ... */ }
+func (s *MyStore) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) { /* ... */ }
 
 // ── Checkpoint methods (4) ───────────────────────
 func (s *MyStore) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error { /* ... */ }
@@ -252,7 +254,7 @@ eng, err := engine.New(
 
 ## Key implementation notes
 
-1. **Tenant isolation** — Every query must filter by `tenant_id` and `app_id` from context. Use `cortex.TenantFromContext(ctx)` and `cortex.AppFromContext(ctx)`.
+1. **Scope isolation** — Every query must filter by the caller's scope and reject a zero scope with `cortex.ErrNoScope`. Use `cortex.ScopeFromContext(ctx)`; `agent.Store` methods also take `cortex.AppFromContext(ctx)`.
 
 2. **ID generation** — Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
 
@@ -266,5 +268,6 @@ eng, err := engine.New(
 
 | Package | Backend | Notes |
 |---------|---------|-------|
-| `store/postgres` | PostgreSQL | Production-ready, bun ORM, embedded migrations |
-| `store/memory` | In-memory maps | For testing only |
+| `store/postgres` | PostgreSQL | Production-ready, embedded migrations |
+| `store/sqlite` | SQLite | Embedded migrations |
+| `store/mongo` | MongoDB | Embedded migrations |

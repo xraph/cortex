@@ -9,24 +9,9 @@ import (
 type contextKey int
 
 const (
-	tenantKey contextKey = iota
-	appKey
+	appKey contextKey = iota
+	scopeKey
 )
-
-// TenantFromContext extracts the tenant identifier from the context.
-// Returns an empty string if no tenant is set.
-func TenantFromContext(ctx context.Context) string {
-	v, ok := ctx.Value(tenantKey).(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-// WithTenant returns a copy of ctx with the tenant identifier attached.
-func WithTenant(ctx context.Context, tenant string) context.Context {
-	return context.WithValue(ctx, tenantKey, tenant)
-}
 
 // AppFromContext extracts the app identifier from the context.
 // Returns an empty string if no app is set.
@@ -43,13 +28,9 @@ func WithApp(ctx context.Context, app string) context.Context {
 	return context.WithValue(ctx, appKey, app)
 }
 
-// scopeKey is the context key for Scope. It is distinct from the older
-// tenantKey/appKey pair, which stays in place until Task 9 removes it.
-const scopeKey contextKey = 2
-
 // ErrNoScope is returned when an operation that requires a scope receives
 // a zero one. A zero scope means the thread broke somewhere upstream, so
-// failing here is preferable to querying across every tenant.
+// failing here is preferable to querying across every host-defined level.
 var ErrNoScope = errors.New("cortex: no scope on context")
 
 // Level is one rung of a host-defined scope hierarchy. Cortex never

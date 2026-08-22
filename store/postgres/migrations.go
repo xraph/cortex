@@ -426,6 +426,41 @@ ALTER TABLE `+table+`
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "drop_tenant_id",
+			Version: "20260821000002",
+			Comment: "Drop tenant_id now that scope carries every host-defined level",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range []string{
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+` DROP COLUMN IF EXISTS tenant_id
+`); err != nil {
+						return fmt.Errorf("drop tenant_id from %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range []string{
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS tenant_id TEXT
+`); err != nil {
+						return fmt.Errorf("re-add tenant_id to %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+		},
 	)
 	return g
 }()

@@ -98,7 +98,9 @@ const features: FeatureCard[] = [
         <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
       </svg>
     ),
-    code: `ctx = cortex.WithTenant(ctx, "acme-corp")
+    code: `ctx = cortex.WithScope(ctx, cortex.Scope{
+  Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+})
 ctx = cortex.WithApp(ctx, "support-app")
 
 // All agents, runs, and resources are
@@ -108,7 +110,7 @@ ctx = cortex.WithApp(ctx, "support-app")
   {
     title: "Pluggable Stores",
     description:
-      "Start with in-memory for development, swap to PostgreSQL for production. Every domain entity is a Go interface — 50 methods across 8 sub-interfaces.",
+      "Start with SQLite for development, swap to PostgreSQL or MongoDB for production. Every domain entity is a Go interface — 50 methods across 8 sub-interfaces.",
     icon: (
       <svg
         className="size-5"

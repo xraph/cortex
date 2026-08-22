@@ -17,8 +17,7 @@ type Store interface {
 
 // ListFilter controls pagination for checkpoint listing.
 type ListFilter struct {
-	RunID    string
-	TenantID string
-	Limit    int
-	Offset   int
+	RunID  string
+	Limit  int
+	Offset int
 }

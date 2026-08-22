@@ -58,8 +58,10 @@ func main() {
         log.Fatal("migrate:", err)
     }
 
-    // Set tenant scope
-    ctx = cortex.WithTenant(ctx, "acme-corp")
+    // Attach the host's own scope hierarchy and app ID
+    ctx = cortex.WithScope(ctx, cortex.Scope{
+        Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+    })
     ctx = cortex.WithApp(ctx, "support-bot")
 
     buildAgent(ctx, eng)

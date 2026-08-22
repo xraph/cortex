@@ -377,8 +377,8 @@ export function DeliveryFlowSection() {
 
             <div className="mt-8 space-y-5">
               <FeatureBullet
-                title="Automatic Tenant Scoping"
-                description="Every agent run is stamped with TenantID and AppID from context. Agent, skill, and persona isolation is enforced at the store layer — no tenant can access another's data."
+                title="Automatic Host-Defined Scoping"
+                description="Every agent run is stamped with the host's own Scope and AppID from context. Agent, skill, and persona isolation is enforced at the store layer — no caller can access another scope's data."
                 delay={0.2}
               />
               <FeatureBullet

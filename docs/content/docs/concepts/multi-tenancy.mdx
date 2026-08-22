@@ -1,69 +1,118 @@
 ---
-title: Multi-Tenancy
-description: How Cortex scopes agents, skills, traits, and all entities to app and tenant contexts.
+title: Host-Defined Scope
+description: How Cortex scopes agents, runs, and every other entity using a hierarchy the host defines.
 ---
 
-Every Cortex entity is scoped to an **app** (logical application boundary) and optionally to a **tenant** (user/organization boundary). This scoping is enforced at the store layer — cross-tenant access is structurally impossible.
+Cortex has no built-in notion of tenant, workspace, or organization. Instead, every
+scope-guarded entity (runs, conversations, checkpoints, and — via `AppID` — agents,
+skills, traits, behaviors, and personas) is scoped by a `cortex.Scope` that **the host
+declares and attaches to the context**. Cortex never interprets what a scope level
+means; it only matches on the `Key` you give it. This is enforced at the store layer —
+cross-scope access is structurally impossible.
 
-## Context injection
+## Scope and Level
 
-Scope identifiers are injected into the Go context using helper functions from the root `cortex` package:
+```go
+type Level struct {
+    Key   string
+    Value string
+}
+
+type Scope struct {
+    Levels []Level
+}
+```
+
+A `Scope` is an ordered hierarchy. TwinOS, for example, uses workspace then project;
+another host might use org, team, then environment. Order is significant — it
+determines which indexed column each level lands in, so a host must keep its ordering
+stable across releases.
+
+## Attaching a scope
+
+The host is responsible for calling `cortex.WithScope` — typically from middleware —
+**before** any call into the engine or the store. There is no default and no fallback:
 
 ```go
 import "github.com/xraph/cortex"
 
-ctx = cortex.WithTenant(ctx, "org-123")
+ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{{Key: "tenant", Value: "org-123"}},
+})
 ctx = cortex.WithApp(ctx, "myapp")
 ```
 
-## Extraction
-
-Retrieve scope values from any context:
+A host with a deeper hierarchy attaches every level it needs, in order:
 
 ```go
-tenantID := cortex.TenantFromContext(ctx) // "org-123"
-appID    := cortex.AppFromContext(ctx)    // "myapp"
+ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{
+        {Key: "workspace", Value: "ws-123"},
+        {Key: "project", Value: "proj-456"},
+    },
+})
 ```
 
-Both functions return an empty string if no value is set.
+## Reading a scope back
 
-## AppID vs TenantID
+```go
+scope := cortex.ScopeFromContext(ctx)
+if scope.IsZero() {
+    // no scope was attached — every scope-guarded store call will fail
+}
 
-| Scope | Purpose | Required | Example |
-|-------|---------|----------|---------|
-| **AppID** | Logical application boundary. All domain entities (agents, skills, traits, behaviors, personas) carry an `AppID` field. | Yes | `"myapp"`, `"staging"` |
-| **TenantID** | User or organization boundary. Used for execution entities (runs, conversations, checkpoints) to isolate per-user data. | Optional | `"org-123"`, `"user-456"` |
+tenant, ok := scope.Get("tenant") // "org-123", true
+canon := scope.Canonical()        // "tenant=org-123"
+```
+
+`ScopeFromContext` returns the zero `Scope` if nothing was attached — callers must
+treat that as an error condition, not as "match everything."
+
+## AppID vs Scope
+
+| Concept | Purpose | Required | Example |
+|---------|---------|----------|---------|
+| **AppID** | Logical application boundary. All domain entities (agents, skills, traits, behaviors, personas) carry an `AppID` field, injected with `cortex.WithApp`. | Yes | `"myapp"`, `"staging"` |
+| **Scope** | The host's own hierarchy — tenant, workspace, org, whatever it needs. Used for execution entities (runs, conversations, checkpoints) to isolate per-host data, injected with `cortex.WithScope`. | Yes, for any scope-guarded operation | `tenant=org-123`, `workspace=ws-123/project=proj-456` |
 
 ## Store enforcement
 
-The PostgreSQL store enforces app scoping on every query:
+Every store implementation enforces scope on every query:
 
 - **Agent, Skill, Trait, Behavior, Persona** — all `GetByName` and `List` queries filter by `app_id`
-- **Run, Memory, Checkpoint** — queries filter by `tenant_id` when provided
-- **Cross-scope access** — returns `ErrNotFound` even if the entity exists under a different app/tenant
+- **Run, Memory, Checkpoint** — every query filters by the caller's scope, read from the context
+- **No scope, no query** — a zero scope is rejected with `cortex.ErrNoScope` before the store touches the database, rather than silently matching every row
+- **Cross-scope access** — returns `ErrNotFound` even if the entity exists under a different app or scope
+- **Scope is immutable after creation** — a run's or checkpoint's stored scope is set once and never rewritten by a later update
 
 ## API integration
 
-When using the Forge extension, the API layer extracts the app ID from the request context (typically set by Forge middleware) and passes it to all engine operations. This means:
+The REST API does **not** manufacture a scope on the caller's behalf. A host using the
+Forge extension must install its own middleware that calls `cortex.WithScope` (and
+`cortex.WithApp`) on the request context before it reaches Cortex's handlers. If that
+middleware is missing, every scope-guarded endpoint returns `412 Precondition Failed`
+rather than a raw 500, but requests still fail — installing the middleware is not
+optional in a real deployment.
 
-- Each API request is automatically scoped to the caller's app
-- Agents in app A cannot see or modify agents in app B
-- Run history is isolated per tenant within each app
-
-## Example: multi-tenant setup
+## Example: two tenants under one host-defined hierarchy
 
 ```go
-// Tenant 1 creates an agent
+// Caller 1 creates an agent
 ctx1 := cortex.WithApp(context.Background(), "myapp")
-ctx1 = cortex.WithTenant(ctx1, "tenant-1")
+ctx1 = cortex.WithScope(ctx1, cortex.Scope{
+    Levels: []cortex.Level{{Key: "tenant", Value: "tenant-1"}},
+})
 eng.CreateAgent(ctx1, agent1Config)
 
-// Tenant 2 creates a different agent
+// Caller 2 creates a different agent under the same app, a different tenant
 ctx2 := cortex.WithApp(context.Background(), "myapp")
-ctx2 = cortex.WithTenant(ctx2, "tenant-2")
+ctx2 = cortex.WithScope(ctx2, cortex.Scope{
+    Levels: []cortex.Level{{Key: "tenant", Value: "tenant-2"}},
+})
 eng.CreateAgent(ctx2, agent2Config)
 
-// Tenant 1 cannot see tenant 2's runs
-runs, _ := eng.ListRuns(ctx1, &run.ListFilter{TenantID: "tenant-2"})
-// runs is empty — tenant isolation enforced
+// Caller 1's context scopes every read to tenant-1 — tenant-2's runs are
+// invisible, not merely filtered out by a parameter caller 1 could omit.
+runs, _ := eng.ListRuns(ctx1, &run.ListFilter{})
+// runs contains only tenant-1's runs
 ```

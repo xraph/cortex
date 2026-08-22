@@ -74,10 +74,6 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 		if filter.RunID != "" {
 			f["run_id"] = filter.RunID
 		}
-
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
-		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -116,10 +112,6 @@ func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter)
 	if filter != nil {
 		if filter.RunID != "" {
 			f["run_id"] = filter.RunID
-		}
-
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 	}
 

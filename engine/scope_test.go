@@ -11,9 +11,10 @@ import (
 	"github.com/xraph/cortex/store/scopespy"
 )
 
-// Both tests call RunAgent with an explicit appID because Task 9 has not
-// yet removed that parameter. When Task 9 lands, drop the "app1" argument
-// from both calls.
+// Both tests call RunAgent with an explicit appID: the app vocabulary
+// (WithApp, AppFromContext, Config.AppID, and this parameter) is staying
+// for now. Task 9 only removes cortex's own tenant vocabulary in favour
+// of the host-defined Scope.
 
 func TestRun_RejectsZeroScope(t *testing.T) {
 	spy := scopespy.New()

@@ -165,22 +165,28 @@ if err := vessel.Resolve(fapp.Container(), &eng); err != nil {
 }
 ```
 
-## Tenant middleware
+## Scope middleware
 
-In a Forge app, tenant scope is typically set by middleware that reads the JWT or API key:
+Cortex has no built-in notion of tenant, workspace, or organization — the host is
+responsible for attaching a scope to every request before it reaches Cortex, typically
+via middleware that reads the JWT or API key. Every scope-guarded operation rejects a
+zero scope with `cortex.ErrNoScope`, so this middleware is not optional in a
+multi-tenant deployment:
 
 ```go
-func tenantMiddleware(next http.Handler) http.Handler {
+func scopeMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         tenantID := r.Header.Get("X-Tenant-ID")
         appID := r.Header.Get("X-App-ID")
-        ctx := cortex.WithTenant(r.Context(), tenantID)
+        ctx := cortex.WithScope(r.Context(), cortex.Scope{
+            Levels: []cortex.Level{{Key: "tenant", Value: tenantID}},
+        })
         ctx = cortex.WithApp(ctx, appID)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
 }
 
-router.Use(tenantMiddleware)
+router.Use(scopeMiddleware)
 ```
 
 ## Adding plugins

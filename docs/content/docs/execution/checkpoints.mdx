@@ -13,7 +13,7 @@ type Checkpoint struct {
     ID        id.CheckpointID
     RunID     id.AgentRunID
     AgentID   id.AgentID
-    TenantID  string
+    Scope     cortex.Scope
     Reason    string
     StepIndex int
     State     string   // "pending" or "resolved"
@@ -65,12 +65,13 @@ type Store interface {
 
 ```go
 type ListFilter struct {
-    RunID    string
-    TenantID string
-    Limit    int
-    Offset   int
+    RunID  string
+    Limit  int
+    Offset int
 }
 ```
+
+As with runs, scope arrives on the context rather than the filter.
 
 ## API routes
 

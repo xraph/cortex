@@ -21,7 +21,6 @@ import (
 // stored scope.
 var mutableRunColumns = []string{
 	"agent_id",
-	"tenant_id",
 	"state",
 	"input",
 	"output",
@@ -120,9 +119,6 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	if filter.AgentID != "" {
 		q = q.Where("agent_id = ?", filter.AgentID)
 	}
-	if filter.TenantID != "" {
-		q = q.Where("tenant_id = ?", filter.TenantID)
-	}
 	if filter.State != "" {
 		q = q.Where("state = ?", string(filter.State))
 	}
@@ -161,9 +157,6 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 	}
 	if filter.AgentID != "" {
 		q = q.Where("agent_id = ?", filter.AgentID)
-	}
-	if filter.TenantID != "" {
-		q = q.Where("tenant_id = ?", filter.TenantID)
 	}
 	if filter.State != "" {
 		q = q.Where("state = ?", string(filter.State))

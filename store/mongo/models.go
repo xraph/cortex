@@ -122,7 +122,6 @@ type runModel struct {
 	grove.BaseModel `grove:"table:cortex_runs"`
 	ID              string            `grove:"id,pk"          bson:"_id"`
 	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
-	TenantID        string            `grove:"tenant_id"      bson:"tenant_id"`
 	State           string            `grove:"state"          bson:"state"`
 	Input           string            `grove:"input"          bson:"input"`
 	Output          string            `grove:"output"         bson:"output"`
@@ -147,7 +146,6 @@ func runToModel(r *run.Run) *runModel {
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
-		TenantID:    r.TenantID,
 		State:       string(r.State),
 		Input:       r.Input,
 		Output:      r.Output,
@@ -182,7 +180,6 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		ID:          runID,
 		AgentID:     agentID,
 		Scope:       cortex.ParseCanonical(m.ScopeCanon),
-		TenantID:    m.TenantID,
 		State:       run.State(m.State),
 		Input:       m.Input,
 		Output:      m.Output,
@@ -330,7 +327,6 @@ type memoryModel struct {
 	grove.BaseModel `grove:"table:cortex_memories"`
 	ID              string            `grove:"id,pk"          bson:"_id,omitempty"`
 	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
-	TenantID        string            `grove:"tenant_id"      bson:"tenant_id"`
 	Kind            string            `grove:"kind"           bson:"kind"`
 	Key             string            `grove:"key"            bson:"key"`
 	Content         string            `grove:"content"        bson:"content"`
@@ -352,7 +348,6 @@ type checkpointModel struct {
 	ID              string               `grove:"id,pk"          bson:"_id"`
 	RunID           string               `grove:"run_id"         bson:"run_id"`
 	AgentID         string               `grove:"agent_id"       bson:"agent_id"`
-	TenantID        string               `grove:"tenant_id"      bson:"tenant_id"`
 	Reason          string               `grove:"reason"         bson:"reason"`
 	StepIndex       int                  `grove:"step_index"     bson:"step_index"`
 	State           string               `grove:"state"          bson:"state"`
@@ -373,7 +368,6 @@ func checkpointToModel(cp *checkpoint.Checkpoint) *checkpointModel {
 		ID:         cp.ID.String(),
 		RunID:      cp.RunID.String(),
 		AgentID:    cp.AgentID.String(),
-		TenantID:   cp.TenantID,
 		Reason:     cp.Reason,
 		StepIndex:  cp.StepIndex,
 		State:      cp.State,
@@ -407,7 +401,6 @@ func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
 		ID:        cpID,
 		RunID:     runID,
 		AgentID:   agentID,
-		TenantID:  m.TenantID,
 		Reason:    m.Reason,
 		StepIndex: m.StepIndex,
 		State:     m.State,
@@ -704,7 +697,6 @@ type orchestrationRunModel struct {
 	ID              string            `grove:"id,pk"         bson:"_id"`
 	ConfigID        string            `grove:"config_id"     bson:"config_id"`
 	AppID           string            `grove:"app_id"        bson:"app_id"`
-	TenantID        string            `grove:"tenant_id"     bson:"tenant_id"`
 	Strategy        string            `grove:"strategy"      bson:"strategy"`
 	Status          string            `grove:"status"        bson:"status"`
 	Input           string            `grove:"input"         bson:"input"`
@@ -733,7 +725,6 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		ID:          r.ID.String(),
 		ConfigID:    r.ConfigID.String(),
 		AppID:       r.AppID,
-		TenantID:    r.TenantID,
 		Strategy:    r.Strategy,
 		Status:      r.Status,
 		Input:       r.Input,
@@ -756,7 +747,6 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,
-		TenantID:    m.TenantID,
 		Strategy:    m.Strategy,
 		Status:      m.Status,
 		Input:       m.Input,

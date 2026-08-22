@@ -57,7 +57,6 @@ func (s *Service) Run(ctx context.Context, appID, name, input string) (*Run, err
 		ID:        id.NewOrchestrationID(),
 		ConfigID:  cfg.ID,
 		AppID:     cfg.AppID,
-		TenantID:  cortexTenant(ctx),
 		Strategy:  cfg.Strategy,
 		Status:    StatusRunning,
 		Input:     input,

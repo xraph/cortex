@@ -75,15 +75,15 @@ When an agent run begins, the engine resolves the agent's full configuration:
 
 6. **Record and notify** — The `run.Run` is updated with the final state, output, token usage, and timing. Plugin hooks fire at each stage (`OnRunStarted`, `OnStepStarted`, `OnToolCalled`, etc.).
 
-## Tenant isolation
+## Scope isolation
 
-`cortex.WithTenant(ctx, id)` and `cortex.WithApp(ctx, id)` inject identifiers into the context. These are extracted at every layer:
+`cortex.WithScope(ctx, scope)` and `cortex.WithApp(ctx, id)` inject identifiers into the context. Cortex never interprets what a scope level means — the host declares its own ordered hierarchy (workspace, org, tenant, whatever it needs) as a `cortex.Scope`, and Cortex only matches on it. These are extracted at every layer:
 
-- **Store** — all queries include `WHERE app_id = ?` filters
-- **Engine** — scope is applied before any store operation
-- **API** — the Forge request context provides tenant/app identifiers
+- **Store** — every scope-guarded query filters by the caller's scope, and rejects a zero scope with `cortex.ErrNoScope` instead of matching everything
+- **Engine** — scope is read from the context and applied before any store operation
+- **API** — the host's own middleware is responsible for calling `cortex.WithScope` on the request context before it reaches Cortex; the REST layer does not manufacture one
 
-Cross-tenant access is structurally impossible: even if a caller passes an agent ID from another tenant, the store layer returns `ErrAgentNotFound`.
+Cross-scope access is structurally impossible: even if a caller passes an agent ID from outside their scope, the store layer returns `ErrAgentNotFound`.
 
 ## Plugin system
 

@@ -46,7 +46,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 
 	limit := defaultLimit(req.Limit)
 
-	messages, err := a.eng.LoadConversation(scopeFromTenant(ctx.Context()), cfg.ID, limit)
+	messages, err := a.eng.LoadConversation(ctx.Context(), cfg.ID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("load conversation: %w", err)
 	}
@@ -61,7 +61,7 @@ func (a *API) clearConversation(ctx forge.Context, _ *ClearConversationRequest) 
 		return nil, mapStoreError(err)
 	}
 
-	if err := a.eng.ClearConversation(scopeFromTenant(ctx.Context()), cfg.ID); err != nil {
+	if err := a.eng.ClearConversation(ctx.Context(), cfg.ID); err != nil {
 		return nil, fmt.Errorf("clear conversation: %w", err)
 	}
 

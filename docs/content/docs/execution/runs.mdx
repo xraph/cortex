@@ -14,7 +14,7 @@ type Run struct {
     cortex.Entity
     ID           id.AgentRunID
     AgentID      id.AgentID
-    TenantID     string
+    Scope        cortex.Scope
     State        RunState
     Input        string
     Output       string
@@ -125,13 +125,18 @@ type Store interface {
 
 ```go
 type ListFilter struct {
-    AgentID  string
-    TenantID string
-    State    RunState
-    Limit    int
-    Offset   int
+    AgentID string
+    State   RunState
+    Exact   bool
+    Limit   int
+    Offset  int
 }
 ```
+
+Scope arrives on the context, not in the filter — every `ListRuns` call is already
+narrowed to the caller's scope before `AgentID` and `State` are applied. `Exact` narrows
+the read to rows stored at precisely the caller's scope depth instead of everything
+beneath it.
 
 ## API routes
 

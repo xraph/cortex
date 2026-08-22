@@ -83,7 +83,6 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 
 	set := bson.M{
 		"agent_id":     m.AgentID,
-		"tenant_id":    m.TenantID,
 		"state":        m.State,
 		"input":        m.Input,
 		"output":       m.Output,
@@ -130,9 +129,6 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	}
 	if filter.AgentID != "" {
 		f["agent_id"] = filter.AgentID
-	}
-	if filter.TenantID != "" {
-		f["tenant_id"] = filter.TenantID
 	}
 	if filter.State != "" {
 		f["state"] = string(filter.State)
@@ -182,9 +178,6 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 	}
 	if filter.AgentID != "" {
 		f["agent_id"] = filter.AgentID
-	}
-	if filter.TenantID != "" {
-		f["tenant_id"] = filter.TenantID
 	}
 	if filter.State != "" {
 		f["state"] = string(filter.State)

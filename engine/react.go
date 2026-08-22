@@ -74,6 +74,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
 				AppID:       ag.AppID,
+				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
 				e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
@@ -169,6 +170,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
 				AppID:       ag.AppID,
+				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
 				e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
@@ -277,6 +279,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
 					AppID:       ag.AppID,
+					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
 					e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
@@ -435,6 +438,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
 					AppID:       ag.AppID,
+					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
 					e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))

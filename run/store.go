@@ -25,10 +25,9 @@ type Store interface {
 // arrives on the context; Exact narrows the read to rows stored at
 // precisely that depth instead of everything beneath it.
 type ListFilter struct {
-	AgentID  string
-	TenantID string
-	State    State
-	Exact    bool
-	Limit    int
-	Offset   int
+	AgentID string
+	State   State
+	Exact   bool
+	Limit   int
+	Offset  int
 }

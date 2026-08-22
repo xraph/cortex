@@ -53,7 +53,7 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid run ID: %v", err))
 	}
 
-	r, err := a.eng.GetRun(scopeFromTenant(ctx.Context()), runID)
+	r, err := a.eng.GetRun(ctx.Context(), runID)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -61,7 +61,7 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 }
 
 func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
-	runs, err := a.eng.ListRuns(scopeFromTenant(ctx.Context()), &run.ListFilter{
+	runs, err := a.eng.ListRuns(ctx.Context(), &run.ListFilter{
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -78,7 +78,7 @@ func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, erro
 		return nil, forge.BadRequest(fmt.Sprintf("invalid run ID: %v", err))
 	}
 
-	r, err := a.eng.GetRun(scopeFromTenant(ctx.Context()), runID)
+	r, err := a.eng.GetRun(ctx.Context(), runID)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -88,7 +88,7 @@ func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, erro
 	}
 
 	r.State = run.StateCancelled
-	if err := a.eng.UpdateRun(scopeFromTenant(ctx.Context()), r); err != nil {
+	if err := a.eng.UpdateRun(ctx.Context(), r); err != nil {
 		return nil, fmt.Errorf("cancel run: %w", err)
 	}
 
