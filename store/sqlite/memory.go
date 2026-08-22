@@ -211,6 +211,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if err := q.Scan(ctx); err != nil {
+		if isNoRows(err) {
+			return nil, cortex.ErrWorkingMemoryNotFound
+		}
 		return nil, fmt.Errorf("cortex/sqlite: load working memory: %w", err)
 	}
 	var v any

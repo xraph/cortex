@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xraph/cortex"
@@ -166,6 +168,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if err := q.Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, cortex.ErrWorkingMemoryNotFound
+		}
 		return nil, fmt.Errorf("cortex: load working memory: %w", err)
 	}
 	var v any

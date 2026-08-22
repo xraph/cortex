@@ -37,6 +37,15 @@ func scopeColumns(s cortex.Scope) (l0, l1, l2 string, extra map[string]string) {
 // matching (exact = false) is the default: one equality per level the
 // caller actually supplied, and nothing for the levels they left off, so a
 // workspace-only filter matches every project inside it.
+//
+// This only ever matches on scope_l0/l1/l2 — it ignores the extra overflow
+// map entirely, on both read and write. That's harmless today only
+// because cortex.WithScope (scope.go's maxScopeLevels, currently 3)
+// refuses to construct a Scope deep enough to populate extra in the first
+// place. If maxScopeLevels ever rises, this needs to start matching on
+// extra too, or mongo's isolation guarantee silently diverges from
+// postgres/sqlite for any level past the third — see the comment on
+// maxScopeLevels for the other half of this.
 func scopeFilter(s cortex.Scope, exact bool) bson.M {
 	l0, l1, l2, _ := scopeColumns(s)
 	cols := []struct {
@@ -260,6 +269,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		Filter(filter).
 		Scan(ctx)
 	if err != nil {
+		if isNoDocuments(err) {
+			return nil, cortex.ErrWorkingMemoryNotFound
+		}
 		return nil, fmt.Errorf("cortex/mongo: load working memory: %w", err)
 	}
 

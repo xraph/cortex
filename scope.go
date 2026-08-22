@@ -109,6 +109,17 @@ func ParseCanonical(canon string) (Scope, error) {
 // in the scope_extra overflow and are never matched as a predicate, even
 // in exact mode, so a deeper scope would have its trailing levels
 // silently accepted and then ignored by every store.
+//
+// This is why store/storetest's ScopeExtraNeverNull test can only ever
+// exercise an empty overflow map: WithScope refuses anything deeper than
+// this before a Scope carrying real overflow could ever reach a store.
+// If this constant ever rises, postgres and sqlite's scopePredicates
+// still only match scope_l0/l1/l2 (extra is stored but never queried,
+// same as today), while mongo's scopeFilter ignores extra entirely on
+// both read and write today — raising this constant without also
+// teaching mongo's scopeFilter to match on extra would silently diverge
+// mongo's isolation guarantee from the other two backends for any level
+// beyond the third, with nothing here catching it.
 const maxScopeLevels = 3
 
 // WithScope attaches a scope to ctx. Two shapes are refused rather than
