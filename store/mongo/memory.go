@@ -182,7 +182,15 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 		"kind":     "working",
 		"key":      key,
 	}
-	for k, v := range scopeFilter(scope, false) {
+	// exact=true, not the usual prefix match: this filter also decides
+	// which existing row an upsert overwrites. Prefix matching pins only
+	// the levels the caller supplied and leaves deeper ones unconstrained,
+	// so a broader (ancestor) scope's save would match a narrower
+	// (descendant) scope's existing row and the $set below would
+	// silently reparent it, blanking scope_l1/scope_l2 down to the
+	// ancestor's shallower scope. An upsert has to match its own scope
+	// precisely or fall through to inserting a new row.
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 

@@ -176,9 +176,20 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 	// time with "ON CONFLICT clause does not match any PRIMARY KEY or
 	// UNIQUE constraint" for a partial one, which made every upsert on
 	// an existing key fail outright.
+	//
+	// scope_canon is part of the conflict target (and of the index
+	// itself, via the 20260822000002 migration) because without it, two
+	// different scopes saving the same (agent_id, kind, key) — which
+	// happens whenever a run ID is known cross-scope, since it's a
+	// bearer capability rather than an isolation boundary — collide on
+	// the same row: the second save's DO UPDATE overwrites the first
+	// scope's content while leaving its scope columns untouched, and the
+	// first scope's next LoadWorking then returns the second scope's
+	// value. The trailing WHERE on the UPDATE is redundant given the
+	// index now includes scope_canon, but kept as a second line of
+	// defense against exactly that class of bug.
 	_, err := s.sdb.NewInsert(m).
-		OnConflict("(agent_id, kind, key) WHERE kind = 'working' DO UPDATE").
-		Set("content = EXCLUDED.content").
+		OnConflict("(agent_id, kind, key, scope_canon) WHERE kind = 'working' DO UPDATE SET content = EXCLUDED.content WHERE cortex_memories.scope_canon = EXCLUDED.scope_canon").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: save working memory: %w", err)

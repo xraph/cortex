@@ -49,6 +49,10 @@ func New(db *grove.DB) *Store {
 
 // Migrate creates indexes for all cortex collections.
 func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.dropStaleWorkingMemoryIndex(ctx); err != nil {
+		return err
+	}
+
 	indexes := migrationIndexes()
 
 	for col, models := range indexes {
@@ -63,6 +67,32 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// mongoIndexNotFound is the error code Mongo returns for an index name
+// that doesn't exist, which DropOne otherwise reports as a fatal error.
+const mongoIndexNotFound = 27
+
+// dropStaleWorkingMemoryIndex removes the pre-scope working-memory
+// unique index by its Mongo-generated default name
+// (staleWorkingMemoryIndexName). It carried no scope column, so a caller
+// in one scope could upsert over another scope's row using nothing but a
+// run ID — a bearer capability, not an isolation boundary.
+// migrationIndexes() replaces it with workingMemoryUniqueIndexName, which
+// also indexes scope_canon, but CreateMany only creates indexes, it
+// never drops a stale one on its own — so this runs first, on every
+// startup, and tolerates the index already being gone (a fresh database,
+// or a Migrate call that already dropped it once).
+func (s *Store) dropStaleWorkingMemoryIndex(ctx context.Context) error {
+	err := s.mdb.Collection(colMemories).Indexes().DropOne(ctx, staleWorkingMemoryIndexName)
+	if err == nil {
+		return nil
+	}
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) && cmdErr.Code == mongoIndexNotFound {
+		return nil
+	}
+	return fmt.Errorf("cortex/mongo: drop stale working-memory index: %w", err)
 }
 
 // Ping checks database connectivity.

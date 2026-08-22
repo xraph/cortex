@@ -35,6 +35,22 @@ var scopeIndex = mongo.IndexModel{
 	Options: options.Index().SetName(scopeIndexName),
 }
 
+// staleWorkingMemoryIndexName is Mongo's default auto-generated name for
+// the pre-scope working-memory unique index (agent_id, kind, key), from
+// when it carried no explicit name. Store.Migrate drops it by this name
+// before creating workingMemoryUniqueIndexName below: without a scope
+// column, that index let a caller in one scope upsert over another
+// scope's row using nothing but a run ID, which is a bearer capability,
+// not an isolation boundary. CreateMany is additive and never drops a
+// stale index on its own, so leaving the old one in place would have
+// kept the write path scope-blind even after this index existed too.
+const staleWorkingMemoryIndexName = "agent_id_1_kind_1_key_1"
+
+// workingMemoryUniqueIndexName is the fixed name for the scope-aware
+// working-memory unique index, so a future migration can find and drop
+// it by name the same way staleWorkingMemoryIndexName is used here.
+const workingMemoryUniqueIndexName = "cortex_memories_working_scope_unique"
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -71,8 +87,8 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "kind", Value: 1}}},
 			{Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "kind", Value: 1}}},
 			{
-				Keys:    bson.D{{Key: "agent_id", Value: 1}, {Key: "kind", Value: 1}, {Key: "key", Value: 1}},
-				Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{"kind": "working"}),
+				Keys:    bson.D{{Key: "agent_id", Value: 1}, {Key: "kind", Value: 1}, {Key: "key", Value: 1}, {Key: "scope_canon", Value: 1}},
+				Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{"kind": "working"}).SetName(workingMemoryUniqueIndexName),
 			},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
 			scopeIndex,

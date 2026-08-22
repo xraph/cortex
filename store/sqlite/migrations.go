@@ -476,5 +476,35 @@ ALTER TABLE `+table+` DROP COLUMN scope_canon;
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "scope_working_memory_unique_index",
+			Version: "20260822000002",
+			Comment: "Make the working-memory partial unique index scope-aware",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// idx_cortex_memories_working used to be (agent_id, kind,
+				// key) WHERE kind = 'working', with no scope column at
+				// all. That let a caller in scope B upsert a working-memory
+				// row using a run ID it only knew about (a run ID is a
+				// bearer capability, not an isolation boundary) and hit the
+				// SAME conflict target as scope A's row: the DO UPDATE
+				// overwrote A's content while leaving A's own scope columns
+				// in place, so A's next scoped LoadWorking returned B's
+				// value. Adding scope_canon to the index means two
+				// different scopes can never conflict with each other in
+				// the first place.
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_memories_working;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key, scope_canon) WHERE kind = 'working';
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_memories_working;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key) WHERE kind = 'working';
+`)
+				return err
+			},
+		},
 	)
 }
