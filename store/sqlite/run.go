@@ -11,9 +11,14 @@ import (
 )
 
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
+	r.Scope = scope
 	m := runToModel(r)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -23,8 +28,16 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 }
 
 func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(runModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx)
+	q := s.sdb.NewSelect(m).Where("id = ?", runID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	err := q.Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
 			return nil, cortex.ErrRunNotFound
@@ -35,9 +48,18 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 }
 
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	r.UpdatedAt = time.Now().UTC()
+	r.Scope = scope
 	m := runToModel(r)
-	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	q := s.sdb.NewUpdate(m).WherePK()
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: update run: %w", err)
 	}
@@ -52,24 +74,33 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 }
 
 func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &run.ListFilter{}
+	}
+
 	var models []runModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
-	if filter != nil {
-		if filter.AgentID != "" {
-			q = q.Where("agent_id = ?", filter.AgentID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
-		}
-		if filter.State != "" {
-			q = q.Where("state = ?", string(filter.State))
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.AgentID != "" {
+		q = q.Where("agent_id = ?", filter.AgentID)
+	}
+	if filter.TenantID != "" {
+		q = q.Where("tenant_id = ?", filter.TenantID)
+	}
+	if filter.State != "" {
+		q = q.Where("state = ?", string(filter.State))
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list runs: %w", err)
@@ -86,17 +117,26 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 }
 
 func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &run.ListFilter{}
+	}
+
 	q := s.sdb.NewSelect((*runModel)(nil))
-	if filter != nil {
-		if filter.AgentID != "" {
-			q = q.Where("agent_id = ?", filter.AgentID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
-		}
-		if filter.State != "" {
-			q = q.Where("state = ?", string(filter.State))
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.AgentID != "" {
+		q = q.Where("agent_id = ?", filter.AgentID)
+	}
+	if filter.TenantID != "" {
+		q = q.Where("tenant_id = ?", filter.TenantID)
+	}
+	if filter.State != "" {
+		q = q.Where("state = ?", string(filter.State))
 	}
 	count, err := q.Count(ctx)
 	if err != nil {

@@ -21,11 +21,14 @@ type Store interface {
 	ListToolCalls(ctx context.Context, stepID id.StepID) ([]*ToolCall, error)
 }
 
-// ListFilter controls pagination for run listing.
+// ListFilter controls pagination and matching for run listing. Scope
+// arrives on the context; Exact narrows the read to rows stored at
+// precisely that depth instead of everything beneath it.
 type ListFilter struct {
 	AgentID  string
 	TenantID string
 	State    State
+	Exact    bool
 	Limit    int
 	Offset   int
 }

@@ -1,9 +1,12 @@
 package postgres
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/run"
 )
 
 func ws(vals ...string) cortex.Scope {
@@ -100,5 +103,31 @@ func TestScopePredicates_ZeroScopeExactPinsAllLevels(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("predicate %d = %v, want %v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestListFilter_RunHasExactNoAppID guards run.ListFilter's shape. It never
+// had AppID (the run store was never app-keyed the way agent's List is),
+// but Exact needs to exist so ListRuns/CountRuns can ask for rows stored at
+// exactly the caller's scope depth instead of anything beneath it.
+func TestListFilter_RunHasExactNoAppID(t *testing.T) {
+	typ := reflect.TypeOf(run.ListFilter{})
+	if _, found := typ.FieldByName("AppID"); found {
+		t.Error("run.ListFilter has AppID; scope comes from context now")
+	}
+	if _, found := typ.FieldByName("Exact"); !found {
+		t.Error("run.ListFilter is missing Exact")
+	}
+}
+
+// TestListFilter_AgentStillHasAppID guards against re-applying a rejected
+// approach: stripping AppID from agent.ListFilter would leave the agent
+// store with two keys for one entity (GetByName stays app-keyed, List
+// would go scope-keyed), and skill/trait/behavior/persona all still key on
+// AppID too. Only run.ListFilter converts this phase.
+func TestListFilter_AgentStillHasAppID(t *testing.T) {
+	typ := reflect.TypeOf(agent.ListFilter{})
+	if _, found := typ.FieldByName("AppID"); !found {
+		t.Error("agent.ListFilter lost AppID; agent stays app-keyed this phase")
 	}
 }

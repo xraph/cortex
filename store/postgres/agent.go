@@ -12,10 +12,15 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
+// Create persists a new agent config. The agent store stays app-keyed this
+// phase (see List/Get/Update/Delete below), but the row still records
+// whatever scope is on the context so the columns are populated for the
+// day agent reads become scope-filtered too.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 	now := time.Now().UTC()
 	config.CreatedAt = now
 	config.UpdatedAt = now
+	config.Scope = cortex.ScopeFromContext(ctx)
 	m := agentToModel(config)
 	_, err := s.pgdb.NewInsert(m).Exec(ctx)
 	if err != nil {

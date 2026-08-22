@@ -11,11 +11,15 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// Create persists a new agent configuration.
+// Create persists a new agent configuration. The agent store stays
+// app-keyed this phase (see Get/Update/Delete/List below), but the
+// document still records whatever scope is on the context so the fields
+// are populated for the day agent reads become scope-filtered too.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 	t := now()
 	config.CreatedAt = t
 	config.UpdatedAt = t
+	config.Scope = cortex.ScopeFromContext(ctx)
 	m := agentToModel(config)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)

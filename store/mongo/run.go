@@ -13,9 +13,14 @@ import (
 
 // CreateRun persists a new run.
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 	r.CreatedAt = t
 	r.UpdatedAt = t
+	r.Scope = scope
 	m := runToModel(r)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -26,12 +31,22 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	return nil
 }
 
-// GetRun returns a run by ID.
+// GetRun returns a run by ID within the caller's scope.
 func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{"_id": runID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var m runModel
 
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"_id": runID.String()}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -44,13 +59,23 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 	return runFromModel(&m)
 }
 
-// UpdateRun modifies an existing run.
+// UpdateRun modifies an existing run within the caller's scope.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	r.UpdatedAt = now()
+	r.Scope = scope
 	m := runToModel(r)
 
+	filter := bson.M{"_id": m.ID}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	res, err := s.mdb.NewUpdate(m).
-		Filter(bson.M{"_id": m.ID}).
+		Filter(filter).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: update run: %w", err)
@@ -63,37 +88,41 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	return nil
 }
 
-// ListRuns returns runs, optionally filtered.
+// ListRuns returns runs within the caller's scope, optionally filtered.
 func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &run.ListFilter{}
+	}
+
 	var models []runModel
 
 	f := bson.M{}
-	if filter != nil {
-		if filter.AgentID != "" {
-			f["agent_id"] = filter.AgentID
-		}
-
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
-		}
-
-		if filter.State != "" {
-			f["state"] = string(filter.State)
-		}
+	for k, v := range scopeFilter(scope, filter.Exact) {
+		f[k] = v
+	}
+	if filter.AgentID != "" {
+		f["agent_id"] = filter.AgentID
+	}
+	if filter.TenantID != "" {
+		f["tenant_id"] = filter.TenantID
+	}
+	if filter.State != "" {
+		f["state"] = string(filter.State)
 	}
 
 	q := s.mdb.NewFind(&models).
 		Filter(f).
 		Sort(bson.D{{Key: "created_at", Value: -1}})
 
-	if filter != nil {
-		if filter.Limit > 0 {
-			q = q.Limit(int64(filter.Limit))
-		}
-
-		if filter.Offset > 0 {
-			q = q.Skip(int64(filter.Offset))
-		}
+	if filter.Limit > 0 {
+		q = q.Limit(int64(filter.Limit))
+	}
+	if filter.Offset > 0 {
+		q = q.Skip(int64(filter.Offset))
 	}
 
 	if err := q.Scan(ctx); err != nil {
@@ -112,21 +141,29 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 	return result, nil
 }
 
-// CountRuns returns the total number of runs matching the filter.
+// CountRuns returns the total number of runs matching the filter within the
+// caller's scope.
 func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &run.ListFilter{}
+	}
+
 	f := bson.M{}
-	if filter != nil {
-		if filter.AgentID != "" {
-			f["agent_id"] = filter.AgentID
-		}
-
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
-		}
-
-		if filter.State != "" {
-			f["state"] = string(filter.State)
-		}
+	for k, v := range scopeFilter(scope, filter.Exact) {
+		f[k] = v
+	}
+	if filter.AgentID != "" {
+		f["agent_id"] = filter.AgentID
+	}
+	if filter.TenantID != "" {
+		f["tenant_id"] = filter.TenantID
+	}
+	if filter.State != "" {
+		f["state"] = string(filter.State)
 	}
 
 	count, err := s.mdb.NewFind((*runModel)(nil)).
