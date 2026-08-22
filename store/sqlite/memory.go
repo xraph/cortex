@@ -5,17 +5,90 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 )
 
-func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, messages []memory.Message) error {
+// indexedScopeLevels is how many scope levels get their own indexed column.
+// Levels past this land in scope_extra (JSON-encoded, since sqlite has no
+// native jsonb type). Mirrors the postgres store's convention so scope data
+// reads the same shape across backends.
+const indexedScopeLevels = 3
+
+// scopePredicate is one equality clause against a scope column.
+type scopePredicate struct {
+	Column string
+	Value  string
+}
+
+// scopeColumns flattens a scope into the three indexed column values plus a
+// JSON-encoded overflow map. Absent levels are the empty string, never NULL,
+// so they stay comparable.
+func scopeColumns(s cortex.Scope) (l0, l1, l2, extraJSON string) {
+	extra := make(map[string]string)
+	for i, lvl := range s.Levels {
+		encoded := lvl.Key + "=" + lvl.Value
+		switch i {
+		case 0:
+			l0 = encoded
+		case 1:
+			l1 = encoded
+		case 2:
+			l2 = encoded
+		default:
+			extra[lvl.Key] = lvl.Value
+		}
+	}
+	return l0, l1, l2, mustJSON(extra)
+}
+
+// scopePredicates builds the WHERE clauses for a scope filter. Prefix
+// matching (exact = false) is the default: one equality per level the
+// caller actually supplied, and nothing for the levels they left off, so a
+// workspace-only filter matches every project inside it.
+func scopePredicates(s cortex.Scope, exact bool) []scopePredicate {
+	cols := []string{"scope_l0", "scope_l1", "scope_l2"}
+	l0, l1, l2, _ := scopeColumns(s)
+	vals := []string{l0, l1, l2}
+
+	preds := make([]scopePredicate, 0, indexedScopeLevels)
+	for i := range cols {
+		if vals[i] == "" && !exact {
+			continue
+		}
+		preds = append(preds, scopePredicate{Column: cols[i], Value: vals[i]})
+	}
+	return preds
+}
+
+func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messages []memory.Message) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	if len(messages) == 0 {
 		return nil
 	}
+	l0, l1, l2, extra := scopeColumns(scope)
+	canon := scope.Canonical()
+
 	models := make([]memoryModel, len(messages))
 	for i, msg := range messages {
-		models[i] = *messageToModel(agentID.String(), tenantID, msg)
+		content, err := json.Marshal(&msg)
+		if err != nil {
+			return fmt.Errorf("cortex/sqlite: marshal message: %w", err)
+		}
+		models[i] = memoryModel{
+			AgentID:    agentID.String(),
+			Kind:       "conversation",
+			Content:    string(content),
+			ScopeL0:    l0,
+			ScopeL1:    l1,
+			ScopeL2:    l2,
+			ScopeExtra: extra,
+			ScopeCanon: canon,
+		}
 	}
 	_, err := s.sdb.NewInsert(&models).Exec(ctx)
 	if err != nil {
@@ -24,13 +97,20 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, tenant
 	return nil
 }
 
-func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) {
+func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
 	var models []memoryModel
 	q := s.sdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
-		Where("tenant_id = ?", tenantID).
 		Where("kind = ?", "conversation").
 		OrderExpr("created_at ASC")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -47,12 +127,19 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenant
 	return messages, nil
 }
 
-func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error {
-	_, err := s.sdb.NewDelete((*memoryModel)(nil)).
+func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+
+	q := s.sdb.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", agentID.String()).
-		Where("tenant_id = ?", tenantID).
-		Where("kind = ?", "conversation").
-		Exec(ctx)
+		Where("kind = ?", "conversation")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	_, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: clear conversation: %w", err)
 	}
@@ -104,12 +191,22 @@ func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
 	return nil
 }
 
-func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, summary string) error {
+func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	l0, l1, l2, extra := scopeColumns(scope)
+
 	m := &memoryModel{
-		AgentID:  agentID.String(),
-		TenantID: tenantID,
-		Kind:     "summary",
-		Content:  summary,
+		AgentID:    agentID.String(),
+		Kind:       "summary",
+		Content:    summary,
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: scope.Canonical(),
 	}
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -118,15 +215,21 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, s
 	return nil
 }
 
-func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error) {
+func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
 	var models []memoryModel
-	err := s.sdb.NewSelect(&models).
+	q := s.sdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
-		Where("tenant_id = ?", tenantID).
 		Where("kind = ?", "summary").
-		OrderExpr("created_at ASC").
-		Scan(ctx)
-	if err != nil {
+		OrderExpr("created_at ASC")
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: load summaries: %w", err)
 	}
 	summaries := make([]string, len(models))

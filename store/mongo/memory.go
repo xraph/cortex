@@ -7,20 +7,87 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 )
 
+// scopeColumns flattens a scope into the three indexed field values plus an
+// overflow map, mirroring the postgres store's column layout so scope data
+// reads the same shape across backends.
+func scopeColumns(s cortex.Scope) (l0, l1, l2 string, extra map[string]string) {
+	extra = make(map[string]string)
+	for i, lvl := range s.Levels {
+		encoded := lvl.Key + "=" + lvl.Value
+		switch i {
+		case 0:
+			l0 = encoded
+		case 1:
+			l1 = encoded
+		case 2:
+			l2 = encoded
+		default:
+			extra[lvl.Key] = lvl.Value
+		}
+	}
+	return l0, l1, l2, extra
+}
+
+// scopeFilter builds the bson filter fragment for a scope match. Prefix
+// matching (exact = false) is the default: one equality per level the
+// caller actually supplied, and nothing for the levels they left off, so a
+// workspace-only filter matches every project inside it.
+func scopeFilter(s cortex.Scope, exact bool) bson.M {
+	l0, l1, l2, _ := scopeColumns(s)
+	cols := []struct {
+		key string
+		val string
+	}{
+		{"scope_l0", l0},
+		{"scope_l1", l1},
+		{"scope_l2", l2},
+	}
+
+	f := bson.M{}
+	for _, c := range cols {
+		if c.val == "" && !exact {
+			continue
+		}
+		f[c.key] = c.val
+	}
+	return f
+}
+
 // SaveConversation appends messages to conversation memory.
-func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, messages []memory.Message) error {
+func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messages []memory.Message) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	if len(messages) == 0 {
 		return nil
 	}
+	l0, l1, l2, extra := scopeColumns(scope)
+	canon := scope.Canonical()
 
 	models := make([]memoryModel, len(messages))
 	for i, msg := range messages {
-		models[i] = *messageToModel(agentID.String(), tenantID, msg)
-		models[i].CreatedAt = now()
+		content, err := json.Marshal(&msg)
+		if err != nil {
+			return fmt.Errorf("cortex/mongo: marshal message: %w", err)
+		}
+		models[i] = memoryModel{
+			AgentID:    agentID.String(),
+			Kind:       "conversation",
+			Content:    string(content),
+			Metadata:   msg.Metadata,
+			ScopeL0:    l0,
+			ScopeL1:    l1,
+			ScopeL2:    l2,
+			ScopeExtra: extra,
+			ScopeCanon: canon,
+			CreatedAt:  now(),
+		}
 	}
 
 	_, err := s.mdb.NewInsert(&models).Exec(ctx)
@@ -31,16 +98,25 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, tenant
 	return nil
 }
 
-// LoadConversation returns conversation messages for an agent and tenant.
-func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) {
+// LoadConversation returns conversation messages for an agent within scope.
+func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{
+		"agent_id": agentID.String(),
+		"kind":     "conversation",
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var models []memoryModel
 
 	q := s.mdb.NewFind(&models).
-		Filter(bson.M{
-			"agent_id":  agentID.String(),
-			"tenant_id": tenantID,
-			"kind":      "conversation",
-		}).
+		Filter(filter).
 		Sort(bson.D{{Key: "created_at", Value: 1}})
 
 	if limit > 0 {
@@ -62,15 +138,24 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, tenant
 	return messages, nil
 }
 
-// ClearConversation removes all conversation messages for an agent and tenant.
-func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error {
+// ClearConversation removes all conversation messages for an agent within scope.
+func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+
+	filter := bson.M{
+		"agent_id": agentID.String(),
+		"kind":     "conversation",
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	_, err := s.mdb.NewDelete((*memoryModel)(nil)).
 		Many().
-		Filter(bson.M{
-			"agent_id":  agentID.String(),
-			"tenant_id": tenantID,
-			"kind":      "conversation",
-		}).
+		Filter(filter).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: clear conversation: %w", err)
@@ -145,13 +230,23 @@ func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
 }
 
 // SaveSummary appends a summary to the agent's memory.
-func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, summary string) error {
+func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	l0, l1, l2, extra := scopeColumns(scope)
+
 	m := &memoryModel{
-		AgentID:   agentID.String(),
-		TenantID:  tenantID,
-		Kind:      "summary",
-		Content:   summary,
-		CreatedAt: now(),
+		AgentID:    agentID.String(),
+		Kind:       "summary",
+		Content:    summary,
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: scope.Canonical(),
+		CreatedAt:  now(),
 	}
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -162,16 +257,25 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, tenantID, s
 	return nil
 }
 
-// LoadSummaries returns all summaries for an agent and tenant.
-func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error) {
+// LoadSummaries returns all summaries for an agent within scope.
+func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	filter := bson.M{
+		"agent_id": agentID.String(),
+		"kind":     "summary",
+	}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	var models []memoryModel
 
 	err := s.mdb.NewFind(&models).
-		Filter(bson.M{
-			"agent_id":  agentID.String(),
-			"tenant_id": tenantID,
-			"kind":      "summary",
-		}).
+		Filter(filter).
 		Sort(bson.D{{Key: "created_at", Value: 1}}).
 		Scan(ctx)
 	if err != nil {

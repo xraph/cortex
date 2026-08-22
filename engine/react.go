@@ -40,7 +40,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
 
 	// Load conversation history.
-	history, _ := e.store.LoadConversation(ctx, ag.ID, "", 100) //nolint:errcheck // best-effort history load
+	history, _ := e.store.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort history load
 	messages := memoryToLLM(history)
 	messages = append(messages, llm.Message{Role: "user", Content: input})
 
@@ -183,7 +183,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 
 	// Save updated conversation.
 	convMsgs := llmToMemory(messages)
-	if err := e.store.SaveConversation(ctx, ag.ID, "", convMsgs); err != nil {
+	if err := e.store.SaveConversation(ctx, ag.ID, convMsgs); err != nil {
 		e.logger.Error("save conversation", log.String("error", err.Error()))
 	}
 
@@ -233,7 +233,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		}}
 
 		// Load conversation history.
-		history, _ := e.store.LoadConversation(ctx, ag.ID, "", 100) //nolint:errcheck // best-effort history load
+		history, _ := e.store.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort history load
 		messages := memoryToLLM(history)
 		messages = append(messages, llm.Message{Role: "user", Content: input})
 
@@ -451,7 +451,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 
 		// Save updated conversation.
 		convMsgs := llmToMemory(messages)
-		if err := e.store.SaveConversation(ctx, ag.ID, "", convMsgs); err != nil {
+		if err := e.store.SaveConversation(ctx, ag.ID, convMsgs); err != nil {
 			e.logger.Error("save conversation", log.String("error", err.Error()))
 		}
 

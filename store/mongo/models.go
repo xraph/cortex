@@ -13,7 +13,6 @@ import (
 	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/communication"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/perception"
 	"github.com/xraph/cortex/persona"
@@ -305,24 +304,19 @@ func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
 
 type memoryModel struct {
 	grove.BaseModel `grove:"table:cortex_memories"`
-	ID              string         `grove:"id,pk"          bson:"_id,omitempty"`
-	AgentID         string         `grove:"agent_id"       bson:"agent_id"`
-	TenantID        string         `grove:"tenant_id"      bson:"tenant_id"`
-	Kind            string         `grove:"kind"           bson:"kind"`
-	Key             string         `grove:"key"            bson:"key"`
-	Content         string         `grove:"content"        bson:"content"`
-	Metadata        map[string]any `grove:"metadata"       bson:"metadata,omitempty"`
-	CreatedAt       time.Time      `grove:"created_at"     bson:"created_at"`
-}
-
-func messageToModel(agentID, tenantID string, msg memory.Message) *memoryModel {
-	return &memoryModel{
-		AgentID:  agentID,
-		TenantID: tenantID,
-		Kind:     "conversation",
-		Content:  mustJSON(msg),
-		Metadata: msg.Metadata,
-	}
+	ID              string            `grove:"id,pk"          bson:"_id,omitempty"`
+	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
+	TenantID        string            `grove:"tenant_id"      bson:"tenant_id"`
+	Kind            string            `grove:"kind"           bson:"kind"`
+	Key             string            `grove:"key"            bson:"key"`
+	Content         string            `grove:"content"        bson:"content"`
+	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
 }
 
 // ──────────────────────────────────────────────────

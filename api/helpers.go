@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 
 	"github.com/xraph/forge"
@@ -36,6 +37,14 @@ func isNotFound(err error) bool {
 
 func isConflict(err error) bool {
 	return errors.Is(err, cortex.ErrAlreadyExists)
+}
+
+// scopeFromTenant bridges the legacy tenant identifier into a Scope while
+// the host has no scope middleware. Task 9 removes TenantFromContext and
+// this helper with it, at which point the host supplies the scope directly.
+func scopeFromTenant(ctx context.Context) context.Context {
+	t := cortex.TenantFromContext(ctx)
+	return cortex.WithScope(ctx, cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: t}}})
 }
 
 // defaultLimit returns a safe default page size.

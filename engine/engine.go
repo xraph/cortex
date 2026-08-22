@@ -448,18 +448,18 @@ func (e *Engine) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.To
 // Memory passthrough
 // ──────────────────────────────────────────────────
 
-func (e *Engine) LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]memory.Message, error) {
+func (e *Engine) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.LoadConversation(ctx, agentID, tenantID, limit)
+	return e.store.LoadConversation(ctx, agentID, limit)
 }
 
-func (e *Engine) ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error {
+func (e *Engine) ClearConversation(ctx context.Context, agentID id.AgentID) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
-	return e.store.ClearConversation(ctx, agentID, tenantID)
+	return e.store.ClearConversation(ctx, agentID)
 }
 
 // ──────────────────────────────────────────────────

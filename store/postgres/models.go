@@ -12,7 +12,6 @@ import (
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
@@ -606,24 +605,19 @@ func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
 
 type memoryModel struct {
 	grove.BaseModel `grove:"table:cortex_memories"`
-	ID              int64     `grove:"id,pk,autoincrement"`
-	AgentID         string    `grove:"agent_id,notnull"`
-	TenantID        string    `grove:"tenant_id"`
-	Kind            string    `grove:"kind,notnull"`
-	Key             string    `grove:"key"`
-	Content         string    `grove:"content,notnull"`
-	Metadata        string    `grove:"metadata,type:jsonb"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-}
-
-func messageToModel(agentID, tenantID string, msg memory.Message) *memoryModel {
-	return &memoryModel{
-		AgentID:  agentID,
-		TenantID: tenantID,
-		Kind:     "conversation",
-		Content:  mustJSON(msg),
-		Metadata: mustJSON(msg.Metadata),
-	}
+	ID              int64             `grove:"id,pk,autoincrement"`
+	AgentID         string            `grove:"agent_id,notnull"`
+	TenantID        string            `grove:"tenant_id"`
+	Kind            string            `grove:"kind,notnull"`
+	Key             string            `grove:"key"`
+	Content         string            `grove:"content,notnull"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb"`
+	ScopeCanon      string            `grove:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
 }
 
 // ──────────────────────────────────────────────────

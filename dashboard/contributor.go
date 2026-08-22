@@ -652,7 +652,7 @@ func (c *Contributor) renderMemory(ctx context.Context, s store.Store, params co
 	if agentIDStr != "" {
 		agID, parseErr := id.ParseAgentID(agentIDStr)
 		if parseErr == nil {
-			messages, _ = s.LoadConversation(ctx, agID, "", 100) //nolint:errcheck // best-effort UI data
+			messages, _ = s.LoadConversation(ctx, agID, 100) //nolint:errcheck // best-effort UI data
 		}
 	}
 	return pages.MemoryPage(agents, agentIDStr, messages), nil
@@ -772,7 +772,7 @@ func (c *Contributor) renderChat(ctx context.Context, s store.Store, params cont
 	if selectedAgent != "" {
 		ag, err := s.GetByName(ctx, "", selectedAgent)
 		if err == nil {
-			messages, _ = s.LoadConversation(ctx, ag.ID, "", 100) //nolint:errcheck // best-effort UI data
+			messages, _ = s.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort UI data
 		}
 	}
 

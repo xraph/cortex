@@ -12,7 +12,6 @@ import (
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
@@ -615,17 +614,12 @@ type memoryModel struct {
 	Key             string    `grove:"key"`
 	Content         string    `grove:"content,notnull"`
 	Metadata        string    `grove:"metadata"`
+	ScopeL0         string    `grove:"scope_l0"`
+	ScopeL1         string    `grove:"scope_l1"`
+	ScopeL2         string    `grove:"scope_l2"`
+	ScopeExtra      string    `grove:"scope_extra"`
+	ScopeCanon      string    `grove:"scope_canon"`
 	CreatedAt       time.Time `grove:"created_at"`
-}
-
-func messageToModel(agentID, tenantID string, msg memory.Message) *memoryModel {
-	return &memoryModel{
-		AgentID:  agentID,
-		TenantID: tenantID,
-		Kind:     "conversation",
-		Content:  mustJSON(msg),
-		Metadata: mustJSON(msg.Metadata),
-	}
 }
 
 // ──────────────────────────────────────────────────
