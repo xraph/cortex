@@ -61,6 +61,44 @@ func (s *staticStream) Close() error { return nil }
 
 func (s *staticStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 1} }
 
+// blockingStreamLLM's stream never yields a chunk on its own; Next blocks
+// on ctx until the caller cancels it, so a test can force the streaming
+// react loop into its cancel branch deterministically instead of racing a
+// timer against a fast-returning fake stream.
+type blockingStreamLLM struct{}
+
+// BlockingStreamLLM returns an llm.Client whose stream hangs in Next until
+// ctx is cancelled, for testing StreamAgent's cancellation path.
+func BlockingStreamLLM() llm.Client { return &blockingStreamLLM{} }
+
+func (b *blockingStreamLLM) Complete(_ context.Context, _ *llm.Request) (*llm.Response, error) {
+	return &llm.Response{Content: "unused"}, nil
+}
+
+func (b *blockingStreamLLM) CompleteStream(_ context.Context, _ *llm.Request) (llm.Stream, error) {
+	return &blockingStream{}, nil
+}
+
+// blockingStream yields one benign empty chunk once ctx is cancelled, so
+// the react loop's read succeeds and control returns to the top of its
+// for-select, where ctx.Done() is then observed. It never returns io.EOF,
+// so the only way out of the loop is the cancel branch.
+type blockingStream struct{ returned bool }
+
+func (b *blockingStream) Next(ctx context.Context) (*llm.Chunk, error) {
+	if b.returned {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	<-ctx.Done()
+	b.returned = true
+	return &llm.Chunk{Content: ""}, nil
+}
+
+func (b *blockingStream) Close() error { return nil }
+
+func (b *blockingStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 0} }
+
 // toolCallingLLM answers its first Complete with a call to tool, then a
 // plain "done" on every call after — enough for a single ReAct loop
 // invocation to dispatch a tool and then finish.

@@ -315,7 +315,13 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					r.State = run.StateCancelled
 					completedAt := time.Now().UTC()
 					r.CompletedAt = &completedAt
-					if err := e.store.UpdateRun(ctx, r); err != nil {
+					// ctx is already cancelled here, so a store write using
+					// it outright would fail before it starts and the
+					// cancel state would never persist, leaving the run
+					// stuck at "running". WithoutCancel keeps every context
+					// value (including scope) while dropping the
+					// cancellation signal for this one terminal write.
+					if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
 						e.logger.Error("update run on cancel", log.String("error", err.Error()))
 					}
 					events <- StreamEvent{Type: EventError, Data: map[string]any{"message": "cancelled"}}

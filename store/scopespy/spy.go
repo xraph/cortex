@@ -21,6 +21,12 @@ import (
 type Call struct {
 	Method string
 	Scope  cortex.Scope
+	// CtxErr is ctx.Err() at call time. A terminal write issued from an
+	// already-cancelled ctx would otherwise fail before it reaches a real
+	// store, so a non-nil CtxErr on a call that's supposed to persist a
+	// cancel/failure outcome is the same bug shape this field exists to
+	// catch even though the spy itself doesn't reject cancelled contexts.
+	CtxErr error
 }
 
 // Spy implements store.Store by embedding it as a nil interface and
@@ -38,7 +44,7 @@ func New() *Spy { return &Spy{} }
 func (s *Spy) record(ctx context.Context, method string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls = append(s.calls, Call{Method: method, Scope: cortex.ScopeFromContext(ctx)})
+	s.calls = append(s.calls, Call{Method: method, Scope: cortex.ScopeFromContext(ctx), CtxErr: ctx.Err()})
 }
 
 func (s *Spy) Calls() []Call {

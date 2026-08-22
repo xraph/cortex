@@ -164,3 +164,121 @@ func TestRunAgent_ToolCallCarriesScope(t *testing.T) {
 		t.Fatal("CreateToolCall was never recorded; this test proves nothing about tool-call scope")
 	}
 }
+
+// TestStreamAgent_CancelPersistsWithUncancelledContext is a regression
+// test for the terminal cancel write: the cancel branch in streamReAct
+// used to call UpdateRun with the ctx that had just been cancelled, so
+// the store write failed before it started and the run stayed "running"
+// forever instead of recording StateCancelled. BlockingStreamLLM hangs
+// in Next until the test cancels ctx, forcing the loop back to its
+// ctx.Done() branch deterministically. The scope must still ride along
+// even though cancellation was stripped for the write.
+func TestStreamAgent_CancelPersistsWithUncancelledContext(t *testing.T) {
+	spy := scopespy.New()
+	e, err := engine.New(engine.WithStore(spy), engine.WithLLM(scopespy.BlockingStreamLLM()))
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	want := cortex.Scope{Levels: []cortex.Level{
+		{Key: "workspace", Value: "ws_x"},
+		{Key: "project", Value: "proj_y"},
+	}}
+	baseCtx := cortex.WithScope(context.Background(), want)
+	ctx, cancel := context.WithCancel(baseCtx)
+	defer cancel()
+
+	events := make(chan engine.StreamEvent, 64)
+	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+		t.Fatalf("StreamAgent: %v", err)
+	}
+
+	cancel()
+
+	var drained int
+	for range events {
+		drained++
+	}
+	if drained == 0 {
+		t.Fatal("no stream events received; StreamAgent may not have run")
+	}
+
+	var sawUpdate bool
+	for _, c := range spy.Calls() {
+		if c.Method != "UpdateRun" {
+			continue
+		}
+		sawUpdate = true
+		if c.Scope.IsZero() {
+			t.Error("UpdateRun on cancel received a zero scope")
+		}
+		if c.Scope.Canonical() != want.Canonical() {
+			t.Errorf("UpdateRun on cancel got scope %q, want %q", c.Scope.Canonical(), want.Canonical())
+		}
+		if c.CtxErr != nil {
+			t.Errorf("UpdateRun on cancel got ctx.Err() = %v, want nil (the write must use context.WithoutCancel)", c.CtxErr)
+		}
+	}
+	if !sawUpdate {
+		t.Fatal("UpdateRun was never recorded on cancel; the cancel branch did not run")
+	}
+}
+
+// TestStreamAgent_MockCancelPersistsWithUncancelledContext is the
+// streamMock sibling of TestStreamAgent_CancelPersistsWithUncancelledContext:
+// the mock/echo fallback (used when no LLM client is configured) has its
+// own independent cancel branch with the same bug shape. It emits one
+// token per character with a short sleep between them, so cancelling
+// right after the first token gives the loop's next ctx.Done() check a
+// wide, deterministic window to fire.
+func TestStreamAgent_MockCancelPersistsWithUncancelledContext(t *testing.T) {
+	spy := scopespy.New()
+	e, err := engine.New(engine.WithStore(spy)) // no WithLLM: forces the mock/echo fallback
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	want := cortex.Scope{Levels: []cortex.Level{
+		{Key: "workspace", Value: "ws_x"},
+		{Key: "project", Value: "proj_y"},
+	}}
+	baseCtx := cortex.WithScope(context.Background(), want)
+	ctx, cancel := context.WithCancel(baseCtx)
+	defer cancel()
+
+	events := make(chan engine.StreamEvent, 64)
+	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+		t.Fatalf("StreamAgent: %v", err)
+	}
+
+	var gotToken bool
+	for ev := range events {
+		if ev.Type == engine.EventToken && !gotToken {
+			gotToken = true
+			cancel()
+		}
+	}
+	if !gotToken {
+		t.Fatal("no token event received; the mock fallback may not have run")
+	}
+
+	var sawUpdate bool
+	for _, c := range spy.Calls() {
+		if c.Method != "UpdateRun" {
+			continue
+		}
+		sawUpdate = true
+		if c.Scope.IsZero() {
+			t.Error("UpdateRun on cancel received a zero scope")
+		}
+		if c.Scope.Canonical() != want.Canonical() {
+			t.Errorf("UpdateRun on cancel got scope %q, want %q", c.Scope.Canonical(), want.Canonical())
+		}
+		if c.CtxErr != nil {
+			t.Errorf("UpdateRun on cancel got ctx.Err() = %v, want nil (the write must use context.WithoutCancel)", c.CtxErr)
+		}
+	}
+	if !sawUpdate {
+		t.Fatal("UpdateRun was never recorded on cancel; the cancel branch did not run")
+	}
+}
