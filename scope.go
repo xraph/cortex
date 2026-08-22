@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -78,23 +79,29 @@ func (s Scope) Canonical() string {
 // level order. It is the inverse of Canonical: stores that persist only
 // the canonical string (or the flattened scope_l0/l1/l2 columns plus a
 // scope_canon column) use this to reconstruct Scope on read. An empty
-// string parses to the zero Scope. Segments that don't contain "=" are
-// skipped rather than erroring, since a malformed stored value shouldn't
-// make a read fail.
-func ParseCanonical(canon string) Scope {
+// string parses to the zero Scope.
+//
+// A segment that doesn't contain "=" is an error rather than something to
+// skip: silently dropping it would reconstruct a scope NARROWER than what
+// was actually stored, which a caller comparing it against the row's own
+// scope_l0/l1/l2 columns (or using it to authorize a write) would never
+// notice. Callers should treat a non-nil error here as a corrupt row —
+// the same as any other scan failure — rather than falling back to
+// whatever levels did parse.
+func ParseCanonical(canon string) (Scope, error) {
 	if canon == "" {
-		return Scope{}
+		return Scope{}, nil
 	}
 	parts := strings.Split(canon, "/")
 	levels := make([]Level, 0, len(parts))
 	for _, p := range parts {
 		key, value, found := strings.Cut(p, "=")
 		if !found {
-			continue
+			return Scope{}, fmt.Errorf("cortex: malformed scope_canon segment %q in %q", p, canon)
 		}
 		levels = append(levels, Level{Key: key, Value: value})
 	}
-	return Scope{Levels: levels}
+	return Scope{Levels: levels}, nil
 }
 
 // maxScopeLevels is how many levels a Scope may carry. It mirrors

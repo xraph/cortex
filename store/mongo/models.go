@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/xraph/grove"
@@ -90,13 +91,17 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("agent %s: %w", agentID, err)
+	}
 	return &agent.Config{
 		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:              agentID,
 		Name:            m.Name,
 		Description:     m.Description,
 		AppID:           m.AppID,
-		Scope:           cortex.ParseCanonical(m.ScopeCanon),
+		Scope:           scope,
 		SystemPrompt:    m.SystemPrompt,
 		Model:           m.Model,
 		Tools:           m.Tools,
@@ -175,11 +180,15 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("run %s: %w", runID, err)
+	}
 	return &run.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AgentID:     agentID,
-		Scope:       cortex.ParseCanonical(m.ScopeCanon),
+		Scope:       scope,
 		State:       run.State(m.State),
 		Input:       m.Input,
 		Output:      m.Output,
@@ -396,12 +405,16 @@ func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint %s: %w", cpID, err)
+	}
 	return &checkpoint.Checkpoint{
 		Entity:    cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:        cpID,
 		RunID:     runID,
 		AgentID:   agentID,
-		Scope:     cortex.ParseCanonical(m.ScopeCanon),
+		Scope:     scope,
 		Reason:    m.Reason,
 		StepIndex: m.StepIndex,
 		State:     m.State,

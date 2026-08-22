@@ -71,6 +71,54 @@ func TestScopeFromContext_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestParseCanonical_RoundTrip proves Canonical/ParseCanonical are true
+// inverses for well-formed input.
+func TestParseCanonical_RoundTrip(t *testing.T) {
+	want := cortex.Scope{Levels: []cortex.Level{
+		{Key: "workspace", Value: "ws_x"},
+		{Key: "project", Value: "proj_y"},
+	}}
+	got, err := cortex.ParseCanonical(want.Canonical())
+	if err != nil {
+		t.Fatalf("ParseCanonical(%q): %v", want.Canonical(), err)
+	}
+	if got.Canonical() != want.Canonical() {
+		t.Errorf("round trip = %q, want %q", got.Canonical(), want.Canonical())
+	}
+}
+
+func TestParseCanonical_Empty(t *testing.T) {
+	got, err := cortex.ParseCanonical("")
+	if err != nil {
+		t.Fatalf("ParseCanonical(\"\"): %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("ParseCanonical(\"\") = %+v, want zero scope", got)
+	}
+}
+
+// TestParseCanonical_MalformedSegmentErrors pins the fix for the
+// silent-narrowing hazard: a segment without "=" used to be dropped, so a
+// corrupt scope_canon read back as a scope NARROWER than what was
+// actually stored — indistinguishable from a legitimately shorter scope.
+// ParseCanonical must now surface that as an error instead of a
+// plausible-looking partial result.
+func TestParseCanonical_MalformedSegmentErrors(t *testing.T) {
+	tests := []string{
+		"workspace=ws_x/garbage",
+		"garbage",
+		"workspace=ws_x//project=proj_y", // empty segment between slashes
+	}
+	for _, canon := range tests {
+		t.Run(canon, func(t *testing.T) {
+			_, err := cortex.ParseCanonical(canon)
+			if err == nil {
+				t.Errorf("ParseCanonical(%q) returned no error for malformed input", canon)
+			}
+		})
+	}
+}
+
 func TestScopeFromContext_AbsentIsZero(t *testing.T) {
 	if !cortex.ScopeFromContext(context.Background()).IsZero() {
 		t.Error("bare context should yield a zero scope")
