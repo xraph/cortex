@@ -59,14 +59,21 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 	return runFromModel(&m)
 }
 
-// UpdateRun modifies an existing run within the caller's scope.
+// UpdateRun modifies an existing run's mutable fields within the caller's
+// scope. Scope is immutable after creation: the context scope is used
+// only as an authorization predicate (the caller must be at or above the
+// run's stored scope to touch it), and is never written back. grove's
+// NewUpdate(model).Exec builds $set from every field on the model by
+// default (confirmed by reading mongodriver's query_update.go), so this
+// builds an explicit $set instead of passing the model through — leaving
+// out scope_l0/l1/l2/extra/canon rather than relying on them happening to
+// already match.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
 	r.UpdatedAt = now()
-	r.Scope = scope
 	m := runToModel(r)
 
 	filter := bson.M{"_id": m.ID}
@@ -74,8 +81,25 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 		filter[k] = v
 	}
 
-	res, err := s.mdb.NewUpdate(m).
+	set := bson.M{
+		"agent_id":     m.AgentID,
+		"tenant_id":    m.TenantID,
+		"state":        m.State,
+		"input":        m.Input,
+		"output":       m.Output,
+		"error":        m.Error,
+		"step_count":   m.StepCount,
+		"tokens_used":  m.TokensUsed,
+		"started_at":   m.StartedAt,
+		"completed_at": m.CompletedAt,
+		"persona_ref":  m.PersonaRef,
+		"metadata":     m.Metadata,
+		"updated_at":   m.UpdatedAt,
+	}
+
+	res, err := s.mdb.NewUpdate((*runModel)(nil)).
 		Filter(filter).
+		SetUpdate(bson.M{"$set": set}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: update run: %w", err)

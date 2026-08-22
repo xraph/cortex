@@ -93,6 +93,29 @@ func (s Scope) Canonical() string {
 	return strings.Join(parts, "/")
 }
 
+// ParseCanonical parses a Canonical() string back into a Scope, preserving
+// level order. It is the inverse of Canonical: stores that persist only
+// the canonical string (or the flattened scope_l0/l1/l2 columns plus a
+// scope_canon column) use this to reconstruct Scope on read. An empty
+// string parses to the zero Scope. Segments that don't contain "=" are
+// skipped rather than erroring, since a malformed stored value shouldn't
+// make a read fail.
+func ParseCanonical(canon string) Scope {
+	if canon == "" {
+		return Scope{}
+	}
+	parts := strings.Split(canon, "/")
+	levels := make([]Level, 0, len(parts))
+	for _, p := range parts {
+		key, value, found := strings.Cut(p, "=")
+		if !found {
+			continue
+		}
+		levels = append(levels, Level{Key: key, Value: value})
+	}
+	return Scope{Levels: levels}
+}
+
 // WithScope attaches a scope to ctx.
 func WithScope(ctx context.Context, s Scope) context.Context {
 	return context.WithValue(ctx, scopeKey, s)

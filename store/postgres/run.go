@@ -12,6 +12,30 @@ import (
 	"github.com/xraph/cortex/run"
 )
 
+// mutableRunColumns is every cortex_runs column UpdateRun is allowed to
+// write. A run's scope is set once at creation and never rewritten:
+// scope_l0/l1/l2/extra/canon are deliberately absent here. Grove's
+// NewUpdate builds SET from every model field by default, so without this
+// explicit whitelist an UpdateRun issued from a broader (but still
+// scope-matching) context would silently overwrite a row's narrower
+// stored scope.
+var mutableRunColumns = []string{
+	"agent_id",
+	"tenant_id",
+	"state",
+	"input",
+	"output",
+	"error",
+	"step_count",
+	"tokens_used",
+	"started_at",
+	"completed_at",
+	"persona_ref",
+	"metadata",
+	"created_at",
+	"updated_at",
+}
+
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -49,15 +73,19 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 	return runFromModel(m)
 }
 
+// UpdateRun updates a run's mutable fields. Scope is immutable after
+// creation: the context scope is used only as an authorization predicate
+// (the caller must be at or above the run's stored scope to touch it), and
+// is never written back. r.Scope is left untouched — whatever runToModel
+// derives from it is excluded from the SET clause by mutableRunColumns.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
 	r.UpdatedAt = time.Now().UTC()
-	r.Scope = scope
 	m := runToModel(r)
-	q := s.pgdb.NewUpdate(m).WherePK()
+	q := s.pgdb.NewUpdate(m).Column(mutableRunColumns...).WherePK()
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

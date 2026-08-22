@@ -180,6 +180,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AgentID:     agentID,
+		Scope:       cortex.ParseCanonical(m.ScopeCanon),
 		TenantID:    m.TenantID,
 		State:       run.State(m.State),
 		Input:       m.Input,
