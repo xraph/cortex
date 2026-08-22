@@ -36,29 +36,35 @@ func unmarshalField(field, data string, dest any) error {
 
 type agentModel struct {
 	grove.BaseModel `grove:"table:cortex_agents"`
-	ID              string    `grove:"id,pk"`
-	Name            string    `grove:"name,notnull"`
-	Description     string    `grove:"description"`
-	AppID           string    `grove:"app_id,notnull"`
-	SystemPrompt    string    `grove:"system_prompt"`
-	Model           string    `grove:"model"`
-	Tools           string    `grove:"tools,type:jsonb"`
-	MaxSteps        int       `grove:"max_steps"`
-	MaxTokens       int       `grove:"max_tokens"`
-	Temperature     float64   `grove:"temperature"`
-	ReasoningLoop   string    `grove:"reasoning_loop"`
-	Guardrails      string    `grove:"guardrails,type:jsonb"`
-	Metadata        string    `grove:"metadata,type:jsonb"`
-	Enabled         bool      `grove:"enabled"`
-	PersonaRef      string    `grove:"persona_ref"`
-	InlineSkills    string    `grove:"inline_skills,type:jsonb"`
-	InlineTraits    string    `grove:"inline_traits,type:jsonb"`
-	InlineBehaviors string    `grove:"inline_behaviors,type:jsonb"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	Name            string            `grove:"name,notnull"`
+	Description     string            `grove:"description"`
+	AppID           string            `grove:"app_id,notnull"`
+	SystemPrompt    string            `grove:"system_prompt"`
+	Model           string            `grove:"model"`
+	Tools           string            `grove:"tools,type:jsonb"`
+	MaxSteps        int               `grove:"max_steps"`
+	MaxTokens       int               `grove:"max_tokens"`
+	Temperature     float64           `grove:"temperature"`
+	ReasoningLoop   string            `grove:"reasoning_loop"`
+	Guardrails      string            `grove:"guardrails,type:jsonb"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	Enabled         bool              `grove:"enabled"`
+	PersonaRef      string            `grove:"persona_ref"`
+	InlineSkills    string            `grove:"inline_skills,type:jsonb"`
+	InlineTraits    string            `grove:"inline_traits,type:jsonb"`
+	InlineBehaviors string            `grove:"inline_behaviors,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func agentToModel(c *agent.Config) *agentModel {
+	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &agentModel{
 		ID:              c.ID.String(),
 		Name:            c.Name,
@@ -78,6 +84,11 @@ func agentToModel(c *agent.Config) *agentModel {
 		InlineSkills:    mustJSON(c.InlineSkills),
 		InlineTraits:    mustJSON(c.InlineTraits),
 		InlineBehaviors: mustJSON(c.InlineBehaviors),
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      c.Scope.Canonical(),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -400,24 +411,30 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 
 type runModel struct {
 	grove.BaseModel `grove:"table:cortex_runs"`
-	ID              string     `grove:"id,pk"`
-	AgentID         string     `grove:"agent_id,notnull"`
-	TenantID        string     `grove:"tenant_id"`
-	State           string     `grove:"state,notnull"`
-	Input           string     `grove:"input"`
-	Output          string     `grove:"output"`
-	Error           string     `grove:"error"`
-	StepCount       int        `grove:"step_count"`
-	TokensUsed      int        `grove:"tokens_used"`
-	StartedAt       *time.Time `grove:"started_at"`
-	CompletedAt     *time.Time `grove:"completed_at"`
-	PersonaRef      string     `grove:"persona_ref"`
-	Metadata        string     `grove:"metadata,type:jsonb"`
-	CreatedAt       time.Time  `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time  `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	AgentID         string            `grove:"agent_id,notnull"`
+	TenantID        string            `grove:"tenant_id"`
+	State           string            `grove:"state,notnull"`
+	Input           string            `grove:"input"`
+	Output          string            `grove:"output"`
+	Error           string            `grove:"error"`
+	StepCount       int               `grove:"step_count"`
+	TokensUsed      int               `grove:"tokens_used"`
+	StartedAt       *time.Time        `grove:"started_at"`
+	CompletedAt     *time.Time        `grove:"completed_at"`
+	PersonaRef      string            `grove:"persona_ref"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func runToModel(r *run.Run) *runModel {
+	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
@@ -432,6 +449,11 @@ func runToModel(r *run.Run) *runModel {
 		CompletedAt: r.CompletedAt,
 		PersonaRef:  r.PersonaRef,
 		Metadata:    mustJSON(r.Metadata),
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  r.Scope.Canonical(),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
@@ -612,11 +634,11 @@ type memoryModel struct {
 	Key             string            `grove:"key"`
 	Content         string            `grove:"content,notnull"`
 	Metadata        string            `grove:"metadata,type:jsonb"`
-	ScopeL0         string            `grove:"scope_l0"`
-	ScopeL1         string            `grove:"scope_l1"`
-	ScopeL2         string            `grove:"scope_l2"`
-	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb"`
-	ScopeCanon      string            `grove:"scope_canon"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
 }
 
@@ -626,32 +648,43 @@ type memoryModel struct {
 
 type checkpointModel struct {
 	grove.BaseModel `grove:"table:cortex_checkpoints"`
-	ID              string    `grove:"id,pk"`
-	RunID           string    `grove:"run_id,notnull"`
-	AgentID         string    `grove:"agent_id,notnull"`
-	TenantID        string    `grove:"tenant_id"`
-	Reason          string    `grove:"reason"`
-	StepIndex       int       `grove:"step_index"`
-	State           string    `grove:"state,notnull"`
-	Decision        string    `grove:"decision,type:jsonb"`
-	Metadata        string    `grove:"metadata,type:jsonb"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	RunID           string            `grove:"run_id,notnull"`
+	AgentID         string            `grove:"agent_id,notnull"`
+	TenantID        string            `grove:"tenant_id"`
+	Reason          string            `grove:"reason"`
+	StepIndex       int               `grove:"step_index"`
+	State           string            `grove:"state,notnull"`
+	Decision        string            `grove:"decision,type:jsonb"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func checkpointToModel(cp *checkpoint.Checkpoint) *checkpointModel {
+	l0, l1, l2, extra := scopeColumns(cp.Scope)
 	return &checkpointModel{
-		ID:        cp.ID.String(),
-		RunID:     cp.RunID.String(),
-		AgentID:   cp.AgentID.String(),
-		TenantID:  cp.TenantID,
-		Reason:    cp.Reason,
-		StepIndex: cp.StepIndex,
-		State:     cp.State,
-		Decision:  mustJSON(cp.Decision),
-		Metadata:  mustJSON(cp.Metadata),
-		CreatedAt: cp.CreatedAt,
-		UpdatedAt: cp.UpdatedAt,
+		ID:         cp.ID.String(),
+		RunID:      cp.RunID.String(),
+		AgentID:    cp.AgentID.String(),
+		TenantID:   cp.TenantID,
+		Reason:     cp.Reason,
+		StepIndex:  cp.StepIndex,
+		State:      cp.State,
+		Decision:   mustJSON(cp.Decision),
+		Metadata:   mustJSON(cp.Metadata),
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: cp.Scope.Canonical(),
+		CreatedAt:  cp.CreatedAt,
+		UpdatedAt:  cp.UpdatedAt,
 	}
 }
 
@@ -770,22 +803,30 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 
 type orchestrationRunModel struct {
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string     `grove:"id,pk"`
-	ConfigID        string     `grove:"config_id"`
-	AppID           string     `grove:"app_id,notnull"`
-	TenantID        string     `grove:"tenant_id"`
-	Strategy        string     `grove:"strategy"`
-	Status          string     `grove:"status,notnull"`
-	Input           string     `grove:"input"`
-	Output          string     `grove:"output"`
-	Error           string     `grove:"error"`
-	AgentRunIDs     string     `grove:"agent_run_ids,type:jsonb"`
-	StartedAt       time.Time  `grove:"started_at"`
-	CompletedAt     *time.Time `grove:"completed_at"`
-	CreatedAt       time.Time  `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time  `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	ConfigID        string            `grove:"config_id"`
+	AppID           string            `grove:"app_id,notnull"`
+	TenantID        string            `grove:"tenant_id"`
+	Strategy        string            `grove:"strategy"`
+	Status          string            `grove:"status,notnull"`
+	Input           string            `grove:"input"`
+	Output          string            `grove:"output"`
+	Error           string            `grove:"error"`
+	AgentRunIDs     string            `grove:"agent_run_ids,type:jsonb"`
+	StartedAt       time.Time         `grove:"started_at"`
+	CompletedAt     *time.Time        `grove:"completed_at"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
+// orchestration.Run does not carry a cortex.Scope field yet, so the scope
+// columns start empty here. They still need a non-nil ScopeExtra map: grove
+// writes a nil Go map as SQL NULL, which the NOT NULL constraint rejects.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
@@ -804,6 +845,7 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		AgentRunIDs: mustJSON(runIDs),
 		StartedAt:   r.StartedAt,
 		CompletedAt: r.CompletedAt,
+		ScopeExtra:  map[string]string{},
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}

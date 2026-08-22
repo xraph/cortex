@@ -97,6 +97,9 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 		Kind:    "working",
 		Key:     key,
 		Content: mustJSON(value),
+		// scope_extra is NOT NULL; working memory isn't scope-filtered, but
+		// the map still has to be non-nil or grove writes SQL NULL into it.
+		ScopeExtra: map[string]string{},
 	}
 	_, err := s.pgdb.NewInsert(m).
 		OnConflict("(agent_id, kind, key) DO UPDATE").

@@ -27,29 +27,35 @@ import (
 
 type agentModel struct {
 	grove.BaseModel `grove:"table:cortex_agents"`
-	ID              string         `grove:"id,pk"              bson:"_id"`
-	Name            string         `grove:"name"               bson:"name"`
-	Description     string         `grove:"description"        bson:"description"`
-	AppID           string         `grove:"app_id"             bson:"app_id"`
-	SystemPrompt    string         `grove:"system_prompt"      bson:"system_prompt"`
-	Model           string         `grove:"model"              bson:"model"`
-	Tools           []string       `grove:"tools"              bson:"tools,omitempty"`
-	MaxSteps        int            `grove:"max_steps"          bson:"max_steps"`
-	MaxTokens       int            `grove:"max_tokens"         bson:"max_tokens"`
-	Temperature     float64        `grove:"temperature"        bson:"temperature"`
-	ReasoningLoop   string         `grove:"reasoning_loop"     bson:"reasoning_loop"`
-	Guardrails      map[string]any `grove:"guardrails"         bson:"guardrails,omitempty"`
-	Metadata        map[string]any `grove:"metadata"           bson:"metadata,omitempty"`
-	Enabled         bool           `grove:"enabled"            bson:"enabled"`
-	PersonaRef      string         `grove:"persona_ref"        bson:"persona_ref"`
-	InlineSkills    []string       `grove:"inline_skills"      bson:"inline_skills,omitempty"`
-	InlineTraits    []string       `grove:"inline_traits"      bson:"inline_traits,omitempty"`
-	InlineBehaviors []string       `grove:"inline_behaviors"   bson:"inline_behaviors,omitempty"`
-	CreatedAt       time.Time      `grove:"created_at"         bson:"created_at"`
-	UpdatedAt       time.Time      `grove:"updated_at"         bson:"updated_at"`
+	ID              string            `grove:"id,pk"              bson:"_id"`
+	Name            string            `grove:"name"               bson:"name"`
+	Description     string            `grove:"description"        bson:"description"`
+	AppID           string            `grove:"app_id"             bson:"app_id"`
+	SystemPrompt    string            `grove:"system_prompt"      bson:"system_prompt"`
+	Model           string            `grove:"model"              bson:"model"`
+	Tools           []string          `grove:"tools"              bson:"tools,omitempty"`
+	MaxSteps        int               `grove:"max_steps"          bson:"max_steps"`
+	MaxTokens       int               `grove:"max_tokens"         bson:"max_tokens"`
+	Temperature     float64           `grove:"temperature"        bson:"temperature"`
+	ReasoningLoop   string            `grove:"reasoning_loop"     bson:"reasoning_loop"`
+	Guardrails      map[string]any    `grove:"guardrails"         bson:"guardrails,omitempty"`
+	Metadata        map[string]any    `grove:"metadata"           bson:"metadata,omitempty"`
+	Enabled         bool              `grove:"enabled"            bson:"enabled"`
+	PersonaRef      string            `grove:"persona_ref"        bson:"persona_ref"`
+	InlineSkills    []string          `grove:"inline_skills"      bson:"inline_skills,omitempty"`
+	InlineTraits    []string          `grove:"inline_traits"      bson:"inline_traits,omitempty"`
+	InlineBehaviors []string          `grove:"inline_behaviors"   bson:"inline_behaviors,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"         bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"         bson:"updated_at"`
 }
 
 func agentToModel(c *agent.Config) *agentModel {
+	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &agentModel{
 		ID:              c.ID.String(),
 		Name:            c.Name,
@@ -69,6 +75,11 @@ func agentToModel(c *agent.Config) *agentModel {
 		InlineSkills:    c.InlineSkills,
 		InlineTraits:    c.InlineTraits,
 		InlineBehaviors: c.InlineBehaviors,
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      c.Scope.Canonical(),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -108,24 +119,30 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 
 type runModel struct {
 	grove.BaseModel `grove:"table:cortex_runs"`
-	ID              string         `grove:"id,pk"          bson:"_id"`
-	AgentID         string         `grove:"agent_id"       bson:"agent_id"`
-	TenantID        string         `grove:"tenant_id"      bson:"tenant_id"`
-	State           string         `grove:"state"          bson:"state"`
-	Input           string         `grove:"input"          bson:"input"`
-	Output          string         `grove:"output"         bson:"output"`
-	Error           string         `grove:"error"          bson:"error"`
-	StepCount       int            `grove:"step_count"     bson:"step_count"`
-	TokensUsed      int            `grove:"tokens_used"    bson:"tokens_used"`
-	StartedAt       *time.Time     `grove:"started_at"     bson:"started_at,omitempty"`
-	CompletedAt     *time.Time     `grove:"completed_at"   bson:"completed_at,omitempty"`
-	PersonaRef      string         `grove:"persona_ref"    bson:"persona_ref"`
-	Metadata        map[string]any `grove:"metadata"       bson:"metadata,omitempty"`
-	CreatedAt       time.Time      `grove:"created_at"     bson:"created_at"`
-	UpdatedAt       time.Time      `grove:"updated_at"     bson:"updated_at"`
+	ID              string            `grove:"id,pk"          bson:"_id"`
+	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
+	TenantID        string            `grove:"tenant_id"      bson:"tenant_id"`
+	State           string            `grove:"state"          bson:"state"`
+	Input           string            `grove:"input"          bson:"input"`
+	Output          string            `grove:"output"         bson:"output"`
+	Error           string            `grove:"error"          bson:"error"`
+	StepCount       int               `grove:"step_count"     bson:"step_count"`
+	TokensUsed      int               `grove:"tokens_used"    bson:"tokens_used"`
+	StartedAt       *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
+	CompletedAt     *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
+	PersonaRef      string            `grove:"persona_ref"    bson:"persona_ref"`
+	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"     bson:"updated_at"`
 }
 
 func runToModel(r *run.Run) *runModel {
+	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
@@ -140,6 +157,11 @@ func runToModel(r *run.Run) *runModel {
 		CompletedAt: r.CompletedAt,
 		PersonaRef:  r.PersonaRef,
 		Metadata:    r.Metadata,
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  r.Scope.Canonical(),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
@@ -334,23 +356,34 @@ type checkpointModel struct {
 	State           string               `grove:"state"          bson:"state"`
 	Decision        *checkpoint.Decision `grove:"decision"       bson:"decision,omitempty"`
 	Metadata        map[string]any       `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string               `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string               `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string               `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string    `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string               `grove:"scope_canon"    bson:"scope_canon"`
 	CreatedAt       time.Time            `grove:"created_at"     bson:"created_at"`
 	UpdatedAt       time.Time            `grove:"updated_at"     bson:"updated_at"`
 }
 
 func checkpointToModel(cp *checkpoint.Checkpoint) *checkpointModel {
+	l0, l1, l2, extra := scopeColumns(cp.Scope)
 	return &checkpointModel{
-		ID:        cp.ID.String(),
-		RunID:     cp.RunID.String(),
-		AgentID:   cp.AgentID.String(),
-		TenantID:  cp.TenantID,
-		Reason:    cp.Reason,
-		StepIndex: cp.StepIndex,
-		State:     cp.State,
-		Decision:  cp.Decision,
-		Metadata:  cp.Metadata,
-		CreatedAt: cp.CreatedAt,
-		UpdatedAt: cp.UpdatedAt,
+		ID:         cp.ID.String(),
+		RunID:      cp.RunID.String(),
+		AgentID:    cp.AgentID.String(),
+		TenantID:   cp.TenantID,
+		Reason:     cp.Reason,
+		StepIndex:  cp.StepIndex,
+		State:      cp.State,
+		Decision:   cp.Decision,
+		Metadata:   cp.Metadata,
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: cp.Scope.Canonical(),
+		CreatedAt:  cp.CreatedAt,
+		UpdatedAt:  cp.UpdatedAt,
 	}
 }
 
@@ -666,22 +699,29 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 
 type orchestrationRunModel struct {
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string     `grove:"id,pk"         bson:"_id"`
-	ConfigID        string     `grove:"config_id"     bson:"config_id"`
-	AppID           string     `grove:"app_id"        bson:"app_id"`
-	TenantID        string     `grove:"tenant_id"     bson:"tenant_id"`
-	Strategy        string     `grove:"strategy"      bson:"strategy"`
-	Status          string     `grove:"status"        bson:"status"`
-	Input           string     `grove:"input"         bson:"input"`
-	Output          string     `grove:"output"        bson:"output"`
-	Error           string     `grove:"error"         bson:"error"`
-	AgentRunIDs     []string   `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
-	StartedAt       time.Time  `grove:"started_at"    bson:"started_at"`
-	CompletedAt     *time.Time `grove:"completed_at"  bson:"completed_at,omitempty"`
-	CreatedAt       time.Time  `grove:"created_at"    bson:"created_at"`
-	UpdatedAt       time.Time  `grove:"updated_at"    bson:"updated_at"`
+	ID              string            `grove:"id,pk"         bson:"_id"`
+	ConfigID        string            `grove:"config_id"     bson:"config_id"`
+	AppID           string            `grove:"app_id"        bson:"app_id"`
+	TenantID        string            `grove:"tenant_id"     bson:"tenant_id"`
+	Strategy        string            `grove:"strategy"      bson:"strategy"`
+	Status          string            `grove:"status"        bson:"status"`
+	Input           string            `grove:"input"         bson:"input"`
+	Output          string            `grove:"output"        bson:"output"`
+	Error           string            `grove:"error"         bson:"error"`
+	AgentRunIDs     []string          `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
+	StartedAt       time.Time         `grove:"started_at"    bson:"started_at"`
+	CompletedAt     *time.Time        `grove:"completed_at"  bson:"completed_at,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"      bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"      bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"      bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"   bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"    bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"    bson:"updated_at"`
 }
 
+// orchestration.Run does not carry a cortex.Scope field yet, so the scope
+// columns simply start empty; Mongo has no NOT NULL to satisfy either way.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {

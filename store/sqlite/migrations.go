@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -349,6 +350,86 @@ DROP TABLE IF EXISTS cortex_orchestration_runs;
 DROP TABLE IF EXISTS cortex_orchestration_configs;
 `)
 				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "add_scope_columns",
+			Version: "20260821000001",
+			Comment: "Add host-defined scope columns and backfill from tenant_id/app_id",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// SQLite only allows one column per ALTER TABLE statement,
+				// and its ADD COLUMN doesn't support IF NOT EXISTS, so each
+				// column is its own statement. Mirrors the postgres
+				// migration's columns and index, minus the JSONB type
+				// (scope_extra is a JSON-encoded TEXT column here).
+				for _, table := range []string{
+					"cortex_agents",
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+` ADD COLUMN scope_l0    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_l1    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_l2    TEXT NOT NULL DEFAULT '';
+ALTER TABLE `+table+` ADD COLUMN scope_extra TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE `+table+` ADD COLUMN scope_canon TEXT NOT NULL DEFAULT '';
+`); err != nil {
+						return fmt.Errorf("add scope columns to %s: %w", table, err)
+					}
+					if _, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2);
+`); err != nil {
+						return fmt.Errorf("index scope on %s: %w", table, err)
+					}
+				}
+
+				// Backfill. Agents carry app_id only; runs, memories and
+				// checkpoints carry both, so tenant leads and app follows.
+				if _, err := exec.Exec(ctx, `
+UPDATE cortex_agents
+   SET scope_l0    = 'app=' || app_id,
+       scope_canon = 'app=' || app_id
+ WHERE scope_l0 = '';
+`); err != nil {
+					return fmt.Errorf("backfill agents: %w", err)
+				}
+
+				for _, table := range []string{"cortex_runs", "cortex_memories", "cortex_checkpoints"} {
+					if _, err := exec.Exec(ctx, `
+UPDATE `+table+`
+   SET scope_l0    = 'tenant=' || COALESCE(tenant_id, ''),
+       scope_canon = 'tenant=' || COALESCE(tenant_id, '')
+ WHERE scope_l0 = '';
+`); err != nil {
+						return fmt.Errorf("backfill %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// SQLite has supported DROP COLUMN since 3.35.0, one at a
+				// time like ADD COLUMN.
+				for _, table := range []string{
+					"cortex_agents",
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_`+table+`_scope;
+ALTER TABLE `+table+` DROP COLUMN scope_l0;
+ALTER TABLE `+table+` DROP COLUMN scope_l1;
+ALTER TABLE `+table+` DROP COLUMN scope_l2;
+ALTER TABLE `+table+` DROP COLUMN scope_extra;
+ALTER TABLE `+table+` DROP COLUMN scope_canon;
+`); err != nil {
+						return fmt.Errorf("drop scope columns from %s: %w", table, err)
+					}
+				}
+				return nil
 			},
 		},
 	)

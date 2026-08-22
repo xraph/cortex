@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -349,6 +350,80 @@ DROP TABLE IF EXISTS cortex_orchestration_runs;
 DROP TABLE IF EXISTS cortex_orchestration_configs;
 `)
 				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "add_scope_columns",
+			Version: "20260821000001",
+			Comment: "Add host-defined scope columns and backfill from tenant_id/app_id",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range []string{
+					"cortex_agents",
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+`
+    ADD COLUMN IF NOT EXISTS scope_l0    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_l1    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_l2    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_extra JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS scope_canon TEXT  NOT NULL DEFAULT ''
+`); err != nil {
+						return fmt.Errorf("add scope columns to %s: %w", table, err)
+					}
+					if _, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2)
+`); err != nil {
+						return fmt.Errorf("index scope on %s: %w", table, err)
+					}
+				}
+
+				// Backfill. Agents carry app_id only; runs, memories and
+				// checkpoints carry both, so tenant leads and app follows.
+				if _, err := exec.Exec(ctx, `
+UPDATE cortex_agents
+   SET scope_l0    = 'app=' || app_id,
+       scope_canon = 'app=' || app_id
+ WHERE scope_l0 = ''
+`); err != nil {
+					return fmt.Errorf("backfill agents: %w", err)
+				}
+
+				for _, table := range []string{"cortex_runs", "cortex_memories", "cortex_checkpoints"} {
+					if _, err := exec.Exec(ctx, `
+UPDATE `+table+`
+   SET scope_l0    = 'tenant=' || COALESCE(tenant_id, ''),
+       scope_canon = 'tenant=' || COALESCE(tenant_id, '')
+ WHERE scope_l0 = ''
+`); err != nil {
+						return fmt.Errorf("backfill %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range []string{
+					"cortex_agents",
+					"cortex_runs",
+					"cortex_memories",
+					"cortex_checkpoints",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+`
+    DROP COLUMN IF EXISTS scope_l0,
+    DROP COLUMN IF EXISTS scope_l1,
+    DROP COLUMN IF EXISTS scope_l2,
+    DROP COLUMN IF EXISTS scope_extra,
+    DROP COLUMN IF EXISTS scope_canon
+`); err != nil {
+						return fmt.Errorf("drop scope columns from %s: %w", table, err)
+					}
+				}
+				return nil
 			},
 		},
 	)

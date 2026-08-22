@@ -54,11 +54,17 @@ type agentModel struct {
 	InlineSkills    string    `grove:"inline_skills"`
 	InlineTraits    string    `grove:"inline_traits"`
 	InlineBehaviors string    `grove:"inline_behaviors"`
+	ScopeL0         string    `grove:"scope_l0,notnull"`
+	ScopeL1         string    `grove:"scope_l1,notnull"`
+	ScopeL2         string    `grove:"scope_l2,notnull"`
+	ScopeExtra      string    `grove:"scope_extra,notnull"`
+	ScopeCanon      string    `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time `grove:"created_at"`
 	UpdatedAt       time.Time `grove:"updated_at"`
 }
 
 func agentToModel(c *agent.Config) *agentModel {
+	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &agentModel{
 		ID:              c.ID.String(),
 		Name:            c.Name,
@@ -78,6 +84,11 @@ func agentToModel(c *agent.Config) *agentModel {
 		InlineSkills:    mustJSON(c.InlineSkills),
 		InlineTraits:    mustJSON(c.InlineTraits),
 		InlineBehaviors: mustJSON(c.InlineBehaviors),
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      c.Scope.Canonical(),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -415,11 +426,17 @@ type runModel struct {
 	CompletedAt     *time.Time `grove:"completed_at"`
 	PersonaRef      string     `grove:"persona_ref"`
 	Metadata        string     `grove:"metadata"`
+	ScopeL0         string     `grove:"scope_l0,notnull"`
+	ScopeL1         string     `grove:"scope_l1,notnull"`
+	ScopeL2         string     `grove:"scope_l2,notnull"`
+	ScopeExtra      string     `grove:"scope_extra,notnull"`
+	ScopeCanon      string     `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time  `grove:"created_at"`
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
 func runToModel(r *run.Run) *runModel {
+	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
@@ -434,6 +451,11 @@ func runToModel(r *run.Run) *runModel {
 		CompletedAt: r.CompletedAt,
 		PersonaRef:  r.PersonaRef,
 		Metadata:    mustJSON(r.Metadata),
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  r.Scope.Canonical(),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
@@ -614,11 +636,11 @@ type memoryModel struct {
 	Key             string    `grove:"key"`
 	Content         string    `grove:"content,notnull"`
 	Metadata        string    `grove:"metadata"`
-	ScopeL0         string    `grove:"scope_l0"`
-	ScopeL1         string    `grove:"scope_l1"`
-	ScopeL2         string    `grove:"scope_l2"`
-	ScopeExtra      string    `grove:"scope_extra"`
-	ScopeCanon      string    `grove:"scope_canon"`
+	ScopeL0         string    `grove:"scope_l0,notnull"`
+	ScopeL1         string    `grove:"scope_l1,notnull"`
+	ScopeL2         string    `grove:"scope_l2,notnull"`
+	ScopeExtra      string    `grove:"scope_extra,notnull"`
+	ScopeCanon      string    `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time `grove:"created_at"`
 }
 
@@ -637,23 +659,34 @@ type checkpointModel struct {
 	State           string    `grove:"state,notnull"`
 	Decision        string    `grove:"decision"`
 	Metadata        string    `grove:"metadata"`
+	ScopeL0         string    `grove:"scope_l0,notnull"`
+	ScopeL1         string    `grove:"scope_l1,notnull"`
+	ScopeL2         string    `grove:"scope_l2,notnull"`
+	ScopeExtra      string    `grove:"scope_extra,notnull"`
+	ScopeCanon      string    `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time `grove:"created_at"`
 	UpdatedAt       time.Time `grove:"updated_at"`
 }
 
 func checkpointToModel(cp *checkpoint.Checkpoint) *checkpointModel {
+	l0, l1, l2, extra := scopeColumns(cp.Scope)
 	return &checkpointModel{
-		ID:        cp.ID.String(),
-		RunID:     cp.RunID.String(),
-		AgentID:   cp.AgentID.String(),
-		TenantID:  cp.TenantID,
-		Reason:    cp.Reason,
-		StepIndex: cp.StepIndex,
-		State:     cp.State,
-		Decision:  mustJSON(cp.Decision),
-		Metadata:  mustJSON(cp.Metadata),
-		CreatedAt: cp.CreatedAt,
-		UpdatedAt: cp.UpdatedAt,
+		ID:         cp.ID.String(),
+		RunID:      cp.RunID.String(),
+		AgentID:    cp.AgentID.String(),
+		TenantID:   cp.TenantID,
+		Reason:     cp.Reason,
+		StepIndex:  cp.StepIndex,
+		State:      cp.State,
+		Decision:   mustJSON(cp.Decision),
+		Metadata:   mustJSON(cp.Metadata),
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: cp.Scope.Canonical(),
+		CreatedAt:  cp.CreatedAt,
+		UpdatedAt:  cp.UpdatedAt,
 	}
 }
 
@@ -769,10 +802,18 @@ type orchestrationRunModel struct {
 	AgentRunIDs     string     `grove:"agent_run_ids"`
 	StartedAt       time.Time  `grove:"started_at"`
 	CompletedAt     *time.Time `grove:"completed_at"`
+	ScopeL0         string     `grove:"scope_l0,notnull"`
+	ScopeL1         string     `grove:"scope_l1,notnull"`
+	ScopeL2         string     `grove:"scope_l2,notnull"`
+	ScopeExtra      string     `grove:"scope_extra,notnull"`
+	ScopeCanon      string     `grove:"scope_canon,notnull"`
 	CreatedAt       time.Time  `grove:"created_at"`
 	UpdatedAt       time.Time  `grove:"updated_at"`
 }
 
+// orchestration.Run does not carry a cortex.Scope field yet, so the scope
+// columns start empty. scope_extra is a JSON-encoded string here (not a
+// native map), so an empty "{}" is enough to satisfy the NOT NULL column.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
@@ -791,6 +832,7 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		AgentRunIDs: mustJSON(runIDs),
 		StartedAt:   r.StartedAt,
 		CompletedAt: r.CompletedAt,
+		ScopeExtra:  mustJSON(map[string]string{}),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
