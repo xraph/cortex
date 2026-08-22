@@ -10,8 +10,11 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/trait"
 )
 
 // Call is one recorded store invocation.
@@ -84,8 +87,43 @@ func (s *Spy) SaveConversation(ctx context.Context, _ id.AgentID, _ []memory.Mes
 
 // GetByName returns a usable agent so RunAgent proceeds into the react
 // loop. Returning an error here would end the run before any of the
-// conversation calls we are actually trying to observe.
+// conversation calls we are actually trying to observe. PersonaRef,
+// InlineSkills and InlineTraits are populated so BuildSystemPrompt
+// reaches GetPersonaByName/GetSkillByName/GetTraitByName too — those
+// calls carry scope the same as everything else the loop touches.
+// MaxSteps is 2 so a tool-calling LLM double gets a second step to
+// answer in after the tool call, without changing behavior for a
+// non-tool-calling double, which breaks out of the loop after step one
+// regardless of MaxSteps.
 func (s *Spy) GetByName(ctx context.Context, _, name string) (*agent.Config, error) {
 	s.record(ctx, "GetByName")
-	return &agent.Config{ID: id.NewAgentID(), Name: name, MaxSteps: 1}, nil
+	return &agent.Config{
+		ID:           id.NewAgentID(),
+		Name:         name,
+		MaxSteps:     2,
+		PersonaRef:   "spy-persona",
+		InlineSkills: []string{"spy-skill"},
+		InlineTraits: []string{"spy-trait"},
+	}, nil
+}
+
+// GetPersonaByName returns a usable persona so BuildSystemPrompt's
+// identity injection has something to record scope on.
+func (s *Spy) GetPersonaByName(ctx context.Context, _, name string) (*persona.Persona, error) {
+	s.record(ctx, "GetPersonaByName")
+	return &persona.Persona{ID: id.NewPersonaID(), Name: name, Identity: "spy identity"}, nil
+}
+
+// GetSkillByName returns a usable skill so BuildSystemPrompt's skill
+// injection has something to record scope on.
+func (s *Spy) GetSkillByName(ctx context.Context, _, name string) (*skill.Skill, error) {
+	s.record(ctx, "GetSkillByName")
+	return &skill.Skill{ID: id.NewSkillID(), Name: name, SystemPromptFragment: "spy skill fragment"}, nil
+}
+
+// GetTraitByName returns a usable trait so BuildSystemPrompt's trait
+// injection has something to record scope on.
+func (s *Spy) GetTraitByName(ctx context.Context, _, name string) (*trait.Trait, error) {
+	s.record(ctx, "GetTraitByName")
+	return &trait.Trait{ID: id.NewTraitID(), Name: name}, nil
 }
