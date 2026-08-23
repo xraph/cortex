@@ -983,9 +983,37 @@ ALTER TABLE cortex_memories DROP COLUMN session_id;
 		&migrate.Migration{
 			Name:    "backfill_default_sessions",
 			Version: "20260824000004",
-			Comment: "Create a default session per pre-v1.9.0 (agent_id, scope_canon) conversation and point its messages at it",
-			Up:      backfillDefaultSessions,
-			Down:    unbackfillDefaultSessions,
+			Comment: "Reserved: the default-session backfill runs unconditionally in Store.Migrate, after rescopeLegacyRows, not as this migration's one-shot Up -- see the Up func's comment",
+			// This Up is deliberately a no-op. See the postgres migration
+			// of the same version for the full reasoning (identical here):
+			// grove runs a migration's Up exactly once per recorded
+			// version, inside the migration group, which completes BEFORE
+			// rescopeLegacyRows runs (see Store.Migrate in store.go). A
+			// host jumping straight from pre-v1.8.0 to this version in one
+			// Migrate() call would have every legacy conversation row
+			// sitting at scope_canon = '' at the point this Up executed --
+			// backfillDefaultSessions' own WHERE scope_canon != '' filter
+			// would find nothing, and because grove never retries a
+			// recorded version, no later boot would either. Store.Migrate
+			// now calls backfillDefaultSessions directly after
+			// rescopeLegacyRows, unconditionally on every boot -- safe to
+			// run repeatedly since its own filter (session_id = '' on
+			// kind = 'conversation') has nothing left to find once a
+			// scope's rows have been backfilled once. This migration
+			// version stays registered so the schema history and
+			// grove_migrations bookkeeping don't lose the record of when
+			// this landed.
+			Up: func(context.Context, migrate.Executor) error { return nil },
+			// Down still finds every session backfillDefaultSessions has
+			// ever created, via backfillSessionMarker, and undoes it,
+			// regardless of whether it was created by this migration's own
+			// Up (it no longer is) or by the unconditional post-rescope
+			// call in Store.Migrate. It cannot stop the very next
+			// Migrate() call from recreating those sessions -- the
+			// underlying legacy rows still have session_id = '' after
+			// Down runs, and the backfill call in Store.Migrate has no
+			// "already applied" gate to disable.
+			Down: unbackfillDefaultSessions,
 		},
 	)
 }
@@ -1015,11 +1043,14 @@ type legacyMessage struct {
 	Content string `json:"content"`
 }
 
-// backfillDefaultSessions is the Up side of this migration. See the
-// postgres migration of the same version for the full reasoning behind
-// both the scope_canon != ” filter and the distinct-(role,content)
-// message_count -- this is the same logic against sqlite's `?`
-// placeholder style.
+// backfillDefaultSessions does the actual work migration 20260824000004
+// was originally going to do as its own Up; it is now called directly
+// from Store.Migrate (store.go), AFTER rescopeLegacyRows, unconditionally
+// on every boot -- not from the migration's Up, which is a no-op. See
+// the postgres migration of the same version for the full reasoning
+// behind that move, the scope_canon != ” filter, and the
+// distinct-(role,content) message_count -- this is the same logic
+// against sqlite's `?` placeholder style.
 func backfillDefaultSessions(ctx context.Context, exec migrate.Executor) error {
 	scopes, err := findLegacyConversationScopes(ctx, exec)
 	if err != nil {

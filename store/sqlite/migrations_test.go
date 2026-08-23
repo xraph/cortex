@@ -87,12 +87,15 @@ func TestMigrate_idempotentAfterPartialFailure(t *testing.T) {
 }
 
 // TestMigrate_backfillDefaultSessions is sqlite's counterpart to the
-// identical postgres test: it proves the 20260824000004 backfill against
-// a genuinely pre-v1.9.0 shape built with direct SQL, bypassing
-// SaveConversation (which always stamps a real session_id today). See
-// the postgres test for the full reasoning behind the duplicate-content
-// row and the distinct-(role,content) message_count it expects; this is
-// the same scenario against sqlite's `?` placeholder style.
+// identical postgres test: it proves the default-session backfill
+// against a genuinely pre-v1.9.0 shape built with direct SQL, bypassing
+// SaveConversation (which always stamps a real session_id today), and
+// proves the fix for the skipped-version upgrade bug a review round
+// caught -- rows starting at scope_canon = ”, a Rescoper supplied, ONE
+// Migrate() call, and the conversation reachable through a default
+// session by the time it returns. See the postgres test for the full
+// reasoning; this is the same scenario against sqlite's `?` placeholder
+// style.
 func TestMigrate_backfillDefaultSessions(t *testing.T) {
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "cortex_backfill_test.db")
@@ -108,6 +111,9 @@ func TestMigrate_backfillDefaultSessions(t *testing.T) {
 	s := New(db)
 	t.Cleanup(func() { _ = s.Close() })
 
+	// Schema-only: an empty database has no unscoped rows, so this needs
+	// no Rescoper. Tables have to exist before the raw SQL inserts below
+	// can write to them.
 	if err = s.Migrate(ctx); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
@@ -116,9 +122,10 @@ func TestMigrate_backfillDefaultSessions(t *testing.T) {
 	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_legacy"}}}
 	canon := scope.Canonical()
 
-	// Two logically distinct messages, the first duplicated once with a
-	// different Timestamp -- the shape engine.llmToMemory's
-	// reload-then-resave round trip produced pre-daa7e44.
+	// Group 1: already scoped, not yet sessioned. Two logically distinct
+	// messages, the first duplicated once with a different Timestamp --
+	// the shape engine.llmToMemory's reload-then-resave round trip
+	// produced pre-daa7e44.
 	legacyRows := []string{
 		`{"role":"user","content":"hello","timestamp":"2024-01-01T00:00:00Z"}`,
 		`{"role":"assistant","content":"hi there","timestamp":"2024-01-01T00:00:01Z"}`,
@@ -134,35 +141,32 @@ VALUES (?, '', 'conversation', ?, '{}', ?, '', '', '{}', ?)`,
 		}
 	}
 
-	// An unrescoped row: scope_canon = '' because no Rescoper ever ran
-	// for it. It must stay exactly as unreachable as it already was.
+	// Group 2: the skipped-version shape -- scope_canon = '' because no
+	// migration and no Rescoper has ever touched it, exactly what a
+	// genuinely pre-v1.8.0 row looks like the moment before an upgrade
+	// that jumps straight to v1.9.0 in one Migrate() call.
+	skippedVersionAgent := id.NewAgentID()
 	if _, err = s.sdb.Exec(ctx, `
 INSERT INTO cortex_memories (agent_id, session_id, kind, content, metadata, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
-VALUES (?, '', 'conversation', '{"role":"user","content":"orphaned"}', '{}', '', '', '', '{}', '')`,
-		agentID.String(),
+VALUES (?, '', 'conversation', '{"role":"user","content":"skipped-version"}', '{}', '', '', '', '{}', '')`,
+		skippedVersionAgent.String(),
 	); err != nil {
-		t.Fatalf("insert unrescoped legacy row: %v", err)
+		t.Fatalf("insert skipped-version legacy row: %v", err)
 	}
 
-	if _, err = s.sdb.Exec(ctx,
-		`DELETE FROM grove_migrations WHERE version = ? AND "group" = 'cortex'`,
-		"20260824000004"); err != nil {
-		t.Fatalf("simulate unrecorded backfill version: %v", err)
-	}
-
-	// A Rescoper is required here: the unrescoped row above would
-	// otherwise fail Migrate outright. What matters below is that
-	// rescoping happens AFTER the backfill migration's own Up already
-	// completed within this same Migrate() call, so this row remains
-	// ineligible for the backfill even though it ends up with a real
-	// scope.
+	// The single call under test: a Rescoper is supplied (required,
+	// since the skipped-version row above would otherwise fail Migrate
+	// outright), and rescoping AND backfilling both groups must happen
+	// inside this one Migrate() call.
+	rescopedScope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_rescoped"}}}
 	rescoper := stubRescoper{fn: func(string, string) (cortex.Scope, error) {
-		return cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_rescoped"}}}, nil
+		return rescopedScope, nil
 	}}
 	if err = s.Migrate(ctx, cortex.WithRescoper(rescoper)); err != nil {
-		t.Fatalf("re-migrate to run backfill: %v", err)
+		t.Fatalf("migrate with rescoper: %v", err)
 	}
 
+	// Group 1: the ordinary case, plus the message_count dedup proof.
 	sessCtx := cortex.WithScope(ctx, scope)
 	sessions, err := s.ListSessions(sessCtx, &session.ListFilter{AgentID: agentID, DefaultOnly: true})
 	if err != nil {
@@ -193,19 +197,32 @@ VALUES (?, '', 'conversation', '{"role":"user","content":"orphaned"}', '{}', '',
 		t.Errorf("LoadConversation after backfill returned %d messages, want 3 (physical rows are never touched)", len(msgs))
 	}
 
-	var (
-		orphanedScopeCanon string
-		orphanedSessionID  string
-	)
-	row := s.sdb.QueryRow(ctx, `SELECT scope_canon, session_id FROM cortex_memories WHERE content = '{"role":"user","content":"orphaned"}'`)
-	if err := row.Scan(&orphanedScopeCanon, &orphanedSessionID); err != nil {
-		t.Fatalf("read formerly-unrescoped row: %v", err)
+	// Group 2: the skipped-version proof. rescopeLegacyRows assigned
+	// rescopedScope to this row inside the SAME Migrate() call, and
+	// backfillDefaultSessions -- running after it, in that same call --
+	// must have picked it up.
+	rescopedCtx := cortex.WithScope(ctx, rescopedScope)
+	rescopedSessions, err := s.ListSessions(rescopedCtx, &session.ListFilter{AgentID: skippedVersionAgent, DefaultOnly: true})
+	if err != nil {
+		t.Fatalf("list sessions for skipped-version agent: %v", err)
 	}
-	if orphanedScopeCanon == "" {
-		t.Errorf("formerly-unrescoped row scope_canon still empty, want rescopeLegacyRows to have assigned one")
+	if len(rescopedSessions) != 1 {
+		t.Fatalf("sessions for skipped-version agent = %d, want exactly 1 default session (rescope + backfill must both land in one Migrate() call)", len(rescopedSessions))
 	}
-	if orphanedSessionID != "" {
-		t.Errorf("formerly-unrescoped row got session_id = %q, want unchanged empty string (backfill already ran before rescoping this row)", orphanedSessionID)
+	rescopedSession := rescopedSessions[0]
+	if rescopedSession.MessageCount != 1 {
+		t.Errorf("skipped-version session MessageCount = %d, want 1", rescopedSession.MessageCount)
+	}
+	if rescopedSession.LastMessage != "skipped-version" {
+		t.Errorf("skipped-version session LastMessage = %q, want %q", rescopedSession.LastMessage, "skipped-version")
+	}
+
+	rescopedMsgs, err := s.LoadConversation(rescopedCtx, skippedVersionAgent, rescopedSession.ID, 0)
+	if err != nil {
+		t.Fatalf("load skipped-version conversation: %v", err)
+	}
+	if len(rescopedMsgs) != 1 || rescopedMsgs[0].Content != "skipped-version" {
+		t.Fatalf("LoadConversation for skipped-version agent = %v, want exactly one message with content %q", rescopedMsgs, "skipped-version")
 	}
 }
 

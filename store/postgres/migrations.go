@@ -1018,9 +1018,43 @@ ALTER TABLE cortex_memories DROP COLUMN IF EXISTS session_id;
 		&migrate.Migration{
 			Name:    "backfill_default_sessions",
 			Version: "20260824000004",
-			Comment: "Create a default session per pre-v1.9.0 (agent_id, scope_canon) conversation and point its messages at it",
-			Up:      backfillDefaultSessions,
-			Down:    unbackfillDefaultSessions,
+			Comment: "Reserved: the default-session backfill runs unconditionally in Store.Migrate, after rescopeLegacyRows, not as this migration's one-shot Up -- see the Up func's comment",
+			// This Up is deliberately a no-op. It originally ran
+			// backfillDefaultSessions directly, which is wrong: grove
+			// runs a migration's Up exactly once per recorded version,
+			// inside the migration group, which completes BEFORE
+			// rescopeLegacyRows runs (see Store.Migrate in store.go). A
+			// host jumping straight from pre-v1.8.0 to this version in
+			// one Migrate() call has every legacy conversation row
+			// sitting at scope_canon = '' at the point this Up would have
+			// executed -- backfillDefaultSessions' own WHERE scope_canon
+			// != '' filter would find nothing, and because grove never
+			// retries a recorded version, no later boot would either.
+			// Those rows would end up scoped (reachable to every other
+			// scoped query, once rescopeLegacyRows got to them minutes
+			// later in the same call) but permanently orphaned from a
+			// session -- exactly the bug this migration exists to fix,
+			// just moved rather than closed.
+			//
+			// Store.Migrate now calls backfillDefaultSessions directly
+			// after rescopeLegacyRows, unconditionally on every boot. That
+			// is safe to run repeatedly: its own filter (session_id = ''
+			// on kind = 'conversation') has nothing left to find once a
+			// scope's rows have been backfilled once. This migration
+			// version stays registered, with its name and version number
+			// intact, purely so the schema history and grove_migrations
+			// bookkeeping don't lose the record of when this landed.
+			Up: func(context.Context, migrate.Executor) error { return nil },
+			// Down still finds every session backfillDefaultSessions has
+			// ever created, via backfillSessionMarker, and undoes it --
+			// that's meaningful regardless of whether the session was
+			// created by this migration's own Up (it no longer is) or by
+			// the unconditional post-rescope call in Store.Migrate. It
+			// does not, and cannot, stop the very next Migrate() call from
+			// recreating those sessions: the underlying legacy rows still
+			// have session_id = '' after Down runs, and the backfill call
+			// in Store.Migrate has no "already applied" gate to disable.
+			Down: unbackfillDefaultSessions,
 		},
 	)
 	return g
@@ -1051,7 +1085,16 @@ type legacyMessage struct {
 	Content string `json:"content"`
 }
 
-// backfillDefaultSessions is the Up side of this migration.
+// backfillDefaultSessions does the actual work migration 20260824000004
+// was originally going to do as its own Up. It is now called directly
+// from Store.Migrate (store.go), AFTER rescopeLegacyRows, unconditionally
+// on every boot -- not from the migration's Up, which is a no-op. See
+// that migration's Comment and Up func for why: running this inside a
+// one-shot Up, before rescopeLegacyRows had a chance to run in the same
+// Store.Migrate call, meant a host jumping straight from pre-v1.8.0 to
+// this version in one call got NOTHING backfilled, permanently -- every
+// legacy conversation row was still unscoped at the point Up executed,
+// and grove never retries a recorded version once applied.
 //
 //   - Session didn't exist before this phase, so every cortex_memories
 //     row with kind = 'conversation' written before it has session_id =
@@ -1064,24 +1107,14 @@ type legacyMessage struct {
 //     therefore the exact, non-invented description of that history, not
 //     a fabricated vocabulary the way a synthetic tenant_id backfill
 //     would have been (see 20260821000001's rejected alternative).
-//   - Rows whose scope_canon is still ” here are skipped
-//     (WHERE scope_canon != ” below) and stay unreachable, exactly the
-//     state they were already in. This migration does not itself
-//     rescope them -- that is rescopeLegacyRows' job, and it runs AFTER
-//     every migration in this group within the same Store.Migrate call
-//     (see store.go). A host that jumps straight from a pre-v1.8.0 build
-//     to v1.9.0 in one Migrate() call will therefore see this migration
-//     find nothing to backfill on that first run: those rows are still
-//     unscoped when this Up executes. grove records a migration's
-//     version once it runs and never re-invokes Up for it, so a later
-//     Migrate() call -- even after rescopeLegacyRows has since given
-//     those rows a real scope_canon -- does not retry this backfill
-//     either. Those rows remain permanently unreachable through a
-//     session, the same way they were permanently invisible to every
-//     scoped query before sessions existed. That is an accepted,
-//     pre-existing limitation, consistent with the "no backfill for rows
-//     a Rescoper never touched" ruling every other migration in this
-//     file already makes.
+//   - Rows whose scope_canon is still ” are skipped (WHERE scope_canon
+//     != ” below) and stay unreachable, exactly the state they were
+//     already in. Because this now runs AFTER rescopeLegacyRows in the
+//     same Store.Migrate call, "still ”" only ever means a host never
+//     supplied a Rescoper at all -- rescopeLegacyRows' own ErrNoRescoper
+//     check would have failed Migrate outright before reaching here
+//     otherwise -- not "hasn't been rescoped yet", which is no longer a
+//     state a row can be in by the time this runs.
 //
 // message_count on the new session is a DISTINCT count of (role,
 // content) pairs among that scope's rows, not a raw COUNT(*). Until

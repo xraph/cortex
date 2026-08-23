@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -139,7 +140,7 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 			return nil, fmt.Errorf("cortex/mongo: delete session: %w", delErr)
 		}
 		if res.DeletedCount() == 0 {
-			return nil, fmt.Errorf("cortex/mongo: delete session: %w", cortex.ErrSessionNotFound)
+			return nil, cortex.ErrSessionNotFound
 		}
 
 		msgFilter := bson.M{"session_id": sid, "kind": "conversation"}
@@ -152,6 +153,15 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 		return nil, nil //nolint:nilnil // WithTransaction's callback contract: no result value to return
 	})
 	if err != nil {
+		// A not-found isn't a commit failure -- the transaction rolled
+		// back cleanly because there was nothing to delete, not because
+		// committing it failed. Attribute it to the actual operation
+		// instead of wrapping every failure in this func under the same
+		// "commit delete session" message, which previously blamed the
+		// commit for a row that was simply never there.
+		if errors.Is(err, cortex.ErrSessionNotFound) {
+			return fmt.Errorf("cortex/mongo: delete session: %w", cortex.ErrSessionNotFound)
+		}
 		return fmt.Errorf("cortex/mongo: commit delete session: %w", err)
 	}
 

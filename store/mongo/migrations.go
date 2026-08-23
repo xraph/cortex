@@ -356,15 +356,19 @@ type legacyConversationGroup struct {
 
 func (g legacyConversationGroup) key() string { return g.AgentID + "|" + g.ScopeCanon }
 
-// legacyConversationDoc is the subset of a cortex_memories document this
-// backfill needs to read off pre-v1.9.0 conversation rows.
-type legacyConversationDoc struct {
+// legacyConversationScopeDoc is the minimal projection
+// findLegacyConversationGroups reads: agent_id and the four scope
+// fields, no content. Bounding the projection this way means the size
+// of the in-memory group set tracks the number of distinct
+// (agent_id, scope) pairs waiting to be backfilled, not the number of
+// orphaned documents -- a large legacy database can hold many documents
+// per pair, and this pass no longer holds any of their content.
+type legacyConversationScopeDoc struct {
 	AgentID    string `bson:"agent_id"`
 	ScopeL0    string `bson:"scope_l0"`
 	ScopeL1    string `bson:"scope_l1"`
 	ScopeL2    string `bson:"scope_l2"`
 	ScopeCanon string `bson:"scope_canon"`
-	Content    string `bson:"content"`
 }
 
 // backfillLegacyMessage is the subset of memory.Message this backfill
@@ -395,77 +399,91 @@ type backfillLegacyMessage struct {
 // distinct-(role,content) count rather than a raw document count; this
 // is the same logic against mongo documents.
 func (s *Store) backfillDefaultSessions(ctx context.Context) error {
-	groups, contents, err := s.findLegacyConversationGroups(ctx)
+	groups, err := s.findLegacyConversationGroups(ctx)
 	if err != nil {
 		return fmt.Errorf("find legacy conversation groups: %w", err)
 	}
 	for _, g := range groups {
-		if err := s.backfillOneGroup(ctx, g, contents[g.key()]); err != nil {
+		if err := s.backfillOneGroup(ctx, g); err != nil {
 			return fmt.Errorf("backfill default session for agent %s: %w", g.AgentID, err)
 		}
 	}
 	return nil
 }
 
-// findLegacyConversationGroups reads every orphaned conversation
-// document and buckets it by (agent_id, scope_canon). The sort by
-// created_at means each bucket's content slice is already in
-// chronological order, which backfillOneGroup's message reduction
-// depends on for "the last message with non-empty content".
-func (s *Store) findLegacyConversationGroups(ctx context.Context) ([]legacyConversationGroup, map[string][]string, error) {
+// findLegacyConversationGroups discovers every distinct (agent_id,
+// scope) pairing sitting on orphaned conversation documents, without
+// reading any document content -- see legacyConversationScopeDoc for
+// why. backfillOneGroup issues its own, separate query per group to
+// read that group's content, so this pass never buffers more than one
+// group's identity at a time per document scanned.
+func (s *Store) findLegacyConversationGroups(ctx context.Context) ([]legacyConversationGroup, error) {
 	filter := bson.M{
 		"kind":        "conversation",
 		"session_id":  "",
 		"scope_canon": bson.M{"$ne": ""},
 	}
-	cur, err := s.mdb.Collection(colMemories).Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	projection := bson.M{"agent_id": 1, "scope_l0": 1, "scope_l1": 1, "scope_l2": 1, "scope_canon": 1}
+	cur, err := s.mdb.Collection(colMemories).Find(ctx, filter, options.Find().SetProjection(projection))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer func() { _ = cur.Close(ctx) }()
 
-	groupsByKey := make(map[string]legacyConversationGroup)
-	contentsByKey := make(map[string][]string)
-	var order []string
+	seen := make(map[string]struct{})
+	var groups []legacyConversationGroup
 	for cur.Next(ctx) {
-		var doc legacyConversationDoc
+		var doc legacyConversationScopeDoc
 		if decodeErr := cur.Decode(&doc); decodeErr != nil {
-			return nil, nil, fmt.Errorf("decode legacy conversation document: %w", decodeErr)
+			return nil, fmt.Errorf("decode legacy conversation scope: %w", decodeErr)
 		}
-		g := legacyConversationGroup{
-			AgentID: doc.AgentID, ScopeL0: doc.ScopeL0, ScopeL1: doc.ScopeL1, ScopeL2: doc.ScopeL2, ScopeCanon: doc.ScopeCanon,
-		}
+		g := legacyConversationGroup(doc)
 		k := g.key()
-		if _, ok := groupsByKey[k]; !ok {
-			groupsByKey[k] = g
-			order = append(order, k)
+		if _, ok := seen[k]; ok {
+			continue
 		}
-		contentsByKey[k] = append(contentsByKey[k], doc.Content)
+		seen[k] = struct{}{}
+		groups = append(groups, g)
 	}
-	if err := cur.Err(); err != nil {
-		return nil, nil, err
-	}
-
-	groups := make([]legacyConversationGroup, 0, len(order))
-	for _, k := range order {
-		groups = append(groups, groupsByKey[k])
-	}
-	return groups, contentsByKey, nil
+	return groups, cur.Err()
 }
 
-// reduceLegacyMessages collapses one group's raw content strings into
-// the two values its default session needs. See
-// backfillDefaultSessions/the postgres migration for why messageCount is
-// a distinct-(role,content) count rather than len(contents), and why
-// lastMessage skips empty-content messages.
-func reduceLegacyMessages(contents []string) (messageCount int, lastMessage string) {
+// reduceLegacyMessagesFor streams one group's orphaned conversation
+// documents -- content only, sorted by created_at -- and reduces them to
+// the two values its default session needs: a distinct-(role,content)
+// message count and the content of the chronologically-last message
+// with non-empty content. See backfillDefaultSessions/the postgres
+// migration for why messageCount is a distinct-pair count rather than a
+// raw document count, and why lastMessage skips empty-content messages.
+//
+// This is a cursor, not a slice load: memory use is bounded by one
+// group's document count at a time, not by the total number of orphaned
+// documents across every group findLegacyConversationGroups found.
+func (s *Store) reduceLegacyMessagesFor(ctx context.Context, g legacyConversationGroup) (messageCount int, lastMessage string, err error) {
+	filter := bson.M{
+		"kind": "conversation", "session_id": "",
+		"agent_id": g.AgentID, "scope_canon": g.ScopeCanon,
+	}
+	cur, findErr := s.mdb.Collection(colMemories).Find(ctx, filter,
+		options.Find().SetProjection(bson.M{"content": 1}).SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	if findErr != nil {
+		return 0, "", findErr
+	}
+	defer func() { _ = cur.Close(ctx) }()
+
 	seen := make(map[[2]string]struct{})
-	for _, content := range contents {
+	for cur.Next(ctx) {
+		var doc struct {
+			Content string `bson:"content"`
+		}
+		if decodeErr := cur.Decode(&doc); decodeErr != nil {
+			return 0, "", fmt.Errorf("decode conversation content: %w", decodeErr)
+		}
 		var msg backfillLegacyMessage
-		if err := json.Unmarshal([]byte(content), &msg); err != nil {
-			// A document that isn't valid JSON can't have been written by
-			// SaveConversation; skip it from the count rather than
-			// aborting the whole backfill over one corrupt row.
+		if jsonErr := json.Unmarshal([]byte(doc.Content), &msg); jsonErr != nil {
+			// A document that isn't valid JSON can't have been written
+			// by SaveConversation; skip it from the count rather than
+			// aborting the whole backfill over one corrupt document.
 			continue
 		}
 		seen[[2]string{msg.Role, msg.Content}] = struct{}{}
@@ -473,7 +491,10 @@ func reduceLegacyMessages(contents []string) (messageCount int, lastMessage stri
 			lastMessage = msg.Content
 		}
 	}
-	return len(seen), lastMessage
+	if cursorErr := cur.Err(); cursorErr != nil {
+		return 0, "", cursorErr
+	}
+	return len(seen), lastMessage, nil
 }
 
 // backfillOneGroup creates (or reuses) the default session for one
@@ -481,8 +502,11 @@ func reduceLegacyMessages(contents []string) (messageCount int, lastMessage stri
 // conversation documents at it, inside one multi-document transaction so
 // a mid-write failure rolls back whole rather than leaving some
 // documents pointed at a session that itself failed to commit.
-func (s *Store) backfillOneGroup(ctx context.Context, g legacyConversationGroup, contents []string) error {
-	messageCount, lastMessage := reduceLegacyMessages(contents)
+func (s *Store) backfillOneGroup(ctx context.Context, g legacyConversationGroup) error {
+	messageCount, lastMessage, err := s.reduceLegacyMessagesFor(ctx, g)
+	if err != nil {
+		return fmt.Errorf("read conversation documents: %w", err)
+	}
 
 	txSess, err := s.mdb.Client().StartSession()
 	if err != nil {

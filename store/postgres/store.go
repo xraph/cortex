@@ -48,6 +48,24 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 		return fmt.Errorf("cortex: rescope legacy rows: %w", err)
 	}
 
+	// Runs after rescopeLegacyRows, unconditionally on every Migrate()
+	// call, rather than only inside migration 20260824000004's one-shot
+	// Up (see that migration's Comment for why the one-shot version was
+	// wrong): a host jumping straight from pre-v1.8.0 to this version in
+	// one Migrate() call has every legacy conversation row sitting at
+	// scope_canon = '' at the point the migration group runs, so a
+	// one-shot Up run before rescoping finds nothing to backfill and,
+	// because grove never retries a recorded version, never gets another
+	// chance -- those rows would stay scoped (reachable to every other
+	// query) but permanently orphaned from a session. Calling this here
+	// instead closes that gap: it runs after every row in this call has
+	// its real scope, and it is safe to run on every boot because its
+	// own filter (session_id = '' on kind = 'conversation') has nothing
+	// left to find once a scope's rows have been backfilled once.
+	if err := backfillDefaultSessions(ctx, executor); err != nil {
+		return fmt.Errorf("cortex: backfill default sessions: %w", err)
+	}
+
 	return nil
 }
 
