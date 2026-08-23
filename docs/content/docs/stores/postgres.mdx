@@ -78,20 +78,22 @@ Complex nested structures are stored as JSONB columns:
 
 ## Composite store interface
 
-The PostgreSQL store implements all 8 sub-interfaces:
+The PostgreSQL store implements all 10 sub-interfaces:
 
 ```go
 type Store interface {
-    agent.Store      // 6 methods
-    skill.Store      // 6 methods
-    trait.Store      // 6 methods
-    behavior.Store   // 6 methods
-    persona.Store    // 6 methods
-    run.Store        // 8 methods
-    memory.Store     // 8 methods
-    checkpoint.Store // 4 methods
+    agent.Store               // 6 methods
+    skill.Store               // 6 methods
+    trait.Store               // 6 methods
+    behavior.Store            // 6 methods
+    persona.Store             // 6 methods
+    run.Store                 // 8 methods
+    memory.Store              // 8 methods
+    checkpoint.Store          // 4 methods
+    orchestration.ConfigStore // 7 methods
+    orchestration.RunStore    // 5 methods
 
-    Migrate(ctx context.Context) error
+    Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
     Close() error
 }
