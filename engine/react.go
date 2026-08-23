@@ -587,17 +587,27 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 }
 
 // resolveTools converts tool name references to llm.Tool definitions,
-// filtered to names when non-empty, then to what the authorizer will let
-// this subject see. A nil authorizer skips the Visible call and returns
-// everything, same as before this seam existed.
+// then narrows them to what the authorizer will let this subject see. A
+// nil authorizer skips the Visible call and returns everything, same as
+// before this seam existed.
+//
+// names comes from an agent's cfg.Tools, and it filters registered tools
+// only. Builtins are always included when the config that creates them is
+// present: an agent with Knowledge configured would otherwise lose
+// knowledge_search the moment it named a single registered tool, and
+// nothing would tell it its knowledge config had gone dead. A host that
+// wants a builtin withheld denies it in ToolAuthorizer.Visible, which is
+// the actual security boundary. cfg.Tools is not one.
 func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string) []llm.Tool {
-	tools := e.builtinTools()
+	registered := make([]llm.Tool, 0, len(e.tools))
 	for _, rt := range e.tools {
-		tools = append(tools, rt.def)
+		registered = append(registered, rt.def)
 	}
 	if len(names) > 0 {
-		tools = filterByName(tools, names)
+		registered = filterByName(registered, names)
 	}
+
+	tools := append(e.builtinTools(), registered...)
 	if e.authorizer != nil {
 		tools = e.authorizer.Visible(ctx, s, tools)
 	}

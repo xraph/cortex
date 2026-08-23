@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/scopespy"
@@ -288,5 +289,66 @@ func TestPrincipalFromContext_ReachesAuthorizerUnchanged(t *testing.T) {
 func TestPrincipalFromContext_AbsentReturnsNil(t *testing.T) {
 	if got := cortex.PrincipalFromContext(context.Background()); got != nil {
 		t.Errorf("PrincipalFromContext on a bare context = %#v, want nil", got)
+	}
+}
+
+// stubKnowledge is a knowledge.Provider that answers nothing. Its only
+// job is to be non-nil, since that is what makes the engine advertise the
+// knowledge_search builtin.
+type stubKnowledge struct{}
+
+func (stubKnowledge) Retrieve(_ context.Context, _ string, _ *knowledge.RetrieveParams) ([]knowledge.ScoredChunk, error) {
+	return nil, nil
+}
+
+func (stubKnowledge) ListCollections(_ context.Context) ([]knowledge.CollectionInfo, error) {
+	return nil, nil
+}
+
+// TestResolveTools_BuiltinsSurviveCfgToolsFiltering pins the boundary
+// cfg.Tools actually draws. It enumerates registered tools, not builtins:
+// an agent that has Knowledge configured and also names a registered tool
+// must keep knowledge_search, or its knowledge configuration becomes dead
+// weight it has no way to notice. Withholding a builtin is the
+// authorizer's job, not cfg.Tools'.
+func TestResolveTools_BuiltinsSurviveCfgToolsFiltering(t *testing.T) {
+	toolA, handlerA := echoTool()
+	toolB := llm.Tool{Name: "other", Description: "a second tool"}
+	handlerB := func(_ context.Context, _ cortex.Invocation) (string, error) { return "b", nil }
+
+	e, err := New(
+		WithKnowledge(stubKnowledge{}),
+		WithTool(toolA, handlerA),
+		WithTool(toolB, handlerB),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := e.resolveTools(context.Background(), cortex.Subject{}, []string{toolB.Name})
+
+	names := make([]string, 0, len(got))
+	for _, tl := range got {
+		names = append(names, tl.Name)
+	}
+	if len(names) != 2 {
+		t.Fatalf("resolveTools = %v, want exactly [knowledge_search %s]", names, toolB.Name)
+	}
+	var sawBuiltin, sawNamed bool
+	for _, n := range names {
+		switch n {
+		case "knowledge_search":
+			sawBuiltin = true
+		case toolB.Name:
+			sawNamed = true
+		case toolA.Name:
+			t.Errorf("resolveTools returned %q, which cfg.Tools did not name", toolA.Name)
+		}
+	}
+	if !sawBuiltin {
+		t.Errorf("resolveTools = %v, dropped the knowledge_search builtin; cfg.Tools must not filter builtins", names)
+	}
+	if !sawNamed {
+		t.Errorf("resolveTools = %v, dropped the registered tool cfg.Tools named", names)
 	}
 }
