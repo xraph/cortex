@@ -53,6 +53,14 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// mongo -- and proving the sqlite one says nothing about the mongo
 	// one, which is the least like the others.
 	t.Run("ClaimSuspensionConcurrency", func(t *testing.T) { testClaimSuspensionConcurrency(t, newStore) })
+
+	// Expiry is part of the claim's own condition rather than a check the
+	// caller runs afterwards, so it is the store contract that has to
+	// prove it, and it has to prove it on each backend: postgres and
+	// sqlite fold the deadline into the UPDATE's predicate, mongo checks
+	// it in front of the FindOneAndUpdate because it has no cross-
+	// collection filter to fold it into.
+	t.Run("ClaimSuspensionExpiry", func(t *testing.T) { testClaimSuspensionExpiry(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -364,6 +372,14 @@ func containsSuspensionID(ss []*suspension.Suspension, want id.SuspensionID) boo
 // already past, so an expiry fixture never depends on wall-clock timing.
 func pastDeadline() *time.Time {
 	t := time.Now().UTC().Add(-time.Hour)
+	return &t
+}
+
+// futureDeadline is pastDeadline's mirror: far enough out that a claim
+// under it can never race the clock. The two exist as a pair so an
+// expiry test's two fixtures differ by the deadline and nothing else.
+func futureDeadline() *time.Time {
+	t := time.Now().UTC().Add(time.Hour)
 	return &t
 }
 
@@ -3086,6 +3102,105 @@ func testClaimSuspensionConcurrency(t *testing.T, newStore func(t *testing.T) st
 		// DeleteSuspension's job, once the resume has fully completed.
 		if _, err := s.GetSuspension(ctx, r.ID); err != nil {
 			t.Errorf("suspension gone after a claim: %v (ClaimSuspension must not delete it)", err)
+		}
+	})
+}
+
+// ──────────────────────────────────────────────────
+// ClaimSuspension expiry
+// ──────────────────────────────────────────────────
+
+// testClaimSuspensionExpiry proves the deadline is part of the claim
+// itself, not something a caller checks after the fact.
+//
+// The distinction is the whole point of the group. A claim that
+// transitioned the run first and reported the expiry second would leave
+// the run running with a suspension nobody can claim any more, because a
+// claim only ever matches a paused run. That is a wedged run: strictly
+// worse than the expired-but-paused row the expiry sweep exists to clean
+// up. So every subtest below asserts the run's state as well as the
+// error, since the error alone cannot tell the two implementations
+// apart.
+//
+// The three fixtures differ only in the suspension's deadline (past,
+// future, absent), which is the thing under test.
+func testClaimSuspensionExpiry(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("ClaimSuspension_ExpiredRefusesAndLeavesTheRunPaused", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, pastDeadline())
+
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if !errors.Is(err, cortex.ErrSuspensionExpired) {
+			t.Fatalf("ClaimSuspension on an expired suspension = (%v, %v), want ErrSuspensionExpired", claimed, err)
+		}
+		if claimed != nil {
+			t.Errorf("expired claim returned a suspension alongside the error: %v", claimed)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the expired claim: %v", err)
+		}
+		if reloaded.State != run.StatePaused {
+			t.Errorf("run state after a refused claim = %q, want %q; the run is wedged in a state no later claim can match", reloaded.State, run.StatePaused)
+		}
+
+		// The row has to survive for the expiry sweep to find. Deleting
+		// it here would make the refusal unrecoverable in the other
+		// direction.
+		still, err := s.GetSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("suspension gone after a refused claim: %v", err)
+		}
+		if still.ID != susp.ID {
+			t.Errorf("GetSuspension after a refused claim = %s, want %s", still.ID, susp.ID)
+		}
+	})
+
+	t.Run("ClaimSuspension_DeadlineStillAheadClaimsNormally", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, futureDeadline())
+
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("ClaimSuspension with the deadline still ahead: %v", err)
+		}
+		if claimed.ID != susp.ID {
+			t.Fatalf("claim returned %s, want %s", claimed.ID, susp.ID)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the claim: %v", err)
+		}
+		if reloaded.State != run.StateRunning {
+			t.Errorf("run state after a successful claim = %q, want %q", reloaded.State, run.StateRunning)
+		}
+	})
+
+	// The other half of the classification. A paused run with no
+	// suspension at all must read as ErrNotSuspended, or a caller
+	// handling expiry (dropping the resume, telling a user it is too
+	// late) would apply that handling to a run that was simply never
+	// suspended.
+	t.Run("ClaimSuspension_NoSuspensionIsNotSuspendedRatherThanExpired", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r := mustPauseRun(t, s, ctx)
+
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Fatalf("ClaimSuspension on a run with no suspension = (%v, %v), want ErrNotSuspended", claimed, err)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the failed claim: %v", err)
+		}
+		if reloaded.State != run.StatePaused {
+			t.Errorf("run state after a claim that found no suspension = %q, want %q", reloaded.State, run.StatePaused)
 		}
 	})
 }

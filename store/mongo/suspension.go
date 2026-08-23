@@ -67,19 +67,34 @@ func (s *Store) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspen
 // exists to close, so the no-document check below is load-bearing:
 // without it both callers would return the same suspension and both
 // would go on to resume the same run.
+//
+// The expiry check sits in front of that write for the same reason the
+// SQL backends fold it into their UPDATE's condition: a caller that
+// claimed first and rejected an expired suspension second would already
+// have flipped the run to running, leaving it stuck there with a
+// suspension nobody can claim any more. Mongo cannot express the
+// deadline as part of the FindOneAndUpdate's own filter, because the
+// deadline lives on the suspension document and the transition writes
+// the run one, and this store deliberately does not require a replica
+// set to wrap the two in a transaction. Ordering the check before the
+// write buys the property that actually matters: an expired resume never
+// moves the run.
 func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
 	}
 
-	// Read first so a run with no suspension at all fails before the
-	// state transition, rather than leaving a run flipped to running with
-	// nothing to continue from. This read is not what serializes the
-	// claim; the FindOneAndUpdate below is.
+	// Read first so a run with no suspension at all, or one past its
+	// deadline, fails before the state transition rather than leaving a
+	// run flipped to running with nothing to continue from. This read is
+	// not what serializes the claim; the FindOneAndUpdate below is.
 	m, err := s.findSuspension(ctx, scope, runID)
 	if err != nil {
 		return nil, err
+	}
+	if m.ExpiresAt != nil && !m.ExpiresAt.After(now()) {
+		return nil, cortex.ErrSuspensionExpired
 	}
 
 	filter := bson.M{"_id": runID.String(), "state": string(run.StatePaused)}

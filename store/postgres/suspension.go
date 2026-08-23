@@ -67,7 +67,7 @@ type suspensionSelector interface {
 // the run's paused-to-running transition and the suspension read as ONE
 // operation, so two concurrent resumes cannot both proceed.
 //
-// The suspension read and the conditional UPDATE share a transaction.
+// The conditional UPDATE and the suspension read share a transaction.
 // The UPDATE carries its own state = 'paused' predicate, so under READ
 // COMMITTED a second caller blocks on the row lock the first holds, then
 // re-evaluates that predicate against the committed row and matches
@@ -78,6 +78,15 @@ type suspensionSelector interface {
 // exists to close, so the rowcount check below is load-bearing: without
 // it both callers would return the same suspension and both would go on
 // to resume the same run.
+//
+// The expiry predicate lives in that same UPDATE rather than in a check
+// the caller runs afterwards, and the difference matters. A caller that
+// claimed first and rejected an expired suspension second would already
+// have flipped the run to running, leaving it stuck there with a
+// suspension nobody can claim any more: strictly worse than the
+// expired-but-paused state the sweeper exists to clean up. Conditioning
+// the write on an unexpired suspension means an expired resume never
+// moves the run at all.
 func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -93,19 +102,13 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	// triggered this defer already is.
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
 
-	// Read first so a run with no suspension at all fails before the
-	// state transition, rather than leaving a run flipped to running with
-	// nothing to continue from.
-	m, err := selectSuspensionRow(ctx, tx, scope, runID)
-	if err != nil {
-		return nil, err
-	}
-
+	now := time.Now().UTC()
 	q := tx.NewUpdate((*runModel)(nil)).
 		Set("state = ?", string(run.StateRunning)).
-		Set("updated_at = ?", time.Now().UTC()).
+		Set("updated_at = ?", now).
 		Where("id = ?", runID.String()).
 		Where("state = ?", string(run.StatePaused))
+	q = q.Where(unexpiredSuspensionExists(scope), unexpiredSuspensionArgs(scope, runID, now)...)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -118,13 +121,63 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		return nil, fmt.Errorf("cortex: claim suspension rows affected: %w", err)
 	}
 	if n == 0 {
-		return nil, cortex.ErrNotSuspended
+		// The claim already lost, so this extra read costs nothing on
+		// any path that succeeds. It is the only way to tell the caller
+		// which of the two failures it hit.
+		return nil, classifyFailedClaim(ctx, tx, scope, runID, now)
+	}
+
+	m, err := selectSuspensionRow(ctx, tx, scope, runID)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cortex: commit claim suspension: %w", err)
 	}
 	return suspensionFromModel(m)
+}
+
+// unexpiredSuspensionExists is the claim's expiry predicate. It is a
+// subquery rather than a join because the state transition it guards
+// writes to cortex_runs while the deadline lives on cortex_suspensions,
+// and it repeats the scope columns so a claim can never read a
+// suspension the caller's own GetSuspension would refuse.
+func unexpiredSuspensionExists(scope cortex.Scope) string {
+	q := "EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ?" +
+		" AND (cs.expires_at IS NULL OR cs.expires_at > ?)"
+	for _, p := range scopePredicates(scope, false) {
+		q += " AND cs." + p.Column + " = ?"
+	}
+	return q + ")"
+}
+
+// unexpiredSuspensionArgs supplies unexpiredSuspensionExists's bind
+// values in the order its placeholders appear.
+func unexpiredSuspensionArgs(scope cortex.Scope, runID id.AgentRunID, now time.Time) []any {
+	preds := scopePredicates(scope, false)
+	args := make([]any, 0, len(preds)+2)
+	args = append(args, runID.String(), now)
+	for _, p := range preds {
+		args = append(args, p.Value)
+	}
+	return args
+}
+
+// classifyFailedClaim says why a claim matched no run. A missing
+// suspension (or one another caller already claimed, which leaves the
+// run no longer paused) is ErrNotSuspended; a suspension that is still
+// there but past its deadline is ErrSuspensionExpired, which tells the
+// caller the difference between "try again" and "too late".
+func classifyFailedClaim(ctx context.Context, q suspensionSelector, scope cortex.Scope, runID id.AgentRunID, now time.Time) error {
+	m, err := selectSuspensionRow(ctx, q, scope, runID)
+	if err != nil {
+		return err
+	}
+	if m.ExpiresAt != nil && !m.ExpiresAt.After(now) {
+		return cortex.ErrSuspensionExpired
+	}
+	return cortex.ErrNotSuspended
 }
 
 // DeleteSuspension removes a run's suspension within the caller's scope.
