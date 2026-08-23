@@ -7,7 +7,7 @@ Every Cortex persistence operation goes through the composite `store.Store` inte
 
 ## The composite interface
 
-The `store.Store` interface embeds 8 domain-specific sub-interfaces plus 3 lifecycle methods:
+The `store.Store` interface embeds 9 domain-specific sub-interfaces plus 3 lifecycle methods:
 
 ```go
 import "github.com/xraph/cortex/store"
@@ -21,6 +21,7 @@ type Store interface {
     run.Store        // 8 methods
     memory.Store     // 8 methods
     checkpoint.Store // 4 methods
+    session.Store    // 6 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -28,7 +29,11 @@ type Store interface {
 }
 ```
 
-**Total: 47 methods** across all sub-interfaces plus 3 lifecycle methods.
+**Total: 53 methods** across all sub-interfaces plus 3 lifecycle methods.
+
+`session.Store` is new: `store.Store` didn't embed it before this release,
+so a custom backend that satisfied the interface last release no longer
+does until it adds these six methods. See the breakdown below.
 
 ## Sub-interface breakdown
 
@@ -137,6 +142,22 @@ type Store interface {
     GetCheckpoint(ctx context.Context, id id.CheckpointID) (*Checkpoint, error)
     Resolve(ctx context.Context, id id.CheckpointID, decision Decision) error
     ListPending(ctx context.Context, filter *ListFilter) ([]*Checkpoint, error)
+}
+```
+
+### session.Store (6 methods)
+
+Scope arrives on the context via `cortex.ScopeFromContext`, same as every
+other sub-interface here — no method carries it explicitly.
+
+```go
+type Store interface {
+    CreateSession(ctx context.Context, s *Session) error
+    GetSession(ctx context.Context, sessionID id.SessionID) (*Session, error)
+    UpdateSession(ctx context.Context, s *Session) error
+    DeleteSession(ctx context.Context, sessionID id.SessionID) error
+    ListSessions(ctx context.Context, filter *ListFilter) ([]*Session, error)
+    CountSessions(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
 
