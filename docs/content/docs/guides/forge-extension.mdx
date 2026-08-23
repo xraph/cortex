@@ -188,7 +188,14 @@ Cortex has no built-in notion of tenant, workspace, or organization — the host
 responsible for attaching a scope to every request before it reaches Cortex, typically
 via middleware that reads the JWT or API key. Every scope-guarded operation rejects a
 zero scope with `cortex.ErrNoScope`, so this middleware is not optional in a
-multi-tenant deployment:
+multi-tenant deployment.
+
+`forge.Router.Use` takes forge's own `Middleware` type
+(`func(next forge.Handler) forge.Handler`, built on forge's `Context`), not a plain
+`net/http` middleware. Rather than rewrite the whole example against `forge.Context`,
+write it as an ordinary `net/http` middleware, typed as `forge.PureMiddleware`
+(`func(http.Handler) http.Handler`, exported by forge for exactly this case), and
+convert it at registration time with `.ToMiddleware()`:
 
 ```go
 func scopeMiddleware(next http.Handler) http.Handler {
@@ -204,7 +211,7 @@ func scopeMiddleware(next http.Handler) http.Handler {
     })
 }
 
-router.Use(scopeMiddleware)
+router.Use(forge.PureMiddleware(scopeMiddleware).ToMiddleware())
 ```
 
 ## Adding plugins

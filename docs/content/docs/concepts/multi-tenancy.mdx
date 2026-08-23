@@ -164,10 +164,14 @@ scope middleware of its own for `api.API` — every guarded endpoint returns
 not optional in a real deployment; without it, none of `api.API`'s run, conversation,
 or checkpoint endpoints work.
 
-`forge.Router.Use` takes an ordinary `func(http.Handler) http.Handler`, so a scope
-middleware is standard Go HTTP middleware — nothing Cortex-specific about its shape,
-just what it does with the request. Register it on the router **before** calling
-`api.New(...).RegisterRoutes(router)`, so it runs ahead of every Cortex handler:
+`forge.Router.Use` itself takes forge's own `Middleware` type
+(`func(next forge.Handler) forge.Handler`, built on forge's `Context`, not
+`net/http`). You do not have to write against that type directly: forge also
+exports `PureMiddleware` (`func(http.Handler) http.Handler`, the ordinary Go HTTP
+shape) with a `.ToMiddleware()` method that adapts it, so the middleware body below
+is nothing Cortex- or forge-specific, just what it does with the request. Register
+it on the router **before** calling `api.New(...).RegisterRoutes(router)`, so it
+runs ahead of every Cortex handler:
 
 ```go
 package main
@@ -213,7 +217,7 @@ func main() {
     }
 
     router := forge.NewRouter()
-    router.Use(scopeMiddleware)
+    router.Use(forge.PureMiddleware(scopeMiddleware).ToMiddleware())
 
     a := api.New(eng, router)
     if err := a.RegisterRoutes(router); err != nil {
