@@ -95,3 +95,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// local dev: needs unreleased core/registry.ServiceName and the query.Fabric
+// DI registration. Repin to a released fabriq and drop this before merge.
+replace github.com/xraph/fabriq => ../../../TwinOS/fabriq
