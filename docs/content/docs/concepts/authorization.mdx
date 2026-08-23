@@ -123,6 +123,16 @@ eng, err := engine.New(
 )
 ```
 
+If you're running cortex as a Forge extension rather than building the
+engine yourself, you never call `engine.New` directly. The extension does,
+and `extension.WithEngineOption` is how an engine option reaches it:
+
+```go
+ext := extension.New(
+    extension.WithEngineOption(engine.WithToolAuthorizer(permissionAuthorizer{})),
+)
+```
+
 Neither method above reaches into the context for the caller's identity.
 Both read it off `s.Principal`, which brings up the part a host has to wire
 up separately: nothing populates `Principal` unless you tell it to.
@@ -173,6 +183,11 @@ a denied tool call looks like a tool that answered "no" rather than a crash.
 The model sees the refusal in its next turn and can try something else,
 explain to the user why it can't proceed, or ask for different input:
 whatever the agent's instructions tell it to do when a tool declines.
+
+`ToolDenied` is the only terminal event a denied call fires. `ToolCompleted`
+does not follow it, and `ToolFailed` does not either. Every tool call ends in
+exactly one of the three, so a subscriber can count denials, failures and
+completions and have the numbers add up to the calls that were dispatched.
 
 This is why `Authorize`'s error should be worded for the model to read, not
 just for a human debugging a log line later. `"caller not permitted to call

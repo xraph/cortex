@@ -45,11 +45,14 @@ whole section before upgrading.
 - **`cortex.ToolAuthorizer`**, the interface a host implements to gate
   tools. `Visible(ctx, Subject, []llm.Tool) []llm.Tool` filters the list
   a model is shown; `Authorize(ctx, Subject, llm.ToolCall) error` gates
-  one dispatch. Both are consulted on every tool call, deliberately: a
-  model can name a tool it was never shown, so trusting `Visible` to
-  have already filtered would leave `Authorize` doing nothing. Install
-  one with `engine.WithToolAuthorizer`. A nil authorizer, or none set at
-  all, allows everything, so a host that doesn't configure one sees no
+  one dispatch. They run at different points, deliberately. `Visible`
+  runs once per step, inside `resolveTools`, before the model is asked
+  to pick anything. `Authorize` runs on every dispatch, including one
+  naming a tool `Visible` never returned: a model can name a tool it was
+  never shown, so trusting `Visible` to have already filtered would
+  leave `Authorize` doing nothing. Install one with
+  `engine.WithToolAuthorizer`. A nil authorizer, or none set at all,
+  allows everything, so a host that doesn't configure one sees no
   behavior change.
 - **`cortex.Subject`**: who's asking. Carries `Scope`, `Principal`,
   `AgentID` and `RunID`. `Principal` is `any`, and cortex never
@@ -74,6 +77,31 @@ whole section before upgrading.
 - **`Registry.EmitToolDenied`**, the emitter `executeTool` calls on a
   denial, notifying every registered `ToolDenied` hook.
 
+### Changed
+
+- **`engine.Dispatch` now goes through the authorizer.** Its signature
+  is unchanged, so nothing forces you to look at it, but it shares
+  `executeTool` with the ReAct loop and therefore picks up the
+  `Authorize` gate along with it. Once you install an authorizer, a
+  direct `Dispatch` call it refuses returns the denial as its result
+  string instead of running the tool. The subject a `Dispatch` builds
+  carries the scope and principal on the context and nothing else: a
+  direct call has no agent and no run of its own, so `AgentID` and
+  `RunID` arrive zero-valued. Write an authorizer that keys on either
+  one to handle that case, or it will treat every host-driven dispatch
+  as coming from the same nameless agent.
+- **A tool call now fires exactly one terminal plugin event.** The ReAct
+  loop used to emit `ToolCompleted` as soon as `executeTool` returned,
+  including for calls that had just fired `ToolDenied` or `ToolFailed`,
+  so a subscriber counting completions counted every denial and every
+  failure as a success. Completed, failed and denied are now mutually
+  exclusive, in the streaming loop as well as the synchronous one, and a
+  tool name matching nothing fires `ToolFailed`, where before it went
+  down as a success. The result string the model reads is unchanged in
+  all three cases. If you built a metric on `ToolCompleted` counts, expect
+  the number to drop by however many denials and failures your agents
+  were quietly logging as wins.
+
 ### Fixed
 
 - **`plugin.ToolFailed` now actually fires.** It's been a declared hook
@@ -86,10 +114,21 @@ whole section before upgrading.
   change even though it's a fix, not a feature.
 - **`resolveTools` now honors `cfg.Tools`.** The parameter existed but
   was discarded on arrival (`resolveTools(_ []string)`) since the
-  function was first written, so an agent configured with a restricted
-  tool list was silently handed every tool anyway. An agent that names
-  specific tools in its config now sees only those tools, which is what
-  the config already claimed to do.
+  function was first written, so `cfg.Tools` filtering has never worked
+  on any release up to and including v1.9.0: an agent configured with a
+  restricted tool list was handed every registered tool anyway. It works
+  now, which means an agent that sets `cfg.Tools` sees a smaller tool
+  list than it saw on v1.9.0. Check what your agents name there before
+  you upgrade, because a tool an agent had been using without listing
+  will disappear from the list the model is shown.
+
+  Builtins are exempt from that filtering. `cfg.Tools` enumerates the
+  tools you registered with `WithTool`; it was never meant to enumerate
+  the ones cortex ships itself, and filtering them with it would mean an
+  agent with Knowledge configured lost `knowledge_search` the moment it
+  named a single registered tool. Withholding a builtin is
+  `ToolAuthorizer.Visible`'s job, which runs after this and still sees
+  the whole list.
 
 ### Deferred to v1.11.0
 
