@@ -298,18 +298,18 @@ func (f *failingPersonaSpy) GetPersonaByName(_ context.Context, _ string) (*pers
 	return nil, cortex.ErrPersonaNotFound
 }
 
-// TestRunAgent_MissingAppFailsPersonaResolutionLoudly is the regression
-// guard for the fix-round review's Finding 1: BuildSystemPrompt must
-// abort the run when persona resolution fails, not silently drop the
-// Identity section from the prompt. The test's name predates Task 7:
-// persona lookup used to key on cortex.AppFromContext(ctx), and a
-// context with no app attached reproduced the failure directly. Persona
-// lookup is scope-keyed now, and RunAgent's own guard already rejects a
-// context with no scope before BuildSystemPrompt ever runs, so there is
-// no equivalent "missing X" context to construct here -- the spy above
-// fails the lookup outright instead, to keep exercising the same
-// fail-loud invariant under the new signature.
-func TestRunAgent_MissingAppFailsPersonaResolutionLoudly(t *testing.T) {
+// TestRunAgent_PersonaLookupFailureAbortsLoudly is the regression guard
+// for the fix-round review's Finding 1: BuildSystemPrompt must abort the
+// run when persona resolution fails, not silently drop the Identity
+// section from the prompt. This test used to be named for a "missing
+// app" scenario: persona lookup used to key on cortex.AppFromContext(ctx),
+// and a context with no app attached reproduced the failure directly.
+// Persona lookup is scope-keyed now (Task 7), and RunAgent's own guard
+// already rejects a context with no scope before BuildSystemPrompt ever
+// runs, so there is no missing-app path left that reaches this code --
+// the spy above fails the lookup outright instead, to keep exercising
+// the same fail-loud invariant under the new signature.
+func TestRunAgent_PersonaLookupFailureAbortsLoudly(t *testing.T) {
 	spy := &failingPersonaSpy{Spy: scopespy.New()}
 	e, err := engine.New(engine.WithStore(spy), engine.WithLLM(scopespy.StaticLLM("done")))
 	if err != nil {
