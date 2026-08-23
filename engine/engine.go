@@ -42,6 +42,9 @@ type Engine struct {
 	extensions  *plugin.Registry
 	pendingExts []plugin.Extension
 	tools       []registeredTool
+	// externalTools are advertised but never dispatched here: a call to
+	// one suspends the run so the host can execute it.
+	externalTools []llm.Tool
 }
 
 // LLM returns the configured LLM client, or nil if none is set.
@@ -512,6 +515,10 @@ const (
 	EventSafetyBlock StreamEventType = "safety_block"
 	EventDone        StreamEventType = "done"
 	EventError       StreamEventType = "error"
+	// EventSuspended is the terminal event of a run that paused instead
+	// of finishing. Its data carries the run id, the reason and the
+	// pending calls the caller has to answer before the run can resume.
+	EventSuspended StreamEventType = "suspended"
 )
 
 // StreamEvent is a single event emitted during streaming execution.

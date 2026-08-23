@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
+	"github.com/xraph/cortex/suspension"
 )
 
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
@@ -149,12 +150,27 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				ToolCalls: resp.ToolCalls,
 			})
 
-			// Execute each tool call.
+			// Execute each tool call. A call that turns out to be
+			// pending is collected rather than recorded: the whole step
+			// runs first, and one suspension carrying every pending call
+			// is written after it.
+			var pending []suspension.PendingCall
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				result, outcome := e.executeTool(ctx, subject, tc)
+				if outcome == outcomePending {
+					// No tool call row: nothing ran, and a row with a
+					// completion timestamp on it would be a lie the
+					// resume has no way to correct (run.Store has no
+					// update for tool calls). No terminal plugin event
+					// either, and no tool result message: the model must
+					// not see an empty result standing in for a call
+					// that is still outstanding.
+					pending = append(pending, pendingCall(tc))
+					continue
+				}
 
 				tcEnd := time.Now().UTC()
 				toolCall := &run.ToolCall{
@@ -185,6 +201,20 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 					Content:    result,
 					ToolCallID: tc.ID,
 				})
+			}
+
+			if len(pending) > 0 {
+				cont := suspension.Continuation{
+					Messages:     messages,
+					SystemPrompt: systemPrompt,
+					StepIndex:    stepIndex,
+					TokensUsed:   totalTokens,
+				}
+				if err := e.suspend(ctx, r, suspension.ReasonExternalTool, pending, cont); err != nil {
+					e.failRun(ctx, r, ag.ID, err, now)
+					return nil, fmt.Errorf("suspend run: %w", err)
+				}
+				return r, nil
 			}
 			continue // Continue the ReAct loop.
 		}
@@ -450,6 +480,10 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					ToolCalls: toolCalls,
 				})
 
+				// Same collect-then-suspend shape as the synchronous
+				// loop: see its comments for why a pending call gets no
+				// row, no terminal event and no result message.
+				var pending []suspension.PendingCall
 				for _, tc := range toolCalls {
 					tcStart := time.Now().UTC()
 					e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -461,6 +495,10 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					}}
 
 					result, outcome := e.executeTool(ctx, subject, tc)
+					if outcome == outcomePending {
+						pending = append(pending, pendingCall(tc))
+						continue
+					}
 
 					tcEnd := time.Now().UTC()
 					toolCall := &run.ToolCall{
@@ -490,6 +528,33 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 						Content:    result,
 						ToolCallID: tc.ID,
 					})
+				}
+
+				if len(pending) > 0 {
+					cont := suspension.Continuation{
+						Messages:     messages,
+						SystemPrompt: systemPrompt,
+						StepIndex:    stepIndex,
+						TokensUsed:   totalTokens,
+					}
+					if err := e.suspend(ctx, r, suspension.ReasonExternalTool, pending, cont); err != nil {
+						e.failRun(ctx, r, ag.ID, err, now)
+						events <- StreamEvent{Type: EventError, Data: map[string]any{
+							"message": err.Error(),
+						}}
+						return
+					}
+					// A streaming caller that never learns the run paused
+					// would see the channel close after the tool_call
+					// event and read it as a run that just stopped. It
+					// needs the pending calls too: it is the one that has
+					// to execute them.
+					events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
+						"run_id":  r.ID.String(),
+						"reason":  string(suspension.ReasonExternalTool),
+						"pending": pending,
+					}}
+					return
 				}
 				continue // Continue the ReAct loop.
 			}
@@ -598,11 +663,22 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 // nothing would tell it its knowledge config had gone dead. A host that
 // wants a builtin withheld denies it in ToolAuthorizer.Visible, which is
 // the actual security boundary. cfg.Tools is not one.
+//
+// External tools sit on the registered side of that line, not the builtin
+// side. A builtin is exempt because it exists as a consequence of engine
+// configuration the agent cannot see, so filtering it would kill that
+// configuration silently. An external tool is a host registration exactly
+// like WithTool, differing only in who executes it, and cfg.Tools is how
+// an agent picks among host registrations. An agent that names its tools
+// and does not name an external one has said it does not use it, and
+// advertising it anyway would suspend runs the agent never asked to have
+// suspended.
 func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string) []llm.Tool {
-	registered := make([]llm.Tool, 0, len(e.tools))
+	registered := make([]llm.Tool, 0, len(e.tools)+len(e.externalTools))
 	for _, rt := range e.tools {
 		registered = append(registered, rt.def)
 	}
+	registered = append(registered, e.externalTools...)
 	if len(names) > 0 {
 		registered = filterByName(registered, names)
 	}
@@ -643,6 +719,14 @@ const (
 	outcomeCompleted toolOutcome = iota
 	outcomeFailed
 	outcomeDenied
+	// outcomePending means the call is waiting on something outside the
+	// engine and has not ended at all yet, so none of the three terminal
+	// events is owed for it. The loop collects these across the whole
+	// step and suspends the run once, after the step, rather than each
+	// site that can produce one suspending on its own: two suspend
+	// triggers in one step is how a step suspends twice, or loses the
+	// results of the sibling calls that did run.
+	outcomePending
 )
 
 // executeTool executes a tool call and returns the result plus how it ended.
@@ -651,9 +735,11 @@ const (
 // Visible having filtered the list is not a substitute for gating the
 // dispatch itself.
 //
-// The result string is the same in all three outcomes, an error payload for a
-// denial or a failure, and it always flows back to the model. Only the plugin
-// event differs.
+// The result string is the same in all three terminal outcomes, an error
+// payload for a denial or a failure, and it always flows back to the model.
+// Only the plugin event differs. outcomePending is the exception: nothing ran,
+// so there is no result, and the empty string it returns must not be fed back
+// to the model as one.
 func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome) {
 	if e.authorizer != nil {
 		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
@@ -675,6 +761,17 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 				return jsonResult("error", err.Error()), outcomeFailed
 			}
 			return out, outcomeCompleted
+		}
+	}
+
+	// External tools are matched after the registered ones so a host that
+	// registers both under one name keeps the executable registration,
+	// same as the first-match-wins rule WithTool already documents.
+	// Nothing runs here and no terminal event fires: the call has not
+	// completed, failed or been denied, it is waiting on the caller.
+	for _, def := range e.externalTools {
+		if def.Name == tc.Name {
+			return "", outcomePending
 		}
 	}
 

@@ -102,3 +102,19 @@ func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 		return nil
 	}
 }
+
+// WithExternalTool registers a tool the engine advertises but never
+// executes. When the model calls one, the run suspends and waits for the
+// caller to run it and hand the result back.
+//
+// The definition is advertised exactly like a WithTool registration
+// (resolveTools), and the authorizer gates a call to it exactly like any
+// other (executeTool). The only difference is what happens at dispatch:
+// there is no handler to run, so the call becomes pending and the loop
+// stops.
+func WithExternalTool(def llm.Tool) Option {
+	return func(e *Engine) error {
+		e.externalTools = append(e.externalTools, def)
+		return nil
+	}
+}

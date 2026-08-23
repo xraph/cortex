@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
 )
 
@@ -68,6 +69,10 @@ func overriddenMethods(t *testing.T) map[string]bool {
 //   - RunAgent, with a tool-calling LLM double so CreateToolCall is
 //     exercised too, alongside every method a plain single-step run
 //     already reaches.
+//   - RunAgent again, this time against an external tool, so the
+//     suspend path (CreateSuspension) is exercised. A run that finishes
+//     normally never writes a suspension, so without this scenario the
+//     Spy override for it would look dead.
 //   - StreamAgent, which runs its store work (LoadConversation,
 //     CreateStep, SaveConversation, UpdateRun, ...) from a goroutine
 //     inside streamReAct — a separate code path from runReAct that could
@@ -100,6 +105,30 @@ func reachedMethods(t *testing.T) map[string]bool {
 		t.Fatalf("RunAgent: %v", runErr)
 	}
 	for _, c := range runSpy.Calls() {
+		reached[c.Method] = true
+	}
+
+	const externalToolName = "spy-completeness-external-tool"
+	suspendSpy := New()
+	suspendEngine, err := engine.New(
+		engine.WithStore(suspendSpy),
+		engine.WithLLM(ToolCallingLLM(externalToolName)),
+		engine.WithExternalTool(llm.Tool{
+			Name:        externalToolName,
+			Description: "test-only external tool for completeness coverage",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("engine.New (suspending RunAgent): %v", err)
+	}
+	suspended, err := suspendEngine.RunAgent(runCtx, "assistant", "hello", nil)
+	if err != nil {
+		t.Fatalf("RunAgent (suspending): %v", err)
+	}
+	if suspended.State != run.StatePaused {
+		t.Fatalf("the suspend scenario left the run in %q, so it never reached CreateSuspension", suspended.State)
+	}
+	for _, c := range suspendSpy.Calls() {
 		reached[c.Method] = true
 	}
 

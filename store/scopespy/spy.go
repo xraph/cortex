@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 )
 
@@ -39,8 +40,28 @@ type Call struct {
 type Spy struct {
 	store.Store
 
-	mu    sync.Mutex
-	calls []Call
+	mu          sync.Mutex
+	calls       []Call
+	suspensions []*suspension.Suspension
+	suspendErr  error
+}
+
+// FailSuspensionWrites makes every later CreateSuspension return err, so
+// a test can drive the engine's "the suspension could not be written"
+// branch without a real store.
+func (s *Spy) FailSuspensionWrites(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.suspendErr = err
+}
+
+// Suspensions returns the suspensions the engine wrote, in order.
+func (s *Spy) Suspensions() []*suspension.Suspension {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*suspension.Suspension, len(s.suspensions))
+	copy(out, s.suspensions)
+	return out
 }
 
 func New() *Spy { return &Spy{} }
@@ -81,6 +102,19 @@ func (s *Spy) CreateRun(ctx context.Context, _ *run.Run) error {
 
 func (s *Spy) UpdateRun(ctx context.Context, _ *run.Run) error {
 	s.record(ctx, "UpdateRun")
+	return nil
+}
+
+// CreateSuspension records the suspension itself, not just that the call
+// happened: a suspend test's whole subject is what the row says.
+func (s *Spy) CreateSuspension(ctx context.Context, susp *suspension.Suspension) error {
+	s.record(ctx, "CreateSuspension")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.suspendErr != nil {
+		return s.suspendErr
+	}
+	s.suspensions = append(s.suspensions, susp)
 	return nil
 }
 
