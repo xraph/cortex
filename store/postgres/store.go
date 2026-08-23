@@ -36,13 +36,16 @@ func New(db *grove.DB) *Store {
 // Migrate runs programmatic migrations via the grove orchestrator.
 func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
 	o := cortex.ApplyMigrateOptions(opts...)
-	_ = o // consumed in Task 3
 
 	executor := &pgMigrateExecutor{pgdb: s.pgdb}
 
 	orch := migrate.NewOrchestrator(executor, Migrations)
 	if _, err := orch.Migrate(ctx); err != nil {
 		return fmt.Errorf("cortex: migration failed: %w", err)
+	}
+
+	if err := s.rescopeLegacyRows(ctx, o); err != nil {
+		return fmt.Errorf("cortex: rescope legacy rows: %w", err)
 	}
 
 	return nil

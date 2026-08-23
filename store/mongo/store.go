@@ -51,7 +51,6 @@ func New(db *grove.DB) *Store {
 // Migrate creates indexes for all cortex collections.
 func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
 	o := cortex.ApplyMigrateOptions(opts...)
-	_ = o // consumed in Task 3
 
 	if err := s.dropStaleWorkingMemoryIndex(ctx); err != nil {
 		return err
@@ -68,6 +67,10 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 		if err != nil {
 			return fmt.Errorf("cortex/mongo: migrate %s indexes: %w", col, err)
 		}
+	}
+
+	if err := s.rescopeLegacyRows(ctx, o); err != nil {
+		return fmt.Errorf("cortex/mongo: rescope legacy rows: %w", err)
 	}
 
 	return nil

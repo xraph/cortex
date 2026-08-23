@@ -72,3 +72,14 @@ func TestErrNoRescoper_IsDistinct(t *testing.T) {
 		t.Error("ErrNoRescoper must not alias ErrNoScope; they mean different things")
 	}
 }
+
+// A rescoper that returns the zero Scope means the host declined to map
+// the row -- there is no level at all, not even an empty-valued one. That
+// must be an error, the same as any other scope ValidateRescopedScope
+// refuses, or the rescope pass would happily write an unscoped row right
+// back to the database it was supposed to be fixing.
+func TestValidateRescopedScope_RejectsZeroScope(t *testing.T) {
+	if err := cortex.ValidateRescopedScope(cortex.Scope{}); err == nil {
+		t.Error("a scope with no levels means the host declined to map the row; that must be an error")
+	}
+}

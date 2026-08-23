@@ -36,7 +36,6 @@ func New(db *grove.DB) *Store {
 // Migrate runs programmatic migrations via the grove orchestrator.
 func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
 	o := cortex.ApplyMigrateOptions(opts...)
-	_ = o // consumed in Task 3
 
 	executor, err := migrate.NewExecutorFor(s.sdb)
 	if err != nil {
@@ -45,6 +44,10 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	orch := migrate.NewOrchestrator(executor, Migrations)
 	if _, err := orch.Migrate(ctx); err != nil {
 		return fmt.Errorf("cortex/sqlite: migration failed: %w", err)
+	}
+
+	if err := s.rescopeLegacyRows(ctx, o); err != nil {
+		return fmt.Errorf("cortex/sqlite: rescope legacy rows: %w", err)
 	}
 	return nil
 }
