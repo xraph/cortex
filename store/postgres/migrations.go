@@ -914,6 +914,70 @@ ALTER TABLE `+table+`
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_sessions",
+			Version: "20260824000001",
+			Comment: "Create cortex_sessions table, scoped from birth",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Session is new this phase, so unlike every scoped table
+				// before it there is no unscoped legacy shape to carry
+				// forward: it is created with its scope columns already in
+				// place rather than getting them bolted on by a later
+				// migration.
+				if _, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_sessions (
+    id            TEXT PRIMARY KEY,
+    agent_id      TEXT NOT NULL,
+    title         TEXT NOT NULL DEFAULT '',
+    message_count INTEGER NOT NULL DEFAULT 0,
+    last_message  TEXT NOT NULL DEFAULT '',
+    is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata      JSONB NOT NULL DEFAULT '{}',
+    scope_l0      TEXT NOT NULL DEFAULT '',
+    scope_l1      TEXT NOT NULL DEFAULT '',
+    scope_l2      TEXT NOT NULL DEFAULT '',
+    scope_extra   JSONB NOT NULL DEFAULT '{}',
+    scope_canon   TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_sessions_scope
+    ON cortex_sessions (scope_l0, scope_l1, scope_l2);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_sessions_agent
+    ON cortex_sessions (agent_id, scope_canon);
+`); err != nil {
+					return fmt.Errorf("create cortex_sessions: %w", err)
+				}
+
+				// Both predicates are load-bearing. is_default keeps
+				// non-default sessions out of the constraint, so an agent
+				// can hold many threads at once. scope_canon != '' keeps
+				// this in step with every other partial unique index in
+				// this codebase: Migrate builds indexes before
+				// rescopeLegacyRows fills scope columns on other tables,
+				// and while cortex_sessions never carries unscoped rows
+				// (CreateSession always stamps a real scope), a plain
+				// unique index here would still be wrong on its own
+				// terms — it would collide the instant two agents in
+				// different scopes each got their first default session
+				// at scope_canon = '', which can only happen if a future
+				// caller ever manages to slip a zero scope through.
+				if _, err := exec.Exec(ctx, `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_sessions_default
+    ON cortex_sessions (agent_id, scope_canon)
+    WHERE is_default AND scope_canon != '';
+`); err != nil {
+					return fmt.Errorf("default-session unique index on cortex_sessions: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cortex_sessions CASCADE`)
+				return err
+			},
+		},
 	)
 	return g
 }()

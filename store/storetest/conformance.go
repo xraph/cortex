@@ -162,23 +162,6 @@ func mustCreatePersona(t *testing.T, s store.Store, ctx context.Context, name st
 	return personaID
 }
 
-// sessionStore type-asserts s to session.Store and fails the test loudly
-// if the assertion doesn't hold. store.Store does not embed session.Store
-// yet — that lands in a later task alongside the concrete implementations
-// across all three backends — so every Session subtest below needs this
-// runtime check in place of the compile-time guarantee every other
-// subsystem already gets from store.Store's method set. Until that later
-// task lands, every caller of this helper fails here, which is the point:
-// this file's Session coverage is red on purpose.
-func sessionStore(t *testing.T, s store.Store) session.Store {
-	t.Helper()
-	ss, ok := s.(session.Store)
-	if !ok {
-		t.Fatalf("store %T does not implement session.Store yet", s)
-	}
-	return ss
-}
-
 // mustCreateSession creates a session under ctx and returns its ID. It
 // takes agentID rather than creating its own agent, the same way
 // mustCreateCheckpoint takes a runID: the caller decides whether that
@@ -186,9 +169,8 @@ func sessionStore(t *testing.T, s store.Store) session.Store {
 // depend on.
 func mustCreateSession(t *testing.T, s store.Store, ctx context.Context, agentID id.AgentID, title string) id.SessionID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
-	ss := sessionStore(t, s)
 	sid := id.NewSessionID()
-	if err := ss.CreateSession(ctx, &session.Session{ID: sid, AgentID: agentID, Title: title}); err != nil {
+	if err := s.CreateSession(ctx, &session.Session{ID: sid, AgentID: agentID, Title: title}); err != nil {
 		t.Fatalf("fixture: create session: %v", err)
 	}
 	return sid
@@ -499,24 +481,20 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 	})
 
-	// Session is new this phase (Task 1 added the entity; no backend
-	// implements session.Store yet), so sessionStore fails this subtest
-	// immediately rather than exercising the ErrNoScope assertions below.
-	// That is expected redness, not a broken test: once a later task wires
-	// up the concrete stores, this subtest starts actually checking that
-	// Create/Get/List all reject a zero scope, the same as every other
+	// Session is new this phase: store.Store now embeds session.Store, and
+	// all three backends implement it, so this subtest exercises the same
+	// Create/Get/List zero-scope assertions as every other
 	// entity above.
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		sess := &session.Session{ID: id.NewSessionID(), AgentID: id.NewAgentID(), Title: "chat"}
-		if err := ss.CreateSession(ctx, sess); !errors.Is(err, cortex.ErrNoScope) {
+		if err := s.CreateSession(ctx, sess); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreateSession with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := ss.GetSession(ctx, sess.ID); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetSession(ctx, sess.ID); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetSession with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := ss.ListSessions(ctx, &session.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.ListSessions(ctx, &session.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("ListSessions with no scope = %v, want ErrNoScope", err)
 		}
 	})
@@ -1019,7 +997,6 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
 
@@ -1031,7 +1008,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		sidA := mustCreateSession(t, s, ctxA, agentID, "thread-a")
 		sidB := mustCreateSession(t, s, ctxB, agentID, "thread-b")
 
-		gotA, err := ss.ListSessions(ctxA, &session.ListFilter{})
+		gotA, err := s.ListSessions(ctxA, &session.ListFilter{})
 		if err != nil {
 			t.Fatalf("list sessions A: %v", err)
 		}
@@ -1039,7 +1016,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListSessions(ctxA) = %d session(s), want exactly sidA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := ss.ListSessions(ctxB, &session.ListFilter{})
+		gotB, err := s.ListSessions(ctxB, &session.ListFilter{})
 		if err != nil {
 			t.Fatalf("list sessions B: %v", err)
 		}
@@ -1047,7 +1024,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListSessions(ctxB) = %d session(s), want exactly sidB", len(gotB))
 		}
 
-		if _, err := ss.GetSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
+		if _, err := s.GetSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
 			t.Errorf("GetSession(ctxB, sidA) = %v, want ErrSessionNotFound", err)
 		}
 	})
@@ -1591,7 +1568,6 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		ctxA := ctxWithScope("ws_a")
 		ctxB := ctxWithScope("ws_b")
 
@@ -1602,13 +1578,13 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		agentA := mustCreateAgent(t, s, ctxA, "shared-name")
 		sidA := mustCreateSession(t, s, ctxA, agentA, "thread")
 
-		if _, err := ss.GetSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
+		if _, err := s.GetSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
 			t.Errorf("GetSession from scope B = %v, want ErrSessionNotFound", err)
 		}
-		if err := ss.DeleteSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
+		if err := s.DeleteSession(ctxB, sidA); !errors.Is(err, cortex.ErrSessionNotFound) {
 			t.Errorf("DeleteSession from scope B = %v, want ErrSessionNotFound", err)
 		}
-		if _, err := ss.GetSession(ctxA, sidA); err != nil {
+		if _, err := s.GetSession(ctxA, sidA); err != nil {
 			t.Errorf("scope A lost its own session after B's attempts: %v", err)
 		}
 	})
@@ -1859,13 +1835,12 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		createCtx := ctxWithScope("ws_x", "p1")
 		agentID := mustCreateAgent(t, s, createCtx, "")
 		sid := mustCreateSession(t, s, createCtx, agentID, "")
 
 		broad := ctxWithScope("ws_x")
-		got, err := ss.ListSessions(broad, &session.ListFilter{})
+		got, err := s.ListSessions(broad, &session.ListFilter{})
 		if err != nil {
 			t.Fatalf("list sessions (broad): %v", err)
 		}
@@ -1874,7 +1849,7 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 
 		other := ctxWithScope("ws_y")
-		gotOther, err := ss.ListSessions(other, &session.ListFilter{})
+		gotOther, err := s.ListSessions(other, &session.ListFilter{})
 		if err != nil {
 			t.Fatalf("list sessions (other workspace): %v", err)
 		}
@@ -2195,12 +2170,11 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		createCtx := ctxWithScope("ws_x", "p1")
 		agentID := mustCreateAgent(t, s, createCtx, "")
 		sid := mustCreateSession(t, s, createCtx, agentID, "original-title")
 
-		loaded, err := ss.GetSession(createCtx, sid)
+		loaded, err := s.GetSession(createCtx, sid)
 		if err != nil {
 			t.Fatalf("get session: %v", err)
 		}
@@ -2213,11 +2187,11 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		// authorizes the update via prefix matching, but must not
 		// collapse the row's own stored scope down to the broader one.
 		updateCtx := ctxWithScope("ws_x")
-		if err = ss.UpdateSession(updateCtx, loaded); err != nil {
+		if err = s.UpdateSession(updateCtx, loaded); err != nil {
 			t.Fatalf("update session: %v", err)
 		}
 
-		reloaded, err := ss.GetSession(createCtx, sid)
+		reloaded, err := s.GetSession(createCtx, sid)
 		if err != nil {
 			t.Fatalf("reload session: %v", err)
 		}
@@ -2473,10 +2447,9 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 
 	t.Run("Session", func(t *testing.T) {
 		s := newStore(t)
-		ss := sessionStore(t, s)
 		agentID := mustCreateAgent(t, s, ctx, "")
 		sid := mustCreateSession(t, s, ctx, agentID, "")
-		got, err := ss.GetSession(ctx, sid)
+		got, err := s.GetSession(ctx, sid)
 		if err != nil {
 			t.Fatalf("get session after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}

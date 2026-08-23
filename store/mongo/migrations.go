@@ -142,6 +142,16 @@ const staleOrchestrationAppNameIndexName = "app_id_1_name_1"
 // staleOrchestrationAppNameIndexName is used here.
 const orchestrationScopeNameUniqueIndexName = "cortex_orchestration_configs_scope_name_unique"
 
+// sessionDefaultUniqueIndexName is the fixed name for the partial unique
+// index on cortex_sessions that enforces one default session per agent
+// per scope, so a future migration can find and drop it by name the same
+// way the stale *AppNameIndexName constants above are used.
+//
+// Unlike every other scope-keyed unique index in this file, this one
+// carries no stale predecessor to drop: cortex_sessions is new this
+// phase, so there is no pre-scope index competing with it.
+const sessionDefaultUniqueIndexName = "cortex_sessions_agent_scope_default_unique"
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -265,6 +275,29 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
+		},
+		colSessions: {
+			// Both predicates are load-bearing. is_default keeps
+			// non-default sessions out of the index, so an agent can hold
+			// many threads at once. scope_canon $gt "" keeps this in step
+			// with every other partial unique index in this file
+			// (colAgents above documents why), even though cortex_sessions
+			// carries no legacy unscoped documents of its own: it is new
+			// this phase, and CreateSession always stamps a real scope
+			// before the first write.
+			//
+			// $gt rather than $ne for the same reason as colAgents:
+			// Mongo's partial-index filter language rejects $ne outright,
+			// and "greater than the empty string" is equivalent to
+			// "non-empty" under BSON string ordering.
+			{
+				Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "scope_canon", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(sessionDefaultUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"is_default": true, "scope_canon": bson.M{"$gt": ""}}),
+			},
+			{Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "scope_canon", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
 			scopeIndex,
 		},

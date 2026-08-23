@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
 )
@@ -26,6 +27,7 @@ type Store interface {
 	trait.Store
 	behavior.Store
 	persona.Store
+	session.Store
 	orchestration.ConfigStore
 	orchestration.RunStore
 

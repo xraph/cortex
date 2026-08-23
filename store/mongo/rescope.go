@@ -20,7 +20,7 @@ import (
 // later phases bring more collections under scope over time.
 var candidateCollections = []string{
 	colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
-	colSkills, colTraits, colBehaviors, colPersonas,
+	colSkills, colTraits, colBehaviors, colPersonas, colSessions,
 	colOrchestrationConfigs, colOrchestrationRuns,
 }
 

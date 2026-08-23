@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
 )
@@ -494,6 +495,77 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 		}
 	}
 	return p, nil
+}
+
+// ──────────────────────────────────────────────────
+// Session model
+// ──────────────────────────────────────────────────
+
+type sessionModel struct {
+	grove.BaseModel `grove:"table:cortex_sessions"`
+	ID              string    `grove:"id,pk"`
+	AgentID         string    `grove:"agent_id,notnull"`
+	Title           string    `grove:"title,notnull"`
+	MessageCount    int       `grove:"message_count,notnull"`
+	LastMessage     string    `grove:"last_message,notnull"`
+	IsDefault       bool      `grove:"is_default,notnull"`
+	Metadata        string    `grove:"metadata,notnull"`
+	ScopeL0         string    `grove:"scope_l0,notnull"`
+	ScopeL1         string    `grove:"scope_l1,notnull"`
+	ScopeL2         string    `grove:"scope_l2,notnull"`
+	ScopeExtra      string    `grove:"scope_extra,notnull"`
+	ScopeCanon      string    `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time `grove:"created_at"`
+	UpdatedAt       time.Time `grove:"updated_at"`
+}
+
+func sessionToModel(sess *session.Session) *sessionModel {
+	l0, l1, l2, extra := scopeColumns(sess.Scope)
+	return &sessionModel{
+		ID:           sess.ID.String(),
+		AgentID:      sess.AgentID.String(),
+		Title:        sess.Title,
+		MessageCount: sess.MessageCount,
+		LastMessage:  sess.LastMessage,
+		IsDefault:    sess.IsDefault,
+		Metadata:     mustJSON(sess.Metadata),
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   sess.Scope.Canonical(),
+		CreatedAt:    sess.CreatedAt,
+		UpdatedAt:    sess.UpdatedAt,
+	}
+}
+
+func sessionFromModel(m *sessionModel) (*session.Session, error) {
+	sessionID, err := id.ParseSessionID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("session %s: %w", sessionID, err)
+	}
+	sess := &session.Session{
+		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:           sessionID,
+		AgentID:      agentID,
+		Scope:        scope,
+		Title:        m.Title,
+		MessageCount: m.MessageCount,
+		LastMessage:  m.LastMessage,
+		IsDefault:    m.IsDefault,
+	}
+	if err := unmarshalField("metadata", m.Metadata, &sess.Metadata); err != nil {
+		return nil, err
+	}
+	return sess, nil
 }
 
 // ──────────────────────────────────────────────────

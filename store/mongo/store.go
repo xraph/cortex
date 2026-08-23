@@ -27,6 +27,7 @@ const (
 	colTraits               = "cortex_traits"
 	colBehaviors            = "cortex_behaviors"
 	colPersonas             = "cortex_personas"
+	colSessions             = "cortex_sessions"
 	colOrchestrationConfigs = "cortex_orchestration_configs"
 	colOrchestrationRuns    = "cortex_orchestration_runs"
 )

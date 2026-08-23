@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/cortex/perception"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
 )
@@ -764,6 +765,74 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 		CommunicationStyle: m.CommunicationStyle,
 		Perception:         m.Perception,
 		Metadata:           m.Metadata,
+	}, nil
+}
+
+// ──────────────────────────────────────────────────
+// Session model
+// ──────────────────────────────────────────────────
+
+type sessionModel struct {
+	grove.BaseModel `grove:"table:cortex_sessions"`
+	ID              string            `grove:"id,pk"            bson:"_id"`
+	AgentID         string            `grove:"agent_id"         bson:"agent_id"`
+	Title           string            `grove:"title"            bson:"title"`
+	MessageCount    int               `grove:"message_count"    bson:"message_count"`
+	LastMessage     string            `grove:"last_message"     bson:"last_message"`
+	IsDefault       bool              `grove:"is_default"       bson:"is_default"`
+	Metadata        map[string]any    `grove:"metadata"         bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"         bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"         bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"         bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"      bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"      bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"       bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"       bson:"updated_at"`
+}
+
+func sessionToModel(sess *session.Session) *sessionModel {
+	l0, l1, l2, extra := scopeColumns(sess.Scope)
+	return &sessionModel{
+		ID:           sess.ID.String(),
+		AgentID:      sess.AgentID.String(),
+		Title:        sess.Title,
+		MessageCount: sess.MessageCount,
+		LastMessage:  sess.LastMessage,
+		IsDefault:    sess.IsDefault,
+		Metadata:     sess.Metadata,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   sess.Scope.Canonical(),
+		CreatedAt:    sess.CreatedAt,
+		UpdatedAt:    sess.UpdatedAt,
+	}
+}
+
+func sessionFromModel(m *sessionModel) (*session.Session, error) {
+	sessionID, err := id.ParseSessionID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("session %s: %w", sessionID, err)
+	}
+	return &session.Session{
+		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:           sessionID,
+		AgentID:      agentID,
+		Scope:        scope,
+		Title:        m.Title,
+		MessageCount: m.MessageCount,
+		LastMessage:  m.LastMessage,
+		IsDefault:    m.IsDefault,
+		Metadata:     m.Metadata,
 	}, nil
 }
 
