@@ -19,6 +19,41 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
+// reactState is the mutable state one pass of the ReAct loop carries
+// across steps. It is deliberately the same set of fields a
+// suspension.Continuation stores: a suspension is a serialized reactState
+// plus the pending calls, and a resume rehydrates one of these rather
+// than reconstructing the loop's local variables by hand.
+type reactState struct {
+	messages     []llm.Message
+	systemPrompt string
+	stepIndex    int
+	tokensUsed   int
+
+	// newMessagesFrom is where this run's own messages begin. Everything
+	// before it is history the run loaded at startup, and saving it again
+	// is the v1.8.0 defect that made agents go deaf after about six runs.
+	newMessagesFrom int
+
+	// sessionID is the session the run loads from and saves into. A
+	// resume restores it rather than re-resolving it, because
+	// resolveSession lazily creates a default session under a create
+	// race and could land on a different one after the pause.
+	sessionID id.SessionID
+}
+
+// continuation snapshots the state for a suspension row.
+func (s *reactState) continuation() suspension.Continuation {
+	return suspension.Continuation{
+		Messages:        s.messages,
+		SystemPrompt:    s.systemPrompt,
+		StepIndex:       s.stepIndex,
+		TokensUsed:      s.tokensUsed,
+		NewMessagesFrom: s.newMessagesFrom,
+		SessionID:       s.sessionID,
+	}
+}
+
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
 	scope := cortex.ScopeFromContext(ctx)
@@ -60,24 +95,42 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	// Load conversation history.
 	history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 	messages := memoryToLLM(history)
-	// Everything from here on is new to this run. SaveConversation below
-	// persists only messages[newMessagesFrom:] -- saving the whole slice
-	// (history included) would re-insert the reloaded history as new
-	// rows on every run, and LoadConversation's LIMIT 100/no-offset read
-	// would then freeze on an ever-older prefix once duplication pushed
-	// the row count past the limit, silently blinding the agent to
-	// recent turns.
-	newMessagesFrom := len(messages)
-	messages = append(messages, llm.Message{Role: "user", Content: input})
+	st := &reactState{
+		messages:     messages,
+		systemPrompt: systemPrompt,
+		sessionID:    sessionID,
+		// Everything from here on is new to this run. SaveConversation
+		// persists only messages[newMessagesFrom:] -- saving the whole
+		// slice (history included) would re-insert the reloaded history
+		// as new rows on every run, and LoadConversation's LIMIT
+		// 100/no-offset read would then freeze on an ever-older prefix
+		// once duplication pushed the row count past the limit, silently
+		// blinding the agent to recent turns.
+		newMessagesFrom: len(messages),
+	}
+	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 
-	var totalTokens int
-	var stepIndex int
+	return e.continueReAct(ctx, ag, cfg, r, st, input, now)
+}
+
+// continueReAct runs the ReAct loop over a run that already exists and a
+// state that is already assembled. A fresh run and a resumed one differ
+// only in how that state was built, from a loaded history or from a
+// suspension's continuation, so the two share this loop rather than the
+// resume path carrying a second copy of it.
+//
+// startedAt is when the RUN started, not when this pass did, so a
+// resumed run reports its full wall-clock duration rather than only the
+// stretch after the pause.
+func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time) (*run.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+
 	var finalOutput string
 
 	// ReAct loop.
-	for stepIndex < cfg.MaxSteps {
+	for st.stepIndex < cfg.MaxSteps {
 		stepStart := time.Now().UTC()
-		e.extensions.EmitStepStarted(ctx, r.ID, stepIndex)
+		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		// Built once per step and threaded to both authorizer calls
 		// below (Visible via resolveTools, Authorize via executeTool)
@@ -86,8 +139,8 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 
 		req := &llm.Request{
 			Model:       cfg.Model,
-			System:      systemPrompt,
-			Messages:    messages,
+			System:      st.systemPrompt,
+			Messages:    st.messages,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
 			Tools:       e.resolveTools(ctx, subject, cfg.Tools),
@@ -107,18 +160,18 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
 				e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
 			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), now)
+				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), startedAt)
 				return nil, fmt.Errorf("safety: input blocked by %s profile", scanResult.ProfileUsed)
 			}
 		}
 
 		resp, err := e.llm.Complete(ctx, req)
 		if err != nil {
-			e.failRun(ctx, r, ag.ID, err, now)
+			e.failRun(ctx, r, ag.ID, err, startedAt)
 			return nil, fmt.Errorf("llm complete: %w", err)
 		}
 
-		totalTokens += resp.Usage.TotalTokens
+		st.tokensUsed += resp.Usage.TotalTokens
 
 		// Record the step.
 		stepEnd := time.Now().UTC()
@@ -126,9 +179,9 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			Entity:      cortex.NewEntity(),
 			ID:          id.NewStepID(),
 			RunID:       r.ID,
-			Index:       stepIndex,
+			Index:       st.stepIndex,
 			Type:        "generation",
-			Input:       lastContent(messages),
+			Input:       lastContent(st.messages),
 			Output:      resp.Content,
 			TokensUsed:  resp.Usage.TotalTokens,
 			StartedAt:   &stepStart,
@@ -138,13 +191,13 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			e.logger.Error("create step", log.String("error", err.Error()))
 		}
 
-		e.extensions.EmitStepCompleted(ctx, r.ID, stepIndex, stepEnd.Sub(stepStart))
-		stepIndex++
+		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
+		st.stepIndex++
 
 		// Check for tool calls.
 		if len(resp.ToolCalls) > 0 {
 			// Append assistant message with tool calls.
-			messages = append(messages, llm.Message{
+			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   resp.Content,
 				ToolCalls: resp.ToolCalls,
@@ -202,7 +255,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				}
 
 				// Append tool result message.
-				messages = append(messages, llm.Message{
+				st.messages = append(st.messages, llm.Message{
 					Role:       "tool",
 					Content:    result,
 					ToolCallID: tc.ID,
@@ -210,16 +263,9 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			}
 
 			if len(pending) > 0 {
-				cont := suspension.Continuation{
-					Messages:        messages,
-					SystemPrompt:    systemPrompt,
-					StepIndex:       stepIndex,
-					TokensUsed:      totalTokens,
-					NewMessagesFrom: newMessagesFrom,
-					SessionID:       sessionID,
-				}
+				cont := st.continuation()
 				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
-					e.failRun(ctx, r, ag.ID, err, now)
+					e.failRun(ctx, r, ag.ID, err, startedAt)
 					return nil, fmt.Errorf("suspend run: %w", err)
 				}
 				return r, nil
@@ -244,22 +290,22 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
 				e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
 			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), now)
+				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), startedAt)
 				return nil, fmt.Errorf("safety: output blocked by %s profile", scanResult.ProfileUsed)
 			} else if scanResult != nil && scanResult.Redacted != "" {
 				finalOutput = scanResult.Redacted
 			}
 		}
 
-		messages = append(messages, llm.Message{Role: "assistant", Content: finalOutput})
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
 		break
 	}
 
-	// Save only the messages this run actually added -- not the whole
-	// reloaded history alongside them. See newMessagesFrom's comment
-	// above for why that distinction matters.
-	convMsgs := llmToMemory(messages[newMessagesFrom:])
-	if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
+	// Save only the messages this run actually added, not the whole
+	// reloaded history alongside them. See newMessagesFrom's comment on
+	// reactState for why that distinction matters.
+	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
+	if err := e.store.SaveConversation(ctx, ag.ID, st.sessionID, convMsgs); err != nil {
 		e.logger.Error("save conversation", log.String("error", err.Error()))
 	}
 
@@ -267,14 +313,14 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	completedAt := time.Now().UTC()
 	r.State = run.StateCompleted
 	r.Output = finalOutput
-	r.StepCount = stepIndex
-	r.TokensUsed = totalTokens
+	r.StepCount = st.stepIndex
+	r.TokensUsed = st.tokensUsed
 	r.CompletedAt = &completedAt
 	if err := e.store.UpdateRun(ctx, r); err != nil {
 		e.logger.Error("update run", log.String("error", err.Error()))
 	}
 
-	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(now))
+	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(startedAt))
 	return r, nil
 }
 
@@ -330,311 +376,317 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		// Load conversation history.
 		history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 		messages := memoryToLLM(history)
-		// See runReAct's identical comment: only messages[newMessagesFrom:]
-		// get saved below, not the whole reloaded history.
-		newMessagesFrom := len(messages)
-		messages = append(messages, llm.Message{Role: "user", Content: input})
+		st := &reactState{
+			messages:     messages,
+			systemPrompt: systemPrompt,
+			sessionID:    sessionID,
+			// See runReAct's identical comment: only
+			// messages[newMessagesFrom:] get saved below, not the whole
+			// reloaded history.
+			newMessagesFrom: len(messages),
+		}
+		st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 
-		var totalTokens int
-		var stepIndex int
-		var finalOutput string
+		e.continueStreamReAct(ctx, ag, cfg, r, st, input, now, events)
+	}()
 
-		// ReAct loop.
-		for stepIndex < cfg.MaxSteps {
-			stepStart := time.Now().UTC()
-			e.extensions.EmitStepStarted(ctx, r.ID, stepIndex)
+	return nil
+}
 
-			stepID := id.NewStepID()
-			events <- StreamEvent{Type: EventStep, Data: map[string]any{
-				"step_id": stepID.String(),
-				"index":   stepIndex,
-				"type":    "generation",
+// continueStreamReAct is continueReAct's streaming twin: same contract,
+// same reason for existing, over the streaming loop instead. It does not
+// close events, because the goroutine that calls it owns the channel.
+func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time, events chan<- StreamEvent) {
+	scope := cortex.ScopeFromContext(ctx)
+
+	var finalOutput string
+
+	// ReAct loop.
+	for st.stepIndex < cfg.MaxSteps {
+		stepStart := time.Now().UTC()
+		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
+
+		stepID := id.NewStepID()
+		events <- StreamEvent{Type: EventStep, Data: map[string]any{
+			"step_id": stepID.String(),
+			"index":   st.stepIndex,
+			"type":    "generation",
+		}}
+
+		// Built once per step and threaded to both authorizer calls
+		// below (Visible via resolveTools, Authorize via executeTool)
+		// so they judge the same subject.
+		subject := cortex.Subject{Scope: scope, Principal: cortex.PrincipalFromContext(ctx), AgentID: ag.ID, RunID: r.ID}
+
+		req := &llm.Request{
+			Model:       cfg.Model,
+			System:      st.systemPrompt,
+			Messages:    st.messages,
+			MaxTokens:   cfg.MaxTokens,
+			Temperature: cfg.Temperature,
+			Tools:       e.resolveTools(ctx, subject, cfg.Tools),
+		}
+
+		// Safety: scan input before LLM call.
+		if e.safety != nil {
+			scanReq := &safety.ScanRequest{
+				Content:     input,
+				Direction:   safety.DirectionInput,
+				AgentID:     ag.ID.String(),
+				RunID:       r.ID.String(),
+				ProfileName: extractSafetyProfile(ag),
+				AppID:       scanAppID(scope),
+				TenantID:    scope.Canonical(),
+			}
+			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
+				e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
+			} else if scanResult != nil && scanResult.Blocked {
+				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), startedAt)
+				events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
+					"direction": "input",
+					"decision":  string(scanResult.Decision),
+					"profile":   scanResult.ProfileUsed,
+				}}
+				return
+			}
+		}
+
+		stream, err := e.llm.CompleteStream(ctx, req)
+		if err != nil {
+			e.failRun(ctx, r, ag.ID, err, startedAt)
+			events <- StreamEvent{Type: EventError, Data: map[string]any{
+				"message": err.Error(),
 			}}
+			return
+		}
 
-			// Built once per step and threaded to both authorizer calls
-			// below (Visible via resolveTools, Authorize via executeTool)
-			// so they judge the same subject.
-			subject := cortex.Subject{Scope: scope, Principal: cortex.PrincipalFromContext(ctx), AgentID: ag.ID, RunID: r.ID}
+		// Read all chunks from the stream.
+		var contentBuf string
+		var toolCalls []llm.ToolCall
+		tokenIndex := 0
 
-			req := &llm.Request{
-				Model:       cfg.Model,
-				System:      systemPrompt,
-				Messages:    messages,
-				MaxTokens:   cfg.MaxTokens,
-				Temperature: cfg.Temperature,
-				Tools:       e.resolveTools(ctx, subject, cfg.Tools),
+		for {
+			select {
+			case <-ctx.Done():
+				_ = stream.Close()
+				r.State = run.StateCancelled
+				completedAt := time.Now().UTC()
+				r.CompletedAt = &completedAt
+				// ctx is already cancelled here, so a store write using
+				// it outright would fail before it starts and the
+				// cancel state would never persist, leaving the run
+				// stuck at "running". WithoutCancel keeps every context
+				// value (including scope) while dropping the
+				// cancellation signal for this one terminal write.
+				if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
+					e.logger.Error("update run on cancel", log.String("error", err.Error()))
+				}
+				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": "cancelled"}}
+				return
+			default:
 			}
 
-			// Safety: scan input before LLM call.
-			if e.safety != nil {
-				scanReq := &safety.ScanRequest{
-					Content:     input,
-					Direction:   safety.DirectionInput,
-					AgentID:     ag.ID.String(),
-					RunID:       r.ID.String(),
-					ProfileName: extractSafetyProfile(ag),
-					AppID:       scanAppID(scope),
-					TenantID:    scope.Canonical(),
-				}
-				if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
-					e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
-				} else if scanResult != nil && scanResult.Blocked {
-					e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), now)
-					events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
-						"direction": "input",
-						"decision":  string(scanResult.Decision),
-						"profile":   scanResult.ProfileUsed,
-					}}
-					return
-				}
+			chunk, err := stream.Next(ctx)
+			if errors.Is(err, io.EOF) {
+				break
 			}
-
-			stream, err := e.llm.CompleteStream(ctx, req)
 			if err != nil {
-				e.failRun(ctx, r, ag.ID, err, now)
+				_ = stream.Close()
+				e.failRun(ctx, r, ag.ID, err, startedAt)
 				events <- StreamEvent{Type: EventError, Data: map[string]any{
 					"message": err.Error(),
 				}}
 				return
 			}
 
-			// Read all chunks from the stream.
-			var contentBuf string
-			var toolCalls []llm.ToolCall
-			tokenIndex := 0
+			if chunk.Content != "" {
+				contentBuf += chunk.Content
+				events <- StreamEvent{Type: EventToken, Data: map[string]any{
+					"content": chunk.Content,
+					"index":   tokenIndex,
+				}}
+				tokenIndex++
+			}
 
-			for {
-				select {
-				case <-ctx.Done():
-					_ = stream.Close()
-					r.State = run.StateCancelled
-					completedAt := time.Now().UTC()
-					r.CompletedAt = &completedAt
-					// ctx is already cancelled here, so a store write using
-					// it outright would fail before it starts and the
-					// cancel state would never persist, leaving the run
-					// stuck at "running". WithoutCancel keeps every context
-					// value (including scope) while dropping the
-					// cancellation signal for this one terminal write.
-					if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
-						e.logger.Error("update run on cancel", log.String("error", err.Error()))
-					}
-					events <- StreamEvent{Type: EventError, Data: map[string]any{"message": "cancelled"}}
-					return
-				default:
+			if len(chunk.ToolCalls) > 0 {
+				toolCalls = mergeToolCallDeltas(toolCalls, chunk.ToolCalls)
+			}
+		}
+
+		// Collect usage from stream.
+		if u := stream.Usage(); u != nil {
+			st.tokensUsed += u.TotalTokens
+		}
+		_ = stream.Close()
+
+		// Record the step.
+		stepEnd := time.Now().UTC()
+		step := &run.Step{
+			Entity:      cortex.NewEntity(),
+			ID:          stepID,
+			RunID:       r.ID,
+			Index:       st.stepIndex,
+			Type:        "generation",
+			Input:       lastContent(st.messages),
+			Output:      contentBuf,
+			StartedAt:   &stepStart,
+			CompletedAt: &stepEnd,
+		}
+		if u := stream.Usage(); u != nil {
+			step.TokensUsed = u.TotalTokens
+		}
+		if err := e.store.CreateStep(ctx, step); err != nil {
+			e.logger.Error("create step", log.String("error", err.Error()))
+		}
+
+		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
+		st.stepIndex++
+
+		// Check for tool calls.
+		if len(toolCalls) > 0 {
+			st.messages = append(st.messages, llm.Message{
+				Role:      "assistant",
+				Content:   contentBuf,
+				ToolCalls: toolCalls,
+			})
+
+			// Same collect-then-suspend shape as the synchronous
+			// loop: see its comments for why a pending call gets no
+			// row, no terminal event and no result message.
+			var pending []suspension.PendingCall
+			// One reason per step, same as the synchronous loop: the
+			// event below reports what suspend was actually given
+			// rather than naming a reason of its own.
+			reason := suspension.ReasonExternalTool
+			for _, tc := range toolCalls {
+				tcStart := time.Now().UTC()
+				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
+
+				events <- StreamEvent{Type: EventToolCall, Data: map[string]any{
+					"tool_name": tc.Name,
+					"arguments": tc.Arguments,
+					"tool_id":   tc.ID,
+				}}
+
+				result, outcome := e.executeTool(ctx, subject, tc)
+				if outcome == outcomePending {
+					pending = append(pending, pendingCall(tc))
+					continue
 				}
 
-				chunk, err := stream.Next(ctx)
-				if errors.Is(err, io.EOF) {
-					break
+				tcEnd := time.Now().UTC()
+				toolCall := &run.ToolCall{
+					Entity:      cortex.NewEntity(),
+					ID:          id.NewToolCallID(),
+					StepID:      step.ID,
+					RunID:       r.ID,
+					ToolName:    tc.Name,
+					Arguments:   tc.Arguments,
+					Result:      result,
+					StartedAt:   &tcStart,
+					CompletedAt: &tcEnd,
 				}
-				if err != nil {
-					_ = stream.Close()
-					e.failRun(ctx, r, ag.ID, err, now)
+				if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
+					e.logger.Error("create tool call", log.String("error", err.Error()))
+				}
+
+				// Same as the non-streaming loop: one terminal event per
+				// call, and executeTool already emitted it for a denial
+				// or a failure.
+				if outcome == outcomeCompleted {
+					e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+				}
+
+				st.messages = append(st.messages, llm.Message{
+					Role:       "tool",
+					Content:    result,
+					ToolCallID: tc.ID,
+				})
+			}
+
+			if len(pending) > 0 {
+				cont := st.continuation()
+				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
+					e.failRun(ctx, r, ag.ID, err, startedAt)
 					events <- StreamEvent{Type: EventError, Data: map[string]any{
 						"message": err.Error(),
 					}}
 					return
 				}
-
-				if chunk.Content != "" {
-					contentBuf += chunk.Content
-					events <- StreamEvent{Type: EventToken, Data: map[string]any{
-						"content": chunk.Content,
-						"index":   tokenIndex,
-					}}
-					tokenIndex++
-				}
-
-				if len(chunk.ToolCalls) > 0 {
-					toolCalls = mergeToolCallDeltas(toolCalls, chunk.ToolCalls)
-				}
+				// A streaming caller that never learns the run paused
+				// would see the channel close after the tool_call
+				// event and read it as a run that just stopped. It
+				// needs the pending calls too: it is the one that has
+				// to execute them.
+				events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
+					"run_id":  r.ID.String(),
+					"reason":  string(reason),
+					"pending": pending,
+				}}
+				return
 			}
-
-			// Collect usage from stream.
-			if u := stream.Usage(); u != nil {
-				totalTokens += u.TotalTokens
-			}
-			_ = stream.Close()
-
-			// Record the step.
-			stepEnd := time.Now().UTC()
-			step := &run.Step{
-				Entity:      cortex.NewEntity(),
-				ID:          stepID,
-				RunID:       r.ID,
-				Index:       stepIndex,
-				Type:        "generation",
-				Input:       lastContent(messages),
-				Output:      contentBuf,
-				StartedAt:   &stepStart,
-				CompletedAt: &stepEnd,
-			}
-			if u := stream.Usage(); u != nil {
-				step.TokensUsed = u.TotalTokens
-			}
-			if err := e.store.CreateStep(ctx, step); err != nil {
-				e.logger.Error("create step", log.String("error", err.Error()))
-			}
-
-			e.extensions.EmitStepCompleted(ctx, r.ID, stepIndex, stepEnd.Sub(stepStart))
-			stepIndex++
-
-			// Check for tool calls.
-			if len(toolCalls) > 0 {
-				messages = append(messages, llm.Message{
-					Role:      "assistant",
-					Content:   contentBuf,
-					ToolCalls: toolCalls,
-				})
-
-				// Same collect-then-suspend shape as the synchronous
-				// loop: see its comments for why a pending call gets no
-				// row, no terminal event and no result message.
-				var pending []suspension.PendingCall
-				// One reason per step, same as the synchronous loop: the
-				// event below reports what suspend was actually given
-				// rather than naming a reason of its own.
-				reason := suspension.ReasonExternalTool
-				for _, tc := range toolCalls {
-					tcStart := time.Now().UTC()
-					e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
-
-					events <- StreamEvent{Type: EventToolCall, Data: map[string]any{
-						"tool_name": tc.Name,
-						"arguments": tc.Arguments,
-						"tool_id":   tc.ID,
-					}}
-
-					result, outcome := e.executeTool(ctx, subject, tc)
-					if outcome == outcomePending {
-						pending = append(pending, pendingCall(tc))
-						continue
-					}
-
-					tcEnd := time.Now().UTC()
-					toolCall := &run.ToolCall{
-						Entity:      cortex.NewEntity(),
-						ID:          id.NewToolCallID(),
-						StepID:      step.ID,
-						RunID:       r.ID,
-						ToolName:    tc.Name,
-						Arguments:   tc.Arguments,
-						Result:      result,
-						StartedAt:   &tcStart,
-						CompletedAt: &tcEnd,
-					}
-					if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
-						e.logger.Error("create tool call", log.String("error", err.Error()))
-					}
-
-					// Same as the non-streaming loop: one terminal event per
-					// call, and executeTool already emitted it for a denial
-					// or a failure.
-					if outcome == outcomeCompleted {
-						e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
-					}
-
-					messages = append(messages, llm.Message{
-						Role:       "tool",
-						Content:    result,
-						ToolCallID: tc.ID,
-					})
-				}
-
-				if len(pending) > 0 {
-					cont := suspension.Continuation{
-						Messages:        messages,
-						SystemPrompt:    systemPrompt,
-						StepIndex:       stepIndex,
-						TokensUsed:      totalTokens,
-						NewMessagesFrom: newMessagesFrom,
-						SessionID:       sessionID,
-					}
-					if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
-						e.failRun(ctx, r, ag.ID, err, now)
-						events <- StreamEvent{Type: EventError, Data: map[string]any{
-							"message": err.Error(),
-						}}
-						return
-					}
-					// A streaming caller that never learns the run paused
-					// would see the channel close after the tool_call
-					// event and read it as a run that just stopped. It
-					// needs the pending calls too: it is the one that has
-					// to execute them.
-					events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
-						"run_id":  r.ID.String(),
-						"reason":  string(reason),
-						"pending": pending,
-					}}
-					return
-				}
-				continue // Continue the ReAct loop.
-			}
-
-			// No tool calls — this is the final response.
-			finalOutput = contentBuf
-
-			// Safety: scan output before returning.
-			if e.safety != nil {
-				scanReq := &safety.ScanRequest{
-					Content:     finalOutput,
-					Direction:   safety.DirectionOutput,
-					AgentID:     ag.ID.String(),
-					RunID:       r.ID.String(),
-					ProfileName: extractSafetyProfile(ag),
-					AppID:       scanAppID(scope),
-					TenantID:    scope.Canonical(),
-				}
-				if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
-					e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
-				} else if scanResult != nil && scanResult.Blocked {
-					e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), now)
-					events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
-						"direction": "output",
-						"decision":  string(scanResult.Decision),
-						"profile":   scanResult.ProfileUsed,
-					}}
-					return
-				} else if scanResult != nil && scanResult.Redacted != "" {
-					finalOutput = scanResult.Redacted
-				}
-			}
-
-			messages = append(messages, llm.Message{Role: "assistant", Content: finalOutput})
-			break
+			continue // Continue the ReAct loop.
 		}
 
-		// Save only the messages this run actually added -- see
-		// runReAct's newMessagesFrom comment for why.
-		convMsgs := llmToMemory(messages[newMessagesFrom:])
-		if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
-			e.logger.Error("save conversation", log.String("error", err.Error()))
+		// No tool calls — this is the final response.
+		finalOutput = contentBuf
+
+		// Safety: scan output before returning.
+		if e.safety != nil {
+			scanReq := &safety.ScanRequest{
+				Content:     finalOutput,
+				Direction:   safety.DirectionOutput,
+				AgentID:     ag.ID.String(),
+				RunID:       r.ID.String(),
+				ProfileName: extractSafetyProfile(ag),
+				AppID:       scanAppID(scope),
+				TenantID:    scope.Canonical(),
+			}
+			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
+				e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
+			} else if scanResult != nil && scanResult.Blocked {
+				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), startedAt)
+				events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
+					"direction": "output",
+					"decision":  string(scanResult.Decision),
+					"profile":   scanResult.ProfileUsed,
+				}}
+				return
+			} else if scanResult != nil && scanResult.Redacted != "" {
+				finalOutput = scanResult.Redacted
+			}
 		}
 
-		// Complete the run.
-		completedAt := time.Now().UTC()
-		r.State = run.StateCompleted
-		r.Output = finalOutput
-		r.StepCount = stepIndex
-		r.TokensUsed = totalTokens
-		r.CompletedAt = &completedAt
-		if err := e.store.UpdateRun(ctx, r); err != nil {
-			e.logger.Error("update run", log.String("error", err.Error()))
-		}
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		break
+	}
 
-		e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(now))
+	// Save only the messages this run actually added, same as
+	// continueReAct. See newMessagesFrom's comment on reactState.
+	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
+	if err := e.store.SaveConversation(ctx, ag.ID, st.sessionID, convMsgs); err != nil {
+		e.logger.Error("save conversation", log.String("error", err.Error()))
+	}
 
-		events <- StreamEvent{Type: EventDone, Data: map[string]any{
-			"run_id":      r.ID.String(),
-			"output":      finalOutput,
-			"tokens_used": totalTokens,
-			"duration_ms": completedAt.Sub(now).Milliseconds(),
-		}}
-	}()
+	// Complete the run.
+	completedAt := time.Now().UTC()
+	r.State = run.StateCompleted
+	r.Output = finalOutput
+	r.StepCount = st.stepIndex
+	r.TokensUsed = st.tokensUsed
+	r.CompletedAt = &completedAt
+	if err := e.store.UpdateRun(ctx, r); err != nil {
+		e.logger.Error("update run", log.String("error", err.Error()))
+	}
 
-	return nil
+	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(startedAt))
+
+	events <- StreamEvent{Type: EventDone, Data: map[string]any{
+		"run_id":      r.ID.String(),
+		"output":      finalOutput,
+		"tokens_used": st.tokensUsed,
+		"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
+	}}
 }
 
 // ──────────────────────────────────────────────────
