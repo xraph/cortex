@@ -41,6 +41,15 @@ version bump. Read this whole section before upgrading.
   `orchestration.ConfigStore.GetOrchestrationByName` now all take just
   `(ctx, name)`. `orchestration.Service.Run` and `engine.Engine.RunOrchestration`
   drop the same parameter, now `(ctx, name, input)`.
+- **`engine.Engine`'s facade methods drop `appID` too**, the same change
+  applied one layer up from the stores above: `RunAgent`, `StreamAgent`,
+  `CloneAgent`, `ClonePersona`, `GetAgentByName`, `GetSkillByName`,
+  `GetTraitByName`, `GetBehaviorByName`, `GetPersonaByName`, and
+  `GetOrchestrationByName` all take one fewer argument now, scope coming
+  from context like everywhere else. `engine.Engine.RunAgent(ctx, appID,
+  agentName, input, overrides)` becoming `RunAgent(ctx, agentName, input,
+  overrides)` is the single most-called break in this release; if you
+  only fix one call site before upgrading, fix this one.
 - **Every `ListFilter` that used to carry `AppID` now carries `Exact bool`
   instead**: `agent.ListFilter`, `skill.ListFilter`, `trait.ListFilter`,
   `behavior.ListFilter`, `persona.ListFilter`,
