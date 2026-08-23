@@ -8,13 +8,12 @@ import (
 
 type debate struct {
 	runner   AgentRunner
-	appID    string
 	parts    []Participant
 	settings Settings
 }
 
-func newDebate(runner AgentRunner, appID string, parts []Participant, settings Settings) *debate {
-	return &debate{runner: runner, appID: appID, parts: parts, settings: settings}
+func newDebate(runner AgentRunner, parts []Participant, settings Settings) *debate {
+	return &debate{runner: runner, parts: parts, settings: settings}
 }
 
 func (o *debate) Strategy() string { return StrategyDebate }
@@ -34,7 +33,7 @@ func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	for r := 0; r < rounds; r++ {
 		for _, d := range debaters {
 			prompt := buildDebatePrompt(input, bb.Snapshot(), r+1)
-			ar, err := o.runner.RunAgent(ctx, o.appID, d.AgentName, prompt, opts)
+			ar, err := o.runner.RunAgent(ctx, d.AgentName, prompt, opts)
 			if err != nil {
 				res.Err = err
 				return res, err
@@ -46,7 +45,7 @@ func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	}
 
 	if judge != "" {
-		ar, err := o.runner.RunAgent(ctx, o.appID, judge, buildJudgePrompt(input, bb.Snapshot()), opts)
+		ar, err := o.runner.RunAgent(ctx, judge, buildJudgePrompt(input, bb.Snapshot()), opts)
 		if err != nil {
 			res.Err = err
 			res.Handoffs = bb.Handoffs()

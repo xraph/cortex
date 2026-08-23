@@ -14,10 +14,10 @@ import (
 
 // RunAgent/StreamAgent dropped their appID parameter this phase: agent
 // lookups are scope-guarded now, so app_id no longer does anything for
-// them. cortex.WithApp/AppFromContext are staying for orchestration,
-// the only subsystem still app-keyed until its own conversion task
-// lands; agents, skills, traits, behaviors, and personas are all
-// scope-guarded now.
+// them. cortex.WithApp/AppFromContext are gone entirely as of the
+// breaking sweep: agents, skills, traits, behaviors, personas, and
+// orchestration are all scope-guarded now, and a host wanting an app
+// dimension declares it as a scope level instead.
 
 func TestRunAgent_RejectsZeroScope(t *testing.T) {
 	spy := scopespy.New()

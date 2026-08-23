@@ -4,13 +4,12 @@ import "context"
 
 type sequential struct {
 	runner   AgentRunner
-	appID    string
 	parts    []Participant
 	settings Settings
 }
 
-func newSequential(runner AgentRunner, appID string, parts []Participant, settings Settings) *sequential {
-	return &sequential{runner: runner, appID: appID, parts: parts, settings: settings}
+func newSequential(runner AgentRunner, parts []Participant, settings Settings) *sequential {
+	return &sequential{runner: runner, parts: parts, settings: settings}
 }
 
 func (o *sequential) Strategy() string { return StrategySequential }
@@ -22,7 +21,7 @@ func (o *sequential) Run(ctx context.Context, input string, bb *Blackboard) (*Re
 	last := input
 	for i, p := range o.parts {
 		agentInput := composeInput(input, bb.Snapshot())
-		ar, err := o.runner.RunAgent(ctx, o.appID, p.AgentName, agentInput, opts)
+		ar, err := o.runner.RunAgent(ctx, p.AgentName, agentInput, opts)
 		if err != nil {
 			res.AgentResults = append(res.AgentResults, AgentResult{AgentName: p.AgentName, Err: err})
 			res.Err = err

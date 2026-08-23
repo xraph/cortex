@@ -47,11 +47,7 @@ func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
 		return nil, err
 	}
 
-	// appID is passed through to AgentRunner.RunAgent for historical
-	// reasons, but every adapter (engine.agentRunnerAdapter included)
-	// discards it — agent resolution is scope-only now. Left as "" here
-	// rather than threaded from Config, which no longer carries one.
-	orch, err := Build(cfg.Strategy, s.runner, "", cfg.Participants, cfg.Settings)
+	orch, err := Build(cfg.Strategy, s.runner, cfg.Participants, cfg.Settings)
 	if err != nil {
 		return nil, err
 	}

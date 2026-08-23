@@ -13,7 +13,7 @@ func TestParallelRunsAllAndConcatenates(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"a": "AA", "b": "BB", "c": "CC"}
 	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}, {AgentName: "c"}}
-	o := newParallel(runner, "app1", parts, Settings{MaxConcurrency: 2})
+	o := newParallel(runner, parts, Settings{MaxConcurrency: 2})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "go", bb)
@@ -39,7 +39,7 @@ func TestParallelAggregatorSynthesizes(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"a": "AA", "b": "BB", "boss": "FINAL"}
 	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}}
-	o := newParallel(runner, "app1", parts, Settings{Aggregator: "boss"})
+	o := newParallel(runner, parts, Settings{Aggregator: "boss"})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "go", bb)

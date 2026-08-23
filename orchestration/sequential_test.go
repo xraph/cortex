@@ -12,7 +12,7 @@ func TestSequentialRunsInOrderAndChains(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"writer": "DRAFT", "editor": "EDITED"}
 	parts := []Participant{{AgentName: "writer"}, {AgentName: "editor"}}
-	o := newSequential(runner, "app1", parts, Settings{})
+	o := newSequential(runner, parts, Settings{})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "start", bb)
@@ -37,7 +37,7 @@ func TestSequentialSecondAgentSeesFirstOutput(t *testing.T) {
 	runner := newFakeRunner()
 	runner.respond = func(agent, input string) string { return agent + ":" + input }
 	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}}
-	o := newSequential(runner, "app1", parts, Settings{})
+	o := newSequential(runner, parts, Settings{})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	_, err := o.Run(context.Background(), "X", bb)
@@ -58,7 +58,7 @@ func TestSequentialSecondAgentSeesFirstOutput(t *testing.T) {
 func TestSequentialFirstAgentSeesRoster(t *testing.T) {
 	runner := newFakeRunner()
 	parts := []Participant{{AgentName: "writer", Role: "author"}, {AgentName: "editor", Role: "critic"}}
-	o := newSequential(runner, "app1", parts, Settings{})
+	o := newSequential(runner, parts, Settings{})
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	if _, err := o.Run(context.Background(), "start", bb); err != nil {
 		t.Fatalf("Run: %v", err)

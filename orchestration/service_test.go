@@ -75,7 +75,7 @@ func (h *recordingHooks) AgentHandoff(context.Context, id.OrchestrationID, strin
 
 type errRunner struct{}
 
-func (errRunner) RunAgent(_ context.Context, _, _, _ string, _ *RunOpts) (*AgentResult, error) {
+func (errRunner) RunAgent(_ context.Context, _, _ string, _ *RunOpts) (*AgentResult, error) {
 	return nil, errors.New("boom")
 }
 

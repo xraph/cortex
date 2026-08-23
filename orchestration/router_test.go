@@ -11,7 +11,7 @@ func TestRouterStaticRules(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"billing": "BILL", "support": "SUPP"}
 	parts := []Participant{{AgentName: "billing"}, {AgentName: "support"}}
-	o := newRouter(runner, "app1", parts, Settings{
+	o := newRouter(runner, parts, Settings{
 		RouterRules: map[string]string{"refund": "billing", "broken": "support"},
 	})
 
@@ -33,7 +33,7 @@ func TestRouterAgentDecides(t *testing.T) {
 	// router agent returns the chosen agent name; chosen agent returns its output.
 	runner.outputs = map[string]string{"dispatcher": "support", "support": "SUPP"}
 	parts := []Participant{{AgentName: "billing"}, {AgentName: "support"}}
-	o := newRouter(runner, "app1", parts, Settings{RouterAgent: "dispatcher"})
+	o := newRouter(runner, parts, Settings{RouterAgent: "dispatcher"})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "my app is broken", bb)
@@ -52,7 +52,7 @@ func TestRouterFallsBackToFirst(t *testing.T) {
 	runner := newFakeRunner()
 	runner.outputs = map[string]string{"a": "AA"}
 	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}}
-	o := newRouter(runner, "app1", parts, Settings{})
+	o := newRouter(runner, parts, Settings{})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "anything", bb)
@@ -69,7 +69,7 @@ func TestRouterRuleUnknownAgentFallsBack(t *testing.T) {
 	runner.outputs = map[string]string{"a": "AA"}
 	parts := []Participant{{AgentName: "a"}, {AgentName: "b"}}
 	// RouterRules has "bug" keyword mapping to "unknown_agent" (not in participants)
-	o := newRouter(runner, "app1", parts, Settings{
+	o := newRouter(runner, parts, Settings{
 		RouterRules: map[string]string{"bug": "unknown_agent"},
 	})
 
@@ -94,7 +94,7 @@ func TestRouterRulesDeterministicOnMultiMatch(t *testing.T) {
 	// Rules: "refund" → billing, "payment" → support
 	// Input "refund payment issue" matches both keywords.
 	// Alphabetically, "payment" < "refund", so "payment" → support should win.
-	o := newRouter(runner, "app1", parts, Settings{
+	o := newRouter(runner, parts, Settings{
 		RouterRules: map[string]string{"refund": "billing", "payment": "support"},
 	})
 

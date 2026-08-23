@@ -8,13 +8,12 @@ import (
 
 type router struct {
 	runner   AgentRunner
-	appID    string
 	parts    []Participant
 	settings Settings
 }
 
-func newRouter(runner AgentRunner, appID string, parts []Participant, settings Settings) *router {
-	return &router{runner: runner, appID: appID, parts: parts, settings: settings}
+func newRouter(runner AgentRunner, parts []Participant, settings Settings) *router {
+	return &router{runner: runner, parts: parts, settings: settings}
 }
 
 func (o *router) Strategy() string { return StrategyRouter }
@@ -49,7 +48,7 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		}
 	case o.settings.RouterAgent != "":
 		prompt := buildRoutingPrompt(o.parts, input)
-		ar, err := o.runner.RunAgent(ctx, o.appID, o.settings.RouterAgent, prompt, opts)
+		ar, err := o.runner.RunAgent(ctx, o.settings.RouterAgent, prompt, opts)
 		if err != nil {
 			res.Err = err
 			return res, err
@@ -61,7 +60,7 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		routedBy = o.settings.RouterAgent
 	}
 
-	ar, err := o.runner.RunAgent(ctx, o.appID, chosen, composeInput(input, bb.Snapshot()), opts)
+	ar, err := o.runner.RunAgent(ctx, chosen, composeInput(input, bb.Snapshot()), opts)
 	if err != nil {
 		res.Err = err
 		return res, err

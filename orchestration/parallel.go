@@ -8,13 +8,12 @@ import (
 
 type parallel struct {
 	runner   AgentRunner
-	appID    string
 	parts    []Participant
 	settings Settings
 }
 
-func newParallel(runner AgentRunner, appID string, parts []Participant, settings Settings) *parallel {
-	return &parallel{runner: runner, appID: appID, parts: parts, settings: settings}
+func newParallel(runner AgentRunner, parts []Participant, settings Settings) *parallel {
+	return &parallel{runner: runner, parts: parts, settings: settings}
 }
 
 func (o *parallel) Strategy() string { return StrategyParallel }
@@ -34,7 +33,7 @@ func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Resu
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			ar, err := o.runner.RunAgent(ctx, o.appID, p.AgentName, composeInput(input, snapshot), opts)
+			ar, err := o.runner.RunAgent(ctx, p.AgentName, composeInput(input, snapshot), opts)
 			if err != nil {
 				results[i] = AgentResult{AgentName: p.AgentName, Err: err}
 				return
@@ -60,7 +59,7 @@ func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Resu
 
 	// Optional aggregator agent synthesizes a single answer from all outputs.
 	if o.settings.Aggregator != "" {
-		ar, err := o.runner.RunAgent(ctx, o.appID, o.settings.Aggregator, composeInput(input, bb.Snapshot()), opts)
+		ar, err := o.runner.RunAgent(ctx, o.settings.Aggregator, composeInput(input, bb.Snapshot()), opts)
 		if err == nil {
 			res.AgentResults = append(res.AgentResults, *ar)
 			res.Output = ar.Output

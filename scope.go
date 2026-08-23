@@ -9,25 +9,7 @@ import (
 
 type contextKey int
 
-const (
-	appKey contextKey = iota
-	scopeKey
-)
-
-// AppFromContext extracts the app identifier from the context.
-// Returns an empty string if no app is set.
-func AppFromContext(ctx context.Context) string {
-	v, ok := ctx.Value(appKey).(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-// WithApp returns a copy of ctx with the app identifier attached.
-func WithApp(ctx context.Context, app string) context.Context {
-	return context.WithValue(ctx, appKey, app)
-}
+const scopeKey contextKey = 0
 
 // ErrNoScope is returned when an operation that requires a scope receives
 // a zero one. A zero scope means the thread broke somewhere upstream, so

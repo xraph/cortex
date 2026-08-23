@@ -32,7 +32,7 @@ func TestHierarchicalDelegatesPerPlan(t *testing.T) {
 		{AgentName: "researcher", Role: "worker"},
 		{AgentName: "writer", Role: "worker"},
 	}
-	o := newHierarchical(runner, "app1", parts, Settings{Manager: "boss"})
+	o := newHierarchical(runner, parts, Settings{Manager: "boss"})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "write a report", bb)
@@ -67,7 +67,7 @@ func TestHierarchicalFallbackWhenPlanInvalid(t *testing.T) {
 		{AgentName: "w1", Role: "worker"},
 		{AgentName: "w2", Role: "worker"},
 	}
-	o := newHierarchical(runner, "app1", parts, Settings{Manager: "boss"})
+	o := newHierarchical(runner, parts, Settings{Manager: "boss"})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "do it", bb)

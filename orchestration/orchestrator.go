@@ -59,7 +59,7 @@ type AgentResult struct {
 // ability to run one named agent and get its result. The engine satisfies it
 // via a thin adapter, avoiding an engine⇄orchestration import cycle.
 type AgentRunner interface {
-	RunAgent(ctx context.Context, appID, agentName, input string, opts *RunOpts) (*AgentResult, error)
+	RunAgent(ctx context.Context, agentName, input string, opts *RunOpts) (*AgentResult, error)
 }
 
 // Settings carries every strategy's tunables in one struct. Fields a given

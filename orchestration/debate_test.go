@@ -20,7 +20,7 @@ func TestDebateRunsRoundsThenJudges(t *testing.T) {
 		{AgentName: "skeptic", Role: "debater"},
 		{AgentName: "judge", Role: "judge"},
 	}
-	o := newDebate(runner, "app1", parts, Settings{Rounds: 2, Judge: "judge"})
+	o := newDebate(runner, parts, Settings{Rounds: 2, Judge: "judge"})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "is X good?", bb)
@@ -44,7 +44,7 @@ func TestDebateNoJudgeUsesLastArgument(t *testing.T) {
 	runner := newFakeRunner()
 	runner.respond = func(agent, _ string) string { return agent + "-arg" }
 	parts := []Participant{{AgentName: "a", Role: "debater"}, {AgentName: "b", Role: "debater"}}
-	o := newDebate(runner, "app1", parts, Settings{Rounds: 1})
+	o := newDebate(runner, parts, Settings{Rounds: 1})
 
 	bb := NewBlackboard(id.NewOrchestrationID(), parts, nil)
 	res, err := o.Run(context.Background(), "topic", bb)

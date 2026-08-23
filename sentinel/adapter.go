@@ -16,10 +16,9 @@ type cortexAgentClient struct {
 }
 
 // NewAgentClient creates a Sentinel AgentClient backed by a Cortex engine.
-// appID is accepted for source compatibility but no longer used: agent
-// lookup is scope-guarded now (scope travels on ctx), so app_id doesn't
-// participate in resolving the agent to run.
-func NewAgentClient(eng *engine.Engine, _ string) target.AgentClient {
+// Agent lookup is scope-guarded (scope travels on ctx), so no app
+// identifier is needed to resolve the agent to run.
+func NewAgentClient(eng *engine.Engine) target.AgentClient {
 	return &cortexAgentClient{eng: eng}
 }
 

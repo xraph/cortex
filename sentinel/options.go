@@ -5,8 +5,7 @@ package sentinel
 
 // pluginOptions configures the Sentinel Cortex plugin.
 type pluginOptions struct {
-	autoEval    bool   // Automatically evaluate after each Cortex agent run.
-	cortexAppID string // Cortex app ID for agent lookup.
+	autoEval bool // Automatically evaluate after each Cortex agent run.
 }
 
 // Option configures the Plugin.
@@ -17,13 +16,5 @@ type Option func(*pluginOptions)
 func WithAutoEval(enabled bool) Option {
 	return func(o *pluginOptions) {
 		o.autoEval = enabled
-	}
-}
-
-// WithCortexAppID sets the Cortex app ID used for agent lookup when
-// running evaluations.
-func WithCortexAppID(appID string) Option {
-	return func(o *pluginOptions) {
-		o.cortexAppID = appID
 	}
 }

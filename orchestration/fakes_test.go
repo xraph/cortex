@@ -23,7 +23,7 @@ func newFakeRunner() *fakeRunner {
 	return &fakeRunner{outputs: map[string]string{}}
 }
 
-func (f *fakeRunner) RunAgent(_ context.Context, _ /*appID*/ string, agentName, input string, _ *RunOpts) (*AgentResult, error) {
+func (f *fakeRunner) RunAgent(_ context.Context, agentName, input string, _ *RunOpts) (*AgentResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, fakeCall{AgentName: agentName, Input: input})
 	f.mu.Unlock()

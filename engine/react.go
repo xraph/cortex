@@ -76,7 +76,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				AgentID:     ag.ID.String(),
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
-				AppID:       cortex.AppFromContext(ctx),
+				AppID:       scope.Canonical(),
 				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
@@ -172,7 +172,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				AgentID:     ag.ID.String(),
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
-				AppID:       cortex.AppFromContext(ctx),
+				AppID:       scope.Canonical(),
 				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
@@ -285,7 +285,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					AgentID:     ag.ID.String(),
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
-					AppID:       cortex.AppFromContext(ctx),
+					AppID:       scope.Canonical(),
 					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
@@ -450,7 +450,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					AgentID:     ag.ID.String(),
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
-					AppID:       cortex.AppFromContext(ctx),
+					AppID:       scope.Canonical(),
 					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {

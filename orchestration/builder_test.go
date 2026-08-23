@@ -11,7 +11,7 @@ func TestBuildAllStrategies(t *testing.T) {
 	for _, strategyName := range []string{
 		StrategySequential, StrategyParallel, StrategyRouter, StrategyHierarchical, StrategyDebate,
 	} {
-		o, err := Build(strategyName, runner, "app1", parts, Settings{})
+		o, err := Build(strategyName, runner, parts, Settings{})
 		if err != nil {
 			t.Fatalf("Build(%q): %v", strategyName, err)
 		}
@@ -22,7 +22,7 @@ func TestBuildAllStrategies(t *testing.T) {
 }
 
 func TestBuildUnknownStrategy(t *testing.T) {
-	_, err := Build("nope", newFakeRunner(), "app1", nil, Settings{})
+	_, err := Build("nope", newFakeRunner(), nil, Settings{})
 	if !errors.Is(err, ErrUnknownStrategy) {
 		t.Fatalf("err = %v, want ErrUnknownStrategy", err)
 	}

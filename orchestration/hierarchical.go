@@ -9,13 +9,12 @@ import (
 
 type hierarchical struct {
 	runner   AgentRunner
-	appID    string
 	parts    []Participant
 	settings Settings
 }
 
-func newHierarchical(runner AgentRunner, appID string, parts []Participant, settings Settings) *hierarchical {
-	return &hierarchical{runner: runner, appID: appID, parts: parts, settings: settings}
+func newHierarchical(runner AgentRunner, parts []Participant, settings Settings) *hierarchical {
+	return &hierarchical{runner: runner, parts: parts, settings: settings}
 }
 
 func (o *hierarchical) Strategy() string { return StrategyHierarchical }
@@ -36,7 +35,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	workers := nonManagerParticipants(o.parts, manager)
 
 	// 1. Manager produces a delegation plan.
-	planOut, err := o.runner.RunAgent(ctx, o.appID, manager, buildPlanPrompt(workers, input), opts)
+	planOut, err := o.runner.RunAgent(ctx, manager, buildPlanPrompt(workers, input), opts)
 	if err != nil {
 		res.Err = err
 		return res, err
@@ -56,7 +55,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			ar, werr := o.runner.RunAgent(ctx, o.appID, d.Agent, composeInput(d.Task, bb.Snapshot()), opts)
+			ar, werr := o.runner.RunAgent(ctx, d.Agent, composeInput(d.Task, bb.Snapshot()), opts)
 			if werr != nil {
 				workerResults[i] = AgentResult{AgentName: d.Agent, Err: werr}
 				return
@@ -76,7 +75,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	}
 
 	// 3. Manager synthesizes the final answer from the workers' contributions.
-	synth, err := o.runner.RunAgent(ctx, o.appID, manager, buildSynthesisPrompt(input, bb.Snapshot()), opts)
+	synth, err := o.runner.RunAgent(ctx, manager, buildSynthesisPrompt(input, bb.Snapshot()), opts)
 	if err != nil {
 		res.Err = err
 		res.Handoffs = bb.Handoffs()
