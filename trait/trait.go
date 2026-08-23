@@ -56,7 +56,7 @@ type Trait struct {
 	ID          id.TraitID     `json:"id"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
-	AppID       string         `json:"app_id"`
+	Scope       cortex.Scope   `json:"scope"`
 	Dimensions  []Dimension    `json:"dimensions,omitempty"`
 	Influences  []Influence    `json:"influences,omitempty"`
 	Category    Category       `json:"category,omitempty"`
@@ -67,16 +67,18 @@ type Trait struct {
 type Store interface {
 	CreateTrait(ctx context.Context, trait *Trait) error
 	GetTrait(ctx context.Context, traitID id.TraitID) (*Trait, error)
-	GetTraitByName(ctx context.Context, appID, name string) (*Trait, error)
+	GetTraitByName(ctx context.Context, name string) (*Trait, error)
 	UpdateTrait(ctx context.Context, trait *Trait) error
 	DeleteTrait(ctx context.Context, traitID id.TraitID) error
 	ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
 	CountTraits(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination and filtering for trait listing.
+// ListFilter controls pagination and matching for trait listing. Scope
+// arrives on the context; Exact narrows to rows stored at precisely that
+// depth instead of everything beneath it.
 type ListFilter struct {
-	AppID    string
+	Exact    bool
 	Category Category
 	Search   string
 	Limit    int

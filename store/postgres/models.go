@@ -148,32 +148,48 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 
 type skillModel struct {
 	grove.BaseModel      `grove:"table:cortex_skills"`
-	ID                   string    `grove:"id,pk"`
-	Name                 string    `grove:"name,notnull"`
-	Description          string    `grove:"description"`
-	AppID                string    `grove:"app_id,notnull"`
-	Tools                string    `grove:"tools,type:jsonb"`
-	Knowledge            string    `grove:"knowledge,type:jsonb"`
-	SystemPromptFragment string    `grove:"system_prompt_fragment"`
-	Dependencies         string    `grove:"dependencies,type:jsonb"`
-	DefaultProficiency   string    `grove:"default_proficiency"`
-	Metadata             string    `grove:"metadata,type:jsonb"`
-	CreatedAt            time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt            time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID                   string            `grove:"id,pk"`
+	Name                 string            `grove:"name,notnull"`
+	Description          string            `grove:"description"`
+	AppID                string            `grove:"app_id,notnull"`
+	Tools                string            `grove:"tools,type:jsonb"`
+	Knowledge            string            `grove:"knowledge,type:jsonb"`
+	SystemPromptFragment string            `grove:"system_prompt_fragment"`
+	Dependencies         string            `grove:"dependencies,type:jsonb"`
+	DefaultProficiency   string            `grove:"default_proficiency"`
+	Metadata             string            `grove:"metadata,type:jsonb"`
+	ScopeL0              string            `grove:"scope_l0,notnull"`
+	ScopeL1              string            `grove:"scope_l1,notnull"`
+	ScopeL2              string            `grove:"scope_l2,notnull"`
+	ScopeExtra           map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon           string            `grove:"scope_canon,notnull"`
+	CreatedAt            time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt            time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func skillToModel(s *skill.Skill) *skillModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
 	return &skillModel{
-		ID:                   s.ID.String(),
-		Name:                 s.Name,
-		Description:          s.Description,
-		AppID:                s.AppID,
+		ID:          s.ID.String(),
+		Name:        s.Name,
+		Description: s.Description,
+		// app_id is a vestigial NOT NULL column: the skill surface lost
+		// AppID this phase (UNIQUE (scope_canon, name) replaced
+		// UNIQUE (app_id, name)), but the column itself isn't dropped
+		// here, so every write leaves it empty rather than reading a
+		// field that no longer exists on Skill.
+		AppID:                "",
 		Tools:                mustJSON(s.Tools),
 		Knowledge:            mustJSON(s.Knowledge),
 		SystemPromptFragment: s.SystemPromptFragment,
 		Dependencies:         mustJSON(s.Dependencies),
 		DefaultProficiency:   string(s.DefaultProficiency),
 		Metadata:             mustJSON(s.Metadata),
+		ScopeL0:              l0,
+		ScopeL1:              l1,
+		ScopeL2:              l2,
+		ScopeExtra:           extra,
+		ScopeCanon:           s.Scope.Canonical(),
 		CreatedAt:            s.CreatedAt,
 		UpdatedAt:            s.UpdatedAt,
 	}
@@ -184,12 +200,16 @@ func skillFromModel(m *skillModel) (*skill.Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: %w", skillID, err)
+	}
 	s := &skill.Skill{
 		Entity:               cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                   skillID,
 		Name:                 m.Name,
 		Description:          m.Description,
-		AppID:                m.AppID,
+		Scope:                scope,
 		SystemPromptFragment: m.SystemPromptFragment,
 		DefaultProficiency:   skill.Proficiency(m.DefaultProficiency),
 	}
@@ -216,30 +236,46 @@ func skillFromModel(m *skillModel) (*skill.Skill, error) {
 
 type traitModel struct {
 	grove.BaseModel `grove:"table:cortex_traits"`
-	ID              string    `grove:"id,pk"`
-	Name            string    `grove:"name,notnull"`
-	Description     string    `grove:"description"`
-	AppID           string    `grove:"app_id,notnull"`
-	Dimensions      string    `grove:"dimensions,type:jsonb"`
-	Influences      string    `grove:"influences,type:jsonb"`
-	Category        string    `grove:"category"`
-	Metadata        string    `grove:"metadata,type:jsonb"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	Name            string            `grove:"name,notnull"`
+	Description     string            `grove:"description"`
+	AppID           string            `grove:"app_id,notnull"`
+	Dimensions      string            `grove:"dimensions,type:jsonb"`
+	Influences      string            `grove:"influences,type:jsonb"`
+	Category        string            `grove:"category"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func traitToModel(t *trait.Trait) *traitModel {
+	l0, l1, l2, extra := scopeColumns(t.Scope)
 	return &traitModel{
 		ID:          t.ID.String(),
 		Name:        t.Name,
 		Description: t.Description,
-		AppID:       t.AppID,
-		Dimensions:  mustJSON(t.Dimensions),
-		Influences:  mustJSON(t.Influences),
-		Category:    string(t.Category),
-		Metadata:    mustJSON(t.Metadata),
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+		// app_id is a vestigial NOT NULL column: the trait surface lost
+		// AppID this phase (UNIQUE (scope_canon, name) replaced
+		// UNIQUE (app_id, name)), but the column itself isn't dropped
+		// here, so every write leaves it empty rather than reading a
+		// field that no longer exists on Trait.
+		AppID:      "",
+		Dimensions: mustJSON(t.Dimensions),
+		Influences: mustJSON(t.Influences),
+		Category:   string(t.Category),
+		Metadata:   mustJSON(t.Metadata),
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: t.Scope.Canonical(),
+		CreatedAt:  t.CreatedAt,
+		UpdatedAt:  t.UpdatedAt,
 	}
 }
 
@@ -248,12 +284,16 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("trait %s: %w", traitID, err)
+	}
 	t := &trait.Trait{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          traitID,
 		Name:        m.Name,
 		Description: m.Description,
-		AppID:       m.AppID,
+		Scope:       scope,
 		Category:    trait.Category(m.Category),
 	}
 	for _, f := range []struct {
@@ -278,32 +318,48 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 
 type behaviorModel struct {
 	grove.BaseModel `grove:"table:cortex_behaviors"`
-	ID              string    `grove:"id,pk"`
-	Name            string    `grove:"name,notnull"`
-	Description     string    `grove:"description"`
-	AppID           string    `grove:"app_id,notnull"`
-	Triggers        string    `grove:"triggers,type:jsonb"`
-	Actions         string    `grove:"actions,type:jsonb"`
-	Priority        int       `grove:"priority"`
-	RequiresSkill   string    `grove:"requires_skill"`
-	RequiresTrait   string    `grove:"requires_trait"`
-	Metadata        string    `grove:"metadata,type:jsonb"`
-	CreatedAt       time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID              string            `grove:"id,pk"`
+	Name            string            `grove:"name,notnull"`
+	Description     string            `grove:"description"`
+	AppID           string            `grove:"app_id,notnull"`
+	Triggers        string            `grove:"triggers,type:jsonb"`
+	Actions         string            `grove:"actions,type:jsonb"`
+	Priority        int               `grove:"priority"`
+	RequiresSkill   string            `grove:"requires_skill"`
+	RequiresTrait   string            `grove:"requires_trait"`
+	Metadata        string            `grove:"metadata,type:jsonb"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func behaviorToModel(b *behavior.Behavior) *behaviorModel {
+	l0, l1, l2, extra := scopeColumns(b.Scope)
 	return &behaviorModel{
-		ID:            b.ID.String(),
-		Name:          b.Name,
-		Description:   b.Description,
-		AppID:         b.AppID,
+		ID:          b.ID.String(),
+		Name:        b.Name,
+		Description: b.Description,
+		// app_id is a vestigial NOT NULL column: the behavior surface lost
+		// AppID this phase (UNIQUE (scope_canon, name) replaced
+		// UNIQUE (app_id, name)), but the column itself isn't dropped
+		// here, so every write leaves it empty rather than reading a
+		// field that no longer exists on Behavior.
+		AppID:         "",
 		Triggers:      mustJSON(b.Triggers),
 		Actions:       mustJSON(b.Actions),
 		Priority:      b.Priority,
 		RequiresSkill: b.RequiresSkill,
 		RequiresTrait: b.RequiresTrait,
 		Metadata:      mustJSON(b.Metadata),
+		ScopeL0:       l0,
+		ScopeL1:       l1,
+		ScopeL2:       l2,
+		ScopeExtra:    extra,
+		ScopeCanon:    b.Scope.Canonical(),
 		CreatedAt:     b.CreatedAt,
 		UpdatedAt:     b.UpdatedAt,
 	}
@@ -314,12 +370,16 @@ func behaviorFromModel(m *behaviorModel) (*behavior.Behavior, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("behavior %s: %w", behaviorID, err)
+	}
 	b := &behavior.Behavior{
 		Entity:        cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:            behaviorID,
 		Name:          m.Name,
 		Description:   m.Description,
-		AppID:         m.AppID,
+		Scope:         scope,
 		Priority:      m.Priority,
 		RequiresSkill: m.RequiresSkill,
 		RequiresTrait: m.RequiresTrait,

@@ -96,7 +96,6 @@ func (a *API) createTrait(ctx forge.Context, req *CreateTraitRequest) (*trait.Tr
 		ID:          id.NewTraitID(),
 		Name:        req.Name,
 		Description: req.Description,
-		AppID:       cortex.AppFromContext(ctx.Context()),
 		Dimensions:  dims,
 		Influences:  infls,
 		Category:    trait.Category(req.Category),
@@ -111,7 +110,7 @@ func (a *API) createTrait(ctx forge.Context, req *CreateTraitRequest) (*trait.Tr
 }
 
 func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, error) {
-	t, err := a.eng.GetTraitByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	t, err := a.eng.GetTraitByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -120,7 +119,6 @@ func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, err
 
 func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) (*ListTraitsResponse, error) {
 	traits, err := a.eng.ListTraits(ctx.Context(), &trait.ListFilter{
-		AppID:    cortex.AppFromContext(ctx.Context()),
 		Category: trait.Category(req.Category),
 		Limit:    defaultLimit(req.Limit),
 		Offset:   req.Offset,
@@ -133,7 +131,7 @@ func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) (*ListTraits
 }
 
 func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Trait, error) {
-	t, err := a.eng.GetTraitByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	t, err := a.eng.GetTraitByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -179,7 +177,7 @@ func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Tr
 }
 
 func (a *API) deleteTrait(ctx forge.Context, _ *DeleteTraitRequest) (*struct{}, error) {
-	t, err := a.eng.GetTraitByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	t, err := a.eng.GetTraitByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}

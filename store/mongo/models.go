@@ -475,22 +475,38 @@ type skillModel struct {
 	Dependencies         []string             `grove:"dependencies"           bson:"dependencies,omitempty"`
 	DefaultProficiency   string               `grove:"default_proficiency"    bson:"default_proficiency"`
 	Metadata             map[string]any       `grove:"metadata"               bson:"metadata,omitempty"`
+	ScopeL0              string               `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1              string               `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2              string               `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra           map[string]string    `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon           string               `grove:"scope_canon"    bson:"scope_canon"`
 	CreatedAt            time.Time            `grove:"created_at"             bson:"created_at"`
 	UpdatedAt            time.Time            `grove:"updated_at"             bson:"updated_at"`
 }
 
 func skillToModel(s *skill.Skill) *skillModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
 	return &skillModel{
-		ID:                   s.ID.String(),
-		Name:                 s.Name,
-		Description:          s.Description,
-		AppID:                s.AppID,
+		ID:          s.ID.String(),
+		Name:        s.Name,
+		Description: s.Description,
+		// app_id is a vestigial field: the skill surface lost AppID this
+		// phase (the (scope_canon, name) unique index replaced
+		// (app_id, name)), but the field itself isn't dropped from the
+		// document here, so every write leaves it empty rather than
+		// reading a field that no longer exists on Skill.
+		AppID:                "",
 		Tools:                s.Tools,
 		Knowledge:            s.Knowledge,
 		SystemPromptFragment: s.SystemPromptFragment,
 		Dependencies:         s.Dependencies,
 		DefaultProficiency:   string(s.DefaultProficiency),
 		Metadata:             s.Metadata,
+		ScopeL0:              l0,
+		ScopeL1:              l1,
+		ScopeL2:              l2,
+		ScopeExtra:           extra,
+		ScopeCanon:           s.Scope.Canonical(),
 		CreatedAt:            s.CreatedAt,
 		UpdatedAt:            s.UpdatedAt,
 	}
@@ -501,12 +517,16 @@ func skillFromModel(m *skillModel) (*skill.Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: %w", skillID, err)
+	}
 	return &skill.Skill{
 		Entity:               cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                   skillID,
 		Name:                 m.Name,
 		Description:          m.Description,
-		AppID:                m.AppID,
+		Scope:                scope,
 		Tools:                m.Tools,
 		Knowledge:            m.Knowledge,
 		SystemPromptFragment: m.SystemPromptFragment,
@@ -530,22 +550,38 @@ type traitModel struct {
 	Influences      []trait.Influence `grove:"influences"     bson:"influences,omitempty"`
 	Category        string            `grove:"category"       bson:"category"`
 	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
 	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
 	UpdatedAt       time.Time         `grove:"updated_at"     bson:"updated_at"`
 }
 
 func traitToModel(t *trait.Trait) *traitModel {
+	l0, l1, l2, extra := scopeColumns(t.Scope)
 	return &traitModel{
 		ID:          t.ID.String(),
 		Name:        t.Name,
 		Description: t.Description,
-		AppID:       t.AppID,
-		Dimensions:  t.Dimensions,
-		Influences:  t.Influences,
-		Category:    string(t.Category),
-		Metadata:    t.Metadata,
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+		// app_id is a vestigial field: the trait surface lost AppID this
+		// phase (the (scope_canon, name) unique index replaced
+		// (app_id, name)), but the field itself isn't dropped from the
+		// document here, so every write leaves it empty rather than
+		// reading a field that no longer exists on Trait.
+		AppID:      "",
+		Dimensions: t.Dimensions,
+		Influences: t.Influences,
+		Category:   string(t.Category),
+		Metadata:   t.Metadata,
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: t.Scope.Canonical(),
+		CreatedAt:  t.CreatedAt,
+		UpdatedAt:  t.UpdatedAt,
 	}
 }
 
@@ -554,12 +590,16 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("trait %s: %w", traitID, err)
+	}
 	return &trait.Trait{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          traitID,
 		Name:        m.Name,
 		Description: m.Description,
-		AppID:       m.AppID,
+		Scope:       scope,
 		Dimensions:  m.Dimensions,
 		Influences:  m.Influences,
 		Category:    trait.Category(m.Category),
@@ -583,22 +623,38 @@ type behaviorModel struct {
 	RequiresSkill   string             `grove:"requires_skill" bson:"requires_skill"`
 	RequiresTrait   string             `grove:"requires_trait" bson:"requires_trait"`
 	Metadata        map[string]any     `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0         string             `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1         string             `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2         string             `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra      map[string]string  `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon      string             `grove:"scope_canon"    bson:"scope_canon"`
 	CreatedAt       time.Time          `grove:"created_at"     bson:"created_at"`
 	UpdatedAt       time.Time          `grove:"updated_at"     bson:"updated_at"`
 }
 
 func behaviorToModel(b *behavior.Behavior) *behaviorModel {
+	l0, l1, l2, extra := scopeColumns(b.Scope)
 	return &behaviorModel{
-		ID:            b.ID.String(),
-		Name:          b.Name,
-		Description:   b.Description,
-		AppID:         b.AppID,
+		ID:          b.ID.String(),
+		Name:        b.Name,
+		Description: b.Description,
+		// app_id is a vestigial field: the behavior surface lost AppID
+		// this phase (the (scope_canon, name) unique index replaced
+		// (app_id, name)), but the field itself isn't dropped from the
+		// document here, so every write leaves it empty rather than
+		// reading a field that no longer exists on Behavior.
+		AppID:         "",
 		Triggers:      b.Triggers,
 		Actions:       b.Actions,
 		Priority:      b.Priority,
 		RequiresSkill: b.RequiresSkill,
 		RequiresTrait: b.RequiresTrait,
 		Metadata:      b.Metadata,
+		ScopeL0:       l0,
+		ScopeL1:       l1,
+		ScopeL2:       l2,
+		ScopeExtra:    extra,
+		ScopeCanon:    b.Scope.Canonical(),
 		CreatedAt:     b.CreatedAt,
 		UpdatedAt:     b.UpdatedAt,
 	}
@@ -609,12 +665,16 @@ func behaviorFromModel(m *behaviorModel) (*behavior.Behavior, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("behavior %s: %w", behaviorID, err)
+	}
 	return &behavior.Behavior{
 		Entity:        cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:            behaviorID,
 		Name:          m.Name,
 		Description:   m.Description,
-		AppID:         m.AppID,
+		Scope:         scope,
 		Triggers:      m.Triggers,
 		Actions:       m.Actions,
 		Priority:      m.Priority,

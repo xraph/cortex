@@ -599,5 +599,93 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_agents_app_name ON cortex_agents (a
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "scope_skills_traits_behaviors",
+			Version: "20260823000002",
+			Comment: "Add host-defined scope columns to cortex_skills/cortex_traits/cortex_behaviors and replace their app_id-keyed unique indexes with scope-keyed ones",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Same column shape and index as every other scoped table
+				// (see 20260821000001); addScopeColumns already skips
+				// columns that exist, so this is idempotent the same way.
+				// No backfill, same reasoning: a fabricated level for
+				// pre-existing rows would make scope_l0 polysemous per
+				// row and silently orphan old rows instead of leaving
+				// them correctly invisible to every scoped query until
+				// rescopeLegacyRows resolves them.
+				for _, table := range []string{
+					"cortex_skills",
+					"cortex_traits",
+					"cortex_behaviors",
+				} {
+					if err := addScopeColumns(ctx, exec, table); err != nil {
+						return err
+					}
+				}
+
+				// idx_cortex_{skills,traits,behaviors}_app_name enforced
+				// uniqueness on (app_id, name), from before these three
+				// carried a scope at all. Now that every method on all
+				// three stores is scope-guarded, two different scopes
+				// must be able to each use the same name — app_id was
+				// never the isolation boundary here, scope is, so the
+				// index has to key on scope_canon instead or the second
+				// scope's Create collides on the first scope's row
+				// before the scope predicate ever gets a chance to
+				// matter.
+				//
+				// Partial (WHERE scope_canon != '') rather than a plain
+				// unique index, for the exact reason 20260823000001
+				// documents for cortex_agents: this migration runs
+				// before rescopeLegacyRows, so any pre-v1.8.0 rows are
+				// still sitting at scope_canon = '' when the index is
+				// built, and a plain unique index would make every such
+				// row collide on ('', name) instead of letting the
+				// rescoper separate them first.
+				for _, spec := range []struct{ table, oldIdx, newIdx string }{
+					{"cortex_skills", "idx_cortex_skills_app_name", "idx_cortex_skills_scope_name"},
+					{"cortex_traits", "idx_cortex_traits_app_name", "idx_cortex_traits_scope_name"},
+					{"cortex_behaviors", "idx_cortex_behaviors_app_name", "idx_cortex_behaviors_scope_name"},
+				} {
+					if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS `+spec.oldIdx+`;
+CREATE UNIQUE INDEX IF NOT EXISTS `+spec.newIdx+` ON `+spec.table+` (scope_canon, name) WHERE scope_canon != '';
+`); err != nil {
+						return fmt.Errorf("scope-key unique index on %s: %w", spec.table, err)
+					}
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				for _, spec := range []struct{ table, oldIdx, newIdx string }{
+					{"cortex_skills", "idx_cortex_skills_app_name", "idx_cortex_skills_scope_name"},
+					{"cortex_traits", "idx_cortex_traits_app_name", "idx_cortex_traits_scope_name"},
+					{"cortex_behaviors", "idx_cortex_behaviors_app_name", "idx_cortex_behaviors_scope_name"},
+				} {
+					if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS `+spec.newIdx+`;
+CREATE UNIQUE INDEX IF NOT EXISTS `+spec.oldIdx+` ON `+spec.table+` (app_id, name);
+`); err != nil {
+						return fmt.Errorf("restore app_id-key unique index on %s: %w", spec.table, err)
+					}
+				}
+				for _, table := range []string{
+					"cortex_skills",
+					"cortex_traits",
+					"cortex_behaviors",
+				} {
+					if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_`+table+`_scope;
+ALTER TABLE `+table+` DROP COLUMN scope_l0;
+ALTER TABLE `+table+` DROP COLUMN scope_l1;
+ALTER TABLE `+table+` DROP COLUMN scope_l2;
+ALTER TABLE `+table+` DROP COLUMN scope_extra;
+ALTER TABLE `+table+` DROP COLUMN scope_canon;
+`); err != nil {
+						return fmt.Errorf("drop scope columns from %s: %w", table, err)
+					}
+				}
+				return nil
+			},
+		},
 	)
 }

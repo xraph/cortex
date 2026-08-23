@@ -52,13 +52,13 @@ type entityCounts struct {
 
 func fetchEntityCounts(ctx context.Context, s store.Store, appID string) entityCounts {
 	var c entityCounts
-	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{})                      //nolint:errcheck // best-effort UI data
-	c.Skills, _ = s.CountSkills(ctx, &skill.ListFilter{AppID: appID})          //nolint:errcheck // best-effort UI data
-	c.Traits, _ = s.CountTraits(ctx, &trait.ListFilter{AppID: appID})          //nolint:errcheck // best-effort UI data
-	c.Behaviors, _ = s.CountBehaviors(ctx, &behavior.ListFilter{AppID: appID}) //nolint:errcheck // best-effort UI data
-	c.Personas, _ = s.CountPersonas(ctx, &persona.ListFilter{AppID: appID})    //nolint:errcheck // best-effort UI data
-	c.Runs, _ = s.CountRuns(ctx, &run.ListFilter{})                            //nolint:errcheck // best-effort UI data
-	c.Checkpoints, _ = s.CountPending(ctx, &checkpoint.ListFilter{})           //nolint:errcheck // best-effort UI data
+	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{})                   //nolint:errcheck // best-effort UI data
+	c.Skills, _ = s.CountSkills(ctx, &skill.ListFilter{})                   //nolint:errcheck // best-effort UI data
+	c.Traits, _ = s.CountTraits(ctx, &trait.ListFilter{})                   //nolint:errcheck // best-effort UI data
+	c.Behaviors, _ = s.CountBehaviors(ctx, &behavior.ListFilter{})          //nolint:errcheck // best-effort UI data
+	c.Personas, _ = s.CountPersonas(ctx, &persona.ListFilter{AppID: appID}) //nolint:errcheck // best-effort UI data
+	c.Runs, _ = s.CountRuns(ctx, &run.ListFilter{})                         //nolint:errcheck // best-effort UI data
+	c.Checkpoints, _ = s.CountPending(ctx, &checkpoint.ListFilter{})        //nolint:errcheck // best-effort UI data
 	return c
 }
 
@@ -74,33 +74,33 @@ func fetchAgentsPaginated(ctx context.Context, s store.Store, search string, lim
 	return items, total, nil
 }
 
-func fetchSkillsPaginated(ctx context.Context, s store.Store, appID, search string, limit, offset int) ([]*skill.Skill, int64, error) {
-	filter := &skill.ListFilter{AppID: appID, Search: search, Limit: limit, Offset: offset}
+func fetchSkillsPaginated(ctx context.Context, s store.Store, search string, limit, offset int) ([]*skill.Skill, int64, error) {
+	filter := &skill.ListFilter{Search: search, Limit: limit, Offset: offset}
 	items, err := s.ListSkills(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, _ := s.CountSkills(ctx, &skill.ListFilter{AppID: appID, Search: search}) //nolint:errcheck // best-effort count
+	total, _ := s.CountSkills(ctx, &skill.ListFilter{Search: search}) //nolint:errcheck // best-effort count
 	return items, total, nil
 }
 
-func fetchTraitsPaginated(ctx context.Context, s store.Store, appID, search string, category trait.Category, limit, offset int) ([]*trait.Trait, int64, error) {
-	filter := &trait.ListFilter{AppID: appID, Search: search, Category: category, Limit: limit, Offset: offset}
+func fetchTraitsPaginated(ctx context.Context, s store.Store, search string, category trait.Category, limit, offset int) ([]*trait.Trait, int64, error) {
+	filter := &trait.ListFilter{Search: search, Category: category, Limit: limit, Offset: offset}
 	items, err := s.ListTraits(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, _ := s.CountTraits(ctx, &trait.ListFilter{AppID: appID, Search: search, Category: category}) //nolint:errcheck // best-effort count
+	total, _ := s.CountTraits(ctx, &trait.ListFilter{Search: search, Category: category}) //nolint:errcheck // best-effort count
 	return items, total, nil
 }
 
-func fetchBehaviorsPaginated(ctx context.Context, s store.Store, appID, search string, limit, offset int) ([]*behavior.Behavior, int64, error) {
-	filter := &behavior.ListFilter{AppID: appID, Search: search, Limit: limit, Offset: offset}
+func fetchBehaviorsPaginated(ctx context.Context, s store.Store, search string, limit, offset int) ([]*behavior.Behavior, int64, error) {
+	filter := &behavior.ListFilter{Search: search, Limit: limit, Offset: offset}
 	items, err := s.ListBehaviors(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, _ := s.CountBehaviors(ctx, &behavior.ListFilter{AppID: appID, Search: search}) //nolint:errcheck // best-effort count
+	total, _ := s.CountBehaviors(ctx, &behavior.ListFilter{Search: search}) //nolint:errcheck // best-effort count
 	return items, total, nil
 }
 
@@ -140,16 +140,16 @@ func fetchAgents(ctx context.Context, s store.Store) ([]*agent.Config, error) {
 	return s.List(ctx, &agent.ListFilter{})
 }
 
-func fetchSkills(ctx context.Context, s store.Store, appID string) ([]*skill.Skill, error) {
-	return s.ListSkills(ctx, &skill.ListFilter{AppID: appID})
+func fetchSkills(ctx context.Context, s store.Store) ([]*skill.Skill, error) {
+	return s.ListSkills(ctx, &skill.ListFilter{})
 }
 
-func fetchTraits(ctx context.Context, s store.Store, appID string) ([]*trait.Trait, error) {
-	return s.ListTraits(ctx, &trait.ListFilter{AppID: appID})
+func fetchTraits(ctx context.Context, s store.Store) ([]*trait.Trait, error) {
+	return s.ListTraits(ctx, &trait.ListFilter{})
 }
 
-func fetchBehaviors(ctx context.Context, s store.Store, appID string) ([]*behavior.Behavior, error) {
-	return s.ListBehaviors(ctx, &behavior.ListFilter{AppID: appID})
+func fetchBehaviors(ctx context.Context, s store.Store) ([]*behavior.Behavior, error) {
+	return s.ListBehaviors(ctx, &behavior.ListFilter{})
 }
 
 func fetchPersonas(ctx context.Context, s store.Store, _ string) ([]*persona.Persona, error) {
@@ -295,7 +295,7 @@ type DiscoveredTool = shared.DiscoveredTool
 type SkillToolRef = shared.SkillToolRef
 
 // discoverTools aggregates tool data from agents, skills, and recent runs.
-func discoverTools(ctx context.Context, s store.Store, appID string) []DiscoveredTool {
+func discoverTools(ctx context.Context, s store.Store) []DiscoveredTool {
 	toolMap := make(map[string]*DiscoveredTool)
 
 	// 1. Collect tools from agent configs.
@@ -311,7 +311,7 @@ func discoverTools(ctx context.Context, s store.Store, appID string) []Discovere
 	}
 
 	// 2. Collect tools from skill bindings.
-	skills, _ := fetchSkills(ctx, s, appID) //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s) //nolint:errcheck // best-effort UI data
 	for _, sk := range skills {
 		for _, tb := range sk.Tools {
 			if tb.ToolName == "" {
@@ -362,8 +362,8 @@ func discoverTools(ctx context.Context, s store.Store, appID string) []Discovere
 }
 
 // discoverToolsPaginated returns a paginated, optionally searched, slice of tools.
-func discoverToolsPaginated(ctx context.Context, s store.Store, appID, search string, limit, offset int) (items []DiscoveredTool, total int64) {
-	all := discoverTools(ctx, s, appID)
+func discoverToolsPaginated(ctx context.Context, s store.Store, search string, limit, offset int) (items []DiscoveredTool, total int64) {
+	all := discoverTools(ctx, s)
 
 	// Filter by search.
 	if search != "" {
@@ -390,8 +390,8 @@ func discoverToolsPaginated(ctx context.Context, s store.Store, appID, search st
 }
 
 // discoverToolByName returns a single tool's aggregated data.
-func discoverToolByName(ctx context.Context, s store.Store, appID, toolName string) (*DiscoveredTool, error) {
-	all := discoverTools(ctx, s, appID)
+func discoverToolByName(ctx context.Context, s store.Store, toolName string) (*DiscoveredTool, error) {
+	all := discoverTools(ctx, s)
 	for i := range all {
 		if all[i].Name == toolName {
 			return &all[i], nil
@@ -497,7 +497,7 @@ func computeSystemPrompt(ctx context.Context, s store.Store, agentName, personaR
 			if sName == "" {
 				continue
 			}
-			sk, err := s.GetSkillByName(ctx, "", sName)
+			sk, err := s.GetSkillByName(ctx, sName)
 			if err == nil && sk.SystemPromptFragment != "" {
 				parts = append(parts, "\n## Skill: "+sk.Name+"\n"+sk.SystemPromptFragment)
 			}
@@ -511,7 +511,7 @@ func computeSystemPrompt(ctx context.Context, s store.Store, agentName, personaR
 			if tName == "" {
 				continue
 			}
-			t, err := s.GetTraitByName(ctx, "", tName)
+			t, err := s.GetTraitByName(ctx, tName)
 			if err == nil {
 				for _, inf := range t.Influences {
 					if inf.Target == "prompt_injection" {

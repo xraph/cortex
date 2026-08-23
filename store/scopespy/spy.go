@@ -122,14 +122,14 @@ func (s *Spy) GetPersonaByName(ctx context.Context, _, name string) (*persona.Pe
 
 // GetSkillByName returns a usable skill so BuildSystemPrompt's skill
 // injection has something to record scope on.
-func (s *Spy) GetSkillByName(ctx context.Context, _, name string) (*skill.Skill, error) {
+func (s *Spy) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
 	s.record(ctx, "GetSkillByName")
 	return &skill.Skill{ID: id.NewSkillID(), Name: name, SystemPromptFragment: "spy skill fragment"}, nil
 }
 
 // GetTraitByName returns a usable trait so BuildSystemPrompt's trait
 // injection has something to record scope on.
-func (s *Spy) GetTraitByName(ctx context.Context, _, name string) (*trait.Trait, error) {
+func (s *Spy) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) {
 	s.record(ctx, "GetTraitByName")
 	return &trait.Trait{ID: id.NewTraitID(), Name: name}, nil
 }

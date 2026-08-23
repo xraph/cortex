@@ -211,11 +211,11 @@ func (e *Engine) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill
 	return e.store.GetSkill(ctx, skillID)
 }
 
-func (e *Engine) GetSkillByName(ctx context.Context, appID, name string) (*skill.Skill, error) {
+func (e *Engine) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetSkillByName(ctx, appID, name)
+	return e.store.GetSkillByName(ctx, name)
 }
 
 func (e *Engine) UpdateSkill(ctx context.Context, s *skill.Skill) error {
@@ -264,11 +264,11 @@ func (e *Engine) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait
 	return e.store.GetTrait(ctx, traitID)
 }
 
-func (e *Engine) GetTraitByName(ctx context.Context, appID, name string) (*trait.Trait, error) {
+func (e *Engine) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetTraitByName(ctx, appID, name)
+	return e.store.GetTraitByName(ctx, name)
 }
 
 func (e *Engine) UpdateTrait(ctx context.Context, t *trait.Trait) error {
@@ -317,11 +317,11 @@ func (e *Engine) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*be
 	return e.store.GetBehavior(ctx, behaviorID)
 }
 
-func (e *Engine) GetBehaviorByName(ctx context.Context, appID, name string) (*behavior.Behavior, error) {
+func (e *Engine) GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetBehaviorByName(ctx, appID, name)
+	return e.store.GetBehaviorByName(ctx, name)
 }
 
 func (e *Engine) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error {

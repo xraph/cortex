@@ -54,7 +54,7 @@ type Behavior struct {
 	ID            id.BehaviorID  `json:"id"`
 	Name          string         `json:"name"`
 	Description   string         `json:"description,omitempty"`
-	AppID         string         `json:"app_id"`
+	Scope         cortex.Scope   `json:"scope"`
 	Triggers      []Trigger      `json:"triggers,omitempty"`
 	Actions       []Action       `json:"actions,omitempty"`
 	Priority      int            `json:"priority,omitempty"`
@@ -67,16 +67,18 @@ type Behavior struct {
 type Store interface {
 	CreateBehavior(ctx context.Context, behavior *Behavior) error
 	GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*Behavior, error)
-	GetBehaviorByName(ctx context.Context, appID, name string) (*Behavior, error)
+	GetBehaviorByName(ctx context.Context, name string) (*Behavior, error)
 	UpdateBehavior(ctx context.Context, behavior *Behavior) error
 	DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error
 	ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
 	CountBehaviors(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination and filtering for behavior listing.
+// ListFilter controls pagination and matching for behavior listing. Scope
+// arrives on the context; Exact narrows to rows stored at precisely that
+// depth instead of everything beneath it.
 type ListFilter struct {
-	AppID  string
+	Exact  bool
 	Search string
 	Limit  int
 	Offset int

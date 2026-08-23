@@ -95,7 +95,6 @@ func (a *API) createSkill(ctx forge.Context, req *CreateSkillRequest) (*skill.Sk
 		ID:                   id.NewSkillID(),
 		Name:                 req.Name,
 		Description:          req.Description,
-		AppID:                cortex.AppFromContext(ctx.Context()),
 		Tools:                tools,
 		Knowledge:            knowledge,
 		SystemPromptFragment: req.SystemPromptFragment,
@@ -112,7 +111,7 @@ func (a *API) createSkill(ctx forge.Context, req *CreateSkillRequest) (*skill.Sk
 }
 
 func (a *API) getSkill(ctx forge.Context, _ *GetSkillRequest) (*skill.Skill, error) {
-	s, err := a.eng.GetSkillByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	s, err := a.eng.GetSkillByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -121,7 +120,6 @@ func (a *API) getSkill(ctx forge.Context, _ *GetSkillRequest) (*skill.Skill, err
 
 func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) (*ListSkillsResponse, error) {
 	skills, err := a.eng.ListSkills(ctx.Context(), &skill.ListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -133,7 +131,7 @@ func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) (*ListSkills
 }
 
 func (a *API) updateSkill(ctx forge.Context, req *UpdateSkillRequest) (*skill.Skill, error) {
-	s, err := a.eng.GetSkillByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	s, err := a.eng.GetSkillByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -184,7 +182,7 @@ func (a *API) updateSkill(ctx forge.Context, req *UpdateSkillRequest) (*skill.Sk
 }
 
 func (a *API) deleteSkill(ctx forge.Context, _ *DeleteSkillRequest) (*struct{}, error) {
-	s, err := a.eng.GetSkillByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	s, err := a.eng.GetSkillByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}

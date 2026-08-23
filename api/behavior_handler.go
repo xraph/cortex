@@ -93,7 +93,6 @@ func (a *API) createBehavior(ctx forge.Context, req *CreateBehaviorRequest) (*be
 		ID:            id.NewBehaviorID(),
 		Name:          req.Name,
 		Description:   req.Description,
-		AppID:         cortex.AppFromContext(ctx.Context()),
 		Triggers:      triggers,
 		Actions:       actions,
 		Priority:      req.Priority,
@@ -110,7 +109,7 @@ func (a *API) createBehavior(ctx forge.Context, req *CreateBehaviorRequest) (*be
 }
 
 func (a *API) getBehavior(ctx forge.Context, _ *GetBehaviorRequest) (*behavior.Behavior, error) {
-	b, err := a.eng.GetBehaviorByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	b, err := a.eng.GetBehaviorByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -119,7 +118,6 @@ func (a *API) getBehavior(ctx forge.Context, _ *GetBehaviorRequest) (*behavior.B
 
 func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) (*ListBehaviorsResponse, error) {
 	behaviors, err := a.eng.ListBehaviors(ctx.Context(), &behavior.ListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -131,7 +129,7 @@ func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) (*List
 }
 
 func (a *API) updateBehavior(ctx forge.Context, req *UpdateBehaviorRequest) (*behavior.Behavior, error) {
-	b, err := a.eng.GetBehaviorByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	b, err := a.eng.GetBehaviorByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -180,7 +178,7 @@ func (a *API) updateBehavior(ctx forge.Context, req *UpdateBehaviorRequest) (*be
 }
 
 func (a *API) deleteBehavior(ctx forge.Context, _ *DeleteBehaviorRequest) (*struct{}, error) {
-	b, err := a.eng.GetBehaviorByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	b, err := a.eng.GetBehaviorByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}

@@ -75,15 +75,17 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides) reso
 // persona identity, skill fragments, and trait injections.
 // This is the engine-level equivalent of dashboard/data.go:computeSystemPrompt.
 //
-// Persona/skill/trait lookups key on cortex.AppFromContext(ctx) — those
-// three subsystems stay app-keyed until Tasks 6/7 convert them. That is
-// only the SAME value the agent was created under when the run context
-// actually carries that app; a run reached through a path with no app on
-// the context (dashboard-triggered runs, sentinel, orchestration
-// sub-agents) would look up ("", ref) instead. A requested-but-unresolved
-// persona/skill/trait therefore fails the whole call loudly instead of
-// silently dropping its fragment from the prompt: swallowing that error
-// would let an agent quietly stop being itself with no signal anywhere.
+// Skill and trait lookups are scope-guarded now (Task 6): they resolve
+// against cortex.ScopeFromContext(ctx), the same as the agent itself.
+// Persona lookup still keys on cortex.AppFromContext(ctx) — persona stays
+// app-keyed until Task 7 converts it. That is only the SAME value the
+// agent was created under when the run context actually carries that
+// app; a run reached through a path with no app on the context
+// (dashboard-triggered runs, sentinel, orchestration sub-agents) would
+// look up ("", ref) instead. A requested-but-unresolved persona/skill/
+// trait therefore fails the whole call loudly instead of silently
+// dropping its fragment from the prompt: swallowing that error would let
+// an agent quietly stop being itself with no signal anywhere.
 func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (string, error) {
 	var parts []string
 
@@ -130,7 +132,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if sName == "" {
 				continue
 			}
-			sk, err := e.store.GetSkillByName(ctx, cortex.AppFromContext(ctx), sName)
+			sk, err := e.store.GetSkillByName(ctx, sName)
 			if err != nil {
 				return "", fmt.Errorf("resolve skill %q: %w", sName, err)
 			}
@@ -147,7 +149,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if sName == "" {
 				continue
 			}
-			sk, err := e.store.GetSkillByName(ctx, cortex.AppFromContext(ctx), sName)
+			sk, err := e.store.GetSkillByName(ctx, sName)
 			if err != nil || len(sk.Knowledge) == 0 {
 				continue
 			}
@@ -186,7 +188,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if tName == "" {
 				continue
 			}
-			t, err := e.store.GetTraitByName(ctx, cortex.AppFromContext(ctx), tName)
+			t, err := e.store.GetTraitByName(ctx, tName)
 			if err != nil {
 				return "", fmt.Errorf("resolve trait %q: %w", tName, err)
 			}

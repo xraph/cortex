@@ -67,6 +67,34 @@ const staleAgentAppNameIndexName = "app_id_1_name_1"
 // name the same way staleAgentAppNameIndexName is used here.
 const agentScopeNameUniqueIndexName = "cortex_agents_scope_name_unique"
 
+// staleSkillAppNameIndexName, staleTraitAppNameIndexName, and
+// staleBehaviorAppNameIndexName are Mongo's default auto-generated names
+// for the pre-scope (app_id, name) unique indexes on cortex_skills,
+// cortex_traits, and cortex_behaviors, from when they carried no explicit
+// name. Store.Migrate drops each by name before creating its
+// scope-keyed replacement below: app_id was never the isolation boundary
+// for these names, scope is, so the old index refused two different
+// scopes the same name. CreateMany is additive and never drops a stale
+// index on its own, so leaving the old ones in place would keep the
+// write path colliding cross-scope even after the new indexes existed
+// too.
+const (
+	staleSkillAppNameIndexName    = "app_id_1_name_1"
+	staleTraitAppNameIndexName    = "app_id_1_name_1"
+	staleBehaviorAppNameIndexName = "app_id_1_name_1"
+)
+
+// skillScopeNameUniqueIndexName, traitScopeNameUniqueIndexName, and
+// behaviorScopeNameUniqueIndexName are the fixed names for the
+// scope-aware unique indexes on cortex_skills, cortex_traits, and
+// cortex_behaviors, so a future migration can find and drop them by name
+// the same way the stale names above are used here.
+const (
+	skillScopeNameUniqueIndexName    = "cortex_skills_scope_name_unique"
+	traitScopeNameUniqueIndexName    = "cortex_traits_scope_name_unique"
+	behaviorScopeNameUniqueIndexName = "cortex_behaviors_scope_name_unique"
+)
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -137,29 +165,47 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			scopeIndex,
 		},
 		colSkills: {
+			// Partial (scope_canon $gt "") for the same reason as
+			// colAgents above: Store.Migrate applies this index before
+			// rescoping legacy rows, and any pre-v1.8.0 document is
+			// still sitting at scope_canon = "" at that point.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(skillScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colTraits: {
+			// Partial (scope_canon $gt "") for the same reason as
+			// colAgents above: Store.Migrate applies this index before
+			// rescoping legacy rows, and any pre-v1.8.0 document is
+			// still sitting at scope_canon = "" at that point.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(traitScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "category", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colBehaviors: {
+			// Partial (scope_canon $gt "") for the same reason as
+			// colAgents above: Store.Migrate applies this index before
+			// rescoping legacy rows, and any pre-v1.8.0 document is
+			// still sitting at scope_canon = "" at that point.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(behaviorScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colPersonas: {
 			{

@@ -301,10 +301,10 @@ func (c *Contributor) renderAgentDetail(ctx context.Context, s store.Store, para
 }
 
 func (c *Contributor) renderAgentForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	personas, _ := fetchPersonas(ctx, s, "")   //nolint:errcheck // best-effort UI data
-	skills, _ := fetchSkills(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	traits, _ := fetchTraits(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	behaviors, _ := fetchBehaviors(ctx, s, "") //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s)         //nolint:errcheck // best-effort UI data
+	traits, _ := fetchTraits(ctx, s)         //nolint:errcheck // best-effort UI data
+	behaviors, _ := fetchBehaviors(ctx, s)   //nolint:errcheck // best-effort UI data
 
 	name := params.QueryParams["name"]
 	if name != "" {
@@ -348,9 +348,9 @@ func (c *Contributor) renderPersonaDetail(ctx context.Context, s store.Store, pa
 }
 
 func (c *Contributor) renderPersonaForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	skills, _ := fetchSkills(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	traits, _ := fetchTraits(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	behaviors, _ := fetchBehaviors(ctx, s, "") //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s)       //nolint:errcheck // best-effort UI data
+	traits, _ := fetchTraits(ctx, s)       //nolint:errcheck // best-effort UI data
+	behaviors, _ := fetchBehaviors(ctx, s) //nolint:errcheck // best-effort UI data
 
 	name := params.QueryParams["name"]
 	if name != "" {
@@ -367,7 +367,7 @@ func (c *Contributor) renderSkills(ctx context.Context, s store.Store, params co
 	search := params.QueryParams["search"]
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total, err := fetchSkillsPaginated(ctx, s, "", search, limit, offset)
+	items, total, err := fetchSkillsPaginated(ctx, s, search, limit, offset)
 	if err != nil {
 		items = nil
 		total = 0
@@ -381,7 +381,7 @@ func (c *Contributor) renderSkillDetail(ctx context.Context, s store.Store, para
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	sk, err := s.GetSkillByName(ctx, "", name)
+	sk, err := s.GetSkillByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve skill: %w", err)
 	}
@@ -395,7 +395,7 @@ func (c *Contributor) renderSkillDetail(ctx context.Context, s store.Store, para
 func (c *Contributor) renderSkillForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		sk, err := s.GetSkillByName(ctx, "", name)
+		sk, err := s.GetSkillByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve skill for edit: %w", err)
 		}
@@ -409,7 +409,7 @@ func (c *Contributor) renderTraits(ctx context.Context, s store.Store, params co
 	category := trait.Category(params.QueryParams["category"])
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total, err := fetchTraitsPaginated(ctx, s, "", search, category, limit, offset)
+	items, total, err := fetchTraitsPaginated(ctx, s, search, category, limit, offset)
 	if err != nil {
 		items = nil
 		total = 0
@@ -423,7 +423,7 @@ func (c *Contributor) renderTraitDetail(ctx context.Context, s store.Store, para
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	t, err := s.GetTraitByName(ctx, "", name)
+	t, err := s.GetTraitByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve trait: %w", err)
 	}
@@ -437,7 +437,7 @@ func (c *Contributor) renderTraitDetail(ctx context.Context, s store.Store, para
 func (c *Contributor) renderTraitForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		t, err := s.GetTraitByName(ctx, "", name)
+		t, err := s.GetTraitByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve trait for edit: %w", err)
 		}
@@ -450,7 +450,7 @@ func (c *Contributor) renderBehaviors(ctx context.Context, s store.Store, params
 	search := params.QueryParams["search"]
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total, err := fetchBehaviorsPaginated(ctx, s, "", search, limit, offset)
+	items, total, err := fetchBehaviorsPaginated(ctx, s, search, limit, offset)
 	if err != nil {
 		items = nil
 		total = 0
@@ -464,7 +464,7 @@ func (c *Contributor) renderBehaviorDetail(ctx context.Context, s store.Store, p
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	b, err := s.GetBehaviorByName(ctx, "", name)
+	b, err := s.GetBehaviorByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve behavior: %w", err)
 	}
@@ -478,7 +478,7 @@ func (c *Contributor) renderBehaviorDetail(ctx context.Context, s store.Store, p
 func (c *Contributor) renderBehaviorForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		b, err := s.GetBehaviorByName(ctx, "", name)
+		b, err := s.GetBehaviorByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve behavior for edit: %w", err)
 		}
@@ -569,7 +569,7 @@ func (c *Contributor) renderTools(ctx context.Context, s store.Store, params con
 	search := params.QueryParams["search"]
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total := discoverToolsPaginated(ctx, s, "", search, limit, offset)
+	items, total := discoverToolsPaginated(ctx, s, search, limit, offset)
 	pg := NewPaginationMeta(total, limit, offset)
 	return pages.ToolsPage(items, search, pg), nil
 }
@@ -579,7 +579,7 @@ func (c *Contributor) renderToolDetail(ctx context.Context, s store.Store, param
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	tool, err := discoverToolByName(ctx, s, "", name)
+	tool, err := discoverToolByName(ctx, s, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve tool: %w", err)
 	}
@@ -784,11 +784,11 @@ func (c *Contributor) renderChat(ctx context.Context, s store.Store, params cont
 }
 
 func (c *Contributor) renderPlayground(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	agents, _ := fetchAgents(ctx, s)           //nolint:errcheck // best-effort UI data
-	personas, _ := fetchPersonas(ctx, s, "")   //nolint:errcheck // best-effort UI data
-	skills, _ := fetchSkills(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	traits, _ := fetchTraits(ctx, s, "")       //nolint:errcheck // best-effort UI data
-	behaviors, _ := fetchBehaviors(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s)         //nolint:errcheck // best-effort UI data
+	traits, _ := fetchTraits(ctx, s)         //nolint:errcheck // best-effort UI data
+	behaviors, _ := fetchBehaviors(ctx, s)   //nolint:errcheck // best-effort UI data
 	engineCfg := c.engine.Config()
 
 	selectedAgent := params.QueryParams["agent"]

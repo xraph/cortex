@@ -85,9 +85,9 @@ func mustCreateAgent(t *testing.T, s store.Store, ctx context.Context, name stri
 	return agentID
 }
 
-// mustCreateSkill creates a skill under ctx and returns its ID. app_id is
-// held fixed at "conformance-app" across every fixture in this file so it
-// can never be the thing that separates two scopes' rows in a test.
+// mustCreateSkill creates a skill under ctx and returns its ID. It
+// requires a scoped context like every other create: the skill store is
+// fully scope-guarded now, the same as agents.
 func mustCreateSkill(t *testing.T, s store.Store, ctx context.Context, name string) id.SkillID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	skillID := id.NewSkillID()
@@ -95,9 +95,8 @@ func mustCreateSkill(t *testing.T, s store.Store, ctx context.Context, name stri
 		name = "conformance-" + skillID.String()
 	}
 	sk := &skill.Skill{
-		ID:    skillID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   skillID,
+		Name: name,
 	}
 	if err := s.CreateSkill(ctx, sk); err != nil {
 		t.Fatalf("fixture: create skill: %v", err)
@@ -105,7 +104,9 @@ func mustCreateSkill(t *testing.T, s store.Store, ctx context.Context, name stri
 	return skillID
 }
 
-// mustCreateTrait creates a trait under ctx and returns its ID.
+// mustCreateTrait creates a trait under ctx and returns its ID. It
+// requires a scoped context like every other create: the trait store is
+// fully scope-guarded now, the same as agents.
 func mustCreateTrait(t *testing.T, s store.Store, ctx context.Context, name string) id.TraitID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	traitID := id.NewTraitID()
@@ -113,9 +114,8 @@ func mustCreateTrait(t *testing.T, s store.Store, ctx context.Context, name stri
 		name = "conformance-" + traitID.String()
 	}
 	tr := &trait.Trait{
-		ID:    traitID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   traitID,
+		Name: name,
 	}
 	if err := s.CreateTrait(ctx, tr); err != nil {
 		t.Fatalf("fixture: create trait: %v", err)
@@ -123,7 +123,9 @@ func mustCreateTrait(t *testing.T, s store.Store, ctx context.Context, name stri
 	return traitID
 }
 
-// mustCreateBehavior creates a behavior under ctx and returns its ID.
+// mustCreateBehavior creates a behavior under ctx and returns its ID. It
+// requires a scoped context like every other create: the behavior store
+// is fully scope-guarded now, the same as agents.
 func mustCreateBehavior(t *testing.T, s store.Store, ctx context.Context, name string) id.BehaviorID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	behaviorID := id.NewBehaviorID()
@@ -131,9 +133,8 @@ func mustCreateBehavior(t *testing.T, s store.Store, ctx context.Context, name s
 		name = "conformance-" + behaviorID.String()
 	}
 	b := &behavior.Behavior{
-		ID:    behaviorID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   behaviorID,
+		Name: name,
 	}
 	if err := s.CreateBehavior(ctx, b); err != nil {
 		t.Fatalf("fixture: create behavior: %v", err)
@@ -356,16 +357,17 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 	})
 
-	// Agent converted this phase: every method rejects a zero scope, same
-	// as runs, checkpoints, steps, tool calls, and working memory above.
+	// Agent, Skill, Trait, and Behavior are all converted now: every
+	// method rejects a zero scope, same as runs, checkpoints, steps, tool
+	// calls, and working memory above.
 	//
-	// The five subtests below still cover skills, traits, behaviors,
-	// personas, and orchestration configs — the subsystems this phase
-	// hasn't converted yet. None of their stores check scope at all right
-	// now, so every one of these is expected to fail: Create/GetByName/List
-	// all succeed against a scopeless context instead of returning
-	// cortex.ErrNoScope. That is the correct starting state for a suite
-	// meant to go green as each subsystem is converted in a later task.
+	// The two subtests below still cover personas and orchestration
+	// configs — the subsystems that remain unconverted. Neither store
+	// checks scope at all right now, so both are expected to fail:
+	// Create/GetByName/List all succeed against a scopeless context
+	// instead of returning cortex.ErrNoScope. That is the correct
+	// starting state for a suite meant to go green as each subsystem is
+	// converted in a later task.
 
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
@@ -383,11 +385,11 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
-		sk := &skill.Skill{ID: id.NewSkillID(), Name: "researcher", AppID: "conformance-app"}
+		sk := &skill.Skill{ID: id.NewSkillID(), Name: "researcher"}
 		if err := s.CreateSkill(ctx, sk); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreateSkill with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetSkillByName(ctx, "conformance-app", "researcher"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetSkillByName(ctx, "researcher"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetSkillByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.ListSkills(ctx, &skill.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
@@ -397,11 +399,11 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Trait", func(t *testing.T) {
 		s := newStore(t)
-		tr := &trait.Trait{ID: id.NewTraitID(), Name: "cautious", AppID: "conformance-app"}
+		tr := &trait.Trait{ID: id.NewTraitID(), Name: "cautious"}
 		if err := s.CreateTrait(ctx, tr); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreateTrait with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetTraitByName(ctx, "conformance-app", "cautious"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetTraitByName(ctx, "cautious"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetTraitByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.ListTraits(ctx, &trait.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
@@ -411,11 +413,11 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Behavior", func(t *testing.T) {
 		s := newStore(t)
-		b := &behavior.Behavior{ID: id.NewBehaviorID(), Name: "always-explain", AppID: "conformance-app"}
+		b := &behavior.Behavior{ID: id.NewBehaviorID(), Name: "always-explain"}
 		if err := s.CreateBehavior(ctx, b); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreateBehavior with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetBehaviorByName(ctx, "conformance-app", "always-explain"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetBehaviorByName(ctx, "always-explain"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetBehaviorByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.ListBehaviors(ctx, &behavior.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
@@ -779,11 +781,10 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
-	// The five subtests below give skills, traits, behaviors, personas,
-	// and orchestration configs the same distinct-identifier cross-scope
-	// shape as Agent above. None of these stores filter by scope yet, so
-	// List/Get returns rows from both scopes and every one of these is
-	// expected to fail.
+	// Skill, Trait, and Behavior get the same distinct-identifier
+	// cross-scope shape as Agent above. Unlike Persona and Orchestration
+	// below, these three are expected to pass: List/GetByName are
+	// scope-guarded now.
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
@@ -793,7 +794,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		skillA := mustCreateSkill(t, s, ctxA, "skill-a")
 		skillB := mustCreateSkill(t, s, ctxB, "skill-b")
 
-		gotA, err := s.ListSkills(ctxA, &skill.ListFilter{AppID: "conformance-app"})
+		gotA, err := s.ListSkills(ctxA, &skill.ListFilter{})
 		if err != nil {
 			t.Fatalf("list skills A: %v", err)
 		}
@@ -801,7 +802,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListSkills(ctxA) = %d skill(s), want exactly skillA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.ListSkills(ctxB, &skill.ListFilter{AppID: "conformance-app"})
+		gotB, err := s.ListSkills(ctxB, &skill.ListFilter{})
 		if err != nil {
 			t.Fatalf("list skills B: %v", err)
 		}
@@ -809,7 +810,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListSkills(ctxB) = %d skill(s), want exactly skillB", len(gotB))
 		}
 
-		if _, err := s.GetSkillByName(ctxB, "conformance-app", "skill-a"); !errors.Is(err, cortex.ErrSkillNotFound) {
+		if _, err := s.GetSkillByName(ctxB, "skill-a"); !errors.Is(err, cortex.ErrSkillNotFound) {
 			t.Errorf("GetSkillByName(ctxB, %q) = %v, want ErrSkillNotFound", "skill-a", err)
 		}
 	})
@@ -822,7 +823,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		traitA := mustCreateTrait(t, s, ctxA, "trait-a")
 		traitB := mustCreateTrait(t, s, ctxB, "trait-b")
 
-		gotA, err := s.ListTraits(ctxA, &trait.ListFilter{AppID: "conformance-app"})
+		gotA, err := s.ListTraits(ctxA, &trait.ListFilter{})
 		if err != nil {
 			t.Fatalf("list traits A: %v", err)
 		}
@@ -830,7 +831,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListTraits(ctxA) = %d trait(s), want exactly traitA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.ListTraits(ctxB, &trait.ListFilter{AppID: "conformance-app"})
+		gotB, err := s.ListTraits(ctxB, &trait.ListFilter{})
 		if err != nil {
 			t.Fatalf("list traits B: %v", err)
 		}
@@ -838,7 +839,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListTraits(ctxB) = %d trait(s), want exactly traitB", len(gotB))
 		}
 
-		if _, err := s.GetTraitByName(ctxB, "conformance-app", "trait-a"); !errors.Is(err, cortex.ErrTraitNotFound) {
+		if _, err := s.GetTraitByName(ctxB, "trait-a"); !errors.Is(err, cortex.ErrTraitNotFound) {
 			t.Errorf("GetTraitByName(ctxB, %q) = %v, want ErrTraitNotFound", "trait-a", err)
 		}
 	})
@@ -851,7 +852,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		behaviorA := mustCreateBehavior(t, s, ctxA, "behavior-a")
 		behaviorB := mustCreateBehavior(t, s, ctxB, "behavior-b")
 
-		gotA, err := s.ListBehaviors(ctxA, &behavior.ListFilter{AppID: "conformance-app"})
+		gotA, err := s.ListBehaviors(ctxA, &behavior.ListFilter{})
 		if err != nil {
 			t.Fatalf("list behaviors A: %v", err)
 		}
@@ -859,7 +860,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListBehaviors(ctxA) = %d behavior(s), want exactly behaviorA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.ListBehaviors(ctxB, &behavior.ListFilter{AppID: "conformance-app"})
+		gotB, err := s.ListBehaviors(ctxB, &behavior.ListFilter{})
 		if err != nil {
 			t.Fatalf("list behaviors B: %v", err)
 		}
@@ -867,10 +868,15 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListBehaviors(ctxB) = %d behavior(s), want exactly behaviorB", len(gotB))
 		}
 
-		if _, err := s.GetBehaviorByName(ctxB, "conformance-app", "behavior-a"); !errors.Is(err, cortex.ErrBehaviorNotFound) {
+		if _, err := s.GetBehaviorByName(ctxB, "behavior-a"); !errors.Is(err, cortex.ErrBehaviorNotFound) {
 			t.Errorf("GetBehaviorByName(ctxB, %q) = %v, want ErrBehaviorNotFound", "behavior-a", err)
 		}
 	})
+
+	// The two subtests below give personas and orchestration configs the
+	// same distinct-identifier cross-scope shape. Neither store filters
+	// by scope yet, so List/Get returns rows from both scopes and both
+	// are expected to fail.
 
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
@@ -1173,21 +1179,12 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
-	// The five subtests below are the ones app_id still governs: ONE name
-	// reused across two scopes, held under the same app_id (app_id is a
-	// required lookup parameter here, not the scope under test — holding
-	// it fixed keeps scope as the only thing that could separate these
-	// rows, if these stores checked it). Two different names would be
-	// separated by the name alone and would prove nothing about a scope
-	// predicate that doesn't exist yet for these five.
-	//
-	// None of these five stores are scope-guarded, and app_id+name is
-	// already a real unique index on every one of these tables (see
-	// idx_cortex_*_app_name in store/sqlite/migrations.go), independent of
-	// any scope column. So the second mustCreate* call below is expected to
-	// fail outright with cortex.ErrAlreadyExists — the fixture can't even
-	// get two rows on the books to compare, which is itself the proof that
-	// nothing about scope separates them.
+	// Skill, Trait, and Behavior get the same treatment as Agent above:
+	// the same name reused across two scopes must resolve to two
+	// distinct rows, proving UNIQUE (scope_canon, name) — not the retired
+	// UNIQUE (app_id, name) — is what each store enforces now, and
+	// Get/Update/Delete must refuse a scope-B caller who only knows (or
+	// guesses) scope-A's id.
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
@@ -1197,16 +1194,48 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreateSkill(t, s, ctxA, "researcher")
 		mustCreateSkill(t, s, ctxB, "researcher")
 
-		gotA, err := s.GetSkillByName(ctxA, "conformance-app", "researcher")
+		gotA, err := s.GetSkillByName(ctxA, "researcher")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own skill: %v", err)
 		}
-		gotB, err := s.GetSkillByName(ctxB, "conformance-app", "researcher")
+		gotB, err := s.GetSkillByName(ctxB, "researcher")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own skill: %v", err)
 		}
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's skill merely by knowing (or guessing) its id.
+		// GetSkillByName above only proves the name-lookup predicate;
+		// GetSkill/UpdateSkill/DeleteSkill take the id directly and need
+		// their own predicate proven independently.
+		_, getErr := s.GetSkill(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrSkillNotFound) {
+			t.Errorf("GetSkill(ctxB, skillA.ID) = %v, want ErrSkillNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.UpdateSkill(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrSkillNotFound) {
+			t.Errorf("UpdateSkill(ctxB, skillA) = %v, want ErrSkillNotFound", updateErr)
+		}
+		stillA, err := s.GetSkill(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload skillA after cross-scope UpdateSkill attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("UpdateSkill(ctxB, skillA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.DeleteSkill(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrSkillNotFound) {
+			t.Errorf("DeleteSkill(ctxB, skillA.ID) = %v, want ErrSkillNotFound", deleteErr)
+		}
+		_, reloadErr := s.GetSkill(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("skillA missing after cross-scope DeleteSkill attempt: %v (must not delete another scope's row)", reloadErr)
 		}
 	})
 
@@ -1218,16 +1247,48 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreateTrait(t, s, ctxA, "cautious")
 		mustCreateTrait(t, s, ctxB, "cautious")
 
-		gotA, err := s.GetTraitByName(ctxA, "conformance-app", "cautious")
+		gotA, err := s.GetTraitByName(ctxA, "cautious")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own trait: %v", err)
 		}
-		gotB, err := s.GetTraitByName(ctxB, "conformance-app", "cautious")
+		gotB, err := s.GetTraitByName(ctxB, "cautious")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own trait: %v", err)
 		}
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's trait merely by knowing (or guessing) its id.
+		// GetTraitByName above only proves the name-lookup predicate;
+		// GetTrait/UpdateTrait/DeleteTrait take the id directly and need
+		// their own predicate proven independently.
+		_, getErr := s.GetTrait(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrTraitNotFound) {
+			t.Errorf("GetTrait(ctxB, traitA.ID) = %v, want ErrTraitNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.UpdateTrait(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrTraitNotFound) {
+			t.Errorf("UpdateTrait(ctxB, traitA) = %v, want ErrTraitNotFound", updateErr)
+		}
+		stillA, err := s.GetTrait(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload traitA after cross-scope UpdateTrait attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("UpdateTrait(ctxB, traitA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.DeleteTrait(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrTraitNotFound) {
+			t.Errorf("DeleteTrait(ctxB, traitA.ID) = %v, want ErrTraitNotFound", deleteErr)
+		}
+		_, reloadErr := s.GetTrait(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("traitA missing after cross-scope DeleteTrait attempt: %v (must not delete another scope's row)", reloadErr)
 		}
 	})
 
@@ -1239,18 +1300,66 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreateBehavior(t, s, ctxA, "always-explain")
 		mustCreateBehavior(t, s, ctxB, "always-explain")
 
-		gotA, err := s.GetBehaviorByName(ctxA, "conformance-app", "always-explain")
+		gotA, err := s.GetBehaviorByName(ctxA, "always-explain")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own behavior: %v", err)
 		}
-		gotB, err := s.GetBehaviorByName(ctxB, "conformance-app", "always-explain")
+		gotB, err := s.GetBehaviorByName(ctxB, "always-explain")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own behavior: %v", err)
 		}
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
 		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's behavior merely by knowing (or guessing) its id.
+		// GetBehaviorByName above only proves the name-lookup predicate;
+		// GetBehavior/UpdateBehavior/DeleteBehavior take the id directly
+		// and need their own predicate proven independently.
+		_, getErr := s.GetBehavior(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrBehaviorNotFound) {
+			t.Errorf("GetBehavior(ctxB, behaviorA.ID) = %v, want ErrBehaviorNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.UpdateBehavior(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrBehaviorNotFound) {
+			t.Errorf("UpdateBehavior(ctxB, behaviorA) = %v, want ErrBehaviorNotFound", updateErr)
+		}
+		stillA, err := s.GetBehavior(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload behaviorA after cross-scope UpdateBehavior attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("UpdateBehavior(ctxB, behaviorA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.DeleteBehavior(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrBehaviorNotFound) {
+			t.Errorf("DeleteBehavior(ctxB, behaviorA.ID) = %v, want ErrBehaviorNotFound", deleteErr)
+		}
+		_, reloadErr := s.GetBehavior(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("behaviorA missing after cross-scope DeleteBehavior attempt: %v (must not delete another scope's row)", reloadErr)
+		}
 	})
+
+	// The two subtests below are the ones app_id still governs: ONE name
+	// reused across two scopes, held under the same app_id (app_id is a
+	// required lookup parameter here, not the scope under test — holding
+	// it fixed keeps scope as the only thing that could separate these
+	// rows, if these stores checked it). Two different names would be
+	// separated by the name alone and would prove nothing about a scope
+	// predicate that doesn't exist yet for these two.
+	//
+	// Neither store is scope-guarded, and app_id+name is already a real
+	// unique index on both tables (see idx_cortex_*_app_name in
+	// store/sqlite/migrations.go), independent of any scope column. So
+	// the second mustCreate* call below is expected to fail outright with
+	// cortex.ErrAlreadyExists — the fixture can't even get two rows on
+	// the books to compare, which is itself the proof that nothing about
+	// scope separates them.
 
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
@@ -1376,6 +1485,79 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("List({workspace=ws_y}) incorrectly returned an agent scoped to {workspace=ws_x, project=p1}")
 		}
 	})
+
+	// Skill, Trait, and Behavior lost their Scope field only this task
+	// (Task 6), so their List predicate against a broader-than-stored
+	// filter went untested until now, the same as Agent's did going into
+	// this task.
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		skillID := mustCreateSkill(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListSkills(broad, nil)
+		if err != nil {
+			t.Fatalf("list skills (broad): %v", err)
+		}
+		if !containsSkillID(got, skillID) {
+			t.Errorf("ListSkills({workspace=ws_x}) didn't return a skill scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListSkills(other, nil)
+		if err != nil {
+			t.Fatalf("list skills (other workspace): %v", err)
+		}
+		if containsSkillID(gotOther, skillID) {
+			t.Errorf("ListSkills({workspace=ws_y}) incorrectly returned a skill scoped to {workspace=ws_x, project=p1}")
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		traitID := mustCreateTrait(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListTraits(broad, nil)
+		if err != nil {
+			t.Fatalf("list traits (broad): %v", err)
+		}
+		if !containsTraitID(got, traitID) {
+			t.Errorf("ListTraits({workspace=ws_x}) didn't return a trait scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListTraits(other, nil)
+		if err != nil {
+			t.Fatalf("list traits (other workspace): %v", err)
+		}
+		if containsTraitID(gotOther, traitID) {
+			t.Errorf("ListTraits({workspace=ws_y}) incorrectly returned a trait scoped to {workspace=ws_x, project=p1}")
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		behaviorID := mustCreateBehavior(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListBehaviors(broad, nil)
+		if err != nil {
+			t.Fatalf("list behaviors (broad): %v", err)
+		}
+		if !containsBehaviorID(got, behaviorID) {
+			t.Errorf("ListBehaviors({workspace=ws_x}) didn't return a behavior scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListBehaviors(other, nil)
+		if err != nil {
+			t.Fatalf("list behaviors (other workspace): %v", err)
+		}
+		if containsBehaviorID(gotOther, behaviorID) {
+			t.Errorf("ListBehaviors({workspace=ws_y}) incorrectly returned a behavior scoped to {workspace=ws_x, project=p1}")
+		}
+	})
 }
 
 func containsRunID(rs []*run.Run, want id.AgentRunID) bool {
@@ -1399,6 +1581,33 @@ func containsCheckpointID(cps []*checkpoint.Checkpoint, want id.CheckpointID) bo
 func containsAgentID(cfgs []*agent.Config, want id.AgentID) bool {
 	for _, c := range cfgs {
 		if c.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSkillID(sks []*skill.Skill, want id.SkillID) bool {
+	for _, sk := range sks {
+		if sk.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTraitID(trs []*trait.Trait, want id.TraitID) bool {
+	for _, tr := range trs {
+		if tr.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsBehaviorID(bs []*behavior.Behavior, want id.BehaviorID) bool {
+	for _, b := range bs {
+		if b.ID == want {
 			return true
 		}
 	}
@@ -1471,6 +1680,99 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		reloaded, err := s.Get(createCtx, agentID)
 		if err != nil {
 			t.Fatalf("reload agent: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Description != "mutated" {
+			t.Errorf("Description after update = %q, want %q", reloaded.Description, "mutated")
+		}
+	})
+
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		skillID := mustCreateSkill(t, s, createCtx, "")
+
+		loaded, err := s.GetSkill(createCtx, skillID)
+		if err != nil {
+			t.Fatalf("get skill: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Description = "mutated"
+
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateSkill(updateCtx, loaded); err != nil {
+			t.Fatalf("update skill: %v", err)
+		}
+
+		reloaded, err := s.GetSkill(createCtx, skillID)
+		if err != nil {
+			t.Fatalf("reload skill: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Description != "mutated" {
+			t.Errorf("Description after update = %q, want %q", reloaded.Description, "mutated")
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		traitID := mustCreateTrait(t, s, createCtx, "")
+
+		loaded, err := s.GetTrait(createCtx, traitID)
+		if err != nil {
+			t.Fatalf("get trait: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Description = "mutated"
+
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateTrait(updateCtx, loaded); err != nil {
+			t.Fatalf("update trait: %v", err)
+		}
+
+		reloaded, err := s.GetTrait(createCtx, traitID)
+		if err != nil {
+			t.Fatalf("reload trait: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Description != "mutated" {
+			t.Errorf("Description after update = %q, want %q", reloaded.Description, "mutated")
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		behaviorID := mustCreateBehavior(t, s, createCtx, "")
+
+		loaded, err := s.GetBehavior(createCtx, behaviorID)
+		if err != nil {
+			t.Fatalf("get behavior: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Description = "mutated"
+
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateBehavior(updateCtx, loaded); err != nil {
+			t.Fatalf("update behavior: %v", err)
+		}
+
+		reloaded, err := s.GetBehavior(createCtx, behaviorID)
+		if err != nil {
+			t.Fatalf("reload behavior: %v", err)
 		}
 		if reloaded.Scope.Canonical() != want {
 			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
@@ -1598,6 +1900,42 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		got, err := s.Get(ctx, agentID)
 		if err != nil {
 			t.Fatalf("get agent after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		skillID := mustCreateSkill(t, s, ctx, "")
+		got, err := s.GetSkill(ctx, skillID)
+		if err != nil {
+			t.Fatalf("get skill after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		traitID := mustCreateTrait(t, s, ctx, "")
+		got, err := s.GetTrait(ctx, traitID)
+		if err != nil {
+			t.Fatalf("get trait after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		behaviorID := mustCreateBehavior(t, s, ctx, "")
+		got, err := s.GetBehavior(ctx, behaviorID)
+		if err != nil {
+			t.Fatalf("get behavior after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}
 		if got.Scope.Canonical() != want {
 			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)

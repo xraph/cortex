@@ -61,7 +61,7 @@ type Skill struct {
 	ID                   id.SkillID     `json:"id"`
 	Name                 string         `json:"name"`
 	Description          string         `json:"description,omitempty"`
-	AppID                string         `json:"app_id"`
+	Scope                cortex.Scope   `json:"scope"`
 	Tools                []ToolBinding  `json:"tools,omitempty"`
 	Knowledge            []KnowledgeRef `json:"knowledge,omitempty"`
 	SystemPromptFragment string         `json:"system_prompt_fragment,omitempty"`
@@ -74,16 +74,18 @@ type Skill struct {
 type Store interface {
 	CreateSkill(ctx context.Context, skill *Skill) error
 	GetSkill(ctx context.Context, skillID id.SkillID) (*Skill, error)
-	GetSkillByName(ctx context.Context, appID, name string) (*Skill, error)
+	GetSkillByName(ctx context.Context, name string) (*Skill, error)
 	UpdateSkill(ctx context.Context, skill *Skill) error
 	DeleteSkill(ctx context.Context, skillID id.SkillID) error
 	ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
 	CountSkills(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination and filtering for skill listing.
+// ListFilter controls pagination and matching for skill listing. Scope
+// arrives on the context; Exact narrows to rows stored at precisely that
+// depth instead of everything beneath it.
 type ListFilter struct {
-	AppID  string
+	Exact  bool
 	Search string
 	Limit  int
 	Offset int
