@@ -148,7 +148,7 @@ func TestRunAgent_ToolCallCarriesScope(t *testing.T) {
 		engine.WithLLM(scopespy.ToolCallingLLM(toolName)),
 		engine.WithTool(
 			llm.Tool{Name: toolName, Description: "test-only tool for scope coverage"},
-			func(_ context.Context, _ string) (string, error) { return "ok", nil },
+			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
 	)
 	if err != nil {

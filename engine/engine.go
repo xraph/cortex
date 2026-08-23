@@ -38,6 +38,7 @@ type Engine struct {
 	llm         llm.Client
 	safety      safety.Scanner
 	knowledge   knowledge.Provider
+	authorizer  cortex.ToolAuthorizer
 	extensions  *plugin.Registry
 	pendingExts []plugin.Extension
 	tools       []registeredTool

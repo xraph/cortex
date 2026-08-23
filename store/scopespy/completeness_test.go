@@ -87,7 +87,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 		engine.WithLLM(ToolCallingLLM(toolName)),
 		engine.WithTool(
 			llm.Tool{Name: toolName, Description: "test-only tool for completeness coverage"},
-			func(_ context.Context, _ string) (string, error) { return "ok", nil },
+			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
 	)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/llm"
 )
 
@@ -14,8 +15,8 @@ func echoTool() (llm.Tool, ToolHandler) {
 		Description: "echoes its arguments",
 		Parameters:  map[string]any{"type": "object"},
 	}
-	h := func(_ context.Context, args string) (string, error) {
-		return "echoed:" + args, nil
+	h := func(_ context.Context, inv cortex.Invocation) (string, error) {
+		return "echoed:" + inv.Call.Arguments, nil
 	}
 	return def, h
 }
@@ -26,7 +27,7 @@ func TestWithTool_AdvertisedInResolveTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	tools := e.resolveTools(nil)
+	tools := e.resolveTools(context.Background(), cortex.Subject{}, nil)
 	var found bool
 	for _, tl := range tools {
 		if tl.Name == "echo" {
@@ -44,7 +45,7 @@ func TestWithTool_DispatchedInExecuteTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	got := e.executeTool(context.Background(), llm.ToolCall{Name: "echo", Arguments: `{"x":1}`})
+	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "echo", Arguments: `{"x":1}`})
 	if got != `echoed:{"x":1}` {
 		t.Fatalf("executeTool = %q, want %q", got, `echoed:{"x":1}`)
 	}
@@ -55,7 +56,7 @@ func TestExecuteTool_UnknownStillErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	got := e.executeTool(context.Background(), llm.ToolCall{Name: "nope"})
+	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "nope"})
 	if !strings.Contains(got, "unknown tool") {
 		t.Fatalf("executeTool = %q, want it to contain %q", got, "unknown tool")
 	}

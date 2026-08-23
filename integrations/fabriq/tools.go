@@ -6,6 +6,7 @@ import (
 
 	"github.com/xraph/fabriq/core/agent"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/llm"
 )
@@ -33,9 +34,9 @@ func toolOptions(tl toolLister, c config) []engine.Option {
 			Description: t.Description,
 			Parameters:  schemaOf(t.InputSchema),
 		}
-		handler := func(ctx context.Context, args string) (string, error) {
+		handler := func(ctx context.Context, inv cortex.Invocation) (string, error) {
 			ctx = c.tenant(ctx)
-			out, err := t.Handler(ctx, json.RawMessage(args))
+			out, err := t.Handler(ctx, json.RawMessage(inv.Call.Arguments))
 			if err != nil {
 				return "", err
 			}

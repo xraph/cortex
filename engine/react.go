@@ -78,13 +78,18 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		stepStart := time.Now().UTC()
 		e.extensions.EmitStepStarted(ctx, r.ID, stepIndex)
 
+		// Built once per step and threaded to both authorizer calls
+		// below (Visible via resolveTools, Authorize via executeTool)
+		// so they judge the same subject.
+		subject := cortex.Subject{Scope: scope, AgentID: ag.ID, RunID: r.ID}
+
 		req := &llm.Request{
 			Model:       cfg.Model,
 			System:      systemPrompt,
 			Messages:    messages,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
-			Tools:       e.resolveTools(cfg.Tools),
+			Tools:       e.resolveTools(ctx, subject, cfg.Tools),
 		}
 
 		// Safety: scan input before LLM call.
@@ -149,8 +154,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				// Execute tool (stub: returns acknowledgement).
-				result := e.executeTool(ctx, tc)
+				result := e.executeTool(ctx, subject, tc)
 
 				tcEnd := time.Now().UTC()
 				toolCall := &run.ToolCall{
@@ -304,13 +308,18 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 				"type":    "generation",
 			}}
 
+			// Built once per step and threaded to both authorizer calls
+			// below (Visible via resolveTools, Authorize via executeTool)
+			// so they judge the same subject.
+			subject := cortex.Subject{Scope: scope, AgentID: ag.ID, RunID: r.ID}
+
 			req := &llm.Request{
 				Model:       cfg.Model,
 				System:      systemPrompt,
 				Messages:    messages,
 				MaxTokens:   cfg.MaxTokens,
 				Temperature: cfg.Temperature,
-				Tools:       e.resolveTools(cfg.Tools),
+				Tools:       e.resolveTools(ctx, subject, cfg.Tools),
 			}
 
 			// Safety: scan input before LLM call.
@@ -446,7 +455,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 						"tool_id":   tc.ID,
 					}}
 
-					result := e.executeTool(ctx, tc)
+					result := e.executeTool(ctx, subject, tc)
 
 					tcEnd := time.Now().UTC()
 					toolCall := &run.ToolCall{
@@ -567,24 +576,62 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 	e.extensions.EmitRunFailed(context.WithoutCancel(ctx), agentID, r.ID, runErr)
 }
 
-// resolveTools converts tool name references to llm.Tool definitions.
-func (e *Engine) resolveTools(_ []string) []llm.Tool {
+// resolveTools converts tool name references to llm.Tool definitions,
+// filtered to names when non-empty, then to what the authorizer will let
+// this subject see. A nil authorizer skips the Visible call and returns
+// everything, same as before this seam existed.
+func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string) []llm.Tool {
 	tools := e.builtinTools()
 	for _, rt := range e.tools {
 		tools = append(tools, rt.def)
 	}
+	if len(names) > 0 {
+		tools = filterByName(tools, names)
+	}
+	if e.authorizer != nil {
+		tools = e.authorizer.Visible(ctx, s, tools)
+	}
 	return tools
 }
 
-// executeTool executes a tool call and returns the result.
-func (e *Engine) executeTool(ctx context.Context, tc llm.ToolCall) string {
-	if result, handled := e.executeBuiltinTool(ctx, tc.Name, tc.Arguments); handled {
+// filterByName keeps only the tools whose name appears in names,
+// preserving the order tools were assembled in.
+func filterByName(tools []llm.Tool, names []string) []llm.Tool {
+	keep := make(map[string]bool, len(names))
+	for _, n := range names {
+		keep[n] = true
+	}
+	out := make([]llm.Tool, 0, len(tools))
+	for _, t := range tools {
+		if keep[t.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// executeTool executes a tool call and returns the result. The authorizer is
+// consulted here even though resolveTools already filtered what the model
+// was shown: a model can name a tool it was never shown, so Visible having
+// filtered the list is not a substitute for gating the dispatch itself.
+func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) string {
+	if e.authorizer != nil {
+		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
+			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, err.Error())
+			return jsonResult("error", err.Error())
+		}
+	}
+
+	inv := cortex.Invocation{Subject: s, Call: tc}
+
+	if result, handled := e.executeBuiltinTool(ctx, inv); handled {
 		return result
 	}
 	for _, rt := range e.tools {
 		if rt.def.Name == tc.Name {
-			out, err := rt.handler(ctx, tc.Arguments)
+			out, err := rt.handler(ctx, inv)
 			if err != nil {
+				e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, err)
 				return jsonResult("error", err.Error())
 			}
 			return out

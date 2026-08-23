@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
 )
@@ -37,17 +38,19 @@ func (e *Engine) builtinTools() []llm.Tool {
 }
 
 // executeBuiltinTool attempts to execute a built-in tool. Returns (result, true) if handled.
-func (e *Engine) executeBuiltinTool(ctx context.Context, name, arguments string) (string, bool) {
-	switch name {
+// It takes the same Invocation shape as a host-registered ToolHandler — builtins are not a
+// separate dispatch contract, just tools the engine happens to implement itself.
+func (e *Engine) executeBuiltinTool(ctx context.Context, inv cortex.Invocation) (string, bool) {
+	switch inv.Call.Name {
 	case "knowledge_search":
-		return e.executeKnowledgeSearch(ctx, arguments), true
+		return e.executeKnowledgeSearch(ctx, inv), true
 	default:
 		return "", false
 	}
 }
 
 // executeKnowledgeSearch handles the knowledge_search tool call.
-func (e *Engine) executeKnowledgeSearch(ctx context.Context, arguments string) string {
+func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocation) string {
 	if e.knowledge == nil {
 		return jsonResult("error", "knowledge provider not configured")
 	}
@@ -56,7 +59,7 @@ func (e *Engine) executeKnowledgeSearch(ctx context.Context, arguments string) s
 		Query      string `json:"query"`
 		Collection string `json:"collection"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
 		return jsonResult("error", "invalid arguments: "+err.Error())
 	}
 	if args.Query == "" {

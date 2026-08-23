@@ -78,10 +78,10 @@ func WithKnowledge(provider knowledge.Provider) Option {
 	}
 }
 
-// ToolHandler executes a registered tool. arguments is the raw JSON argument
-// string from the LLM tool call; the return string is the tool result fed back
-// to the model.
-type ToolHandler func(ctx context.Context, arguments string) (string, error)
+// ToolHandler executes a registered tool. The Invocation carries the
+// scope, the host's principal and the call itself, so a handler never
+// has to reach into the context for them.
+type ToolHandler func(ctx context.Context, inv cortex.Invocation) (string, error)
 
 // WithTool registers an externally-provided executable tool. The def is
 // advertised to the LLM (resolveTools); the handler runs when the model calls
@@ -90,6 +90,15 @@ type ToolHandler func(ctx context.Context, arguments string) (string, error)
 func WithTool(def llm.Tool, h ToolHandler) Option {
 	return func(e *Engine) error {
 		e.tools = append(e.tools, registeredTool{def: def, handler: h})
+		return nil
+	}
+}
+
+// WithToolAuthorizer installs the host's authorization decisions. A nil
+// authorizer, or none at all, allows every tool and every call.
+func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
+	return func(e *Engine) error {
+		e.authorizer = a
 		return nil
 	}
 }
