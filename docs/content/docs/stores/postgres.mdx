@@ -42,11 +42,12 @@ if err := s.Migrate(ctx); err != nil {
 | `cortex_traits` | Traits | `id`, `app_id`, `name`, `dimensions` (JSONB), `influences` (JSONB), `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_behaviors` | Behaviors | `id`, `app_id`, `name`, `triggers` (JSONB), `actions` (JSONB), `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_personas` | Personas | `id`, `app_id`, `name`, `identity`, embedded styles (JSONB), `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
-| `cortex_runs` | Runs | `id`, `agent_id`, `state`, `input`, `output`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+| `cortex_runs` | Runs | `id`, `agent_id`, `session_id`, `state`, `input`, `output`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_steps` | Steps | `id`, `run_id`, `index`, `type`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_tool_calls` | Tool calls | `id`, `step_id`, `run_id`, `tool_name`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
-| `cortex_memories` | Memories | `id`, `agent_id`, `kind`, `key`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+| `cortex_memories` | Memories | `id`, `agent_id`, `session_id`, `kind`, `key`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_checkpoints` | Checkpoints | `id`, `run_id`, `agent_id`, `state`, `decision` (JSONB), `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+| `cortex_sessions` | Sessions | `id`, `agent_id`, `title`, `message_count`, `last_message`, `is_default`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_orchestration_configs` | Orchestration configs | `id`, `app_id`, `name`, `strategy`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_orchestration_runs` | Orchestration runs | `id`, `config_id`, `app_id`, `status`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 
@@ -78,7 +79,7 @@ Complex nested structures are stored as JSONB columns:
 
 ## Composite store interface
 
-The PostgreSQL store implements all 10 sub-interfaces:
+The PostgreSQL store implements all 11 sub-interfaces:
 
 ```go
 type Store interface {
@@ -90,6 +91,7 @@ type Store interface {
     run.Store                 // 8 methods
     memory.Store              // 8 methods
     checkpoint.Store          // 4 methods
+    session.Store             // 6 methods
     orchestration.ConfigStore // 7 methods
     orchestration.RunStore    // 5 methods
 

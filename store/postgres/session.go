@@ -111,10 +111,10 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 // This is explicit application-level cascade, not a database FOREIGN KEY
 // -- cortex_memories.session_id can't carry one. The column is shared by
 // every memory kind, not just conversation: working and summary rows
-// never set it at all, so they sit at its DEFAULT ” permanently. A real
+// never set it at all, so they sit at its DEFAULT "" permanently. A real
 // FOREIGN KEY (session_id) REFERENCES cortex_sessions(id) would require
 // every row's session_id to resolve to an existing session, including
-// those ” rows -- which would need a session literally named "" to
+// those "" rows -- which would need a session literally named "" to
 // satisfy, and would reject every SaveWorking/SaveSummary write the
 // moment the constraint existed. NOT VALID only skips validating
 // pre-existing rows at creation time; it does not exempt future inserts

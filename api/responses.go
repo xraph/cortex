@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
 )
@@ -48,6 +49,16 @@ type ListPersonasResponse struct {
 // ListCheckpointsResponse wraps a list of checkpoints.
 type ListCheckpointsResponse struct {
 	Items []*checkpoint.Checkpoint `json:"items"`
+}
+
+// ListSessionsResponse wraps a list of sessions.
+type ListSessionsResponse struct {
+	Items []*session.Session `json:"items"`
+}
+
+// CountSessionsResponse wraps a session count.
+type CountSessionsResponse struct {
+	Count int64 `json:"count"`
 }
 
 // ListToolsResponse wraps a list of tools.

@@ -1098,7 +1098,7 @@ type legacyMessage struct {
 //
 //   - Session didn't exist before this phase, so every cortex_memories
 //     row with kind = 'conversation' written before it has session_id =
-//     ” (the column's DEFAULT, added by 20260824000002). Those rows are
+//     "" (the column's DEFAULT, added by 20260824000002). Those rows are
 //     otherwise permanently unreachable: LoadConversation always filters
 //     on a real session_id.
 //   - A pre-v1.9.0 conversation was, by construction, the only
@@ -1107,10 +1107,10 @@ type legacyMessage struct {
 //     therefore the exact, non-invented description of that history, not
 //     a fabricated vocabulary the way a synthetic tenant_id backfill
 //     would have been (see 20260821000001's rejected alternative).
-//   - Rows whose scope_canon is still ” are skipped (WHERE scope_canon
-//     != ” below) and stay unreachable, exactly the state they were
+//   - Rows whose scope_canon is still "" are skipped (WHERE scope_canon
+//     != "" below) and stay unreachable, exactly the state they were
 //     already in. Because this now runs AFTER rescopeLegacyRows in the
-//     same Store.Migrate call, "still ”" only ever means a host never
+//     same Store.Migrate call, "still """ only ever means a host never
 //     supplied a Rescoper at all -- rescopeLegacyRows' own ErrNoRescoper
 //     check would have failed Migrate outright before reaching here
 //     otherwise -- not "hasn't been rescoped yet", which is no longer a
@@ -1298,7 +1298,7 @@ SELECT id FROM cortex_sessions
 
 // unbackfillDefaultSessions is the Down side of this migration. It
 // reverses exactly what Up did: memory rows this migration pointed at a
-// session go back to session_id = ”, and the sessions it created are
+// session go back to session_id = "", and the sessions it created are
 // removed. backfillSessionMarker in Metadata is what makes that safe --
 // an organically-created default session (engine.resolveSession) has
 // the identical IsDefault=true, Title "Default" shape but carries no

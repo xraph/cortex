@@ -3,7 +3,7 @@ title: MongoDB Store
 description: Document store using Grove ORM with mongodriver for MongoDB.
 ---
 
-The MongoDB store (`store/mongo`) provides a document-oriented backend using the [Grove ORM](https://github.com/xraph/grove) with `mongodriver`. It stores Cortex entities in 12 MongoDB collections with compound indexes for efficient queries scoped by `cortex.Scope`.
+The MongoDB store (`store/mongo`) provides a document-oriented backend using the [Grove ORM](https://github.com/xraph/grove) with `mongodriver`. It stores Cortex entities in 13 MongoDB collections with compound indexes for efficient queries scoped by `cortex.Scope`.
 
 ## Setup
 
@@ -48,12 +48,13 @@ if err := s.Migrate(ctx); err != nil {
 | `cortex_tool_calls` | Tool calls |
 | `cortex_memories` | Memories |
 | `cortex_checkpoints` | Checkpoints |
+| `cortex_sessions` | Sessions |
 | `cortex_orchestration_configs` | Orchestration configs |
 | `cortex_orchestration_runs` | Orchestration runs |
 
 ## Composite store interface
 
-The MongoDB store implements all 10 sub-interfaces:
+The MongoDB store implements all 11 sub-interfaces:
 
 ```go
 type Store interface {
@@ -65,6 +66,7 @@ type Store interface {
     run.Store
     memory.Store
     checkpoint.Store
+    session.Store
     orchestration.ConfigStore
     orchestration.RunStore
 

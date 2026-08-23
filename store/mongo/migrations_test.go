@@ -31,7 +31,7 @@ import (
 // startup, and always AFTER rescopeLegacyRows within that same call (see
 // store.go), so a document that only gets its scope_canon from THIS
 // Migrate call is still eligible for the backfill in the same call --
-// there is no "scope_canon != ” at Up time" boundary to fall on the
+// there is no "scope_canon != "" at Up time" boundary to fall on the
 // wrong side of the way there is for postgres/sqlite. This test proves
 // that directly with a second, skipped-version document (scope_canon
 // starts at "", a Rescoper is supplied, and it must be reachable through

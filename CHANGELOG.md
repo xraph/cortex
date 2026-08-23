@@ -4,6 +4,141 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.9.0] - Unreleased
+
+Adds sessions: a real, first-class thread that groups an agent's
+conversation messages, instead of the one-conversation-per-agent-per-scope
+shape every earlier release assumed. An agent can now hold many sessions
+in the same scope, a run can target one explicitly through
+`RunOverrides.SessionID`, and one session per agent per scope is marked
+default — the thread a run lands in when its caller names none. The
+default is a real row, created lazily on an agent's first unsessioned
+run, not an empty-string sentinel standing in for "the shared one"; see
+`docs/content/docs/concepts/sessions.mdx` for the full model.
+
+As with v1.7.0 and v1.8.0, this ships inside v1 rather than as v2.0.0.
+The module path is `github.com/xraph/cortex`, carries no `/v2` suffix,
+and migrating it was declined. Go refuses to resolve a `v2.x` tag
+against an unsuffixed module path, so a minor version is the only
+release channel available, and the breaking changes below are
+enumerated here instead of signaled by a major version bump. Read this
+whole section before upgrading.
+
+### Breaking changes
+
+- **`memory.Store`'s `SaveConversation`, `LoadConversation` and
+  `ClearConversation` gained a `sessionID id.SessionID` parameter**,
+  ahead of the `limit`/`messages` argument each already took. Scope
+  still comes from context, but which thread a conversation call reads
+  or writes no longer does — this breaks every custom `memory.Store`
+  implementation, not just the three bundled ones.
+- **`engine.Engine.LoadConversation` and `ClearConversation` gained the
+  same `sessionID id.SessionID` parameter**, one layer up from the store
+  methods above, for the same reason.
+- **`store.Store` now embeds `session.Store`**, six additional methods
+  (`CreateSession`, `GetSession`, `UpdateSession`, `DeleteSession`,
+  `ListSessions`, `CountSessions`) on top of everything the composite
+  interface already required. A custom `store.Store` implementation
+  (see `docs/content/docs/guides/custom-store.mdx`) no longer satisfies
+  the interface until it implements these too; the three bundled
+  backends already do.
+
+### Added
+
+- **The `session` package**: the `session.Session` entity
+  (`ID`, `AgentID`, `Scope`, `Title`, `Metadata`, `MessageCount`,
+  `LastMessage`, `IsDefault`) and `session.Store`, implemented by all
+  three backends. `session.ListFilter` follows the `Exact`/scope-prefix
+  convention v1.8.0 established for the entity stores, plus
+  `AgentID`, `DefaultOnly`, and `Search`.
+- `id.SessionID`, `id.NewSessionID`, `id.ParseSessionID`, and
+  `id.ParseOptionalSessionID`, the same identifier shape every other
+  entity in this package already has.
+- `cortex.ErrSessionNotFound`, returned by every session store method
+  that can't find the row it was asked for, and mapped to a 404 by the
+  API layer's `mapStoreError`.
+- `RunOverrides.SessionID` and `run.Run.SessionID`: a run can now target
+  an explicit session, and every run records which session it belongs
+  to. With no override, the engine resolves (and lazily creates, on the
+  first unsessioned run) the agent's default session for the caller's
+  scope.
+- Six REST endpoints under `/v1/agents/:name/sessions`: `POST` (create),
+  `GET` (list), `GET /count` (count), `GET /:id` (get), `PUT /:id`
+  (update), and `DELETE /:id` (delete). A session id in the path is
+  always checked against the agent named in the same path — a mismatch
+  reads as the same `ErrSessionNotFound` a genuinely missing session
+  does, rather than a distinct "forbidden" response that would leak the
+  existence of another agent's session. This is the same ownership check
+  `resolveConversationSession` added to the memory endpoints already
+  had; the new session endpoints follow it from the start rather than
+  needing a follow-up fix.
+- `DeleteSession` cascades: deleting a session also deletes every
+  conversation message it owns, on all three backends. This is an
+  explicit application-level delete, not a database `FOREIGN KEY` —
+  `cortex_memories.session_id` is shared by every memory kind, and
+  working/summary rows never set it at all, so a real foreign key would
+  reject their writes outright.
+
+### Fixed
+
+- **The reasoning loop re-saved a run's entire reloaded conversation
+  history as new rows on every turn.** `runReAct` and `streamReAct`
+  passed the whole reloaded history back into `SaveConversation`
+  alongside each run's actual new turn, so a real N-turn conversation
+  could hold far more physical rows than logical messages (a
+  three-turn conversation could reach 14 rows where it should hold 6).
+  Both now save only the messages a run actually added. See "Migration
+  notes" below for what this means for `message_count` on a session
+  backfilled from before this fix.
+
+### Migration notes
+
+- **MongoDB requires a replica set (or sharded cluster) in production.**
+  This is new as of this release: `SaveConversation` now writes inside a
+  multi-document transaction, because a session's `message_count` and
+  `last_message` counters have to commit or roll back together with the
+  message rows they describe, or the counter drifts from the rows it's
+  supposed to summarize. A standalone `mongod` cannot run transactions
+  at all, and every conversation write will fail against one.
+  `store/postgres` and `store/sqlite` have no such requirement.
+- **Existing conversations are backfilled into a per-agent-per-scope
+  default session.** Sessions didn't exist before this release, so every
+  pre-existing `cortex_memories` row with `kind = 'conversation'` has no
+  session to belong to; without a backfill, `LoadConversation`'s
+  session-scoped filter would make that history permanently
+  unreachable. A pre-v1.9.0 conversation was, by construction, the only
+  conversation an agent had in a given scope, so "the default session"
+  is the exact description of that history, not an invented one.
+- **The backfill runs on every `Migrate()` call, after the rescope pass,
+  rather than as a one-shot migration.** A one-shot version would only
+  ever see a legacy row's scope as it stood at that exact migration's
+  Up — and a host jumping from pre-v1.8.0 straight to this release in
+  one `Migrate()` call has every legacy conversation row still unscoped
+  at that point, because the rescope pass that assigns scope runs
+  separately, in the same call. Backfilling from a one-shot migration
+  would have left that entire jump's conversation history permanently
+  unreachable, with no second chance to fix it: grove never retries a
+  recorded migration version once applied. Running the backfill directly
+  from `Store.Migrate`, after rescope, on every boot, closes that gap —
+  a row only ever needs a real scope by the time the backfill inspects
+  it, regardless of which release wrote that scope. Rows whose scope is
+  never filled in at all (no `Rescoper` was ever supplied) are skipped
+  and stay unreachable, exactly as before.
+- **A legacy session's `message_count` is a `DISTINCT` count of
+  `(role, content)` pairs, not a raw row count.** Until the fix above
+  landed, the reasoning loop re-saved a run's entire history on every
+  turn, so pre-existing conversation rows are duplicated, and the
+  duplication compounds with every turn. Backfilling `message_count` as
+  a raw row count would report a number known to be wrong from the very
+  first read of every upgraded deployment. Counting distinct
+  `(role, content)` pairs instead means two things for a host reading a
+  legacy session: its `message_count` may read lower than its physical
+  row count (`LoadConversation` still returns every row, duplicates
+  included), and a user who genuinely sent the same message twice in a
+  legacy conversation is counted once. Conversations created after this
+  release count normally — the duplication this works around no longer
+  happens.
+
 ## [1.8.0] - Unreleased
 
 Finishes the scope conversion that v1.7.0 started. That release moved runs,

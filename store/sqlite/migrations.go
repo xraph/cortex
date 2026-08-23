@@ -1048,7 +1048,7 @@ type legacyMessage struct {
 // from Store.Migrate (store.go), AFTER rescopeLegacyRows, unconditionally
 // on every boot -- not from the migration's Up, which is a no-op. See
 // the postgres migration of the same version for the full reasoning
-// behind that move, the scope_canon != ” filter, and the
+// behind that move, the scope_canon != "" filter, and the
 // distinct-(role,content) message_count -- this is the same logic
 // against sqlite's `?` placeholder style.
 func backfillDefaultSessions(ctx context.Context, exec migrate.Executor) error {

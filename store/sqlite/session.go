@@ -110,7 +110,7 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 // -- see the identical comment on the postgres store's DeleteSession for
 // why cortex_memories.session_id can't carry one: the column is shared
 // by every memory kind, and working/summary rows always sit at its
-// DEFAULT ” rather than a real session id, which a real FK would reject
+// DEFAULT "" rather than a real session id, which a real FK would reject
 // on the very next non-conversation write. The delete below is what
 // keeps postgres, sqlite, and mongo observably identical: deleting a
 // session leaves no orphaned messages on any of the three.

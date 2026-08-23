@@ -145,7 +145,7 @@ func TestMigrate_workingMemoryIndexRecoversFromInvalidBuild(t *testing.T) {
 // This also proves the fix for the skipped-version upgrade bug a review
 // round caught: a host jumping straight from pre-v1.8.0 to v1.9.0 in one
 // Migrate() call has every legacy conversation row sitting at
-// scope_canon = ” at the point the migration group used to run its
+// scope_canon = "" at the point the migration group used to run its
 // one-shot backfill, before rescopeLegacyRows had a chance to assign a
 // real scope in that same call -- so the old, migration-Up-based
 // backfill found nothing, and because grove never retries a recorded
@@ -154,7 +154,7 @@ func TestMigrate_workingMemoryIndexRecoversFromInvalidBuild(t *testing.T) {
 // rescopeLegacyRows got to them) but permanently orphaned from a
 // session. backfillDefaultSessions now runs directly from Store.Migrate,
 // AFTER rescopeLegacyRows, unconditionally on every boot -- so this test
-// exercises exactly that: rows starting at scope_canon = ”, a Rescoper
+// exercises exactly that: rows starting at scope_canon = "", a Rescoper
 // supplied, ONE Migrate() call, and the conversation reachable through a
 // default session by the time it returns.
 //
@@ -169,7 +169,7 @@ func TestMigrate_workingMemoryIndexRecoversFromInvalidBuild(t *testing.T) {
 // backfillDefaultSessions' comment in migrations.go for the full
 // reasoning behind counting message_count as distinct (role, content)
 // pairs instead of a raw row count. The second group (one row, scope_l0
-// and scope_canon both ”) is the skipped-version shape: it starts with
+// and scope_canon both "") is the skipped-version shape: it starts with
 // no scope at all, so rescopeLegacyRows -- not this test -- is what
 // gives it one, inside the same Migrate() call the backfill runs in.
 func TestMigrate_backfillDefaultSessions(t *testing.T) {

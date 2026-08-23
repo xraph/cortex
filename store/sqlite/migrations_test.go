@@ -91,7 +91,7 @@ func TestMigrate_idempotentAfterPartialFailure(t *testing.T) {
 // against a genuinely pre-v1.9.0 shape built with direct SQL, bypassing
 // SaveConversation (which always stamps a real session_id today), and
 // proves the fix for the skipped-version upgrade bug a review round
-// caught -- rows starting at scope_canon = ”, a Rescoper supplied, ONE
+// caught -- rows starting at scope_canon = "", a Rescoper supplied, ONE
 // Migrate() call, and the conversation reachable through a default
 // session by the time it returns. See the postgres test for the full
 // reasoning; this is the same scenario against sqlite's `?` placeholder

@@ -47,12 +47,13 @@ The SQLite store creates the same tables as the PostgreSQL store:
 | `cortex_tool_calls` | Tool calls |
 | `cortex_memories` | Memories |
 | `cortex_checkpoints` | Checkpoints |
+| `cortex_sessions` | Sessions |
 | `cortex_orchestration_configs` | Orchestration configs |
 | `cortex_orchestration_runs` | Orchestration runs |
 
 ## Composite store interface
 
-The SQLite store implements all 10 sub-interfaces:
+The SQLite store implements all 11 sub-interfaces:
 
 ```go
 type Store interface {
@@ -64,6 +65,7 @@ type Store interface {
     run.Store
     memory.Store
     checkpoint.Store
+    session.Store
     orchestration.ConfigStore
     orchestration.RunStore
 

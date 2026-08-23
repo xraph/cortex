@@ -433,6 +433,47 @@ type ListOrchestrationRunsRequest struct {
 	Offset int    `query:"offset"`
 }
 
+// ── Session requests ───────────────────────────────────
+
+// CreateSessionRequest is the request body for creating a session.
+type CreateSessionRequest struct {
+	Name     string         `path:"name" description:"Agent name"`
+	Title    string         `json:"title,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// GetSessionRequest is the request for getting a session by ID.
+type GetSessionRequest struct {
+	Name      string `path:"name" description:"Agent name"`
+	SessionID string `path:"id" description:"Session ID"`
+}
+
+// ListSessionsRequest is the request for listing an agent's sessions.
+type ListSessionsRequest struct {
+	Name   string `path:"name" description:"Agent name"`
+	Limit  int    `query:"limit"`
+	Offset int    `query:"offset"`
+}
+
+// CountSessionsRequest is the request for counting an agent's sessions.
+type CountSessionsRequest struct {
+	Name string `path:"name" description:"Agent name"`
+}
+
+// UpdateSessionRequest is the request body for updating a session.
+type UpdateSessionRequest struct {
+	Name      string         `path:"name" description:"Agent name"`
+	SessionID string         `path:"id" description:"Session ID"`
+	Title     string         `json:"title,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// DeleteSessionRequest is the request for deleting a session.
+type DeleteSessionRequest struct {
+	Name      string `path:"name" description:"Agent name"`
+	SessionID string `path:"id" description:"Session ID"`
+}
+
 // ── Clone requests ───────────────────────────────────
 
 // CloneAgentRequest is the request for cloning an agent.
