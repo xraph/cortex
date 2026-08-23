@@ -10,6 +10,74 @@ import (
 // Migrations is the grove migration group for the Cortex SQLite store.
 var Migrations = migrate.NewGroup("cortex")
 
+// scopeColumnDefs are the host-defined scope columns added to every
+// scope-guarded table by the 20260821000001 and 20260822000001 migrations.
+var scopeColumnDefs = []struct {
+	name string
+	ddl  string
+}{
+	{"scope_l0", "TEXT NOT NULL DEFAULT ''"},
+	{"scope_l1", "TEXT NOT NULL DEFAULT ''"},
+	{"scope_l2", "TEXT NOT NULL DEFAULT ''"},
+	{"scope_extra", "TEXT NOT NULL DEFAULT '{}'"},
+	{"scope_canon", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// existingColumns reports the columns already present on table, via PRAGMA
+// table_info. SQLite doesn't accept bound parameters for PRAGMA table names,
+// but table is always one of our own hardcoded constants, never caller
+// input.
+func existingColumns(ctx context.Context, exec migrate.Executor, table string) (map[string]bool, error) {
+	rows, err := exec.Query(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, fmt.Errorf("read columns of %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return nil, fmt.Errorf("scan columns of %s: %w", table, err)
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
+// addScopeColumns adds the scope_* columns and their index to table,
+// skipping any column that already exists. SQLite's ADD COLUMN has no IF
+// NOT EXISTS, so a migration that fails partway through (e.g. after adding
+// scope_l0 but before the version is recorded) would abort every rerun on
+// "duplicate column name" without this check.
+func addScopeColumns(ctx context.Context, exec migrate.Executor, table string) error {
+	existing, err := existingColumns(ctx, exec, table)
+	if err != nil {
+		return err
+	}
+
+	for _, col := range scopeColumnDefs {
+		if existing[col.name] {
+			continue
+		}
+		if _, err := exec.Exec(ctx, `ALTER TABLE `+table+` ADD COLUMN `+col.name+` `+col.ddl); err != nil {
+			return fmt.Errorf("add column %s to %s: %w", col.name, table, err)
+		}
+	}
+
+	if _, err := exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2)`); err != nil {
+		return fmt.Errorf("index scope on %s: %w", table, err)
+	}
+	return nil
+}
+
 func init() {
 	Migrations.MustRegister(
 		&migrate.Migration{
@@ -358,10 +426,13 @@ DROP TABLE IF EXISTS cortex_orchestration_configs;
 			Comment: "Add host-defined scope columns; pre-v2 rows are left unscoped",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				// SQLite only allows one column per ALTER TABLE statement,
-				// and its ADD COLUMN doesn't support IF NOT EXISTS, so each
-				// column is its own statement. Mirrors the postgres
-				// migration's columns and index, minus the JSONB type
-				// (scope_extra is a JSON-encoded TEXT column here).
+				// and its ADD COLUMN doesn't support IF NOT EXISTS, so
+				// addScopeColumns checks PRAGMA table_info first and skips
+				// columns that already exist -- otherwise a migration that
+				// failed partway through would abort every rerun on
+				// "duplicate column name". Mirrors the postgres migration's
+				// columns and index, minus the JSONB type (scope_extra is a
+				// JSON-encoded TEXT column here).
 				//
 				// cortex_orchestration_runs is deliberately excluded: see the
 				// postgres migration of the same version for why.
@@ -371,19 +442,8 @@ DROP TABLE IF EXISTS cortex_orchestration_configs;
 					"cortex_memories",
 					"cortex_checkpoints",
 				} {
-					if _, err := exec.Exec(ctx, `
-ALTER TABLE `+table+` ADD COLUMN scope_l0    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_l1    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_l2    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_extra TEXT NOT NULL DEFAULT '{}';
-ALTER TABLE `+table+` ADD COLUMN scope_canon TEXT NOT NULL DEFAULT '';
-`); err != nil {
-						return fmt.Errorf("add scope columns to %s: %w", table, err)
-					}
-					if _, err := exec.Exec(ctx, `
-CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2);
-`); err != nil {
-						return fmt.Errorf("index scope on %s: %w", table, err)
+					if err := addScopeColumns(ctx, exec, table); err != nil {
+						return err
 					}
 				}
 
@@ -434,19 +494,8 @@ ALTER TABLE `+table+` DROP COLUMN scope_canon;
 					"cortex_steps",
 					"cortex_tool_calls",
 				} {
-					if _, err := exec.Exec(ctx, `
-ALTER TABLE `+table+` ADD COLUMN scope_l0    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_l1    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_l2    TEXT NOT NULL DEFAULT '';
-ALTER TABLE `+table+` ADD COLUMN scope_extra TEXT NOT NULL DEFAULT '{}';
-ALTER TABLE `+table+` ADD COLUMN scope_canon TEXT NOT NULL DEFAULT '';
-`); err != nil {
-						return fmt.Errorf("add scope columns to %s: %w", table, err)
-					}
-					if _, err := exec.Exec(ctx, `
-CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2);
-`); err != nil {
-						return fmt.Errorf("index scope on %s: %w", table, err)
+					if err := addScopeColumns(ctx, exec, table); err != nil {
+						return err
 					}
 				}
 
