@@ -76,6 +76,12 @@ type ToolFailed interface {
 	OnToolFailed(ctx context.Context, runID id.AgentRunID, toolName string, err error) error
 }
 
+// ToolDenied is called when an authorizer refuses a tool call. A denial
+// that leaves no record is the one an operator will want later.
+type ToolDenied interface {
+	OnToolDenied(ctx context.Context, runID id.AgentRunID, toolName, reason string) error
+}
+
 // ──────────────────────────────────────────────────
 // Persona lifecycle hooks
 // ──────────────────────────────────────────────────

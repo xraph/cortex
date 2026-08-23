@@ -51,6 +51,11 @@ type toolFailedEntry struct {
 	hook ToolFailed
 }
 
+type toolDeniedEntry struct {
+	name string
+	hook ToolDenied
+}
+
 type personaResolvedEntry struct {
 	name string
 	hook PersonaResolved
@@ -111,6 +116,7 @@ type Registry struct {
 	toolCalled             []toolCalledEntry
 	toolCompleted          []toolCompletedEntry
 	toolFailed             []toolFailedEntry
+	toolDenied             []toolDeniedEntry
 	personaResolved        []personaResolvedEntry
 	behaviorTriggered      []behaviorTriggeredEntry
 	cognitivePhaseChanged  []cognitivePhaseChangedEntry
@@ -156,6 +162,9 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(ToolFailed); ok {
 		r.toolFailed = append(r.toolFailed, toolFailedEntry{name, h})
+	}
+	if h, ok := e.(ToolDenied); ok {
+		r.toolDenied = append(r.toolDenied, toolDeniedEntry{name, h})
 	}
 	if h, ok := e.(PersonaResolved); ok {
 		r.personaResolved = append(r.personaResolved, personaResolvedEntry{name, h})
@@ -261,6 +270,17 @@ func (r *Registry) EmitToolFailed(ctx context.Context, runID id.AgentRunID, tool
 	for _, e := range r.toolFailed {
 		if err := e.hook.OnToolFailed(ctx, runID, toolName, toolErr); err != nil {
 			r.logHookError("OnToolFailed", e.name, err)
+		}
+	}
+}
+
+// EmitToolDenied notifies extensions that an authorizer refused a tool
+// call. It is purely observational: hooks record the denial, they cannot
+// veto it. The authorizer already decided.
+func (r *Registry) EmitToolDenied(ctx context.Context, runID id.AgentRunID, toolName, reason string) {
+	for _, e := range r.toolDenied {
+		if err := e.hook.OnToolDenied(ctx, runID, toolName, reason); err != nil {
+			r.logHookError("OnToolDenied", e.name, err)
 		}
 	}
 }
