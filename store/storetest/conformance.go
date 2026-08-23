@@ -13,11 +13,16 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/orchestration"
+	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/trait"
 )
 
 // Conformance runs the full scope-isolation contract against any backend.
@@ -61,18 +66,114 @@ func ctxWithScope(vals ...string) context.Context {
 // cortex_runs.agent_id and cortex_checkpoints.agent_id are real foreign
 // keys, so every run/checkpoint fixture below needs a genuinely persisted
 // agent row to reference regardless of backend.
-func mustCreateAgent(t *testing.T, s store.Store, ctx context.Context) id.AgentID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+func mustCreateAgent(t *testing.T, s store.Store, ctx context.Context, name string) id.AgentID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	agentID := id.NewAgentID()
+	if name == "" {
+		name = "conformance-" + agentID.String()
+	}
 	cfg := &agent.Config{
 		ID:    agentID,
-		Name:  "conformance-" + agentID.String(),
+		Name:  name,
 		AppID: "conformance-app",
 	}
 	if err := s.Create(ctx, cfg); err != nil {
 		t.Fatalf("fixture: create agent: %v", err)
 	}
 	return agentID
+}
+
+// mustCreateSkill creates a skill under ctx and returns its ID. app_id is
+// held fixed at "conformance-app" across every fixture in this file so it
+// can never be the thing that separates two scopes' rows in a test.
+func mustCreateSkill(t *testing.T, s store.Store, ctx context.Context, name string) id.SkillID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	skillID := id.NewSkillID()
+	if name == "" {
+		name = "conformance-" + skillID.String()
+	}
+	sk := &skill.Skill{
+		ID:    skillID,
+		Name:  name,
+		AppID: "conformance-app",
+	}
+	if err := s.CreateSkill(ctx, sk); err != nil {
+		t.Fatalf("fixture: create skill: %v", err)
+	}
+	return skillID
+}
+
+// mustCreateTrait creates a trait under ctx and returns its ID.
+func mustCreateTrait(t *testing.T, s store.Store, ctx context.Context, name string) id.TraitID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	traitID := id.NewTraitID()
+	if name == "" {
+		name = "conformance-" + traitID.String()
+	}
+	tr := &trait.Trait{
+		ID:    traitID,
+		Name:  name,
+		AppID: "conformance-app",
+	}
+	if err := s.CreateTrait(ctx, tr); err != nil {
+		t.Fatalf("fixture: create trait: %v", err)
+	}
+	return traitID
+}
+
+// mustCreateBehavior creates a behavior under ctx and returns its ID.
+func mustCreateBehavior(t *testing.T, s store.Store, ctx context.Context, name string) id.BehaviorID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	behaviorID := id.NewBehaviorID()
+	if name == "" {
+		name = "conformance-" + behaviorID.String()
+	}
+	b := &behavior.Behavior{
+		ID:    behaviorID,
+		Name:  name,
+		AppID: "conformance-app",
+	}
+	if err := s.CreateBehavior(ctx, b); err != nil {
+		t.Fatalf("fixture: create behavior: %v", err)
+	}
+	return behaviorID
+}
+
+// mustCreatePersona creates a persona under ctx and returns its ID.
+func mustCreatePersona(t *testing.T, s store.Store, ctx context.Context, name string) id.PersonaID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	personaID := id.NewPersonaID()
+	if name == "" {
+		name = "conformance-" + personaID.String()
+	}
+	p := &persona.Persona{
+		ID:    personaID,
+		Name:  name,
+		AppID: "conformance-app",
+	}
+	if err := s.CreatePersona(ctx, p); err != nil {
+		t.Fatalf("fixture: create persona: %v", err)
+	}
+	return personaID
+}
+
+// mustCreateOrchestration creates an orchestration config under ctx and
+// returns its ID.
+func mustCreateOrchestration(t *testing.T, s store.Store, ctx context.Context, name string) id.OrchestrationConfigID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	orchID := id.NewOrchestrationConfigID()
+	if name == "" {
+		name = "conformance-" + orchID.String()
+	}
+	c := &orchestration.Config{
+		ID:    orchID,
+		Name:  name,
+		AppID: "conformance-app",
+	}
+	if err := s.CreateOrchestration(ctx, c); err != nil {
+		t.Fatalf("fixture: create orchestration: %v", err)
+	}
+	return orchID
 }
 
 func newRun(agentID id.AgentID) *run.Run {
@@ -85,7 +186,7 @@ func newRun(agentID id.AgentID) *run.Run {
 // server-assigned scope/timestamps).
 func mustCreateRun(t *testing.T, s store.Store, ctx context.Context) *run.Run { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
-	agentID := mustCreateAgent(t, s, ctx)
+	agentID := mustCreateAgent(t, s, ctx, "")
 	r := newRun(agentID)
 	if err := s.CreateRun(ctx, r); err != nil {
 		t.Fatalf("fixture: create run: %v", err)
@@ -250,6 +351,98 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 		if _, err := s.LoadSummaries(ctx, agentID); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("LoadSummaries with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	// The six subtests below cover agents, skills, traits, behaviors,
+	// personas, and orchestration configs — the subsystems this phase
+	// hasn't converted yet. None of their stores check scope at all right
+	// now, so every one of these is expected to fail: Create/GetByName/List
+	// all succeed against a scopeless context instead of returning
+	// cortex.ErrNoScope. That is the correct starting state for a suite
+	// meant to go green as each subsystem is converted in a later task.
+
+	t.Run("Agent", func(t *testing.T) {
+		s := newStore(t)
+		cfg := &agent.Config{ID: id.NewAgentID(), Name: "assistant", AppID: "conformance-app"}
+		if err := s.Create(ctx, cfg); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("Create with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetByName(ctx, "conformance-app", "assistant"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.List(ctx, &agent.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("List with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		sk := &skill.Skill{ID: id.NewSkillID(), Name: "researcher", AppID: "conformance-app"}
+		if err := s.CreateSkill(ctx, sk); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateSkill with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetSkillByName(ctx, "conformance-app", "researcher"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetSkillByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListSkills(ctx, &skill.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListSkills with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		tr := &trait.Trait{ID: id.NewTraitID(), Name: "cautious", AppID: "conformance-app"}
+		if err := s.CreateTrait(ctx, tr); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateTrait with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetTraitByName(ctx, "conformance-app", "cautious"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetTraitByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListTraits(ctx, &trait.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListTraits with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		b := &behavior.Behavior{ID: id.NewBehaviorID(), Name: "always-explain", AppID: "conformance-app"}
+		if err := s.CreateBehavior(ctx, b); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateBehavior with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetBehaviorByName(ctx, "conformance-app", "always-explain"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetBehaviorByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListBehaviors(ctx, &behavior.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListBehaviors with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		p := &persona.Persona{ID: id.NewPersonaID(), Name: "support-rep", AppID: "conformance-app"}
+		if err := s.CreatePersona(ctx, p); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreatePersona with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetPersonaByName(ctx, "conformance-app", "support-rep"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetPersonaByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListPersonas(ctx, &persona.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListPersonas with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		c := &orchestration.Config{ID: id.NewOrchestrationConfigID(), Name: "escalation-flow", AppID: "conformance-app"}
+		if err := s.CreateOrchestration(ctx, c); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateOrchestration with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetOrchestrationByName(ctx, "conformance-app", "escalation-flow"); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetOrchestrationByName with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListOrchestrations(ctx, &orchestration.ConfigListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListOrchestrations with no scope = %v, want ErrNoScope", err)
 		}
 	})
 }
@@ -546,6 +739,188 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("LoadSummaries(ctxB, agentID) = %v, want exactly [%q] (scope A's summary must not be visible to scope B)", gotB, "summary-b")
 		}
 	})
+
+	// The six subtests below give agents, skills, traits, behaviors,
+	// personas, and orchestration configs the same distinct-identifier
+	// cross-scope shape as Run/Checkpoint above: two rows with DIFFERENT
+	// names, one per scope, and a listing scoped to each side that should
+	// see only its own row. None of these stores filter by scope yet, so
+	// List/Get returns rows from both scopes and every one of these is
+	// expected to fail.
+
+	t.Run("Agent", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		agentA := mustCreateAgent(t, s, ctxA, "agent-a")
+		agentB := mustCreateAgent(t, s, ctxB, "agent-b")
+
+		gotA, err := s.List(ctxA, &agent.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list agents A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != agentA {
+			t.Fatalf("List(ctxA) = %d agent(s), want exactly agentA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.List(ctxB, &agent.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list agents B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != agentB {
+			t.Fatalf("List(ctxB) = %d agent(s), want exactly agentB", len(gotB))
+		}
+
+		if _, err := s.GetByName(ctxB, "conformance-app", "agent-a"); !errors.Is(err, cortex.ErrAgentNotFound) {
+			t.Errorf("GetByName(ctxB, %q) = %v, want ErrAgentNotFound", "agent-a", err)
+		}
+	})
+
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		skillA := mustCreateSkill(t, s, ctxA, "skill-a")
+		skillB := mustCreateSkill(t, s, ctxB, "skill-b")
+
+		gotA, err := s.ListSkills(ctxA, &skill.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list skills A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != skillA {
+			t.Fatalf("ListSkills(ctxA) = %d skill(s), want exactly skillA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListSkills(ctxB, &skill.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list skills B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != skillB {
+			t.Fatalf("ListSkills(ctxB) = %d skill(s), want exactly skillB", len(gotB))
+		}
+
+		if _, err := s.GetSkillByName(ctxB, "conformance-app", "skill-a"); !errors.Is(err, cortex.ErrSkillNotFound) {
+			t.Errorf("GetSkillByName(ctxB, %q) = %v, want ErrSkillNotFound", "skill-a", err)
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		traitA := mustCreateTrait(t, s, ctxA, "trait-a")
+		traitB := mustCreateTrait(t, s, ctxB, "trait-b")
+
+		gotA, err := s.ListTraits(ctxA, &trait.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list traits A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != traitA {
+			t.Fatalf("ListTraits(ctxA) = %d trait(s), want exactly traitA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListTraits(ctxB, &trait.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list traits B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != traitB {
+			t.Fatalf("ListTraits(ctxB) = %d trait(s), want exactly traitB", len(gotB))
+		}
+
+		if _, err := s.GetTraitByName(ctxB, "conformance-app", "trait-a"); !errors.Is(err, cortex.ErrTraitNotFound) {
+			t.Errorf("GetTraitByName(ctxB, %q) = %v, want ErrTraitNotFound", "trait-a", err)
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		behaviorA := mustCreateBehavior(t, s, ctxA, "behavior-a")
+		behaviorB := mustCreateBehavior(t, s, ctxB, "behavior-b")
+
+		gotA, err := s.ListBehaviors(ctxA, &behavior.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list behaviors A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != behaviorA {
+			t.Fatalf("ListBehaviors(ctxA) = %d behavior(s), want exactly behaviorA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListBehaviors(ctxB, &behavior.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list behaviors B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != behaviorB {
+			t.Fatalf("ListBehaviors(ctxB) = %d behavior(s), want exactly behaviorB", len(gotB))
+		}
+
+		if _, err := s.GetBehaviorByName(ctxB, "conformance-app", "behavior-a"); !errors.Is(err, cortex.ErrBehaviorNotFound) {
+			t.Errorf("GetBehaviorByName(ctxB, %q) = %v, want ErrBehaviorNotFound", "behavior-a", err)
+		}
+	})
+
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		personaA := mustCreatePersona(t, s, ctxA, "persona-a")
+		personaB := mustCreatePersona(t, s, ctxB, "persona-b")
+
+		gotA, err := s.ListPersonas(ctxA, &persona.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list personas A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != personaA {
+			t.Fatalf("ListPersonas(ctxA) = %d persona(s), want exactly personaA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListPersonas(ctxB, &persona.ListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list personas B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != personaB {
+			t.Fatalf("ListPersonas(ctxB) = %d persona(s), want exactly personaB", len(gotB))
+		}
+
+		if _, err := s.GetPersonaByName(ctxB, "conformance-app", "persona-a"); !errors.Is(err, cortex.ErrPersonaNotFound) {
+			t.Errorf("GetPersonaByName(ctxB, %q) = %v, want ErrPersonaNotFound", "persona-a", err)
+		}
+	})
+
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		orchA := mustCreateOrchestration(t, s, ctxA, "orchestration-a")
+		orchB := mustCreateOrchestration(t, s, ctxB, "orchestration-b")
+
+		gotA, err := s.ListOrchestrations(ctxA, &orchestration.ConfigListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list orchestrations A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != orchA {
+			t.Fatalf("ListOrchestrations(ctxA) = %d orchestration(s), want exactly orchA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListOrchestrations(ctxB, &orchestration.ConfigListFilter{AppID: "conformance-app"})
+		if err != nil {
+			t.Fatalf("list orchestrations B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != orchB {
+			t.Fatalf("ListOrchestrations(ctxB) = %d orchestration(s), want exactly orchB", len(gotB))
+		}
+
+		if _, err := s.GetOrchestrationByName(ctxB, "conformance-app", "orchestration-a"); !errors.Is(err, cortex.ErrOrchestrationNotFound) {
+			t.Errorf("GetOrchestrationByName(ctxB, %q) = %v, want ErrOrchestrationNotFound", "orchestration-a", err)
+		}
+	})
 }
 
 // ──────────────────────────────────────────────────
@@ -727,6 +1102,147 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			t.Fatalf("Resolve(ctxB, cpB.ID): %v", err)
 		}
 	})
+
+	// The six subtests below are the ones that matter for this task: ONE
+	// name reused across two scopes, held under the same app_id (app_id is
+	// a required lookup parameter here, not the scope under test — holding
+	// it fixed keeps scope as the only thing that could separate these
+	// rows). Two different names would be separated by the name alone and
+	// would prove nothing about a scope predicate that doesn't exist yet.
+	//
+	// None of these six stores are scope-guarded, and app_id+name is
+	// already a real unique index on every one of these tables (see
+	// idx_cortex_*_app_name in store/sqlite/migrations.go), independent of
+	// any scope column. So the second mustCreate* call below is expected to
+	// fail outright with cortex.ErrAlreadyExists — the fixture can't even
+	// get two rows on the books to compare, which is itself the proof that
+	// nothing about scope separates them.
+
+	t.Run("Agent", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreateAgent(t, s, ctxA, "assistant")
+		mustCreateAgent(t, s, ctxB, "assistant")
+
+		gotA, err := s.GetByName(ctxA, "conformance-app", "assistant")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own agent: %v", err)
+		}
+		gotB, err := s.GetByName(ctxB, "conformance-app", "assistant")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own agent: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
+
+	t.Run("Skill", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreateSkill(t, s, ctxA, "researcher")
+		mustCreateSkill(t, s, ctxB, "researcher")
+
+		gotA, err := s.GetSkillByName(ctxA, "conformance-app", "researcher")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own skill: %v", err)
+		}
+		gotB, err := s.GetSkillByName(ctxB, "conformance-app", "researcher")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own skill: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
+
+	t.Run("Trait", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreateTrait(t, s, ctxA, "cautious")
+		mustCreateTrait(t, s, ctxB, "cautious")
+
+		gotA, err := s.GetTraitByName(ctxA, "conformance-app", "cautious")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own trait: %v", err)
+		}
+		gotB, err := s.GetTraitByName(ctxB, "conformance-app", "cautious")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own trait: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
+
+	t.Run("Behavior", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreateBehavior(t, s, ctxA, "always-explain")
+		mustCreateBehavior(t, s, ctxB, "always-explain")
+
+		gotA, err := s.GetBehaviorByName(ctxA, "conformance-app", "always-explain")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own behavior: %v", err)
+		}
+		gotB, err := s.GetBehaviorByName(ctxB, "conformance-app", "always-explain")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own behavior: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
+
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreatePersona(t, s, ctxA, "support-rep")
+		mustCreatePersona(t, s, ctxB, "support-rep")
+
+		gotA, err := s.GetPersonaByName(ctxA, "conformance-app", "support-rep")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own persona: %v", err)
+		}
+		gotB, err := s.GetPersonaByName(ctxB, "conformance-app", "support-rep")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own persona: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
+
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		mustCreateOrchestration(t, s, ctxA, "escalation-flow")
+		mustCreateOrchestration(t, s, ctxB, "escalation-flow")
+
+		gotA, err := s.GetOrchestrationByName(ctxA, "conformance-app", "escalation-flow")
+		if err != nil {
+			t.Fatalf("scope A cannot read its own orchestration: %v", err)
+		}
+		gotB, err := s.GetOrchestrationByName(ctxB, "conformance-app", "escalation-flow")
+		if err != nil {
+			t.Fatalf("scope B cannot read its own orchestration: %v", err)
+		}
+		if gotA.ID == gotB.ID {
+			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+	})
 }
 
 // ──────────────────────────────────────────────────
@@ -848,7 +1364,7 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
 		createCtx := ctxWithScope("ws_x", "p1")
-		agentID := mustCreateAgent(t, s, createCtx)
+		agentID := mustCreateAgent(t, s, createCtx, "")
 
 		loaded, err := s.Get(context.Background(), agentID)
 		if err != nil {
@@ -992,7 +1508,7 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
-		agentID := mustCreateAgent(t, s, ctx)
+		agentID := mustCreateAgent(t, s, ctx, "")
 		got, err := s.Get(context.Background(), agentID)
 		if err != nil {
 			t.Fatalf("get agent after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
