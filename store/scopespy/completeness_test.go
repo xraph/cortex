@@ -128,6 +128,25 @@ func reachedMethods(t *testing.T) map[string]bool {
 	if suspended.State != run.StatePaused {
 		t.Fatalf("the suspend scenario left the run in %q, so it never reached CreateSuspension", suspended.State)
 	}
+
+	// The suspended run is the fixture for a resume, on the same engine
+	// and the same spy so the resume reads exactly the suspension the run
+	// just wrote. Resume reaches the claim, the run and agent reads, the
+	// step lookup and the delete: six methods no run that finishes in one
+	// pass ever touches.
+	susps := suspendSpy.Suspensions()
+	if len(susps) != 1 || len(susps[0].Pending) != 1 {
+		t.Fatalf("the suspend scenario wrote %d suspensions; the resume scenario needs exactly 1 with 1 pending call", len(susps))
+	}
+	resumed, err := suspendEngine.Resume(runCtx, suspended.ID, engine.ResumeInput{
+		ToolResults: []engine.ToolResult{{ToolCallID: susps[0].Pending[0].ID, Content: "the caller ran it"}},
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Fatalf("the resume scenario left the run in %q, so it never ran the loop to completion", resumed.State)
+	}
 	for _, c := range suspendSpy.Calls() {
 		reached[c.Method] = true
 	}

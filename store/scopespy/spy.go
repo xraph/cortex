@@ -44,6 +44,10 @@ type Spy struct {
 	calls       []Call
 	suspensions []*suspension.Suspension
 	suspendErr  error
+	claimed     map[id.AgentRunID]bool
+	runs        map[id.AgentRunID]run.Run
+	steps       []run.Step
+	toolCalls   []run.ToolCall
 }
 
 // FailSuspensionWrites makes every later CreateSuspension return err, so
@@ -64,7 +68,30 @@ func (s *Spy) Suspensions() []*suspension.Suspension {
 	return out
 }
 
-func New() *Spy { return &Spy{} }
+// ToolCalls returns the tool call rows the engine wrote, in order.
+func (s *Spy) ToolCalls() []run.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]run.ToolCall, len(s.toolCalls))
+	copy(out, s.toolCalls)
+	return out
+}
+
+// Steps returns the steps the engine wrote, in order.
+func (s *Spy) Steps() []run.Step {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]run.Step, len(s.steps))
+	copy(out, s.steps)
+	return out
+}
+
+func New() *Spy {
+	return &Spy{
+		claimed: make(map[id.AgentRunID]bool),
+		runs:    make(map[id.AgentRunID]run.Run),
+	}
+}
 
 func (s *Spy) record(ctx context.Context, method string) {
 	s.mu.Lock()
@@ -95,18 +122,58 @@ func (s *Spy) CallCount() int {
 	return len(s.calls)
 }
 
-func (s *Spy) CreateRun(ctx context.Context, _ *run.Run) error {
+// CreateRun keeps the run so GetRun can serve it back. A resume reads
+// the run it is continuing, and a spy that forgot every run it was handed
+// could not exercise that path at all.
+func (s *Spy) CreateRun(ctx context.Context, r *run.Run) error {
 	s.record(ctx, "CreateRun")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runs[r.ID] = *r
 	return nil
 }
 
-func (s *Spy) UpdateRun(ctx context.Context, _ *run.Run) error {
+func (s *Spy) UpdateRun(ctx context.Context, r *run.Run) error {
 	s.record(ctx, "UpdateRun")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runs[r.ID] = *r
 	return nil
+}
+
+// GetRun returns a copy, the way a real store would. Handing back the
+// same object the engine already holds would let a test pass on a run the
+// engine never actually persisted.
+func (s *Spy) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	s.record(ctx, "GetRun")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.runs[runID]
+	if !ok {
+		return nil, cortex.ErrRunNotFound
+	}
+	return &r, nil
+}
+
+// Get returns an agent carrying the id it was asked for. GetByName mints
+// a fresh id per call, so a resume that looked the agent up by the run's
+// AgentID would otherwise get a stranger back.
+func (s *Spy) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
+	s.record(ctx, "Get")
+	return &agent.Config{
+		ID:       agentID,
+		Name:     "assistant",
+		MaxSteps: 2,
+	}, nil
 }
 
 // CreateSuspension records the suspension itself, not just that the call
 // happened: a suspend test's whole subject is what the row says.
+//
+// It also refuses a second suspension for a run that already has one,
+// which is the partial unique index every real backend carries. Without
+// it a resume that forgot to delete the row it claimed would still pass
+// here, and the collision would only show up in production.
 func (s *Spy) CreateSuspension(ctx context.Context, susp *suspension.Suspension) error {
 	s.record(ctx, "CreateSuspension")
 	s.mu.Lock()
@@ -114,17 +181,97 @@ func (s *Spy) CreateSuspension(ctx context.Context, susp *suspension.Suspension)
 	if s.suspendErr != nil {
 		return s.suspendErr
 	}
+	if _, err := s.findSuspension(susp.RunID); err == nil {
+		return cortex.ErrAlreadyExists
+	}
 	s.suspensions = append(s.suspensions, susp)
 	return nil
 }
 
-func (s *Spy) CreateStep(ctx context.Context, _ *run.Step) error {
+// GetSuspension serves back what CreateSuspension recorded.
+func (s *Spy) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
+	s.record(ctx, "GetSuspension")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.findSuspension(runID)
+}
+
+// ClaimSuspension models the one property the real stores go to a
+// transaction for: a suspension can only be claimed once. The second
+// claimer gets ErrNotSuspended, exactly as it would against a run the
+// first claimer already moved out of paused.
+func (s *Spy) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
+	s.record(ctx, "ClaimSuspension")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.claimed[runID] {
+		return nil, cortex.ErrNotSuspended
+	}
+	susp, err := s.findSuspension(runID)
+	if err != nil {
+		return nil, err
+	}
+	s.claimed[runID] = true
+	return susp, nil
+}
+
+// DeleteSuspension drops the row, so a resumed run that suspends again
+// writes a fresh one rather than colliding with its own stale one.
+func (s *Spy) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error {
+	s.record(ctx, "DeleteSuspension")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, susp := range s.suspensions {
+		if susp.RunID == runID {
+			s.suspensions = append(s.suspensions[:i], s.suspensions[i+1:]...)
+			delete(s.claimed, runID)
+			return nil
+		}
+	}
+	return cortex.ErrNotSuspended
+}
+
+// findSuspension must be called with mu held.
+func (s *Spy) findSuspension(runID id.AgentRunID) (*suspension.Suspension, error) {
+	for _, susp := range s.suspensions {
+		if susp.RunID == runID {
+			return susp, nil
+		}
+	}
+	return nil, cortex.ErrNotSuspended
+}
+
+func (s *Spy) CreateStep(ctx context.Context, step *run.Step) error {
 	s.record(ctx, "CreateStep")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = append(s.steps, *step)
 	return nil
 }
 
-func (s *Spy) CreateToolCall(ctx context.Context, _ *run.ToolCall) error {
+// ListSteps is what a resume uses to find the step its pending calls came
+// from, so the tool call rows it writes land on the step that made them.
+func (s *Spy) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
+	s.record(ctx, "ListSteps")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*run.Step, 0, len(s.steps))
+	for i := range s.steps {
+		if s.steps[i].RunID == runID {
+			step := s.steps[i]
+			out = append(out, &step)
+		}
+	}
+	return out, nil
+}
+
+// CreateToolCall records the row itself: a resumed call's row is the
+// audit trail entry a test here is actually asserting on.
+func (s *Spy) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 	s.record(ctx, "CreateToolCall")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, *tc)
 	return nil
 }
 

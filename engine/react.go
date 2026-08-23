@@ -54,6 +54,19 @@ func (s *reactState) continuation() suspension.Continuation {
 	}
 }
 
+// stateFromContinuation is continuation's inverse, and the only way a
+// resumed loop gets its state.
+func stateFromContinuation(cont suspension.Continuation) *reactState {
+	return &reactState{
+		messages:        cont.Messages,
+		systemPrompt:    cont.SystemPrompt,
+		stepIndex:       cont.StepIndex,
+		tokensUsed:      cont.TokensUsed,
+		newMessagesFrom: cont.NewMessagesFrom,
+		sessionID:       cont.SessionID,
+	}
+}
+
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
 	scope := cortex.ScopeFromContext(ctx)
