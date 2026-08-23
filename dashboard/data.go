@@ -149,7 +149,7 @@ func fetchAgents(ctx context.Context, s store.Store) ([]*agent.Config, error) {
 // no conversation to show yet, so the zero id (which LoadConversation
 // then reads as "no rows") is a normal answer here, not an error.
 func fetchDefaultSessionID(ctx context.Context, s store.Store, agentID id.AgentID) id.SessionID {
-	sessions, err := s.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true})
+	sessions, err := s.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true, Exact: true})
 	if err != nil || len(sessions) != 1 {
 		return id.SessionID{}
 	}
