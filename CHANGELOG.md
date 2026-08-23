@@ -136,6 +136,16 @@ version bump. Read this whole section before upgrading.
   still reads `app_id`/`tenant_id` off unscoped rows to feed your
   `Rescoper`. Expect a later release to drop them once hosts have
   finished migrating.
+- **Rolling back this release's Postgres or SQLite migrations is one-way
+  once any two scopes hold a same-named agent, skill, trait, behavior,
+  persona, or orchestration config.** Every `Down` in this phase
+  recreates the old `UNIQUE (app_id, name)` index, and every row written
+  under v1.8.0 has `app_id = ''`. The first time two such rows share a
+  name, `Down` fails outright on the index build rather than corrupting
+  anything — it just means rollback stops being available from that
+  point on. Mongo carries no rollback path for this phase at all. Plan
+  accordingly: if you might need to roll back, do it before two scopes
+  accumulate a same-named entity, not after.
 
 ## [1.7.0] - Unreleased
 
