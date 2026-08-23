@@ -4,6 +4,103 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.10.0] - Unreleased
+
+Adds tool authorization: a host-implemented `cortex.ToolAuthorizer` that
+decides which tools a model gets to see and which calls it's actually
+allowed to dispatch. Before this release cortex had no seam for a host's
+own permission model to reach a tool call at all; any registered tool was
+visible to every run and dispatched for every call, whatever the caller
+was or wasn't allowed to do.
+
+This release ships two of the authorizer's three outcomes. `Authorize`
+returning nil allows the call; returning any error denies it, and the
+error's text is fed back to the model as the tool result, so the model
+can react to the refusal instead of the run just failing. The third
+outcome, escalating a call to a human for approval, needs a suspension
+mechanism that doesn't exist yet. It's arriving in v1.11.0, not this one:
+see "Deferred to v1.11.0" below before you build against it.
+
+As with v1.7.0, v1.8.0 and v1.9.0, this ships inside v1 rather than as
+v2.0.0. The module path is `github.com/xraph/cortex`, carries no `/v2`
+suffix, and migrating it was declined. Go refuses to resolve a `v2.x`
+tag against an unsuffixed module path, so a minor version is the only
+release channel available, and the breaking changes below are
+enumerated here instead of signaled by a major version bump. Read this
+whole section before upgrading.
+
+### Breaking changes
+
+- **`engine.ToolHandler` now takes `(ctx context.Context, inv
+  cortex.Invocation)` instead of `(ctx context.Context, arguments
+  string)`.** Every `WithTool` registration has to change: pull the
+  arguments out of `inv.Call.Arguments` rather than a second parameter.
+  The builtin `knowledge_search` handler moved onto the same contract
+  internally, so this isn't a shape the engine keeps around anywhere as
+  a fallback. Update anything that implements `ToolHandler`, not just
+  the literal `WithTool(...)` call sites.
+
+### Added
+
+- **`cortex.ToolAuthorizer`**, the interface a host implements to gate
+  tools. `Visible(ctx, Subject, []llm.Tool) []llm.Tool` filters the list
+  a model is shown; `Authorize(ctx, Subject, llm.ToolCall) error` gates
+  one dispatch. Both are consulted on every tool call, deliberately: a
+  model can name a tool it was never shown, so trusting `Visible` to
+  have already filtered would leave `Authorize` doing nothing. Install
+  one with `engine.WithToolAuthorizer`. A nil authorizer, or none set at
+  all, allows everything, so a host that doesn't configure one sees no
+  behavior change.
+- **`cortex.Subject`**: who's asking. Carries `Scope`, `Principal`,
+  `AgentID` and `RunID`. `Principal` is `any`, and cortex never
+  interprets it: a host puts its own identity object there and gets the
+  identical value back at both `Visible` and `Authorize`.
+- **`cortex.Invocation`**: one tool call about to run. Embeds `Subject`
+  and adds `Call llm.ToolCall`, so a `ToolHandler` receives scope and
+  principal explicitly instead of reaching into the context for them.
+- **`cortex.WithPrincipal(ctx, principal any) context.Context`** and
+  **`cortex.PrincipalFromContext(ctx) any`**, attaching and reading the
+  host's caller identity on the context, next to `WithScope` and
+  `ScopeFromContext` and following the same contract (a missing
+  principal returns nil, not a panic). Nothing populates
+  `Subject.Principal` unless a host calls `WithPrincipal` on the request
+  context; skip it and an authorizer only has scope, agent and run to
+  decide on.
+- **`plugin.ToolDenied`**, a hook fired when the authorizer refuses a
+  call: `OnToolDenied(ctx, runID, toolName, reason string) error`. It's
+  observational, not a veto point. A hook can log or alert on a denial;
+  it can't undo one, since the authorizer has already decided by the
+  time the hook runs.
+- **`Registry.EmitToolDenied`**, the emitter `executeTool` calls on a
+  denial, notifying every registered `ToolDenied` hook.
+
+### Fixed
+
+- **`plugin.ToolFailed` now actually fires.** It's been a declared hook
+  since an earlier release, but `executeTool` never called
+  `EmitToolFailed` when a handler returned an error, so a host that
+  implemented `ToolFailed` had registered a callback nothing invoked.
+  This release wires the call in while `executeTool` was already being
+  touched for the authorizer. If you implemented `ToolFailed` and never
+  saw it run, you'll start seeing it now; this is a genuine behavior
+  change even though it's a fix, not a feature.
+- **`resolveTools` now honors `cfg.Tools`.** The parameter existed but
+  was discarded on arrival (`resolveTools(_ []string)`) since the
+  function was first written, so an agent configured with a restricted
+  tool list was silently handed every tool anyway. An agent that names
+  specific tools in its config now sees only those tools, which is what
+  the config already claimed to do.
+
+### Deferred to v1.11.0
+
+- **Escalating a tool call to a human approver is not available in this
+  release.** `Authorize` can allow or deny a call; it has no way to
+  suspend a run so a person can approve it later. That needs
+  `ErrRequiresApproval` and a suspension mechanism to go with it, and
+  both are landing together in v1.11.0, so no half of that feature ships
+  on its own. Returning a custom error from `Authorize` today just
+  denies the call; there's no approval path for it to fall into.
+
 ## [1.9.0] - Unreleased
 
 Adds sessions: a real, first-class thread that groups an agent's

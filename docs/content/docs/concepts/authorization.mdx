@@ -1,0 +1,194 @@
+---
+title: Tool Authorization
+description: How a host gates which tools a model sees and which calls it can actually dispatch.
+---
+
+Cortex has no built-in notion of who's allowed to call what. Every tool a host
+registers with `engine.WithTool`, plus the builtins cortex ships itself, is
+available to every run by default. `cortex.ToolAuthorizer` is the seam a host
+uses to change that: one interface, implemented once, that decides which
+tools a given caller gets shown and which calls that caller can actually
+dispatch.
+
+A nil authorizer, or none configured at all, allows everything. Set nothing
+and nothing changes: every existing host that never heard of this release
+keeps behaving exactly as it did before.
+
+## The interface
+
+```go
+type ToolAuthorizer interface {
+    // Visible filters the tool list before it reaches the model. Called
+    // once per step.
+    Visible(ctx context.Context, s Subject, tools []llm.Tool) []llm.Tool
+
+    // Authorize gates one dispatch. Returning nil allows the call; any
+    // error denies it, and the error's text is fed back to the model as
+    // the tool result so it can react rather than silently retrying.
+    Authorize(ctx context.Context, s Subject, call llm.ToolCall) error
+}
+```
+
+`Subject` is who's asking:
+
+```go
+type Subject struct {
+    Scope     Scope
+    Principal any
+    AgentID   id.AgentID
+    RunID     id.AgentRunID
+}
+```
+
+## Two consultation points, not one
+
+It's tempting to read `Visible` and `Authorize` as the same check running
+twice, once to build the list and once to double-check it. They aren't. They
+answer different questions: `Visible` decides what the model is *shown*,
+`Authorize` decides what it's *allowed to run*.
+
+The gap between those two is real, not theoretical. A model's tool call
+arrives as a name and a JSON argument string the model generated itself.
+Nothing forces that name to be one `Visible` returned earlier in the same
+step. A model can hallucinate a tool name it read in a system prompt, recall
+one from an earlier turn that's since been revoked, or just get it wrong.
+If `executeTool` trusted that anything reaching it had already passed
+`Visible`, an authorizer that hides a tool would only ever be advisory: a
+caller who could get the model to name the hidden tool anyway would have it
+dispatched with no gate in the way at all.
+
+Cortex's engine consults `Authorize` on every dispatch, whether or not that
+tool's name ever appeared in the list `Visible` produced for that step. The
+test suite pins this down directly: an authorizer that hides a tool entirely
+from `Visible` still has `Authorize` called before that same tool runs, and
+still gets to deny it.
+
+## A worked example
+
+Say a host already has its own permission model: a caller identity with a
+set of permission strings, checked everywhere else in the host's code. An
+authorizer over it is a thin adapter, not a new authorization system:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/xraph/cortex"
+    "github.com/xraph/cortex/engine"
+    "github.com/xraph/cortex/llm"
+)
+
+// caller is the host's own identity type. Cortex never looks inside it.
+type caller struct {
+    UserID      string
+    Permissions map[string]bool
+}
+
+// permissionAuthorizer adapts a host's existing permission model to
+// cortex.ToolAuthorizer.
+type permissionAuthorizer struct{}
+
+func (permissionAuthorizer) Visible(_ context.Context, s cortex.Subject, tools []llm.Tool) []llm.Tool {
+    c, ok := s.Principal.(*caller)
+    if !ok {
+        return nil
+    }
+    out := make([]llm.Tool, 0, len(tools))
+    for _, t := range tools {
+        if c.Permissions[t.Name] {
+            out = append(out, t)
+        }
+    }
+    return out
+}
+
+func (permissionAuthorizer) Authorize(_ context.Context, s cortex.Subject, call llm.ToolCall) error {
+    c, ok := s.Principal.(*caller)
+    if !ok || !c.Permissions[call.Name] {
+        return fmt.Errorf("caller not permitted to call %q", call.Name)
+    }
+    return nil
+}
+```
+
+Install it with `engine.WithToolAuthorizer`:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(pgStore),
+    engine.WithToolAuthorizer(permissionAuthorizer{}),
+)
+```
+
+Neither method above reaches into the context for the caller's identity.
+Both read it off `s.Principal`, which brings up the part a host has to wire
+up separately: nothing populates `Principal` unless you tell it to.
+
+## Attaching a principal
+
+`Subject.Principal` is `any`, and cortex never interprets it. That's
+deliberate: the host's identity type, whatever it is, a struct pointer, a
+JWT claims object, an integer user ID, travels through unchanged and comes
+back out exactly as it went in. Cortex's job is carrying it, not
+understanding it.
+
+It arrives on the context, next to scope:
+
+```go
+ctx = cortex.WithPrincipal(ctx, &caller{
+    UserID:      "user_42",
+    Permissions: map[string]bool{"search_docs": true},
+})
+ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{{Key: "workspace", Value: "ws_1"}},
+})
+```
+
+`WithPrincipal` and its reader, `cortex.PrincipalFromContext`, follow the
+same contract `WithScope`/`ScopeFromContext` already established: a context
+nobody attached a principal to yields `nil`, not a panic. Set it from the
+same middleware that already calls `WithScope`, typically right after you've
+authenticated the request.
+
+Skip this and `Subject.Principal` is `nil` on every call. An authorizer
+that only reads scope, agent, and run still works fine; one that expects a
+caller identity gets nothing to check and, per the example above, denies
+everything by default when it can't type-assert a principal out of `nil`.
+That's a property of how you write the authorizer, not something cortex
+enforces: writing `Visible`/`Authorize` to fail open on a missing principal
+instead of closed is a choice available to you, just not the one the example
+above makes.
+
+## What a denial looks like to the model
+
+`Authorize` returning an error doesn't fail the run. The engine catches it,
+emits `plugin.ToolDenied` for anything listening (a hook can log or alert on
+the denial, but it can't overturn it since the authorizer already decided),
+and returns the error's text back to the model as the tool's result, the
+same channel a handler's own return value would use. From the model's side,
+a denied tool call looks like a tool that answered "no" rather than a crash.
+The model sees the refusal in its next turn and can try something else,
+explain to the user why it can't proceed, or ask for different input:
+whatever the agent's instructions tell it to do when a tool declines.
+
+This is why `Authorize`'s error should be worded for the model to read, not
+just for a human debugging a log line later. `"caller not permitted to call
+%q"` is fine. A bare `errors.New("denied")` leaves the model with nothing to
+reason about.
+
+## What's not here yet
+
+An authorizer can allow a call or deny it. It cannot, in this release, defer
+a call for a human to approve later. That third outcome needs a way to
+suspend a run mid-step and resume it once someone's granted or refused the
+call, and that suspension mechanism doesn't exist yet. It's arriving in
+v1.11.0, alongside `ErrRequiresApproval`, together rather than piecemeal.
+
+If your authorizer wants "ask a human," today it has one option: deny, with
+an error explaining that the action needs approval a human hasn't given yet.
+That's a real answer, just not the deferred one. Don't build against an
+approval outcome that doesn't exist; a call to `Authorize` today only ever
+resolves to allow or deny.
