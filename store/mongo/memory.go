@@ -67,8 +67,16 @@ func scopeFilter(s cortex.Scope, exact bool) bson.M {
 	return f
 }
 
-// SaveConversation appends messages to conversation memory.
-func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messages []memory.Message) error {
+// SaveConversation appends messages to conversation memory and updates
+// the owning session's message_count/last_message inside one
+// multi-document transaction. The counter is derived from the rows this
+// call actually writes (len(messages), not a flat +1 per call), so it
+// always matches the physical row count even when a caller's batch size
+// varies from call to call. If the session document can't be found — a
+// session id that doesn't correspond to a real session — the whole write
+// rolls back rather than leaving orphaned message rows a reader can
+// never reach through GetSession/ListSessions.
+func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
@@ -78,8 +86,10 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 	canon := scope.Canonical()
+	sid := sessionID.String()
 
 	models := make([]memoryModel, len(messages))
+	var lastMessage string
 	for i, msg := range messages {
 		content, err := json.Marshal(&msg)
 		if err != nil {
@@ -96,6 +106,7 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 			// a SaveConversation failed outright until this was set.
 			ID:         id.NewMemoryID().String(),
 			AgentID:    agentID.String(),
+			SessionID:  sid,
 			Kind:       "conversation",
 			Content:    string(content),
 			Metadata:   msg.Metadata,
@@ -106,26 +117,54 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 			ScopeCanon: canon,
 			CreatedAt:  now(),
 		}
+		lastMessage = msg.Content
 	}
 
-	_, err := s.mdb.NewInsert(&models).Exec(ctx)
+	sess, err := s.mdb.Client().StartSession()
 	if err != nil {
-		return fmt.Errorf("cortex/mongo: save conversation: %w", err)
+		return fmt.Errorf("cortex/mongo: start save conversation session: %w", err)
+	}
+	defer sess.EndSession(ctx)
+
+	_, err = sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
+		if _, insErr := s.mdb.NewInsert(&models).Exec(sc); insErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: save conversation: %w", insErr)
+		}
+
+		res, updErr := s.mdb.NewUpdate((*sessionModel)(nil)).
+			Filter(bson.M{"_id": sid, "scope_canon": canon}).
+			SetUpdate(bson.M{
+				"$inc": bson.M{"message_count": len(messages)},
+				"$set": bson.M{"last_message": lastMessage, "updated_at": now()},
+			}).
+			Exec(sc)
+		if updErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: update session counters: %w", updErr)
+		}
+		if res.MatchedCount() == 0 {
+			return nil, fmt.Errorf("cortex/mongo: save conversation: %w", cortex.ErrSessionNotFound)
+		}
+		return nil, nil //nolint:nilnil // WithTransaction's callback contract: no result value to return
+	})
+	if err != nil {
+		return fmt.Errorf("cortex/mongo: commit save conversation: %w", err)
 	}
 
 	return nil
 }
 
-// LoadConversation returns conversation messages for an agent within scope.
-func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+// LoadConversation returns conversation messages for an agent's session
+// within scope.
+func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
 	}
 
 	filter := bson.M{
-		"agent_id": agentID.String(),
-		"kind":     "conversation",
+		"agent_id":   agentID.String(),
+		"session_id": sessionID.String(),
+		"kind":       "conversation",
 	}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
@@ -156,27 +195,51 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit 
 	return messages, nil
 }
 
-// ClearConversation removes all conversation messages for an agent within scope.
-func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+// ClearConversation removes a session's conversation messages and resets
+// its counters in the same multi-document transaction, for the same
+// drift reason as SaveConversation.
+func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
+	sid := sessionID.String()
+	canon := scope.Canonical()
 
 	filter := bson.M{
-		"agent_id": agentID.String(),
-		"kind":     "conversation",
+		"agent_id":   agentID.String(),
+		"session_id": sid,
+		"kind":       "conversation",
 	}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
 
-	_, err := s.mdb.NewDelete((*memoryModel)(nil)).
-		Many().
-		Filter(filter).
-		Exec(ctx)
+	sess, err := s.mdb.Client().StartSession()
 	if err != nil {
-		return fmt.Errorf("cortex/mongo: clear conversation: %w", err)
+		return fmt.Errorf("cortex/mongo: start clear conversation session: %w", err)
+	}
+	defer sess.EndSession(ctx)
+
+	_, err = sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
+		if _, delErr := s.mdb.NewDelete((*memoryModel)(nil)).Many().Filter(filter).Exec(sc); delErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: clear conversation: %w", delErr)
+		}
+
+		res, updErr := s.mdb.NewUpdate((*sessionModel)(nil)).
+			Filter(bson.M{"_id": sid, "scope_canon": canon}).
+			SetUpdate(bson.M{"$set": bson.M{"message_count": 0, "last_message": "", "updated_at": now()}}).
+			Exec(sc)
+		if updErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: reset session counters: %w", updErr)
+		}
+		if res.MatchedCount() == 0 {
+			return nil, fmt.Errorf("cortex/mongo: clear conversation: %w", cortex.ErrSessionNotFound)
+		}
+		return nil, nil //nolint:nilnil // WithTransaction's callback contract: no result value to return
+	})
+	if err != nil {
+		return fmt.Errorf("cortex/mongo: commit clear conversation: %w", err)
 	}
 
 	return nil

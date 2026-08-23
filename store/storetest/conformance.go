@@ -363,13 +363,14 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 	t.Run("Conversation", func(t *testing.T) {
 		s := newStore(t)
 		agentID := id.NewAgentID()
-		if err := s.SaveConversation(ctx, agentID, []memory.Message{{Role: "user", Content: "hi"}}); !errors.Is(err, cortex.ErrNoScope) {
+		sessionID := id.NewSessionID()
+		if err := s.SaveConversation(ctx, agentID, sessionID, []memory.Message{{Role: "user", Content: "hi"}}); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("SaveConversation with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.LoadConversation(ctx, agentID, 0); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.LoadConversation(ctx, agentID, sessionID, 0); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("LoadConversation with no scope = %v, want ErrNoScope", err)
 		}
-		if err := s.ClearConversation(ctx, agentID); !errors.Is(err, cortex.ErrNoScope) {
+		if err := s.ClearConversation(ctx, agentID, sessionID); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("ClearConversation with no scope = %v, want ErrNoScope", err)
 		}
 	})
@@ -691,8 +692,17 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 
 	t.Run("Conversation", func(t *testing.T) {
 		s := newStore(t)
-		ctxA := ctxWithScope("ws_a")
-		ctxB := ctxWithScope("ws_b")
+		// Distinct scope tokens from the rest of this function's
+		// ws_a/ws_b, not because conversation memory itself needs them,
+		// but because this subtest now also creates sessions
+		// (SaveConversation requires one), and the later "Session"
+		// subtest's ListSessions(ctxA, &session.ListFilter{}) call is
+		// deliberately unfiltered by agent — it would otherwise pick up
+		// these two rows too, since newStore(t) is one shared backend
+		// across every subtest in this function, not a fresh one per
+		// subtest.
+		ctxA := ctxWithScope("ws_conv_a")
+		ctxB := ctxWithScope("ws_conv_b")
 		// One shared agent ID, not two distinct ones. Two distinct IDs
 		// would let agent_id alone separate the rows regardless of
 		// whether the scope predicate does anything at all — the same
@@ -703,15 +713,17 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		// load-bearing is in the phase report: deleting it from one
 		// backend's LoadConversation makes this subtest fail.
 		agentID := id.NewAgentID()
+		sidA := mustCreateSession(t, s, ctxA, agentID, "session-a")
+		sidB := mustCreateSession(t, s, ctxB, agentID, "session-b")
 
-		if err := s.SaveConversation(ctxA, agentID, []memory.Message{{Role: "user", Content: "from-a"}}); err != nil {
+		if err := s.SaveConversation(ctxA, agentID, sidA, []memory.Message{{Role: "user", Content: "from-a"}}); err != nil {
 			t.Fatalf("save conversation A: %v", err)
 		}
-		if err := s.SaveConversation(ctxB, agentID, []memory.Message{{Role: "user", Content: "from-b"}}); err != nil {
+		if err := s.SaveConversation(ctxB, agentID, sidB, []memory.Message{{Role: "user", Content: "from-b"}}); err != nil {
 			t.Fatalf("save conversation B: %v", err)
 		}
 
-		gotA, err := s.LoadConversation(ctxA, agentID, 0)
+		gotA, err := s.LoadConversation(ctxA, agentID, sidA, 0)
 		if err != nil {
 			t.Fatalf("load conversation A: %v", err)
 		}
@@ -719,7 +731,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("LoadConversation(ctxA, agentID) = %v, want exactly [%q] (scope B's message must not be visible to scope A)", gotA, "from-a")
 		}
 
-		gotB, err := s.LoadConversation(ctxB, agentID, 0)
+		gotB, err := s.LoadConversation(ctxB, agentID, sidB, 0)
 		if err != nil {
 			t.Fatalf("load conversation B: %v", err)
 		}
@@ -734,17 +746,17 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		// nothing at all) pass silently, since a no-op also leaves A
 		// untouched. This was previously untested entirely —
 		// ClearConversation only appeared in ZeroScopeRejection.
-		if err = s.ClearConversation(ctxB, agentID); err != nil {
+		if err = s.ClearConversation(ctxB, agentID, sidB); err != nil {
 			t.Fatalf("clear conversation (ctxB): %v", err)
 		}
-		stillThere, err := s.LoadConversation(ctxA, agentID, 0)
+		stillThere, err := s.LoadConversation(ctxA, agentID, sidA, 0)
 		if err != nil {
 			t.Fatalf("reload conversation A after ctxB clear: %v", err)
 		}
 		if len(stillThere) != 1 || stillThere[0].Content != "from-a" {
 			t.Fatalf("conversation A after ctxB's ClearConversation = %v, want unchanged [%q] (must not delete another scope's history)", stillThere, "from-a")
 		}
-		bGone, err := s.LoadConversation(ctxB, agentID, 0)
+		bGone, err := s.LoadConversation(ctxB, agentID, sidB, 0)
 		if err != nil {
 			t.Fatalf("reload conversation B after ctxB clear: %v", err)
 		}
@@ -753,15 +765,77 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 
 		// Clearing from the correct scope removes that scope's own rows.
-		if err = s.ClearConversation(ctxA, agentID); err != nil {
+		if err = s.ClearConversation(ctxA, agentID, sidA); err != nil {
 			t.Fatalf("clear conversation (ctxA): %v", err)
 		}
-		afterClear, err := s.LoadConversation(ctxA, agentID, 0)
+		afterClear, err := s.LoadConversation(ctxA, agentID, sidA, 0)
 		if err != nil {
 			t.Fatalf("reload conversation A after ctxA clear: %v", err)
 		}
 		if len(afterClear) != 0 {
 			t.Fatalf("conversation A after same-scope ClearConversation = %v, want empty", afterClear)
+		}
+	})
+
+	// SessionMessageCounters is the store-level proof for the counter
+	// invariant this phase exists to guarantee: message_count always
+	// equals the number of message ROWS a session's SaveConversation
+	// calls have written, never the number of calls. Two SaveConversation
+	// calls with different batch sizes (3, then 2) would leave
+	// message_count at 2 if the counter were naively incremented once per
+	// call instead of by len(messages); this catches that shape directly,
+	// on every backend, since each hand-writes its own transaction.
+	t.Run("SessionMessageCounters", func(t *testing.T) {
+		s := newStore(t)
+		agentCtx := ctxWithScope("ws_counters")
+		agentID := id.NewAgentID()
+		sessionID := mustCreateSession(t, s, agentCtx, agentID, "counters")
+
+		if err := s.SaveConversation(agentCtx, agentID, sessionID, []memory.Message{
+			{Role: "user", Content: "one"},
+			{Role: "assistant", Content: "two"},
+			{Role: "user", Content: "three"},
+		}); err != nil {
+			t.Fatalf("save conversation (batch 1, 3 messages): %v", err)
+		}
+		if err := s.SaveConversation(agentCtx, agentID, sessionID, []memory.Message{
+			{Role: "assistant", Content: "four"},
+			{Role: "user", Content: "five"},
+		}); err != nil {
+			t.Fatalf("save conversation (batch 2, 2 messages): %v", err)
+		}
+
+		rows, err := s.LoadConversation(agentCtx, agentID, sessionID, 0)
+		if err != nil {
+			t.Fatalf("load conversation: %v", err)
+		}
+		if len(rows) != 5 {
+			t.Fatalf("LoadConversation returned %d row(s), want 5 (setup assumption broken, not the thing under test)", len(rows))
+		}
+
+		got, err := s.GetSession(agentCtx, sessionID)
+		if err != nil {
+			t.Fatalf("get session: %v", err)
+		}
+		if got.MessageCount != 5 {
+			t.Errorf("session.MessageCount = %d, want 5 (the number of message rows written across both calls, not the number of SaveConversation calls, which was 2)", got.MessageCount)
+		}
+		if got.LastMessage != "five" {
+			t.Errorf("session.LastMessage = %q, want %q (the last row written by the most recent SaveConversation call)", got.LastMessage, "five")
+		}
+
+		if clearErr := s.ClearConversation(agentCtx, agentID, sessionID); clearErr != nil {
+			t.Fatalf("clear conversation: %v", clearErr)
+		}
+		afterClear, err := s.GetSession(agentCtx, sessionID)
+		if err != nil {
+			t.Fatalf("get session after clear: %v", err)
+		}
+		if afterClear.MessageCount != 0 {
+			t.Errorf("session.MessageCount after ClearConversation = %d, want 0", afterClear.MessageCount)
+		}
+		if afterClear.LastMessage != "" {
+			t.Errorf("session.LastMessage after ClearConversation = %q, want empty", afterClear.LastMessage)
 		}
 	})
 
@@ -2343,10 +2417,11 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 	t.Run("Conversation", func(t *testing.T) {
 		s := newStore(t)
 		agentID := id.NewAgentID()
-		if err := s.SaveConversation(ctx, agentID, []memory.Message{{Role: "user", Content: "hello"}}); err != nil {
+		sessionID := mustCreateSession(t, s, ctx, agentID, "")
+		if err := s.SaveConversation(ctx, agentID, sessionID, []memory.Message{{Role: "user", Content: "hello"}}); err != nil {
 			t.Fatalf("save conversation with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}
-		got, err := s.LoadConversation(ctx, agentID, 0)
+		got, err := s.LoadConversation(ctx, agentID, sessionID, 0)
 		if err != nil {
 			t.Fatalf("load conversation: %v", err)
 		}

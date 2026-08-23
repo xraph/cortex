@@ -22,6 +22,16 @@ import (
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
 	scope := cortex.ScopeFromContext(ctx)
 
+	// Resolved once here and threaded to every conversation call below,
+	// rather than re-resolved at each call site: resolveSession lazily
+	// creates the agent's default session under a create race, and
+	// calling it more than once per run risks two different calls
+	// landing on two different freshly created "default" sessions.
+	sessionID, err := e.resolveSession(ctx, ag.ID, overrideSessionID(overrides))
+	if err != nil {
+		return nil, fmt.Errorf("resolve session: %w", err)
+	}
+
 	cfg := e.effectiveConfig(ag, overrides)
 	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
 	if err != nil {
@@ -33,6 +43,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		Entity:     cortex.NewEntity(),
 		ID:         id.NewAgentRunID(),
 		AgentID:    ag.ID,
+		SessionID:  sessionID,
 		Scope:      scope,
 		State:      run.StateRunning,
 		Input:      input,
@@ -46,7 +57,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
 
 	// Load conversation history.
-	history, _ := e.store.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort history load
+	history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 	messages := memoryToLLM(history)
 	messages = append(messages, llm.Message{Role: "user", Content: input})
 
@@ -191,7 +202,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 
 	// Save updated conversation.
 	convMsgs := llmToMemory(messages)
-	if err := e.store.SaveConversation(ctx, ag.ID, convMsgs); err != nil {
+	if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
 		e.logger.Error("save conversation", log.String("error", err.Error()))
 	}
 
@@ -214,6 +225,17 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
 	scope := cortex.ScopeFromContext(ctx)
 
+	// Resolved once here and threaded to every conversation call below,
+	// same as runReAct: resolveSession lazily creates the agent's
+	// default session under a create race, and calling it more than
+	// once per run risks two different calls landing on two different
+	// freshly created "default" sessions.
+	sessionID, err := e.resolveSession(ctx, ag.ID, overrideSessionID(overrides))
+	if err != nil {
+		close(events)
+		return fmt.Errorf("resolve session: %w", err)
+	}
+
 	cfg := e.effectiveConfig(ag, overrides)
 	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
 	if err != nil {
@@ -226,6 +248,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		Entity:     cortex.NewEntity(),
 		ID:         id.NewAgentRunID(),
 		AgentID:    ag.ID,
+		SessionID:  sessionID,
 		Scope:      scope,
 		State:      run.StateRunning,
 		Input:      input,
@@ -248,7 +271,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		}}
 
 		// Load conversation history.
-		history, _ := e.store.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort history load
+		history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 		messages := memoryToLLM(history)
 		messages = append(messages, llm.Message{Role: "user", Content: input})
 
@@ -474,7 +497,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 
 		// Save updated conversation.
 		convMsgs := llmToMemory(messages)
-		if err := e.store.SaveConversation(ctx, ag.ID, convMsgs); err != nil {
+		if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
 			e.logger.Error("save conversation", log.String("error", err.Error()))
 		}
 

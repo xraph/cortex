@@ -60,6 +60,7 @@ func TestRunAgent_EveryStoreCallCarriesScope(t *testing.T) {
 	if spy.CallCount() == 0 {
 		t.Fatal("spy recorded no store calls; the test proves nothing")
 	}
+	var sawSaveConversation bool
 	for _, c := range spy.Calls() {
 		if c.Scope.IsZero() {
 			t.Errorf("%s received a zero scope", c.Method)
@@ -67,6 +68,19 @@ func TestRunAgent_EveryStoreCallCarriesScope(t *testing.T) {
 		if c.Scope.Canonical() != want.Canonical() {
 			t.Errorf("%s got scope %q, want %q", c.Method, c.Scope.Canonical(), want.Canonical())
 		}
+		// resolveSession runs once at the top of runReAct and its result
+		// is threaded to every conversation call. A zero id here would
+		// mean either the override plumbing broke or resolveSession
+		// silently failed to produce a real default session.
+		if c.Method == "SaveConversation" {
+			sawSaveConversation = true
+			if c.SessionID.IsNil() {
+				t.Error("SaveConversation received a zero session id; want the resolved default session")
+			}
+		}
+	}
+	if !sawSaveConversation {
+		t.Fatal("SaveConversation was never recorded; this test proves nothing about session resolution")
 	}
 }
 

@@ -71,9 +71,9 @@ func TestRescope(t *testing.T) {
 	// applyScopes runs its writes inside a multi-document transaction,
 	// which mongo only supports on a replica set (or sharded cluster) --
 	// never on a standalone mongod, which is what tcmongodb.Run gives by
-	// default. WithReplicaSet is what the rest of this package's
-	// TestConformance omits, since scope reads/writes there never need a
-	// transaction.
+	// default. TestConformance in this package needs the same option now,
+	// for the same reason: SaveConversation/ClearConversation also write
+	// inside a transaction.
 	mongoContainer, err := tcmongodb.Run(ctx, mongoConformanceImage, tcmongodb.WithReplicaSet("rs0"))
 	if err != nil {
 		t.Fatalf("start mongodb container: %v", err)

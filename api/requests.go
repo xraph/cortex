@@ -356,13 +356,15 @@ type ResolveCheckpointRequest struct {
 
 // GetConversationRequest is the request for getting conversation history.
 type GetConversationRequest struct {
-	Name  string `path:"name" description:"Agent name"`
-	Limit int    `query:"limit"`
+	Name      string `path:"name" description:"Agent name"`
+	Limit     int    `query:"limit"`
+	SessionID string `query:"session_id" description:"Session ID; defaults to the agent's default session for the caller's scope"`
 }
 
 // ClearConversationRequest is the request for clearing conversation history.
 type ClearConversationRequest struct {
-	Name string `path:"name" description:"Agent name"`
+	Name      string `path:"name" description:"Agent name"`
+	SessionID string `query:"session_id" description:"Session ID; defaults to the agent's default session for the caller's scope"`
 }
 
 // ── Tool requests ─────────────────────────────────────

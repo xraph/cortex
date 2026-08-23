@@ -6,13 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 )
 
-func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messages []memory.Message) error {
+// SaveConversation inserts messages and updates the owning session's
+// message_count/last_message inside one transaction. The counter is
+// derived from the rows this call actually writes (len(messages), not a
+// flat +1 per call), so it always matches the physical row count even
+// when a caller's batch size varies from call to call. If the session
+// row can't be found — a session id that doesn't correspond to a real
+// session — the whole write rolls back rather than leaving orphaned
+// message rows a reader can never reach through GetSession/ListSessions.
+func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
@@ -21,11 +30,22 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 		return nil
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
+	sid := sessionID.String()
 
+	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex: begin save conversation: %w", err)
+	}
+	// After a successful Commit, Rollback is a documented no-op; before
+	// one, its error can't be acted on any further than the failure that
+	// triggered this defer already is.
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	var lastMessage string
 	for _, msg := range messages {
-		content, err := json.Marshal(&msg)
-		if err != nil {
-			return fmt.Errorf("cortex: marshal message: %w", err)
+		content, marshalErr := json.Marshal(&msg)
+		if marshalErr != nil {
+			return fmt.Errorf("cortex: marshal message: %w", marshalErr)
 		}
 		// Metadata is jsonb; the Go zero value for the field is "", which
 		// postgres rejects as invalid JSON syntax rather than falling
@@ -35,6 +55,7 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 		// missed when memory rows picked up the same jsonb typing.
 		m := &memoryModel{
 			AgentID:    agentID.String(),
+			SessionID:  sid,
 			Kind:       "conversation",
 			Content:    string(content),
 			Metadata:   mustJSON(nil),
@@ -44,14 +65,34 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 			ScopeExtra: extra,
 			ScopeCanon: scope.Canonical(),
 		}
-		if _, err := s.pgdb.NewInsert(m).Exec(ctx); err != nil {
-			return fmt.Errorf("cortex: save conversation: %w", err)
+		if _, insErr := tx.NewInsert(m).Exec(ctx); insErr != nil {
+			return fmt.Errorf("cortex: save conversation: %w", insErr)
 		}
+		lastMessage = msg.Content
+	}
+
+	res, err := tx.NewRaw(
+		`UPDATE cortex_sessions SET message_count = message_count + $1, last_message = $2, updated_at = $3 WHERE id = $4 AND scope_canon = $5`,
+		len(messages), lastMessage, time.Now().UTC(), sid, scope.Canonical(),
+	).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("cortex: update session counters: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: save conversation rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex: save conversation: %w", cortex.ErrSessionNotFound)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex: commit save conversation: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
@@ -60,6 +101,7 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit 
 	var models []memoryModel
 	q := s.pgdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
+		Where("session_id = ?", sessionID.String()).
 		Where("kind = ?", "conversation").
 		OrderExpr("created_at ASC")
 	for _, p := range scopePredicates(scope, false) {
@@ -82,20 +124,50 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit 
 	return messages, nil
 }
 
-func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+// ClearConversation deletes the session's message rows and resets its
+// counters in the same transaction, for the same drift reason as
+// SaveConversation.
+func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
+	sid := sessionID.String()
 
-	q := s.pgdb.NewDelete((*memoryModel)(nil)).
+	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex: begin clear conversation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	q := tx.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", agentID.String()).
+		Where("session_id = ?", sid).
 		Where("kind = ?", "conversation")
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
-	if _, err := q.Exec(ctx); err != nil {
-		return fmt.Errorf("cortex: clear conversation: %w", err)
+	if _, delErr := q.Exec(ctx); delErr != nil {
+		return fmt.Errorf("cortex: clear conversation: %w", delErr)
+	}
+
+	res, err := tx.NewRaw(
+		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = $1 WHERE id = $2 AND scope_canon = $3`,
+		time.Now().UTC(), sid, scope.Canonical(),
+	).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("cortex: reset session counters: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: clear conversation rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex: clear conversation: %w", cortex.ErrSessionNotFound)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex: commit clear conversation: %w", err)
 	}
 	return nil
 }

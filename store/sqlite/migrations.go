@@ -922,5 +922,59 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_sessions_default
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "add_memory_session_id",
+			Version: "20260824000002",
+			Comment: "Key conversation memory on a session",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// SQLite's ADD COLUMN has no IF NOT EXISTS, so check
+				// PRAGMA table_info first the same way addScopeColumns
+				// does — otherwise a migration that failed partway
+				// through would abort every rerun on "duplicate column
+				// name".
+				existing, err := existingColumns(ctx, exec, "cortex_memories")
+				if err != nil {
+					return err
+				}
+				if !existing["session_id"] {
+					if _, err := exec.Exec(ctx, `ALTER TABLE cortex_memories ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+						return fmt.Errorf("add session_id to cortex_memories: %w", err)
+					}
+				}
+				if _, err := exec.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_cortex_memories_session ON cortex_memories (session_id, scope_canon)`); err != nil {
+					return fmt.Errorf("index session_id on cortex_memories: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_memories_session;
+ALTER TABLE cortex_memories DROP COLUMN session_id;
+`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "add_run_session_id",
+			Version: "20260824000003",
+			Comment: "Carry the resolved session on a run",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				existing, err := existingColumns(ctx, exec, "cortex_runs")
+				if err != nil {
+					return err
+				}
+				if existing["session_id"] {
+					return nil
+				}
+				if _, err := exec.Exec(ctx, `ALTER TABLE cortex_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+					return fmt.Errorf("add session_id to cortex_runs: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cortex_runs DROP COLUMN session_id`)
+				return err
+			},
+		},
 	)
 }

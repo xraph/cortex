@@ -83,6 +83,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 
 	set := bson.M{
 		"agent_id":     m.AgentID,
+		"session_id":   m.SessionID,
 		"state":        m.State,
 		"input":        m.Input,
 		"output":       m.Output,

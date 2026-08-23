@@ -65,6 +65,7 @@ type RunOverrides struct {
 	InlineTraits    []string
 	InlineBehaviors []string
 	Tools           []string
+	SessionID       id.SessionID
 }
 
 // New creates a new Engine with the given options.
@@ -448,18 +449,18 @@ func (e *Engine) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.To
 // Memory passthrough
 // ──────────────────────────────────────────────────
 
-func (e *Engine) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+func (e *Engine) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.LoadConversation(ctx, agentID, limit)
+	return e.store.LoadConversation(ctx, agentID, sessionID, limit)
 }
 
-func (e *Engine) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+func (e *Engine) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
-	return e.store.ClearConversation(ctx, agentID)
+	return e.store.ClearConversation(ctx, agentID, sessionID)
 }
 
 // ──────────────────────────────────────────────────

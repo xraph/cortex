@@ -52,3 +52,13 @@ func (e *Engine) resolveSession(ctx context.Context, agentID id.AgentID, overrid
 	}
 	return s.ID, nil
 }
+
+// overrideSessionID extracts the caller-supplied session override from
+// overrides, returning the zero id.SessionID when overrides is nil so
+// resolveSession falls through to the default-session lookup.
+func overrideSessionID(overrides *RunOverrides) id.SessionID {
+	if overrides == nil {
+		return id.SessionID{}
+	}
+	return overrides.SessionID
+}

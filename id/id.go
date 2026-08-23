@@ -257,6 +257,18 @@ func ParsePersonaID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPers
 // ParseSessionID parses a string and validates the "ses" prefix.
 func ParseSessionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSession) }
 
+// ParseOptionalSessionID parses s as a session ID, returning the zero ID
+// (rather than an error) when s is empty. Run and memory rows written
+// before session_id existed carry an empty column, and the store layer
+// reconstructing those rows into structs needs a nil session id there,
+// not a parse failure.
+func ParseOptionalSessionID(s string) (ID, error) {
+	if s == "" {
+		return Nil, nil
+	}
+	return ParseSessionID(s)
+}
+
 // ParseAny parses a string into an ID without type checking the prefix.
 func ParseAny(s string) (ID, error) { return Parse(s) }
 

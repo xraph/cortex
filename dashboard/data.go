@@ -11,8 +11,10 @@ import (
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/dashboard/shared"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/trait"
@@ -138,6 +140,20 @@ func fetchCheckpointsPaginated(ctx context.Context, s store.Store, limit, offset
 
 func fetchAgents(ctx context.Context, s store.Store) ([]*agent.Config, error) {
 	return s.List(ctx, &agent.ListFilter{})
+}
+
+// fetchDefaultSessionID resolves an agent's default session for the
+// caller's scope, for best-effort dashboard reads. Unlike
+// engine.resolveSession, it never lazily creates one: these are
+// read-only UI panels, and an agent that has never run has legitimately
+// no conversation to show yet, so the zero id (which LoadConversation
+// then reads as "no rows") is a normal answer here, not an error.
+func fetchDefaultSessionID(ctx context.Context, s store.Store, agentID id.AgentID) id.SessionID {
+	sessions, err := s.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true})
+	if err != nil || len(sessions) != 1 {
+		return id.SessionID{}
+	}
+	return sessions[0].ID
 }
 
 func fetchSkills(ctx context.Context, s store.Store) ([]*skill.Skill, error) {

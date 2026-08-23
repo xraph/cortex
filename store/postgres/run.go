@@ -21,6 +21,7 @@ import (
 // stored scope.
 var mutableRunColumns = []string{
 	"agent_id",
+	"session_id",
 	"state",
 	"input",
 	"output",

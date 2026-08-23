@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -62,7 +63,15 @@ func scopePredicates(s cortex.Scope, exact bool) []scopePredicate {
 	return preds
 }
 
-func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messages []memory.Message) error {
+// SaveConversation inserts messages and updates the owning session's
+// message_count/last_message inside one transaction. The counter is
+// derived from the rows this call actually writes (len(messages), not a
+// flat +1 per call), so it always matches the physical row count even
+// when a caller's batch size varies from call to call. If the session
+// row can't be found — a session id that doesn't correspond to a real
+// session — the whole write rolls back rather than leaving orphaned
+// message rows a reader can never reach through GetSession/ListSessions.
+func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
@@ -72,15 +81,27 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 	canon := scope.Canonical()
+	sid := sessionID.String()
+
+	tx, err := s.sdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex/sqlite: begin save conversation: %w", err)
+	}
+	// After a successful Commit, Rollback is a documented no-op; before
+	// one, its error can't be acted on any further than the failure that
+	// triggered this defer already is.
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
 
 	models := make([]memoryModel, len(messages))
+	var lastMessage string
 	for i, msg := range messages {
-		content, err := json.Marshal(&msg)
-		if err != nil {
-			return fmt.Errorf("cortex/sqlite: marshal message: %w", err)
+		content, marshalErr := json.Marshal(&msg)
+		if marshalErr != nil {
+			return fmt.Errorf("cortex/sqlite: marshal message: %w", marshalErr)
 		}
 		models[i] = memoryModel{
 			AgentID:    agentID.String(),
+			SessionID:  sid,
 			Kind:       "conversation",
 			Content:    string(content),
 			ScopeL0:    l0,
@@ -89,15 +110,34 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, messag
 			ScopeExtra: extra,
 			ScopeCanon: canon,
 		}
+		lastMessage = msg.Content
 	}
-	_, err := s.sdb.NewInsert(&models).Exec(ctx)
+	if _, insErr := tx.NewInsert(&models).Exec(ctx); insErr != nil {
+		return fmt.Errorf("cortex/sqlite: save conversation: %w", insErr)
+	}
+
+	res, err := tx.NewRaw(
+		`UPDATE cortex_sessions SET message_count = message_count + ?, last_message = ?, updated_at = ? WHERE id = ? AND scope_canon = ?`,
+		len(messages), lastMessage, time.Now().UTC(), sid, canon,
+	).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex/sqlite: save conversation: %w", err)
+		return fmt.Errorf("cortex/sqlite: update session counters: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex/sqlite: save conversation rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex/sqlite: save conversation: %w", cortex.ErrSessionNotFound)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex/sqlite: commit save conversation: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) {
+func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
@@ -106,6 +146,7 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit 
 	var models []memoryModel
 	q := s.sdb.NewSelect(&models).
 		Where("agent_id = ?", agentID.String()).
+		Where("session_id = ?", sessionID.String()).
 		Where("kind = ?", "conversation").
 		OrderExpr("created_at ASC")
 	for _, p := range scopePredicates(scope, false) {
@@ -127,21 +168,51 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, limit 
 	return messages, nil
 }
 
-func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID) error {
+// ClearConversation deletes the session's message rows and resets its
+// counters in the same transaction, for the same drift reason as
+// SaveConversation.
+func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
+	sid := sessionID.String()
+	canon := scope.Canonical()
 
-	q := s.sdb.NewDelete((*memoryModel)(nil)).
+	tx, err := s.sdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex/sqlite: begin clear conversation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	q := tx.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", agentID.String()).
+		Where("session_id = ?", sid).
 		Where("kind = ?", "conversation")
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
-	_, err := q.Exec(ctx)
+	if _, delErr := q.Exec(ctx); delErr != nil {
+		return fmt.Errorf("cortex/sqlite: clear conversation: %w", delErr)
+	}
+
+	res, err := tx.NewRaw(
+		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = ? WHERE id = ? AND scope_canon = ?`,
+		time.Now().UTC(), sid, canon,
+	).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("cortex/sqlite: clear conversation: %w", err)
+		return fmt.Errorf("cortex/sqlite: reset session counters: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex/sqlite: clear conversation rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex/sqlite: clear conversation: %w", cortex.ErrSessionNotFound)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex/sqlite: commit clear conversation: %w", err)
 	}
 	return nil
 }

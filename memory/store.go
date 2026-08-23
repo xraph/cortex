@@ -15,9 +15,9 @@ import (
 // isolation boundary on its own — so they need the same guard as
 // everything else here.
 type Store interface {
-	SaveConversation(ctx context.Context, agentID id.AgentID, messages []Message) error
-	LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]Message, error)
-	ClearConversation(ctx context.Context, agentID id.AgentID) error
+	SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []Message) error
+	LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]Message, error)
+	ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error
 
 	SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error
 	LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error)

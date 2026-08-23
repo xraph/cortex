@@ -132,6 +132,7 @@ type runModel struct {
 	grove.BaseModel `grove:"table:cortex_runs"`
 	ID              string            `grove:"id,pk"          bson:"_id"`
 	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
+	SessionID       string            `grove:"session_id"     bson:"session_id"`
 	State           string            `grove:"state"          bson:"state"`
 	Input           string            `grove:"input"          bson:"input"`
 	Output          string            `grove:"output"         bson:"output"`
@@ -156,6 +157,7 @@ func runToModel(r *run.Run) *runModel {
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
+		SessionID:   r.SessionID.String(),
 		State:       string(r.State),
 		Input:       r.Input,
 		Output:      r.Output,
@@ -185,6 +187,10 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionID, err := id.ParseOptionalSessionID(m.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("run %s: %w", runID, err)
+	}
 	scope, err := cortex.ParseCanonical(m.ScopeCanon)
 	if err != nil {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
@@ -193,6 +199,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AgentID:     agentID,
+		SessionID:   sessionID,
 		Scope:       scope,
 		State:       run.State(m.State),
 		Input:       m.Input,
@@ -373,6 +380,7 @@ type memoryModel struct {
 	grove.BaseModel `grove:"table:cortex_memories"`
 	ID              string            `grove:"id,pk"          bson:"_id,omitempty"`
 	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
+	SessionID       string            `grove:"session_id"     bson:"session_id"`
 	Kind            string            `grove:"kind"           bson:"kind"`
 	Key             string            `grove:"key"            bson:"key"`
 	Content         string            `grove:"content"        bson:"content"`

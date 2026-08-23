@@ -212,6 +212,11 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 				Keys:    bson.D{{Key: "agent_id", Value: 1}, {Key: "kind", Value: 1}, {Key: "key", Value: 1}, {Key: "scope_canon", Value: 1}},
 				Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{"kind": "working"}).SetName(workingMemoryUniqueIndexName),
 			},
+			// Mirrors the postgres/sqlite 20260824000002 migration:
+			// conversation memory is keyed on a session now, and every
+			// SaveConversation/LoadConversation/ClearConversation call
+			// filters on session_id alongside scope.
+			{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "scope_canon", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
 			scopeIndex,
 		},

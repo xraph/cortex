@@ -574,6 +574,7 @@ type runModel struct {
 	grove.BaseModel `grove:"table:cortex_runs"`
 	ID              string            `grove:"id,pk"`
 	AgentID         string            `grove:"agent_id,notnull"`
+	SessionID       string            `grove:"session_id,notnull"`
 	State           string            `grove:"state,notnull"`
 	Input           string            `grove:"input"`
 	Output          string            `grove:"output"`
@@ -598,6 +599,7 @@ func runToModel(r *run.Run) *runModel {
 	return &runModel{
 		ID:          r.ID.String(),
 		AgentID:     r.AgentID.String(),
+		SessionID:   r.SessionID.String(),
 		State:       string(r.State),
 		Input:       r.Input,
 		Output:      r.Output,
@@ -627,6 +629,10 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionID, err := id.ParseOptionalSessionID(m.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("run %s: %w", runID, err)
+	}
 	scope, err := cortex.ParseCanonical(m.ScopeCanon)
 	if err != nil {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
@@ -635,6 +641,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AgentID:     agentID,
+		SessionID:   sessionID,
 		Scope:       scope,
 		State:       run.State(m.State),
 		Input:       m.Input,
@@ -824,6 +831,7 @@ type memoryModel struct {
 	grove.BaseModel `grove:"table:cortex_memories"`
 	ID              int64             `grove:"id,pk,autoincrement"`
 	AgentID         string            `grove:"agent_id,notnull"`
+	SessionID       string            `grove:"session_id,notnull"`
 	Kind            string            `grove:"kind,notnull"`
 	Key             string            `grove:"key"`
 	Content         string            `grove:"content,notnull"`

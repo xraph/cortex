@@ -10,9 +10,11 @@ import (
 	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/session"
+	"github.com/xraph/cortex/store/scopespy"
 	"github.com/xraph/cortex/store/sqlite"
 )
 
@@ -96,5 +98,81 @@ func TestResolveSession_OverrideWins(t *testing.T) {
 	}
 	if got != explicit {
 		t.Errorf("resolve returned %s, want the explicit session %s", got, explicit)
+	}
+}
+
+// TestRunAgent_DefaultSessionReachesActualMessageCount is the end-to-end
+// proof for the counter invariant this phase exists to guarantee: after
+// runs with no session override, every message the react loop wrote must
+// be reachable through the agent's resolved default session, and that
+// session's MessageCount must equal the number of message ROWS actually
+// under it — never the number of runs, and never the number of
+// SaveConversation calls (react.go calls it once per run, and each call's
+// batch re-includes the whole reloaded history alongside the new turn, so
+// a naive "+1 per call" or "+1 per row this run added" counter would both
+// drift from LoadConversation's real count here). This uses a real
+// sqlite backend, not scopespy: the spy fakes every store method and so
+// can't catch a counter that drifted from the rows it's supposed to
+// describe — only a store that actually counts real inserted rows can.
+func TestRunAgent_DefaultSessionReachesActualMessageCount(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "cortex_test.db")
+	drv := sqlitedriver.New()
+	if err := drv.Open(ctx, dsn); err != nil {
+		t.Fatalf("open sqlite driver: %v", err)
+	}
+	db, err := grove.Open(drv)
+	if err != nil {
+		t.Fatalf("grove open: %v", err)
+	}
+	s := sqlite.New(db)
+	if migrateErr := s.Migrate(ctx); migrateErr != nil {
+		t.Fatalf("migrate: %v", migrateErr)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	// StaticLLM answers in one step every time, so runReAct's ReAct loop
+	// always terminates after saving exactly one assistant message per
+	// run (plus whatever history it reloaded), without needing a tool
+	// double.
+	e, err := engine.New(engine.WithStore(s), engine.WithLLM(scopespy.StaticLLM("ack")))
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	scopedCtx := cortex.WithScope(ctx,
+		cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_msgcount"}}})
+
+	agentCfg := &agent.Config{ID: id.NewAgentID(), Name: "assistant", MaxSteps: 2}
+	if createErr := e.CreateAgent(scopedCtx, agentCfg); createErr != nil {
+		t.Fatalf("create agent: %v", createErr)
+	}
+
+	if _, runErr := e.RunAgent(scopedCtx, "assistant", "first message", nil); runErr != nil {
+		t.Fatalf("first run: %v", runErr)
+	}
+	if _, runErr := e.RunAgent(scopedCtx, "assistant", "second message", nil); runErr != nil {
+		t.Fatalf("second run: %v", runErr)
+	}
+
+	sessions, err := s.ListSessions(scopedCtx, &session.ListFilter{AgentID: agentCfg.ID, DefaultOnly: true, Limit: 1})
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions(DefaultOnly) = %d session(s), want exactly one default session", len(sessions))
+	}
+	sess := sessions[0]
+
+	rows, err := s.LoadConversation(scopedCtx, agentCfg.ID, sess.ID, 0)
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("no message rows were saved through the default session; this test proves nothing")
+	}
+
+	if sess.MessageCount != len(rows) {
+		t.Errorf("session.MessageCount = %d, want %d (the number of message rows actually reachable through this session, not the number of runs or SaveConversation calls)", sess.MessageCount, len(rows))
 	}
 }

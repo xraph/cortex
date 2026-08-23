@@ -978,6 +978,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_sessions_default
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "add_memory_session_id",
+			Version: "20260824000002",
+			Comment: "Key conversation memory on a session",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+ALTER TABLE cortex_memories ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_cortex_memories_session ON cortex_memories (session_id, scope_canon);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_memories_session;
+ALTER TABLE cortex_memories DROP COLUMN IF EXISTS session_id;
+`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "add_run_session_id",
+			Version: "20260824000003",
+			Comment: "Carry the resolved session on a run",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cortex_runs DROP COLUMN IF EXISTS session_id`)
+				return err
+			},
+		},
 	)
 	return g
 }()

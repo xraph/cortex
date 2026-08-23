@@ -78,6 +78,16 @@ func TestConformance(t *testing.T) {
 // per subtest. RESTART IDENTITY isn't load-bearing (every PK here is a
 // TypeID, not a sequence) but costs nothing and keeps this honest if that
 // ever changes.
+//
+// This list used to stop at cortex_agents, from when that was every
+// entity Conformance exercised. It went stale as skills, traits,
+// behaviors, personas, sessions, and orchestration were added without a
+// matching entry here — latent, because no subtest before now both wrote
+// one of those tables AND ran an unfiltered list against it later in the
+// same TestConformance run. storetest's own SessionMessageCounters and
+// Conversation subtests do exactly that for cortex_sessions (writing
+// stray rows another subtest's ListSessions then picked up), which is
+// what surfaced the gap; the fix is to stop it recurring for the rest.
 func truncateConformanceTables(ctx context.Context, s *Store) error {
 	const stmt = `TRUNCATE TABLE
 		cortex_tool_calls,
@@ -85,7 +95,14 @@ func truncateConformanceTables(ctx context.Context, s *Store) error {
 		cortex_checkpoints,
 		cortex_memories,
 		cortex_runs,
-		cortex_agents
+		cortex_agents,
+		cortex_skills,
+		cortex_traits,
+		cortex_behaviors,
+		cortex_personas,
+		cortex_sessions,
+		cortex_orchestration_configs,
+		cortex_orchestration_runs
 	RESTART IDENTITY CASCADE`
 	if _, err := s.pgdb.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("truncate conformance tables: %w", err)
