@@ -27,7 +27,7 @@ Cortex models AI agents the way you would describe a person:
 - **Persona composition** — Bundle skills, traits, behaviors, cognitive style, communication style, and perception into a reusable Persona. Assign it to any agent with one field.
 - **Execution tracking** — Every agent run is recorded as a Run with Steps and ToolCalls, providing full observability into reasoning chains.
 - **Human-in-the-loop** — Checkpoints pause a run for human approval before proceeding with sensitive actions.
-- **Multi-tenant isolation** — Every entity is scoped to a tenant and app via context. Cross-tenant access is structurally impossible.
+- **Multi-tenant isolation**: every entity is scoped via context to a hierarchy the host defines (tenant, workspace, app, whatever it needs); cross-scope access is structurally impossible.
 - **Plugin system** — 16 lifecycle hooks for metrics, audit trails, tracing, and custom processing. Extensions opt in to only the events they care about.
 - **Memory management** — Conversation history, working memory, and summary memory per agent per tenant.
 - **PostgreSQL store** — Production-ready persistence with embedded migrations and JSONB columns for flexible metadata.
@@ -42,7 +42,7 @@ Cortex models AI agents the way you would describe a person:
 
 **Interfaces over implementations.** Every subsystem defines a Go interface. Swap any storage backend with a single type change.
 
-**Scoped by design.** `cortex.WithScope` and `cortex.WithApp` inject context that is enforced at every layer. Cortex never interprets what a scope level means — the host defines its own hierarchy (workspace, org, tenant, whatever it needs) and Cortex just matches on it.
+**Scoped by design.** `cortex.WithScope` injects context that is enforced at every layer. Cortex never interprets what a scope level means: the host defines its own hierarchy (workspace, org, tenant, app, whatever it needs) and Cortex just matches on it.
 
 **TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`agt_`, `skl_`, `trt_`, `bhv_`, `prs_`, `arun_`, etc.).
 

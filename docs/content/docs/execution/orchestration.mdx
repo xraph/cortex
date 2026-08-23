@@ -85,7 +85,6 @@ Run history is available at `GET /v1/orchestration-runs` and
 cfg := &orchestration.Config{
     ID:       id.NewOrchestrationConfigID(),
     Name:     "research-team",
-    AppID:    "my-app",
     Strategy: orchestration.StrategySequential,
     Participants: []orchestration.Participant{
         {AgentName: "researcher", Role: "worker"},

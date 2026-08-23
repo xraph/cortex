@@ -13,7 +13,6 @@ type Skill struct {
     ID                   id.SkillID
     Name                 string
     Description          string
-    AppID                string
     Tools                []ToolBinding
     Knowledge            []KnowledgeRef
     SystemPromptFragment string
@@ -92,7 +91,7 @@ skill := &skill.Skill{
 type Store interface {
     CreateSkill(ctx context.Context, skill *Skill) error
     GetSkill(ctx context.Context, skillID id.SkillID) (*Skill, error)
-    GetSkillByName(ctx context.Context, appID, name string) (*Skill, error)
+    GetSkillByName(ctx context.Context, name string) (*Skill, error)
     UpdateSkill(ctx context.Context, skill *Skill) error
     DeleteSkill(ctx context.Context, skillID id.SkillID) error
     ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)

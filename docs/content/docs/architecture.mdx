@@ -77,7 +77,7 @@ When an agent run begins, the engine resolves the agent's full configuration:
 
 ## Scope isolation
 
-`cortex.WithScope(ctx, scope)` and `cortex.WithApp(ctx, id)` inject identifiers into the context. Cortex never interprets what a scope level means — the host declares its own ordered hierarchy (workspace, org, tenant, whatever it needs) as a `cortex.Scope`, and Cortex only matches on it. These are extracted at every layer:
+`cortex.WithScope(ctx, scope)` injects a scope into the context. Cortex never interprets what a scope level means: the host declares its own ordered hierarchy (workspace, org, tenant, app, whatever it needs) as a `cortex.Scope`, and Cortex only matches on it. This is extracted at every layer:
 
 - **Store** — every scope-guarded query filters by the caller's scope, and rejects a zero scope with `cortex.ErrNoScope` instead of matching everything
 - **Engine** — scope is read from the context and applied before any store operation

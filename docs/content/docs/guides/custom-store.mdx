@@ -22,7 +22,7 @@ type Store interface {
     memory.Store     // 8 methods
     checkpoint.Store // 4 methods
 
-    Migrate(ctx context.Context) error
+    Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
     Close() error
 }
@@ -38,7 +38,7 @@ type Store interface {
 type Store interface {
     Create(ctx context.Context, config *Config) error
     Get(ctx context.Context, id id.AgentID) (*Config, error)
-    GetByName(ctx context.Context, appID, name string) (*Config, error)
+    GetByName(ctx context.Context, name string) (*Config, error)
     Update(ctx context.Context, config *Config) error
     Delete(ctx context.Context, id id.AgentID) error
     List(ctx context.Context, filter *ListFilter) ([]*Config, error)
@@ -51,7 +51,7 @@ type Store interface {
 type Store interface {
     CreateSkill(ctx context.Context, s *Skill) error
     GetSkill(ctx context.Context, id id.SkillID) (*Skill, error)
-    GetSkillByName(ctx context.Context, appID, name string) (*Skill, error)
+    GetSkillByName(ctx context.Context, name string) (*Skill, error)
     UpdateSkill(ctx context.Context, s *Skill) error
     DeleteSkill(ctx context.Context, id id.SkillID) error
     ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
@@ -64,7 +64,7 @@ type Store interface {
 type Store interface {
     CreateTrait(ctx context.Context, t *Trait) error
     GetTrait(ctx context.Context, id id.TraitID) (*Trait, error)
-    GetTraitByName(ctx context.Context, appID, name string) (*Trait, error)
+    GetTraitByName(ctx context.Context, name string) (*Trait, error)
     UpdateTrait(ctx context.Context, t *Trait) error
     DeleteTrait(ctx context.Context, id id.TraitID) error
     ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
@@ -77,7 +77,7 @@ type Store interface {
 type Store interface {
     CreateBehavior(ctx context.Context, b *Behavior) error
     GetBehavior(ctx context.Context, id id.BehaviorID) (*Behavior, error)
-    GetBehaviorByName(ctx context.Context, appID, name string) (*Behavior, error)
+    GetBehaviorByName(ctx context.Context, name string) (*Behavior, error)
     UpdateBehavior(ctx context.Context, b *Behavior) error
     DeleteBehavior(ctx context.Context, id id.BehaviorID) error
     ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
@@ -90,7 +90,7 @@ type Store interface {
 type Store interface {
     CreatePersona(ctx context.Context, p *Persona) error
     GetPersona(ctx context.Context, id id.PersonaID) (*Persona, error)
-    GetPersonaByName(ctx context.Context, appID, name string) (*Persona, error)
+    GetPersonaByName(ctx context.Context, name string) (*Persona, error)
     UpdatePersona(ctx context.Context, p *Persona) error
     DeletePersona(ctx context.Context, id id.PersonaID) error
     ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
@@ -148,6 +148,7 @@ package mystore
 import (
     "context"
 
+    "github.com/xraph/cortex"
     "github.com/xraph/cortex/agent"
     "github.com/xraph/cortex/behavior"
     "github.com/xraph/cortex/checkpoint"
@@ -168,8 +169,10 @@ type MyStore struct {
 // Compile-time check.
 var _ store.Store = (*MyStore)(nil)
 
-// Migrate creates tables or runs schema migrations.
-func (s *MyStore) Migrate(ctx context.Context) error { return nil }
+// Migrate creates tables or runs schema migrations. opts carries a
+// cortex.Rescoper for populating scope on rows written before v1.8.0;
+// see the rescope guide.
+func (s *MyStore) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error { return nil }
 
 // Ping verifies database connectivity.
 func (s *MyStore) Ping(ctx context.Context) error { return nil }
@@ -180,7 +183,7 @@ func (s *MyStore) Close() error { return nil }
 // ── Agent methods (6) ────────────────────────────
 func (s *MyStore) Create(ctx context.Context, config *agent.Config) error { /* ... */ }
 func (s *MyStore) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) { /* ... */ }
-func (s *MyStore) GetByName(ctx context.Context, appID, name string) (*agent.Config, error) { /* ... */ }
+func (s *MyStore) GetByName(ctx context.Context, name string) (*agent.Config, error) { /* ... */ }
 func (s *MyStore) Update(ctx context.Context, config *agent.Config) error { /* ... */ }
 func (s *MyStore) Delete(ctx context.Context, agentID id.AgentID) error { /* ... */ }
 func (s *MyStore) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) { /* ... */ }
@@ -188,7 +191,7 @@ func (s *MyStore) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.
 // ── Skill methods (6) ────────────────────────────
 func (s *MyStore) CreateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
 func (s *MyStore) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) { /* ... */ }
-func (s *MyStore) GetSkillByName(ctx context.Context, appID, name string) (*skill.Skill, error) { /* ... */ }
+func (s *MyStore) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) { /* ... */ }
 func (s *MyStore) UpdateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
 func (s *MyStore) DeleteSkill(ctx context.Context, skillID id.SkillID) error { /* ... */ }
 func (s *MyStore) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) { /* ... */ }
@@ -196,7 +199,7 @@ func (s *MyStore) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*
 // ── Trait methods (6) ────────────────────────────
 func (s *MyStore) CreateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
 func (s *MyStore) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) { /* ... */ }
-func (s *MyStore) GetTraitByName(ctx context.Context, appID, name string) (*trait.Trait, error) { /* ... */ }
+func (s *MyStore) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) { /* ... */ }
 func (s *MyStore) UpdateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
 func (s *MyStore) DeleteTrait(ctx context.Context, traitID id.TraitID) error { /* ... */ }
 func (s *MyStore) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) { /* ... */ }
@@ -204,7 +207,7 @@ func (s *MyStore) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*
 // ── Behavior methods (6) ─────────────────────────
 func (s *MyStore) CreateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
 func (s *MyStore) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) { /* ... */ }
-func (s *MyStore) GetBehaviorByName(ctx context.Context, appID, name string) (*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error) { /* ... */ }
 func (s *MyStore) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
 func (s *MyStore) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error { /* ... */ }
 func (s *MyStore) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) { /* ... */ }
@@ -212,7 +215,7 @@ func (s *MyStore) ListBehaviors(ctx context.Context, filter *behavior.ListFilter
 // ── Persona methods (6) ──────────────────────────
 func (s *MyStore) CreatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
 func (s *MyStore) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) { /* ... */ }
-func (s *MyStore) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) { /* ... */ }
+func (s *MyStore) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) { /* ... */ }
 func (s *MyStore) UpdatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
 func (s *MyStore) DeletePersona(ctx context.Context, personaID id.PersonaID) error { /* ... */ }
 func (s *MyStore) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) { /* ... */ }
@@ -254,7 +257,7 @@ eng, err := engine.New(
 
 ## Key implementation notes
 
-1. **Scope isolation** — Every query must filter by the caller's scope and reject a zero scope with `cortex.ErrNoScope`. Use `cortex.ScopeFromContext(ctx)`; `agent.Store` methods also take `cortex.AppFromContext(ctx)`.
+1. **Scope isolation.** Every query must filter by the caller's scope and reject a zero scope with `cortex.ErrNoScope`. Use `cortex.ScopeFromContext(ctx)`. There is no separate app dimension to read: a host that wants one declares an `app` level on the same `cortex.Scope`.
 
 2. **ID generation** — Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
 

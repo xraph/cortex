@@ -16,12 +16,11 @@ Root package. Exports context helpers, error constants, configuration, and share
 | `WithScope(ctx, scope)` | Attach a host-defined `Scope` to context |
 | `ScopeFromContext(ctx)` | Read the `Scope` from context (zero value if absent) |
 | `Scope`, `Level` | Host-defined scope hierarchy; Cortex only matches on `Level.Key`, never interprets it |
-| `WithApp(ctx, id)` | Inject app ID into context |
-| `AppFromContext(ctx)` | Read app ID from context |
 | `Config` | Engine configuration struct |
 | `DefaultConfig()` | Returns default Config values |
 | `Entity` | Base entity with common fields |
-| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNoScope`, ... | 20+ sentinel errors |
+| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNoScope`, `ErrNoRescoper`, ... | 20+ sentinel errors |
+| `Rescoper`, `MigrateOption`, `WithRescoper(r)`, `ApplyMigrateOptions(...)`, `ValidateRescopedScope(s)` | Legacy-row migration; see the [rescope guide](/docs/guides/v1.8-rescope) |
 
 ### `github.com/xraph/cortex/engine`
 
@@ -54,7 +53,8 @@ Agent configuration and store interface.
 ```go
 type Config struct {
     cortex.Entity
-    ID, AppID, Name, Description, SystemPrompt, Model string
+    ID, Name, Description, SystemPrompt, Model string
+    Scope cortex.Scope
     Tools []string                    // flat mode
     PersonaRef string                 // persona mode
     MaxSteps, MaxTokens int
@@ -65,7 +65,7 @@ type Config struct {
 }
 
 type Store interface {  // 6 methods
-    Create, Get, GetByName, Update, Delete, List
+    Create, Get, GetByName(ctx, name), Update, Delete, List
 }
 ```
 
@@ -76,7 +76,8 @@ Skills, tool bindings, knowledge references, and proficiency levels.
 ```go
 type Skill struct {
     cortex.Entity
-    ID, AppID, Name, Description string
+    ID, Name, Description string
+    Scope cortex.Scope
     Tools []ToolBinding
     Knowledge []KnowledgeRef
     SystemPromptFragment, DefaultProficiency string
@@ -87,7 +88,7 @@ type Skill struct {
 // Competent (0.6), Proficient (0.8), Expert (1.0)
 
 type Store interface {  // 6 methods
-    CreateSkill, GetSkill, GetSkillByName, UpdateSkill, DeleteSkill, ListSkills
+    CreateSkill, GetSkill, GetSkillByName(ctx, name), UpdateSkill, DeleteSkill, ListSkills
 }
 ```
 
@@ -98,14 +99,15 @@ Personality traits with bipolar dimensions and influences.
 ```go
 type Trait struct {
     cortex.Entity
-    ID, AppID, Name, Description string
+    ID, Name, Description string
+    Scope cortex.Scope
     Dimensions []Dimension    // bipolar axes (e.g. detached - empathetic)
-    Influences []Influence    // 5 targets: tone, vocabulary, reasoning, etc.
-    Category TraitCategory    // cognitive, emotional, social, behavioral
+    Influences []Influence    // targets: prompt_injection, max_steps, tool_selection, response_style
+    Category Category         // personality, workstyle, communication, risk
 }
 
 type Store interface {  // 6 methods
-    CreateTrait, GetTrait, GetTraitByName, UpdateTrait, DeleteTrait, ListTraits
+    CreateTrait, GetTrait, GetTraitByName(ctx, name), UpdateTrait, DeleteTrait, ListTraits
 }
 ```
 
@@ -116,7 +118,8 @@ Reactive behaviors with triggers and actions.
 ```go
 type Behavior struct {
     cortex.Entity
-    ID, AppID, Name, Description string
+    ID, Name, Description string
+    Scope cortex.Scope
     Triggers []Trigger      // 6 types: keyword_match, sentiment_below, etc.
     Actions  []Action       // 6 types: inject_prompt, modify_tone, etc.
     Priority int
@@ -124,7 +127,7 @@ type Behavior struct {
 }
 
 type Store interface {  // 6 methods
-    CreateBehavior, GetBehavior, GetBehaviorByName, UpdateBehavior, DeleteBehavior, ListBehaviors
+    CreateBehavior, GetBehavior, GetBehaviorByName(ctx, name), UpdateBehavior, DeleteBehavior, ListBehaviors
 }
 ```
 
@@ -135,17 +138,18 @@ Persona composition — skills, traits, behaviors, and styles.
 ```go
 type Persona struct {
     cortex.Entity
-    ID, AppID, Name, Description, Identity string
+    ID, Name, Description, Identity string
+    Scope cortex.Scope
     Skills []SkillAssignment
     Traits []TraitAssignment
     Behaviors []string
-    CognitiveStyle *cognitive.Style
-    CommunicationStyle *communication.Style
-    Perception *perception.Model
+    CognitiveStyle cognitive.Style
+    CommunicationStyle communication.Style
+    Perception perception.Model
 }
 
 type Store interface {  // 6 methods
-    CreatePersona, GetPersona, GetPersonaByName, UpdatePersona, DeletePersona, ListPersonas
+    CreatePersona, GetPersona, GetPersonaByName(ctx, name), UpdatePersona, DeletePersona, ListPersonas
 }
 ```
 
@@ -156,11 +160,12 @@ Cognitive processing styles.
 ```go
 type Style struct {
     Phases []Phase
+    DepthPreference, FocusPreference, ReflectionFrequency float64
 }
 type Phase struct {
-    Name, Prompt string
-    Strategy Strategy      // analytical, creative, methodical, intuitive, critical, collaborative
-    TransitionCondition    // on_complete, on_confidence, on_timeout, on_external
+    Strategy   Strategy             // analytical, creative, methodical, reactive, reflective, collaborative
+    MaxSteps   int
+    Transition TransitionCondition // after_steps, on_stuck, on_plan_complete, on_error
 }
 ```
 
@@ -170,9 +175,9 @@ Communication style configuration.
 
 ```go
 type Style struct {
-    Tone, Formality, Verbosity string
-    TechnicalLevel, EmojiUsage, PreferredFormat string
-    AdaptToUser bool
+    Tone, PreferredFormat string
+    Formality, Verbosity, TechnicalLevel float64
+    EmojiUsage, AdaptToUser bool
 }
 ```
 
@@ -182,8 +187,8 @@ Perception and attention models.
 
 ```go
 type Model struct {
-    AttentionFilter AttentionFilter
-    ContextWindow, DetailOrientation string
+    AttentionFilters []AttentionFilter
+    ContextWindow, DetailOrientation float64
 }
 type AttentionFilter struct {
     Name string
@@ -296,7 +301,7 @@ type Store interface {
     run.Store        // 8 methods
     memory.Store     // 8 methods
     checkpoint.Store // 4 methods
-    Migrate(ctx) error
+    Migrate(ctx, ...opts) error
     Ping(ctx) error
     Close() error
 }
@@ -308,7 +313,7 @@ Production PostgreSQL store with embedded migrations.
 
 ```go
 func New(db *grove.DB) *Store
-func (s *Store) Migrate(ctx context.Context) error
+func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 ```
 
 ### `github.com/xraph/cortex/store/sqlite`
@@ -317,7 +322,7 @@ SQLite store with embedded migrations.
 
 ```go
 func New(db *grove.DB) *Store
-func (s *Store) Migrate(ctx context.Context) error
+func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 ```
 
 ### `github.com/xraph/cortex/store/mongo`
@@ -326,7 +331,7 @@ MongoDB store with embedded migrations.
 
 ```go
 func New(db *grove.DB) *Store
-func (s *Store) Migrate(ctx context.Context) error
+func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 ```
 
 ### `github.com/xraph/cortex/plugin`

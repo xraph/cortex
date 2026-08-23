@@ -12,14 +12,12 @@ package main
 
 import (
     "context"
-    "database/sql"
     "fmt"
     "log"
     "os"
 
-    "github.com/uptrace/bun"
-    "github.com/uptrace/bun/dialect/pgdialect"
-    "github.com/uptrace/bun/driver/pgdriver"
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
 
     "github.com/xraph/cortex"
     "github.com/xraph/cortex/engine"
@@ -29,11 +27,15 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Connect to PostgreSQL
-    sqldb := sql.OpenDB(pgdriver.NewConnector(
-        pgdriver.WithDSN(os.Getenv("DATABASE_URL")),
-    ))
-    db := bun.NewDB(sqldb, pgdialect.New())
+    // Connect to PostgreSQL via grove
+    drv := pgdriver.New()
+    if err := drv.Open(ctx, os.Getenv("DATABASE_URL")); err != nil {
+        log.Fatal(err)
+    }
+    db, err := grove.Open(drv)
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Create the composite store
     st := pgstore.New(db)
@@ -42,10 +44,10 @@ func main() {
     eng, err := engine.New(
         engine.WithStore(st),
         engine.WithConfig(cortex.Config{
-            DefaultModel:        "gpt-4o",
-            DefaultMaxSteps:     25,
-            DefaultMaxTokens:    4096,
-            DefaultTemperature:  0.7,
+            DefaultModel:         "gpt-4o",
+            DefaultMaxSteps:      25,
+            DefaultMaxTokens:     4096,
+            DefaultTemperature:   0.7,
             DefaultReasoningLoop: "react",
         }),
     )
@@ -58,11 +60,15 @@ func main() {
         log.Fatal("migrate:", err)
     }
 
-    // Attach the host's own scope hierarchy and app ID
+    // Attach the host's own scope hierarchy. Cortex has no built-in
+    // notion of tenant or app. A host that wants an app dimension
+    // declares it as a level, the same as tenant:
     ctx = cortex.WithScope(ctx, cortex.Scope{
-        Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+        Levels: []cortex.Level{
+            {Key: "tenant", Value: "acme-corp"},
+            {Key: "app", Value: "support-bot"},
+        },
     })
-    ctx = cortex.WithApp(ctx, "support-bot")
 
     buildAgent(ctx, eng)
 }
@@ -78,18 +84,18 @@ import "github.com/xraph/cortex/skill"
 func buildAgent(ctx context.Context, eng *engine.Engine) {
     // Create a "customer-support" skill with two tool bindings
     supportSkill := &skill.Skill{
-        AppID:       "support-bot",
+        ID:          id.NewSkillID(),
         Name:        "customer-support",
         Description: "Handle customer inquiries using CRM tools",
         Tools: []skill.ToolBinding{
             {
                 ToolName: "lookup_order",
-                Mastery:  skill.Expert,
+                Mastery:  skill.ProficiencyExpert,
                 Guidance: "Always verify the order ID format before lookup",
             },
             {
                 ToolName: "create_ticket",
-                Mastery:  skill.Proficient,
+                Mastery:  skill.ProficiencyProficient,
                 Guidance: "Classify ticket priority based on customer sentiment",
             },
         },
@@ -98,7 +104,7 @@ func buildAgent(ctx context.Context, eng *engine.Engine) {
             {Source: "policies://warranty",      InjectMode: "on_demand", Priority: 2},
         },
         SystemPromptFragment: "You are an expert support agent. Always be empathetic.",
-        DefaultProficiency:   skill.Proficient,
+        DefaultProficiency:   skill.ProficiencyProficient,
     }
     if err := eng.CreateSkill(ctx, supportSkill); err != nil {
         log.Fatal("create skill:", err)
@@ -115,10 +121,10 @@ Traits define personality dimensions — bipolar axes that shape agent behavior.
 
     // Create an "empathy" trait
     empathyTrait := &trait.Trait{
-        AppID:       "support-bot",
+        ID:          id.NewTraitID(),
         Name:        "empathy",
         Description: "Ability to understand and share customer feelings",
-        Category:    trait.Emotional,
+        Category:    trait.CategoryPersonality,
         Dimensions: []trait.Dimension{
             {
                 Name:      "emotional-awareness",
@@ -134,8 +140,7 @@ Traits define personality dimensions — bipolar axes that shape agent behavior.
             },
         },
         Influences: []trait.Influence{
-            {Target: "tone",       Value: "warm and understanding", Weight: 0.8},
-            {Target: "vocabulary", Value: "supportive phrases",     Weight: 0.6},
+            {Target: trait.TargetResponseStyle, Value: "warm and understanding", Weight: 0.8},
         },
     }
     if err := eng.CreateTrait(ctx, empathyTrait); err != nil {
@@ -152,17 +157,16 @@ Behaviors define automatic reactions to triggers — like habits an agent follow
     import "github.com/xraph/cortex/behavior"
 
     escalationBehavior := &behavior.Behavior{
-        AppID:       "support-bot",
+        ID:          id.NewBehaviorID(),
         Name:        "auto-escalate",
         Description: "Escalate angry customers to a human agent",
         Priority:    10,
         Triggers: []behavior.Trigger{
-            {Type: behavior.SentimentBelow, Pattern: "0.3"},
-            {Type: behavior.KeywordMatch,   Pattern: "speak to manager|supervisor|escalate"},
+            {Type: behavior.TriggerOnInput, Pattern: "speak to manager|supervisor|escalate"},
         },
         Actions: []behavior.Action{
-            {Type: behavior.ModifyTone,   Target: "tone", Value: "extra empathetic"},
-            {Type: behavior.InjectPrompt, Value: "Acknowledge the customer's frustration before proceeding."},
+            {Type: behavior.ActionInjectPrompt, Value: "Acknowledge the customer's frustration before proceeding, in an extra empathetic tone."},
+            {Type: behavior.ActionRequireTool, Target: "create_ticket"},
         },
     }
     if err := eng.CreateBehavior(ctx, escalationBehavior); err != nil {
@@ -177,20 +181,20 @@ A persona composes skills, traits, and behaviors into a coherent identity.
 
 ```go
     import (
-        "github.com/xraph/cortex/persona"
         "github.com/xraph/cortex/cognitive"
         "github.com/xraph/cortex/communication"
         "github.com/xraph/cortex/perception"
+        "github.com/xraph/cortex/persona"
     )
 
     supportPersona := &persona.Persona{
-        AppID:       "support-bot",
+        ID:          id.NewPersonaID(),
         Name:        "helpful-agent",
         Description: "A warm, knowledgeable customer support agent",
         Identity:    "I am a customer support specialist who genuinely cares about solving problems.",
 
         Skills: []persona.SkillAssignment{
-            {SkillName: "customer-support", Proficiency: skill.Expert},
+            {SkillName: "customer-support", Proficiency: skill.ProficiencyExpert},
         },
         Traits: []persona.TraitAssignment{
             {TraitName: "empathy", DimensionValues: map[string]float64{
@@ -200,29 +204,28 @@ A persona composes skills, traits, and behaviors into a coherent identity.
         },
         Behaviors: []string{"auto-escalate"},
 
-        CognitiveStyle: &cognitive.Style{
+        CognitiveStyle: cognitive.Style{
             Phases: []cognitive.Phase{
-                {Name: "understand", Strategy: cognitive.Analytical, Prompt: "Understand the customer's issue"},
-                {Name: "resolve",    Strategy: cognitive.Creative,   Prompt: "Find the best solution"},
-                {Name: "confirm",    Strategy: cognitive.Methodical, Prompt: "Verify the customer is satisfied"},
+                {Strategy: cognitive.StrategyAnalytical, MaxSteps: 5, Transition: cognitive.TransitionAfterSteps},
+                {Strategy: cognitive.StrategyCreative,   MaxSteps: 5, Transition: cognitive.TransitionOnStuck},
+                {Strategy: cognitive.StrategyMethodical, MaxSteps: 5, Transition: cognitive.TransitionOnPlanComplete},
             },
         },
-        CommunicationStyle: &communication.Style{
+        CommunicationStyle: communication.Style{
             Tone:            "warm",
-            Formality:       "professional-casual",
-            Verbosity:       "concise",
-            TechnicalLevel:  "low",
-            EmojiUsage:      "minimal",
+            Formality:       0.5,
+            Verbosity:       0.4,
+            TechnicalLevel:  0.2,
+            EmojiUsage:      false,
             PreferredFormat: "conversational",
             AdaptToUser:     true,
         },
-        Perception: &perception.Model{
-            AttentionFilter: perception.AttentionFilter{
-                Name:     "support-focus",
-                Keywords: []string{"order", "return", "refund", "complaint", "issue"},
+        Perception: perception.Model{
+            AttentionFilters: []perception.AttentionFilter{
+                {Name: "support-focus", Keywords: []string{"order", "return", "refund", "complaint", "issue"}},
             },
-            ContextWindow:     "recent",
-            DetailOrientation: "high",
+            ContextWindow:     0.7,
+            DetailOrientation: 0.8,
         },
     }
     if err := eng.CreatePersona(ctx, supportPersona); err != nil {
@@ -239,7 +242,7 @@ The agent config ties everything together — specifying the model, persona, and
     import "github.com/xraph/cortex/agent"
 
     agentCfg := &agent.Config{
-        AppID:        "support-bot",
+        ID:           id.NewAgentID(),
         Name:         "support-agent",
         Description:  "Primary customer support agent",
         SystemPrompt: "You are a helpful customer support agent for Acme Corp.",
@@ -258,29 +261,32 @@ The agent config ties everything together — specifying the model, persona, and
 
 ## 7. Run via API
 
-Once the engine is wired up with the HTTP API, you can interact through REST:
+Once the engine is wired up with the HTTP API, you can interact through REST. `X-Tenant-ID` below stands in for whatever headers your own scope middleware reads to build the request's `cortex.Scope`; see the [multi-tenancy guide](/docs/concepts/multi-tenancy) for a worked middleware example.
 
 ```bash
 # List agents
-curl http://localhost:8080/cortex/agents
+curl http://localhost:8080/cortex/agents \
+  -H "X-Tenant-ID: acme-corp"
 
 # Run the agent
 curl -X POST http://localhost:8080/cortex/agents/support-agent/run \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: acme-corp" \
-  -H "X-App-ID: support-bot" \
   -d '{"input": "I want to return order #12345, the product arrived damaged"}'
 
 # Check run status
-curl http://localhost:8080/cortex/runs/{run_id}
+curl http://localhost:8080/cortex/runs/{run_id} \
+  -H "X-Tenant-ID: acme-corp"
 
 # Stream a run
 curl -N -X POST http://localhost:8080/cortex/agents/support-agent/stream \
   -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: acme-corp" \
   -d '{"input": "What is your return policy?"}'
 
 # View conversation history
-curl http://localhost:8080/cortex/agents/support-agent/conversation?limit=20
+curl "http://localhost:8080/cortex/agents/support-agent/conversation?limit=20" \
+  -H "X-Tenant-ID: acme-corp"
 ```
 
 ## 8. Wiring with Forge
@@ -290,6 +296,9 @@ For production, use the Forge extension to get automatic lifecycle management:
 ```go
 import (
     "github.com/xraph/forge"
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+
     "github.com/xraph/cortex/extension"
     pgstore "github.com/xraph/cortex/store/postgres"
 )
@@ -297,8 +306,18 @@ import (
 func main() {
     app := forge.New()
 
+    ctx := context.Background()
+    drv := pgdriver.New()
+    if err := drv.Open(ctx, os.Getenv("DATABASE_URL")); err != nil {
+        log.Fatal(err)
+    }
+    db, err := grove.Open(drv)
+    if err != nil {
+        log.Fatal(err)
+    }
+
     cortexExt := extension.New(
-        extension.WithStore(pgstore.New(bunDB)),
+        extension.WithStore(pgstore.New(db)),
     )
 
     app.RegisterExtension(cortexExt)

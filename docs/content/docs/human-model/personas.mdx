@@ -13,7 +13,6 @@ type Persona struct {
     ID                 id.PersonaID
     Name               string
     Description        string
-    AppID              string
     Identity           string               // core identity statement
     Skills             []SkillAssignment
     Traits             []TraitAssignment
@@ -122,7 +121,6 @@ Use `agent.HasPersona()` to check which mode is active.
 seniorEng := &persona.Persona{
     ID:       id.NewPersonaID(),
     Name:     "senior-engineer",
-    AppID:    "myapp",
     Identity: "A senior software engineer with 10+ years of experience",
     Skills: []persona.SkillAssignment{
         {SkillName: "code-review", Proficiency: skill.ProficiencyExpert},
@@ -158,7 +156,7 @@ seniorEng := &persona.Persona{
 type Store interface {
     CreatePersona(ctx context.Context, persona *Persona) error
     GetPersona(ctx context.Context, personaID id.PersonaID) (*Persona, error)
-    GetPersonaByName(ctx context.Context, appID, name string) (*Persona, error)
+    GetPersonaByName(ctx context.Context, name string) (*Persona, error)
     UpdatePersona(ctx context.Context, persona *Persona) error
     DeletePersona(ctx context.Context, personaID id.PersonaID) error
     ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)

@@ -25,6 +25,9 @@ import (
     "context"
     "log"
 
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+
     "github.com/xraph/cortex/engine"
     "github.com/xraph/cortex/store/postgres"
 )
@@ -32,7 +35,14 @@ import (
 func main() {
     ctx := context.Background()
 
-    db := connectDB() // your *bun.DB connection
+    drv := pgdriver.New()
+    if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/cortex?sslmode=disable"); err != nil {
+        log.Fatal(err)
+    }
+    db, err := grove.Open(drv)
+    if err != nil {
+        log.Fatal(err)
+    }
     pgStore := postgres.New(db)
 
     // Run migrations.
@@ -55,16 +65,19 @@ func main() {
 
 ## Step 2: Set up a scoped context
 
-Cortex has no built-in notion of tenant, workspace, or organization — the host defines its
-own scope hierarchy and attaches it to the context, along with the app ID:
+Cortex has no built-in notion of tenant, workspace, or app. The host defines its own
+scope hierarchy and attaches it to the context. A host that wants an app dimension
+declares it as a level, the same as any other:
 
 ```go
 import "github.com/xraph/cortex"
 
 ctx = cortex.WithScope(ctx, cortex.Scope{
-    Levels: []cortex.Level{{Key: "tenant", Value: "tenant-1"}},
+    Levels: []cortex.Level{
+        {Key: "tenant", Value: "tenant-1"},
+        {Key: "app", Value: "myapp"},
+    },
 })
-ctx = cortex.WithApp(ctx, "myapp")
 ```
 
 `WithScope` is required before calling into the engine or the store: every scope-guarded
@@ -85,7 +98,6 @@ import (
 codeReview := &skill.Skill{
     ID:          id.NewSkillID(),
     Name:        "code-review",
-    AppID:       "myapp",
     Description: "Review pull requests for bugs, style, and security issues",
     Tools: []skill.ToolBinding{
         {ToolName: "read_file", Mastery: skill.ProficiencyExpert},
@@ -109,7 +121,6 @@ import "github.com/xraph/cortex/trait"
 thoroughness := &trait.Trait{
     ID:       id.NewTraitID(),
     Name:     "thoroughness",
-    AppID:    "myapp",
     Category: trait.CategoryWorkstyle,
     Dimensions: []trait.Dimension{
         {Name: "depth", LowLabel: "surface-level", HighLabel: "exhaustive", Value: 0.85},
@@ -136,7 +147,6 @@ import (
 seniorEng := &persona.Persona{
     ID:       id.NewPersonaID(),
     Name:     "senior-engineer",
-    AppID:    "myapp",
     Identity: "A senior software engineer with 10+ years of experience",
     Skills: []persona.SkillAssignment{
         {SkillName: "code-review", Proficiency: skill.ProficiencyExpert},
@@ -166,7 +176,6 @@ import "github.com/xraph/cortex/agent"
 agentCfg := &agent.Config{
     ID:         id.NewAgentID(),
     Name:       "reviewer-bot",
-    AppID:      "myapp",
     PersonaRef: "senior-engineer",
     Model:      "gpt-4o",
     MaxSteps:   25,
@@ -182,11 +191,11 @@ if err := eng.CreateAgent(ctx, agentCfg); err != nil {
 If you are using the Forge extension, you get 36 REST endpoints automatically. You can also invoke the engine directly:
 
 ```go
-// List agents
-agents, _ := eng.ListAgents(ctx, &agent.ListFilter{AppID: "myapp"})
+// List agents (scope comes from ctx, the same scope attached in Step 2)
+agents, _ := eng.ListAgents(ctx, &agent.ListFilter{})
 
 // Get a specific agent
-a, _ := eng.GetAgentByName(ctx, "myapp", "reviewer-bot")
+a, _ := eng.GetAgentByName(ctx, "reviewer-bot")
 
 // List runs for an agent
 runs, _ := eng.ListRuns(ctx, &run.ListFilter{AgentID: a.ID.String()})

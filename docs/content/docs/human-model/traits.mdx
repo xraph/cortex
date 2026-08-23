@@ -13,7 +13,6 @@ type Trait struct {
     ID          id.TraitID
     Name        string
     Description string
-    AppID       string
     Dimensions  []Dimension
     Influences  []Influence
     Category    TraitCategory
@@ -85,7 +84,7 @@ Traits are organized into four categories:
 type Store interface {
     CreateTrait(ctx context.Context, trait *Trait) error
     GetTrait(ctx context.Context, traitID id.TraitID) (*Trait, error)
-    GetTraitByName(ctx context.Context, appID, name string) (*Trait, error)
+    GetTraitByName(ctx context.Context, name string) (*Trait, error)
     UpdateTrait(ctx context.Context, trait *Trait) error
     DeleteTrait(ctx context.Context, traitID id.TraitID) error
     ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)

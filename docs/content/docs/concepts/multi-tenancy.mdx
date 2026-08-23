@@ -3,29 +3,37 @@ title: Host-Defined Scope
 description: How Cortex scopes agents, runs, and every other entity using a hierarchy the host defines.
 ---
 
-Cortex has no built-in notion of tenant, workspace, or organization. Instead, every
-scope-guarded entity (runs, conversations, checkpoints, and — via `AppID` — agents,
-skills, traits, behaviors, and personas) is scoped by a `cortex.Scope` that **the host
-declares and attaches to the context**. Cortex never interprets what a scope level
-means; it only matches on the `Key` you give it. This is enforced at the store layer
-for the entities listed above — cross-scope access to a run, conversation, or
-checkpoint is structurally impossible, not merely filtered out by a parameter a caller
-could omit.
+Cortex has no built-in notion of tenant, workspace, or organization. Every entity it
+manages, agents, skills, traits, behaviors, personas, orchestration configs and
+orchestration runs, agent runs, checkpoints, conversations, working memory, steps,
+and tool calls, is scoped by a `cortex.Scope` that **the host declares and attaches
+to the context**.
+Cortex never interprets what a scope level means; it only matches on the `Key` you
+give it. This is enforced at the store layer for every entity in that list: a
+zero-scope context is rejected outright with `cortex.ErrNoScope`, and cross-scope
+access to any of them is structurally impossible, not merely filtered out by a
+parameter a caller could omit.
 
-That guarantee does **not** extend to everything a run touches. Steps, tool calls, and
-working memory carry no scope of their own:
+That guarantee applies uniformly, but not every entity resolves its scope the same
+way. Agents, skills, traits, behaviors, personas, and orchestration configs are each
+independently addressable by name: `GetByName`, `GetSkillByName`, and so on all take
+just `(ctx, name)` and resolve against whatever scope is on the context. Runs and
+checkpoints work the same way, resolved directly from context on every call.
 
-- **Steps and tool calls** are read through `ListSteps`/`ListToolCalls`, keyed by
-  `run_id` with no scope predicate. They're safe in practice because every reader
-  path goes through a scoped `GetRun` first — you can't reach a step or tool call
-  without already having resolved its parent run inside your own scope — but a direct
-  `run_id` (guessed or leaked) issued straight against `ListSteps`/`ListToolCalls`
-  without that upstream check is not rejected by the store itself.
-- **Working memory** (`SaveWorking`/`LoadWorking`/`ClearWorking`) is unscoped
-  entirely; it is not covered by this document's enforcement guarantees.
+Steps and tool calls are different. They carry scope columns and are filtered by them
+in every `ListSteps`/`ListToolCalls` call, the same `cortex.ErrNoScope` guard as
+everything else, but they have no by-name lookup of their own and no independent way
+to acquire a scope: a step or tool call is only ever created inside the same request
+that created its parent run, using that run's own context, so its scope is always the
+run's scope. There is no separate "step scope" concept to reason about. This matters
+most during the [v1.8.0 rescope of legacy rows](/docs/guides/v1.8-rescope): a step or
+tool call from before this release never resolves its own scope through a host's
+`Rescoper`. It inherits whatever its parent run resolves to.
 
-Both are pre-existing gaps, not something this release introduced, and are called out
-here rather than left implicit.
+Working memory (`SaveWorking`/`LoadWorking`/`ClearWorking`) is scope-guarded like
+everything else and, unlike steps and tool calls, does carry its own legacy `tenant_id`
+column, so a pre-v1.8.0 working memory row resolves directly through a `Rescoper`
+rather than inheriting from its run.
 
 ## Scope and Level
 
@@ -56,7 +64,18 @@ import "github.com/xraph/cortex"
 ctx = cortex.WithScope(ctx, cortex.Scope{
     Levels: []cortex.Level{{Key: "tenant", Value: "org-123"}},
 })
-ctx = cortex.WithApp(ctx, "myapp")
+```
+
+A host that also wants an application dimension declares it as another level, the
+same way:
+
+```go
+ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{
+        {Key: "tenant", Value: "org-123"},
+        {Key: "app", Value: "myapp"},
+    },
+})
 ```
 
 A host with a deeper hierarchy attaches every level it needs, in order:
@@ -85,46 +104,57 @@ canon := scope.Canonical()        // "tenant=org-123"
 `ScopeFromContext` returns the zero `Scope` if nothing was attached — callers must
 treat that as an error condition, not as "match everything."
 
-## AppID vs Scope
+## One scoping model, not two
 
-| Concept | Purpose | Required | Example |
-|---------|---------|----------|---------|
-| **AppID** | Logical application boundary. All domain entities (agents, skills, traits, behaviors, personas) carry an `AppID` field, injected with `cortex.WithApp`. | Yes | `"myapp"`, `"staging"` |
-| **Scope** | The host's own hierarchy — tenant, workspace, org, whatever it needs. Used for execution entities (runs, conversations, checkpoints) to isolate per-host data, injected with `cortex.WithScope`. | Yes, for any scope-guarded operation | `tenant=org-123`, `workspace=ws-123/project=proj-456` |
+Before v1.8.0, domain entities (agents, skills, traits, behaviors, personas) carried
+a separate `AppID` field, injected with `cortex.WithApp` and unrelated to
+`cortex.Scope`. That axis is gone. There is one mechanism now: every entity carries a
+`Scope`, populated from `cortex.WithScope` on create, and a host that used to rely on
+`AppID` as an application boundary declares an `app` level on that same `Scope`
+instead. `cortex.WithApp` and `cortex.AppFromContext` no longer exist.
 
 ## Store enforcement
 
 Every store implementation enforces scope on every query:
 
-- **Agent, Skill, Trait, Behavior, Persona** — all `GetByName` and `List` queries filter by `app_id`
-- **Run, Memory, Checkpoint** — every query filters by the caller's scope, read from the context
-- **No scope, no query** — a zero scope is rejected with `cortex.ErrNoScope` before the store touches the database, rather than silently matching every row
-- **Cross-scope access** — returns `ErrNotFound` even if the entity exists under a different app or scope
-- **Scope is immutable after creation** — a run's or checkpoint's stored scope is set once and never rewritten by a later update
+- **Agent, Skill, Trait, Behavior, Persona, Orchestration Config**: `GetByName` and
+  `List`/`Count` queries filter by the caller's scope, read from the context, the same
+  as every other entity
+- **Run, Orchestration Run, Memory, Checkpoint, Step, Tool Call**: every query
+  filters by the caller's scope, read from the context
+- **No scope, no query**: a zero scope is rejected with `cortex.ErrNoScope` before
+  the store touches the database, rather than silently matching every row
+- **Cross-scope access**: returns `ErrNotFound` even if the entity exists under a
+  different scope
+- **Scope is immutable after creation**: an entity's stored scope is set once and
+  never rewritten by a later update
 
-## Upgrading to v2: rows from before this release carry no scope
+## Upgrading: rows from before v1.7.0/v1.8.0 carry no scope
 
-The migration that adds `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` does **not**
-backfill them for existing rows. An earlier draft of the migration tried to
-synthesize a scope from the old `tenant_id`/`app_id` columns (e.g.
-`scope_l0 = 'tenant=' || tenant_id`), but that invents a key vocabulary
-("tenant=", "app=") distinct from whatever keys your own scope actually uses (e.g.
-"workspace="), and every pre-v2 conversation row had `tenant_id = ''` — backfilling
-those into a literal `tenant=` bucket would have silently orphaned all v1 history
-into a bucket nothing could ever reach again.
+The migrations that added `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` do **not**
+backfill them for existing rows. An earlier draft tried synthesizing a scope from the
+old `tenant_id`/`app_id` columns (`scope_l0 = 'tenant=' || tenant_id`), but that
+invents a key vocabulary ("tenant=", "app=") distinct from whatever keys your own
+scope actually uses (e.g. "workspace="), and every row predating scope had
+`tenant_id = ''` or `app_id = ''`. Backfilling those into a literal `tenant=` bucket
+would have silently orphaned all of that history into a bucket nothing could ever
+reach again.
 
-So instead: **rows created before v2 are left with empty scope columns.** Since every
-scoped query requires a non-zero `cortex.Scope` on the context and filters by it, a
-row with `scope_l0 = ''` simply never matches — it is invisible to every scoped read,
-not deleted, and not silently misattributed to whichever scope happens to query first.
+So instead: **rows created before scope existed are left with empty scope columns.**
+Since every scoped query requires a non-zero `cortex.Scope` on the context and
+filters by it, a row with `scope_canon = ''` simply never matches. It is invisible to
+every scoped read, not deleted, and not silently misattributed to whichever scope
+happens to query first.
 
-If that old data matters to you, you are responsible for re-scoping it yourself before
-your hosts start relying on it being reachable — for example, a one-off script that
-reads each pre-v2 row's old `tenant_id`/`app_id` value, maps it to your own scope
-keys, and issues an `UPDATE` (or the equivalent through your store) to populate
-`scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` accordingly. `tenant_id` and `app_id`
-themselves are not dropped this release — they stay around as read-only columns
-specifically so this kind of backfill is still possible after upgrading.
+As of v1.8.0, cortex will do the mapping for you, but only if you tell it how: pass a
+`cortex.Rescoper` to `Migrate`, and it maps each distinct legacy `(appID, tenantID)`
+pair onto a real `cortex.Scope` before writing anything. Without one, `Migrate`
+returns `cortex.ErrNoRescoper` and leaves the database untouched rather than
+guessing. See the [rescope guide](/docs/guides/v1.8-rescope) for the interface, a
+worked implementation, and how to resolve a collision when two legacy rows map onto
+the same scope and name. `tenant_id` and `app_id` are not dropped this release; they
+stay around as read-only columns specifically so this kind of rescope is still
+possible even if you skip it at upgrade time.
 
 ## API integration
 
@@ -155,8 +185,8 @@ import (
 // scopeMiddleware reads workspace/project off request headers set by an
 // upstream auth gateway and attaches them as the request's scope. A real
 // deployment would more likely derive these from a validated JWT or
-// session, not raw headers — the shape of WithScope/WithApp is what
-// matters here, not the header lookup.
+// session, not raw headers. The shape of WithScope is what matters
+// here, not the header lookup.
 func scopeMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         ctx := r.Context()
@@ -171,7 +201,6 @@ func scopeMiddleware(next http.Handler) http.Handler {
             levels = append(levels, cortex.Level{Key: "project", Value: project})
         }
         ctx = cortex.WithScope(ctx, cortex.Scope{Levels: levels})
-        ctx = cortex.WithApp(ctx, "myapp")
 
         next.ServeHTTP(w, r.WithContext(ctx))
     })
@@ -204,17 +233,21 @@ the `412` described above.
 ## Example: two tenants under one host-defined hierarchy
 
 ```go
-// Caller 1 creates an agent
-ctx1 := cortex.WithApp(context.Background(), "myapp")
-ctx1 = cortex.WithScope(ctx1, cortex.Scope{
-    Levels: []cortex.Level{{Key: "tenant", Value: "tenant-1"}},
+// Caller 1 creates an agent under "myapp", tenant-1
+ctx1 := cortex.WithScope(context.Background(), cortex.Scope{
+    Levels: []cortex.Level{
+        {Key: "tenant", Value: "tenant-1"},
+        {Key: "app", Value: "myapp"},
+    },
 })
 eng.CreateAgent(ctx1, agent1Config)
 
 // Caller 2 creates a different agent under the same app, a different tenant
-ctx2 := cortex.WithApp(context.Background(), "myapp")
-ctx2 = cortex.WithScope(ctx2, cortex.Scope{
-    Levels: []cortex.Level{{Key: "tenant", Value: "tenant-2"}},
+ctx2 := cortex.WithScope(context.Background(), cortex.Scope{
+    Levels: []cortex.Level{
+        {Key: "tenant", Value: "tenant-2"},
+        {Key: "app", Value: "myapp"},
+    },
 })
 eng.CreateAgent(ctx2, agent2Config)
 

@@ -99,9 +99,11 @@ const features: FeatureCard[] = [
       </svg>
     ),
     code: `ctx = cortex.WithScope(ctx, cortex.Scope{
-  Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+  Levels: []cortex.Level{
+    {Key: "tenant", Value: "acme-corp"},
+    {Key: "app", Value: "support-app"},
+  },
 })
-ctx = cortex.WithApp(ctx, "support-app")
 
 // All agents, runs, and resources are
 // automatically scoped to acme-corp`,

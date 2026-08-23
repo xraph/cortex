@@ -1,0 +1,142 @@
+---
+title: Rescoping Legacy Rows
+description: How to migrate a pre-v1.8.0 database, where agents, skills, traits, behaviors, and personas still carry app_id instead of a scope.
+---
+
+If your database has agent, skill, trait, behavior, or persona rows created before v1.8.0, they carry an `app_id` (and, for runs, memories, and checkpoints, a `tenant_id`) instead of a `cortex.Scope`. Every scope-guarded query cortex runs today filters on scope, not on those old columns, so as they stand those rows are invisible: not deleted, not corrupted, just unreachable by anything written after v1.7.0.
+
+This guide covers what `Migrate` does about that, what you have to supply for it to do anything at all, and what happens when two old rows want the same new scope.
+
+## Why cortex won't guess
+
+An earlier draft of this migration tried to synthesize a scope automatically, something like `scope_l0 = 'app=' || app_id`. That got dropped before release, for a reason worth understanding before you write your own mapping: `"app="` and `"tenant="` are not keys your own scope hierarchy uses. If your host's levels are `workspace` and `project`, a synthesized `app=` bucket sits outside that hierarchy entirely. Every row in it would still be unreachable, just unreachable under a different, made-up name instead of an honest empty one.
+
+So cortex leaves the decision to you. You know what your old `app_id` and `tenant_id` values actually meant; cortex doesn't, and inventing an answer would be worse than admitting it doesn't have one.
+
+## The Rescoper interface
+
+```go
+// Rescoper maps a row's legacy identifiers onto a Scope during the v1.8.0
+// upgrade. It is called once per distinct (appID, tenantID) pair, not once
+// per row, so an expensive implementation is fine.
+type Rescoper interface {
+	Rescope(ctx context.Context, appID, tenantID string) (Scope, error)
+}
+```
+
+Cortex calls `Rescope` once per distinct `(appID, tenantID)` pair it finds among your unscoped rows, however many rows share that pair. A host with three legacy apps across two tenants sees at most six calls, not one per row, so a `Rescoper` that hits a database or a config service for each pair is fine.
+
+Not every table carries both identifiers. `cortex_agents`, `cortex_skills`, `cortex_traits`, `cortex_behaviors`, and `cortex_personas` only ever had `app_id`; `cortex_runs`, `cortex_memories`, and `cortex_checkpoints` only ever had `tenant_id`. Whichever column a table doesn't have arrives as an empty string, so a `Rescoper` needs to produce a sensible scope from either identifier alone, not just from the pair together.
+
+## A worked implementation
+
+Say your pre-v1.8.0 host tracked two tenants, each running a couple of named apps, and you want your new scope hierarchy to be `tenant` then `app`. The rows that only carry `app_id` (agents, skills, traits, behaviors, personas) need their tenant looked up from somewhere else, because the column that would tell you was never there:
+
+```go
+package migration
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/xraph/cortex"
+)
+
+// legacyAppTenants records which tenant owned each app_id this host ever
+// wrote agent, skill, trait, behavior, or persona rows under. Those five
+// tables never had a tenant_id column of their own, so this lookup is
+// how the tenant dimension gets reconstructed for them.
+var legacyAppTenants = map[string]string{
+	"support-bot":    "acme-corp",
+	"billing-bot":    "acme-corp",
+	"onboarding-bot": "globex",
+}
+
+// hostRescoper implements cortex.Rescoper for a tenant-then-app hierarchy.
+type hostRescoper struct{}
+
+func (hostRescoper) Rescope(ctx context.Context, appID, tenantID string) (cortex.Scope, error) {
+	// Runs, memories, and checkpoints carry tenant_id directly; use it.
+	tenant := tenantID
+	if tenant == "" {
+		// Agents, skills, traits, behaviors, and personas only carry
+		// app_id, so fall back to the static mapping for those.
+		var ok bool
+		tenant, ok = legacyAppTenants[appID]
+		if !ok {
+			return cortex.Scope{}, fmt.Errorf("rescope: no tenant mapping for legacy app %q", appID)
+		}
+	}
+
+	levels := []cortex.Level{{Key: "tenant", Value: tenant}}
+	if appID != "" {
+		levels = append(levels, cortex.Level{Key: "app", Value: appID})
+	}
+	return cortex.Scope{Levels: levels}, nil
+}
+```
+
+Pass it to `Migrate` with `cortex.WithRescoper`:
+
+```go
+import (
+	"context"
+	"errors"
+	"log"
+
+	"github.com/xraph/cortex"
+)
+
+func migrate(ctx context.Context, pgStore *postgres.Store) {
+	err := pgStore.Migrate(ctx, cortex.WithRescoper(hostRescoper{}))
+	if err != nil {
+		if errors.Is(err, cortex.ErrNoRescoper) {
+			log.Fatal("legacy unscoped rows found and no rescoper supplied; see docs/guides/v1.8-rescope")
+		}
+		log.Fatal(err)
+	}
+}
+```
+
+A returned scope goes through the same validation `cortex.WithScope` applies to a scope on a context: an empty `Key` or `Value` on any level, or more than three levels, is rejected with an error rather than silently written. A `Rescoper` that returns a scope too shallow or too deep to be useful fails the migration instead of quietly writing something that won't discriminate.
+
+## What happens without one
+
+`store.Store.Migrate` runs your schema migrations first, the same as always: new tables, new columns, new indexes all land regardless of whether you pass a `Rescoper`. Only after that does it scan for rows with an empty `scope_canon`. A brand-new database has none, so `Migrate(ctx)` with no options works fine on a fresh install; the scan finds nothing and the rescope step is a no-op.
+
+If it finds unscoped rows and you didn't pass `cortex.WithRescoper`, `Migrate` returns an error wrapping `cortex.ErrNoRescoper` and writes nothing. Rows that only ever carry a `run_id` (steps and tool calls, covered below) don't need a `Rescoper` on their own, so a database with only unscoped steps under already-rescoped runs won't hit this error; but a run, agent, skill, trait, behavior, or persona with no scope and no `Rescoper` supplied always does.
+
+If you're using the Forge extension's auto-migration, note that `Extension.Start` currently calls `store.Migrate(ctx)` with no options. There is no extension config field yet for supplying a `Rescoper`. If your database has legacy rows, disable auto-migration with `extension.WithDisableMigrate()` and call `Migrate` yourself, with your `Rescoper`, before the extension starts.
+
+## Steps and tool calls inherit their run's scope
+
+`cortex_steps` and `cortex_tool_calls` never had an `app_id` or `tenant_id` column of their own; the only identifier they carry is the `run_id` of the run they belong to. So they never call your `Rescoper` directly. Once their parent run resolves to a scope, whether that run was rescoped in this same pass or was already scoped from before, every step and tool call under it inherits that same scope. If a dependent row somehow references a run that comes out of the scan with no resolvable scope at all, the migration fails loudly instead of guessing.
+
+## Ordering, and what "aborts before writing" actually covers
+
+The rescope step, after schema migration, runs in this order:
+
+1. **Scan.** Find every row across every scope-aware table with `scope_canon = ''`.
+2. **Resolve.** Call your `Rescoper` once per distinct `(appID, tenantID)` pair for direct rows; work out inherited scopes for steps and tool calls from their parent runs.
+3. **Check for collisions.** Before writing anything, verify that no two rows, in this batch or already in the database, would land on the same `(scope, name)` (or, for working memory, the same `(scope, agent, key)`).
+4. **Write.** Apply every resolved scope inside one transaction.
+
+Steps 1 through 3 are ordinary reads; nothing is written until step 4, and step 4 either commits every resolved scope or rolls back entirely on any failure. A database is never left half-rescoped, some rows reachable and others still orphaned with nothing to tell them apart. That would be strictly worse than a migration that refused to start.
+
+## The collision error
+
+Step 3 exists because your `Rescoper` might map two rows that used to be distinguishable (different apps, say) onto the same new scope, and if they also share a name, the partial unique index `(scope_canon, name) WHERE scope_canon != ''` would reject the second write. Rather than let that surface as a raw constraint violation mid-migration, cortex checks for it up front and reports which rows collided:
+
+```
+rescope collision: cortex_skills rows agt_01... and agt_02... both map to
+scope "tenant=acme-corp/app=support-bot" with name "customer-support"; the
+rescoper must keep them in distinct scopes
+```
+
+This happens most often when two apps that used to be namespaced separately by `app_id` alone both had a skill (or agent, trait, behavior, or persona) with the same name, and your `Rescoper` folds both apps into the same tenant-level scope without an app level underneath to keep them apart. The fix is almost always in the `Rescoper`, not in the data: add the level that used to keep them distinct back into the returned scope, the way the worked example above appends an `app` level rather than mapping everything down to `tenant` alone. Working memory has its own version of the same check, keyed on `(scope, agent_id, key)` instead of name, for the same reason.
+
+## Rows stay invisible until you rescope them
+
+If you skip this migration, or run it against a database that had unscoped rows and pass a `Rescoper` that never gets around to some of them (the scan only runs once, at migrate time), those rows are not reachable by anything cortex does afterward. Every scoped read requires a non-zero `cortex.Scope` on the context and filters by it; a row with `scope_canon = ''` never matches any of them, and there's no admin escape hatch that lists everything regardless of scope. The data is still in the table if you go looking for it directly with `scope_canon = ''`, but as far as cortex's own API is concerned it doesn't exist until it's rescoped.
+
+`app_id` and `tenant_id` stay in the schema, unused by any code path, specifically so a rescope you didn't run at upgrade time is still possible later: the values this migration would have read from them are still there, waiting.
