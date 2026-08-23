@@ -28,7 +28,7 @@ func (e *Engine) resolveSession(ctx context.Context, agentID id.AgentID, overrid
 		return id.SessionID{}, fmt.Errorf("resolve default session: %w", cortex.ErrNoStore)
 	}
 
-	existing, err := e.store.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true})
+	existing, err := e.store.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true, Exact: true})
 	if err != nil {
 		return id.SessionID{}, fmt.Errorf("resolve default session: %w", err)
 	}
@@ -43,7 +43,7 @@ func (e *Engine) resolveSession(ctx context.Context, agentID id.AgentID, overrid
 		// unique violation rather than a second default, so re-read
 		// instead of failing the run.
 		if errors.Is(err, cortex.ErrAlreadyExists) {
-			again, reErr := e.store.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true})
+			again, reErr := e.store.ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true, Exact: true})
 			if reErr == nil && len(again) == 1 {
 				return again[0].ID, nil
 			}

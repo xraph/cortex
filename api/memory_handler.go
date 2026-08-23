@@ -132,7 +132,7 @@ func (a *API) resolveConversationSession(ctx context.Context, agentID id.AgentID
 		return sessionID, nil
 	}
 
-	sessions, err := a.eng.Store().ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true})
+	sessions, err := a.eng.Store().ListSessions(ctx, &session.ListFilter{AgentID: agentID, Limit: 1, DefaultOnly: true, Exact: true})
 	if err != nil {
 		return id.SessionID{}, fmt.Errorf("resolve default session: %w", err)
 	}

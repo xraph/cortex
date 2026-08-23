@@ -233,6 +233,85 @@ func TestRunAgent_SavesOnlyNewMessagesPerRun(t *testing.T) {
 	}
 }
 
+// TestResolveSession_DoesNotMatchDescendantScope is the regression for
+// fix round 2's session-resolution bug: the ListSessions(DefaultOnly)
+// call in resolveSession left Exact unset, so scopePredicates skipped
+// the (empty) narrower levels and matched a default session stored at
+// ANY deeper scope too. A run at a shallow scope would then "resolve" a
+// default session that actually lives at a descendant scope, whose
+// scope_canon disagrees with the shallow context's own canon.
+// SaveConversation's scope-predicated UPDATE then matches zero rows,
+// returns ErrSessionNotFound, and the whole write rolls back -- so the
+// shallow-scope agent silently never gets its own session and never
+// persists anything, with nothing but a log line noting the failure.
+//
+// This proves a run at {workspace=ws_x} creates and uses ITS OWN default
+// session, distinct from one that already exists for the same agent at
+// the deeper scope {workspace=ws_x, project=p1}, and that its messages
+// land where that session -- and only that session -- can see them.
+func TestResolveSession_DoesNotMatchDescendantScope(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStoreForTest(t)
+
+	e, err := engine.New(engine.WithStore(s), engine.WithLLM(scopespy.StaticLLM("ack")))
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	shallowCtx := cortex.WithScope(ctx,
+		cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
+	deepCtx := cortex.WithScope(ctx,
+		cortex.Scope{Levels: []cortex.Level{
+			{Key: "workspace", Value: "ws_x"},
+			{Key: "project", Value: "p1"},
+		}})
+
+	agentCfg := &agent.Config{ID: id.NewAgentID(), Name: "assistant", MaxSteps: 2}
+	if createErr := e.CreateAgent(shallowCtx, agentCfg); createErr != nil {
+		t.Fatalf("create agent: %v", createErr)
+	}
+
+	// A default session already exists one level deeper, for the same
+	// agent. Before the fix, this is the row a shallow-scope lookup
+	// would wrongly latch onto.
+	deepDefault := &session.Session{ID: id.NewSessionID(), AgentID: agentCfg.ID, IsDefault: true, Title: "Default"}
+	if createErr := e.Store().CreateSession(deepCtx, deepDefault); createErr != nil {
+		t.Fatalf("create deep default session: %v", createErr)
+	}
+
+	if _, runErr := e.RunAgent(shallowCtx, "assistant", "hello from shallow scope", nil); runErr != nil {
+		t.Fatalf("run at shallow scope: %v", runErr)
+	}
+
+	shallowSessions, err := s.ListSessions(shallowCtx, &session.ListFilter{AgentID: agentCfg.ID, DefaultOnly: true, Exact: true, Limit: 1})
+	if err != nil {
+		t.Fatalf("list sessions at shallow scope: %v", err)
+	}
+	if len(shallowSessions) != 1 {
+		t.Fatalf("ListSessions(DefaultOnly, Exact) at shallow scope = %d session(s), want exactly one own default", len(shallowSessions))
+	}
+	shallowDefault := shallowSessions[0]
+	if shallowDefault.ID == deepDefault.ID {
+		t.Fatalf("shallow-scope run resolved the DEEPER scope's default session (%s); it must create its own", deepDefault.ID)
+	}
+
+	rows, err := s.LoadConversation(shallowCtx, agentCfg.ID, shallowDefault.ID, 0)
+	if err != nil {
+		t.Fatalf("load conversation at shallow scope: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("no messages reachable through the shallow scope's own default session; the run's write must have gone missing")
+	}
+
+	deepRows, err := s.LoadConversation(deepCtx, agentCfg.ID, deepDefault.ID, 0)
+	if err != nil {
+		t.Fatalf("load conversation at deep scope: %v", err)
+	}
+	if len(deepRows) != 0 {
+		t.Errorf("deep scope's pre-existing default session gained %d message(s) from a shallow-scope run; it should be untouched", len(deepRows))
+	}
+}
+
 // newSQLiteStoreForTest opens a migrated sqlite store backed by a
 // temp-file database, for tests that need a real backend rather than
 // scopespy's in-memory fakes.
