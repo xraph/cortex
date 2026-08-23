@@ -1,4 +1,4 @@
-.PHONY: help build run test clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps templ templ-watch
+.PHONY: help build run test test-integration clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps templ templ-watch
 
 # Default target
 .DEFAULT_GOAL := help
@@ -40,6 +40,7 @@ help:
 	@echo "  make test (t)       - Run tests"
 	@echo "  make test-verbose   - Run tests with verbose output"
 	@echo "  make test-race      - Run tests with race detector"
+	@echo "  make test-integration - Run integration tests (inttest/ module; needs Docker)"
 	@echo "  make coverage       - Generate test coverage report"
 	@echo "  make coverage-html  - Generate HTML coverage report"
 	@echo ""
@@ -151,6 +152,14 @@ test-race:
 	@echo "$(BLUE)Running tests with race detector...$(NC)"
 	$(GO) test -race -v ./...
 	@echo "$(GREEN)✓ Race tests complete$(NC)"
+
+## test-integration: Run integration tests (needs Docker; live embedded fabriq engine).
+## The suite lives in the inttest/ nested module (its own go.mod), so the
+## root ./... above never reaches it.
+test-integration:
+	@echo "$(BLUE)Running integration tests...$(NC)"
+	cd inttest && $(GO) test -tags=integration -p 1 -timeout 30m ./...
+	@echo "$(GREEN)✓ Integration tests complete$(NC)"
 
 ## coverage: Generate test coverage
 coverage:
