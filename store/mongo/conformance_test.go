@@ -114,7 +114,7 @@ func TestConformance(t *testing.T) {
 func clearConformanceCollections(ctx context.Context, s *Store) error {
 	collections := []string{
 		colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
-		colSkills, colTraits, colBehaviors, colPersonas, colSessions,
+		colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions,
 		colOrchestrationConfigs, colOrchestrationRuns,
 	}
 	for _, col := range collections {

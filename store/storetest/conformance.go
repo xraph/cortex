@@ -10,13 +10,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
@@ -24,6 +27,7 @@ import (
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 )
 
@@ -39,6 +43,16 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("PrefixMatching", func(t *testing.T) { testPrefixMatching(t, newStore) })
 	t.Run("ScopeImmutability", func(t *testing.T) { testScopeImmutability(t, newStore) })
 	t.Run("ScopeExtraNeverNull", func(t *testing.T) { testScopeExtraNeverNull(t, newStore) })
+
+	// ClaimSuspension is the one store method whose whole reason for
+	// existing is what happens when two callers race it, so it gets its
+	// own group rather than riding along in the six scope groups. It runs
+	// against all three backends because the three implementations are
+	// genuinely different -- a conditional UPDATE with a rowcount check
+	// inside a transaction on postgres and sqlite, a FindOneAndUpdate on
+	// mongo -- and proving the sqlite one says nothing about the mongo
+	// one, which is the least like the others.
+	t.Run("ClaimSuspensionConcurrency", func(t *testing.T) { testClaimSuspensionConcurrency(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -286,6 +300,71 @@ func mustCreateCheckpoint(t *testing.T, s store.Store, ctx context.Context, runI
 	return cp
 }
 
+// newSuspension builds an unpersisted suspension fixture for runID. The
+// continuation carries real content -- a message, a system prompt, a step
+// index, a token count -- so a backend that silently drops or mangles the
+// JSON/BSON round-trip fails a read-back assertion instead of passing on
+// two empty structs comparing equal.
+func newSuspension(runID id.AgentRunID) *suspension.Suspension {
+	return &suspension.Suspension{
+		ID:     id.NewSuspensionID(),
+		RunID:  runID,
+		Reason: suspension.ReasonApproval,
+		Pending: []suspension.PendingCall{
+			{ID: "call_conformance", Name: "conformance-tool", Arguments: `{"query":"x"}`},
+		},
+		Cont: suspension.Continuation{
+			Messages:     []llm.Message{{Role: "user", Content: "hello"}},
+			SystemPrompt: "you are a conformance fixture",
+			StepIndex:    2,
+			TokensUsed:   17,
+		},
+	}
+}
+
+// mustPauseRun creates a run under ctx and moves it to paused, which is
+// the only state ClaimSuspension will transition out of.
+func mustPauseRun(t *testing.T, s store.Store, ctx context.Context) *run.Run { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	r := mustCreateRun(t, s, ctx)
+	r.State = run.StatePaused
+	if err := s.UpdateRun(ctx, r); err != nil {
+		t.Fatalf("fixture: pause run: %v", err)
+	}
+	return r
+}
+
+// mustSuspendRun creates a paused run under ctx and the one suspension
+// that belongs to it, which is the fixture every claim assertion needs.
+// expiresAt is applied verbatim, so a caller can hand it a past deadline
+// to make the row visible to ListExpired or nil to keep it out.
+func mustSuspendRun(t *testing.T, s store.Store, ctx context.Context, expiresAt *time.Time) (*run.Run, *suspension.Suspension) { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	r := mustPauseRun(t, s, ctx)
+	susp := newSuspension(r.ID)
+	susp.ExpiresAt = expiresAt
+	if err := s.CreateSuspension(ctx, susp); err != nil {
+		t.Fatalf("fixture: create suspension: %v", err)
+	}
+	return r, susp
+}
+
+func containsSuspensionID(ss []*suspension.Suspension, want id.SuspensionID) bool {
+	for _, s := range ss {
+		if s.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+// pastDeadline is a deadline every ListExpired call in this suite is
+// already past, so an expiry fixture never depends on wall-clock timing.
+func pastDeadline() *time.Time {
+	t := time.Now().UTC().Add(-time.Hour)
+	return &t
+}
+
 // ──────────────────────────────────────────────────
 // Zero-scope rejection
 // ──────────────────────────────────────────────────
@@ -498,6 +577,31 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 		if _, err := s.ListSessions(ctx, &session.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("ListSessions with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	// Suspension is new this release. ClaimSuspension gets its guard
+	// asserted here alongside the plain reads because it is the one
+	// method that WRITES on the way to returning something: a claim that
+	// skipped the guard would flip a run's state from an unscoped
+	// context, which no other assertion in this file would catch.
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		susp := newSuspension(id.NewAgentRunID())
+		if err := s.CreateSuspension(ctx, susp); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateSuspension with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetSuspension(ctx, susp.RunID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetSuspension with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ClaimSuspension(ctx, susp.RunID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ClaimSuspension with no scope = %v, want ErrNoScope", err)
+		}
+		if err := s.DeleteSuspension(ctx, susp.RunID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("DeleteSuspension with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListExpired(ctx, time.Now().UTC(), 10); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListExpired with no scope = %v, want ErrNoScope", err)
 		}
 	})
 
@@ -1254,6 +1358,42 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
+	// A suspension is keyed one-per-run, and a run only ever exists in one
+	// scope, so the two fixtures here necessarily sit on two different
+	// runs -- the same shape the Run subtest above uses. The scope
+	// predicate is still what the assertions turn on: ListExpired is
+	// filtered by nothing but scope, and the cross-read at the end asks
+	// for scope A's run by id from scope B, which only a scope predicate
+	// on the suspension read can refuse.
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		runA, suspA := mustSuspendRun(t, s, ctxA, pastDeadline())
+		_, suspB := mustSuspendRun(t, s, ctxB, pastDeadline())
+
+		gotA, err := s.ListExpired(ctxA, time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("list expired A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != suspA.ID {
+			t.Fatalf("ListExpired(ctxA) = %d suspension(s), want exactly suspA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListExpired(ctxB, time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("list expired B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != suspB.ID {
+			t.Fatalf("ListExpired(ctxB) = %d suspension(s), want exactly suspB", len(gotB))
+		}
+
+		if _, err := s.GetSuspension(ctxB, runA.ID); !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Errorf("GetSuspension(ctxB, runA.ID) = %v, want ErrNotSuspended", err)
+		}
+	})
+
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1814,6 +1954,46 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
+	// Suspension has no reusable name to collide on -- its identity is a
+	// run id, and run ids are globally unique -- so this subtest proves
+	// the other half of the same contract: a scope-B caller who knows (or
+	// guesses) a scope-A run id must not be able to read, claim, or
+	// delete scope A's suspension. Claim matters most of the three: it is
+	// the only one that would also flip scope A's run state as a side
+	// effect, so the run is re-read afterward and must still be paused.
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		runA, suspA := mustSuspendRun(t, s, ctxA, nil)
+
+		if _, err := s.GetSuspension(ctxB, runA.ID); !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Errorf("GetSuspension from scope B = %v, want ErrNotSuspended", err)
+		}
+		if _, err := s.ClaimSuspension(ctxB, runA.ID); !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Errorf("ClaimSuspension from scope B = %v, want ErrNotSuspended", err)
+		}
+		if err := s.DeleteSuspension(ctxB, runA.ID); !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Errorf("DeleteSuspension from scope B = %v, want ErrNotSuspended", err)
+		}
+
+		stillA, err := s.GetSuspension(ctxA, runA.ID)
+		if err != nil {
+			t.Fatalf("scope A lost its own suspension after B's attempts: %v", err)
+		}
+		if stillA.ID != suspA.ID {
+			t.Errorf("GetSuspension(ctxA) = %s, want %s", stillA.ID, suspA.ID)
+		}
+		reloadedRun, err := s.GetRun(ctxA, runA.ID)
+		if err != nil {
+			t.Fatalf("reload runA after cross-scope ClaimSuspension attempt: %v", err)
+		}
+		if reloadedRun.State != run.StatePaused {
+			t.Errorf("runA state = %q after a cross-scope claim, want %q (the claim must be a no-op)", reloadedRun.State, run.StatePaused)
+		}
+	})
+
 	// Orchestration gets the same treatment as Agent/Skill/Trait/Behavior/
 	// Persona above: the same name reused across two scopes must resolve
 	// to two distinct rows, proving UNIQUE (scope_canon, name) is what the
@@ -2080,6 +2260,30 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		if containsSessionID(gotOther, sid) {
 			t.Errorf("ListSessions({workspace=ws_y}) incorrectly returned a session scoped to {workspace=ws_x, project=p1}")
+		}
+	})
+
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		_, susp := mustSuspendRun(t, s, createCtx, pastDeadline())
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListExpired(broad, time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("list expired (broad): %v", err)
+		}
+		if !containsSuspensionID(got, susp.ID) {
+			t.Errorf("ListExpired({workspace=ws_x}) didn't return a suspension scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListExpired(other, time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("list expired (other workspace): %v", err)
+		}
+		if containsSuspensionID(gotOther, susp.ID) {
+			t.Errorf("ListExpired({workspace=ws_y}) incorrectly returned a suspension scoped to {workspace=ws_x, project=p1}")
 		}
 	})
 
@@ -2428,6 +2632,55 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 	})
 
+	// Suspension has no Update method, so the mutating call this group
+	// has to prove immutable against is ClaimSuspension: it writes, and
+	// it can be authorized by a context broader than the row's own stored
+	// scope. The claim must land on the RUN and leave the suspension's
+	// stored scope exactly where CreateSuspension put it.
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		r, susp := mustSuspendRun(t, s, createCtx, nil)
+
+		loaded, err := s.GetSuspension(createCtx, r.ID)
+		if err != nil {
+			t.Fatalf("get suspension: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+
+		// A broader context (workspace only, no project) still
+		// authorizes the claim via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		claimCtx := ctxWithScope("ws_x")
+		claimed, err := s.ClaimSuspension(claimCtx, r.ID)
+		if err != nil {
+			t.Fatalf("claim suspension from a broader scope: %v", err)
+		}
+		if claimed.ID != susp.ID {
+			t.Errorf("ClaimSuspension returned %s, want %s", claimed.ID, susp.ID)
+		}
+
+		reloaded, err := s.GetSuspension(createCtx, r.ID)
+		if err != nil {
+			t.Fatalf("reload suspension: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after claim = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		reloadedRun, err := s.GetRun(createCtx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run: %v", err)
+		}
+		if reloadedRun.State != run.StateRunning {
+			t.Errorf("run state after claim = %q, want %q (the claim must actually land, not silently no-op)", reloadedRun.State, run.StateRunning)
+		}
+		if reloadedRun.Scope.Canonical() != want {
+			t.Errorf("run scope after claim = %q, want %q (scope must be immutable)", reloadedRun.Scope.Canonical(), want)
+		}
+	})
+
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		createCtx := ctxWithScope("ws_x", "p1")
@@ -2684,6 +2937,35 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		}
 	})
 
+	t.Run("Suspension", func(t *testing.T) {
+		s := newStore(t)
+		r, susp := mustSuspendRun(t, s, ctx, nil)
+		got, err := s.GetSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("get suspension after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+		// The round-trip is asserted here rather than in its own subtest
+		// because this is the one place a suspension is written and read
+		// back with nothing else going on: a backend that mangled the
+		// continuation encoding would otherwise pass every scope
+		// assertion in this file with two empty structs comparing equal.
+		if got.ID != susp.ID || got.Reason != susp.Reason {
+			t.Errorf("round-trip = (%s, %q), want (%s, %q)", got.ID, got.Reason, susp.ID, susp.Reason)
+		}
+		if len(got.Pending) != 1 || got.Pending[0].Name != susp.Pending[0].Name || got.Pending[0].Arguments != susp.Pending[0].Arguments {
+			t.Errorf("pending calls round-tripped as %+v, want %+v", got.Pending, susp.Pending)
+		}
+		if got.Cont.SystemPrompt != susp.Cont.SystemPrompt || got.Cont.StepIndex != susp.Cont.StepIndex || got.Cont.TokensUsed != susp.Cont.TokensUsed {
+			t.Errorf("continuation round-tripped as %+v, want %+v", got.Cont, susp.Cont)
+		}
+		if len(got.Cont.Messages) != 1 || got.Cont.Messages[0].Content != susp.Cont.Messages[0].Content {
+			t.Errorf("continuation messages round-tripped as %+v, want %+v", got.Cont.Messages, susp.Cont.Messages)
+		}
+	})
+
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		orchID := mustCreateOrchestration(t, s, ctx, "")
@@ -2693,6 +2975,108 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		}
 		if got.Scope.Canonical() != want {
 			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+}
+
+// ──────────────────────────────────────────────────
+// ClaimSuspension concurrency
+// ──────────────────────────────────────────────────
+
+// testClaimSuspensionConcurrency proves the claim is genuinely atomic:
+// the paused-to-running transition and the suspension read happen as one
+// operation, so two concurrent resumes cannot both proceed.
+//
+// Both subtests race against the SAME suspension. Racing two suspensions
+// that cannot collide would pass against a read-then-write implementation
+// too, which is to say it would prove nothing at all.
+func testClaimSuspensionConcurrency(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("ClaimSuspension_ConcurrentDoubleClaimWinsOnce", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, nil)
+
+		const claimers = 2
+		var (
+			wg     sync.WaitGroup
+			start  = make(chan struct{})
+			claims = make([]*suspension.Suspension, claimers)
+			errs   = make([]error, claimers)
+		)
+		for i := range claimers {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				// Both goroutines block here and are released at once, so
+				// they contend for the same paused run rather than
+				// arriving comfortably one after the other.
+				<-start
+				claims[i], errs[i] = s.ClaimSuspension(ctx, r.ID)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		var wins, losses int
+		for i, err := range errs {
+			switch {
+			case err == nil:
+				wins++
+				if claims[i] == nil || claims[i].ID != susp.ID {
+					t.Errorf("winning claim returned %v, want suspension %s", claims[i], susp.ID)
+				}
+			case errors.Is(err, cortex.ErrNotSuspended):
+				losses++
+				if claims[i] != nil {
+					t.Errorf("losing claim returned a suspension alongside ErrNotSuspended: %v", claims[i])
+				}
+			default:
+				t.Fatalf("claim %d returned an unexpected error: %v", i, err)
+			}
+		}
+		if wins != 1 || losses != 1 {
+			t.Fatalf("concurrent claims: %d won, %d lost, want exactly 1 and 1 (the claim is not atomic)", wins, losses)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the race: %v", err)
+		}
+		if reloaded.State != run.StateRunning {
+			t.Errorf("run state after the race = %q, want %q", reloaded.State, run.StateRunning)
+		}
+	})
+
+	// The sequential half of the same contract. The concurrent subtest
+	// above can only observe whichever interleaving the scheduler happens
+	// to produce; this one pins the outcome down with no scheduling
+	// involved, so a backend that let a second claim through would fail
+	// deterministically rather than only under load.
+	t.Run("ClaimSuspension_SecondClaimAfterWinReturnsNotSuspended", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, nil)
+
+		first, err := s.ClaimSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("first claim: %v", err)
+		}
+		if first.ID != susp.ID {
+			t.Fatalf("first claim returned %s, want %s", first.ID, susp.ID)
+		}
+
+		second, err := s.ClaimSuspension(ctx, r.ID)
+		if !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Fatalf("second claim = (%v, %v), want ErrNotSuspended", second, err)
+		}
+		if second != nil {
+			t.Errorf("second claim returned a suspension alongside ErrNotSuspended: %v", second)
+		}
+
+		// The suspension row itself survives a claim: deleting it is
+		// DeleteSuspension's job, once the resume has fully completed.
+		if _, err := s.GetSuspension(ctx, r.ID); err != nil {
+			t.Errorf("suspension gone after a claim: %v (ClaimSuspension must not delete it)", err)
 		}
 	})
 }

@@ -101,6 +101,7 @@ func truncateConformanceTables(ctx context.Context, s *Store) error {
 		cortex_behaviors,
 		cortex_personas,
 		cortex_sessions,
+		cortex_suspensions,
 		cortex_orchestration_configs,
 		cortex_orchestration_runs
 	RESTART IDENTITY CASCADE`
