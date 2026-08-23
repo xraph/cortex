@@ -612,6 +612,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_agents_scope_name ON cortex_agents 
 				return err
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// This recreates UNIQUE (app_id, name), and every row
+				// written since v1.8.0 has app_id = ''. If any two scopes
+				// hold an agent with the same name, that collision makes
+				// this CREATE UNIQUE INDEX fail outright — rollback is
+				// only available if no such pair exists yet.
 				_, err := exec.Exec(ctx, `
 DROP INDEX IF EXISTS idx_cortex_agents_scope_name;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_agents_app_name ON cortex_agents (app_id, name);
@@ -687,6 +692,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS `+spec.newIdx+` ON `+spec.table+` (scope_canon
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// Each loop iteration recreates UNIQUE (app_id, name) on
+				// its table, and every row written since v1.8.0 has
+				// app_id = ''. If any two scopes hold a skill, trait, or
+				// behavior with the same name, the CREATE UNIQUE INDEX
+				// for that table fails outright — rollback is only
+				// available if no such pair exists yet.
 				for _, spec := range []struct{ table, oldIdx, newIdx string }{
 					{"cortex_skills", "idx_cortex_skills_app_name", "idx_cortex_skills_scope_name"},
 					{"cortex_traits", "idx_cortex_traits_app_name", "idx_cortex_traits_scope_name"},
@@ -773,6 +784,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_personas_scope_name ON cortex_perso
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// This recreates UNIQUE (app_id, name), and every row
+				// written since v1.8.0 has app_id = ''. If any two scopes
+				// hold a persona with the same name, that collision makes
+				// this CREATE UNIQUE INDEX fail outright — rollback is
+				// only available if no such pair exists yet.
 				if _, err := exec.Exec(ctx, `
 DROP INDEX IF EXISTS idx_cortex_personas_scope_name;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_personas_app_name ON cortex_personas (app_id, name);
@@ -831,12 +847,18 @@ CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1,
 				// uniqueness on (app_id, name), from before orchestration
 				// configs carried a scope at all. Now that every method on
 				// ConfigStore is scope-guarded, two different scopes must
-				// be able to each use the same name — app_id stays a real,
-				// required lookup parameter on GetOrchestrationByName, but
-				// it was never the isolation boundary, scope is, so the
-				// unique index has to key on scope_canon instead or the
-				// second scope's Create collides on the first scope's row
-				// before the scope predicate ever gets a chance to matter.
+				// be able to each use the same name — app_id was never the
+				// isolation boundary, scope is, so the unique index has to
+				// key on scope_canon instead or the second scope's Create
+				// collides on the first scope's row before the scope
+				// predicate ever gets a chance to matter.
+				//
+				// The app_id column itself is not dropped here, but not
+				// because any lookup still needs it:
+				// GetOrchestrationByName(ctx, name) takes no appID
+				// parameter. It stays because rescopeLegacyRows reads it
+				// off pre-v1.8.0 rows to reconstruct the scope a Rescoper
+				// should assign them.
 				//
 				// Partial (WHERE scope_canon != '') rather than a plain
 				// unique index, for the exact reason 20260823000001
@@ -862,6 +884,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_scope_name ON
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// This recreates UNIQUE (app_id, name), and every row
+				// written since v1.8.0 has app_id = ''. If any two scopes
+				// hold an orchestration config with the same name, that
+				// collision makes this CREATE UNIQUE INDEX fail outright
+				// — rollback is only available if no such pair exists
+				// yet.
 				if _, err := exec.Exec(ctx, `
 DROP INDEX IF EXISTS idx_cortex_orchestration_configs_scope_name;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_app_name ON cortex_orchestration_configs (app_id, name);

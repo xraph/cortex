@@ -117,12 +117,17 @@ const personaScopeNameUniqueIndexName = "cortex_personas_scope_name_unique"
 // cortex_orchestration_configs, from when it carried no explicit name.
 // Store.Migrate drops it by name before creating its scope-keyed
 // replacement below: app_id was never the isolation boundary for
-// orchestration names, scope is (app_id stays a real, required lookup
-// parameter on GetOrchestrationByName, but layered on top of scope, not
-// instead of it), so the old index refused two different scopes the
-// same name. CreateMany is additive and never drops a stale index on its
-// own, so leaving the old one in place would keep the write path
-// colliding cross-scope even after the new index existed too.
+// orchestration names, scope is, so the old index refused two different
+// scopes the same name. CreateMany is additive and never drops a stale
+// index on its own, so leaving the old one in place would keep the
+// write path colliding cross-scope even after the new index existed
+// too.
+//
+// The app_id field itself is not dropped from these documents, but not
+// because any lookup still needs it: GetOrchestrationByName(ctx, name)
+// takes no appID parameter. It stays because rescopeLegacyRows reads it
+// off pre-v1.8.0 documents to reconstruct the scope a Rescoper should
+// assign them.
 //
 // Orchestration is the last entity converted in this phase, and the only
 // one that ever had scope columns dropped once already: an earlier
