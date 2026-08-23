@@ -209,6 +209,9 @@ func TestToolEvents_StreamingDeniedFiresDeniedOnly(t *testing.T) {
 	if n := countEvent(got, "completed"); n != 0 {
 		t.Errorf("ToolCompleted fired %d times on a denied streaming call, want 0: %v", n, got)
 	}
+	if n := countEvent(got, "failed"); n != 0 {
+		t.Errorf("ToolFailed fired %d times on a denied streaming call, want 0: %v", n, got)
+	}
 }
 
 // TestExecuteTool_UnknownToolFiresFailed pins the outcome of a name that
