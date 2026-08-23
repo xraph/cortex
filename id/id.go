@@ -37,6 +37,7 @@ const (
 	PrefixTrait               Prefix = "trt"
 	PrefixBehavior            Prefix = "bhv"
 	PrefixPersona             Prefix = "prs"
+	PrefixSession             Prefix = "ses"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -156,6 +157,9 @@ type BehaviorID = ID
 // PersonaID is a type-safe identifier for personas (prefix: "prs").
 type PersonaID = ID
 
+// SessionID is a type-safe identifier for sessions (prefix: "ses").
+type SessionID = ID
+
 // AnyID is a type alias that accepts any valid prefix.
 type AnyID = ID
 
@@ -202,6 +206,9 @@ func NewBehaviorID() ID { return New(PrefixBehavior) }
 // NewPersonaID generates a new unique persona ID.
 func NewPersonaID() ID { return New(PrefixPersona) }
 
+// NewSessionID generates a new unique session ID.
+func NewSessionID() ID { return New(PrefixSession) }
+
 // ──────────────────────────────────────────────────
 // Convenience parsers
 // ──────────────────────────────────────────────────
@@ -246,6 +253,9 @@ func ParseBehaviorID(s string) (ID, error) { return ParseWithPrefix(s, PrefixBeh
 
 // ParsePersonaID parses a string and validates the "prs" prefix.
 func ParsePersonaID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPersona) }
+
+// ParseSessionID parses a string and validates the "ses" prefix.
+func ParseSessionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSession) }
 
 // ParseAny parses a string into an ID without type checking the prefix.
 func ParseAny(s string) (ID, error) { return Parse(s) }

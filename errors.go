@@ -17,6 +17,7 @@ var (
 	ErrTraitNotFound            = errors.New("cortex: trait not found")
 	ErrBehaviorNotFound         = errors.New("cortex: behavior not found")
 	ErrPersonaNotFound          = errors.New("cortex: persona not found")
+	ErrSessionNotFound          = errors.New("cortex: session not found")
 	ErrCheckpointNotFound       = errors.New("cortex: checkpoint not found")
 	ErrOrchestrationNotFound    = errors.New("cortex: orchestration not found")
 	ErrOrchestrationRunNotFound = errors.New("cortex: orchestration run not found")
