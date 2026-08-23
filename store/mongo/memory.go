@@ -168,6 +168,20 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 
 // LoadConversation returns conversation messages for an agent's session
 // within scope.
+// LoadConversation returns the NEWEST `limit` messages in chronological
+// order, not the oldest. The query sorts created_at/_id DESCENDING and
+// takes LIMIT off the front -- the recent end of the conversation --
+// then the loop below walks the result backwards to hand callers
+// chronological order again. Sorting ASCENDING and limiting (the old
+// behavior) always returns the SAME oldest prefix once a conversation
+// grows past the limit: every later turn is written but never read back
+// into context, and an install that had already accumulated duplicate
+// rows from the pre-fix re-save bug stayed pinned on that stale prefix
+// even after the duplication itself was fixed upstream. _id breaks ties
+// within a batch that shares one created_at timestamp -- id.New's
+// TypeID suffix is a ULID, so it sorts chronologically the same as
+// created_at -- and DESCENDING on both keeps the reversal a stable
+// chronological order rather than an arbitrary one.
 func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -187,7 +201,7 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 
 	q := s.mdb.NewFind(&models).
 		Filter(filter).
-		Sort(bson.D{{Key: "created_at", Value: 1}})
+		Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
 
 	if limit > 0 {
 		q = q.Limit(int64(limit))
@@ -198,9 +212,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 	}
 
 	messages := make([]memory.Message, 0, len(models))
-	for _, m := range models {
+	for i := len(models) - 1; i >= 0; i-- {
 		var msg memory.Message
-		if err := json.Unmarshal([]byte(m.Content), &msg); err == nil {
+		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
 			messages = append(messages, msg)
 		}
 	}

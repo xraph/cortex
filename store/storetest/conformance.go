@@ -9,6 +9,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -777,6 +778,54 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 		if len(afterClear) != 0 {
 			t.Fatalf("conversation A after same-scope ClearConversation = %v, want empty", afterClear)
+		}
+	})
+
+	// ConversationLoadReturnsNewestMessages is the store-level proof for
+	// fix round 2's Finding 2: LoadConversation used to order
+	// created_at ASC and LIMIT off the front, so once a conversation
+	// grew past the limit it stayed frozen on its oldest prefix forever
+	// -- new turns kept being written but were never read back into
+	// context, on every backend already past that limit whether or not
+	// it was ever touched by the duplicate-row backfill. LoadConversation
+	// must instead take the newest `limit` rows and hand them back in
+	// chronological order, so a caller always sees the recent end of the
+	// conversation, not a stale prefix.
+	t.Run("ConversationLoadReturnsNewestMessages", func(t *testing.T) {
+		s := newStore(t)
+		agentCtx := ctxWithScope("ws_newest")
+		agentID := id.NewAgentID()
+		sessionID := mustCreateSession(t, s, agentCtx, agentID, "newest")
+
+		const total = 150
+		messages := make([]memory.Message, total)
+		for i := range messages {
+			messages[i] = memory.Message{Role: "user", Content: fmt.Sprintf("msg-%03d", i)}
+		}
+		if err := s.SaveConversation(agentCtx, agentID, sessionID, messages); err != nil {
+			t.Fatalf("save conversation (%d messages): %v", total, err)
+		}
+
+		const limit = 100
+		rows, err := s.LoadConversation(agentCtx, agentID, sessionID, limit)
+		if err != nil {
+			t.Fatalf("load conversation: %v", err)
+		}
+		if len(rows) != limit {
+			t.Fatalf("LoadConversation(limit=%d) returned %d row(s), want %d", limit, len(rows), limit)
+		}
+
+		// The last `limit` messages written (msg-050 .. msg-149), in the
+		// same chronological order they were written -- not the first
+		// `limit` (msg-000 .. msg-099), which is what the pre-fix
+		// ASC-then-LIMIT query would have returned.
+		wantFirst := total - limit // 50
+		for i, msg := range rows {
+			want := fmt.Sprintf("msg-%03d", wantFirst+i)
+			if msg.Content != want {
+				t.Fatalf("row %d = %q, want %q (LoadConversation must return the NEWEST %d messages in chronological order, not the oldest %d)",
+					i, msg.Content, want, limit, limit)
+			}
 		}
 	})
 

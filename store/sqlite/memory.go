@@ -149,6 +149,18 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 	return nil
 }
 
+// LoadConversation returns the NEWEST `limit` messages in chronological
+// order, not the oldest. The query orders created_at/id DESC and takes
+// LIMIT off the front -- the recent end of the conversation -- then the
+// loop below walks the result backwards to hand callers chronological
+// order again. Ordering ASC and limiting (the old behavior) always
+// returns the SAME oldest prefix once a conversation grows past the
+// limit: every later turn is written but never read back into context,
+// and an install that had already accumulated duplicate rows from the
+// pre-fix re-save bug stayed pinned on that stale prefix even after the
+// duplication itself was fixed upstream. id DESC breaks ties within a
+// batch that shares one created_at timestamp, so the reversal is a
+// stable chronological order rather than an arbitrary one.
 func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -160,7 +172,7 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 		Where("agent_id = ?", agentID.String()).
 		Where("session_id = ?", sessionID.String()).
 		Where("kind = ?", "conversation").
-		OrderExpr("created_at ASC")
+		OrderExpr("created_at DESC, id DESC")
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -171,9 +183,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 		return nil, fmt.Errorf("cortex/sqlite: load conversation: %w", err)
 	}
 	messages := make([]memory.Message, 0, len(models))
-	for _, m := range models {
+	for i := len(models) - 1; i >= 0; i-- {
 		var msg memory.Message
-		if err := json.Unmarshal([]byte(m.Content), &msg); err == nil {
+		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
 			messages = append(messages, msg)
 		}
 	}
