@@ -498,18 +498,35 @@ ALTER TABLE `+table+`
 				// value. Adding scope_canon to the index means two
 				// different scopes can never conflict with each other in
 				// the first place.
-				_, err := exec.Exec(ctx, `
-DROP INDEX IF EXISTS idx_cortex_memories_working;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key, scope_canon) WHERE kind = 'working';
-`)
-				return err
+				//
+				// CONCURRENTLY on both statements so this doesn't hold a
+				// write lock on cortex_memories for the rebuild: grove's
+				// pgmigrate executor runs each Exec call directly against
+				// the pool/dedicated connection with no surrounding
+				// BEGIN/COMMIT (see pgmigrate.Executor.Exec), so
+				// CONCURRENTLY is available here -- but each statement must
+				// be its own Exec call. Bundling DROP and CREATE into one
+				// multi-statement string, like the rest of this file does,
+				// would make pgx send them as a single simple-query
+				// message, and Postgres implicitly wraps a multi-statement
+				// simple-query message in a transaction block, which
+				// CONCURRENTLY refuses to run inside.
+				if _, err := exec.Exec(ctx, `DROP INDEX CONCURRENTLY IF EXISTS idx_cortex_memories_working`); err != nil {
+					return fmt.Errorf("drop old working-memory index: %w", err)
+				}
+				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key, scope_canon) WHERE kind = 'working'`); err != nil {
+					return fmt.Errorf("create scope-aware working-memory index: %w", err)
+				}
+				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
-				_, err := exec.Exec(ctx, `
-DROP INDEX IF EXISTS idx_cortex_memories_working;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key) WHERE kind = 'working';
-`)
-				return err
+				if _, err := exec.Exec(ctx, `DROP INDEX CONCURRENTLY IF EXISTS idx_cortex_memories_working`); err != nil {
+					return fmt.Errorf("drop scope-aware working-memory index: %w", err)
+				}
+				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key) WHERE kind = 'working'`); err != nil {
+					return fmt.Errorf("recreate pre-scope working-memory index: %w", err)
+				}
+				return nil
 			},
 		},
 	)
