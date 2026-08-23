@@ -11,15 +11,19 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// Create persists a new agent configuration. The agent store stays
-// app-keyed this phase (see Get/Update/Delete/List below), but the
-// document still records whatever scope is on the context so the fields
-// are populated for the day agent reads become scope-filtered too.
+// Create persists a new agent configuration, stamping the scope from the
+// context. The (scope_canon, name) unique index is what actually
+// enforces per-scope name uniqueness; app_id survives on the document as
+// a vestigial field no longer read or filtered on.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	t := now()
 	config.CreatedAt = t
 	config.UpdatedAt = t
-	config.Scope = cortex.ScopeFromContext(ctx)
+	config.Scope = scope
 	m := agentToModel(config)
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
@@ -33,12 +37,21 @@ func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 	return nil
 }
 
-// Get returns an agent configuration by ID.
+// Get returns an agent configuration by ID within the caller's scope.
 func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var m agentModel
 
+	filter := bson.M{"_id": agentID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"_id": agentID.String()}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -51,12 +64,21 @@ func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, err
 	return agentFromModel(&m)
 }
 
-// GetByName returns an agent by app ID and name.
-func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Config, error) {
+// GetByName returns an agent by name within the caller's scope.
+func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	var m agentModel
 
+	filter := bson.M{"name": name}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"app_id": appID, "name": name}).
+		Filter(filter).
 		Scan(ctx)
 	if err != nil {
 		if isNoDocuments(err) {
@@ -69,18 +91,26 @@ func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Confi
 	return agentFromModel(&m)
 }
 
-// Update modifies an existing agent configuration's mutable fields. The
-// agent store stays app-keyed this phase — no scope filter is added here,
-// Update locates the document exactly as it always has (by _id). Only the
-// write side changes: scope is immutable after creation, so this builds
-// an explicit $set instead of passing the model through. grove's
-// NewUpdate(model).Exec defaults to a full-field $set built from the
-// model struct when no explicit update document is given (confirmed by
-// reading mongodriver's query_update.go), which would otherwise blank
-// scope_l0/l1/l2/extra/canon on every call.
+// Update modifies an existing agent configuration's mutable fields within
+// the caller's scope. Scope is immutable after creation: the context
+// scope is used only as an authorization predicate (the caller must be at
+// or above the agent's stored scope to touch it), and is never written
+// back. grove's NewUpdate(model).Exec defaults to a full-field $set built
+// from the model struct when no explicit update document is given
+// (confirmed by reading mongodriver's query_update.go), which would
+// otherwise blank scope_l0/l1/l2/extra/canon on every call.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	config.UpdatedAt = now()
 	m := agentToModel(config)
+
+	filter := bson.M{"_id": m.ID}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
 
 	set := bson.M{
 		"name":             m.Name,
@@ -104,7 +134,7 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	}
 
 	res, err := s.mdb.NewUpdate((*agentModel)(nil)).
-		Filter(bson.M{"_id": m.ID}).
+		Filter(filter).
 		SetUpdate(bson.M{"$set": set}).
 		Exec(ctx)
 	if err != nil {
@@ -118,10 +148,19 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	return nil
 }
 
-// Delete removes an agent configuration.
+// Delete removes an agent configuration within the caller's scope.
 func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	filter := bson.M{"_id": agentID.String()}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+
 	res, err := s.mdb.NewDelete((*agentModel)(nil)).
-		Filter(bson.M{"_id": agentID.String()}).
+		Filter(filter).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: delete agent: %w", err)
@@ -134,33 +173,36 @@ func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
 	return nil
 }
 
-// List returns agent configurations, optionally filtered.
+// List returns agent configurations within the caller's scope, optionally
+// filtered.
 func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &agent.ListFilter{}
+	}
 	var models []agentModel
 
 	f := bson.M{}
-	if filter != nil {
-		if filter.AppID != "" {
-			f["app_id"] = filter.AppID
-		}
-
-		if filter.Search != "" {
-			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
-		}
+	for k, v := range scopeFilter(scope, filter.Exact) {
+		f[k] = v
+	}
+	if filter.Search != "" {
+		f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
 	}
 
 	q := s.mdb.NewFind(&models).
 		Filter(f).
 		Sort(bson.D{{Key: "created_at", Value: 1}})
 
-	if filter != nil {
-		if filter.Limit > 0 {
-			q = q.Limit(int64(filter.Limit))
-		}
+	if filter.Limit > 0 {
+		q = q.Limit(int64(filter.Limit))
+	}
 
-		if filter.Offset > 0 {
-			q = q.Skip(int64(filter.Offset))
-		}
+	if filter.Offset > 0 {
+		q = q.Skip(int64(filter.Offset))
 	}
 
 	if err := q.Scan(ctx); err != nil {
@@ -179,17 +221,22 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 	return result, nil
 }
 
-// CountAgents returns the total number of agents matching the filter.
+// CountAgents returns the total number of agents matching the filter
+// within the caller's scope.
 func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &agent.ListFilter{}
+	}
 	f := bson.M{}
-	if filter != nil {
-		if filter.AppID != "" {
-			f["app_id"] = filter.AppID
-		}
-
-		if filter.Search != "" {
-			f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
-		}
+	for k, v := range scopeFilter(scope, filter.Exact) {
+		f[k] = v
+	}
+	if filter.Search != "" {
+		f["name"] = bson.M{"$regex": filter.Search, "$options": "i"}
 	}
 
 	count, err := s.mdb.NewFind((*agentModel)(nil)).

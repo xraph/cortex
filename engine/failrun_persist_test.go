@@ -40,7 +40,7 @@ func TestStreamAgent_FailurePersistsWithUncancelledContext(t *testing.T) {
 	defer cancel()
 
 	events := make(chan engine.StreamEvent, 64)
-	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+	if err := e.StreamAgent(ctx, "assistant", "hello", nil, events); err != nil {
 		t.Fatalf("StreamAgent: %v", err)
 	}
 

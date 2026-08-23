@@ -58,10 +58,15 @@ type agentModel struct {
 func agentToModel(c *agent.Config) *agentModel {
 	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &agentModel{
-		ID:              c.ID.String(),
-		Name:            c.Name,
-		Description:     c.Description,
-		AppID:           c.AppID,
+		ID:          c.ID.String(),
+		Name:        c.Name,
+		Description: c.Description,
+		// app_id is a vestigial field: the agent surface lost AppID this
+		// phase (the (scope_canon, name) unique index replaced
+		// (app_id, name)), but the field itself isn't dropped from the
+		// document here, so every write leaves it empty rather than
+		// reading a field that no longer exists on Config.
+		AppID:           "",
 		SystemPrompt:    c.SystemPrompt,
 		Model:           c.Model,
 		Tools:           c.Tools,
@@ -100,7 +105,6 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 		ID:              agentID,
 		Name:            m.Name,
 		Description:     m.Description,
-		AppID:           m.AppID,
 		Scope:           scope,
 		SystemPrompt:    m.SystemPrompt,
 		Model:           m.Model,

@@ -11,11 +11,12 @@ import (
 
 func TestCloneConfigResetsIdentityAndDeepCopies(t *testing.T) {
 	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}}
 	src := &agent.Config{
 		Entity:       cortex.Entity{CreatedAt: old, UpdatedAt: old},
 		ID:           id.NewAgentID(),
 		Name:         "original",
-		AppID:        "app1",
+		Scope:        scope,
 		SystemPrompt: "sp",
 		Model:        "smart",
 		Tools:        []string{"t1", "t2"},
@@ -44,7 +45,7 @@ func TestCloneConfigResetsIdentityAndDeepCopies(t *testing.T) {
 	}
 
 	// Config preserved.
-	if clone.AppID != "app1" || clone.SystemPrompt != "sp" || clone.Model != "smart" ||
+	if clone.Scope.Canonical() != scope.Canonical() || clone.SystemPrompt != "sp" || clone.Model != "smart" ||
 		!clone.Enabled || clone.PersonaRef != "p1" {
 		t.Errorf("preserved fields wrong: %+v", clone)
 	}

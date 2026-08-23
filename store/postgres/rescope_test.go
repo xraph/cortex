@@ -157,7 +157,8 @@ func TestRescope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse agent id: %v", err)
 		}
-		got, err := st.Get(ctx, parsedID)
+		getCtx := cortex.WithScope(ctx, cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}})
+		got, err := st.Get(getCtx, parsedID)
 		if err != nil {
 			t.Fatalf("get rescoped agent: %v", err)
 		}

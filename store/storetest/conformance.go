@@ -60,12 +60,15 @@ func ctxWithScope(vals ...string) context.Context {
 	return cortex.WithScope(context.Background(), scopeOf(vals...))
 }
 
-// mustCreateAgent creates an agent under ctx and returns its ID. The agent
-// store isn't scope-guarded — Create never rejects a zero scope, and it
-// stays app-keyed rather than scope-filtered this phase — but postgres's
-// cortex_runs.agent_id and cortex_checkpoints.agent_id are real foreign
-// keys, so every run/checkpoint fixture below needs a genuinely persisted
-// agent row to reference regardless of backend.
+// mustCreateAgent creates an agent under ctx and returns its ID. The
+// helper persists a real agent row — not a throwaway fixture — because
+// postgres's cortex_runs.agent_id and cortex_checkpoints.agent_id are
+// genuine foreign keys, so every run/checkpoint fixture below needs a row
+// that actually exists regardless of backend. It requires a scoped
+// context like every other create: the agent store is fully scope-guarded
+// now (Create/Get/GetByName/Update/Delete/List/CountAgents all reject a
+// zero scope and filter on it), the same as runs, checkpoints, steps,
+// tool calls, and working memory.
 func mustCreateAgent(t *testing.T, s store.Store, ctx context.Context, name string) id.AgentID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	agentID := id.NewAgentID()
@@ -73,9 +76,8 @@ func mustCreateAgent(t *testing.T, s store.Store, ctx context.Context, name stri
 		name = "conformance-" + agentID.String()
 	}
 	cfg := &agent.Config{
-		ID:    agentID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   agentID,
+		Name: name,
 	}
 	if err := s.Create(ctx, cfg); err != nil {
 		t.Fatalf("fixture: create agent: %v", err)
@@ -354,7 +356,10 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 	})
 
-	// The six subtests below cover agents, skills, traits, behaviors,
+	// Agent converted this phase: every method rejects a zero scope, same
+	// as runs, checkpoints, steps, tool calls, and working memory above.
+	//
+	// The five subtests below still cover skills, traits, behaviors,
 	// personas, and orchestration configs — the subsystems this phase
 	// hasn't converted yet. None of their stores check scope at all right
 	// now, so every one of these is expected to fail: Create/GetByName/List
@@ -364,11 +369,11 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
-		cfg := &agent.Config{ID: id.NewAgentID(), Name: "assistant", AppID: "conformance-app"}
+		cfg := &agent.Config{ID: id.NewAgentID(), Name: "assistant"}
 		if err := s.Create(ctx, cfg); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("Create with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetByName(ctx, "conformance-app", "assistant"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetByName(ctx, "assistant"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.List(ctx, &agent.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
@@ -740,14 +745,11 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
-	// The six subtests below give agents, skills, traits, behaviors,
-	// personas, and orchestration configs the same distinct-identifier
-	// cross-scope shape as Run/Checkpoint above: two rows with DIFFERENT
-	// names, one per scope, and a listing scoped to each side that should
-	// see only its own row. None of these stores filter by scope yet, so
-	// List/Get returns rows from both scopes and every one of these is
-	// expected to fail.
-
+	// Agent gets the same distinct-identifier cross-scope shape as
+	// Run/Checkpoint above: two rows with DIFFERENT names, one per scope,
+	// and a listing scoped to each side that should see only its own row.
+	// Unlike the five subtests that follow, this one is expected to pass:
+	// List/GetByName are scope-guarded now.
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -756,7 +758,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		agentA := mustCreateAgent(t, s, ctxA, "agent-a")
 		agentB := mustCreateAgent(t, s, ctxB, "agent-b")
 
-		gotA, err := s.List(ctxA, &agent.ListFilter{AppID: "conformance-app"})
+		gotA, err := s.List(ctxA, &agent.ListFilter{})
 		if err != nil {
 			t.Fatalf("list agents A: %v", err)
 		}
@@ -764,7 +766,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("List(ctxA) = %d agent(s), want exactly agentA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.List(ctxB, &agent.ListFilter{AppID: "conformance-app"})
+		gotB, err := s.List(ctxB, &agent.ListFilter{})
 		if err != nil {
 			t.Fatalf("list agents B: %v", err)
 		}
@@ -772,10 +774,16 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("List(ctxB) = %d agent(s), want exactly agentB", len(gotB))
 		}
 
-		if _, err := s.GetByName(ctxB, "conformance-app", "agent-a"); !errors.Is(err, cortex.ErrAgentNotFound) {
+		if _, err := s.GetByName(ctxB, "agent-a"); !errors.Is(err, cortex.ErrAgentNotFound) {
 			t.Errorf("GetByName(ctxB, %q) = %v, want ErrAgentNotFound", "agent-a", err)
 		}
 	})
+
+	// The five subtests below give skills, traits, behaviors, personas,
+	// and orchestration configs the same distinct-identifier cross-scope
+	// shape as Agent above. None of these stores filter by scope yet, so
+	// List/Get returns rows from both scopes and every one of these is
+	// expected to fail.
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
@@ -1103,21 +1111,14 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
-	// The six subtests below are the ones that matter for this task: ONE
-	// name reused across two scopes, held under the same app_id (app_id is
-	// a required lookup parameter here, not the scope under test — holding
-	// it fixed keeps scope as the only thing that could separate these
-	// rows). Two different names would be separated by the name alone and
-	// would prove nothing about a scope predicate that doesn't exist yet.
-	//
-	// None of these six stores are scope-guarded, and app_id+name is
-	// already a real unique index on every one of these tables (see
-	// idx_cortex_*_app_name in store/sqlite/migrations.go), independent of
-	// any scope column. So the second mustCreate* call below is expected to
-	// fail outright with cortex.ErrAlreadyExists — the fixture can't even
-	// get two rows on the books to compare, which is itself the proof that
-	// nothing about scope separates them.
-
+	// Agent is the one entity below that IS scope-guarded: the same name
+	// reused across two scopes must resolve to two distinct rows, proving
+	// UNIQUE (scope_canon, name) — not the retired UNIQUE (app_id, name)
+	// — is what the store enforces now. Before this task, the second
+	// mustCreateAgent call below failed outright with
+	// cortex.ErrAlreadyExists, colliding on the old app_id-keyed index
+	// before the fixture could even get two rows on the books to compare.
+	// It no longer does: two different scopes can each use "assistant".
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1126,11 +1127,11 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreateAgent(t, s, ctxA, "assistant")
 		mustCreateAgent(t, s, ctxB, "assistant")
 
-		gotA, err := s.GetByName(ctxA, "conformance-app", "assistant")
+		gotA, err := s.GetByName(ctxA, "assistant")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own agent: %v", err)
 		}
-		gotB, err := s.GetByName(ctxB, "conformance-app", "assistant")
+		gotB, err := s.GetByName(ctxB, "assistant")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own agent: %v", err)
 		}
@@ -1138,6 +1139,22 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
 		}
 	})
+
+	// The five subtests below are the ones app_id still governs: ONE name
+	// reused across two scopes, held under the same app_id (app_id is a
+	// required lookup parameter here, not the scope under test — holding
+	// it fixed keeps scope as the only thing that could separate these
+	// rows, if these stores checked it). Two different names would be
+	// separated by the name alone and would prove nothing about a scope
+	// predicate that doesn't exist yet for these five.
+	//
+	// None of these five stores are scope-guarded, and app_id+name is
+	// already a real unique index on every one of these tables (see
+	// idx_cortex_*_app_name in store/sqlite/migrations.go), independent of
+	// any scope column. So the second mustCreate* call below is expected to
+	// fail outright with cortex.ErrAlreadyExists — the fixture can't even
+	// get two rows on the books to compare, which is itself the proof that
+	// nothing about scope separates them.
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
@@ -1300,6 +1317,32 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("ListPending({workspace=ws_y}) incorrectly returned a checkpoint scoped to {workspace=ws_x, project=p1}")
 		}
 	})
+
+	// Agent already had a Scope field going into this task (Phase 0), but
+	// this subtest itself did not — List's scope predicate went untested
+	// against a broader-than-stored filter until now.
+	t.Run("Agent", func(t *testing.T) {
+		s := newStore(t)
+		agentID := mustCreateAgent(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.List(broad, nil)
+		if err != nil {
+			t.Fatalf("list agents (broad): %v", err)
+		}
+		if !containsAgentID(got, agentID) {
+			t.Errorf("List({workspace=ws_x}) didn't return an agent scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.List(other, nil)
+		if err != nil {
+			t.Fatalf("list agents (other workspace): %v", err)
+		}
+		if containsAgentID(gotOther, agentID) {
+			t.Errorf("List({workspace=ws_y}) incorrectly returned an agent scoped to {workspace=ws_x, project=p1}")
+		}
+	})
 }
 
 func containsRunID(rs []*run.Run, want id.AgentRunID) bool {
@@ -1314,6 +1357,15 @@ func containsRunID(rs []*run.Run, want id.AgentRunID) bool {
 func containsCheckpointID(cps []*checkpoint.Checkpoint, want id.CheckpointID) bool {
 	for _, cp := range cps {
 		if cp.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAgentID(cfgs []*agent.Config, want id.AgentID) bool {
+	for _, c := range cfgs {
+		if c.ID == want {
 			return true
 		}
 	}
@@ -1366,7 +1418,7 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		createCtx := ctxWithScope("ws_x", "p1")
 		agentID := mustCreateAgent(t, s, createCtx, "")
 
-		loaded, err := s.Get(context.Background(), agentID)
+		loaded, err := s.Get(createCtx, agentID)
 		if err != nil {
 			t.Fatalf("get agent: %v", err)
 		}
@@ -1375,14 +1427,15 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Description = "mutated"
 
-		// Agent Update takes no scope predicate at all this phase — a
-		// plain background context proves nothing about the update path
-		// can put the row's scope back even if it wanted to.
-		if err = s.Update(context.Background(), loaded); err != nil {
+		// A broader context (workspace only, no project) still
+		// authorizes the update via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.Update(updateCtx, loaded); err != nil {
 			t.Fatalf("update agent: %v", err)
 		}
 
-		reloaded, err := s.Get(context.Background(), agentID)
+		reloaded, err := s.Get(createCtx, agentID)
 		if err != nil {
 			t.Fatalf("reload agent: %v", err)
 		}
@@ -1509,7 +1562,7 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
 		agentID := mustCreateAgent(t, s, ctx, "")
-		got, err := s.Get(context.Background(), agentID)
+		got, err := s.Get(ctx, agentID)
 		if err != nil {
 			t.Fatalf("get agent after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}

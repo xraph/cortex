@@ -15,7 +15,6 @@ type Config struct {
 	ID            id.AgentID     `json:"id"`
 	Name          string         `json:"name"`
 	Description   string         `json:"description,omitempty"`
-	AppID         string         `json:"app_id"`
 	Scope         cortex.Scope   `json:"scope"`
 	SystemPrompt  string         `json:"system_prompt"`
 	Model         string         `json:"model,omitempty"`
@@ -47,16 +46,18 @@ func (c *Config) HasPersona() bool {
 type Store interface {
 	Create(ctx context.Context, config *Config) error
 	Get(ctx context.Context, agentID id.AgentID) (*Config, error)
-	GetByName(ctx context.Context, appID, name string) (*Config, error)
+	GetByName(ctx context.Context, name string) (*Config, error)
 	Update(ctx context.Context, config *Config) error
 	Delete(ctx context.Context, agentID id.AgentID) error
 	List(ctx context.Context, filter *ListFilter) ([]*Config, error)
 	CountAgents(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination and filtering for agent listing.
+// ListFilter controls pagination and matching for agent listing. Scope
+// arrives on the context; Exact narrows to rows stored at precisely that
+// depth instead of everything beneath it.
 type ListFilter struct {
-	AppID  string
+	Exact  bool
 	Search string
 	Limit  int
 	Offset int

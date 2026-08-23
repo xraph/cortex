@@ -230,7 +230,8 @@ func TestRescope_AppliesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse agent id: %v", err)
 	}
-	got, err := s.Get(context.Background(), parsedID)
+	getCtx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}})
+	got, err := s.Get(getCtx, parsedID)
 	if err != nil {
 		t.Fatalf("get rescoped agent: %v", err)
 	}

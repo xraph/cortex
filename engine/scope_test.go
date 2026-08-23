@@ -11,10 +11,11 @@ import (
 	"github.com/xraph/cortex/store/scopespy"
 )
 
-// Both tests call RunAgent with an explicit appID: the app vocabulary
-// (WithApp, AppFromContext, Config.AppID, and this parameter) is staying
-// for now. Task 9 only removes cortex's own tenant vocabulary in favour
-// of the host-defined Scope.
+// RunAgent/StreamAgent dropped their appID parameter this phase: agent
+// lookups are scope-guarded now, so app_id no longer does anything for
+// them. cortex.WithApp/AppFromContext are staying for skills, traits,
+// behaviors, personas, and orchestration, which are still app-keyed
+// until their own conversion tasks land.
 
 func TestRunAgent_RejectsZeroScope(t *testing.T) {
 	spy := scopespy.New()
@@ -23,7 +24,7 @@ func TestRunAgent_RejectsZeroScope(t *testing.T) {
 		t.Fatalf("engine.New: %v", err)
 	}
 
-	_, err = e.RunAgent(context.Background(), "app1", "assistant", "hello", nil)
+	_, err = e.RunAgent(context.Background(), "assistant", "hello", nil)
 	if !errors.Is(err, cortex.ErrNoScope) {
 		t.Fatalf("err = %v, want ErrNoScope", err)
 	}
@@ -50,7 +51,7 @@ func TestRunAgent_EveryStoreCallCarriesScope(t *testing.T) {
 	}}
 	ctx := cortex.WithScope(context.Background(), want)
 
-	if _, err := e.RunAgent(ctx, "app1", "assistant", "hello", nil); err != nil {
+	if _, err := e.RunAgent(ctx, "assistant", "hello", nil); err != nil {
 		t.Fatalf("RunAgent: %v", err)
 	}
 
@@ -90,7 +91,7 @@ func TestStreamAgent_EveryStoreCallCarriesScope(t *testing.T) {
 	ctx := cortex.WithScope(context.Background(), want)
 
 	events := make(chan engine.StreamEvent, 64)
-	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+	if err := e.StreamAgent(ctx, "assistant", "hello", nil, events); err != nil {
 		t.Fatalf("StreamAgent: %v", err)
 	}
 
@@ -144,7 +145,7 @@ func TestRunAgent_ToolCallCarriesScope(t *testing.T) {
 	}}
 	ctx := cortex.WithScope(context.Background(), want)
 
-	if _, err := e.RunAgent(ctx, "app1", "assistant", "hello", nil); err != nil {
+	if _, err := e.RunAgent(ctx, "assistant", "hello", nil); err != nil {
 		t.Fatalf("RunAgent: %v", err)
 	}
 
@@ -189,7 +190,7 @@ func TestStreamAgent_CancelPersistsWithUncancelledContext(t *testing.T) {
 	defer cancel()
 
 	events := make(chan engine.StreamEvent, 64)
-	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+	if err := e.StreamAgent(ctx, "assistant", "hello", nil, events); err != nil {
 		t.Fatalf("StreamAgent: %v", err)
 	}
 
@@ -247,7 +248,7 @@ func TestStreamAgent_MockCancelPersistsWithUncancelledContext(t *testing.T) {
 	defer cancel()
 
 	events := make(chan engine.StreamEvent, 64)
-	if err := e.StreamAgent(ctx, "app1", "assistant", "hello", nil, events); err != nil {
+	if err := e.StreamAgent(ctx, "assistant", "hello", nil, events); err != nil {
 		t.Fatalf("StreamAgent: %v", err)
 	}
 

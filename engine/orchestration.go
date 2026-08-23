@@ -12,8 +12,8 @@ import (
 // agentRunnerAdapter adapts the engine's RunAgent to orchestration.AgentRunner.
 type agentRunnerAdapter struct{ eng *Engine }
 
-func (a agentRunnerAdapter) RunAgent(ctx context.Context, appID, agentName, input string, opts *orchestration.RunOpts) (*orchestration.AgentResult, error) {
-	r, err := a.eng.RunAgent(ctx, appID, agentName, input, mapRunOpts(opts))
+func (a agentRunnerAdapter) RunAgent(ctx context.Context, _, agentName, input string, opts *orchestration.RunOpts) (*orchestration.AgentResult, error) {
+	r, err := a.eng.RunAgent(ctx, agentName, input, mapRunOpts(opts))
 	if err != nil {
 		return nil, err
 	}

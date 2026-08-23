@@ -10,7 +10,7 @@ import (
 
 // CloneConfig returns an independent deep copy of src as a new agent with the
 // given ID and name and fresh timestamps. All other configuration (including
-// AppID, Enabled, and PersonaRef) is preserved. Runtime history is not a field
+// Scope, Enabled, and PersonaRef) is preserved. Runtime history is not a field
 // on Config and is therefore never copied. The deep copy is a JSON round-trip,
 // so all nested slices and maps are independent of the source.
 func CloneConfig(src *Config, newID id.AgentID, newName string) (*Config, error) {

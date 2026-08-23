@@ -45,17 +45,18 @@ func resolveCloneName(ctx context.Context, desired, source string, exists func(c
 	return "", fmt.Errorf("clone: no free name for %q after %d attempts", source, maxCloneNameAttempts)
 }
 
-// CloneAgent creates an independent copy of an existing agent in the same app.
-func (e *Engine) CloneAgent(ctx context.Context, appID, sourceName, newName string) (*agent.Config, error) {
+// CloneAgent creates an independent copy of an existing agent in the
+// caller's scope.
+func (e *Engine) CloneAgent(ctx context.Context, sourceName, newName string) (*agent.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	src, err := e.store.GetByName(ctx, appID, sourceName)
+	src, err := e.store.GetByName(ctx, sourceName)
 	if err != nil {
 		return nil, err
 	}
 	name, err := resolveCloneName(ctx, newName, sourceName, func(c context.Context, n string) (bool, error) {
-		_, gerr := e.store.GetByName(c, appID, n)
+		_, gerr := e.store.GetByName(c, n)
 		if gerr == nil {
 			return true, nil
 		}

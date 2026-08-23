@@ -45,8 +45,10 @@ func TestScopeColumns(t *testing.T) {
 
 func TestScopeColumns_OverflowGoesToExtra(t *testing.T) {
 	s := cortex.Scope{Levels: []cortex.Level{
-		{Key: "a", Value: "1"}, {Key: "b", Value: "2"},
-		{Key: "c", Value: "3"}, {Key: "d", Value: "4"},
+		{Key: "a", Value: "1"},
+		{Key: "b", Value: "2"},
+		{Key: "c", Value: "3"},
+		{Key: "d", Value: "4"},
 	}}
 	_, _, _, extra := scopeColumns(s)
 	if len(extra) != 1 || extra["d"] != "4" {
@@ -120,14 +122,20 @@ func TestListFilter_RunHasExactNoAppID(t *testing.T) {
 	}
 }
 
-// TestListFilter_AgentStillHasAppID guards against re-applying a rejected
-// approach: stripping AppID from agent.ListFilter would leave the agent
-// store with two keys for one entity (GetByName stays app-keyed, List
-// would go scope-keyed), and skill/trait/behavior/persona all still key on
-// AppID too. Only run.ListFilter converts this phase.
-func TestListFilter_AgentStillHasAppID(t *testing.T) {
+// TestListFilter_AgentHasExactNoAppID guards agent.ListFilter's shape now
+// that the agent surface has converted: AppID is gone (Create/Get/
+// GetByName/Update/Delete/List/CountAgents are all scope-guarded, and
+// UNIQUE (scope_canon, name) replaced the app_id-keyed index), and Exact
+// exists so List/CountAgents can ask for rows stored at exactly the
+// caller's scope depth instead of anything beneath it — same shape as
+// run.ListFilter above. skill/trait/behavior/persona/orchestration still
+// key on AppID; only agent and run convert this phase.
+func TestListFilter_AgentHasExactNoAppID(t *testing.T) {
 	typ := reflect.TypeOf(agent.ListFilter{})
-	if _, found := typ.FieldByName("AppID"); !found {
-		t.Error("agent.ListFilter lost AppID; agent stays app-keyed this phase")
+	if _, found := typ.FieldByName("AppID"); found {
+		t.Error("agent.ListFilter has AppID; scope comes from context now")
+	}
+	if _, found := typ.FieldByName("Exact"); !found {
+		t.Error("agent.ListFilter is missing Exact")
 	}
 }

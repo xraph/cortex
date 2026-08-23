@@ -51,15 +51,52 @@ const staleWorkingMemoryIndexName = "agent_id_1_kind_1_key_1"
 // it by name the same way staleWorkingMemoryIndexName is used here.
 const workingMemoryUniqueIndexName = "cortex_memories_working_scope_unique"
 
+// staleAgentAppNameIndexName is Mongo's default auto-generated name for
+// the pre-scope agent unique index (app_id, name), from when it carried
+// no explicit name. Store.Migrate drops it by this name before creating
+// agentScopeNameUniqueIndexName below: app_id was never the isolation
+// boundary for agent names, scope is, so two different scopes must each
+// be able to use the same agent name, which the old index refused.
+// CreateMany is additive and never drops a stale index on its own, so
+// leaving the old one in place would keep the write path colliding
+// cross-scope even after the new index existed too.
+const staleAgentAppNameIndexName = "app_id_1_name_1"
+
+// agentScopeNameUniqueIndexName is the fixed name for the scope-aware
+// agent name unique index, so a future migration can find and drop it by
+// name the same way staleAgentAppNameIndexName is used here.
+const agentScopeNameUniqueIndexName = "cortex_agents_scope_name_unique"
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
 func migrationIndexes() map[string][]mongo.IndexModel {
 	return map[string][]mongo.IndexModel{
 		colAgents: {
+			// Partial (scope_canon $ne "") for the same reason as the
+			// postgres/sqlite equivalent: Store.Migrate applies this
+			// index before rescoping legacy rows, and any pre-v1.8.0
+			// document is still sitting at scope_canon = "" at that
+			// point. Two such documents sharing a name but never
+			// colliding under the old app_id-keyed index would make a
+			// non-partial unique index fail to build against existing
+			// data before the rescoper ever got a chance to separate
+			// them. Every document Create writes always carries a real,
+			// non-empty scope_canon (Create rejects a zero scope), so
+			// the partial index protects every current and future write
+			// exactly as a full index would.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				// $gt rather than $ne: Mongo's partial-index filter
+				// language only supports a restricted operator subset
+				// ($eq, $exists, $gt/$gte/$lt/$lte, $type, and top-level
+				// $and) and rejects $ne outright ("Expression not
+				// supported in partial index: $not"). scope_canon is
+				// always a string, so "greater than the empty string"
+				// is equivalent to "non-empty" under BSON string
+				// ordering and lands within the supported subset.
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(agentScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},

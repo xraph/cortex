@@ -55,6 +55,9 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	if err := s.dropStaleWorkingMemoryIndex(ctx); err != nil {
 		return err
 	}
+	if err := s.dropStaleAgentAppNameIndex(ctx); err != nil {
+		return err
+	}
 
 	indexes := migrationIndexes()
 
@@ -119,6 +122,27 @@ func (s *Store) dropStaleWorkingMemoryIndex(ctx context.Context) error {
 		return nil
 	}
 	return fmt.Errorf("cortex/mongo: drop stale working-memory index: %w", err)
+}
+
+// dropStaleAgentAppNameIndex removes the pre-scope agent unique index by
+// its Mongo-generated default name (staleAgentAppNameIndexName). app_id
+// was never the isolation boundary for agent names — scope is — so the
+// old (app_id, name) index refused two different scopes the same name.
+// migrationIndexes() replaces it with agentScopeNameUniqueIndexName, but
+// CreateMany only creates indexes, it never drops a stale one on its own,
+// so this runs first on every startup, tolerating the same "already gone"
+// and "collection doesn't exist yet" cases as
+// dropStaleWorkingMemoryIndex.
+func (s *Store) dropStaleAgentAppNameIndex(ctx context.Context) error {
+	err := s.mdb.Collection(colAgents).Indexes().DropOne(ctx, staleAgentAppNameIndexName)
+	if err == nil {
+		return nil
+	}
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) && (cmdErr.Code == mongoIndexNotFound || cmdErr.Code == mongoNamespaceNotFound) {
+		return nil
+	}
+	return fmt.Errorf("cortex/mongo: drop stale agent app_id+name index: %w", err)
 }
 
 // Ping checks database connectivity.

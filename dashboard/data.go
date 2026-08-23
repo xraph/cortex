@@ -52,7 +52,7 @@ type entityCounts struct {
 
 func fetchEntityCounts(ctx context.Context, s store.Store, appID string) entityCounts {
 	var c entityCounts
-	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{AppID: appID})          //nolint:errcheck // best-effort UI data
+	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{})                      //nolint:errcheck // best-effort UI data
 	c.Skills, _ = s.CountSkills(ctx, &skill.ListFilter{AppID: appID})          //nolint:errcheck // best-effort UI data
 	c.Traits, _ = s.CountTraits(ctx, &trait.ListFilter{AppID: appID})          //nolint:errcheck // best-effort UI data
 	c.Behaviors, _ = s.CountBehaviors(ctx, &behavior.ListFilter{AppID: appID}) //nolint:errcheck // best-effort UI data
@@ -64,13 +64,13 @@ func fetchEntityCounts(ctx context.Context, s store.Store, appID string) entityC
 
 // --- Paginated Fetch Functions ---
 
-func fetchAgentsPaginated(ctx context.Context, s store.Store, appID, search string, limit, offset int) ([]*agent.Config, int64, error) {
-	filter := &agent.ListFilter{AppID: appID, Search: search, Limit: limit, Offset: offset}
+func fetchAgentsPaginated(ctx context.Context, s store.Store, search string, limit, offset int) ([]*agent.Config, int64, error) {
+	filter := &agent.ListFilter{Search: search, Limit: limit, Offset: offset}
 	items, err := s.List(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, _ := s.CountAgents(ctx, &agent.ListFilter{AppID: appID, Search: search}) //nolint:errcheck // best-effort count
+	total, _ := s.CountAgents(ctx, &agent.ListFilter{Search: search}) //nolint:errcheck // best-effort count
 	return items, total, nil
 }
 
@@ -136,8 +136,8 @@ func fetchCheckpointsPaginated(ctx context.Context, s store.Store, limit, offset
 
 // --- Non-Paginated Fetch Functions ---
 
-func fetchAgents(ctx context.Context, s store.Store, appID string) ([]*agent.Config, error) {
-	return s.List(ctx, &agent.ListFilter{AppID: appID})
+func fetchAgents(ctx context.Context, s store.Store) ([]*agent.Config, error) {
+	return s.List(ctx, &agent.ListFilter{})
 }
 
 func fetchSkills(ctx context.Context, s store.Store, appID string) ([]*skill.Skill, error) {
@@ -185,8 +185,8 @@ func formatTimeAgo(t time.Time) string {
 }
 
 // buildAgentNameMap fetches all agents and returns a map from AgentID.String() to agent Name.
-func buildAgentNameMap(ctx context.Context, s store.Store, _ string) map[string]string {
-	agents, err := s.List(ctx, &agent.ListFilter{AppID: ""})
+func buildAgentNameMap(ctx context.Context, s store.Store) map[string]string {
+	agents, err := s.List(ctx, &agent.ListFilter{})
 	if err != nil {
 		return map[string]string{}
 	}
@@ -299,7 +299,7 @@ func discoverTools(ctx context.Context, s store.Store, appID string) []Discovere
 	toolMap := make(map[string]*DiscoveredTool)
 
 	// 1. Collect tools from agent configs.
-	agents, _ := fetchAgents(ctx, s, appID) //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s) //nolint:errcheck // best-effort UI data
 	for _, ag := range agents {
 		for _, toolName := range ag.Tools {
 			if toolName == "" {
@@ -472,7 +472,7 @@ func computeSystemPrompt(ctx context.Context, s store.Store, agentName, personaR
 
 	// Agent base prompt.
 	if agentName != "" {
-		ag, err := s.GetByName(ctx, "", agentName)
+		ag, err := s.GetByName(ctx, agentName)
 		if err == nil && ag.SystemPrompt != "" {
 			parts = append(parts, ag.SystemPrompt)
 		}

@@ -12,13 +12,15 @@ import (
 
 // cortexAgentClient adapts *engine.Engine to Sentinel's target.AgentClient.
 type cortexAgentClient struct {
-	eng   *engine.Engine
-	appID string
+	eng *engine.Engine
 }
 
 // NewAgentClient creates a Sentinel AgentClient backed by a Cortex engine.
-func NewAgentClient(eng *engine.Engine, appID string) target.AgentClient {
-	return &cortexAgentClient{eng: eng, appID: appID}
+// appID is accepted for source compatibility but no longer used: agent
+// lookup is scope-guarded now (scope travels on ctx), so app_id doesn't
+// participate in resolving the agent to run.
+func NewAgentClient(eng *engine.Engine, _ string) target.AgentClient {
+	return &cortexAgentClient{eng: eng}
 }
 
 func (c *cortexAgentClient) Run(ctx context.Context, agentID, personaRef, input string) (*target.AgentResponse, error) {
@@ -27,7 +29,7 @@ func (c *cortexAgentClient) Run(ctx context.Context, agentID, personaRef, input 
 		overrides = &engine.RunOverrides{PersonaRef: personaRef}
 	}
 
-	r, err := c.eng.RunAgent(ctx, c.appID, agentID, input, overrides)
+	r, err := c.eng.RunAgent(ctx, agentID, input, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("cortex run: %w", err)
 	}

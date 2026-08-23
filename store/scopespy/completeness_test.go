@@ -96,7 +96,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 	runCtx := cortex.WithScope(context.Background(), cortex.Scope{
 		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
 	})
-	if _, runErr := runEngine.RunAgent(runCtx, "app1", "assistant", "hello", nil); runErr != nil {
+	if _, runErr := runEngine.RunAgent(runCtx, "assistant", "hello", nil); runErr != nil {
 		t.Fatalf("RunAgent: %v", runErr)
 	}
 	for _, c := range runSpy.Calls() {
@@ -115,7 +115,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
 	})
 	events := make(chan engine.StreamEvent, 64)
-	if err := streamEngine.StreamAgent(streamCtx, "app1", "assistant", "hello", nil, events); err != nil {
+	if err := streamEngine.StreamAgent(streamCtx, "assistant", "hello", nil, events); err != nil {
 		t.Fatalf("StreamAgent: %v", err)
 	}
 	var drained int

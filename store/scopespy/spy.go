@@ -101,7 +101,7 @@ func (s *Spy) SaveConversation(ctx context.Context, _ id.AgentID, _ []memory.Mes
 // answer in after the tool call, without changing behavior for a
 // non-tool-calling double, which breaks out of the loop after step one
 // regardless of MaxSteps.
-func (s *Spy) GetByName(ctx context.Context, _, name string) (*agent.Config, error) {
+func (s *Spy) GetByName(ctx context.Context, name string) (*agent.Config, error) {
 	s.record(ctx, "GetByName")
 	return &agent.Config{
 		ID:           id.NewAgentID(),

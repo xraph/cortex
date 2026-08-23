@@ -573,6 +573,50 @@ ALTER TABLE `+table+`
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "scope_agents_unique_index",
+			Version: "20260823000001",
+			Comment: "Replace the app_id-keyed agent name uniqueness with a scope-keyed one",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// idx_cortex_agents_app_name enforced uniqueness on
+				// (app_id, name), from before agents carried a scope at
+				// all. Now that Create/Get/GetByName/Update/Delete/List
+				// are all scope-guarded, two different scopes must be
+				// able to each use the name "assistant" — app_id was
+				// never the isolation boundary here, scope is, so the
+				// index has to key on scope_canon instead or the second
+				// scope's Create collides on the first scope's row before
+				// the scope predicate ever gets a chance to matter.
+				//
+				// Partial (WHERE scope_canon != '') rather than a plain
+				// unique index: this migration runs before
+				// rescopeLegacyRows, so any pre-v1.8.0 rows are still
+				// sitting at scope_canon = '' when the index is built.
+				// Two such rows sharing a name but never colliding under
+				// the old app_id-keyed index (different apps, say) would
+				// make a non-partial CREATE UNIQUE INDEX fail outright on
+				// existing data before the rescoper ever got a chance to
+				// separate them. Every row Create writes always carries a
+				// real, non-empty scope_canon (Create rejects a zero
+				// scope), so the partial index gives every current and
+				// future write the same protection a full index would —
+				// it only widens the exemption for not-yet-rescoped
+				// legacy rows, which stay invisible to every scoped query
+				// anyway per the 20260821000001 migration's reasoning.
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_agents_app_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_agents_scope_name ON cortex_agents (scope_canon, name) WHERE scope_canon != '';
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_agents_scope_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_agents_app_name ON cortex_agents (app_id, name);
+`)
+				return err
+			},
+		},
 	)
 	return g
 }()

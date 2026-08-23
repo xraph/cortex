@@ -10,15 +10,19 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// Create persists a new agent config. The agent store stays app-keyed this
-// phase (see List/Get/Update/Delete below), but the row still records
-// whatever scope is on the context so the columns are populated for the
-// day agent reads become scope-filtered too.
+// Create persists a new agent config, stamping the scope from the
+// context. UNIQUE (scope_canon, name) is what actually enforces
+// per-scope name uniqueness; app_id survives on the row as a vestigial
+// column no longer read or filtered on.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	config.CreatedAt = now
 	config.UpdatedAt = now
-	config.Scope = cortex.ScopeFromContext(ctx)
+	config.Scope = scope
 	m := agentToModel(config)
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
@@ -31,8 +35,16 @@ func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 }
 
 func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(agentModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", agentID.String()).Scan(ctx)
+	q := s.sdb.NewSelect(m).Where("id = ?", agentID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	err := q.Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
 			return nil, cortex.ErrAgentNotFound
@@ -42,12 +54,17 @@ func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, err
 	return agentFromModel(m)
 }
 
-func (s *Store) GetByName(ctx context.Context, appID, name string) (*agent.Config, error) {
+func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(agentModel)
-	err := s.sdb.NewSelect(m).
-		Where("app_id = ?", appID).
-		Where("name = ?", name).
-		Scan(ctx)
+	q := s.sdb.NewSelect(m).Where("name = ?", name)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	err := q.Scan(ctx)
 	if err != nil {
 		if isNoRows(err) {
 			return nil, cortex.ErrAgentNotFound
@@ -86,15 +103,24 @@ var mutableAgentColumns = []string{
 	"updated_at",
 }
 
-// Update modifies an existing agent config. The agent store stays
-// app-keyed this phase — no scope predicate is added here, Update locates
-// the row exactly as it always has (by primary key). Only the write side
-// changes: scope is immutable after creation, so mutableAgentColumns
-// excludes the five scope columns from what gets written.
+// Update modifies an existing agent config's mutable fields within the
+// caller's scope. Scope is immutable after creation: the context scope is
+// used only as an authorization predicate (the caller must be at or above
+// the agent's stored scope to touch it), and is never written back —
+// mutableAgentColumns excludes the five scope columns from what gets
+// written.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	config.UpdatedAt = time.Now().UTC()
 	m := agentToModel(config)
-	res, err := s.sdb.NewUpdate(m).Column(mutableAgentColumns...).WherePK().Exec(ctx)
+	q := s.sdb.NewUpdate(m).Column(mutableAgentColumns...).WherePK()
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: update agent: %w", err)
 	}
@@ -109,9 +135,16 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 }
 
 func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
-	res, err := s.sdb.NewDelete((*agentModel)(nil)).
-		Where("id = ?", agentID.String()).
-		Exec(ctx)
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	q := s.sdb.NewDelete((*agentModel)(nil)).
+		Where("id = ?", agentID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: delete agent: %w", err)
 	}
@@ -126,21 +159,26 @@ func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
 }
 
 func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &agent.ListFilter{}
+	}
 	var models []agentModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Search != "" {
-			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Search != "" {
+		q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex/sqlite: list agents: %w", err)
@@ -157,14 +195,19 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 }
 
 func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &agent.ListFilter{}
+	}
 	q := s.sdb.NewSelect((*agentModel)(nil))
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Search != "" {
-			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Search != "" {
+		q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
 	}
 	count, err := q.Count(ctx)
 	if err != nil {

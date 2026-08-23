@@ -122,7 +122,6 @@ func (a *API) createAgent(ctx forge.Context, req *CreateAgentRequest) (*agent.Co
 		ID:              id.NewAgentID(),
 		Name:            req.Name,
 		Description:     req.Description,
-		AppID:           cortex.AppFromContext(ctx.Context()),
 		SystemPrompt:    req.SystemPrompt,
 		Model:           req.Model,
 		Tools:           req.Tools,
@@ -147,7 +146,7 @@ func (a *API) createAgent(ctx forge.Context, req *CreateAgentRequest) (*agent.Co
 }
 
 func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, error) {
-	cfg, err := a.eng.GetAgentByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	cfg, err := a.eng.GetAgentByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -156,7 +155,6 @@ func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, er
 
 func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
 	agents, err := a.eng.ListAgents(ctx.Context(), &agent.ListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -168,7 +166,7 @@ func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgents
 }
 
 func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Config, error) {
-	cfg, err := a.eng.GetAgentByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	cfg, err := a.eng.GetAgentByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -223,7 +221,7 @@ func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Co
 }
 
 func (a *API) deleteAgent(ctx forge.Context, _ *DeleteAgentRequest) (*struct{}, error) {
-	cfg, err := a.eng.GetAgentByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	cfg, err := a.eng.GetAgentByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -238,8 +236,7 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 		return nil, forge.BadRequest("input is required")
 	}
 
-	appID := cortex.AppFromContext(ctx.Context())
-	r, err := a.eng.RunAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides))
+	r, err := a.eng.RunAgent(ctx.Context(), req.Name, req.Input, mapOverrides(req.Overrides))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -270,10 +267,9 @@ func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}
 	ctx.SetHeader("Connection", "keep-alive")
 	ctx.SetHeader("X-Accel-Buffering", "no")
 
-	appID := cortex.AppFromContext(ctx.Context())
 	events := make(chan engine.StreamEvent, 64)
 
-	if err := a.eng.StreamAgent(ctx.Context(), appID, req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
+	if err := a.eng.StreamAgent(ctx.Context(), req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
 		return nil, mapStoreError(err)
 	}
 
@@ -287,8 +283,7 @@ func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}
 }
 
 func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*PreviewPromptResponse, error) {
-	appID := cortex.AppFromContext(ctx.Context())
-	ag, err := a.eng.GetAgentByName(ctx.Context(), appID, ctx.Param("name"))
+	ag, err := a.eng.GetAgentByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -303,8 +298,7 @@ func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*Previe
 }
 
 func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Config, error) {
-	appID := cortex.AppFromContext(ctx.Context())
-	clone, err := a.eng.CloneAgent(ctx.Context(), appID, req.Name, req.NewName)
+	clone, err := a.eng.CloneAgent(ctx.Context(), req.Name, req.NewName)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}

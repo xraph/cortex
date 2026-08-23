@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/knowledge"
 )
@@ -92,7 +93,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 
 	// Resolve persona identity.
 	if personaRef != "" && e.store != nil {
-		p, err := e.store.GetPersonaByName(ctx, ag.AppID, personaRef)
+		p, err := e.store.GetPersonaByName(ctx, cortex.AppFromContext(ctx), personaRef)
 		if err == nil && p.Identity != "" {
 			parts = append(parts, "\n## Identity\n"+p.Identity)
 		}
@@ -111,7 +112,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if sName == "" {
 				continue
 			}
-			sk, err := e.store.GetSkillByName(ctx, ag.AppID, sName)
+			sk, err := e.store.GetSkillByName(ctx, cortex.AppFromContext(ctx), sName)
 			if err == nil && sk.SystemPromptFragment != "" {
 				parts = append(parts, "\n## Skill: "+sk.Name+"\n"+sk.SystemPromptFragment)
 			}
@@ -125,7 +126,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if sName == "" {
 				continue
 			}
-			sk, err := e.store.GetSkillByName(ctx, ag.AppID, sName)
+			sk, err := e.store.GetSkillByName(ctx, cortex.AppFromContext(ctx), sName)
 			if err != nil || len(sk.Knowledge) == 0 {
 				continue
 			}
@@ -162,7 +163,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 			if tName == "" {
 				continue
 			}
-			t, err := e.store.GetTraitByName(ctx, ag.AppID, tName)
+			t, err := e.store.GetTraitByName(ctx, cortex.AppFromContext(ctx), tName)
 			if err == nil {
 				for _, inf := range t.Influences {
 					if inf.Target == "prompt_injection" {

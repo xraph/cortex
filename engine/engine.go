@@ -158,11 +158,11 @@ func (e *Engine) GetAgent(ctx context.Context, agentID id.AgentID) (*agent.Confi
 	return e.store.Get(ctx, agentID)
 }
 
-func (e *Engine) GetAgentByName(ctx context.Context, appID, name string) (*agent.Config, error) {
+func (e *Engine) GetAgentByName(ctx context.Context, name string) (*agent.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetByName(ctx, appID, name)
+	return e.store.GetByName(ctx, name)
 }
 
 func (e *Engine) UpdateAgent(ctx context.Context, config *agent.Config) error {
@@ -521,7 +521,7 @@ type StreamEvent struct {
 // RunAgent executes an agent synchronously.
 // When an LLM client is configured, it uses the ReAct reasoning loop.
 // Otherwise, it falls back to mock/echo mode.
-func (e *Engine) RunAgent(ctx context.Context, appID, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
+func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -529,7 +529,7 @@ func (e *Engine) RunAgent(ctx context.Context, appID, agentName, input string, o
 		return nil, cortex.ErrNoScope
 	}
 
-	ag, err := e.store.GetByName(ctx, appID, agentName)
+	ag, err := e.store.GetByName(ctx, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
@@ -547,7 +547,7 @@ func (e *Engine) RunAgent(ctx context.Context, appID, agentName, input string, o
 // The channel is closed when execution completes.
 // When an LLM client is configured, it uses the ReAct reasoning loop with streaming.
 // Otherwise, it falls back to mock/echo mode.
-func (e *Engine) StreamAgent(ctx context.Context, appID, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
 	if e.store == nil {
 		close(events)
 		return cortex.ErrNoStore
@@ -557,7 +557,7 @@ func (e *Engine) StreamAgent(ctx context.Context, appID, agentName, input string
 		return cortex.ErrNoScope
 	}
 
-	ag, err := e.store.GetByName(ctx, appID, agentName)
+	ag, err := e.store.GetByName(ctx, agentName)
 	if err != nil {
 		close(events)
 		return fmt.Errorf("resolve agent: %w", err)

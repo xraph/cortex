@@ -248,7 +248,7 @@ func (c *Contributor) renderOverview(ctx context.Context, s store.Store) (templ.
 	counts := fetchEntityCounts(ctx, s, "")
 	runs, _ := fetchRecentRuns(ctx, s, 10)       //nolint:errcheck // best-effort UI data
 	cps, _ := fetchPendingCheckpoints(ctx, s, 5) //nolint:errcheck // best-effort UI data
-	agentNames := buildAgentNameMap(ctx, s, "")
+	agentNames := buildAgentNameMap(ctx, s)
 	pluginSections := c.collectPluginSections(ctx)
 
 	return templ.ComponentFunc(func(tCtx context.Context, w io.Writer) error {
@@ -261,7 +261,7 @@ func (c *Contributor) renderAgents(ctx context.Context, s store.Store, params co
 	search := params.QueryParams["search"]
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total, err := fetchAgentsPaginated(ctx, s, "", search, limit, offset)
+	items, total, err := fetchAgentsPaginated(ctx, s, search, limit, offset)
 	if err != nil {
 		items = nil
 		total = 0
@@ -275,7 +275,7 @@ func (c *Contributor) renderAgentDetail(ctx context.Context, s store.Store, para
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	ag, err := s.GetByName(ctx, "", name)
+	ag, err := s.GetByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve agent: %w", err)
 	}
@@ -308,7 +308,7 @@ func (c *Contributor) renderAgentForm(ctx context.Context, s store.Store, params
 
 	name := params.QueryParams["name"]
 	if name != "" {
-		ag, err := s.GetByName(ctx, "", name)
+		ag, err := s.GetByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve agent for edit: %w", err)
 		}
@@ -385,7 +385,7 @@ func (c *Contributor) renderSkillDetail(ctx context.Context, s store.Store, para
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve skill: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s, "")     //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
 	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineSkills }, sk.Name) +
 		countSkillUsageInPersonas(personas, sk.Name)
@@ -427,7 +427,7 @@ func (c *Contributor) renderTraitDetail(ctx context.Context, s store.Store, para
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve trait: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s, "")     //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
 	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineTraits }, t.Name) +
 		countTraitUsageInPersonas(personas, t.Name)
@@ -468,7 +468,7 @@ func (c *Contributor) renderBehaviorDetail(ctx context.Context, s store.Store, p
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve behavior: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s, "")     //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
 	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineBehaviors }, b.Name) +
 		countBehaviorUsageInPersonas(personas, b.Name)
@@ -497,7 +497,7 @@ func (c *Contributor) renderRuns(ctx context.Context, s store.Store, params cont
 		items = nil
 		total = 0
 	}
-	agents, _ := fetchAgents(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s) //nolint:errcheck // best-effort UI data
 	agentNames := buildAgentNameMapFrom(agents)
 	pg := NewPaginationMeta(total, limit, offset)
 	return pages.RunsPage(items, agentFilter, stateFilter, agents, agentNames, pg), nil
@@ -524,7 +524,7 @@ func (c *Contributor) renderRunDetail(ctx context.Context, s store.Store, params
 		stepToolCalls[step.ID.String()] = tcs
 		totalToolCalls += len(tcs)
 	}
-	agentNames := buildAgentNameMap(ctx, s, "")
+	agentNames := buildAgentNameMap(ctx, s)
 	agentName := resolveAgentName(r.AgentID.String(), agentNames)
 	duration := formatDuration(r.StartedAt, r.CompletedAt)
 	pluginSections := c.collectRunDetailSections(ctx, runID)
@@ -560,7 +560,7 @@ func (c *Contributor) renderCheckpointDetail(ctx context.Context, s store.Store,
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve checkpoint: %w", err)
 	}
-	agentNames := buildAgentNameMap(ctx, s, "")
+	agentNames := buildAgentNameMap(ctx, s)
 	agentName := resolveAgentName(cp.AgentID.String(), agentNames)
 	return pages.CheckpointDetailPage(cp, agentName), nil
 }
@@ -646,7 +646,7 @@ func (c *Contributor) renderModelDetail(ctx context.Context, params contributor.
 }
 
 func (c *Contributor) renderMemory(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	agents, _ := fetchAgents(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s) //nolint:errcheck // best-effort UI data
 	agentIDStr := params.QueryParams["agent"]
 	var messages []memory.Message
 	if agentIDStr != "" {
@@ -667,7 +667,7 @@ func (c *Contributor) renderStatsWidget(ctx context.Context, s store.Store) (tem
 
 func (c *Contributor) renderRecentRunsWidget(ctx context.Context, s store.Store) (templ.Component, error) {
 	runs, _ := fetchRecentRuns(ctx, s, 10) //nolint:errcheck // best-effort UI data
-	agentNames := buildAgentNameMap(ctx, s, "")
+	agentNames := buildAgentNameMap(ctx, s)
 	return widgets.RecentRunsWidget(runs, agentNames), nil
 }
 
@@ -765,12 +765,12 @@ func (c *Contributor) collectRunDetailSections(ctx context.Context, runID id.Age
 // --- Chat & Playground Renderers ---
 
 func (c *Contributor) renderChat(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	agents, _ := fetchAgents(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s) //nolint:errcheck // best-effort UI data
 	selectedAgent := params.QueryParams["agent"]
 
 	var messages []memory.Message
 	if selectedAgent != "" {
-		ag, err := s.GetByName(ctx, "", selectedAgent)
+		ag, err := s.GetByName(ctx, selectedAgent)
 		if err == nil {
 			messages, _ = s.LoadConversation(ctx, ag.ID, 100) //nolint:errcheck // best-effort UI data
 		}
@@ -784,7 +784,7 @@ func (c *Contributor) renderChat(ctx context.Context, s store.Store, params cont
 }
 
 func (c *Contributor) renderPlayground(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	agents, _ := fetchAgents(ctx, s, "")       //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)           //nolint:errcheck // best-effort UI data
 	personas, _ := fetchPersonas(ctx, s, "")   //nolint:errcheck // best-effort UI data
 	skills, _ := fetchSkills(ctx, s, "")       //nolint:errcheck // best-effort UI data
 	traits, _ := fetchTraits(ctx, s, "")       //nolint:errcheck // best-effort UI data

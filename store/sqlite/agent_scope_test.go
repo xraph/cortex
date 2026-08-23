@@ -12,9 +12,10 @@ import (
 // TestAgentStore_UpdateDoesNotMutateScope mirrors
 // TestRunStore_UpdateDoesNotMutateScope for the agent store. An agent's
 // scope is immutable after creation just like a run's: Create stamps it
-// from the context, but Update must never rewrite it, even though the
-// agent store stays app-keyed this phase and Update takes no scope
-// predicate at all. scopeOf is shared with run_scope_test.go.
+// from the context, and Update — now scope-guarded like every other
+// method — accepts a broader-but-still-matching context as authorization
+// without ever collapsing the row's own narrower stored scope down to it.
+// scopeOf is shared with run_scope_test.go.
 func TestAgentStore_UpdateDoesNotMutateScope(t *testing.T) {
 	s := newTestStore(t)
 	createCtx := cortex.WithScope(context.Background(), scopeOf("ws_x", "proj_y"))
@@ -22,7 +23,6 @@ func TestAgentStore_UpdateDoesNotMutateScope(t *testing.T) {
 	cfg := &agent.Config{
 		ID:          id.NewAgentID(),
 		Name:        "immutable-scope",
-		AppID:       "app1",
 		Description: "original",
 	}
 	if err := s.Create(createCtx, cfg); err != nil {
@@ -31,7 +31,7 @@ func TestAgentStore_UpdateDoesNotMutateScope(t *testing.T) {
 
 	const want = "workspace=ws_x/project=proj_y"
 
-	loaded, err := s.Get(context.Background(), cfg.ID)
+	loaded, err := s.Get(createCtx, cfg.ID)
 	if err != nil {
 		t.Fatalf("get agent: %v", err)
 	}
@@ -40,15 +40,15 @@ func TestAgentStore_UpdateDoesNotMutateScope(t *testing.T) {
 	}
 	loaded.Description = "mutated"
 
-	// Agent Update doesn't use context scope for anything — no predicate,
-	// no write. A plain background context proves the point: nothing
-	// about the update path can put the row's scope back even if it
-	// wanted to.
-	if updateErr := s.Update(context.Background(), loaded); updateErr != nil {
+	// A broader context (workspace only, no project) still authorizes the
+	// update via prefix matching, but must not collapse the row's own
+	// stored scope down to the broader one.
+	updateCtx := cortex.WithScope(context.Background(), scopeOf("ws_x"))
+	if updateErr := s.Update(updateCtx, loaded); updateErr != nil {
 		t.Fatalf("update agent: %v", updateErr)
 	}
 
-	reloaded, err := s.Get(context.Background(), cfg.ID)
+	reloaded, err := s.Get(createCtx, cfg.ID)
 	if err != nil {
 		t.Fatalf("reload agent: %v", err)
 	}

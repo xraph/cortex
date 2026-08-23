@@ -6,7 +6,6 @@ import (
 
 	"github.com/xraph/forge"
 
-	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/memory"
 )
 
@@ -38,8 +37,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 }
 
 func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*GetConversationResponse, error) {
-	appID := cortex.AppFromContext(ctx.Context())
-	cfg, err := a.eng.GetAgentByName(ctx.Context(), appID, ctx.Param("name"))
+	cfg, err := a.eng.GetAgentByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -55,8 +53,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 }
 
 func (a *API) clearConversation(ctx forge.Context, _ *ClearConversationRequest) (*struct{}, error) {
-	appID := cortex.AppFromContext(ctx.Context())
-	cfg, err := a.eng.GetAgentByName(ctx.Context(), appID, ctx.Param("name"))
+	cfg, err := a.eng.GetAgentByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
