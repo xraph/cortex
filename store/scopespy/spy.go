@@ -115,7 +115,7 @@ func (s *Spy) GetByName(ctx context.Context, name string) (*agent.Config, error)
 
 // GetPersonaByName returns a usable persona so BuildSystemPrompt's
 // identity injection has something to record scope on.
-func (s *Spy) GetPersonaByName(ctx context.Context, _, name string) (*persona.Persona, error) {
+func (s *Spy) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) {
 	s.record(ctx, "GetPersonaByName")
 	return &persona.Persona{ID: id.NewPersonaID(), Name: name, Identity: "spy identity"}, nil
 }

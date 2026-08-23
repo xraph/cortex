@@ -14,9 +14,10 @@ import (
 
 // RunAgent/StreamAgent dropped their appID parameter this phase: agent
 // lookups are scope-guarded now, so app_id no longer does anything for
-// them. cortex.WithApp/AppFromContext are staying for skills, traits,
-// behaviors, personas, and orchestration, which are still app-keyed
-// until their own conversion tasks land.
+// them. cortex.WithApp/AppFromContext are staying for orchestration,
+// the only subsystem still app-keyed until its own conversion task
+// lands; agents, skills, traits, behaviors, and personas are all
+// scope-guarded now.
 
 func TestRunAgent_RejectsZeroScope(t *testing.T) {
 	spy := scopespy.New()
@@ -285,31 +286,29 @@ func TestStreamAgent_MockCancelPersistsWithUncancelledContext(t *testing.T) {
 	}
 }
 
-// failingPersonaSpy wraps scopespy.Spy but fails persona resolution when
-// called with an empty app id, simulating the exact shape a request with
-// no app on its context produces: cortex.AppFromContext returns "", and a
-// lookup for ("", personaRef) finds nothing. scopespy.Spy's own
-// GetPersonaByName always succeeds regardless of the app id argument, so
-// it can't reproduce this on its own.
+// failingPersonaSpy wraps scopespy.Spy but always fails persona
+// resolution, simulating a persona lookup that finds nothing at the
+// caller's scope. scopespy.Spy's own GetPersonaByName always succeeds,
+// so it can't reproduce this on its own.
 type failingPersonaSpy struct {
 	*scopespy.Spy
 }
 
-func (f *failingPersonaSpy) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) {
-	if appID == "" {
-		return nil, cortex.ErrPersonaNotFound
-	}
-	return f.Spy.GetPersonaByName(ctx, appID, name)
+func (f *failingPersonaSpy) GetPersonaByName(_ context.Context, _ string) (*persona.Persona, error) {
+	return nil, cortex.ErrPersonaNotFound
 }
 
 // TestRunAgent_MissingAppFailsPersonaResolutionLoudly is the regression
-// guard for the fix-round review's Finding 1: BuildSystemPrompt's
-// persona/skill/trait lookups moved from the agent's persisted app id to
-// cortex.AppFromContext(ctx). Those are only the same value when the run
-// context actually carries the app the agent was created under -- a run
-// reached through a context with no app attached (dashboard-triggered
-// runs, sentinel, orchestration sub-agents) must not silently drop the
-// Identity section from the prompt. It must fail the run outright instead.
+// guard for the fix-round review's Finding 1: BuildSystemPrompt must
+// abort the run when persona resolution fails, not silently drop the
+// Identity section from the prompt. The test's name predates Task 7:
+// persona lookup used to key on cortex.AppFromContext(ctx), and a
+// context with no app attached reproduced the failure directly. Persona
+// lookup is scope-keyed now, and RunAgent's own guard already rejects a
+// context with no scope before BuildSystemPrompt ever runs, so there is
+// no equivalent "missing X" context to construct here -- the spy above
+// fails the lookup outright instead, to keep exercising the same
+// fail-loud invariant under the new signature.
 func TestRunAgent_MissingAppFailsPersonaResolutionLoudly(t *testing.T) {
 	spy := &failingPersonaSpy{Spy: scopespy.New()}
 	e, err := engine.New(engine.WithStore(spy), engine.WithLLM(scopespy.StaticLLM("done")))
@@ -317,16 +316,12 @@ func TestRunAgent_MissingAppFailsPersonaResolutionLoudly(t *testing.T) {
 		t.Fatalf("engine.New: %v", err)
 	}
 
-	// Scope is on the context (RunAgent's own guard passes), but
-	// deliberately no app -- cortex.WithApp is never called here, the
-	// same as a request that never went through a host layer that
-	// attaches one.
 	ctx := cortex.WithScope(context.Background(), cortex.Scope{
 		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
 	})
 
 	if _, err := e.RunAgent(ctx, "assistant", "hello", nil); err == nil {
-		t.Fatal("RunAgent with no app on context succeeded despite the agent requesting a persona; it must fail instead of silently dropping the Identity section from the prompt")
+		t.Fatal("RunAgent with a failing persona lookup succeeded despite the agent requesting a persona; it must fail instead of silently dropping the Identity section from the prompt")
 	} else if !errors.Is(err, cortex.ErrPersonaNotFound) {
 		t.Errorf("RunAgent err = %v, want it to wrap cortex.ErrPersonaNotFound", err)
 	}

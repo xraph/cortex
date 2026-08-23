@@ -67,6 +67,9 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	if err := s.dropStaleAppNameIndex(ctx, colBehaviors, staleBehaviorAppNameIndexName); err != nil {
 		return err
 	}
+	if err := s.dropStaleAppNameIndex(ctx, colPersonas, stalePersonaAppNameIndexName); err != nil {
+		return err
+	}
 
 	indexes := migrationIndexes()
 
@@ -156,14 +159,24 @@ func (s *Store) dropStaleAgentAppNameIndex(ctx context.Context) error {
 
 // dropStaleAppNameIndex removes a pre-scope (app_id, name) unique index
 // by its Mongo-generated default name from the given collection. Shared
-// by cortex_skills, cortex_traits, and cortex_behaviors, which all
-// converted to a scope-keyed unique index in the same migration as each
-// other: app_id was never the isolation boundary for any of their names
-// — scope is — so the old index refused two different scopes the same
-// name. CreateMany only creates indexes, it never drops a stale one on
-// its own, so this runs first on every startup, tolerating the same
+// by cortex_skills, cortex_traits, cortex_behaviors, and cortex_personas,
+// which all converted to a scope-keyed unique index in their own
+// migration: app_id was never the isolation boundary for any of their
+// names — scope is — so the old index refused two different scopes the
+// same name. CreateMany only creates indexes, it never drops a stale one
+// on its own, so this runs first on every startup, tolerating the same
 // "already gone" and "collection doesn't exist yet" cases as
 // dropStaleWorkingMemoryIndex/dropStaleAgentAppNameIndex.
+//
+// indexName is passed explicitly per collection even though every
+// (app_id, name) compound index Mongo has auto-named so far happens to
+// collide on "app_id_1_name_1": that's a property of Mongo's
+// default-naming scheme for this exact field-pair shape, not a
+// guarantee, and a future stale index with a different shape (or an
+// explicit name) must not silently start reusing this same literal
+// because the parameter got dropped.
+//
+//nolint:unparam // see above: the shared literal is coincidental, not structural
 func (s *Store) dropStaleAppNameIndex(ctx context.Context, col, indexName string) error {
 	err := s.mdb.Collection(col).Indexes().DropOne(ctx, indexName)
 	if err == nil {

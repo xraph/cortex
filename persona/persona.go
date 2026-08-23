@@ -34,7 +34,7 @@ type Persona struct {
 	ID                 id.PersonaID        `json:"id"`
 	Name               string              `json:"name"`
 	Description        string              `json:"description,omitempty"`
-	AppID              string              `json:"app_id"`
+	Scope              cortex.Scope        `json:"scope"`
 	Identity           string              `json:"identity"`
 	Skills             []SkillAssignment   `json:"skills,omitempty"`
 	Traits             []TraitAssignment   `json:"traits,omitempty"`
@@ -49,16 +49,18 @@ type Persona struct {
 type Store interface {
 	CreatePersona(ctx context.Context, persona *Persona) error
 	GetPersona(ctx context.Context, personaID id.PersonaID) (*Persona, error)
-	GetPersonaByName(ctx context.Context, appID, name string) (*Persona, error)
+	GetPersonaByName(ctx context.Context, name string) (*Persona, error)
 	UpdatePersona(ctx context.Context, persona *Persona) error
 	DeletePersona(ctx context.Context, personaID id.PersonaID) error
 	ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
 	CountPersonas(ctx context.Context, filter *ListFilter) (int64, error)
 }
 
-// ListFilter controls pagination and filtering for persona listing.
+// ListFilter controls pagination and matching for persona listing. Scope
+// arrives on the context; Exact narrows to rows stored at precisely that
+// depth instead of everything beneath it.
 type ListFilter struct {
-	AppID  string
+	Exact  bool
 	Search string
 	Limit  int
 	Offset int

@@ -142,7 +142,9 @@ func mustCreateBehavior(t *testing.T, s store.Store, ctx context.Context, name s
 	return behaviorID
 }
 
-// mustCreatePersona creates a persona under ctx and returns its ID.
+// mustCreatePersona creates a persona under ctx and returns its ID. It
+// requires a scoped context like every other create: the persona store is
+// fully scope-guarded now, the same as agents.
 func mustCreatePersona(t *testing.T, s store.Store, ctx context.Context, name string) id.PersonaID { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	personaID := id.NewPersonaID()
@@ -150,9 +152,8 @@ func mustCreatePersona(t *testing.T, s store.Store, ctx context.Context, name st
 		name = "conformance-" + personaID.String()
 	}
 	p := &persona.Persona{
-		ID:    personaID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   personaID,
+		Name: name,
 	}
 	if err := s.CreatePersona(ctx, p); err != nil {
 		t.Fatalf("fixture: create persona: %v", err)
@@ -427,11 +428,11 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
-		p := &persona.Persona{ID: id.NewPersonaID(), Name: "support-rep", AppID: "conformance-app"}
+		p := &persona.Persona{ID: id.NewPersonaID(), Name: "support-rep"}
 		if err := s.CreatePersona(ctx, p); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreatePersona with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetPersonaByName(ctx, "conformance-app", "support-rep"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetPersonaByName(ctx, "support-rep"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetPersonaByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.ListPersonas(ctx, &persona.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
@@ -782,9 +783,9 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 	})
 
 	// Skill, Trait, and Behavior get the same distinct-identifier
-	// cross-scope shape as Agent above. Unlike Persona and Orchestration
-	// below, these three are expected to pass: List/GetByName are
-	// scope-guarded now.
+	// cross-scope shape as Agent above. Unlike Orchestration below,
+	// these three (and Persona, further below) are expected to pass:
+	// List/GetByName are scope-guarded now.
 
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
@@ -873,10 +874,12 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
-	// The two subtests below give personas and orchestration configs the
-	// same distinct-identifier cross-scope shape. Neither store filters
-	// by scope yet, so List/Get returns rows from both scopes and both
-	// are expected to fail.
+	// Persona gets the same distinct-identifier cross-scope shape as
+	// Agent/Skill/Trait/Behavior above: List/GetPersonaByName are
+	// scope-guarded now, so this is expected to pass. Orchestration
+	// below is the one entity left that isn't -- neither store filters
+	// by scope yet, so its List/Get returns rows from both scopes and it
+	// is expected to fail.
 
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
@@ -886,7 +889,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		personaA := mustCreatePersona(t, s, ctxA, "persona-a")
 		personaB := mustCreatePersona(t, s, ctxB, "persona-b")
 
-		gotA, err := s.ListPersonas(ctxA, &persona.ListFilter{AppID: "conformance-app"})
+		gotA, err := s.ListPersonas(ctxA, &persona.ListFilter{})
 		if err != nil {
 			t.Fatalf("list personas A: %v", err)
 		}
@@ -894,7 +897,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListPersonas(ctxA) = %d persona(s), want exactly personaA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.ListPersonas(ctxB, &persona.ListFilter{AppID: "conformance-app"})
+		gotB, err := s.ListPersonas(ctxB, &persona.ListFilter{})
 		if err != nil {
 			t.Fatalf("list personas B: %v", err)
 		}
@@ -902,7 +905,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListPersonas(ctxB) = %d persona(s), want exactly personaB", len(gotB))
 		}
 
-		if _, err := s.GetPersonaByName(ctxB, "conformance-app", "persona-a"); !errors.Is(err, cortex.ErrPersonaNotFound) {
+		if _, err := s.GetPersonaByName(ctxB, "persona-a"); !errors.Is(err, cortex.ErrPersonaNotFound) {
 			t.Errorf("GetPersonaByName(ctxB, %q) = %v, want ErrPersonaNotFound", "persona-a", err)
 		}
 	})
@@ -1345,22 +1348,12 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
-	// The two subtests below are the ones app_id still governs: ONE name
-	// reused across two scopes, held under the same app_id (app_id is a
-	// required lookup parameter here, not the scope under test — holding
-	// it fixed keeps scope as the only thing that could separate these
-	// rows, if these stores checked it). Two different names would be
-	// separated by the name alone and would prove nothing about a scope
-	// predicate that doesn't exist yet for these two.
-	//
-	// Neither store is scope-guarded, and app_id+name is already a real
-	// unique index on both tables (see idx_cortex_*_app_name in
-	// store/sqlite/migrations.go), independent of any scope column. So
-	// the second mustCreate* call below is expected to fail outright with
-	// cortex.ErrAlreadyExists — the fixture can't even get two rows on
-	// the books to compare, which is itself the proof that nothing about
-	// scope separates them.
-
+	// Persona gets the same treatment as Agent/Skill/Trait/Behavior
+	// above: the same name reused across two scopes must resolve to two
+	// distinct rows, proving UNIQUE (scope_canon, name) — not the
+	// retired UNIQUE (app_id, name) — is what the store enforces now,
+	// and Get/Update/Delete must refuse a scope-B caller who only knows
+	// (or guesses) scope-A's id.
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1369,19 +1362,67 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreatePersona(t, s, ctxA, "support-rep")
 		mustCreatePersona(t, s, ctxB, "support-rep")
 
-		gotA, err := s.GetPersonaByName(ctxA, "conformance-app", "support-rep")
+		gotA, err := s.GetPersonaByName(ctxA, "support-rep")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own persona: %v", err)
 		}
-		gotB, err := s.GetPersonaByName(ctxB, "conformance-app", "support-rep")
+		gotB, err := s.GetPersonaByName(ctxB, "support-rep")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own persona: %v", err)
 		}
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
 		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's persona merely by knowing (or guessing) its id (or
+		// name). GetPersonaByName above only proves the name-lookup
+		// predicate; Get/Update/Delete need their own predicate proven
+		// independently, and each check re-reads from scope A afterward
+		// to prove no mutation and no deletion happened.
+		_, getErr := s.GetPersona(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrPersonaNotFound) {
+			t.Errorf("GetPersona(ctxB, personaA.ID) = %v, want ErrPersonaNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.UpdatePersona(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrPersonaNotFound) {
+			t.Errorf("UpdatePersona(ctxB, personaA) = %v, want ErrPersonaNotFound", updateErr)
+		}
+		stillA, err := s.GetPersona(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload personaA after cross-scope UpdatePersona attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("UpdatePersona(ctxB, personaA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.DeletePersona(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrPersonaNotFound) {
+			t.Errorf("DeletePersona(ctxB, personaA.ID) = %v, want ErrPersonaNotFound", deleteErr)
+		}
+		_, reloadErr := s.GetPersona(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("personaA missing after cross-scope DeletePersona attempt: %v (must not delete another scope's row)", reloadErr)
+		}
 	})
 
+	// Orchestration is the one entity left where app_id still governs:
+	// ONE name reused across two scopes, held under the same app_id
+	// (app_id is a required lookup parameter here, not the scope under
+	// test — holding it fixed keeps scope as the only thing that could
+	// separate these rows, if the store checked it). A different name
+	// would be separated by the name alone and would prove nothing about
+	// a scope predicate that doesn't exist yet for orchestration.
+	//
+	// The store is not scope-guarded, and app_id+name is already a real
+	// unique index on the table (see idx_cortex_orchestration_configs_
+	// app_name in store/sqlite/migrations.go), independent of any scope
+	// column. So the second mustCreateOrchestration call below is
+	// expected to fail outright with cortex.ErrAlreadyExists — the
+	// fixture can't even get two rows on the books to compare, which is
+	// itself the proof that nothing about scope separates them.
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1558,6 +1599,32 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("ListBehaviors({workspace=ws_y}) incorrectly returned a behavior scoped to {workspace=ws_x, project=p1}")
 		}
 	})
+
+	// Persona lost its Scope field only this task (Task 7), so its List
+	// predicate against a broader-than-stored filter went untested until
+	// now, the same as Skill/Trait/Behavior's did going into Task 6.
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		personaID := mustCreatePersona(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListPersonas(broad, nil)
+		if err != nil {
+			t.Fatalf("list personas (broad): %v", err)
+		}
+		if !containsPersonaID(got, personaID) {
+			t.Errorf("ListPersonas({workspace=ws_x}) didn't return a persona scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListPersonas(other, nil)
+		if err != nil {
+			t.Fatalf("list personas (other workspace): %v", err)
+		}
+		if containsPersonaID(gotOther, personaID) {
+			t.Errorf("ListPersonas({workspace=ws_y}) incorrectly returned a persona scoped to {workspace=ws_x, project=p1}")
+		}
+	})
 }
 
 func containsRunID(rs []*run.Run, want id.AgentRunID) bool {
@@ -1608,6 +1675,15 @@ func containsTraitID(trs []*trait.Trait, want id.TraitID) bool {
 func containsBehaviorID(bs []*behavior.Behavior, want id.BehaviorID) bool {
 	for _, b := range bs {
 		if b.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPersonaID(ps []*persona.Persona, want id.PersonaID) bool {
+	for _, p := range ps {
+		if p.ID == want {
 			return true
 		}
 	}
@@ -1781,6 +1857,40 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 			t.Errorf("Description after update = %q, want %q", reloaded.Description, "mutated")
 		}
 	})
+
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		personaID := mustCreatePersona(t, s, createCtx, "")
+
+		loaded, err := s.GetPersona(createCtx, personaID)
+		if err != nil {
+			t.Fatalf("get persona: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Description = "mutated"
+
+		// A broader context (workspace only, no project) still
+		// authorizes the update via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdatePersona(updateCtx, loaded); err != nil {
+			t.Fatalf("update persona: %v", err)
+		}
+
+		reloaded, err := s.GetPersona(createCtx, personaID)
+		if err != nil {
+			t.Fatalf("reload persona: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Description != "mutated" {
+			t.Errorf("Description after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Description, "mutated")
+		}
+	})
 }
 
 // ──────────────────────────────────────────────────
@@ -1936,6 +2046,18 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		got, err := s.GetBehavior(ctx, behaviorID)
 		if err != nil {
 			t.Fatalf("get behavior after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Persona", func(t *testing.T) {
+		s := newStore(t)
+		personaID := mustCreatePersona(t, s, ctx, "")
+		got, err := s.GetPersona(ctx, personaID)
+		if err != nil {
+			t.Fatalf("get persona after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}
 		if got.Scope.Canonical() != want {
 			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)

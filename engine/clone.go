@@ -78,17 +78,17 @@ func (e *Engine) CloneAgent(ctx context.Context, sourceName, newName string) (*a
 	return clone, nil
 }
 
-// ClonePersona creates an independent copy of an existing persona in the same app.
-func (e *Engine) ClonePersona(ctx context.Context, appID, sourceName, newName string) (*persona.Persona, error) {
+// ClonePersona creates an independent copy of an existing persona in the caller's scope.
+func (e *Engine) ClonePersona(ctx context.Context, sourceName, newName string) (*persona.Persona, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	src, err := e.store.GetPersonaByName(ctx, appID, sourceName)
+	src, err := e.store.GetPersonaByName(ctx, sourceName)
 	if err != nil {
 		return nil, err
 	}
 	name, err := resolveCloneName(ctx, newName, sourceName, func(c context.Context, n string) (bool, error) {
-		_, gerr := e.store.GetPersonaByName(c, appID, n)
+		_, gerr := e.store.GetPersonaByName(c, n)
 		if gerr == nil {
 			return true, nil
 		}

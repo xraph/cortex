@@ -55,15 +55,16 @@ func TestCreateAgentDuplicateReturnsAlreadyExists(t *testing.T) {
 }
 
 func TestCreatePersonaDuplicateReturnsAlreadyExists(t *testing.T) {
-	ctx := context.Background()
 	s := newTestStore(t)
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
 
-	p := &persona.Persona{ID: id.NewPersonaID(), Name: "dup", AppID: "app1"}
+	p := &persona.Persona{ID: id.NewPersonaID(), Name: "dup"}
 	if err := s.CreatePersona(ctx, p); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
-	dup := &persona.Persona{ID: id.NewPersonaID(), Name: "dup", AppID: "app1"}
+	// Same (scope_canon, name), different ID — must collide on the unique index.
+	dup := &persona.Persona{ID: id.NewPersonaID(), Name: "dup"}
 	err := s.CreatePersona(ctx, dup)
 	if !errors.Is(err, cortex.ErrAlreadyExists) {
 		t.Fatalf("duplicate create err = %v, want ErrAlreadyExists", err)

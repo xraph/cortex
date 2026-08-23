@@ -702,16 +702,27 @@ type personaModel struct {
 	CommunicationStyle communication.Style       `grove:"communication_style"  bson:"communication_style,omitempty"`
 	Perception         perception.Model          `grove:"perception"           bson:"perception,omitempty"`
 	Metadata           map[string]any            `grove:"metadata"             bson:"metadata,omitempty"`
+	ScopeL0            string                    `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1            string                    `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2            string                    `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra         map[string]string         `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon         string                    `grove:"scope_canon"    bson:"scope_canon"`
 	CreatedAt          time.Time                 `grove:"created_at"           bson:"created_at"`
 	UpdatedAt          time.Time                 `grove:"updated_at"           bson:"updated_at"`
 }
 
 func personaToModel(p *persona.Persona) *personaModel {
+	l0, l1, l2, extra := scopeColumns(p.Scope)
 	return &personaModel{
-		ID:                 p.ID.String(),
-		Name:               p.Name,
-		Description:        p.Description,
-		AppID:              p.AppID,
+		ID:          p.ID.String(),
+		Name:        p.Name,
+		Description: p.Description,
+		// app_id is a vestigial field: the persona surface lost AppID
+		// this phase (the (scope_canon, name) unique index replaced
+		// (app_id, name)), but the field itself isn't dropped from the
+		// document here, so every write leaves it empty rather than
+		// reading a field that no longer exists on Persona.
+		AppID:              "",
 		Identity:           p.Identity,
 		Skills:             p.Skills,
 		Traits:             p.Traits,
@@ -720,6 +731,11 @@ func personaToModel(p *persona.Persona) *personaModel {
 		CommunicationStyle: p.CommunicationStyle,
 		Perception:         p.Perception,
 		Metadata:           p.Metadata,
+		ScopeL0:            l0,
+		ScopeL1:            l1,
+		ScopeL2:            l2,
+		ScopeExtra:         extra,
+		ScopeCanon:         p.Scope.Canonical(),
 		CreatedAt:          p.CreatedAt,
 		UpdatedAt:          p.UpdatedAt,
 	}
@@ -730,12 +746,16 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("persona %s: %w", personaID, err)
+	}
 	return &persona.Persona{
 		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                 personaID,
 		Name:               m.Name,
 		Description:        m.Description,
-		AppID:              m.AppID,
+		Scope:              scope,
 		Identity:           m.Identity,
 		Skills:             m.Skills,
 		Traits:             m.Traits,

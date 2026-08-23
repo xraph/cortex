@@ -420,16 +420,27 @@ type personaModel struct {
 	CommunicationStyle string    `grove:"communication_style"`
 	Perception         string    `grove:"perception"`
 	Metadata           string    `grove:"metadata"`
+	ScopeL0            string    `grove:"scope_l0,notnull"`
+	ScopeL1            string    `grove:"scope_l1,notnull"`
+	ScopeL2            string    `grove:"scope_l2,notnull"`
+	ScopeExtra         string    `grove:"scope_extra,notnull"`
+	ScopeCanon         string    `grove:"scope_canon,notnull"`
 	CreatedAt          time.Time `grove:"created_at"`
 	UpdatedAt          time.Time `grove:"updated_at"`
 }
 
 func personaToModel(p *persona.Persona) *personaModel {
+	l0, l1, l2, extra := scopeColumns(p.Scope)
 	return &personaModel{
-		ID:                 p.ID.String(),
-		Name:               p.Name,
-		Description:        p.Description,
-		AppID:              p.AppID,
+		ID:          p.ID.String(),
+		Name:        p.Name,
+		Description: p.Description,
+		// app_id is a vestigial NOT NULL column: the persona surface lost
+		// AppID this phase (UNIQUE (scope_canon, name) replaced
+		// UNIQUE (app_id, name)), but the column itself isn't dropped
+		// here, so every write leaves it empty rather than reading a
+		// field that no longer exists on Persona.
+		AppID:              "",
 		Identity:           p.Identity,
 		Skills:             mustJSON(p.Skills),
 		Traits:             mustJSON(p.Traits),
@@ -438,6 +449,11 @@ func personaToModel(p *persona.Persona) *personaModel {
 		CommunicationStyle: mustJSON(p.CommunicationStyle),
 		Perception:         mustJSON(p.Perception),
 		Metadata:           mustJSON(p.Metadata),
+		ScopeL0:            l0,
+		ScopeL1:            l1,
+		ScopeL2:            l2,
+		ScopeExtra:         extra,
+		ScopeCanon:         p.Scope.Canonical(),
 		CreatedAt:          p.CreatedAt,
 		UpdatedAt:          p.UpdatedAt,
 	}
@@ -448,12 +464,16 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("persona %s: %w", personaID, err)
+	}
 	p := &persona.Persona{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          personaID,
 		Name:        m.Name,
 		Description: m.Description,
-		AppID:       m.AppID,
+		Scope:       scope,
 		Identity:    m.Identity,
 	}
 	for _, f := range []struct {

@@ -50,15 +50,15 @@ type entityCounts struct {
 	Checkpoints int64
 }
 
-func fetchEntityCounts(ctx context.Context, s store.Store, appID string) entityCounts {
+func fetchEntityCounts(ctx context.Context, s store.Store) entityCounts {
 	var c entityCounts
-	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{})                   //nolint:errcheck // best-effort UI data
-	c.Skills, _ = s.CountSkills(ctx, &skill.ListFilter{})                   //nolint:errcheck // best-effort UI data
-	c.Traits, _ = s.CountTraits(ctx, &trait.ListFilter{})                   //nolint:errcheck // best-effort UI data
-	c.Behaviors, _ = s.CountBehaviors(ctx, &behavior.ListFilter{})          //nolint:errcheck // best-effort UI data
-	c.Personas, _ = s.CountPersonas(ctx, &persona.ListFilter{AppID: appID}) //nolint:errcheck // best-effort UI data
-	c.Runs, _ = s.CountRuns(ctx, &run.ListFilter{})                         //nolint:errcheck // best-effort UI data
-	c.Checkpoints, _ = s.CountPending(ctx, &checkpoint.ListFilter{})        //nolint:errcheck // best-effort UI data
+	c.Agents, _ = s.CountAgents(ctx, &agent.ListFilter{})            //nolint:errcheck // best-effort UI data
+	c.Skills, _ = s.CountSkills(ctx, &skill.ListFilter{})            //nolint:errcheck // best-effort UI data
+	c.Traits, _ = s.CountTraits(ctx, &trait.ListFilter{})            //nolint:errcheck // best-effort UI data
+	c.Behaviors, _ = s.CountBehaviors(ctx, &behavior.ListFilter{})   //nolint:errcheck // best-effort UI data
+	c.Personas, _ = s.CountPersonas(ctx, &persona.ListFilter{})      //nolint:errcheck // best-effort UI data
+	c.Runs, _ = s.CountRuns(ctx, &run.ListFilter{})                  //nolint:errcheck // best-effort UI data
+	c.Checkpoints, _ = s.CountPending(ctx, &checkpoint.ListFilter{}) //nolint:errcheck // best-effort UI data
 	return c
 }
 
@@ -104,13 +104,13 @@ func fetchBehaviorsPaginated(ctx context.Context, s store.Store, search string, 
 	return items, total, nil
 }
 
-func fetchPersonasPaginated(ctx context.Context, s store.Store, appID, search string, limit, offset int) ([]*persona.Persona, int64, error) {
-	filter := &persona.ListFilter{AppID: appID, Search: search, Limit: limit, Offset: offset}
+func fetchPersonasPaginated(ctx context.Context, s store.Store, search string, limit, offset int) ([]*persona.Persona, int64, error) {
+	filter := &persona.ListFilter{Search: search, Limit: limit, Offset: offset}
 	items, err := s.ListPersonas(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, _ := s.CountPersonas(ctx, &persona.ListFilter{AppID: appID, Search: search}) //nolint:errcheck // best-effort count
+	total, _ := s.CountPersonas(ctx, &persona.ListFilter{Search: search}) //nolint:errcheck // best-effort count
 	return items, total, nil
 }
 
@@ -152,8 +152,8 @@ func fetchBehaviors(ctx context.Context, s store.Store) ([]*behavior.Behavior, e
 	return s.ListBehaviors(ctx, &behavior.ListFilter{})
 }
 
-func fetchPersonas(ctx context.Context, s store.Store, _ string) ([]*persona.Persona, error) {
-	return s.ListPersonas(ctx, &persona.ListFilter{AppID: ""})
+func fetchPersonas(ctx context.Context, s store.Store) ([]*persona.Persona, error) {
+	return s.ListPersonas(ctx, &persona.ListFilter{})
 }
 
 func fetchRecentRuns(ctx context.Context, s store.Store, limit int) ([]*run.Run, error) {
@@ -484,7 +484,7 @@ func computeSystemPrompt(ctx context.Context, s store.Store, agentName, personaR
 
 	// Persona identity.
 	if personaRef != "" {
-		p, err := s.GetPersonaByName(ctx, "", personaRef)
+		p, err := s.GetPersonaByName(ctx, personaRef)
 		if err == nil && p.Identity != "" {
 			parts = append(parts, "\n## Identity\n"+p.Identity)
 		}

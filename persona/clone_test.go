@@ -11,11 +11,12 @@ import (
 
 func TestClonePersonaResetsIdentityAndDeepCopies(t *testing.T) {
 	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}}
 	src := &persona.Persona{
 		Entity:   cortex.Entity{CreatedAt: old, UpdatedAt: old},
 		ID:       id.NewPersonaID(),
 		Name:     "original",
-		AppID:    "app1",
+		Scope:    scope,
 		Identity: "I am a helper",
 		Skills:   []persona.SkillAssignment{{SkillName: "research"}},
 		Traits: []persona.TraitAssignment{
@@ -43,7 +44,7 @@ func TestClonePersonaResetsIdentityAndDeepCopies(t *testing.T) {
 	}
 
 	// Preserved.
-	if clone.AppID != "app1" || clone.Identity != "I am a helper" {
+	if clone.Scope.Canonical() != scope.Canonical() || clone.Identity != "I am a helper" {
 		t.Errorf("preserved fields wrong: %+v", clone)
 	}
 

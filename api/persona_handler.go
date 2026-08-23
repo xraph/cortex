@@ -104,7 +104,6 @@ func (a *API) createPersona(ctx forge.Context, req *CreatePersonaRequest) (*pers
 		ID:          id.NewPersonaID(),
 		Name:        req.Name,
 		Description: req.Description,
-		AppID:       cortex.AppFromContext(ctx.Context()),
 		Identity:    req.Identity,
 		Skills:      skills,
 		Traits:      traits,
@@ -120,7 +119,7 @@ func (a *API) createPersona(ctx forge.Context, req *CreatePersonaRequest) (*pers
 }
 
 func (a *API) getPersona(ctx forge.Context, _ *GetPersonaRequest) (*persona.Persona, error) {
-	p, err := a.eng.GetPersonaByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	p, err := a.eng.GetPersonaByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -129,7 +128,6 @@ func (a *API) getPersona(ctx forge.Context, _ *GetPersonaRequest) (*persona.Pers
 
 func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) (*ListPersonasResponse, error) {
 	personas, err := a.eng.ListPersonas(ctx.Context(), &persona.ListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -141,7 +139,7 @@ func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) (*ListPe
 }
 
 func (a *API) updatePersona(ctx forge.Context, req *UpdatePersonaRequest) (*persona.Persona, error) {
-	p, err := a.eng.GetPersonaByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	p, err := a.eng.GetPersonaByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -186,7 +184,7 @@ func (a *API) updatePersona(ctx forge.Context, req *UpdatePersonaRequest) (*pers
 }
 
 func (a *API) deletePersona(ctx forge.Context, _ *DeletePersonaRequest) (*struct{}, error) {
-	p, err := a.eng.GetPersonaByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	p, err := a.eng.GetPersonaByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -197,8 +195,7 @@ func (a *API) deletePersona(ctx forge.Context, _ *DeletePersonaRequest) (*struct
 }
 
 func (a *API) clonePersona(ctx forge.Context, req *ClonePersonaRequest) (*persona.Persona, error) {
-	appID := cortex.AppFromContext(ctx.Context())
-	clone, err := a.eng.ClonePersona(ctx.Context(), appID, req.Name, req.NewName)
+	clone, err := a.eng.ClonePersona(ctx.Context(), req.Name, req.NewName)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}

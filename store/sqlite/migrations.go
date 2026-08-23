@@ -687,5 +687,68 @@ ALTER TABLE `+table+` DROP COLUMN scope_canon;
 				return nil
 			},
 		},
+		&migrate.Migration{
+			Name:    "scope_personas",
+			Version: "20260823000003",
+			Comment: "Add host-defined scope columns to cortex_personas and replace its app_id-keyed unique index with a scope-keyed one",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Same column shape and index as every other scoped table
+				// (see 20260821000001); addScopeColumns already skips
+				// columns that exist, so this is idempotent the same way.
+				// No backfill, same reasoning: a fabricated level for
+				// pre-existing rows would make scope_l0 polysemous per
+				// row and silently orphan old rows instead of leaving
+				// them correctly invisible to every scoped query until
+				// rescopeLegacyRows resolves them.
+				if err := addScopeColumns(ctx, exec, "cortex_personas"); err != nil {
+					return err
+				}
+
+				// idx_cortex_personas_app_name enforced uniqueness on
+				// (app_id, name), from before personas carried a scope at
+				// all. Now that every method on the persona store is
+				// scope-guarded, two different scopes must be able to
+				// each use the same name — app_id was never the isolation
+				// boundary here, scope is, so the index has to key on
+				// scope_canon instead or the second scope's Create
+				// collides on the first scope's row before the scope
+				// predicate ever gets a chance to matter.
+				//
+				// Partial (WHERE scope_canon != '') rather than a plain
+				// unique index, for the exact reason 20260823000001
+				// documents for cortex_agents: this migration runs
+				// before rescopeLegacyRows, so any pre-v1.8.0 rows are
+				// still sitting at scope_canon = '' when the index is
+				// built, and a plain unique index would make every such
+				// row collide on ('', name) instead of letting the
+				// rescoper separate them first.
+				if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_personas_app_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_personas_scope_name ON cortex_personas (scope_canon, name) WHERE scope_canon != '';
+`); err != nil {
+					return fmt.Errorf("scope-key unique index on cortex_personas: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_personas_scope_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_personas_app_name ON cortex_personas (app_id, name);
+`); err != nil {
+					return fmt.Errorf("restore app_id-key unique index on cortex_personas: %w", err)
+				}
+				if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_personas_scope;
+ALTER TABLE cortex_personas DROP COLUMN scope_l0;
+ALTER TABLE cortex_personas DROP COLUMN scope_l1;
+ALTER TABLE cortex_personas DROP COLUMN scope_l2;
+ALTER TABLE cortex_personas DROP COLUMN scope_extra;
+ALTER TABLE cortex_personas DROP COLUMN scope_canon;
+`); err != nil {
+					return fmt.Errorf("drop scope columns from cortex_personas: %w", err)
+				}
+				return nil
+			},
+		},
 	)
 }

@@ -245,7 +245,7 @@ func (c *Contributor) RenderSettings(ctx context.Context, settingID string) (tem
 // --- Page Renderers ---
 
 func (c *Contributor) renderOverview(ctx context.Context, s store.Store) (templ.Component, error) {
-	counts := fetchEntityCounts(ctx, s, "")
+	counts := fetchEntityCounts(ctx, s)
 	runs, _ := fetchRecentRuns(ctx, s, 10)       //nolint:errcheck // best-effort UI data
 	cps, _ := fetchPendingCheckpoints(ctx, s, 5) //nolint:errcheck // best-effort UI data
 	agentNames := buildAgentNameMap(ctx, s)
@@ -301,10 +301,10 @@ func (c *Contributor) renderAgentDetail(ctx context.Context, s store.Store, para
 }
 
 func (c *Contributor) renderAgentForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
-	skills, _ := fetchSkills(ctx, s)         //nolint:errcheck // best-effort UI data
-	traits, _ := fetchTraits(ctx, s)         //nolint:errcheck // best-effort UI data
-	behaviors, _ := fetchBehaviors(ctx, s)   //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s)   //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s)       //nolint:errcheck // best-effort UI data
+	traits, _ := fetchTraits(ctx, s)       //nolint:errcheck // best-effort UI data
+	behaviors, _ := fetchBehaviors(ctx, s) //nolint:errcheck // best-effort UI data
 
 	name := params.QueryParams["name"]
 	if name != "" {
@@ -321,7 +321,7 @@ func (c *Contributor) renderPersonas(ctx context.Context, s store.Store, params 
 	search := params.QueryParams["search"]
 	limit := parseIntParam(params.QueryParams, "limit", 20)
 	offset := parseIntParam(params.QueryParams, "offset", 0)
-	items, total, err := fetchPersonasPaginated(ctx, s, "", search, limit, offset)
+	items, total, err := fetchPersonasPaginated(ctx, s, search, limit, offset)
 	if err != nil {
 		items = nil
 		total = 0
@@ -335,7 +335,7 @@ func (c *Contributor) renderPersonaDetail(ctx context.Context, s store.Store, pa
 	if name == "" {
 		return nil, contributor.ErrPageNotFound
 	}
-	p, err := s.GetPersonaByName(ctx, "", name)
+	p, err := s.GetPersonaByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve persona: %w", err)
 	}
@@ -354,7 +354,7 @@ func (c *Contributor) renderPersonaForm(ctx context.Context, s store.Store, para
 
 	name := params.QueryParams["name"]
 	if name != "" {
-		p, err := s.GetPersonaByName(ctx, "", name)
+		p, err := s.GetPersonaByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve persona for edit: %w", err)
 		}
@@ -385,8 +385,8 @@ func (c *Contributor) renderSkillDetail(ctx context.Context, s store.Store, para
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve skill: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
-	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)     //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s) //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineSkills }, sk.Name) +
 		countSkillUsageInPersonas(personas, sk.Name)
 	return pages.SkillDetailPage(sk, usageCount), nil
@@ -427,8 +427,8 @@ func (c *Contributor) renderTraitDetail(ctx context.Context, s store.Store, para
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve trait: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
-	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)     //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s) //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineTraits }, t.Name) +
 		countTraitUsageInPersonas(personas, t.Name)
 	return pages.TraitDetailPage(t, usageCount), nil
@@ -468,8 +468,8 @@ func (c *Contributor) renderBehaviorDetail(ctx context.Context, s store.Store, p
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: resolve behavior: %w", err)
 	}
-	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
-	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)     //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s) //nolint:errcheck // best-effort UI data
 	usageCount := countUsageInAgents(agents, func(a *agent.Config) []string { return a.InlineBehaviors }, b.Name) +
 		countBehaviorUsageInPersonas(personas, b.Name)
 	return pages.BehaviorDetailPage(b, usageCount), nil
@@ -661,7 +661,7 @@ func (c *Contributor) renderMemory(ctx context.Context, s store.Store, params co
 // --- Widget Renderers ---
 
 func (c *Contributor) renderStatsWidget(ctx context.Context, s store.Store) (templ.Component, error) {
-	counts := fetchEntityCounts(ctx, s, "")
+	counts := fetchEntityCounts(ctx, s)
 	return widgets.StatsWidget(counts.Agents, counts.Personas, counts.Skills, counts.Traits, counts.Behaviors, counts.Runs, counts.Checkpoints), nil
 }
 
@@ -784,11 +784,11 @@ func (c *Contributor) renderChat(ctx context.Context, s store.Store, params cont
 }
 
 func (c *Contributor) renderPlayground(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
-	agents, _ := fetchAgents(ctx, s)         //nolint:errcheck // best-effort UI data
-	personas, _ := fetchPersonas(ctx, s, "") //nolint:errcheck // best-effort UI data
-	skills, _ := fetchSkills(ctx, s)         //nolint:errcheck // best-effort UI data
-	traits, _ := fetchTraits(ctx, s)         //nolint:errcheck // best-effort UI data
-	behaviors, _ := fetchBehaviors(ctx, s)   //nolint:errcheck // best-effort UI data
+	agents, _ := fetchAgents(ctx, s)       //nolint:errcheck // best-effort UI data
+	personas, _ := fetchPersonas(ctx, s)   //nolint:errcheck // best-effort UI data
+	skills, _ := fetchSkills(ctx, s)       //nolint:errcheck // best-effort UI data
+	traits, _ := fetchTraits(ctx, s)       //nolint:errcheck // best-effort UI data
+	behaviors, _ := fetchBehaviors(ctx, s) //nolint:errcheck // best-effort UI data
 	engineCfg := c.engine.Config()
 
 	selectedAgent := params.QueryParams["agent"]

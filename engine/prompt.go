@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/knowledge"
 )
@@ -75,17 +74,12 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides) reso
 // persona identity, skill fragments, and trait injections.
 // This is the engine-level equivalent of dashboard/data.go:computeSystemPrompt.
 //
-// Skill and trait lookups are scope-guarded now (Task 6): they resolve
-// against cortex.ScopeFromContext(ctx), the same as the agent itself.
-// Persona lookup still keys on cortex.AppFromContext(ctx) — persona stays
-// app-keyed until Task 7 converts it. That is only the SAME value the
-// agent was created under when the run context actually carries that
-// app; a run reached through a path with no app on the context
-// (dashboard-triggered runs, sentinel, orchestration sub-agents) would
-// look up ("", ref) instead. A requested-but-unresolved persona/skill/
-// trait therefore fails the whole call loudly instead of silently
-// dropping its fragment from the prompt: swallowing that error would let
-// an agent quietly stop being itself with no signal anywhere.
+// Persona, skill, and trait lookups are all scope-guarded now (Tasks 6
+// and 7): they resolve against cortex.ScopeFromContext(ctx), the same as
+// the agent itself. A requested-but-unresolved persona/skill/trait
+// therefore fails the whole call loudly instead of silently dropping its
+// fragment from the prompt: swallowing that error would let an agent
+// quietly stop being itself with no signal anywhere.
 func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (string, error) {
 	var parts []string
 
@@ -108,7 +102,7 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 	// specific persona, not an optional lookup — failing to resolve it
 	// must abort rather than silently omit the Identity section.
 	if personaRef != "" && e.store != nil {
-		p, err := e.store.GetPersonaByName(ctx, cortex.AppFromContext(ctx), personaRef)
+		p, err := e.store.GetPersonaByName(ctx, personaRef)
 		if err != nil {
 			return "", fmt.Errorf("resolve persona %q: %w", personaRef, err)
 		}

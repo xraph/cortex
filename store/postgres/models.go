@@ -406,28 +406,39 @@ func behaviorFromModel(m *behaviorModel) (*behavior.Behavior, error) {
 
 type personaModel struct {
 	grove.BaseModel    `grove:"table:cortex_personas"`
-	ID                 string    `grove:"id,pk"`
-	Name               string    `grove:"name,notnull"`
-	Description        string    `grove:"description"`
-	AppID              string    `grove:"app_id,notnull"`
-	Identity           string    `grove:"identity"`
-	Skills             string    `grove:"skills,type:jsonb"`
-	Traits             string    `grove:"traits,type:jsonb"`
-	Behaviors          string    `grove:"behaviors,type:jsonb"`
-	CognitiveStyle     string    `grove:"cognitive_style,type:jsonb"`
-	CommunicationStyle string    `grove:"communication_style,type:jsonb"`
-	Perception         string    `grove:"perception,type:jsonb"`
-	Metadata           string    `grove:"metadata,type:jsonb"`
-	CreatedAt          time.Time `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt          time.Time `grove:"updated_at,notnull,default:current_timestamp"`
+	ID                 string            `grove:"id,pk"`
+	Name               string            `grove:"name,notnull"`
+	Description        string            `grove:"description"`
+	AppID              string            `grove:"app_id,notnull"`
+	Identity           string            `grove:"identity"`
+	Skills             string            `grove:"skills,type:jsonb"`
+	Traits             string            `grove:"traits,type:jsonb"`
+	Behaviors          string            `grove:"behaviors,type:jsonb"`
+	CognitiveStyle     string            `grove:"cognitive_style,type:jsonb"`
+	CommunicationStyle string            `grove:"communication_style,type:jsonb"`
+	Perception         string            `grove:"perception,type:jsonb"`
+	Metadata           string            `grove:"metadata,type:jsonb"`
+	ScopeL0            string            `grove:"scope_l0,notnull"`
+	ScopeL1            string            `grove:"scope_l1,notnull"`
+	ScopeL2            string            `grove:"scope_l2,notnull"`
+	ScopeExtra         map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon         string            `grove:"scope_canon,notnull"`
+	CreatedAt          time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt          time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
 }
 
 func personaToModel(p *persona.Persona) *personaModel {
+	l0, l1, l2, extra := scopeColumns(p.Scope)
 	return &personaModel{
-		ID:                 p.ID.String(),
-		Name:               p.Name,
-		Description:        p.Description,
-		AppID:              p.AppID,
+		ID:          p.ID.String(),
+		Name:        p.Name,
+		Description: p.Description,
+		// app_id is a vestigial NOT NULL column: the persona surface lost
+		// AppID this phase (UNIQUE (scope_canon, name) replaced
+		// UNIQUE (app_id, name)), but the column itself isn't dropped
+		// here, so every write leaves it empty rather than reading a
+		// field that no longer exists on Persona.
+		AppID:              "",
 		Identity:           p.Identity,
 		Skills:             mustJSON(p.Skills),
 		Traits:             mustJSON(p.Traits),
@@ -436,6 +447,11 @@ func personaToModel(p *persona.Persona) *personaModel {
 		CommunicationStyle: mustJSON(p.CommunicationStyle),
 		Perception:         mustJSON(p.Perception),
 		Metadata:           mustJSON(p.Metadata),
+		ScopeL0:            l0,
+		ScopeL1:            l1,
+		ScopeL2:            l2,
+		ScopeExtra:         extra,
+		ScopeCanon:         p.Scope.Canonical(),
 		CreatedAt:          p.CreatedAt,
 		UpdatedAt:          p.UpdatedAt,
 	}
@@ -446,12 +462,16 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("persona %s: %w", personaID, err)
+	}
 	p := &persona.Persona{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          personaID,
 		Name:        m.Name,
 		Description: m.Description,
-		AppID:       m.AppID,
+		Scope:       scope,
 		Identity:    m.Identity,
 	}
 	for _, f := range []struct {

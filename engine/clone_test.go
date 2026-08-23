@@ -54,7 +54,7 @@ func TestCloneNoStore(t *testing.T) {
 	if _, err := e.CloneAgent(ctx, "x", ""); !errors.Is(err, cortex.ErrNoStore) {
 		t.Errorf("CloneAgent err = %v, want ErrNoStore", err)
 	}
-	if _, err := e.ClonePersona(ctx, "app1", "x", ""); !errors.Is(err, cortex.ErrNoStore) {
+	if _, err := e.ClonePersona(ctx, "x", ""); !errors.Is(err, cortex.ErrNoStore) {
 		t.Errorf("ClonePersona err = %v, want ErrNoStore", err)
 	}
 }

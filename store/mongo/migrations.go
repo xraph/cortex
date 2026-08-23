@@ -95,6 +95,23 @@ const (
 	behaviorScopeNameUniqueIndexName = "cortex_behaviors_scope_name_unique"
 )
 
+// stalePersonaAppNameIndexName is Mongo's default auto-generated name
+// for the pre-scope (app_id, name) unique index on cortex_personas, from
+// when it carried no explicit name. Store.Migrate drops it by name
+// before creating its scope-keyed replacement below: app_id was never
+// the isolation boundary for persona names, scope is, so the old index
+// refused two different scopes the same name. CreateMany is additive and
+// never drops a stale index on its own, so leaving the old one in place
+// would keep the write path colliding cross-scope even after the new
+// index existed too.
+const stalePersonaAppNameIndexName = "app_id_1_name_1"
+
+// personaScopeNameUniqueIndexName is the fixed name for the scope-aware
+// unique index on cortex_personas, so a future migration can find and
+// drop it by name the same way stalePersonaAppNameIndexName is used
+// here.
+const personaScopeNameUniqueIndexName = "cortex_personas_scope_name_unique"
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -208,12 +225,18 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			scopeIndex,
 		},
 		colPersonas: {
+			// Partial (scope_canon $gt "") for the same reason as
+			// colAgents above: Store.Migrate applies this index before
+			// rescoping legacy rows, and any pre-v1.8.0 document is
+			// still sitting at scope_canon = "" at that point.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(personaScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colOrchestrationConfigs: {
 			{

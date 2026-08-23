@@ -370,11 +370,11 @@ func (e *Engine) GetPersona(ctx context.Context, personaID id.PersonaID) (*perso
 	return e.store.GetPersona(ctx, personaID)
 }
 
-func (e *Engine) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) {
+func (e *Engine) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetPersonaByName(ctx, appID, name)
+	return e.store.GetPersonaByName(ctx, name)
 }
 
 func (e *Engine) UpdatePersona(ctx context.Context, p *persona.Persona) error {

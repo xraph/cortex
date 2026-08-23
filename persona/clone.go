@@ -9,7 +9,7 @@ import (
 )
 
 // ClonePersona returns an independent deep copy of src as a new persona with the
-// given ID and name and fresh timestamps. All other fields (including AppID and
+// given ID and name and fresh timestamps. All other fields (including Scope and
 // the full skill/trait/behavior/style composition) are preserved. The deep copy
 // is a JSON round-trip, so all nested slices and maps are independent of src.
 func ClonePersona(src *Persona, newID id.PersonaID, newName string) (*Persona, error) {
