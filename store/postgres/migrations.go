@@ -511,19 +511,63 @@ ALTER TABLE `+table+`
 				// message, and Postgres implicitly wraps a multi-statement
 				// simple-query message in a transaction block, which
 				// CONCURRENTLY refuses to run inside.
+				//
+				// The DROP is unconditional, not gated on whether a prior
+				// run got this far, and the CREATE has no IF NOT EXISTS.
+				// A CONCURRENTLY build that dies partway (lock timeout,
+				// killed connection, cancelled deploy) leaves an INVALID
+				// index under this name -- Postgres does not clean it up.
+				// With IF NOT EXISTS on the CREATE, a retry would see the
+				// name already taken, emit a NOTICE, return no error, and
+				// grove would record the migration as applied with the
+				// unique index never actually built -- silently reopening
+				// the exact cross-scope clobber this migration exists to
+				// close. Dropping first guarantees a retry always starts
+				// from nothing, and dropping IF NOT EXISTS from the CREATE
+				// means a genuine build failure surfaces as a returned
+				// error instead of a silent skip.
+				//
+				// This does leave cortex_memories with no unique index on
+				// (agent_id, kind, key[, scope_canon]) for the WHERE
+				// kind = 'working' rows between the DROP completing and the
+				// CONCURRENTLY CREATE finishing. SaveWorking's ON CONFLICT
+				// target names this index explicitly (see memory.go), so a
+				// write landing in that window doesn't silently clobber
+				// across scopes -- it fails outright with "there is no
+				// unique or exclusion constraint matching the ON CONFLICT
+				// specification" until the index exists again. That's a
+				// brief write-availability gap on one table during a
+				// migration, not a correctness regression, and it's judged
+				// acceptable here.
+				//
+				// The alternative -- build a new index under a temporary
+				// name, then swap names in a fast catalog-only transaction
+				// -- would close that gap, but at a worse cost: it requires
+				// leaving the OLD, unscoped index in force as the only
+				// working unique constraint for the entire CONCURRENTLY
+				// build, which is exactly the index that lets scope B
+				// clobber scope A's working memory. A short fail-loud
+				// availability gap is preferable to keeping the known
+				// cross-scope bug exploitable for the full build duration,
+				// so the extra complexity of a build-then-swap wasn't
+				// taken.
 				if _, err := exec.Exec(ctx, `DROP INDEX CONCURRENTLY IF EXISTS idx_cortex_memories_working`); err != nil {
 					return fmt.Errorf("drop old working-memory index: %w", err)
 				}
-				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key, scope_canon) WHERE kind = 'working'`); err != nil {
+				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY idx_cortex_memories_working ON cortex_memories (agent_id, kind, key, scope_canon) WHERE kind = 'working'`); err != nil {
 					return fmt.Errorf("create scope-aware working-memory index: %w", err)
 				}
 				return nil
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				// Same unconditional-drop-then-unguarded-create shape as Up,
+				// for the same reason: a failed CONCURRENTLY build must not
+				// be able to leave an invalid index that IF NOT EXISTS then
+				// silently treats as done.
 				if _, err := exec.Exec(ctx, `DROP INDEX CONCURRENTLY IF EXISTS idx_cortex_memories_working`); err != nil {
 					return fmt.Errorf("drop scope-aware working-memory index: %w", err)
 				}
-				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_cortex_memories_working ON cortex_memories (agent_id, kind, key) WHERE kind = 'working'`); err != nil {
+				if _, err := exec.Exec(ctx, `CREATE UNIQUE INDEX CONCURRENTLY idx_cortex_memories_working ON cortex_memories (agent_id, kind, key) WHERE kind = 'working'`); err != nil {
 					return fmt.Errorf("recreate pre-scope working-memory index: %w", err)
 				}
 				return nil
