@@ -793,10 +793,17 @@ type orchestrationConfigModel struct {
 func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
 	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &orchestrationConfigModel{
-		ID:           c.ID.String(),
-		Name:         c.Name,
-		Description:  c.Description,
-		AppID:        c.AppID,
+		ID:          c.ID.String(),
+		Name:        c.Name,
+		Description: c.Description,
+		// app_id is a vestigial field: orchestration.Config dropped
+		// AppID this round (it never governed anything once the unique
+		// index went scope-keyed — GetOrchestrationByName's appID
+		// predicate could only ever turn a hit into a miss, never
+		// disambiguate two rows), but the field itself isn't dropped
+		// from the document here, so every write leaves it empty rather
+		// than reading a field that no longer exists on Config.
+		AppID:        "",
 		Strategy:     c.Strategy,
 		Participants: c.Participants,
 		Settings:     c.Settings,
@@ -825,7 +832,6 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 		ID:           cfgID,
 		Name:         m.Name,
 		Description:  m.Description,
-		AppID:        m.AppID,
 		Scope:        scope,
 		Strategy:     m.Strategy,
 		Participants: m.Participants,
@@ -867,9 +873,13 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	}
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &orchestrationRunModel{
-		ID:          r.ID.String(),
-		ConfigID:    r.ConfigID.String(),
-		AppID:       r.AppID,
+		ID:       r.ID.String(),
+		ConfigID: r.ConfigID.String(),
+		// app_id is vestigial for the same reason as
+		// orchestrationConfigToModel's: orchestration.Run dropped AppID
+		// this round, and the field stays empty rather than reading a
+		// field that no longer exists.
+		AppID:       "",
 		Strategy:    r.Strategy,
 		Status:      r.Status,
 		Input:       r.Input,
@@ -900,7 +910,6 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
-		AppID:       m.AppID,
 		Scope:       scope,
 		Strategy:    m.Strategy,
 		Status:      m.Status,

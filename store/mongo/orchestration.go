@@ -61,18 +61,21 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(&m)
 }
 
-// GetOrchestrationByName returns an orchestration config by app ID and
-// name within the caller's scope. appID stays a real, required lookup
-// parameter here (unlike agent/persona, which dropped it): scope is
-// layered on top of it, not a replacement for it.
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
+// GetOrchestrationByName returns an orchestration config by name within
+// the caller's scope. Fix round 1 dropped the appID parameter this
+// method used to also filter on: with a unique (scope_canon, name)
+// index, at most one document can ever exist per (scope, name), so an
+// app_id predicate on top could only ever turn a hit into a miss, never
+// disambiguate two documents — the same reasoning that dropped AppID
+// from agent and persona.
+func (s *Store) GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
 	}
 	var m orchestrationConfigModel
 
-	filter := bson.M{"app_id": appID, "name": name}
+	filter := bson.M{"name": name}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -98,7 +101,13 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 // is never written back. grove's NewUpdate(model).Exec defaults to a
 // full-field $set built from the model struct when no explicit update
 // document is given, which would otherwise blank
-// scope_l0/l1/l2/extra/canon on every call.
+// scope_l0/l1/l2/extra/canon on every call. app_id is excluded from set
+// too, mirroring persona: orchestration.Config dropped its AppID field
+// (fix round 1), so orchestrationConfigToModel always writes AppID as ""
+// now, and including it here would blank whatever a pre-fix document's
+// app_id field still holds. created_at is included, matching
+// mutableOrchestrationConfigColumns on postgres/sqlite — a Config built
+// fresh rather than reloaded before Update must not zero it here only.
 func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -115,11 +124,11 @@ func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config
 	set := bson.M{
 		"name":         m.Name,
 		"description":  m.Description,
-		"app_id":       m.AppID,
 		"strategy":     m.Strategy,
 		"participants": m.Participants,
 		"settings":     m.Settings,
 		"metadata":     m.Metadata,
+		"created_at":   m.CreatedAt,
 		"updated_at":   m.UpdatedAt,
 	}
 
@@ -289,7 +298,10 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 
 // UpdateOrchestrationRun modifies an existing orchestration run's mutable
 // fields within the caller's scope. Scope is immutable after creation,
-// same as UpdateOrchestration above.
+// same as UpdateOrchestration above. app_id is excluded from set for the
+// same reason as UpdateOrchestration's: orchestration.Run dropped its
+// AppID field (fix round 1). created_at is included, matching
+// mutableOrchestrationRunColumns on postgres/sqlite.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -305,7 +317,6 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run
 
 	set := bson.M{
 		"config_id":     m.ConfigID,
-		"app_id":        m.AppID,
 		"strategy":      m.Strategy,
 		"status":        m.Status,
 		"input":         m.Input,
@@ -314,6 +325,7 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run
 		"agent_run_ids": m.AgentRunIDs,
 		"started_at":    m.StartedAt,
 		"completed_at":  m.CompletedAt,
+		"created_at":    m.CreatedAt,
 		"updated_at":    m.UpdatedAt,
 	}
 

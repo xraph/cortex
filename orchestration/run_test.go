@@ -13,7 +13,6 @@ func TestOrchestrationRunFields(t *testing.T) {
 		Entity:      cortex.NewEntity(),
 		ID:          id.NewOrchestrationID(),
 		ConfigID:    id.NewOrchestrationConfigID(),
-		AppID:       "app1",
 		Strategy:    orchestration.StrategySequential,
 		Status:      orchestration.StatusRunning,
 		Input:       "hello",

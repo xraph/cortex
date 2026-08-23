@@ -59,7 +59,7 @@ func (h registryHookEmitter) AgentHandoff(ctx context.Context, orchID id.Orchest
 
 // RunOrchestration loads a stored orchestration config by name and executes it,
 // persisting a Run and firing orchestration lifecycle hooks.
-func (e *Engine) RunOrchestration(ctx context.Context, appID, name, input string) (*orchestration.Run, error) {
+func (e *Engine) RunOrchestration(ctx context.Context, name, input string) (*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -69,5 +69,5 @@ func (e *Engine) RunOrchestration(ctx context.Context, appID, name, input string
 		e.store,
 		registryHookEmitter{eng: e},
 	)
-	return svc.Run(ctx, appID, name, input)
+	return svc.Run(ctx, name, input)
 }

@@ -170,14 +170,40 @@ func mustCreateOrchestration(t *testing.T, s store.Store, ctx context.Context, n
 		name = "conformance-" + orchID.String()
 	}
 	c := &orchestration.Config{
-		ID:    orchID,
-		Name:  name,
-		AppID: "conformance-app",
+		ID:   orchID,
+		Name: name,
 	}
 	if err := s.CreateOrchestration(ctx, c); err != nil {
 		t.Fatalf("fixture: create orchestration: %v", err)
 	}
 	return orchID
+}
+
+// newOrchestrationRun builds an unpersisted orchestration run fixture.
+// ConfigID is deliberately left empty: cortex_orchestration_runs.config_id
+// carries no foreign key on any backend (unlike cortex_runs.agent_id), and
+// Run.ConfigID's own doc comment says empty means "programmatic run", so a
+// bare fixture needs no config to exist first.
+func newOrchestrationRun() *orchestration.Run {
+	return &orchestration.Run{
+		ID:       id.NewOrchestrationID(),
+		Strategy: orchestration.StrategySequential,
+		Status:   orchestration.StatusRunning,
+		Input:    "input",
+	}
+}
+
+// mustCreateOrchestrationRun creates an orchestration run under ctx and
+// returns the stored run (with its server-assigned scope/timestamps). It
+// requires a scoped context like every other create: the orchestration
+// run store is fully scope-guarded now, the same as agent runs.
+func mustCreateOrchestrationRun(t *testing.T, s store.Store, ctx context.Context) *orchestration.Run { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	r := newOrchestrationRun()
+	if err := s.CreateOrchestrationRun(ctx, r); err != nil {
+		t.Fatalf("fixture: create orchestration run: %v", err)
+	}
+	return r
 }
 
 func newRun(agentID id.AgentID) *run.Run {
@@ -442,15 +468,41 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
-		c := &orchestration.Config{ID: id.NewOrchestrationConfigID(), Name: "escalation-flow", AppID: "conformance-app"}
+		c := &orchestration.Config{ID: id.NewOrchestrationConfigID(), Name: "escalation-flow"}
 		if err := s.CreateOrchestration(ctx, c); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("CreateOrchestration with no scope = %v, want ErrNoScope", err)
 		}
-		if _, err := s.GetOrchestrationByName(ctx, "conformance-app", "escalation-flow"); !errors.Is(err, cortex.ErrNoScope) {
+		if _, err := s.GetOrchestrationByName(ctx, "escalation-flow"); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetOrchestrationByName with no scope = %v, want ErrNoScope", err)
 		}
 		if _, err := s.ListOrchestrations(ctx, &orchestration.ConfigListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("ListOrchestrations with no scope = %v, want ErrNoScope", err)
+		}
+	})
+
+	// OrchestrationRun covers RunStore, which testZeroScopeRejection's
+	// original six subtests never touched — every prior Orchestration
+	// assertion here exercised ConfigStore only. cortex_orchestration_runs
+	// gained the same five scope columns as configs; this is the coverage
+	// that proves its guards actually reject a zero scope instead of just
+	// existing unexercised.
+	t.Run("OrchestrationRun", func(t *testing.T) {
+		s := newStore(t)
+		r := newOrchestrationRun()
+		if err := s.CreateOrchestrationRun(ctx, r); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateOrchestrationRun with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetOrchestrationRun(ctx, r.ID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetOrchestrationRun with no scope = %v, want ErrNoScope", err)
+		}
+		if err := s.UpdateOrchestrationRun(ctx, r); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("UpdateOrchestrationRun with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListOrchestrationRuns(ctx, nil); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListOrchestrationRuns with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.CountOrchestrationRuns(ctx, nil); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CountOrchestrationRuns with no scope = %v, want ErrNoScope", err)
 		}
 	})
 }
@@ -934,8 +986,47 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListOrchestrations(ctxB) = %d orchestration(s), want exactly orchB", len(gotB))
 		}
 
-		if _, err := s.GetOrchestrationByName(ctxB, "conformance-app", "orchestration-a"); !errors.Is(err, cortex.ErrOrchestrationNotFound) {
+		if _, err := s.GetOrchestrationByName(ctxB, "orchestration-a"); !errors.Is(err, cortex.ErrOrchestrationNotFound) {
 			t.Errorf("GetOrchestrationByName(ctxB, %q) = %v, want ErrOrchestrationNotFound", "orchestration-a", err)
+		}
+	})
+
+	// OrchestrationRun covers RunStore, same gap as ZeroScopeRejection's
+	// OrchestrationRun subtest above: every other Orchestration assertion
+	// in this group exercises ConfigStore only.
+	t.Run("OrchestrationRun", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		runA := mustCreateOrchestrationRun(t, s, ctxA)
+		runB := mustCreateOrchestrationRun(t, s, ctxB)
+
+		gotA, err := s.ListOrchestrationRuns(ctxA, nil)
+		if err != nil {
+			t.Fatalf("list orchestration runs A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != runA.ID {
+			t.Fatalf("ListOrchestrationRuns(ctxA) = %d run(s), want exactly runA (predicate isn't filtering)", len(gotA))
+		}
+		count, err := s.CountOrchestrationRuns(ctxA, nil)
+		if err != nil {
+			t.Fatalf("count orchestration runs A: %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("CountOrchestrationRuns(ctxA) = %d, want 1", count)
+		}
+
+		gotB, err := s.ListOrchestrationRuns(ctxB, nil)
+		if err != nil {
+			t.Fatalf("list orchestration runs B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != runB.ID {
+			t.Fatalf("ListOrchestrationRuns(ctxB) = %d run(s), want exactly runB", len(gotB))
+		}
+
+		if _, err := s.GetOrchestrationRun(ctxB, runA.ID); !errors.Is(err, cortex.ErrOrchestrationRunNotFound) {
+			t.Errorf("GetOrchestrationRun(ctxB, runA.ID) = %v, want ErrOrchestrationRunNotFound", err)
 		}
 	})
 }
@@ -1408,14 +1499,14 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
-	// Orchestration is the one entity left where app_id still governs
-	// something: it's a required lookup parameter on GetOrchestrationByName,
-	// layered on top of scope rather than replaced by it. ONE name reused
-	// across two scopes, held under the same app_id (held fixed so scope
-	// is the only thing that could separate these rows), proves
-	// UNIQUE (scope_canon, name) — not the retired UNIQUE (app_id, name)
-	// — is what the store enforces now, and Get/Update/Delete must refuse
-	// a scope-B caller who only knows (or guesses) scope-A's id.
+	// Orchestration gets the same treatment as Agent/Skill/Trait/Behavior/
+	// Persona above: the same name reused across two scopes must resolve
+	// to two distinct rows, proving UNIQUE (scope_canon, name) is what the
+	// store enforces now, and Get/Update/Delete must refuse a scope-B
+	// caller who only knows (or guesses) scope-A's id. Fix round 1 dropped
+	// AppID from Config entirely (it never disambiguated anything once the
+	// index went scope-keyed — a fixed app_id could only turn a hit into a
+	// miss), so GetOrchestrationByName no longer takes one either.
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1424,11 +1515,11 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		mustCreateOrchestration(t, s, ctxA, "escalation-flow")
 		mustCreateOrchestration(t, s, ctxB, "escalation-flow")
 
-		gotA, err := s.GetOrchestrationByName(ctxA, "conformance-app", "escalation-flow")
+		gotA, err := s.GetOrchestrationByName(ctxA, "escalation-flow")
 		if err != nil {
 			t.Fatalf("scope A cannot read its own orchestration: %v", err)
 		}
-		gotB, err := s.GetOrchestrationByName(ctxB, "conformance-app", "escalation-flow")
+		gotB, err := s.GetOrchestrationByName(ctxB, "escalation-flow")
 		if err != nil {
 			t.Fatalf("scope B cannot read its own orchestration: %v", err)
 		}
@@ -1984,6 +2075,42 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		if reloaded.Description != "mutated" {
 			t.Errorf("Description after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Description, "mutated")
+		}
+	})
+
+	// OrchestrationRun covers RunStore, same gap noted at
+	// ZeroScopeRejection/OrchestrationRun above.
+	t.Run("OrchestrationRun", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		r := mustCreateOrchestrationRun(t, s, createCtx)
+
+		loaded, err := s.GetOrchestrationRun(createCtx, r.ID)
+		if err != nil {
+			t.Fatalf("get orchestration run: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Input = "mutated"
+
+		// A broader context (workspace only, no project) still
+		// authorizes the update via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateOrchestrationRun(updateCtx, loaded); err != nil {
+			t.Fatalf("update orchestration run: %v", err)
+		}
+
+		reloaded, err := s.GetOrchestrationRun(createCtx, r.ID)
+		if err != nil {
+			t.Fatalf("reload orchestration run: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Input != "mutated" {
+			t.Errorf("Input after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Input, "mutated")
 		}
 	})
 }

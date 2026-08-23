@@ -14,7 +14,7 @@ func TestRunOrchestrationNoStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
-	_, err = e.RunOrchestration(context.Background(), "app1", "team", "go")
+	_, err = e.RunOrchestration(context.Background(), "team", "go")
 	if !errors.Is(err, cortex.ErrNoStore) {
 		t.Fatalf("err = %v, want ErrNoStore", err)
 	}

@@ -24,12 +24,12 @@ func (e *Engine) GetOrchestration(ctx context.Context, orchID id.OrchestrationCo
 	return e.store.GetOrchestration(ctx, orchID)
 }
 
-// GetOrchestrationByName returns an orchestration config by app-scoped name.
-func (e *Engine) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
+// GetOrchestrationByName returns an orchestration config by scoped name.
+func (e *Engine) GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	return e.store.GetOrchestrationByName(ctx, appID, name)
+	return e.store.GetOrchestrationByName(ctx, name)
 }
 
 // UpdateOrchestration updates an existing orchestration config.

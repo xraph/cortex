@@ -13,7 +13,6 @@ func TestOrchestrationConfigFields(t *testing.T) {
 		Entity:   cortex.NewEntity(),
 		ID:       id.NewOrchestrationConfigID(),
 		Name:     "research-team",
-		AppID:    "app1",
 		Strategy: orchestration.StrategyDebate,
 		Participants: []orchestration.Participant{
 			{AgentName: "optimist", Role: "debater"},

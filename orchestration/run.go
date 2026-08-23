@@ -20,7 +20,6 @@ type Run struct {
 	cortex.Entity
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
-	AppID       string                   `json:"app_id"`
 	Scope       cortex.Scope             `json:"scope"`
 	Strategy    string                   `json:"strategy"`
 	Status      string                   `json:"status"`

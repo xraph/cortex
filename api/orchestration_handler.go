@@ -120,7 +120,6 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 		ID:           id.NewOrchestrationConfigID(),
 		Name:         req.Name,
 		Description:  req.Description,
-		AppID:        cortex.AppFromContext(ctx.Context()),
 		Strategy:     req.Strategy,
 		Participants: req.Participants,
 		Settings:     req.Settings,
@@ -133,7 +132,7 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 }
 
 func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*orchestration.Config, error) {
-	c, err := a.eng.GetOrchestrationByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	c, err := a.eng.GetOrchestrationByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -153,7 +152,7 @@ func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsReque
 }
 
 func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationRequest) (*orchestration.Config, error) {
-	c, err := a.eng.GetOrchestrationByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), req.Name)
+	c, err := a.eng.GetOrchestrationByName(ctx.Context(), req.Name)
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -184,7 +183,7 @@ func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationReq
 }
 
 func (a *API) deleteOrchestration(ctx forge.Context, _ *DeleteOrchestrationRequest) (*struct{}, error) {
-	c, err := a.eng.GetOrchestrationByName(ctx.Context(), cortex.AppFromContext(ctx.Context()), ctx.Param("name"))
+	c, err := a.eng.GetOrchestrationByName(ctx.Context(), ctx.Param("name"))
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
@@ -198,8 +197,7 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 	if req.Input == "" {
 		return nil, forge.BadRequest("input is required")
 	}
-	appID := cortex.AppFromContext(ctx.Context())
-	r, err := a.eng.RunOrchestration(ctx.Context(), appID, req.Name, req.Input)
+	r, err := a.eng.RunOrchestration(ctx.Context(), req.Name, req.Input)
 	if r == nil {
 		return nil, mapStoreError(err)
 	}

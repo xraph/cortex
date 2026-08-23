@@ -18,7 +18,7 @@ func (f *fakeConfigStore) CreateOrchestration(context.Context, *Config) error { 
 func (f *fakeConfigStore) GetOrchestration(context.Context, id.OrchestrationConfigID) (*Config, error) {
 	return nil, cortex.ErrOrchestrationNotFound
 }
-func (f *fakeConfigStore) GetOrchestrationByName(_ context.Context, _, name string) (*Config, error) {
+func (f *fakeConfigStore) GetOrchestrationByName(_ context.Context, name string) (*Config, error) {
 	if c, ok := f.byName[name]; ok {
 		return c, nil
 	}
@@ -87,7 +87,6 @@ func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
 	cfg := &Config{
 		ID:           id.NewOrchestrationConfigID(),
 		Name:         "team",
-		AppID:        "app1",
 		Strategy:     StrategySequential,
 		Participants: []Participant{{AgentName: "a"}, {AgentName: "b"}},
 	}
@@ -96,7 +95,7 @@ func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
 	hooks := &recordingHooks{}
 	svc := NewService(runner, configs, runs, hooks)
 
-	out, err := svc.Run(context.Background(), "app1", "team", "go")
+	out, err := svc.Run(context.Background(), "team", "go")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -125,7 +124,7 @@ func TestServiceRunSequentialPersistsAndEmits(t *testing.T) {
 
 func TestServiceRunUnknownConfig(t *testing.T) {
 	svc := NewService(newFakeRunner(), &fakeConfigStore{byName: map[string]*Config{}}, &fakeRunStore{}, &recordingHooks{})
-	_, err := svc.Run(context.Background(), "app1", "missing", "go")
+	_, err := svc.Run(context.Background(), "missing", "go")
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -136,7 +135,6 @@ func TestServiceRunFailed(t *testing.T) {
 	cfg := &Config{
 		ID:           id.NewOrchestrationConfigID(),
 		Name:         "team",
-		AppID:        "app1",
 		Strategy:     StrategySequential,
 		Participants: []Participant{{AgentName: "a"}},
 	}
@@ -145,7 +143,7 @@ func TestServiceRunFailed(t *testing.T) {
 	hooks := &recordingHooks{}
 	svc := NewService(runner, configs, runs, hooks)
 
-	rec, err := svc.Run(context.Background(), "app1", "team", "go")
+	rec, err := svc.Run(context.Background(), "team", "go")
 	if err == nil {
 		t.Fatal("expected error from failing runner")
 	}

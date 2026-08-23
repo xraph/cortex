@@ -16,15 +16,20 @@ import (
 // deliberately absent here. Grove's NewUpdate builds SET from every model
 // field by default, so without this explicit whitelist an
 // UpdateOrchestration issued from a broader (but still scope-matching)
-// context would silently overwrite a row's narrower stored scope. Unlike
-// the persona conversion, app_id stays in this list: orchestration.Config
-// still carries a live AppID field (GetOrchestrationByName keeps it as a
-// real, required lookup parameter alongside scope), so it isn't vestigial
-// here and every write is expected to keep populating it.
+// context would silently overwrite a row's narrower stored scope.
+//
+// app_id is deliberately absent too, mirroring persona's
+// mutablePersonaColumns: orchestration.Config dropped its AppID field
+// (fix round 1 — it never governed anything once the unique index went
+// scope-keyed, so keeping it live was a regression, not belt-and-braces),
+// so orchestrationConfigToModel always writes AppID as "" now, and
+// including "app_id" here would blank whatever a pre-fix row's app_id
+// column still holds on its very first update. The column itself is
+// vestigial but intentionally left in place; erasing its content is not
+// this task's call to make.
 var mutableOrchestrationConfigColumns = []string{
 	"name",
 	"description",
-	"app_id",
 	"strategy",
 	"participants",
 	"settings",
@@ -34,10 +39,10 @@ var mutableOrchestrationConfigColumns = []string{
 }
 
 // mutableOrchestrationRunColumns mirrors mutableOrchestrationConfigColumns
-// for cortex_orchestration_runs: everything except the five scope columns.
+// for cortex_orchestration_runs: everything except the five scope columns
+// and (for the same reason as above) app_id.
 var mutableOrchestrationRunColumns = []string{
 	"config_id",
-	"app_id",
 	"strategy",
 	"status",
 	"input",
@@ -89,17 +94,19 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(m)
 }
 
-// GetOrchestrationByName returns an orchestration config by app ID and
-// name within the caller's scope. appID stays a real, required lookup
-// parameter here (unlike agent/persona, which dropped it): scope is
-// layered on top of it, not a replacement for it.
-func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
+// GetOrchestrationByName returns an orchestration config by name within
+// the caller's scope. Fix round 1 dropped the appID parameter this
+// method used to also filter on: with UNIQUE (scope_canon, name), at
+// most one row can ever exist per (scope, name), so an app_id predicate
+// on top could only ever turn a hit into a miss, never disambiguate two
+// rows — the same reasoning that dropped AppID from agent and persona.
+func (s *Store) GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error) {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
 	}
 	m := new(orchestrationConfigModel)
-	q := s.sdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name)
+	q := s.sdb.NewSelect(m).Where("name = ?", name)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

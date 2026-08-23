@@ -41,13 +41,17 @@ func NewService(runner AgentRunner, configs ConfigStore, runs RunStore, hooks Ho
 
 // Run loads the named config, executes the strategy, persists a Run,
 // and fires lifecycle hooks. The returned run reflects the final state.
-func (s *Service) Run(ctx context.Context, appID, name, input string) (*Run, error) {
-	cfg, err := s.configs.GetOrchestrationByName(ctx, appID, name)
+func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
+	cfg, err := s.configs.GetOrchestrationByName(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	orch, err := Build(cfg.Strategy, s.runner, cfg.AppID, cfg.Participants, cfg.Settings)
+	// appID is passed through to AgentRunner.RunAgent for historical
+	// reasons, but every adapter (engine.agentRunnerAdapter included)
+	// discards it — agent resolution is scope-only now. Left as "" here
+	// rather than threaded from Config, which no longer carries one.
+	orch, err := Build(cfg.Strategy, s.runner, "", cfg.Participants, cfg.Settings)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +60,6 @@ func (s *Service) Run(ctx context.Context, appID, name, input string) (*Run, err
 	rec := &Run{
 		ID:        id.NewOrchestrationID(),
 		ConfigID:  cfg.ID,
-		AppID:     cfg.AppID,
 		Strategy:  cfg.Strategy,
 		Status:    StatusRunning,
 		Input:     input,

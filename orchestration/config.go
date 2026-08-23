@@ -14,7 +14,6 @@ type Config struct {
 	ID           id.OrchestrationConfigID `json:"id"`
 	Name         string                   `json:"name"`
 	Description  string                   `json:"description,omitempty"`
-	AppID        string                   `json:"app_id"`
 	Scope        cortex.Scope             `json:"scope"`
 	Strategy     string                   `json:"strategy"`
 	Participants []Participant            `json:"participants"`
@@ -26,7 +25,7 @@ type Config struct {
 type ConfigStore interface {
 	CreateOrchestration(ctx context.Context, c *Config) error
 	GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*Config, error)
-	GetOrchestrationByName(ctx context.Context, appID, name string) (*Config, error)
+	GetOrchestrationByName(ctx context.Context, name string) (*Config, error)
 	UpdateOrchestration(ctx context.Context, c *Config) error
 	DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error
 	ListOrchestrations(ctx context.Context, filter *ConfigListFilter) ([]*Config, error)
