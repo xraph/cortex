@@ -26,9 +26,18 @@ const (
 )
 
 // PendingCall is one tool call awaiting a result from outside the engine.
+//
+// Arguments is carried here rather than left to be recovered from the
+// continuation's last assistant message. A caller resuming an external
+// tool has to actually execute the call, and making it cross-reference
+// the message history by call id to find out with what would be a
+// needless puzzle for the one consumer this type exists to serve.
 type PendingCall struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Arguments is the JSON-encoded argument object, verbatim from the
+	// model's tool call.
+	Arguments string `json:"arguments"`
 }
 
 // Continuation is everything the loop needs to pick up where it stopped.

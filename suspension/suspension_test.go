@@ -26,6 +26,9 @@ func TestContinuation_SurvivesRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(blob, &back); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	if back.SystemPrompt != "be brief" {
+		t.Errorf("SystemPrompt did not survive the round trip: %q", back.SystemPrompt)
+	}
 	if back.StepIndex != 3 || back.TokensUsed != 120 || len(back.Messages) != 1 {
 		t.Errorf("continuation lost fidelity: %+v", back)
 	}
@@ -86,4 +89,23 @@ func (fakeStore) DeleteSuspension(_ context.Context, _ id.AgentRunID) error {
 
 func (fakeStore) ListExpired(_ context.Context, _ time.Time, _ int) ([]*suspension.Suspension, error) {
 	return nil, nil
+}
+
+// A pending call has to carry enough for the caller to execute it. If
+// Arguments is dropped on the way through storage, the external-tool
+// path still compiles and still round-trips, and the caller is simply
+// handed a tool name with no inputs.
+func TestPendingCall_CarriesArguments(t *testing.T) {
+	p := suspension.PendingCall{ID: "call_1", Name: "fetch", Arguments: `{"url":"https://x"}`}
+	blob, err := json.Marshal(&p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back suspension.PendingCall
+	if err := json.Unmarshal(blob, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Arguments != p.Arguments {
+		t.Errorf("Arguments did not survive the round trip: got %q, want %q", back.Arguments, p.Arguments)
+	}
 }
