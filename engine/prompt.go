@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/xraph/cortex"
@@ -73,7 +74,17 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides) reso
 // BuildSystemPrompt assembles the full system prompt from agent config,
 // persona identity, skill fragments, and trait injections.
 // This is the engine-level equivalent of dashboard/data.go:computeSystemPrompt.
-func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides) string {
+//
+// Persona/skill/trait lookups key on cortex.AppFromContext(ctx) — those
+// three subsystems stay app-keyed until Tasks 6/7 convert them. That is
+// only the SAME value the agent was created under when the run context
+// actually carries that app; a run reached through a path with no app on
+// the context (dashboard-triggered runs, sentinel, orchestration
+// sub-agents) would look up ("", ref) instead. A requested-but-unresolved
+// persona/skill/trait therefore fails the whole call loudly instead of
+// silently dropping its fragment from the prompt: swallowing that error
+// would let an agent quietly stop being itself with no signal anywhere.
+func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (string, error) {
 	var parts []string
 
 	// Determine effective system prompt.
@@ -91,10 +102,15 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 		personaRef = overrides.PersonaRef
 	}
 
-	// Resolve persona identity.
+	// Resolve persona identity. A non-empty personaRef is a request for a
+	// specific persona, not an optional lookup — failing to resolve it
+	// must abort rather than silently omit the Identity section.
 	if personaRef != "" && e.store != nil {
 		p, err := e.store.GetPersonaByName(ctx, cortex.AppFromContext(ctx), personaRef)
-		if err == nil && p.Identity != "" {
+		if err != nil {
+			return "", fmt.Errorf("resolve persona %q: %w", personaRef, err)
+		}
+		if p.Identity != "" {
 			parts = append(parts, "\n## Identity\n"+p.Identity)
 		}
 	}
@@ -105,7 +121,9 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 		skillNames = overrides.InlineSkills
 	}
 
-	// Inject skill prompt fragments.
+	// Inject skill prompt fragments. Same fail-loud rule as persona: a
+	// named skill that doesn't resolve aborts instead of silently
+	// vanishing from the prompt.
 	if e.store != nil {
 		for _, sName := range skillNames {
 			sName = strings.TrimSpace(sName)
@@ -113,7 +131,10 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 				continue
 			}
 			sk, err := e.store.GetSkillByName(ctx, cortex.AppFromContext(ctx), sName)
-			if err == nil && sk.SystemPromptFragment != "" {
+			if err != nil {
+				return "", fmt.Errorf("resolve skill %q: %w", sName, err)
+			}
+			if sk.SystemPromptFragment != "" {
 				parts = append(parts, "\n## Skill: "+sk.Name+"\n"+sk.SystemPromptFragment)
 			}
 		}
@@ -156,7 +177,9 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 		traitNames = overrides.InlineTraits
 	}
 
-	// Inject trait prompt injections.
+	// Inject trait prompt injections. Same fail-loud rule as
+	// persona/skill: a named trait that doesn't resolve aborts instead of
+	// silently vanishing from the prompt.
 	if e.store != nil {
 		for _, tName := range traitNames {
 			tName = strings.TrimSpace(tName)
@@ -164,12 +187,13 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 				continue
 			}
 			t, err := e.store.GetTraitByName(ctx, cortex.AppFromContext(ctx), tName)
-			if err == nil {
-				for _, inf := range t.Influences {
-					if inf.Target == "prompt_injection" {
-						if v, ok := inf.Value.(string); ok && v != "" {
-							parts = append(parts, "\n## Trait: "+t.Name+"\n"+v)
-						}
+			if err != nil {
+				return "", fmt.Errorf("resolve trait %q: %w", tName, err)
+			}
+			for _, inf := range t.Influences {
+				if inf.Target == "prompt_injection" {
+					if v, ok := inf.Value.(string); ok && v != "" {
+						parts = append(parts, "\n## Trait: "+t.Name+"\n"+v)
 					}
 				}
 			}
@@ -177,9 +201,9 @@ func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 	}
 
 	if len(parts) == 0 {
-		return ""
+		return "", nil
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), nil
 }
 
 // coalesceStr returns the first non-empty string.

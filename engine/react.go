@@ -23,7 +23,10 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	scope := cortex.ScopeFromContext(ctx)
 
 	cfg := e.effectiveConfig(ag, overrides)
-	systemPrompt := e.BuildSystemPrompt(ctx, ag, overrides)
+	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
+	if err != nil {
+		return nil, fmt.Errorf("build system prompt: %w", err)
+	}
 
 	now := time.Now().UTC()
 	r := &run.Run{
@@ -212,7 +215,11 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 	scope := cortex.ScopeFromContext(ctx)
 
 	cfg := e.effectiveConfig(ag, overrides)
-	systemPrompt := e.BuildSystemPrompt(ctx, ag, overrides)
+	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
+	if err != nil {
+		close(events)
+		return fmt.Errorf("build system prompt: %w", err)
+	}
 
 	now := time.Now().UTC()
 	r := &run.Run{

@@ -83,10 +83,16 @@ func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, erro
 // explicit whitelist Update would blank the scope columns on every call
 // (agentToModel always derives them from config.Scope, and nothing
 // populates config.Scope on the Update path).
+//
+// app_id is deliberately absent too, for the same reason: agentToModel
+// always writes AppID as "" now (Config carries no such field to draw
+// from), so including "app_id" here would blank whatever a pre-v1.8.0
+// row's app_id column still holds on its very first Update. The column
+// itself is vestigial but intentionally left in place; erasing its
+// content is not this task's call to make.
 var mutableAgentColumns = []string{
 	"name",
 	"description",
-	"app_id",
 	"system_prompt",
 	"model",
 	"tools",

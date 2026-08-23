@@ -289,7 +289,10 @@ func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*Previe
 	}
 
 	// Use the engine's prompt builder for a consistent preview.
-	prompt := a.eng.BuildSystemPrompt(ctx.Context(), ag, nil)
+	prompt, err := a.eng.BuildSystemPrompt(ctx.Context(), ag, nil)
+	if err != nil {
+		return nil, mapStoreError(err)
+	}
 
 	resp := &PreviewPromptResponse{
 		Prompt: prompt,

@@ -1138,6 +1138,39 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
 		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's agent merely by knowing (or guessing) its id -- the
+		// same bearer-capability threat the run/checkpoint/step subtests
+		// above exercise for their own identifiers. GetByName above only
+		// proves the name-lookup predicate; Get/Update/Delete take the id
+		// directly and need their own predicate proven independently.
+		_, getErr := s.Get(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrAgentNotFound) {
+			t.Errorf("Get(ctxB, agentA.ID) = %v, want ErrAgentNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.Update(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrAgentNotFound) {
+			t.Errorf("Update(ctxB, agentA) = %v, want ErrAgentNotFound", updateErr)
+		}
+		stillA, err := s.Get(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload agentA after cross-scope Update attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("Update(ctxB, agentA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.Delete(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrAgentNotFound) {
+			t.Errorf("Delete(ctxB, agentA.ID) = %v, want ErrAgentNotFound", deleteErr)
+		}
+		_, reloadErr := s.Get(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("agentA missing after cross-scope Delete attempt: %v (must not delete another scope's row)", reloadErr)
+		}
 	})
 
 	// The five subtests below are the ones app_id still governs: ONE name

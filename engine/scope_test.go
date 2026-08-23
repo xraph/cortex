@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/store/scopespy"
 )
 
@@ -281,5 +282,56 @@ func TestStreamAgent_MockCancelPersistsWithUncancelledContext(t *testing.T) {
 	}
 	if !sawUpdate {
 		t.Fatal("UpdateRun was never recorded on cancel; the cancel branch did not run")
+	}
+}
+
+// failingPersonaSpy wraps scopespy.Spy but fails persona resolution when
+// called with an empty app id, simulating the exact shape a request with
+// no app on its context produces: cortex.AppFromContext returns "", and a
+// lookup for ("", personaRef) finds nothing. scopespy.Spy's own
+// GetPersonaByName always succeeds regardless of the app id argument, so
+// it can't reproduce this on its own.
+type failingPersonaSpy struct {
+	*scopespy.Spy
+}
+
+func (f *failingPersonaSpy) GetPersonaByName(ctx context.Context, appID, name string) (*persona.Persona, error) {
+	if appID == "" {
+		return nil, cortex.ErrPersonaNotFound
+	}
+	return f.Spy.GetPersonaByName(ctx, appID, name)
+}
+
+// TestRunAgent_MissingAppFailsPersonaResolutionLoudly is the regression
+// guard for the fix-round review's Finding 1: BuildSystemPrompt's
+// persona/skill/trait lookups moved from the agent's persisted app id to
+// cortex.AppFromContext(ctx). Those are only the same value when the run
+// context actually carries the app the agent was created under -- a run
+// reached through a context with no app attached (dashboard-triggered
+// runs, sentinel, orchestration sub-agents) must not silently drop the
+// Identity section from the prompt. It must fail the run outright instead.
+func TestRunAgent_MissingAppFailsPersonaResolutionLoudly(t *testing.T) {
+	spy := &failingPersonaSpy{Spy: scopespy.New()}
+	e, err := engine.New(engine.WithStore(spy), engine.WithLLM(scopespy.StaticLLM("done")))
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+
+	// Scope is on the context (RunAgent's own guard passes), but
+	// deliberately no app -- cortex.WithApp is never called here, the
+	// same as a request that never went through a host layer that
+	// attaches one.
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+
+	if _, err := e.RunAgent(ctx, "assistant", "hello", nil); err == nil {
+		t.Fatal("RunAgent with no app on context succeeded despite the agent requesting a persona; it must fail instead of silently dropping the Identity section from the prompt")
+	} else if !errors.Is(err, cortex.ErrPersonaNotFound) {
+		t.Errorf("RunAgent err = %v, want it to wrap cortex.ErrPersonaNotFound", err)
+	}
+
+	if spy.CallCount() == 0 {
+		t.Fatal("spy recorded no store calls; GetByName never ran, so this test proves nothing about persona resolution")
 	}
 }

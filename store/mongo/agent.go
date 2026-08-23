@@ -99,6 +99,13 @@ func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, erro
 // from the model struct when no explicit update document is given
 // (confirmed by reading mongodriver's query_update.go), which would
 // otherwise blank scope_l0/l1/l2/extra/canon on every call.
+//
+// app_id is deliberately absent from set too, for the same reason:
+// agentToModel always writes AppID as "" now (Config carries no such
+// field to draw from), so including it here would blank whatever a
+// pre-v1.8.0 document's app_id field still holds on its very first
+// Update. The field itself is vestigial but intentionally left in place;
+// erasing its content is not this task's call to make.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -115,7 +122,6 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	set := bson.M{
 		"name":             m.Name,
 		"description":      m.Description,
-		"app_id":           m.AppID,
 		"system_prompt":    m.SystemPrompt,
 		"model":            m.Model,
 		"tools":            m.Tools,
