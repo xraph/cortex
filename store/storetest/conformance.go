@@ -1173,6 +1173,38 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
+	// SessionDeleteRemovesMessages proves deleting a session leaves no
+	// orphaned messages behind. Every backend gets there differently --
+	// postgres/sqlite delete the message rows explicitly inside
+	// DeleteSession's own transaction rather than through a database
+	// FOREIGN KEY (cortex_memories.session_id is shared by
+	// working/summary memory too, which never sets it at all, so a real
+	// FK there would reject their writes outright), mongo does the same
+	// inside its own multi-document transaction since it has no FK
+	// concept at all -- but this test doesn't care which route a given
+	// backend took, only that all three land on the same observable
+	// result.
+	t.Run("SessionDeleteRemovesMessages", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		agentID := mustCreateAgent(t, s, ctx, "")
+		sid := mustCreateSession(t, s, ctx, agentID, "thread")
+
+		if err := s.SaveConversation(ctx, agentID, sid, []memory.Message{{Role: "user", Content: "hello"}}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		if err := s.DeleteSession(ctx, sid); err != nil {
+			t.Fatalf("delete session: %v", err)
+		}
+		msgs, err := s.LoadConversation(ctx, agentID, sid, 100)
+		if err != nil {
+			t.Fatalf("load after delete: %v", err)
+		}
+		if len(msgs) != 0 {
+			t.Errorf("deleting a session left %d orphaned messages", len(msgs))
+		}
+	})
+
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")

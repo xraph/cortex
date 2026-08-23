@@ -92,6 +92,17 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 		return fmt.Errorf("cortex/mongo: rescope legacy rows: %w", err)
 	}
 
+	// Runs after rescopeLegacyRows so a pre-v1.8.0 database jumping
+	// straight to this version in one Migrate() call gets its
+	// conversation rows scoped first, in the same call, and so is
+	// eligible for the session backfill immediately rather than only on
+	// a later restart -- see backfillDefaultSessions' comment for why
+	// the postgres/sqlite migrations of the same version can't offer
+	// that same-call guarantee.
+	if err := s.backfillDefaultSessions(ctx); err != nil {
+		return fmt.Errorf("cortex/mongo: backfill default sessions: %w", err)
+	}
+
 	return nil
 }
 

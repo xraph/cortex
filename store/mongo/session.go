@@ -107,26 +107,52 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 	return nil
 }
 
-// DeleteSession removes a session within the caller's scope.
+// DeleteSession removes a session within the caller's scope, along with
+// every conversation message it owns, in the same multi-document
+// transaction. Mongo has no FOREIGN KEY to do this for it -- and unlike
+// postgres/sqlite (see their DeleteSession comments for why a FK there
+// isn't viable either, FK or no FK), so the delete below is what keeps
+// all three backends observably identical: deleting a session leaves no
+// orphaned messages on any of them.
 func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
-	filter := bson.M{"_id": sessionID.String()}
+	sid := sessionID.String()
+	filter := bson.M{"_id": sid}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
 
-	res, err := s.mdb.NewDelete((*sessionModel)(nil)).
-		Filter(filter).
-		Exec(ctx)
+	txSess, err := s.mdb.Client().StartSession()
 	if err != nil {
-		return fmt.Errorf("cortex/mongo: delete session: %w", err)
+		return fmt.Errorf("cortex/mongo: start delete session: %w", err)
 	}
+	defer txSess.EndSession(ctx)
 
-	if res.DeletedCount() == 0 {
-		return cortex.ErrSessionNotFound
+	_, err = txSess.WithTransaction(ctx, func(sc context.Context) (any, error) {
+		res, delErr := s.mdb.NewDelete((*sessionModel)(nil)).
+			Filter(filter).
+			Exec(sc)
+		if delErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: delete session: %w", delErr)
+		}
+		if res.DeletedCount() == 0 {
+			return nil, fmt.Errorf("cortex/mongo: delete session: %w", cortex.ErrSessionNotFound)
+		}
+
+		msgFilter := bson.M{"session_id": sid, "kind": "conversation"}
+		for k, v := range scopeFilter(scope, false) {
+			msgFilter[k] = v
+		}
+		if _, msgErr := s.mdb.NewDelete((*memoryModel)(nil)).Many().Filter(msgFilter).Exec(sc); msgErr != nil {
+			return nil, fmt.Errorf("cortex/mongo: delete session messages: %w", msgErr)
+		}
+		return nil, nil //nolint:nilnil // WithTransaction's callback contract: no result value to return
+	})
+	if err != nil {
+		return fmt.Errorf("cortex/mongo: commit delete session: %w", err)
 	}
 
 	return nil

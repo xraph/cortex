@@ -105,13 +105,41 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 	return nil
 }
 
+// DeleteSession removes a session within the caller's scope, along with
+// every conversation message it owns.
+//
+// This is explicit application-level cascade, not a database FOREIGN KEY
+// -- cortex_memories.session_id can't carry one. The column is shared by
+// every memory kind, not just conversation: working and summary rows
+// never set it at all, so they sit at its DEFAULT ” permanently. A real
+// FOREIGN KEY (session_id) REFERENCES cortex_sessions(id) would require
+// every row's session_id to resolve to an existing session, including
+// those ” rows -- which would need a session literally named "" to
+// satisfy, and would reject every SaveWorking/SaveSummary write the
+// moment the constraint existed. NOT VALID only skips validating
+// pre-existing rows at creation time; it does not exempt future inserts
+// from being checked, so it doesn't get around this either. The delete
+// below is what keeps postgres, sqlite, and mongo observably identical:
+// deleting a session leaves no orphaned messages on any of the three,
+// whichever mechanism gets it there.
 func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
-	q := s.pgdb.NewDelete((*sessionModel)(nil)).
-		Where("id = ?", sessionID.String())
+	sid := sessionID.String()
+
+	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex: begin delete session: %w", err)
+	}
+	// After a successful Commit, Rollback is a documented no-op; before
+	// one, its error can't be acted on any further than the failure that
+	// triggered this defer already is.
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	q := tx.NewDelete((*sessionModel)(nil)).
+		Where("id = ?", sid)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -125,6 +153,25 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 	}
 	if n == 0 {
 		return cortex.ErrSessionNotFound
+	}
+
+	// scope_canon alone would be enough to stay within the caller's own
+	// data, but session_id is already the whole identity of "this
+	// session's messages" -- kind = 'conversation' narrows to the memory
+	// rows a session can own at all, matching LoadConversation's own
+	// filter.
+	msgQ := tx.NewDelete((*memoryModel)(nil)).
+		Where("session_id = ?", sid).
+		Where("kind = ?", "conversation")
+	for _, p := range scopePredicates(scope, false) {
+		msgQ = msgQ.Where(p.Column+" = ?", p.Value)
+	}
+	if _, err := msgQ.Exec(ctx); err != nil {
+		return fmt.Errorf("cortex: delete session messages: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex: commit delete session: %w", err)
 	}
 	return nil
 }

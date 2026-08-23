@@ -2,9 +2,13 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/xraph/grove/migrate"
+
+	"github.com/xraph/cortex/id"
 )
 
 // Migrations is the grove migration group for the Cortex SQLite store.
@@ -976,5 +980,217 @@ ALTER TABLE cortex_memories DROP COLUMN session_id;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "backfill_default_sessions",
+			Version: "20260824000004",
+			Comment: "Create a default session per pre-v1.9.0 (agent_id, scope_canon) conversation and point its messages at it",
+			Up:      backfillDefaultSessions,
+			Down:    unbackfillDefaultSessions,
+		},
 	)
+}
+
+// backfillSessionMarker tags every cortex_sessions row this migration
+// creates, in Metadata, so unbackfillDefaultSessions (Down) can find
+// exactly the rows it is responsible for undoing without mistaking an
+// organically-created default session for one of its own --
+// engine.resolveSession stamps the identical IsDefault=true, Title
+// "Default" shape, but never sets Metadata.
+const backfillSessionMarker = `{"backfilled_by":"20260824000004"}`
+
+// legacyConversationScope is one distinct (agent_id, scope) pairing this
+// migration found sitting on unsessioned conversation rows.
+type legacyConversationScope struct {
+	agentID, l0, l1, l2, canon string
+}
+
+// legacyMessage is the subset of memory.Message this migration needs off
+// a stored conversation row's JSON content. Role and Content are the only
+// two fields that survive llmToMemory's reload-then-resave round trip
+// unchanged (see backfillDefaultSessions' comment on the duplication
+// bug) -- everything else in memory.Message is deliberately not decoded
+// here.
+type legacyMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// backfillDefaultSessions is the Up side of this migration. See the
+// postgres migration of the same version for the full reasoning behind
+// both the scope_canon != ” filter and the distinct-(role,content)
+// message_count -- this is the same logic against sqlite's `?`
+// placeholder style.
+func backfillDefaultSessions(ctx context.Context, exec migrate.Executor) error {
+	scopes, err := findLegacyConversationScopes(ctx, exec)
+	if err != nil {
+		return fmt.Errorf("find legacy conversation scopes: %w", err)
+	}
+	for _, sc := range scopes {
+		if err := backfillOneScope(ctx, exec, sc); err != nil {
+			return fmt.Errorf("backfill default session for agent %s: %w", sc.agentID, err)
+		}
+	}
+	return nil
+}
+
+func findLegacyConversationScopes(ctx context.Context, exec migrate.Executor) ([]legacyConversationScope, error) {
+	rows, err := exec.Query(ctx, `
+SELECT DISTINCT agent_id, scope_l0, scope_l1, scope_l2, scope_canon
+  FROM cortex_memories
+ WHERE kind = 'conversation' AND session_id = '' AND scope_canon != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []legacyConversationScope
+	for rows.Next() {
+		var sc legacyConversationScope
+		if scanErr := rows.Scan(&sc.agentID, &sc.l0, &sc.l1, &sc.l2, &sc.canon); scanErr != nil {
+			return nil, fmt.Errorf("scan legacy conversation scope: %w", scanErr)
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+// backfillOneScope creates (or reuses) the default session for one
+// (agent_id, scope_canon) pair and points that pair's orphaned
+// conversation rows at it. See the postgres migration's comment on
+// backfillOneScope for why the SELECT after the INSERT is required
+// rather than trusting the freshly minted id -- the same lazy-create
+// race applies here.
+func backfillOneScope(ctx context.Context, exec migrate.Executor, sc legacyConversationScope) error {
+	messageCount, lastMessage, err := scanLegacyMessages(ctx, exec, sc)
+	if err != nil {
+		return fmt.Errorf("read conversation rows: %w", err)
+	}
+
+	newID := id.NewSessionID()
+	now := time.Now().UTC()
+	if _, insErr := exec.Exec(ctx, `
+INSERT INTO cortex_sessions
+    (id, agent_id, title, message_count, last_message, is_default, metadata,
+     scope_l0, scope_l1, scope_l2, scope_extra, scope_canon, created_at, updated_at)
+VALUES (?, ?, 'Default', ?, ?, TRUE, ?, ?, ?, ?, '{}', ?, ?, ?)
+ON CONFLICT (agent_id, scope_canon) WHERE is_default AND scope_canon != '' DO NOTHING`,
+		newID.String(), sc.agentID, messageCount, lastMessage, backfillSessionMarker,
+		sc.l0, sc.l1, sc.l2, sc.canon, now, now,
+	); insErr != nil {
+		return fmt.Errorf("insert default session: %w", insErr)
+	}
+
+	sid, err := defaultSessionID(ctx, exec, sc.agentID, sc.canon)
+	if err != nil {
+		return fmt.Errorf("resolve default session: %w", err)
+	}
+
+	if _, updErr := exec.Exec(ctx, `
+UPDATE cortex_memories SET session_id = ?
+ WHERE kind = 'conversation' AND session_id = '' AND agent_id = ? AND scope_canon = ?`,
+		sid, sc.agentID, sc.canon,
+	); updErr != nil {
+		return fmt.Errorf("point conversation rows at default session: %w", updErr)
+	}
+	return nil
+}
+
+// scanLegacyMessages reads every orphaned conversation row for one
+// (agent_id, scope_canon) pair and reduces it to the two values the new
+// session needs: a distinct-(role,content) message count and the
+// content of the chronologically-last message with non-empty content.
+// See the postgres migration's scanLegacyMessages for the full
+// reasoning.
+func scanLegacyMessages(ctx context.Context, exec migrate.Executor, sc legacyConversationScope) (messageCount int, lastMessage string, err error) {
+	rows, err := exec.Query(ctx, `
+SELECT content FROM cortex_memories
+ WHERE kind = 'conversation' AND session_id = '' AND agent_id = ? AND scope_canon = ?
+ ORDER BY created_at ASC`, sc.agentID, sc.canon)
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() { _ = rows.Close() }()
+
+	seen := make(map[[2]string]struct{})
+	for rows.Next() {
+		var content string
+		if scanErr := rows.Scan(&content); scanErr != nil {
+			return 0, "", fmt.Errorf("scan conversation row: %w", scanErr)
+		}
+		var msg legacyMessage
+		if jsonErr := json.Unmarshal([]byte(content), &msg); jsonErr != nil {
+			// A row that isn't valid JSON can't have been written by
+			// SaveConversation; skip it from the count rather than
+			// aborting the whole backfill over one corrupt row.
+			continue
+		}
+		seen[[2]string{msg.Role, msg.Content}] = struct{}{}
+		if msg.Content != "" {
+			lastMessage = msg.Content
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, "", err
+	}
+	return len(seen), lastMessage, nil
+}
+
+// defaultSessionID reads back the id of whichever session currently
+// holds the (agent_id, scope_canon) default slot -- the one
+// backfillOneScope just inserted, or one that already existed there.
+func defaultSessionID(ctx context.Context, exec migrate.Executor, agentID, canon string) (string, error) {
+	rows, err := exec.Query(ctx, `
+SELECT id FROM cortex_sessions
+ WHERE agent_id = ? AND scope_canon = ? AND is_default = TRUE
+ LIMIT 1`, agentID, canon)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return "", fmt.Errorf("no default session found for agent %s in scope %s after insert", agentID, canon)
+	}
+	var sid string
+	if scanErr := rows.Scan(&sid); scanErr != nil {
+		return "", fmt.Errorf("scan default session id: %w", scanErr)
+	}
+	return sid, rows.Err()
+}
+
+// unbackfillDefaultSessions is the Down side of this migration. See the
+// postgres migration of the same version for the full reasoning; the
+// short version is that backfillSessionMarker in Metadata is what makes
+// this safe to run at all -- an organically-created default session has
+// the identical IsDefault=true, Title "Default" shape but carries no
+// Metadata, so this only ever touches rows this migration itself wrote.
+func unbackfillDefaultSessions(ctx context.Context, exec migrate.Executor) error {
+	rows, err := exec.Query(ctx, `SELECT id FROM cortex_sessions WHERE metadata = ?`, backfillSessionMarker)
+	if err != nil {
+		return fmt.Errorf("find backfilled sessions: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var sid string
+		if scanErr := rows.Scan(&sid); scanErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan backfilled session id: %w", scanErr)
+		}
+		ids = append(ids, sid)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return rowsErr
+	}
+	_ = rows.Close()
+
+	for _, sid := range ids {
+		if _, resetErr := exec.Exec(ctx, `UPDATE cortex_memories SET session_id = '' WHERE session_id = ?`, sid); resetErr != nil {
+			return fmt.Errorf("reset session_id for session %s: %w", sid, resetErr)
+		}
+		if _, delErr := exec.Exec(ctx, `DELETE FROM cortex_sessions WHERE id = ?`, sid); delErr != nil {
+			return fmt.Errorf("delete backfilled session %s: %w", sid, delErr)
+		}
+	}
+	return nil
 }

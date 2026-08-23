@@ -103,13 +103,35 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 	return nil
 }
 
+// DeleteSession removes a session within the caller's scope, along with
+// every conversation message it owns.
+//
+// This is explicit application-level cascade, not a database FOREIGN KEY
+// -- see the identical comment on the postgres store's DeleteSession for
+// why cortex_memories.session_id can't carry one: the column is shared
+// by every memory kind, and working/summary rows always sit at its
+// DEFAULT ” rather than a real session id, which a real FK would reject
+// on the very next non-conversation write. The delete below is what
+// keeps postgres, sqlite, and mongo observably identical: deleting a
+// session leaves no orphaned messages on any of the three.
 func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
 		return cortex.ErrNoScope
 	}
-	q := s.sdb.NewDelete((*sessionModel)(nil)).
-		Where("id = ?", sessionID.String())
+	sid := sessionID.String()
+
+	tx, err := s.sdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cortex/sqlite: begin delete session: %w", err)
+	}
+	// After a successful Commit, Rollback is a documented no-op; before
+	// one, its error can't be acted on any further than the failure that
+	// triggered this defer already is.
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	q := tx.NewDelete((*sessionModel)(nil)).
+		Where("id = ?", sid)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -123,6 +145,20 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 	}
 	if n == 0 {
 		return cortex.ErrSessionNotFound
+	}
+
+	msgQ := tx.NewDelete((*memoryModel)(nil)).
+		Where("session_id = ?", sid).
+		Where("kind = ?", "conversation")
+	for _, p := range scopePredicates(scope, false) {
+		msgQ = msgQ.Where(p.Column+" = ?", p.Value)
+	}
+	if _, err := msgQ.Exec(ctx); err != nil {
+		return fmt.Errorf("cortex/sqlite: delete session messages: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex/sqlite: commit delete session: %w", err)
 	}
 	return nil
 }
