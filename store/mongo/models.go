@@ -20,6 +20,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 )
 
@@ -1029,4 +1030,82 @@ func mustJSON(v any) string {
 		return "null"
 	}
 	return string(b)
+}
+
+// ──────────────────────────────────────────────────
+// Suspension model
+// ──────────────────────────────────────────────────
+
+// suspensionModel stores Pending and Continuation as native BSON rather
+// than as encoded JSON strings, the same way checkpointModel stores
+// Decision: mongo is a document store, so a nested document reads and
+// indexes as itself instead of as an opaque blob. The postgres/sqlite
+// models encode these two to JSON text because their columns are
+// JSONB/TEXT; all three round-trip the same Go values.
+type suspensionModel struct {
+	grove.BaseModel `grove:"table:cortex_suspensions"`
+	ID              string                   `grove:"id,pk"        bson:"_id"`
+	RunID           string                   `grove:"run_id"       bson:"run_id"`
+	Reason          string                   `grove:"reason"       bson:"reason"`
+	Pending         []suspension.PendingCall `grove:"pending"      bson:"pending"`
+	Continuation    suspension.Continuation  `grove:"continuation" bson:"continuation"`
+	ExpiresAt       *time.Time               `grove:"expires_at"   bson:"expires_at,omitempty"`
+	ScopeL0         string                   `grove:"scope_l0"     bson:"scope_l0"`
+	ScopeL1         string                   `grove:"scope_l1"     bson:"scope_l1"`
+	ScopeL2         string                   `grove:"scope_l2"     bson:"scope_l2"`
+	ScopeExtra      map[string]string        `grove:"scope_extra"  bson:"scope_extra,omitempty"`
+	ScopeCanon      string                   `grove:"scope_canon"  bson:"scope_canon"`
+	CreatedAt       time.Time                `grove:"created_at"   bson:"created_at"`
+	UpdatedAt       time.Time                `grove:"updated_at"   bson:"updated_at"`
+}
+
+func suspensionToModel(s *suspension.Suspension) *suspensionModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
+	// Pending's zero value is a nil slice, which bson writes as null
+	// rather than as an empty array. Coerce it so a reader always gets an
+	// array back, matching what postgres/sqlite store.
+	pending := s.Pending
+	if pending == nil {
+		pending = []suspension.PendingCall{}
+	}
+	return &suspensionModel{
+		ID:           s.ID.String(),
+		RunID:        s.RunID.String(),
+		Reason:       string(s.Reason),
+		Pending:      pending,
+		Continuation: s.Cont,
+		ExpiresAt:    s.ExpiresAt,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   s.Scope.Canonical(),
+		CreatedAt:    s.CreatedAt,
+		UpdatedAt:    s.UpdatedAt,
+	}
+}
+
+func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
+	suspensionID, err := id.ParseSuspensionID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := id.ParseAgentRunID(m.RunID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("suspension %s: %w", suspensionID, err)
+	}
+	return &suspension.Suspension{
+		Entity:    cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:        suspensionID,
+		RunID:     runID,
+		Scope:     scope,
+		Reason:    suspension.SuspendReason(m.Reason),
+		Pending:   m.Pending,
+		Cont:      m.Continuation,
+		ExpiresAt: m.ExpiresAt,
+	}, nil
 }

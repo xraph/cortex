@@ -17,6 +17,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 )
 
@@ -1126,4 +1127,83 @@ func mustJSON(v any) string {
 		return "null"
 	}
 	return string(b)
+}
+
+// ──────────────────────────────────────────────────
+// Suspension model
+// ──────────────────────────────────────────────────
+
+type suspensionModel struct {
+	grove.BaseModel `grove:"table:cortex_suspensions"`
+	ID              string     `grove:"id,pk"`
+	RunID           string     `grove:"run_id,notnull"`
+	Reason          string     `grove:"reason,notnull"`
+	Pending         string     `grove:"pending,notnull"`
+	Continuation    string     `grove:"continuation,notnull"`
+	ExpiresAt       *time.Time `grove:"expires_at"`
+	ScopeL0         string     `grove:"scope_l0,notnull"`
+	ScopeL1         string     `grove:"scope_l1,notnull"`
+	ScopeL2         string     `grove:"scope_l2,notnull"`
+	ScopeExtra      string     `grove:"scope_extra,notnull"`
+	ScopeCanon      string     `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time  `grove:"created_at"`
+	UpdatedAt       time.Time  `grove:"updated_at"`
+}
+
+func suspensionToModel(s *suspension.Suspension) *suspensionModel {
+	l0, l1, l2, extra := scopeColumns(s.Scope)
+	// Pending is []PendingCall, whose zero value is a nil slice --
+	// mustJSON would render that as "null" and the column's DEFAULT '[]'
+	// never applies to an explicit write. Coerce to an empty slice so the
+	// stored value is always a JSON array, which is what
+	// suspensionFromModel and every reader downstream expect.
+	pending := s.Pending
+	if pending == nil {
+		pending = []suspension.PendingCall{}
+	}
+	return &suspensionModel{
+		ID:           s.ID.String(),
+		RunID:        s.RunID.String(),
+		Reason:       string(s.Reason),
+		Pending:      mustJSON(pending),
+		Continuation: mustJSON(s.Cont),
+		ExpiresAt:    s.ExpiresAt,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   s.Scope.Canonical(),
+		CreatedAt:    s.CreatedAt,
+		UpdatedAt:    s.UpdatedAt,
+	}
+}
+
+func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
+	suspensionID, err := id.ParseSuspensionID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	runID, err := id.ParseAgentRunID(m.RunID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("suspension %s: %w", suspensionID, err)
+	}
+	s := &suspension.Suspension{
+		Entity:    cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:        suspensionID,
+		RunID:     runID,
+		Scope:     scope,
+		Reason:    suspension.SuspendReason(m.Reason),
+		ExpiresAt: m.ExpiresAt,
+	}
+	if err := unmarshalField("pending", m.Pending, &s.Pending); err != nil {
+		return nil, err
+	}
+	if err := unmarshalField("continuation", m.Continuation, &s.Cont); err != nil {
+		return nil, err
+	}
+	return s, nil
 }

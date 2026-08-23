@@ -1026,6 +1026,81 @@ ALTER TABLE cortex_memories DROP COLUMN session_id;
 			// "already applied" gate to disable.
 			Down: unbackfillDefaultSessions,
 		},
+		&migrate.Migration{
+			Name:    "create_suspensions",
+			Version: "20260825000001",
+			Comment: "Create cortex_suspensions table, scoped from birth",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Suspension is new this release, so like cortex_sessions
+				// before it there is no unscoped legacy shape to carry
+				// forward: the table is created with its scope columns
+				// already in place rather than getting them bolted on by
+				// a later migration.
+				//
+				// The column names, constraints and index shapes are the
+				// postgres migration's; the TYPES are sqlite's own, taken
+				// from cortex_sessions right above. SQLite has neither
+				// JSONB nor TIMESTAMPTZ: JSON lands in TEXT, and
+				// timestamps in TEXT defaulted from datetime('now').
+				if _, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_suspensions (
+    id            TEXT PRIMARY KEY,
+    run_id        TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    pending       TEXT NOT NULL DEFAULT '[]',
+    continuation  TEXT NOT NULL DEFAULT '{}',
+    expires_at    TEXT,
+    scope_l0      TEXT NOT NULL DEFAULT '',
+    scope_l1      TEXT NOT NULL DEFAULT '',
+    scope_l2      TEXT NOT NULL DEFAULT '',
+    scope_extra   TEXT NOT NULL DEFAULT '{}',
+    scope_canon   TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_suspensions_scope
+    ON cortex_suspensions (scope_l0, scope_l1, scope_l2);
+`); err != nil {
+					return fmt.Errorf("create cortex_suspensions: %w", err)
+				}
+
+				// One suspension per run, which is what makes
+				// ClaimSuspension a meaningful primitive: the claim reads
+				// "the" suspension for a run, not one of several.
+				//
+				// scope_canon != '' keeps this in step with every other
+				// partial unique index in this codebase. Migrate builds
+				// indexes before rescopeLegacyRows fills scope columns,
+				// so a plain unique index over a scope column would
+				// collide on the empty string across every pre-existing
+				// row. cortex_suspensions carries no legacy rows of its
+				// own, but the predicate also stops a zero-scope row (if
+				// a future caller ever slipped one past the guard) from
+				// taking the one slot every other scope's run needs.
+				if _, err := exec.Exec(ctx, `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_suspensions_run
+    ON cortex_suspensions (run_id) WHERE scope_canon != '';
+`); err != nil {
+					return fmt.Errorf("run unique index on cortex_suspensions: %w", err)
+				}
+
+				// The expiry sweep (ListExpired) reads only rows that
+				// carry a deadline at all, so the index carries only
+				// those rows too.
+				if _, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_cortex_suspensions_expiry
+    ON cortex_suspensions (expires_at) WHERE expires_at IS NOT NULL;
+`); err != nil {
+					return fmt.Errorf("expiry index on cortex_suspensions: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cortex_suspensions`)
+				return err
+			},
+		},
 	)
 }
 
