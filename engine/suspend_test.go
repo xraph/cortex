@@ -3,11 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/scopespy"
 	"github.com/xraph/cortex/suspension"
@@ -200,6 +203,15 @@ func TestDispatch_ExternalToolIsNotDispatchable(t *testing.T) {
 	got := e.Dispatch(context.Background(), def.Name, "{}")
 	if got == "" {
 		t.Fatal("Dispatch returned an empty string for an external tool; that reads as a tool that ran and said nothing")
+	}
+	// Asserting non-empty alone proves nothing: deleting the external
+	// arm from executeTool entirely yields the unknown-tool payload,
+	// which is also non-empty. The message has to name the contract.
+	if !strings.Contains(got, "external") {
+		t.Errorf("Dispatch = %q, want it to say the tool is external and answered by suspending a run", got)
+	}
+	if strings.Contains(got, "unknown tool") {
+		t.Errorf("Dispatch = %q, but the engine knows this tool; it is external, not unknown", got)
 	}
 }
 
@@ -478,5 +490,149 @@ func TestStreamAgent_SuspendsOnExternalToolCall(t *testing.T) {
 	}
 	if got := countEvent(rec.snapshot(), "completed"); got != 0 {
 		t.Errorf("ToolCompleted fired %d times on a suspended streaming call, want 0", got)
+	}
+}
+
+// historySpy returns a fixed conversation history from LoadConversation.
+// The base Spy returns none, and the boundary a continuation has to carry
+// only exists when there IS a history in front of the run's own messages.
+type historySpy struct {
+	*scopespy.Spy
+	history []memory.Message
+}
+
+func (h *historySpy) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
+	if _, err := h.Spy.LoadConversation(ctx, agentID, sessionID, limit); err != nil {
+		return nil, err
+	}
+	return h.history, nil
+}
+
+// TestRunAgent_ContinuationSeparatesHistoryFromNewMessages is the fix for
+// the defect that shipped in v1.8.0. The continuation carries the loaded
+// history alongside the run's own messages, so without the boundary a
+// resume's first SaveConversation writes the entire history back as new
+// rows, and the fixed-size read window fills with duplicates until the
+// agent stops seeing recent turns.
+//
+// The end-to-end proof (suspend, resume, assert no duplicate rows) needs
+// Task 4's Resume to exist. What is provable here is that the writer put
+// the right boundary and the right session in the row Resume will read.
+func TestRunAgent_ContinuationSeparatesHistoryFromNewMessages(t *testing.T) {
+	const historyLen = 3
+	history := make([]memory.Message, historyLen)
+	for i := range history {
+		history[i] = memory.Message{Role: "user", Content: "earlier turn"}
+	}
+	spy := &historySpy{Spy: scopespy.New(), history: history}
+	def := externalTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithExternalTool(def),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	r, err := e.RunAgent(ctx, "assistant", "ask the human", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+
+	susps := spy.Suspensions()
+	if len(susps) != 1 {
+		t.Fatalf("the run wrote %d suspensions, want exactly 1", len(susps))
+	}
+	cont := susps[0].Cont
+
+	if cont.NewMessagesFrom != historyLen {
+		t.Errorf("continuation NewMessagesFrom = %d, want %d (the loaded history length); a resume would re-save the history", cont.NewMessagesFrom, historyLen)
+	}
+	if len(cont.Messages) <= cont.NewMessagesFrom {
+		t.Fatalf("continuation carries %d messages with a boundary at %d; the run's own messages are missing", len(cont.Messages), cont.NewMessagesFrom)
+	}
+	// Everything before the boundary must be the history verbatim, or the
+	// index points at the wrong message.
+	if cont.Messages[cont.NewMessagesFrom].Content != "ask the human" {
+		t.Errorf("the message at the boundary is %q, want the run's own input; the boundary is off", cont.Messages[cont.NewMessagesFrom].Content)
+	}
+
+	if cont.SessionID.IsNil() {
+		t.Error("continuation carries no session id; a resume cannot save into the session the messages came from")
+	}
+	if cont.SessionID != r.SessionID {
+		t.Errorf("continuation SessionID = %q, want the run's own session %q", cont.SessionID, r.SessionID)
+	}
+}
+
+// orphanSpy fails the run update that follows a successful suspension
+// write, and records every DeleteSuspension the engine issues.
+type orphanSpy struct {
+	*scopespy.Spy
+	mu      sync.Mutex
+	deleted []id.AgentRunID
+}
+
+func (o *orphanSpy) UpdateRun(ctx context.Context, r *run.Run) error {
+	if r.State == run.StatePaused {
+		return errors.New("update rejected")
+	}
+	return o.Spy.UpdateRun(ctx, r)
+}
+
+func (o *orphanSpy) DeleteSuspension(_ context.Context, runID id.AgentRunID) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.deleted = append(o.deleted, runID)
+	return nil
+}
+
+func (o *orphanSpy) deletions() []id.AgentRunID {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]id.AgentRunID(nil), o.deleted...)
+}
+
+// TestSuspend_FailedStateFlipDeletesTheSuspension covers the other half
+// of the write order. The suspension is written first on purpose, so when
+// the flip to paused fails the row is left attached to a run that is
+// about to be failed: ExpiresAt is nil, so the sweeper never sees it, and
+// nothing else would ever delete it.
+func TestSuspend_FailedStateFlipDeletesTheSuspension(t *testing.T) {
+	spy := &orphanSpy{Spy: scopespy.New()}
+	def := externalTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithExternalTool(def),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	r, err := e.RunAgent(ctx, "assistant", "ask the human", nil)
+	if err == nil {
+		t.Fatalf("RunAgent returned no error though the run could not be paused; run = %+v", r)
+	}
+
+	susps := spy.Suspensions()
+	if len(susps) != 1 {
+		t.Fatalf("the run wrote %d suspensions, want 1; there is nothing to clean up otherwise", len(susps))
+	}
+	deleted := spy.deletions()
+	if len(deleted) != 1 {
+		t.Fatalf("DeleteSuspension called %d times, want 1: the suspension is stranded on a failed run", len(deleted))
+	}
+	if deleted[0] != susps[0].RunID {
+		t.Errorf("DeleteSuspension got run %q, want the suspended run %q", deleted[0], susps[0].RunID)
 	}
 }

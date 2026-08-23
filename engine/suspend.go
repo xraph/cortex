@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
@@ -59,6 +61,15 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 	r.StepCount = cont.StepIndex
 	r.TokensUsed = cont.TokensUsed
 	if err := e.store.UpdateRun(ctx, r); err != nil {
+		// The suspension is written and now belongs to nobody: the
+		// caller is about to fail the run, ExpiresAt is nil so the
+		// sweeper never sees the row, and nothing else deletes it. Best
+		// effort, since the store just failed a write, and logged
+		// rather than returned: the caller needs the reason the run
+		// could not be paused, not the reason the cleanup also failed.
+		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
+			e.logger.Error("delete orphaned suspension", log.String("error", delErr.Error()))
+		}
 		return fmt.Errorf("update run to paused: %w", err)
 	}
 	return nil

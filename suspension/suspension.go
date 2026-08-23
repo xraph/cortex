@@ -56,6 +56,26 @@ type Continuation struct {
 	SystemPrompt string        `json:"system_prompt"`
 	StepIndex    int           `json:"step_index"`
 	TokensUsed   int           `json:"tokens_used"`
+
+	// NewMessagesFrom is the index in Messages where this run's own
+	// messages begin. Everything before it is conversation history the
+	// run loaded at startup and must never save again.
+	//
+	// Without it a resume has no way to tell the two apart, and its
+	// first SaveConversation writes the whole history back as new rows.
+	// That is not hypothetical: it shipped in v1.8.0, and agents went
+	// deaf after about six runs because the duplicated rows filled the
+	// fixed read window until it held nothing recent. The engine tracks
+	// this boundary as newMessagesFrom in both react loops; this field
+	// is the same number, carried across the pause.
+	NewMessagesFrom int `json:"new_messages_from"`
+
+	// SessionID is the session the run was loading from and saving to. A
+	// resume cannot re-derive it: resolveSession lazily creates a
+	// default session under a create race, so asking it again after a
+	// pause can land on a different session than the one the messages
+	// above came from.
+	SessionID id.SessionID `json:"session_id,omitempty"`
 }
 
 // Suspension is a paused run.

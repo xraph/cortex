@@ -12,11 +12,17 @@ import (
 )
 
 func TestContinuation_SurvivesRoundTrip(t *testing.T) {
+	sid := id.NewSessionID()
 	c := suspension.Continuation{
-		Messages:     []llm.Message{{Role: "user", Content: "hello"}},
-		SystemPrompt: "be brief",
-		StepIndex:    3,
-		TokensUsed:   120,
+		Messages: []llm.Message{
+			{Role: "user", Content: "from an earlier run"},
+			{Role: "user", Content: "hello"},
+		},
+		SystemPrompt:    "be brief",
+		StepIndex:       3,
+		TokensUsed:      120,
+		NewMessagesFrom: 1,
+		SessionID:       sid,
 	}
 	blob, err := json.Marshal(&c)
 	if err != nil {
@@ -29,8 +35,17 @@ func TestContinuation_SurvivesRoundTrip(t *testing.T) {
 	if back.SystemPrompt != "be brief" {
 		t.Errorf("SystemPrompt did not survive the round trip: %q", back.SystemPrompt)
 	}
-	if back.StepIndex != 3 || back.TokensUsed != 120 || len(back.Messages) != 1 {
+	if back.StepIndex != 3 || back.TokensUsed != 120 || len(back.Messages) != 2 {
 		t.Errorf("continuation lost fidelity: %+v", back)
+	}
+	// The boundary and the session are what a resume saves by. A
+	// continuation that loses either re-saves the history it loaded, or
+	// saves into the wrong session.
+	if back.NewMessagesFrom != 1 {
+		t.Errorf("NewMessagesFrom did not survive the round trip: got %d, want 1", back.NewMessagesFrom)
+	}
+	if back.SessionID != sid {
+		t.Errorf("SessionID did not survive the round trip: got %q, want %q", back.SessionID, sid)
 	}
 }
 

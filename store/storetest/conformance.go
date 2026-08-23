@@ -314,10 +314,12 @@ func newSuspension(runID id.AgentRunID) *suspension.Suspension {
 			{ID: "call_conformance", Name: "conformance-tool", Arguments: `{"query":"x"}`},
 		},
 		Cont: suspension.Continuation{
-			Messages:     []llm.Message{{Role: "user", Content: "hello"}},
-			SystemPrompt: "you are a conformance fixture",
-			StepIndex:    2,
-			TokensUsed:   17,
+			Messages:        []llm.Message{{Role: "user", Content: "hello"}},
+			SystemPrompt:    "you are a conformance fixture",
+			StepIndex:       2,
+			TokensUsed:      17,
+			NewMessagesFrom: 1,
+			SessionID:       id.NewSessionID(),
 		},
 	}
 }
@@ -2960,6 +2962,13 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		}
 		if got.Cont.SystemPrompt != susp.Cont.SystemPrompt || got.Cont.StepIndex != susp.Cont.StepIndex || got.Cont.TokensUsed != susp.Cont.TokensUsed {
 			t.Errorf("continuation round-tripped as %+v, want %+v", got.Cont, susp.Cont)
+		}
+		// A backend that drops these two hands a resume a continuation
+		// that re-saves the history it loaded, into whatever session the
+		// resume happens to resolve.
+		if got.Cont.NewMessagesFrom != susp.Cont.NewMessagesFrom || got.Cont.SessionID != susp.Cont.SessionID {
+			t.Errorf("continuation boundary/session round-tripped as (%d, %q), want (%d, %q)",
+				got.Cont.NewMessagesFrom, got.Cont.SessionID, susp.Cont.NewMessagesFrom, susp.Cont.SessionID)
 		}
 		if len(got.Cont.Messages) != 1 || got.Cont.Messages[0].Content != susp.Cont.Messages[0].Content {
 			t.Errorf("continuation messages round-tripped as %+v, want %+v", got.Cont.Messages, susp.Cont.Messages)

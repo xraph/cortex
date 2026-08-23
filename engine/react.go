@@ -155,6 +155,12 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 			// runs first, and one suspension carrying every pending call
 			// is written after it.
 			var pending []suspension.PendingCall
+			// One reason per step, bound where the pending calls are
+			// collected and handed to suspend from here. Task 5 sets
+			// this from executeTool's classification instead of a
+			// literal; nothing downstream, including the persisted row,
+			// gets to name a reason of its own.
+			reason := suspension.ReasonExternalTool
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -205,12 +211,14 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 
 			if len(pending) > 0 {
 				cont := suspension.Continuation{
-					Messages:     messages,
-					SystemPrompt: systemPrompt,
-					StepIndex:    stepIndex,
-					TokensUsed:   totalTokens,
+					Messages:        messages,
+					SystemPrompt:    systemPrompt,
+					StepIndex:       stepIndex,
+					TokensUsed:      totalTokens,
+					NewMessagesFrom: newMessagesFrom,
+					SessionID:       sessionID,
 				}
-				if err := e.suspend(ctx, r, suspension.ReasonExternalTool, pending, cont); err != nil {
+				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, now)
 					return nil, fmt.Errorf("suspend run: %w", err)
 				}
@@ -484,6 +492,10 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 				// loop: see its comments for why a pending call gets no
 				// row, no terminal event and no result message.
 				var pending []suspension.PendingCall
+				// One reason per step, same as the synchronous loop: the
+				// event below reports what suspend was actually given
+				// rather than naming a reason of its own.
+				reason := suspension.ReasonExternalTool
 				for _, tc := range toolCalls {
 					tcStart := time.Now().UTC()
 					e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -532,12 +544,14 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 
 				if len(pending) > 0 {
 					cont := suspension.Continuation{
-						Messages:     messages,
-						SystemPrompt: systemPrompt,
-						StepIndex:    stepIndex,
-						TokensUsed:   totalTokens,
+						Messages:        messages,
+						SystemPrompt:    systemPrompt,
+						StepIndex:       stepIndex,
+						TokensUsed:      totalTokens,
+						NewMessagesFrom: newMessagesFrom,
+						SessionID:       sessionID,
 					}
-					if err := e.suspend(ctx, r, suspension.ReasonExternalTool, pending, cont); err != nil {
+					if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
 						e.failRun(ctx, r, ag.ID, err, now)
 						events <- StreamEvent{Type: EventError, Data: map[string]any{
 							"message": err.Error(),
@@ -551,7 +565,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					// to execute them.
 					events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
 						"run_id":  r.ID.String(),
-						"reason":  string(suspension.ReasonExternalTool),
+						"reason":  string(reason),
 						"pending": pending,
 					}}
 					return
