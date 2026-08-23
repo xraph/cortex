@@ -98,6 +98,14 @@ func NewManifest(_ *engine.Engine, plugins []plugin.Extension, modelSource Model
 			})
 		}
 
+		// context.Background() is deliberate here, not an oversight: NewManifest
+		// runs once at dashboard extension Start(), reached through forge's
+		// DashboardAware.DashboardContributor() (github.com/xraph/forge/extensions/dashboard),
+		// which takes no context and has no request in flight to take one from.
+		// Threading a real context through would mean changing that external
+		// interface, or moving plugin-widget merging out of manifest build
+		// entirely and into a per-request path -- worth doing if/when
+		// DashboardWidgets starts requiring scope, but out of scope here.
 		for _, pw := range dp.DashboardWidgets(context.Background()) {
 			m.Widgets = append(m.Widgets, contributor.WidgetDescriptor{
 				ID:         pw.ID,

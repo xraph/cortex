@@ -392,10 +392,10 @@ func (c *Contributor) renderSkillDetail(ctx context.Context, s store.Store, para
 	return pages.SkillDetailPage(sk, usageCount), nil
 }
 
-func (c *Contributor) renderSkillForm(_ context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
+func (c *Contributor) renderSkillForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		sk, err := s.GetSkillByName(context.Background(), "", name)
+		sk, err := s.GetSkillByName(ctx, "", name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve skill for edit: %w", err)
 		}
@@ -434,10 +434,10 @@ func (c *Contributor) renderTraitDetail(ctx context.Context, s store.Store, para
 	return pages.TraitDetailPage(t, usageCount), nil
 }
 
-func (c *Contributor) renderTraitForm(_ context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
+func (c *Contributor) renderTraitForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		t, err := s.GetTraitByName(context.Background(), "", name)
+		t, err := s.GetTraitByName(ctx, "", name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve trait for edit: %w", err)
 		}
@@ -475,10 +475,10 @@ func (c *Contributor) renderBehaviorDetail(ctx context.Context, s store.Store, p
 	return pages.BehaviorDetailPage(b, usageCount), nil
 }
 
-func (c *Contributor) renderBehaviorForm(_ context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
+func (c *Contributor) renderBehaviorForm(ctx context.Context, s store.Store, params contributor.Params) (templ.Component, error) {
 	name := params.QueryParams["name"]
 	if name != "" {
-		b, err := s.GetBehaviorByName(context.Background(), "", name)
+		b, err := s.GetBehaviorByName(ctx, "", name)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard: resolve behavior for edit: %w", err)
 		}
