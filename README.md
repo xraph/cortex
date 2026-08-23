@@ -37,12 +37,16 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Cortex has no built-in notion of tenant or workspace — the host
-    // defines its own scope hierarchy and attaches it to the context.
+    // Cortex has no built-in notion of tenant, workspace, or app — the
+    // host defines its own scope hierarchy and attaches it to the
+    // context. A host that wants an app dimension declares it as a
+    // level, the same as any other.
     ctx = cortex.WithScope(ctx, cortex.Scope{
-        Levels: []cortex.Level{{Key: "tenant", Value: "acme-corp"}},
+        Levels: []cortex.Level{
+            {Key: "tenant", Value: "acme-corp"},
+            {Key: "app", Value: "my-app"},
+        },
     })
-    ctx = cortex.WithApp(ctx, "my-app")
 
     // Open a SQLite-backed store and run its migrations. Swap in
     // store/postgres or store/mongo for production.
@@ -66,9 +70,9 @@ func main() {
         log.Fatal(err)
     }
 
-    // Create an agent
+    // Create an agent. Scope comes from the context set above, not
+    // from the config — Create fills it in from cortex.ScopeFromContext.
     err = eng.CreateAgent(ctx, &agent.Config{
-        AppID:        "my-app",
         Name:         "assistant",
         SystemPrompt: "You are a helpful assistant.",
         Model:        "gpt-4o",

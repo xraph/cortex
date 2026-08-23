@@ -76,7 +76,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				AgentID:     ag.ID.String(),
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
-				AppID:       scope.Canonical(),
+				AppID:       scanAppID(scope),
 				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
@@ -172,7 +172,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				AgentID:     ag.ID.String(),
 				RunID:       r.ID.String(),
 				ProfileName: extractSafetyProfile(ag),
-				AppID:       scope.Canonical(),
+				AppID:       scanAppID(scope),
 				TenantID:    scope.Canonical(),
 			}
 			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
@@ -285,7 +285,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					AgentID:     ag.ID.String(),
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
-					AppID:       scope.Canonical(),
+					AppID:       scanAppID(scope),
 					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
@@ -450,7 +450,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 					AgentID:     ag.ID.String(),
 					RunID:       r.ID.String(),
 					ProfileName: extractSafetyProfile(ag),
-					AppID:       scope.Canonical(),
+					AppID:       scanAppID(scope),
 					TenantID:    scope.Canonical(),
 				}
 				if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
@@ -614,6 +614,20 @@ func extractSafetyProfile(ag *agent.Config) string {
 		return profile
 	}
 	return ""
+}
+
+// scanAppID derives the app dimension for a safety.ScanRequest from scope.
+// safety.ScanRequest.AppID and TenantID are distinct dimensions to a host
+// scanner (see shield.WithApp vs shield.WithTenant), so a host that still
+// wants per-app scanner policies must declare an "app" scope level — its
+// value is used verbatim here. A host without one gets the same canonical
+// string as TenantID, which is what every host got before this scope
+// conversion existed.
+func scanAppID(scope cortex.Scope) string {
+	if v, ok := scope.Get("app"); ok {
+		return v
+	}
+	return scope.Canonical()
 }
 
 // mergeToolCallDeltas accumulates streaming tool call deltas into complete tool calls.

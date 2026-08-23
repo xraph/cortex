@@ -46,8 +46,13 @@ breaking-changes list before upgrading.
   the entity model is deferred to a later phase. Agent rows do get scope
   columns written at create for forward compatibility, but agent queries
   stay app-keyed.
-- **`AppFromContext`, `WithApp` and `Config.AppID` are unchanged.** The app
-  vocabulary survives this release alongside the new scope vocabulary.
+- **`AppFromContext`, `WithApp` and `Config.AppID` are unchanged in this
+  release** — the app vocabulary survives here alongside the new scope
+  vocabulary. That does not last: the scope-completion work that follows
+  this release removes `AppFromContext` and `WithApp` outright, along
+  with the `AppID` field on every entity and the `appID` parameter on
+  every by-name lookup. A host wanting an app dimension declares it as a
+  scope level instead.
 
 ### Added
 
@@ -127,6 +132,14 @@ breaking-changes list before upgrading.
   `cortex.Scope` on the context, so a row with `scope_l0 = ''` simply never
   matches — it is invisible to scoped reads, not deleted. If old history
   matters, the host must re-scope those rows itself.
+- **Hosts relying on per-app Shield policies must declare an `app` scope
+  level.** Once `AppFromContext`/`WithApp` are removed, `safety.ScanRequest.AppID`
+  (and the `shield.WithApp` dimension it feeds) is sourced from the host's own
+  `Scope` — specifically from an `app` level, if one exists (`scope.Get("app")`).
+  A host with no such level gets the same canonical string already used for
+  `TenantID`, which collapses the app and tenant dimensions Shield sees as
+  distinct. A host with per-app Shield policies must add an `app` level to its
+  `scope_levels` before upgrading, or those policies silently stop matching.
 - **`cortex_orchestration_runs` carries no scope columns.** Orchestration is
   out of scope for this phase and `orchestrationRunToModel` never populated
   the indexed scope levels (only `ScopeExtra`), so the columns would have
