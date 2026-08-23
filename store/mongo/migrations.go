@@ -112,6 +112,31 @@ const stalePersonaAppNameIndexName = "app_id_1_name_1"
 // here.
 const personaScopeNameUniqueIndexName = "cortex_personas_scope_name_unique"
 
+// staleOrchestrationAppNameIndexName is Mongo's default auto-generated
+// name for the pre-scope (app_id, name) unique index on
+// cortex_orchestration_configs, from when it carried no explicit name.
+// Store.Migrate drops it by name before creating its scope-keyed
+// replacement below: app_id was never the isolation boundary for
+// orchestration names, scope is (app_id stays a real, required lookup
+// parameter on GetOrchestrationByName, but layered on top of scope, not
+// instead of it), so the old index refused two different scopes the
+// same name. CreateMany is additive and never drops a stale index on its
+// own, so leaving the old one in place would keep the write path
+// colliding cross-scope even after the new index existed too.
+//
+// Orchestration is the last entity converted in this phase, and the only
+// one that ever had scope columns dropped once already: an earlier
+// attempt populated cortex_orchestration_runs' scope fields only
+// partially and it read as coverage that wasn't there, so this
+// collection carried no scope-aware index at all until now.
+const staleOrchestrationAppNameIndexName = "app_id_1_name_1"
+
+// orchestrationScopeNameUniqueIndexName is the fixed name for the
+// scope-aware unique index on cortex_orchestration_configs, so a future
+// migration can find and drop it by name the same way
+// staleOrchestrationAppNameIndexName is used here.
+const orchestrationScopeNameUniqueIndexName = "cortex_orchestration_configs_scope_name_unique"
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -239,17 +264,24 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			scopeIndex,
 		},
 		colOrchestrationConfigs: {
+			// Partial (scope_canon $gt "") for the same reason as
+			// colAgents above: Store.Migrate applies this index before
+			// rescoping legacy rows, and any pre-v1.8.0 document is
+			// still sitting at scope_canon = "" at that point.
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
-				Options: options.Index().SetUnique(true),
+				Keys: bson.D{{Key: "scope_canon", Value: 1}, {Key: "name", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(orchestrationScopeNameUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
 		},
 		colOrchestrationRuns: {
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "status", Value: 1}}},
 			{Keys: bson.D{{Key: "config_id", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			scopeIndex,
 		},
 	}
 }

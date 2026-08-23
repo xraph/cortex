@@ -918,7 +918,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		orchA := mustCreateOrchestration(t, s, ctxA, "orchestration-a")
 		orchB := mustCreateOrchestration(t, s, ctxB, "orchestration-b")
 
-		gotA, err := s.ListOrchestrations(ctxA, &orchestration.ConfigListFilter{AppID: "conformance-app"})
+		gotA, err := s.ListOrchestrations(ctxA, &orchestration.ConfigListFilter{})
 		if err != nil {
 			t.Fatalf("list orchestrations A: %v", err)
 		}
@@ -926,7 +926,7 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 			t.Fatalf("ListOrchestrations(ctxA) = %d orchestration(s), want exactly orchA (predicate isn't filtering)", len(gotA))
 		}
 
-		gotB, err := s.ListOrchestrations(ctxB, &orchestration.ConfigListFilter{AppID: "conformance-app"})
+		gotB, err := s.ListOrchestrations(ctxB, &orchestration.ConfigListFilter{})
 		if err != nil {
 			t.Fatalf("list orchestrations B: %v", err)
 		}
@@ -1408,21 +1408,14 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
-	// Orchestration is the one entity left where app_id still governs:
-	// ONE name reused across two scopes, held under the same app_id
-	// (app_id is a required lookup parameter here, not the scope under
-	// test — holding it fixed keeps scope as the only thing that could
-	// separate these rows, if the store checked it). A different name
-	// would be separated by the name alone and would prove nothing about
-	// a scope predicate that doesn't exist yet for orchestration.
-	//
-	// The store is not scope-guarded, and app_id+name is already a real
-	// unique index on the table (see idx_cortex_orchestration_configs_
-	// app_name in store/sqlite/migrations.go), independent of any scope
-	// column. So the second mustCreateOrchestration call below is
-	// expected to fail outright with cortex.ErrAlreadyExists — the
-	// fixture can't even get two rows on the books to compare, which is
-	// itself the proof that nothing about scope separates them.
+	// Orchestration is the one entity left where app_id still governs
+	// something: it's a required lookup parameter on GetOrchestrationByName,
+	// layered on top of scope rather than replaced by it. ONE name reused
+	// across two scopes, held under the same app_id (held fixed so scope
+	// is the only thing that could separate these rows), proves
+	// UNIQUE (scope_canon, name) — not the retired UNIQUE (app_id, name)
+	// — is what the store enforces now, and Get/Update/Delete must refuse
+	// a scope-B caller who only knows (or guesses) scope-A's id.
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -1441,6 +1434,39 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 		if gotA.ID == gotB.ID {
 			t.Fatal("both scopes resolved to the same row; the scope predicate is not applied")
+		}
+
+		// A caller in scope B must not be able to read, mutate, or delete
+		// scope A's orchestration merely by knowing (or guessing) its id.
+		// GetOrchestrationByName above only proves the name-lookup
+		// predicate; Get/Update/Delete need their own predicate proven
+		// independently, and each check re-reads from scope A afterward
+		// to prove no mutation and no deletion happened.
+		_, getErr := s.GetOrchestration(ctxB, gotA.ID)
+		if !errors.Is(getErr, cortex.ErrOrchestrationNotFound) {
+			t.Errorf("GetOrchestration(ctxB, orchA.ID) = %v, want ErrOrchestrationNotFound", getErr)
+		}
+
+		gotA.Description = "mutated-from-B"
+		updateErr := s.UpdateOrchestration(ctxB, gotA)
+		if !errors.Is(updateErr, cortex.ErrOrchestrationNotFound) {
+			t.Errorf("UpdateOrchestration(ctxB, orchA) = %v, want ErrOrchestrationNotFound", updateErr)
+		}
+		stillA, err := s.GetOrchestration(ctxA, gotA.ID)
+		if err != nil {
+			t.Fatalf("reload orchA after cross-scope UpdateOrchestration attempt: %v", err)
+		}
+		if stillA.Description == "mutated-from-B" {
+			t.Error("UpdateOrchestration(ctxB, orchA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+
+		deleteErr := s.DeleteOrchestration(ctxB, gotA.ID)
+		if !errors.Is(deleteErr, cortex.ErrOrchestrationNotFound) {
+			t.Errorf("DeleteOrchestration(ctxB, orchA.ID) = %v, want ErrOrchestrationNotFound", deleteErr)
+		}
+		_, reloadErr := s.GetOrchestration(ctxA, gotA.ID)
+		if reloadErr != nil {
+			t.Errorf("orchA missing after cross-scope DeleteOrchestration attempt: %v (must not delete another scope's row)", reloadErr)
 		}
 	})
 }
@@ -1625,6 +1651,32 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("ListPersonas({workspace=ws_y}) incorrectly returned a persona scoped to {workspace=ws_x, project=p1}")
 		}
 	})
+
+	// Orchestration is the last entity converted in this phase, so its
+	// List predicate against a broader-than-stored filter went untested
+	// until now, the same as Persona's did going into Task 7.
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		orchID := mustCreateOrchestration(t, s, ctxWithScope("ws_x", "p1"), "")
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListOrchestrations(broad, nil)
+		if err != nil {
+			t.Fatalf("list orchestrations (broad): %v", err)
+		}
+		if !containsOrchestrationID(got, orchID) {
+			t.Errorf("ListOrchestrations({workspace=ws_x}) didn't return an orchestration scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListOrchestrations(other, nil)
+		if err != nil {
+			t.Fatalf("list orchestrations (other workspace): %v", err)
+		}
+		if containsOrchestrationID(gotOther, orchID) {
+			t.Errorf("ListOrchestrations({workspace=ws_y}) incorrectly returned an orchestration scoped to {workspace=ws_x, project=p1}")
+		}
+	})
 }
 
 func containsRunID(rs []*run.Run, want id.AgentRunID) bool {
@@ -1684,6 +1736,15 @@ func containsBehaviorID(bs []*behavior.Behavior, want id.BehaviorID) bool {
 func containsPersonaID(ps []*persona.Persona, want id.PersonaID) bool {
 	for _, p := range ps {
 		if p.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsOrchestrationID(cfgs []*orchestration.Config, want id.OrchestrationConfigID) bool {
+	for _, c := range cfgs {
+		if c.ID == want {
 			return true
 		}
 	}
@@ -1891,6 +1952,40 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 			t.Errorf("Description after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Description, "mutated")
 		}
 	})
+
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		orchID := mustCreateOrchestration(t, s, createCtx, "")
+
+		loaded, err := s.GetOrchestration(createCtx, orchID)
+		if err != nil {
+			t.Fatalf("get orchestration: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Description = "mutated"
+
+		// A broader context (workspace only, no project) still
+		// authorizes the update via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateOrchestration(updateCtx, loaded); err != nil {
+			t.Fatalf("update orchestration: %v", err)
+		}
+
+		reloaded, err := s.GetOrchestration(createCtx, orchID)
+		if err != nil {
+			t.Fatalf("reload orchestration: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Description != "mutated" {
+			t.Errorf("Description after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Description, "mutated")
+		}
+	})
 }
 
 // ──────────────────────────────────────────────────
@@ -2058,6 +2153,18 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		got, err := s.GetPersona(ctx, personaID)
 		if err != nil {
 			t.Fatalf("get persona after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Orchestration", func(t *testing.T) {
+		s := newStore(t)
+		orchID := mustCreateOrchestration(t, s, ctx, "")
+		got, err := s.GetOrchestration(ctx, orchID)
+		if err != nil {
+			t.Fatalf("get orchestration after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
 		}
 		if got.Scope.Canonical() != want {
 			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)

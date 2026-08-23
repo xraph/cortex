@@ -120,9 +120,10 @@ func (s *Store) rescopeLegacyRows(ctx context.Context, o cortex.MigrateOptions) 
 
 // discoverScopedCollections finds every candidate collection that
 // actually carries the scope_l0/l1/l2 index Migrate creates for
-// scope-guarded collections. A collection that doesn't have it yet
-// (cortex_personas and cortex_orchestration_* until a later phase) or
-// doesn't exist at all is simply skipped.
+// scope-guarded collections. A collection that doesn't have it yet, or
+// doesn't exist at all, is simply skipped -- this is what let earlier
+// phases bring collections under scope one at a time without this pass
+// needing a hardcoded list to keep in sync.
 func (s *Store) discoverScopedCollections(ctx context.Context) ([]string, error) {
 	var scoped []string
 	for _, col := range candidateCollections {

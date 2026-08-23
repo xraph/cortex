@@ -12,10 +12,57 @@ import (
 	"github.com/xraph/cortex/orchestration"
 )
 
+// mutableOrchestrationConfigColumns is every cortex_orchestration_configs
+// column UpdateOrchestration is allowed to write. A config's scope is set
+// once at creation and never rewritten: scope_l0/l1/l2/extra/canon are
+// deliberately absent here. Grove's NewUpdate builds SET from every model
+// field by default, so without this explicit whitelist an
+// UpdateOrchestration issued from a broader (but still scope-matching)
+// context would silently overwrite a row's narrower stored scope. Unlike
+// the persona conversion, app_id stays in this list: orchestration.Config
+// still carries a live AppID field (GetOrchestrationByName keeps it as a
+// real, required lookup parameter alongside scope), so it isn't vestigial
+// here and every write is expected to keep populating it.
+var mutableOrchestrationConfigColumns = []string{
+	"name",
+	"description",
+	"app_id",
+	"strategy",
+	"participants",
+	"settings",
+	"metadata",
+	"created_at",
+	"updated_at",
+}
+
+// mutableOrchestrationRunColumns mirrors mutableOrchestrationConfigColumns
+// for cortex_orchestration_runs: everything except the five scope columns.
+var mutableOrchestrationRunColumns = []string{
+	"config_id",
+	"app_id",
+	"strategy",
+	"status",
+	"input",
+	"output",
+	"error",
+	"agent_run_ids",
+	"started_at",
+	"completed_at",
+	"created_at",
+	"updated_at",
+}
+
+// CreateOrchestration persists a new orchestration config, stamping the
+// scope from the context.
 func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	c.CreatedAt = now
 	c.UpdatedAt = now
+	c.Scope = scope
 	if _, err := s.pgdb.NewInsert(orchestrationConfigToModel(c)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("cortex: create orchestration: %w", cortex.ErrAlreadyExists)
@@ -26,8 +73,16 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config
 }
 
 func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(orchestrationConfigModel)
-	if err := s.pgdb.NewSelect(m).Where("id = ?", orchID.String()).Scan(ctx); err != nil {
+	q := s.pgdb.NewSelect(m).Where("id = ?", orchID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrOrchestrationNotFound
 		}
@@ -36,9 +91,21 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 	return orchestrationConfigFromModel(m)
 }
 
+// GetOrchestrationByName returns an orchestration config by app ID and
+// name within the caller's scope. appID stays a real, required lookup
+// parameter here (unlike agent/persona, which dropped it): scope is
+// layered on top of it, not a replacement for it.
 func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) (*orchestration.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(orchestrationConfigModel)
-	err := s.pgdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name).Scan(ctx)
+	q := s.pgdb.NewSelect(m).Where("app_id = ?", appID).Where("name = ?", name)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	err := q.Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrOrchestrationNotFound
@@ -48,9 +115,24 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, appID, name string) 
 	return orchestrationConfigFromModel(m)
 }
 
+// UpdateOrchestration modifies an existing orchestration config's mutable
+// fields within the caller's scope. Scope is immutable after creation:
+// the context scope is used only as an authorization predicate (the
+// caller must be at or above the config's stored scope to touch it), and
+// is never written back — mutableOrchestrationConfigColumns excludes the
+// five scope columns from what gets written.
 func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	c.UpdatedAt = time.Now().UTC()
-	res, err := s.pgdb.NewUpdate(orchestrationConfigToModel(c)).WherePK().Exec(ctx)
+	m := orchestrationConfigToModel(c)
+	q := s.pgdb.NewUpdate(m).Column(mutableOrchestrationConfigColumns...).WherePK()
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: update orchestration: %w", err)
 	}
@@ -65,7 +147,15 @@ func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config
 }
 
 func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error {
-	res, err := s.pgdb.NewDelete((*orchestrationConfigModel)(nil)).Where("id = ?", orchID.String()).Exec(ctx)
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
+	q := s.pgdb.NewDelete((*orchestrationConfigModel)(nil)).Where("id = ?", orchID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: delete orchestration: %w", err)
 	}
@@ -80,21 +170,26 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 }
 
 func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &orchestration.ConfigListFilter{}
+	}
 	var models []orchestrationConfigModel
 	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Search != "" {
-			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Search != "" {
+		q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list orchestrations: %w", err)
@@ -111,14 +206,19 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 }
 
 func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &orchestration.ConfigListFilter{}
+	}
 	q := s.pgdb.NewSelect((*orchestrationConfigModel)(nil))
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Search != "" {
-			q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Search != "" {
+		q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+filter.Search+"%")
 	}
 	count, err := q.Count(ctx)
 	if err != nil {
@@ -127,10 +227,17 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 	return count, nil
 }
 
+// CreateOrchestrationRun persists a new orchestration run, stamping the
+// scope from the context.
 func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	now := time.Now().UTC()
 	r.CreatedAt = now
 	r.UpdatedAt = now
+	r.Scope = scope
 	if _, err := s.pgdb.NewInsert(orchestrationRunToModel(r)).Exec(ctx); err != nil {
 		return fmt.Errorf("cortex: create orchestration run: %w", err)
 	}
@@ -138,8 +245,16 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run
 }
 
 func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
 	m := new(orchestrationRunModel)
-	if err := s.pgdb.NewSelect(m).Where("id = ?", runID.String()).Scan(ctx); err != nil {
+	q := s.pgdb.NewSelect(m).Where("id = ?", runID.String())
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, cortex.ErrOrchestrationRunNotFound
 		}
@@ -148,9 +263,21 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 	return orchestrationRunFromModel(m)
 }
 
+// UpdateOrchestrationRun modifies an existing orchestration run's mutable
+// fields within the caller's scope. Scope is immutable after creation,
+// same as UpdateOrchestration above.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return cortex.ErrNoScope
+	}
 	r.UpdatedAt = time.Now().UTC()
-	res, err := s.pgdb.NewUpdate(orchestrationRunToModel(r)).WherePK().Exec(ctx)
+	m := orchestrationRunToModel(r)
+	q := s.pgdb.NewUpdate(m).Column(mutableOrchestrationRunColumns...).WherePK()
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: update orchestration run: %w", err)
 	}
@@ -165,21 +292,26 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run
 }
 
 func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &orchestration.RunListFilter{}
+	}
 	var models []orchestrationRunModel
 	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Status != "" {
-			q = q.Where("status = ?", filter.Status)
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Status != "" {
+		q = q.Where("status = ?", filter.Status)
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list orchestration runs: %w", err)
@@ -196,14 +328,19 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 }
 
 func (s *Store) CountOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) (int64, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return 0, cortex.ErrNoScope
+	}
+	if filter == nil {
+		filter = &orchestration.RunListFilter{}
+	}
 	q := s.pgdb.NewSelect((*orchestrationRunModel)(nil))
-	if filter != nil {
-		if filter.AppID != "" {
-			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.Status != "" {
-			q = q.Where("status = ?", filter.Status)
-		}
+	for _, p := range scopePredicates(scope, filter.Exact) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if filter.Status != "" {
+		q = q.Where("status = ?", filter.Status)
 	}
 	count, err := q.Count(ctx)
 	if err != nil {

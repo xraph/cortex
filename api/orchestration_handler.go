@@ -142,7 +142,6 @@ func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*
 
 func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsRequest) (*ListOrchestrationsResponse, error) {
 	items, err := a.eng.ListOrchestrations(ctx.Context(), &orchestration.ConfigListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
 	})
@@ -221,7 +220,6 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 
 func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRunsRequest) (*ListOrchestrationRunsResponse, error) {
 	items, err := a.eng.ListOrchestrationRuns(ctx.Context(), &orchestration.RunListFilter{
-		AppID:  cortex.AppFromContext(ctx.Context()),
 		Status: req.Status,
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,

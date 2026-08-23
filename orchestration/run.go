@@ -21,6 +21,7 @@ type Run struct {
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs
 	AppID       string                   `json:"app_id"`
+	Scope       cortex.Scope             `json:"scope"`
 	Strategy    string                   `json:"strategy"`
 	Status      string                   `json:"status"`
 	Input       string                   `json:"input"`
@@ -40,9 +41,11 @@ type RunStore interface {
 	CountOrchestrationRuns(ctx context.Context, filter *RunListFilter) (int64, error)
 }
 
-// RunListFilter controls pagination and filtering for orchestration run listing.
+// RunListFilter controls pagination and filtering for orchestration run
+// listing. Scope arrives on the context; Exact narrows to rows stored at
+// precisely that depth instead of everything beneath it.
 type RunListFilter struct {
-	AppID  string
+	Exact  bool
 	Status string
 	Limit  int
 	Offset int

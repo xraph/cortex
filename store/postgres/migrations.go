@@ -357,11 +357,13 @@ DROP TABLE IF EXISTS cortex_orchestration_configs;
 			Version: "20260821000001",
 			Comment: "Add host-defined scope columns; pre-v2 rows are left unscoped",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
-				// cortex_orchestration_runs is deliberately excluded: orchestration
-				// is out of this phase's scope, orchestrationRunToModel never
-				// populates the indexed scope levels (only ScopeExtra), and empty
-				// NOT NULL columns that read as coverage and aren't are worse than
-				// no columns at all.
+				// cortex_orchestration_configs/cortex_orchestration_runs are
+				// deliberately excluded here: orchestration was out of
+				// scope for this migration and got its own columns much
+				// later, in 20260823000004, once
+				// orchestrationConfigToModel/orchestrationRunToModel
+				// actually populated all five columns via scopeColumns
+				// instead of just ScopeExtra.
 				for _, table := range []string{
 					"cortex_agents",
 					"cortex_runs",
@@ -786,6 +788,100 @@ ALTER TABLE cortex_personas
     DROP COLUMN IF EXISTS scope_canon
 `); err != nil {
 					return fmt.Errorf("drop scope columns from cortex_personas: %w", err)
+				}
+				return nil
+			},
+		},
+		&migrate.Migration{
+			Name:    "scope_orchestrations",
+			Version: "20260823000004",
+			Comment: "Add host-defined scope columns to cortex_orchestration_configs/cortex_orchestration_runs and replace the configs' app_id-keyed unique index with a scope-keyed one",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Orchestration is the last entity converted in this phase,
+				// and the only one that had its scope columns dropped once
+				// already (see 20260821000001's comment on
+				// cortex_orchestration_runs): the earlier attempt populated
+				// only ScopeExtra and left scope_l0/l1/l2/canon empty,
+				// which read as coverage that wasn't there. This time
+				// orchestrationConfigToModel/orchestrationRunToModel write
+				// all five columns via scopeColumns, the same as every
+				// other scoped table (see 20260821000001).
+				for _, table := range []string{
+					"cortex_orchestration_configs",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+`
+    ADD COLUMN IF NOT EXISTS scope_l0    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_l1    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_l2    TEXT  NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS scope_extra JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS scope_canon TEXT  NOT NULL DEFAULT ''
+`); err != nil {
+						return fmt.Errorf("add scope columns to %s: %w", table, err)
+					}
+					if _, err := exec.Exec(ctx, `
+CREATE INDEX IF NOT EXISTS idx_`+table+`_scope ON `+table+` (scope_l0, scope_l1, scope_l2)
+`); err != nil {
+						return fmt.Errorf("index scope on %s: %w", table, err)
+					}
+				}
+
+				// idx_cortex_orchestration_configs_app_name enforced
+				// uniqueness on (app_id, name), from before orchestration
+				// configs carried a scope at all. Now that every method on
+				// ConfigStore is scope-guarded, two different scopes must
+				// be able to each use the same name — app_id stays a real,
+				// required lookup parameter on GetOrchestrationByName, but
+				// it was never the isolation boundary, scope is, so the
+				// unique index has to key on scope_canon instead or the
+				// second scope's Create collides on the first scope's row
+				// before the scope predicate ever gets a chance to matter.
+				//
+				// Partial (WHERE scope_canon != '') rather than a plain
+				// unique index, for the exact reason 20260823000001
+				// documents for cortex_agents: this migration runs before
+				// rescopeLegacyRows, so any pre-v1.8.0 rows are still
+				// sitting at scope_canon = '' when the index is built, and
+				// a plain unique index would make every such row collide
+				// on ('', name) instead of letting the rescoper separate
+				// them first.
+				if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_orchestration_configs_app_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_scope_name ON cortex_orchestration_configs (scope_canon, name) WHERE scope_canon != '';
+`); err != nil {
+					return fmt.Errorf("scope-key unique index on cortex_orchestration_configs: %w", err)
+				}
+
+				// No backfill, same reasoning as every prior migration in
+				// this phase: a fabricated level for pre-existing rows
+				// would make scope_l0 polysemous per row and silently
+				// orphan old rows instead of leaving them correctly
+				// invisible to every scoped query until rescopeLegacyRows
+				// resolves them.
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				if _, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_cortex_orchestration_configs_scope_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_orchestration_configs_app_name ON cortex_orchestration_configs (app_id, name);
+`); err != nil {
+					return fmt.Errorf("restore app_id-key unique index on cortex_orchestration_configs: %w", err)
+				}
+				for _, table := range []string{
+					"cortex_orchestration_configs",
+					"cortex_orchestration_runs",
+				} {
+					if _, err := exec.Exec(ctx, `
+ALTER TABLE `+table+`
+    DROP COLUMN IF EXISTS scope_l0,
+    DROP COLUMN IF EXISTS scope_l1,
+    DROP COLUMN IF EXISTS scope_l2,
+    DROP COLUMN IF EXISTS scope_extra,
+    DROP COLUMN IF EXISTS scope_canon
+`); err != nil {
+						return fmt.Errorf("drop scope columns from %s: %w", table, err)
+					}
 				}
 				return nil
 			},

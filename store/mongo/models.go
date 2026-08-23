@@ -781,11 +781,17 @@ type orchestrationConfigModel struct {
 	Participants    []orchestration.Participant `grove:"participants" bson:"participants,omitempty"`
 	Settings        orchestration.Settings      `grove:"settings"     bson:"settings,omitempty"`
 	Metadata        map[string]any              `grove:"metadata"     bson:"metadata,omitempty"`
+	ScopeL0         string                      `grove:"scope_l0"     bson:"scope_l0"`
+	ScopeL1         string                      `grove:"scope_l1"     bson:"scope_l1"`
+	ScopeL2         string                      `grove:"scope_l2"     bson:"scope_l2"`
+	ScopeExtra      map[string]string           `grove:"scope_extra"  bson:"scope_extra,omitempty"`
+	ScopeCanon      string                      `grove:"scope_canon"  bson:"scope_canon"`
 	CreatedAt       time.Time                   `grove:"created_at"   bson:"created_at"`
 	UpdatedAt       time.Time                   `grove:"updated_at"   bson:"updated_at"`
 }
 
 func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigModel {
+	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &orchestrationConfigModel{
 		ID:           c.ID.String(),
 		Name:         c.Name,
@@ -795,6 +801,11 @@ func orchestrationConfigToModel(c *orchestration.Config) *orchestrationConfigMod
 		Participants: c.Participants,
 		Settings:     c.Settings,
 		Metadata:     c.Metadata,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   c.Scope.Canonical(),
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
 	}
@@ -805,12 +816,17 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("orchestration config %s: %w", cfgID, err)
+	}
 	return &orchestration.Config{
 		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:           cfgID,
 		Name:         m.Name,
 		Description:  m.Description,
 		AppID:        m.AppID,
+		Scope:        scope,
 		Strategy:     m.Strategy,
 		Participants: m.Participants,
 		Settings:     m.Settings,
@@ -824,30 +840,32 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 
 type orchestrationRunModel struct {
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string     `grove:"id,pk"         bson:"_id"`
-	ConfigID        string     `grove:"config_id"     bson:"config_id"`
-	AppID           string     `grove:"app_id"        bson:"app_id"`
-	Strategy        string     `grove:"strategy"      bson:"strategy"`
-	Status          string     `grove:"status"        bson:"status"`
-	Input           string     `grove:"input"         bson:"input"`
-	Output          string     `grove:"output"        bson:"output"`
-	Error           string     `grove:"error"         bson:"error"`
-	AgentRunIDs     []string   `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
-	StartedAt       time.Time  `grove:"started_at"    bson:"started_at"`
-	CompletedAt     *time.Time `grove:"completed_at"  bson:"completed_at,omitempty"`
-	CreatedAt       time.Time  `grove:"created_at"    bson:"created_at"`
-	UpdatedAt       time.Time  `grove:"updated_at"    bson:"updated_at"`
+	ID              string            `grove:"id,pk"         bson:"_id"`
+	ConfigID        string            `grove:"config_id"     bson:"config_id"`
+	AppID           string            `grove:"app_id"        bson:"app_id"`
+	Strategy        string            `grove:"strategy"      bson:"strategy"`
+	Status          string            `grove:"status"        bson:"status"`
+	Input           string            `grove:"input"         bson:"input"`
+	Output          string            `grove:"output"        bson:"output"`
+	Error           string            `grove:"error"         bson:"error"`
+	AgentRunIDs     []string          `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"      bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"      bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"      bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"   bson:"scope_canon"`
+	StartedAt       time.Time         `grove:"started_at"    bson:"started_at"`
+	CompletedAt     *time.Time        `grove:"completed_at"  bson:"completed_at,omitempty"`
+	CreatedAt       time.Time         `grove:"created_at"    bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"    bson:"updated_at"`
 }
 
-// orchestration.Run does not carry a cortex.Scope field yet, so
-// cortex_orchestration_runs deliberately carries no scope fields:
-// orchestration is out of this phase's scope, and fields nothing ever
-// populates would read as coverage that isn't there.
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	runIDs := make([]string, len(r.AgentRunIDs))
 	for i, rid := range r.AgentRunIDs {
 		runIDs[i] = rid.String()
 	}
+	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &orchestrationRunModel{
 		ID:          r.ID.String(),
 		ConfigID:    r.ConfigID.String(),
@@ -858,6 +876,11 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 		Output:      r.Output,
 		Error:       r.Error,
 		AgentRunIDs: runIDs,
+		ScopeL0:     l0,
+		ScopeL1:     l1,
+		ScopeL2:     l2,
+		ScopeExtra:  extra,
+		ScopeCanon:  r.Scope.Canonical(),
 		StartedAt:   r.StartedAt,
 		CompletedAt: r.CompletedAt,
 		CreatedAt:   r.CreatedAt,
@@ -870,10 +893,15 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 	if err != nil {
 		return nil, err
 	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("orchestration run %s: %w", runID, err)
+	}
 	r := &orchestration.Run{
 		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:          runID,
 		AppID:       m.AppID,
+		Scope:       scope,
 		Strategy:    m.Strategy,
 		Status:      m.Status,
 		Input:       m.Input,

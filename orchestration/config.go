@@ -15,6 +15,7 @@ type Config struct {
 	Name         string                   `json:"name"`
 	Description  string                   `json:"description,omitempty"`
 	AppID        string                   `json:"app_id"`
+	Scope        cortex.Scope             `json:"scope"`
 	Strategy     string                   `json:"strategy"`
 	Participants []Participant            `json:"participants"`
 	Settings     Settings                 `json:"settings,omitempty"`
@@ -32,9 +33,11 @@ type ConfigStore interface {
 	CountOrchestrations(ctx context.Context, filter *ConfigListFilter) (int64, error)
 }
 
-// ConfigListFilter controls pagination and filtering for orchestration listing.
+// ConfigListFilter controls pagination and filtering for orchestration
+// listing. Scope arrives on the context; Exact narrows to rows stored at
+// precisely that depth instead of everything beneath it.
 type ConfigListFilter struct {
-	AppID  string
+	Exact  bool
 	Search string
 	Limit  int
 	Offset int

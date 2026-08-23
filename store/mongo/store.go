@@ -70,6 +70,9 @@ func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	if err := s.dropStaleAppNameIndex(ctx, colPersonas, stalePersonaAppNameIndexName); err != nil {
 		return err
 	}
+	if err := s.dropStaleAppNameIndex(ctx, colOrchestrationConfigs, staleOrchestrationAppNameIndexName); err != nil {
+		return err
+	}
 
 	indexes := migrationIndexes()
 
