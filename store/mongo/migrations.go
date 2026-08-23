@@ -336,14 +336,18 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 }
 
 // backfillSessionMarker tags every cortex_sessions document this backfill
-// creates, in Metadata, for the same audit-trail reason as the
-// postgres/sqlite migrations of the same version -- an
-// organically-created default session (engine.resolveSession) has the
-// identical IsDefault=true, Title "Default" shape but never sets
-// Metadata. Mongo carries no versioned migration list to give this a Down
-// to reverse, so nothing currently reads the marker back, but it costs
-// nothing to leave every backfilled document distinguishable from an
-// organic one, and it keeps this data-shape identical across all three
+// creates, in the cortex-owned backfilled_by field, for the same
+// audit-trail reason as the postgres/sqlite migrations of the same
+// version -- an organically-created default session
+// (engine.resolveSession) has the identical IsDefault=true, Title
+// "Default" shape but never sets backfilled_by. This used to live in
+// Metadata, which session.Session documents as belonging to the host: a
+// host that overwrote its own metadata on a backfilled document would
+// silently destroy the marker. Mongo carries no versioned migration
+// list to give this a Down to reverse, so nothing currently reads the
+// marker back, but it costs nothing to leave every backfilled document
+// distinguishable from an organic one, in a field a host can't collide
+// with, and it keeps this data shape identical across all three
 // backends.
 const backfillSessionMarker = "20260824000004"
 
@@ -555,7 +559,7 @@ func (s *Store) insertOrReuseDefaultSession(ctx context.Context, g legacyConvers
 		MessageCount: messageCount,
 		LastMessage:  lastMessage,
 		IsDefault:    true,
-		Metadata:     map[string]any{"backfilled_by": backfillSessionMarker},
+		BackfilledBy: backfillSessionMarker,
 		ScopeL0:      g.ScopeL0,
 		ScopeL1:      g.ScopeL1,
 		ScopeL2:      g.ScopeL2,

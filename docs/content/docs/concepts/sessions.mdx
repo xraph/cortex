@@ -23,6 +23,8 @@ type Session struct {
     LastMessage  string
 
     IsDefault bool
+
+    BackfilledBy string
 }
 ```
 
@@ -30,6 +32,13 @@ type Session struct {
 them. `MessageCount` and `LastMessage` belong to cortex: they are maintained on
 write, inside the same transaction as the messages they describe, so a reader can
 trust them without recomputing anything from the message rows.
+
+`BackfilledBy` also belongs to cortex, not the host, and lives in its own column
+rather than `Metadata` for exactly that reason: it's the migration version that
+created a session for a pre-v1.9.0 conversation that never had one (see
+"Upgrading: message_count on a legacy session" below), empty for every session a
+run creates organically. Keeping it out of `Metadata` means a host overwriting its
+own metadata can never collide with or erase it.
 
 ## The default session is a real row
 

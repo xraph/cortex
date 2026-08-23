@@ -510,6 +510,7 @@ type sessionModel struct {
 	LastMessage     string    `grove:"last_message,notnull"`
 	IsDefault       bool      `grove:"is_default,notnull"`
 	Metadata        string    `grove:"metadata,notnull"`
+	BackfilledBy    string    `grove:"backfilled_by,notnull"`
 	ScopeL0         string    `grove:"scope_l0,notnull"`
 	ScopeL1         string    `grove:"scope_l1,notnull"`
 	ScopeL2         string    `grove:"scope_l2,notnull"`
@@ -529,6 +530,7 @@ func sessionToModel(sess *session.Session) *sessionModel {
 		LastMessage:  sess.LastMessage,
 		IsDefault:    sess.IsDefault,
 		Metadata:     mustJSON(sess.Metadata),
+		BackfilledBy: sess.BackfilledBy,
 		ScopeL0:      l0,
 		ScopeL1:      l1,
 		ScopeL2:      l2,
@@ -561,6 +563,7 @@ func sessionFromModel(m *sessionModel) (*session.Session, error) {
 		MessageCount: m.MessageCount,
 		LastMessage:  m.LastMessage,
 		IsDefault:    m.IsDefault,
+		BackfilledBy: m.BackfilledBy,
 	}
 	if err := unmarshalField("metadata", m.Metadata, &sess.Metadata); err != nil {
 		return nil, err

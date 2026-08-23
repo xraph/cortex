@@ -872,6 +872,16 @@ ALTER TABLE `+table+` DROP COLUMN scope_canon;
 				// forward: it is created with its scope columns already in
 				// place rather than getting them bolted on by a later
 				// migration.
+				//
+				// backfilled_by is cortex-owned, unlike metadata (the
+				// host's column, right above it): it is the migration
+				// version that created a session via the v1.9.0 backfill,
+				// empty for every session a run creates organically. See
+				// backfillSessionMarker and unbackfillDefaultSessions
+				// below -- Down finds exactly the rows it's responsible
+				// for undoing by this column, and a host PUTting its own
+				// metadata can never collide with or erase it, because
+				// it never touches metadata.
 				if _, err := exec.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS cortex_sessions (
     id            TEXT PRIMARY KEY,
@@ -881,6 +891,7 @@ CREATE TABLE IF NOT EXISTS cortex_sessions (
     last_message  TEXT NOT NULL DEFAULT '',
     is_default    INTEGER NOT NULL DEFAULT 0,
     metadata      TEXT NOT NULL DEFAULT '{}',
+    backfilled_by TEXT NOT NULL DEFAULT '',
     scope_l0      TEXT NOT NULL DEFAULT '',
     scope_l1      TEXT NOT NULL DEFAULT '',
     scope_l2      TEXT NOT NULL DEFAULT '',
@@ -1019,12 +1030,17 @@ ALTER TABLE cortex_memories DROP COLUMN session_id;
 }
 
 // backfillSessionMarker tags every cortex_sessions row this migration
-// creates, in Metadata, so unbackfillDefaultSessions (Down) can find
-// exactly the rows it is responsible for undoing without mistaking an
-// organically-created default session for one of its own --
-// engine.resolveSession stamps the identical IsDefault=true, Title
-// "Default" shape, but never sets Metadata.
-const backfillSessionMarker = `{"backfilled_by":"20260824000004"}`
+// creates, in the cortex-owned backfilled_by column, so
+// unbackfillDefaultSessions (Down) can find exactly the rows it is
+// responsible for undoing without mistaking an organically-created
+// default session for one of its own -- engine.resolveSession stamps the
+// identical IsDefault=true, Title "Default" shape, but never sets
+// backfilled_by. This used to live in Metadata, which session.Session
+// documents as belonging to the host: a host that PUT its own metadata
+// on a backfilled session would silently destroy the marker Down
+// depends on. backfilled_by is a dedicated column cortex alone writes,
+// so it survives that.
+const backfillSessionMarker = "20260824000004"
 
 // legacyConversationScope is one distinct (agent_id, scope) pairing this
 // migration found sitting on unsessioned conversation rows.
@@ -1101,7 +1117,7 @@ func backfillOneScope(ctx context.Context, exec migrate.Executor, sc legacyConve
 	now := time.Now().UTC()
 	if _, insErr := exec.Exec(ctx, `
 INSERT INTO cortex_sessions
-    (id, agent_id, title, message_count, last_message, is_default, metadata,
+    (id, agent_id, title, message_count, last_message, is_default, backfilled_by,
      scope_l0, scope_l1, scope_l2, scope_extra, scope_canon, created_at, updated_at)
 VALUES (?, ?, 'Default', ?, ?, TRUE, ?, ?, ?, ?, '{}', ?, ?, ?)
 ON CONFLICT (agent_id, scope_canon) WHERE is_default AND scope_canon != '' DO NOTHING`,
@@ -1191,12 +1207,16 @@ SELECT id FROM cortex_sessions
 
 // unbackfillDefaultSessions is the Down side of this migration. See the
 // postgres migration of the same version for the full reasoning; the
-// short version is that backfillSessionMarker in Metadata is what makes
-// this safe to run at all -- an organically-created default session has
-// the identical IsDefault=true, Title "Default" shape but carries no
-// Metadata, so this only ever touches rows this migration itself wrote.
+// short version is that backfillSessionMarker in the cortex-owned
+// backfilled_by column is what makes this safe to run at all -- an
+// organically-created default session has the identical IsDefault=true,
+// Title "Default" shape but never sets backfilled_by, so this only ever
+// touches rows this migration itself wrote. A dedicated column, not
+// Metadata: session.Session documents Metadata as the host's, and a
+// host PUTting its own metadata on a backfilled session must not be
+// able to erase the marker this depends on.
 func unbackfillDefaultSessions(ctx context.Context, exec migrate.Executor) error {
-	rows, err := exec.Query(ctx, `SELECT id FROM cortex_sessions WHERE metadata = ?`, backfillSessionMarker)
+	rows, err := exec.Query(ctx, `SELECT id FROM cortex_sessions WHERE backfilled_by = ?`, backfillSessionMarker)
 	if err != nil {
 		return fmt.Errorf("find backfilled sessions: %w", err)
 	}

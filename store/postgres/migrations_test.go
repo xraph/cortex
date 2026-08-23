@@ -335,6 +335,61 @@ VALUES ($1, '', 'conversation', '{"role":"user","content":"skipped-version"}', '
 	if len(rescopedMsgs) != 1 || rescopedMsgs[0].Content != "skipped-version" {
 		t.Fatalf("LoadConversation for skipped-version agent = %v, want exactly one message with content %q", rescopedMsgs, "skipped-version")
 	}
+
+	// unbackfillDefaultSessions (Down) regression, fix round 2's Finding
+	// 4: the marker it depends on to find its own rows used to live in
+	// Metadata, the column session.Session documents as belonging to
+	// the host. Simulate a host PUTting its own metadata over the
+	// group-1 session -- exactly what would have silently destroyed the
+	// old marker -- and prove Down still finds and removes it, because
+	// backfilled_by is a separate, cortex-owned column UpdateSession
+	// never carries in its mutable-column list.
+	got.Metadata = map[string]any{"host_field": "host_value"}
+	if err = s.UpdateSession(sessCtx, got); err != nil {
+		t.Fatalf("host update of session metadata: %v", err)
+	}
+
+	// An organic default session, created the ordinary way, that Down
+	// must leave alone.
+	organicAgent := id.NewAgentID()
+	organicScope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_organic"}}}
+	organicCtx := cortex.WithScope(ctx, organicScope)
+	organicSession := &session.Session{ID: id.NewSessionID(), AgentID: organicAgent, IsDefault: true, Title: "Default"}
+	if err = s.CreateSession(organicCtx, organicSession); err != nil {
+		t.Fatalf("create organic session: %v", err)
+	}
+
+	executor := &pgMigrateExecutor{pgdb: s.pgdb}
+	if err = unbackfillDefaultSessions(ctx, executor); err != nil {
+		t.Fatalf("unbackfillDefaultSessions: %v", err)
+	}
+
+	afterDown, err := s.ListSessions(sessCtx, &session.ListFilter{AgentID: agentID, DefaultOnly: true})
+	if err != nil {
+		t.Fatalf("list sessions after Down: %v", err)
+	}
+	if len(afterDown) != 0 {
+		t.Errorf("sessions for group 1's agent after Down = %d, want 0 (Down must remove the session it created, even after a host overwrote its metadata)", len(afterDown))
+	}
+
+	var resetSessionID string
+	if scanErr := s.pgdb.QueryRow(ctx,
+		`SELECT session_id FROM cortex_memories WHERE agent_id = $1 AND kind = 'conversation' LIMIT 1`,
+		agentID.String(),
+	).Scan(&resetSessionID); scanErr != nil {
+		t.Fatalf("read conversation row session_id after Down: %v", scanErr)
+	}
+	if resetSessionID != "" {
+		t.Errorf("conversation row session_id after Down = %q, want empty (Down must reset rows it pointed at the removed session)", resetSessionID)
+	}
+
+	stillThere, err := s.GetSession(organicCtx, organicSession.ID)
+	if err != nil {
+		t.Fatalf("get organic session after Down: %v", err)
+	}
+	if stillThere.ID != organicSession.ID {
+		t.Errorf("organic session after Down = %+v, want it untouched (Down must only remove rows it created itself)", stillThere)
+	}
 }
 
 // stubRescoper is a minimal cortex.Rescoper for tests that need Migrate to

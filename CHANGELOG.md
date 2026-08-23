@@ -47,10 +47,10 @@ whole section before upgrading.
 
 - **The `session` package**: the `session.Session` entity
   (`ID`, `AgentID`, `Scope`, `Title`, `Metadata`, `MessageCount`,
-  `LastMessage`, `IsDefault`) and `session.Store`, implemented by all
-  three backends. `session.ListFilter` follows the `Exact`/scope-prefix
-  convention v1.8.0 established for the entity stores, plus
-  `AgentID`, `DefaultOnly`, and `Search`.
+  `LastMessage`, `IsDefault`, `BackfilledBy`) and `session.Store`,
+  implemented by all three backends. `session.ListFilter` follows the
+  `Exact`/scope-prefix convention v1.8.0 established for the entity
+  stores, plus `AgentID`, `DefaultOnly`, and `Search`.
 - `id.SessionID`, `id.NewSessionID`, `id.ParseSessionID`, and
   `id.ParseOptionalSessionID`, the same identifier shape every other
   entity in this package already has.

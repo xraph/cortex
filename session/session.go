@@ -35,6 +35,21 @@ type Session struct {
 	// empty identifier that silently means "the shared one" is the shape
 	// that leaked history across tenants.
 	IsDefault bool `json:"is_default"`
+
+	// BackfilledBy belongs to cortex, not the host: it is set once, at
+	// creation, by the v1.9.0 migration that gives a pre-existing
+	// unsessioned conversation its first default session, to the
+	// migration version that created it (e.g. "20260824000004"). It is
+	// empty for every session a run creates organically through
+	// engine.resolveSession. This lives in its own column rather than
+	// Metadata specifically so a host PUTting its own metadata can never
+	// destroy it -- Metadata is documented above as host-owned and
+	// cortex never reads it back for anything, which used to include
+	// this marker before it moved here. No store write path other than
+	// the backfill migrations sets it, and UpdateSession never carries
+	// it in its mutable-column list, so it can't be overwritten after
+	// creation either.
+	BackfilledBy string `json:"backfilled_by,omitempty"`
 }
 
 // Store defines persistence for sessions. Scope arrives on the context

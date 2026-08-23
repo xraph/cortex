@@ -226,6 +226,126 @@ VALUES (?, '', 'conversation', '{"role":"user","content":"skipped-version"}', '{
 	}
 }
 
+// TestMigrate_unbackfillDefaultSessions is the regression for fix round
+// 2's Finding 4: unbackfillDefaultSessions (the Down side of
+// backfill_default_sessions) used to find its own rows by matching
+// Metadata against backfillSessionMarker, a JSON blob living in the
+// column session.Session documents as belonging to the host. A host
+// that PUT its own metadata over a backfilled session would silently
+// destroy that marker, and Down would then leave the row behind
+// (indistinguishable from an organic default) instead of removing it.
+//
+// The marker now lives in the cortex-owned backfilled_by column
+// instead, which no store write path but the backfill itself ever
+// touches. This proves Down still does its job with the new column:
+// it must remove exactly the session the backfill created, reset the
+// conversation rows it pointed at that session back to session_id =
+// "", and leave an organically-created default session (same
+// IsDefault=true, Title "Default" shape, but no backfilled_by) alone.
+func TestMigrate_unbackfillDefaultSessions(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "cortex_unbackfill_test.db")
+
+	drv := sqlitedriver.New()
+	if err := drv.Open(ctx, dsn); err != nil {
+		t.Fatalf("open sqlite driver: %v", err)
+	}
+	db, err := grove.Open(drv)
+	if err != nil {
+		t.Fatalf("grove open: %v", err)
+	}
+	s := New(db)
+	t.Cleanup(func() { _ = s.Close() })
+
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+
+	// The legacy conversation this backfill will pick up.
+	backfilledAgent := id.NewAgentID()
+	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_unbackfill"}}}
+	canon := scope.Canonical()
+	if _, err = s.sdb.Exec(ctx, `
+INSERT INTO cortex_memories (agent_id, session_id, kind, content, metadata, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
+VALUES (?, '', 'conversation', '{"role":"user","content":"legacy"}', '{}', ?, '', '', '{}', ?)`,
+		backfilledAgent.String(), canon, canon,
+	); err != nil {
+		t.Fatalf("insert legacy conversation row: %v", err)
+	}
+
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatalf("migrate (runs the backfill): %v", err)
+	}
+
+	sessCtx := cortex.WithScope(ctx, scope)
+	backfilledSessions, err := s.ListSessions(sessCtx, &session.ListFilter{AgentID: backfilledAgent, DefaultOnly: true})
+	if err != nil {
+		t.Fatalf("list sessions after backfill: %v", err)
+	}
+	if len(backfilledSessions) != 1 {
+		t.Fatalf("sessions after backfill = %d, want exactly 1", len(backfilledSessions))
+	}
+	backfilledSession := backfilledSessions[0]
+	if backfilledSession.BackfilledBy == "" {
+		t.Fatalf("backfilled session's BackfilledBy is empty, want the migration version that created it (setup assumption broken, not the thing under test)")
+	}
+
+	// An organic default session for a different agent, in the same
+	// scope, created the ordinary way -- the row Down must NOT touch.
+	organicAgent := id.NewAgentID()
+	organicSession := &session.Session{ID: id.NewSessionID(), AgentID: organicAgent, IsDefault: true, Title: "Default"}
+	if err = s.CreateSession(sessCtx, organicSession); err != nil {
+		t.Fatalf("create organic session: %v", err)
+	}
+
+	// This is the exact scenario the column move exists to fix: a host
+	// overwrites its own Metadata on the backfilled session, the field
+	// session.Session documents as belonging to it. Before this fix the
+	// marker lived in that same field, so this would have silently
+	// erased it and left Down unable to find the row. It must not
+	// matter now: backfilled_by is a separate, cortex-owned column
+	// UpdateSession never carries in its mutable-column list.
+	backfilledSession.Metadata = map[string]any{"host_field": "host_value"}
+	if err = s.UpdateSession(sessCtx, backfilledSession); err != nil {
+		t.Fatalf("host update of session metadata: %v", err)
+	}
+
+	executor, execErr := migrate.NewExecutorFor(s.sdb)
+	if execErr != nil {
+		t.Fatalf("create migration executor: %v", execErr)
+	}
+	if err = unbackfillDefaultSessions(ctx, executor); err != nil {
+		t.Fatalf("unbackfillDefaultSessions: %v", err)
+	}
+
+	afterDown, err := s.ListSessions(sessCtx, &session.ListFilter{AgentID: backfilledAgent, DefaultOnly: true})
+	if err != nil {
+		t.Fatalf("list sessions after Down: %v", err)
+	}
+	if len(afterDown) != 0 {
+		t.Errorf("sessions for the backfilled agent after Down = %d, want 0 (Down must remove the session it created)", len(afterDown))
+	}
+
+	var resetSessionID string
+	if scanErr := s.sdb.QueryRow(ctx,
+		`SELECT session_id FROM cortex_memories WHERE agent_id = ? AND kind = 'conversation'`,
+		backfilledAgent.String(),
+	).Scan(&resetSessionID); scanErr != nil {
+		t.Fatalf("read conversation row session_id after Down: %v", scanErr)
+	}
+	if resetSessionID != "" {
+		t.Errorf("conversation row session_id after Down = %q, want empty (Down must reset rows it pointed at the removed session)", resetSessionID)
+	}
+
+	stillThere, err := s.GetSession(sessCtx, organicSession.ID)
+	if err != nil {
+		t.Fatalf("get organic session after Down: %v", err)
+	}
+	if stillThere.ID != organicSession.ID {
+		t.Errorf("organic session after Down = %+v, want it untouched (Down must only remove rows it created itself)", stillThere)
+	}
+}
+
 // stubRescoper is a minimal cortex.Rescoper for tests that need Migrate to
 // accept unscoped legacy rows without erroring.
 type stubRescoper struct {

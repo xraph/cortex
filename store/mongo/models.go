@@ -789,6 +789,7 @@ type sessionModel struct {
 	LastMessage     string            `grove:"last_message"     bson:"last_message"`
 	IsDefault       bool              `grove:"is_default"       bson:"is_default"`
 	Metadata        map[string]any    `grove:"metadata"         bson:"metadata,omitempty"`
+	BackfilledBy    string            `grove:"backfilled_by"    bson:"backfilled_by,omitempty"`
 	ScopeL0         string            `grove:"scope_l0"         bson:"scope_l0"`
 	ScopeL1         string            `grove:"scope_l1"         bson:"scope_l1"`
 	ScopeL2         string            `grove:"scope_l2"         bson:"scope_l2"`
@@ -808,6 +809,7 @@ func sessionToModel(sess *session.Session) *sessionModel {
 		LastMessage:  sess.LastMessage,
 		IsDefault:    sess.IsDefault,
 		Metadata:     sess.Metadata,
+		BackfilledBy: sess.BackfilledBy,
 		ScopeL0:      l0,
 		ScopeL1:      l1,
 		ScopeL2:      l2,
@@ -841,6 +843,7 @@ func sessionFromModel(m *sessionModel) (*session.Session, error) {
 		LastMessage:  m.LastMessage,
 		IsDefault:    m.IsDefault,
 		Metadata:     m.Metadata,
+		BackfilledBy: m.BackfilledBy,
 	}, nil
 }
 
