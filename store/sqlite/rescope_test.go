@@ -103,8 +103,10 @@ func insertLegacyToolCall(t *testing.T, s *Store, toolCallID, stepID, runID stri
 }
 
 // legacyScopeCanon reads scope_canon straight from the table, so tests can
-// verify the write path without depending on a scope-filtered read.
-func legacyScopeCanon(t *testing.T, s *Store, table, id string) string {
+// verify the write path without depending on a scope-filtered read. id is
+// `any`, not `string`, because cortex_memories.id is INTEGER AUTOINCREMENT
+// while every other scoped table's id is TEXT.
+func legacyScopeCanon(t *testing.T, s *Store, table string, id any) string {
 	t.Helper()
 	var canon string
 	err := s.sdb.QueryRow(context.Background(),
@@ -113,6 +115,72 @@ func legacyScopeCanon(t *testing.T, s *Store, table, id string) string {
 		t.Fatalf("read back scope_canon from %s: %v", table, err)
 	}
 	return canon
+}
+
+// insertScopedAgentRow writes a cortex_agents row that is already scoped,
+// so tests can construct a collision against a row this pass never
+// touches.
+func insertScopedAgentRow(t *testing.T, s *Store, agentID, name string, scope cortex.Scope) {
+	t.Helper()
+	l0, l1, l2, extra := scopeColumns(scope)
+	const q = `INSERT INTO cortex_agents
+	    (id, name, app_id, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon, enabled)
+	    VALUES (?, ?, '', ?, ?, ?, ?, ?, 1)`
+	if _, err := s.sdb.Exec(context.Background(), q, agentID, name, l0, l1, l2, extra, scope.Canonical()); err != nil {
+		t.Fatalf("insert scoped agent: %v", err)
+	}
+}
+
+// insertLegacyMemory writes an unscoped cortex_memories row and returns
+// its auto-generated integer id. cortex_memories.id is INTEGER
+// AUTOINCREMENT, unlike every other scoped table's TEXT id -- this is
+// the exact shape mismatch that made rescopeLegacyRows unable to scan a
+// legacy memory row at all (a Go string destination can't receive it on
+// postgres, whose pgx driver has no database/sql convertAssign layer to
+// paper over the mismatch the way sqlite's driver does).
+func insertLegacyMemory(t *testing.T, s *Store, agentID, tenantID, kind, key string) int64 {
+	t.Helper()
+	const q = `INSERT INTO cortex_memories
+	    (agent_id, tenant_id, kind, "key", content, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
+	    VALUES (?, ?, ?, ?, 'hello', '', '', '', '{}', '')`
+	res, err := s.sdb.Exec(context.Background(), q, agentID, tenantID, kind, key)
+	if err != nil {
+		t.Fatalf("insert legacy memory: %v", err)
+	}
+	memID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	return memID
+}
+
+// insertScopedWorkingMemory writes an already-scoped cortex_memories row
+// with kind='working', so tests can construct a working-memory collision
+// against a row this pass never touches.
+func insertScopedWorkingMemory(t *testing.T, s *Store, agentID, key string, scope cortex.Scope) {
+	t.Helper()
+	l0, l1, l2, extra := scopeColumns(scope)
+	const q = `INSERT INTO cortex_memories
+	    (agent_id, tenant_id, kind, "key", content, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
+	    VALUES (?, '', 'working', ?, 'hello', ?, ?, ?, ?, ?)`
+	if _, err := s.sdb.Exec(context.Background(), q, agentID, key, l0, l1, l2, extra, scope.Canonical()); err != nil {
+		t.Fatalf("insert scoped working memory: %v", err)
+	}
+}
+
+// insertLegacyCheckpoint writes an unscoped cortex_checkpoints row. Like
+// cortex_runs and cortex_memories it carries its own tenant_id, so --
+// unlike cortex_steps/cortex_tool_calls -- it must always be resolved
+// directly through the Rescoper, never inherited from its run, even
+// though it also has a run_id.
+func insertLegacyCheckpoint(t *testing.T, s *Store, checkpointID, runID, agentID, tenantID string) {
+	t.Helper()
+	const q = `INSERT INTO cortex_checkpoints
+	    (id, run_id, agent_id, tenant_id, state, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
+	    VALUES (?, ?, ?, ?, 'pending', '', '', '', '{}', '')`
+	if _, err := s.sdb.Exec(context.Background(), q, checkpointID, runID, agentID, tenantID); err != nil {
+		t.Fatalf("insert legacy checkpoint: %v", err)
+	}
 }
 
 func TestRescope_NoUnscopedRowsNeedsNoRescoper(t *testing.T) {
@@ -260,5 +328,203 @@ func TestRescope_StepInheritsFromAlreadyScopedRunNeedsNoRescoper(t *testing.T) {
 
 	if got := legacyScopeCanon(t, s, "cortex_steps", stepID); got != scope.Canonical() {
 		t.Errorf("step scope_canon = %q, want it to match its already-scoped run %q", got, scope.Canonical())
+	}
+}
+
+// TestRescope_MemoriesAndCheckpointsRescope is the direct regression test
+// for Finding 1: cortex_memories.id is INTEGER AUTOINCREMENT, not TEXT
+// like every other scoped table. Scanning it into a plain Go string
+// aborted the whole pass on postgres (whose pgx driver refuses int8 ->
+// *string outright) the moment a single legacy memory row existed --
+// exactly the database this pass exists to migrate. cortex_checkpoints
+// is covered in the same test since neither table had any coverage at
+// all before this round.
+func TestRescope_MemoriesAndCheckpointsRescope(t *testing.T) {
+	s := newTestStore(t)
+	agentID := id.NewAgentID().String()
+
+	runID := id.NewAgentRunID().String()
+	insertLegacyRun(t, s, runID, agentID, "tenantR")
+
+	memID := insertLegacyMemory(t, s, agentID, "tenantM", "conversation", "")
+
+	checkpointID := id.NewCheckpointID().String()
+	insertLegacyCheckpoint(t, s, checkpointID, runID, agentID, "tenantC")
+
+	r := tenantRescoper{level: "workspace"}
+	if err := s.rescopeLegacyRows(context.Background(), cortex.MigrateOptions{Rescoper: r}); err != nil {
+		t.Fatalf("rescope: %v", err)
+	}
+
+	if got := legacyScopeCanon(t, s, "cortex_runs", runID); got != "workspace=tenantR" {
+		t.Errorf("run scope_canon = %q, want workspace=tenantR", got)
+	}
+	if got := legacyScopeCanon(t, s, "cortex_memories", memID); got != "workspace=tenantM" {
+		t.Errorf("memory scope_canon = %q, want workspace=tenantM", got)
+	}
+	if got := legacyScopeCanon(t, s, "cortex_checkpoints", checkpointID); got != "workspace=tenantC" {
+		t.Errorf("checkpoint scope_canon = %q, want workspace=tenantC", got)
+	}
+}
+
+// TestRescope_CheckpointWithBlankTenantStillResolvedDirectly is the
+// regression test for Finding 2. cortex_checkpoints has BOTH run_id and
+// tenant_id, so a checkpoint whose tenant_id happens to be blank must
+// still be resolved directly through the Rescoper -- exactly like every
+// other checkpoint of the same run -- rather than being misclassified as
+// dependent (a run_id-only row) and silently inheriting its run's scope
+// instead. The run and the checkpoint are deliberately given rescopers
+// that resolve to DIFFERENT scopes, so a misclassification is visible as
+// the wrong canonical string rather than an accident of both landing in
+// the same place.
+func TestRescope_CheckpointWithBlankTenantStillResolvedDirectly(t *testing.T) {
+	s := newTestStore(t)
+	agentID := id.NewAgentID().String()
+
+	runID := id.NewAgentRunID().String()
+	insertLegacyRun(t, s, runID, agentID, "tenantR")
+
+	checkpointID := id.NewCheckpointID().String()
+	insertLegacyCheckpoint(t, s, checkpointID, runID, agentID, "")
+
+	// Maps a blank tenant to a fixed, recognizable scope distinct from
+	// whatever the run resolves to, so a misclassified checkpoint that
+	// inherited the run's scope instead is unambiguously wrong.
+	r := blankToleratingRescoper{}
+	if err := s.rescopeLegacyRows(context.Background(), cortex.MigrateOptions{Rescoper: r}); err != nil {
+		t.Fatalf("rescope: %v", err)
+	}
+
+	runCanon := legacyScopeCanon(t, s, "cortex_runs", runID)
+	if runCanon != "workspace=tenantR" {
+		t.Fatalf("run scope_canon = %q, want workspace=tenantR", runCanon)
+	}
+	got := legacyScopeCanon(t, s, "cortex_checkpoints", checkpointID)
+	if got != "workspace=legacy_default" {
+		t.Errorf("checkpoint scope_canon = %q, want workspace=legacy_default (resolved directly); "+
+			"got the run's scope %q instead, meaning the checkpoint was wrongly treated as dependent", got, runCanon)
+	}
+}
+
+// blankToleratingRescoper maps an empty tenant to a fixed, recognizable
+// value instead of returning an invalid empty-valued level (which
+// ValidateRescopedScope would reject), so a test can resolve a row with
+// no legacy identifier at all through the Rescoper directly.
+type blankToleratingRescoper struct{}
+
+func (blankToleratingRescoper) Rescope(_ context.Context, _, tenantID string) (cortex.Scope, error) {
+	v := tenantID
+	if v == "" {
+		v = "legacy_default"
+	}
+	return cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: v}}}, nil
+}
+
+// TestRescope_DetectsNameCollisionWithExistingRow is the regression test
+// for Finding 3's name-collision half: detectCollisions used to compare
+// unscoped rows only against each other, so a legacy agent rescoped onto
+// a scope an ALREADY-scoped agent of the same name already occupies went
+// undetected until the raw UPDATE hit the (currently app_id-based, but
+// this doesn't need the DB to actually enforce it to prove the gap)
+// unique expectation.
+func TestRescope_DetectsNameCollisionWithExistingRow(t *testing.T) {
+	s := newTestStore(t)
+	existing := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}}
+	insertScopedAgentRow(t, s, id.NewAgentID().String(), "assistant", existing)
+
+	insertLegacyAgent(t, s, id.NewAgentID().String(), "acme")
+
+	r := fixedRescoper{level: "workspace"}
+	err := s.rescopeLegacyRows(context.Background(), cortex.MigrateOptions{Rescoper: r})
+	if err == nil {
+		t.Fatal("a legacy agent colliding with an ALREADY-scoped agent must abort the pass")
+	}
+	if !strings.Contains(err.Error(), "assistant") {
+		t.Errorf("the error must name the colliding row, got: %v", err)
+	}
+}
+
+// TestRescope_DetectsWorkingMemoryCollisionWithExistingRow is Finding 3's
+// working-memory half. cortex_memories has no `name` column, so it never
+// participates in the name-based check at all -- its uniqueness surface
+// is (agent_id, kind, key, scope_canon), the same composite
+// idx_cortex_memories_working enforces. Without a dedicated pre-check
+// against already-scoped rows, a legacy working-memory row could be
+// rescoped onto a key an existing row already occupies.
+func TestRescope_DetectsWorkingMemoryCollisionWithExistingRow(t *testing.T) {
+	s := newTestStore(t)
+	agentID := id.NewAgentID().String()
+
+	existing := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}}
+	insertScopedWorkingMemory(t, s, agentID, "the-key", existing)
+
+	insertLegacyMemory(t, s, agentID, "acme", "working", "the-key")
+
+	r := tenantRescoper{level: "workspace"}
+	err := s.rescopeLegacyRows(context.Background(), cortex.MigrateOptions{Rescoper: r})
+	if err == nil {
+		t.Fatal("a legacy working-memory row colliding with an ALREADY-scoped one must abort the pass")
+	}
+	if !strings.Contains(err.Error(), "the-key") {
+		t.Errorf("the error must name the colliding key, got: %v", err)
+	}
+}
+
+// TestRescope_DiscoverySkipsTableWithoutScopeCanon is the entire
+// justification for deriving the table list at runtime instead of
+// hardcoding it: a table that doesn't (or no longer) has a scope_canon
+// column must be skipped, not crash the whole pass trying to SELECT a
+// column that isn't there. Dropping the column from a live table
+// simulates the state discoverScopedTables is actually meant to survive
+// -- a partially migrated (here: partially DOWNgraded) database.
+func TestRescope_DiscoverySkipsTableWithoutScopeCanon(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.sdb.Exec(context.Background(), `ALTER TABLE cortex_checkpoints DROP COLUMN scope_canon`); err != nil {
+		t.Fatalf("drop scope_canon from cortex_checkpoints: %v", err)
+	}
+
+	agentID := id.NewAgentID().String()
+	insertLegacyAgent(t, s, agentID, "acme")
+
+	r := fixedRescoper{level: "workspace"}
+	if err := s.rescopeLegacyRows(context.Background(), cortex.MigrateOptions{Rescoper: r}); err != nil {
+		t.Fatalf("a table without scope_canon must be skipped, not fail the whole pass: %v", err)
+	}
+
+	if got := legacyScopeCanon(t, s, "cortex_agents", agentID); got != "workspace=acme" {
+		t.Errorf("agent scope_canon = %q, want workspace=acme", got)
+	}
+}
+
+// TestRescope_RollsBackOnMidTransactionFailure proves the transactional
+// property directly: TestRescope_AbortsBeforeWriting only proves nothing
+// is written when the pass aborts during the resolve phase, BEFORE
+// BeginTx is ever reached. This calls applyScopes itself with a second
+// row aimed at a table that doesn't exist, so the first row's UPDATE
+// genuinely succeeds inside the transaction before the second one fails
+// it -- and then checks that the first row's success didn't survive the
+// rollback.
+func TestRescope_RollsBackOnMidTransactionFailure(t *testing.T) {
+	s := newTestStore(t)
+	agentID := id.NewAgentID().String()
+	insertLegacyAgent(t, s, agentID, "acme")
+
+	rs := toRawScope(cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}})
+	rows := []legacyRow{
+		{Table: "cortex_agents", ID: agentID, Name: "assistant"},
+		{Table: "cortex_table_that_does_not_exist", ID: "bogus"},
+	}
+	resolved := map[string]rawScope{
+		rows[0].key(): rs,
+		rows[1].key(): rs,
+	}
+
+	if err := s.applyScopes(context.Background(), rows, resolved); err == nil {
+		t.Fatal("a write against a nonexistent table must fail")
+	}
+
+	if got := legacyScopeCanon(t, s, "cortex_agents", agentID); got != "" {
+		t.Errorf("scope_canon = %q after a rolled-back transaction, want it untouched "+
+			"(the first row's UPDATE succeeded inside the transaction before the second failed it)", got)
 	}
 }

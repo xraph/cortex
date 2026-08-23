@@ -24,10 +24,31 @@ var candidateCollections = []string{
 	colOrchestrationConfigs, colOrchestrationRuns,
 }
 
+// dependentCollections are the collections whose documents must inherit
+// their scope from a parent run rather than being resolved directly
+// through the Rescoper: cortex_steps and cortex_tool_calls carry a
+// run_id and nothing else identifying. This is deliberately a property
+// of the COLLECTION, not of any one document's fields -- mongo is
+// schemaless, so unlike postgres/sqlite there is no information_schema
+// to derive it from, but the underlying hazard is the same one their
+// tableShape.isDependent() guards against: cortex_checkpoints has both
+// run_id and a (possibly blank, possibly entirely absent on documents
+// written before the Go model dropped the field) tenant_id, and a
+// per-document value check would silently let two checkpoints of the
+// same run land in different scopes depending on which one happened to
+// have a populated tenant_id.
+var dependentCollections = map[string]bool{
+	colSteps:     true,
+	colToolCalls: true,
+}
+
 // legacyRow is one document awaiting a scope. Mongo carries no schema, so
 // unlike the SQL backends the legacy identifier fields are read straight
 // off the raw document rather than a fixed column set: a field the
-// document doesn't have decodes to the empty string.
+// document doesn't have decodes to the empty string. ID stays a plain
+// string here (unlike the SQL backends' `any`) because every cortex
+// collection's _id is always a string TypeID under this store's own
+// models -- there is no BIGSERIAL-equivalent surprise on mongo.
 type legacyRow struct {
 	Collection string
 	ID         string
@@ -35,6 +56,9 @@ type legacyRow struct {
 	AppID      string
 	TenantID   string
 	RunID      string
+	AgentID    string
+	Kind       string
+	Key        string
 }
 
 func (r legacyRow) key() string { return r.Collection + "|" + r.ID }
@@ -87,7 +111,7 @@ func (s *Store) rescopeLegacyRows(ctx context.Context, o cortex.MigrateOptions) 
 		return err
 	}
 
-	if err := detectCollisions(rows, resolved); err != nil {
+	if err := s.detectCollisions(ctx, rows, resolved); err != nil {
 		return err
 	}
 
@@ -171,6 +195,9 @@ func (s *Store) scanCollection(ctx context.Context, col string, filter bson.M) (
 			AppID:      stringField(doc, "app_id"),
 			TenantID:   stringField(doc, "tenant_id"),
 			RunID:      stringField(doc, "run_id"),
+			AgentID:    stringField(doc, "agent_id"),
+			Kind:       stringField(doc, "kind"),
+			Key:        stringField(doc, "key"),
 		})
 	}
 	return rows, cur.Err()
@@ -188,14 +215,14 @@ func stringField(doc bson.M, key string) string {
 	return str
 }
 
-// resolveScopes decides a target scope for every unscoped row. Rows that
-// carry their own legacy identifier (app_id and/or tenant_id, or neither
-// field exists at all) go straight through the Rescoper, once per
-// distinct (appID, tenantID) pair. Rows that carry only a run_id --
-// cortex_steps and cortex_tool_calls -- have no legacy identifier of
-// their own; they inherit whatever scope their parent run resolves to,
-// so a scoped ListSteps/ListToolCalls under the run's scope still finds
-// them afterward.
+// resolveScopes decides a target scope for every unscoped row. Rows
+// outside dependentCollections carry their own legacy identifier (app_id
+// and/or tenant_id, or neither field exists at all) and go straight
+// through the Rescoper, once per distinct (appID, tenantID) pair. Rows in
+// dependentCollections -- cortex_steps and cortex_tool_calls -- have no
+// legacy identifier of their own; they inherit whatever scope their
+// parent run resolves to, so a scoped ListSteps/ListToolCalls under the
+// run's scope still finds them afterward.
 func (s *Store) resolveScopes(ctx context.Context, rows []legacyRow, r cortex.Rescoper) (map[string]rawScope, error) {
 	resolved := make(map[string]rawScope, len(rows))
 	byAppTenant := make(map[[2]string]rawScope)
@@ -323,27 +350,152 @@ func (s *Store) fetchRunScopes(ctx context.Context, ids []string) (map[string]ra
 	return out, cur.Err()
 }
 
-// detectCollisions finds rows that would violate a (scope_canon, name)
-// uniqueness expectation once written, and reports them before anything
-// is written. Rows without a name field (cortex_runs, cortex_steps, and
-// friends) never participate -- there is nothing to collide on.
-func detectCollisions(rows []legacyRow, resolved map[string]rawScope) error {
-	seen := make(map[[3]string]string) // collection+canon+name -> first row id
+// detectCollisions finds rows that would violate a (scope_canon, name) or
+// working-memory (scope_canon, agent_id, kind, key) uniqueness
+// expectation once written, and reports them before anything is written.
+//
+// This checks two things, not one: rows within THIS batch colliding with
+// each other, and rows in this batch colliding with rows that are
+// already scoped (from an earlier pass, or written post-v1.8.0 under a
+// real scope). The latter needs a database round trip -- loadExisting*
+// pre-seeds `seen`/`seenWorking` with what's already there for the
+// canons this batch is about to write, before the in-batch rows are
+// checked against them.
+func (s *Store) detectCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope) error {
+	seen := make(map[[3]string]string)        // collection+canon+name -> row id (existing or in-batch)
+	seenWorking := make(map[[4]string]string) // canon+agent_id+kind+key -> row id
+
+	if err := s.loadExistingNameCollisions(ctx, rows, resolved, seen); err != nil {
+		return err
+	}
+	if err := s.loadExistingWorkingMemoryCollisions(ctx, rows, resolved, seenWorking); err != nil {
+		return err
+	}
+
+	for _, r := range rows {
+		canon := resolved[r.key()].Canon
+
+		if r.Name != "" {
+			k := [3]string{r.Collection, canon, r.Name}
+			if first, ok := seen[k]; ok {
+				return fmt.Errorf(
+					"rescope collision: %s rows %s and %s both map to scope %q with name %q; "+
+						"the rescoper must keep them in distinct scopes",
+					r.Collection, first, r.ID, canon, r.Name)
+			}
+			seen[k] = r.ID
+		}
+
+		if r.Collection == colMemories && r.Kind == "working" {
+			k := [4]string{canon, r.AgentID, r.Kind, r.Key}
+			if first, ok := seenWorking[k]; ok {
+				return fmt.Errorf(
+					"rescope collision: cortex_memories rows %s and %s both map to scope %q "+
+						"with working-memory key (agent=%q key=%q); the rescoper must keep them in distinct scopes",
+					first, r.ID, canon, r.AgentID, r.Key)
+			}
+			seenWorking[k] = r.ID
+		}
+	}
+	return nil
+}
+
+// loadExistingNameCollisions pre-seeds seen with every already-scoped
+// document (in a name-bearing collection) whose scope_canon matches one
+// of the canons this batch is about to write. Without this, a legacy row
+// could be rescoped onto a scope an existing document already occupies
+// under the same name, with nothing to catch it before the write.
+func (s *Store) loadExistingNameCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope, seen map[[3]string]string) error {
+	canonsByCollection := make(map[string]map[string]struct{})
 	for _, r := range rows {
 		if r.Name == "" {
 			continue
 		}
 		canon := resolved[r.key()].Canon
-		k := [3]string{r.Collection, canon, r.Name}
-		if first, ok := seen[k]; ok {
-			return fmt.Errorf(
-				"rescope collision: %s rows %s and %s both map to scope %q with name %q; "+
-					"the rescoper must keep them in distinct scopes",
-				r.Collection, first, r.ID, canon, r.Name)
+		if canonsByCollection[r.Collection] == nil {
+			canonsByCollection[r.Collection] = make(map[string]struct{})
 		}
-		seen[k] = r.ID
+		canonsByCollection[r.Collection][canon] = struct{}{}
+	}
+
+	for col, canonSet := range canonsByCollection {
+		canons := make([]string, 0, len(canonSet))
+		for c := range canonSet {
+			canons = append(canons, c)
+		}
+		if err := s.loadExistingNamesInCollection(ctx, col, canons, seen); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (s *Store) loadExistingNamesInCollection(ctx context.Context, col string, canons []string, seen map[[3]string]string) error {
+	cur, err := s.mdb.Collection(col).Find(ctx, bson.M{"scope_canon": bson.M{"$in": canons}})
+	if err != nil {
+		return fmt.Errorf("check existing names in %s: %w", col, err)
+	}
+	defer func() { _ = cur.Close(ctx) }()
+
+	type nameDoc struct {
+		ID    string `bson:"_id"`
+		Name  string `bson:"name"`
+		Canon string `bson:"scope_canon"`
+	}
+	for cur.Next(ctx) {
+		var doc nameDoc
+		if decodeErr := cur.Decode(&doc); decodeErr != nil {
+			return fmt.Errorf("decode existing name in %s: %w", col, decodeErr)
+		}
+		seen[[3]string{col, doc.Canon, doc.Name}] = doc.ID
+	}
+	return cur.Err()
+}
+
+// loadExistingWorkingMemoryCollisions is loadExistingNameCollisions'
+// counterpart for cortex_memories, which has no `name` field and so
+// never participates in the name-based check. Its uniqueness surface is
+// (agent_id, kind, key, scope_canon) instead -- the same composite the
+// scope-aware working-memory unique index enforces
+// (workingMemoryUniqueIndexName in migrations.go).
+func (s *Store) loadExistingWorkingMemoryCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope, seen map[[4]string]string) error {
+	canonSet := make(map[string]struct{})
+	for _, r := range rows {
+		if r.Collection == colMemories && r.Kind == "working" {
+			canonSet[resolved[r.key()].Canon] = struct{}{}
+		}
+	}
+	if len(canonSet) == 0 {
+		return nil
+	}
+	canons := make([]string, 0, len(canonSet))
+	for c := range canonSet {
+		canons = append(canons, c)
+	}
+
+	cur, err := s.mdb.Collection(colMemories).Find(ctx, bson.M{
+		"kind":        "working",
+		"scope_canon": bson.M{"$in": canons},
+	})
+	if err != nil {
+		return fmt.Errorf("check existing working-memory keys: %w", err)
+	}
+	defer func() { _ = cur.Close(ctx) }()
+
+	type workingDoc struct {
+		ID      string `bson:"_id"`
+		AgentID string `bson:"agent_id"`
+		Key     string `bson:"key"`
+		Canon   string `bson:"scope_canon"`
+	}
+	for cur.Next(ctx) {
+		var doc workingDoc
+		if decodeErr := cur.Decode(&doc); decodeErr != nil {
+			return fmt.Errorf("decode existing working-memory key: %w", decodeErr)
+		}
+		seen[[4]string{doc.Canon, doc.AgentID, "working", doc.Key}] = doc.ID
+	}
+	return cur.Err()
 }
 
 // applyScopes writes every resolved scope inside one multi-document
@@ -394,10 +546,13 @@ func countCollections(rows []legacyRow) int {
 }
 
 // isDependentRow reports whether row must inherit its scope from a parent
-// run rather than being resolved directly: it carries a run_id and
-// neither of the identifier fields a direct row would use.
+// run rather than being resolved directly. Unlike the SQL backends, this
+// is a lookup against dependentCollections (mongo has no schema to
+// derive it from), keyed purely by which collection the row is in -- see
+// dependentCollections for why that has to be collection identity and
+// not a per-document field check.
 func isDependentRow(row legacyRow) bool {
-	return row.RunID != "" && row.AppID == "" && row.TenantID == ""
+	return dependentCollections[row.Collection]
 }
 
 // hasDirectRows reports whether any row in rows needs to be resolved

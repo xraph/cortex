@@ -43,6 +43,20 @@ func (s stubScopeRescoper) Rescope(_ context.Context, _, _ string) (cortex.Scope
 	return s.scope, nil
 }
 
+// blankToleratingRescoper maps an empty tenant to a fixed, recognizable
+// value instead of returning an invalid empty-valued level (which
+// ValidateRescopedScope would reject), so a test can resolve a row with
+// no legacy identifier at all through the Rescoper directly.
+type blankToleratingRescoper struct{}
+
+func (blankToleratingRescoper) Rescope(_ context.Context, _, tenantID string) (cortex.Scope, error) {
+	v := tenantID
+	if v == "" {
+		v = "legacy_default"
+	}
+	return cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: v}}}, nil
+}
+
 // TestRescope runs every rescope scenario as a subtest of one container,
 // clearing the collections the rescope pass touches between each -- a
 // fresh mongo container per scenario would work too, but costs minutes
@@ -242,6 +256,183 @@ func TestRescope(t *testing.T) {
 			t.Errorf("step scope_canon = %q, want it to match its already-scoped run %q", got, scope.Canonical())
 		}
 	})
+
+	// MemoriesAndCheckpointsRescope gives cortex_memories and
+	// cortex_checkpoints the same coverage every other collection has had
+	// since round one -- neither had any before this round. Mongo's _id
+	// is always a string TypeID here (Finding 1 is a postgres/sqlite-only
+	// hazard), but the collections themselves were still completely
+	// unexercised.
+	t.Run("MemoriesAndCheckpointsRescope", func(t *testing.T) {
+		st := fresh(t)
+		agentID := id.NewAgentID().String()
+
+		runID := id.NewAgentRunID().String()
+		insertLegacyRun(t, st, runID, agentID, "tenantR")
+
+		memID := insertLegacyMemory(t, st, agentID, "tenantM", "conversation", "")
+
+		checkpointID := id.NewCheckpointID().String()
+		insertLegacyCheckpoint(t, st, checkpointID, runID, agentID, "tenantC")
+
+		r := tenantRescoper{level: "workspace"}
+		if err := st.rescopeLegacyRows(ctx, cortex.MigrateOptions{Rescoper: r}); err != nil {
+			t.Fatalf("rescope: %v", err)
+		}
+
+		if got := legacyScopeCanon(t, st, colRuns, runID); got != "workspace=tenantR" {
+			t.Errorf("run scope_canon = %q, want workspace=tenantR", got)
+		}
+		if got := legacyScopeCanon(t, st, colMemories, memID); got != "workspace=tenantM" {
+			t.Errorf("memory scope_canon = %q, want workspace=tenantM", got)
+		}
+		if got := legacyScopeCanon(t, st, colCheckpoints, checkpointID); got != "workspace=tenantC" {
+			t.Errorf("checkpoint scope_canon = %q, want workspace=tenantC", got)
+		}
+	})
+
+	// CheckpointWithBlankTenantStillResolvedDirectly is the regression
+	// test for Finding 2. cortex_checkpoints documents can carry both a
+	// run_id and a tenant_id, so a checkpoint whose tenant_id happens to
+	// be blank must still be resolved directly through the Rescoper --
+	// the same as every other checkpoint of the same run -- rather than
+	// being misclassified as dependent and silently inheriting its run's
+	// scope. dependentCollections classifies by collection identity
+	// (colCheckpoints is never in it), not by this row's own blank
+	// tenant_id, so this must resolve to the Rescoper's own answer for a
+	// blank tenant, not the run's scope.
+	t.Run("CheckpointWithBlankTenantStillResolvedDirectly", func(t *testing.T) {
+		st := fresh(t)
+		agentID := id.NewAgentID().String()
+
+		runID := id.NewAgentRunID().String()
+		insertLegacyRun(t, st, runID, agentID, "tenantR")
+
+		checkpointID := id.NewCheckpointID().String()
+		insertLegacyCheckpoint(t, st, checkpointID, runID, agentID, "")
+
+		r := blankToleratingRescoper{}
+		if err := st.rescopeLegacyRows(ctx, cortex.MigrateOptions{Rescoper: r}); err != nil {
+			t.Fatalf("rescope: %v", err)
+		}
+
+		runCanon := legacyScopeCanon(t, st, colRuns, runID)
+		if runCanon != "workspace=tenantR" {
+			t.Fatalf("run scope_canon = %q, want workspace=tenantR", runCanon)
+		}
+		got := legacyScopeCanon(t, st, colCheckpoints, checkpointID)
+		if got != "workspace=legacy_default" {
+			t.Errorf("checkpoint scope_canon = %q, want workspace=legacy_default (resolved directly); "+
+				"got the run's scope %q instead, meaning the checkpoint was wrongly treated as dependent", got, runCanon)
+		}
+	})
+
+	// DetectsNameCollisionWithExistingRow is Finding 3's name-collision
+	// half: detectCollisions used to compare unscoped rows only against
+	// each other, so a legacy agent rescoped onto a scope an
+	// ALREADY-scoped agent of the same name occupies went undetected.
+	t.Run("DetectsNameCollisionWithExistingRow", func(t *testing.T) {
+		st := fresh(t)
+		existing := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}}
+		insertScopedAgent(t, st, id.NewAgentID().String(), "acme_existing_seed", "assistant", existing)
+
+		insertLegacyAgent(t, st, id.NewAgentID().String(), "acme")
+
+		r := fixedRescoper{level: "workspace"}
+		err := st.rescopeLegacyRows(ctx, cortex.MigrateOptions{Rescoper: r})
+		if err == nil {
+			t.Fatal("a legacy agent colliding with an ALREADY-scoped agent must abort the pass")
+		}
+		if !strings.Contains(err.Error(), "assistant") {
+			t.Errorf("the error must name the colliding row, got: %v", err)
+		}
+	})
+
+	// DetectsWorkingMemoryCollisionWithExistingRow is Finding 3's
+	// working-memory half. cortex_memories has no `name` field, so it
+	// never participates in the name-based check -- its uniqueness
+	// surface is (agent_id, kind, key, scope_canon) instead, the same
+	// composite workingMemoryUniqueIndexName enforces.
+	t.Run("DetectsWorkingMemoryCollisionWithExistingRow", func(t *testing.T) {
+		st := fresh(t)
+		agentID := id.NewAgentID().String()
+
+		existing := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}}
+		insertScopedWorkingMemory(t, st, agentID, "the-key", existing)
+
+		insertLegacyMemory(t, st, agentID, "acme", "working", "the-key")
+
+		r := tenantRescoper{level: "workspace"}
+		err := st.rescopeLegacyRows(ctx, cortex.MigrateOptions{Rescoper: r})
+		if err == nil {
+			t.Fatal("a legacy working-memory row colliding with an ALREADY-scoped one must abort the pass")
+		}
+		if !strings.Contains(err.Error(), "the-key") {
+			t.Errorf("the error must name the colliding key, got: %v", err)
+		}
+	})
+
+	// DiscoverySkipsCollectionWithoutScopeIndex is the entire
+	// justification for deriving the collection list at runtime instead
+	// of hardcoding it: a collection that doesn't (or no longer) carry
+	// the scope_l0_l1_l2 index must be skipped, not treated as scoped.
+	// The index is restored afterward since this subtest shares its
+	// database with every other one in this container.
+	t.Run("DiscoverySkipsCollectionWithoutScopeIndex", func(t *testing.T) {
+		st := fresh(t)
+		if err := st.mdb.Collection(colCheckpoints).Indexes().DropOne(ctx, scopeIndexName); err != nil {
+			t.Fatalf("drop scope index from cortex_checkpoints: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := st.mdb.Collection(colCheckpoints).Indexes().CreateOne(context.Background(), scopeIndex); err != nil {
+				t.Fatalf("restore scope index on cortex_checkpoints: %v", err)
+			}
+		})
+
+		agentID := id.NewAgentID().String()
+		insertLegacyAgent(t, st, agentID, "acme")
+
+		r := fixedRescoper{level: "workspace"}
+		if err := st.rescopeLegacyRows(ctx, cortex.MigrateOptions{Rescoper: r}); err != nil {
+			t.Fatalf("a collection without the scope index must be skipped, not fail the whole pass: %v", err)
+		}
+
+		if got := legacyScopeCanon(t, st, colAgents, agentID); got != "workspace=acme" {
+			t.Errorf("agent scope_canon = %q, want workspace=acme", got)
+		}
+	})
+
+	// RollsBackOnMidTransactionFailure proves the transactional property
+	// directly: AbortsBeforeWriting only proves nothing is written when
+	// the pass aborts during the resolve phase, BEFORE the transaction is
+	// ever started. This calls applyScopes directly with a second row
+	// aimed at a collection name mongo rejects outright, so the first
+	// row's update genuinely succeeds inside the transaction before the
+	// second one fails it and the whole transaction aborts.
+	t.Run("RollsBackOnMidTransactionFailure", func(t *testing.T) {
+		st := fresh(t)
+		agentID := id.NewAgentID().String()
+		insertLegacyAgent(t, st, agentID, "acme")
+
+		rs := toRawScope(cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "acme"}}})
+		rows := []legacyRow{
+			{Collection: colAgents, ID: agentID, Name: "assistant"},
+			{Collection: "", ID: "bogus"},
+		}
+		resolved := map[string]rawScope{
+			rows[0].key(): rs,
+			rows[1].key(): rs,
+		}
+
+		if err := st.applyScopes(ctx, rows, resolved); err == nil {
+			t.Fatal("a write against an invalid collection name must fail")
+		}
+
+		if got := legacyScopeCanon(t, st, colAgents, agentID); got != "" {
+			t.Errorf("scope_canon = %q after a rolled-back transaction, want it untouched "+
+				"(the first row's update succeeded inside the transaction before the second failed it)", got)
+		}
+	})
 }
 
 // insertLegacyAgent writes a document with EMPTY scope fields, mimicking
@@ -314,6 +505,70 @@ func insertLegacyToolCall(t *testing.T, s *Store, toolCallID, stepID, runID stri
 	}
 	if _, err := s.mdb.Collection(colToolCalls).InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("insert legacy tool call: %v", err)
+	}
+}
+
+// insertScopedAgent writes a cortex_agents document that is already
+// scoped, so tests exercising a different row's collision can add an
+// existing row without it showing up as an unscoped row of its own.
+func insertScopedAgent(t *testing.T, s *Store, agentID, appID, name string, scope cortex.Scope) {
+	t.Helper()
+	l0, l1, l2, extra := scopeColumns(scope)
+	doc := bson.M{
+		"_id": agentID, "name": name, "app_id": appID,
+		"scope_l0": l0, "scope_l1": l1, "scope_l2": l2, "scope_extra": extra, "scope_canon": scope.Canonical(),
+		"enabled": true,
+	}
+	if _, err := s.mdb.Collection(colAgents).InsertOne(context.Background(), doc); err != nil {
+		t.Fatalf("insert scoped agent: %v", err)
+	}
+}
+
+// insertLegacyMemory writes an unscoped cortex_memories document and
+// returns its id. Unlike postgres/sqlite, mongo's _id is always a string
+// TypeID here (Finding 1 doesn't reproduce on this backend), generated
+// the same way the real SaveConversation/SaveWorking paths do.
+func insertLegacyMemory(t *testing.T, s *Store, agentID, tenantID, kind, key string) string {
+	t.Helper()
+	memID := id.NewMemoryID().String()
+	doc := bson.M{
+		"_id": memID, "agent_id": agentID, "tenant_id": tenantID, "kind": kind, "key": key, "content": "hello",
+		"scope_l0": "", "scope_l1": "", "scope_l2": "", "scope_extra": bson.M{}, "scope_canon": "",
+	}
+	if _, err := s.mdb.Collection(colMemories).InsertOne(context.Background(), doc); err != nil {
+		t.Fatalf("insert legacy memory: %v", err)
+	}
+	return memID
+}
+
+// insertScopedWorkingMemory writes an already-scoped cortex_memories
+// document with kind='working', so tests can construct a working-memory
+// collision against a row this pass never touches.
+func insertScopedWorkingMemory(t *testing.T, s *Store, agentID, key string, scope cortex.Scope) {
+	t.Helper()
+	l0, l1, l2, extra := scopeColumns(scope)
+	doc := bson.M{
+		"_id": id.NewMemoryID().String(), "agent_id": agentID, "tenant_id": "", "kind": "working", "key": key, "content": "hello",
+		"scope_l0": l0, "scope_l1": l1, "scope_l2": l2, "scope_extra": extra, "scope_canon": scope.Canonical(),
+	}
+	if _, err := s.mdb.Collection(colMemories).InsertOne(context.Background(), doc); err != nil {
+		t.Fatalf("insert scoped working memory: %v", err)
+	}
+}
+
+// insertLegacyCheckpoint writes an unscoped cortex_checkpoints document.
+// Like cortex_runs and cortex_memories it can carry its own tenant_id, so
+// -- unlike cortex_steps/cortex_tool_calls -- it must always be resolved
+// directly through the Rescoper, never inherited from its run, even
+// though it also has a run_id.
+func insertLegacyCheckpoint(t *testing.T, s *Store, checkpointID, runID, agentID, tenantID string) {
+	t.Helper()
+	doc := bson.M{
+		"_id": checkpointID, "run_id": runID, "agent_id": agentID, "tenant_id": tenantID, "state": "pending",
+		"scope_l0": "", "scope_l1": "", "scope_l2": "", "scope_extra": bson.M{}, "scope_canon": "",
+	}
+	if _, err := s.mdb.Collection(colCheckpoints).InsertOne(context.Background(), doc); err != nil {
+		t.Fatalf("insert legacy checkpoint: %v", err)
 	}
 }
 

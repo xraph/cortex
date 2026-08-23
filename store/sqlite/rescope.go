@@ -9,33 +9,63 @@ import (
 )
 
 // tableShape records which of the legacy identifier columns (name,
-// app_id, tenant_id, run_id) a table actually has. Not every table has
-// all of them: cortex_agents carries name+app_id,
+// app_id, tenant_id, run_id, agent_id, kind, key) a table actually has.
+// Not every table has all of them: cortex_agents carries name+app_id,
 // cortex_runs/cortex_memories/cortex_checkpoints carry tenant_id, and
 // cortex_steps/cortex_tool_calls carry neither -- they inherit their
-// scope from the run they belong to instead. A missing column is
-// substituted with an empty string in the SELECT, so one query shape covers
-// every table without assuming a uniform schema.
+// scope from the run they belong to instead. agent_id/kind/key exist
+// only to support cortex_memories' working-memory collision check.
+// A missing column is substituted with an empty string in the SELECT,
+// so one query shape covers every table without assuming a uniform
+// schema.
 type tableShape struct {
 	hasName     bool
 	hasAppID    bool
 	hasTenantID bool
 	hasRunID    bool
+	hasAgentID  bool
+	hasKind     bool
+	hasKey      bool
+}
+
+// isDependent reports whether a row of this shape must inherit its scope
+// from a parent run rather than being resolved directly through the
+// Rescoper: it has a run_id and neither of the identifier columns a
+// direct row would use. This is a property of the TABLE, not of any one
+// row's values -- cortex_checkpoints has both run_id and tenant_id, so a
+// checkpoint whose tenant_id happens to be blank must still be resolved
+// directly, the same as every other checkpoint of the same run. Deciding
+// this from a row's values instead of its table's shape would let two
+// checkpoints of one run land in different scopes.
+func (t tableShape) isDependent() bool {
+	return t.hasRunID && !t.hasAppID && !t.hasTenantID
 }
 
 // legacyRow is one row awaiting a scope, with whichever legacy identifier
 // columns its table happened to carry. Fields for columns the table
-// doesn't have are left as the empty string.
+// doesn't have are left as the empty string. ID is `any`, not `string`:
+// cortex_memories.id is INTEGER AUTOINCREMENT, every other scoped
+// table's id is TEXT. sqlite's driver will happily convertAssign an
+// integer into a *string, but binding it back into a `WHERE id = ?`
+// against every OTHER backend (postgres in particular, whose pgx driver
+// refuses int8 -> *string outright) is exactly the mismatch that made
+// this pass unable to migrate a database with real conversation history.
+// Scanning into `any` here keeps the same row type across all three
+// backends.
 type legacyRow struct {
-	Table    string
-	ID       string
-	Name     string
-	AppID    string
-	TenantID string
-	RunID    string
+	Table     string
+	ID        any
+	Name      string
+	AppID     string
+	TenantID  string
+	RunID     string
+	AgentID   string
+	Kind      string
+	Key       string
+	Dependent bool
 }
 
-func (r legacyRow) key() string { return r.Table + "|" + r.ID }
+func (r legacyRow) key() string { return r.Table + "|" + fmt.Sprint(r.ID) }
 
 // rawScope is a resolved scope in the same shape the scope columns are
 // stored in, so a row that inherits its scope from a parent can be
@@ -85,7 +115,7 @@ func (s *Store) rescopeLegacyRows(ctx context.Context, o cortex.MigrateOptions) 
 		return err
 	}
 
-	if err := detectCollisions(rows, resolved); err != nil {
+	if err := s.detectCollisions(ctx, rows, resolved); err != nil {
 		return err
 	}
 
@@ -119,6 +149,9 @@ func (s *Store) discoverScopedTables(ctx context.Context) (map[string]tableShape
 			hasAppID:    cols["app_id"],
 			hasTenantID: cols["tenant_id"],
 			hasRunID:    cols["run_id"],
+			hasAgentID:  cols["agent_id"],
+			hasKind:     cols["kind"],
+			hasKey:      cols["key"],
 		}
 	}
 	return shapes, nil
@@ -172,8 +205,8 @@ func (s *Store) tableColumns(ctx context.Context, table string) (map[string]bool
 }
 
 // scanUnscoped selects every row with an empty scope_canon from each
-// table in shapes, substituting an empty string for whichever legacy identifier
-// columns that particular table doesn't have.
+// table in shapes, substituting an empty string for whichever legacy
+// identifier columns that particular table doesn't have.
 func (s *Store) scanUnscoped(ctx context.Context, shapes map[string]tableShape) ([]legacyRow, error) {
 	var rows []legacyRow
 	for table, shape := range shapes {
@@ -183,10 +216,13 @@ func (s *Store) scanUnscoped(ctx context.Context, shapes map[string]tableShape) 
 			selectOrEmpty("app_id", shape.hasAppID),
 			selectOrEmpty("tenant_id", shape.hasTenantID),
 			selectOrEmpty("run_id", shape.hasRunID),
+			selectOrEmpty("agent_id", shape.hasAgentID),
+			selectOrEmpty("kind", shape.hasKind),
+			selectOrEmpty(`"key"`, shape.hasKey),
 		}
 		query := `SELECT ` + strings.Join(cols, ", ") + ` FROM ` + table + ` WHERE scope_canon = ''`
 
-		tableRows, err := s.scanTable(ctx, table, query)
+		tableRows, err := s.scanTable(ctx, table, query, shape.isDependent())
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +231,7 @@ func (s *Store) scanUnscoped(ctx context.Context, shapes map[string]tableShape) 
 	return rows, nil
 }
 
-func (s *Store) scanTable(ctx context.Context, table, query string) ([]legacyRow, error) {
+func (s *Store) scanTable(ctx context.Context, table, query string, dependent bool) ([]legacyRow, error) {
 	rs, err := s.sdb.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("scan %s: %w", table, err)
@@ -204,8 +240,8 @@ func (s *Store) scanTable(ctx context.Context, table, query string) ([]legacyRow
 
 	var rows []legacyRow
 	for rs.Next() {
-		r := legacyRow{Table: table}
-		if scanErr := rs.Scan(&r.ID, &r.Name, &r.AppID, &r.TenantID, &r.RunID); scanErr != nil {
+		r := legacyRow{Table: table, Dependent: dependent}
+		if scanErr := rs.Scan(&r.ID, &r.Name, &r.AppID, &r.TenantID, &r.RunID, &r.AgentID, &r.Kind, &r.Key); scanErr != nil {
 			return nil, fmt.Errorf("scan row in %s: %w", table, scanErr)
 		}
 		rows = append(rows, r)
@@ -213,21 +249,34 @@ func (s *Store) scanTable(ctx context.Context, table, query string) ([]legacyRow
 	return rows, rs.Err()
 }
 
-func selectOrEmpty(col string, present bool) string {
-	if present {
-		return col
+// selectOrEmpty selects expr if the table has it, or a literal empty
+// string aliased to the same name otherwise. expr is either a bare
+// column name or (for "key", which the rest of this package always
+// quotes -- see memory.go's LoadWorking) a pre-quoted identifier; the
+// alias always uses the unquoted form so Scan's column order stays
+// predictable either way.
+func selectOrEmpty(expr string, present bool) string {
+	if !present {
+		return `'' AS ` + trimQuotes(expr)
 	}
-	return `'' AS ` + col
+	return expr
+}
+
+func trimQuotes(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // resolveScopes decides a target scope for every unscoped row. Rows that
 // carry their own legacy identifier (app_id and/or tenant_id, or neither
 // column exists at all) go straight through the Rescoper, once per
-// distinct (appID, tenantID) pair. Rows that carry only a run_id --
-// cortex_steps and cortex_tool_calls -- have no legacy identifier of
-// their own; they inherit whatever scope their parent run resolves to,
-// so a scoped ListSteps/ListToolCalls under the run's scope still finds
-// them afterward.
+// distinct (appID, tenantID) pair. Rows whose table shape marks them
+// dependent -- cortex_steps and cortex_tool_calls -- have no legacy
+// identifier of their own; they inherit whatever scope their parent run
+// resolves to, so a scoped ListSteps/ListToolCalls under the run's scope
+// still finds them afterward.
 func (s *Store) resolveScopes(ctx context.Context, rows []legacyRow, r cortex.Rescoper) (map[string]rawScope, error) {
 	resolved := make(map[string]rawScope, len(rows))
 	byAppTenant := make(map[[2]string]rawScope)
@@ -235,7 +284,7 @@ func (s *Store) resolveScopes(ctx context.Context, rows []legacyRow, r cortex.Re
 	var dependents []legacyRow
 
 	for _, row := range rows {
-		if isDependentRow(row) {
+		if row.Dependent {
 			dependents = append(dependents, row)
 			continue
 		}
@@ -247,7 +296,7 @@ func (s *Store) resolveScopes(ctx context.Context, rows []legacyRow, r cortex.Re
 				// hasDirectRows in the caller should have already turned
 				// this into ErrNoRescoper; guarded here too so a future
 				// change to that check fails loud instead of panicking.
-				return nil, fmt.Errorf("%w: row %s in %s needs one", cortex.ErrNoRescoper, row.ID, row.Table)
+				return nil, fmt.Errorf("%w: row %v in %s needs one", cortex.ErrNoRescoper, row.ID, row.Table)
 			}
 			sc, rErr := r.Rescope(ctx, row.AppID, row.TenantID)
 			if rErr != nil {
@@ -261,7 +310,7 @@ func (s *Store) resolveScopes(ctx context.Context, rows []legacyRow, r cortex.Re
 		}
 		resolved[row.key()] = rs
 		if row.Table == "cortex_runs" {
-			runScope[row.ID] = rs
+			runScope[fmt.Sprint(row.ID)] = rs
 		}
 	}
 
@@ -304,7 +353,7 @@ func (s *Store) resolveDependents(ctx context.Context, dependents []legacyRow, r
 	for _, row := range dependents {
 		rs, ok := runScope[row.RunID]
 		if !ok {
-			return fmt.Errorf("rescope: %s row %s references run %s, which has no resolvable scope",
+			return fmt.Errorf("rescope: %s row %v references run %s, which has no resolvable scope",
 				row.Table, row.ID, row.RunID)
 		}
 		resolved[row.key()] = rs
@@ -314,18 +363,13 @@ func (s *Store) resolveDependents(ctx context.Context, dependents []legacyRow, r
 
 // fetchRunScopes reads the current scope columns for a set of runs
 // directly, for runs that are already scoped and so weren't part of the
-// pass's own scan.
+// pass's own scan. cortex_runs.id is always TEXT, unlike
+// cortex_memories.id, so a plain string round-trip is safe here.
 func (s *Store) fetchRunScopes(ctx context.Context, ids []string) (map[string]rawScope, error) {
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
 	query := `SELECT id, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon FROM cortex_runs WHERE id IN (` +
-		strings.Join(placeholders, ",") + `)`
+		placeholders(len(ids)) + `)`
 
-	rows, err := s.sdb.Query(ctx, query, args...)
+	rows, err := s.sdb.Query(ctx, query, toArgs(ids)...)
 	if err != nil {
 		return nil, fmt.Errorf("fetch parent run scopes: %w", err)
 	}
@@ -351,29 +395,172 @@ func (s *Store) fetchRunScopes(ctx context.Context, ids []string) (map[string]ra
 	return out, rows.Err()
 }
 
-// detectCollisions finds rows that would violate a (scope_canon, name)
-// uniqueness expectation once written, and reports them before anything
-// is written. Letting a later unique index reject them mid-write would be
-// a data-loss surprise; this turns it into a fix-your-rescoper message.
-// Rows without a name column (cortex_runs, cortex_steps, and friends)
-// never participate -- there is nothing to collide on.
-func detectCollisions(rows []legacyRow, resolved map[string]rawScope) error {
-	seen := make(map[[3]string]string) // table+canon+name -> first row id
+// placeholders returns n comma-separated "?" placeholders.
+func placeholders(n int) string {
+	ps := make([]string, n)
+	for i := range ps {
+		ps[i] = "?"
+	}
+	return strings.Join(ps, ",")
+}
+
+func toArgs(ids []string) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
+}
+
+// detectCollisions finds rows that would violate a (scope_canon, name) or
+// working-memory (scope_canon, agent_id, kind, key) uniqueness
+// expectation once written, and reports them before anything is written.
+// Letting a later unique index reject them mid-write would be a
+// data-loss surprise; this turns it into a fix-your-rescoper message.
+//
+// This checks two things, not one: rows within THIS batch colliding with
+// each other, and rows in this batch colliding with rows that are
+// already scoped (from an earlier pass, or written post-v1.8.0 under a
+// real scope). The latter needs a database round trip -- loadExisting*
+// pre-seeds `seen`/`seenWorking` with what's already there for the
+// canons this batch is about to write, before the in-batch rows are
+// checked against them.
+func (s *Store) detectCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope) error {
+	seen := make(map[[3]string]any)        // table+canon+name -> row id (existing or in-batch)
+	seenWorking := make(map[[4]string]any) // canon+agent_id+kind+key -> row id
+
+	if err := s.loadExistingNameCollisions(ctx, rows, resolved, seen); err != nil {
+		return err
+	}
+	if err := s.loadExistingWorkingMemoryCollisions(ctx, rows, resolved, seenWorking); err != nil {
+		return err
+	}
+
+	for _, r := range rows {
+		canon := resolved[r.key()].Canon
+
+		if r.Name != "" {
+			k := [3]string{r.Table, canon, r.Name}
+			if first, ok := seen[k]; ok {
+				return fmt.Errorf(
+					"rescope collision: %s rows %v and %v both map to scope %q with name %q; "+
+						"the rescoper must keep them in distinct scopes",
+					r.Table, first, r.ID, canon, r.Name)
+			}
+			seen[k] = r.ID
+		}
+
+		if r.Table == "cortex_memories" && r.Kind == "working" {
+			k := [4]string{canon, r.AgentID, r.Kind, r.Key}
+			if first, ok := seenWorking[k]; ok {
+				return fmt.Errorf(
+					"rescope collision: cortex_memories rows %v and %v both map to scope %q "+
+						"with working-memory key (agent=%q key=%q); the rescoper must keep them in distinct scopes",
+					first, r.ID, canon, r.AgentID, r.Key)
+			}
+			seenWorking[k] = r.ID
+		}
+	}
+	return nil
+}
+
+// loadExistingNameCollisions pre-seeds seen with every already-scoped row
+// (in a name-bearing table) whose scope_canon matches one of the canons
+// this batch is about to write. Without this, a legacy row could be
+// rescoped onto a scope an existing row already occupies under the same
+// name, and the pass would only discover it as a raw unique-violation
+// once applyScopes hits the write -- rolled back, but with no indication
+// of which row it collided with.
+func (s *Store) loadExistingNameCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope, seen map[[3]string]any) error {
+	canonsByTable := make(map[string]map[string]struct{})
 	for _, r := range rows {
 		if r.Name == "" {
 			continue
 		}
 		canon := resolved[r.key()].Canon
-		k := [3]string{r.Table, canon, r.Name}
-		if first, ok := seen[k]; ok {
-			return fmt.Errorf(
-				"rescope collision: %s rows %s and %s both map to scope %q with name %q; "+
-					"the rescoper must keep them in distinct scopes",
-				r.Table, first, r.ID, canon, r.Name)
+		if canonsByTable[r.Table] == nil {
+			canonsByTable[r.Table] = make(map[string]struct{})
 		}
-		seen[k] = r.ID
+		canonsByTable[r.Table][canon] = struct{}{}
+	}
+
+	for table, canonSet := range canonsByTable {
+		canons := make([]string, 0, len(canonSet))
+		for c := range canonSet {
+			canons = append(canons, c)
+		}
+		if err := s.loadExistingNamesInTable(ctx, table, canons, seen); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (s *Store) loadExistingNamesInTable(ctx context.Context, table string, canons []string, seen map[[3]string]any) error {
+	query := `SELECT id, name, scope_canon FROM ` + table + ` WHERE scope_canon IN (` + placeholders(len(canons)) + `)`
+	existing, err := s.sdb.Query(ctx, query, toArgs(canons)...)
+	if err != nil {
+		return fmt.Errorf("check existing names in %s: %w", table, err)
+	}
+	defer func() { _ = existing.Close() }()
+
+	for existing.Next() {
+		var (
+			id    any
+			name  string
+			canon string
+		)
+		if scanErr := existing.Scan(&id, &name, &canon); scanErr != nil {
+			return fmt.Errorf("scan existing name in %s: %w", table, scanErr)
+		}
+		seen[[3]string{table, canon, name}] = id
+	}
+	return existing.Err()
+}
+
+// loadExistingWorkingMemoryCollisions is loadExistingNameCollisions'
+// counterpart for cortex_memories, which has no `name` column and so
+// never participates in the name-based check. Its uniqueness surface is
+// (agent_id, kind, key, scope_canon) instead -- the same composite the
+// scope-aware partial unique index enforces (idx_cortex_memories_working
+// in migrations.go).
+func (s *Store) loadExistingWorkingMemoryCollisions(ctx context.Context, rows []legacyRow, resolved map[string]rawScope, seen map[[4]string]any) error {
+	canonSet := make(map[string]struct{})
+	for _, r := range rows {
+		if r.Table == "cortex_memories" && r.Kind == "working" {
+			canonSet[resolved[r.key()].Canon] = struct{}{}
+		}
+	}
+	if len(canonSet) == 0 {
+		return nil
+	}
+
+	canons := make([]string, 0, len(canonSet))
+	for c := range canonSet {
+		canons = append(canons, c)
+	}
+
+	query := `SELECT id, agent_id, "key", scope_canon FROM cortex_memories WHERE kind = 'working' AND scope_canon IN (` +
+		placeholders(len(canons)) + `)`
+	existing, err := s.sdb.Query(ctx, query, toArgs(canons)...)
+	if err != nil {
+		return fmt.Errorf("check existing working-memory keys: %w", err)
+	}
+	defer func() { _ = existing.Close() }()
+
+	for existing.Next() {
+		var (
+			id      any
+			agentID string
+			key     string
+			canon   string
+		)
+		if scanErr := existing.Scan(&id, &agentID, &key, &canon); scanErr != nil {
+			return fmt.Errorf("scan existing working-memory key: %w", scanErr)
+		}
+		seen[[4]string{canon, agentID, "working", key}] = id
+	}
+	return existing.Err()
 }
 
 // applyScopes writes every resolved scope inside one transaction, so a
@@ -393,7 +580,7 @@ func (s *Store) applyScopes(ctx context.Context, rows []legacyRow, resolved map[
 		rs := resolved[r.key()]
 		query := `UPDATE ` + r.Table + ` SET scope_l0 = ?, scope_l1 = ?, scope_l2 = ?, scope_extra = ?, scope_canon = ? WHERE id = ?`
 		if _, execErr := tx.Exec(ctx, query, rs.L0, rs.L1, rs.L2, rs.Extra, rs.Canon, r.ID); execErr != nil {
-			return fmt.Errorf("rescope %s row %s: %w", r.Table, r.ID, execErr)
+			return fmt.Errorf("rescope %s row %v: %w", r.Table, r.ID, execErr)
 		}
 	}
 
@@ -411,20 +598,13 @@ func countTables(rows []legacyRow) int {
 	return len(t)
 }
 
-// isDependentRow reports whether row must inherit its scope from a parent
-// run rather than being resolved directly: it carries a run_id and
-// neither of the identifier columns a direct row would use.
-func isDependentRow(row legacyRow) bool {
-	return row.RunID != "" && row.AppID == "" && row.TenantID == ""
-}
-
 // hasDirectRows reports whether any row in rows needs to be resolved
 // directly through the Rescoper, as opposed to inheriting a parent's
 // scope. An unscoped run is a direct row itself, so this still requires
 // a rescoper whenever a dependent's own parent is unscoped.
 func hasDirectRows(rows []legacyRow) bool {
 	for _, r := range rows {
-		if !isDependentRow(r) {
+		if !r.Dependent {
 			return true
 		}
 	}
