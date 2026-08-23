@@ -135,6 +135,24 @@ rescoper must keep them in distinct scopes
 
 This happens most often when two apps that used to be namespaced separately by `app_id` alone both had a skill (or agent, trait, behavior, or persona) with the same name, and your `Rescoper` folds both apps into the same tenant-level scope without an app level underneath to keep them apart. The fix is almost always in the `Rescoper`, not in the data: add the level that used to keep them distinct back into the returned scope, the way the worked example above appends an `app` level rather than mapping everything down to `tenant` alone. Working memory has its own version of the same check, keyed on `(scope, agent_id, key)` instead of name, for the same reason.
 
+## Mongo: the whole pass is one transaction, and that has a time limit
+
+On every backend, step 4 above writes every resolved scope inside a single
+transaction, so a mid-write failure rolls back the whole pass rather than
+leaving some rows rescoped and others not. On Postgres and SQLite that is
+cheap even at scale. On Mongo it is not: `applyScopes` opens one
+multi-document session and issues one `UpdateOne` per unscoped row inside it,
+with no batching or checkpointing in between. Mongo caps how long a
+transaction may stay open with `transactionLifetimeLimitSeconds`, 60 seconds
+by default, and a legacy database with several million unscoped agents,
+skills, traits, behaviors, or personas can take longer than that to rescope
+in one pass. When it does, Mongo aborts the transaction, `Migrate` returns
+the underlying error, and nothing is written, the same as any other
+mid-migration failure. If you're upgrading a large Mongo deployment, either
+raise `transactionLifetimeLimitSeconds` on the cluster for the duration of
+the migration window, or get in touch before upgrading; there is no
+batching escape hatch in the code today, and a single pass is what you get.
+
 ## Rows stay invisible until you rescope them
 
 If you skip this migration, or run it against a database that had unscoped rows and pass a `Rescoper` that never gets around to some of them (the scan only runs once, at migrate time), those rows are not reachable by anything cortex does afterward. Every scoped read requires a non-zero `cortex.Scope` on the context and filters by it; a row with `scope_canon = ''` never matches any of them, and there's no admin escape hatch that lists everything regardless of scope. The data is still in the table if you go looking for it directly with `scope_canon = ''`, but as far as cortex's own API is concerned it doesn't exist until it's rescoped.

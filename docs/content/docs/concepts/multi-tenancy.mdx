@@ -129,6 +129,28 @@ Every store implementation enforces scope on every query:
 - **Scope is immutable after creation**: an entity's stored scope is set once and
   never rewritten by a later update
 
+### `GetByName` prefix-matches, and ties are nondeterministic
+
+`GetByName` (and its `GetSkillByName`/`GetTraitByName`/`GetBehaviorByName`/
+`GetPersonaByName`/`GetOrchestrationByName` siblings) filter by scope with
+`exact = false`: they match the caller's scope and everything beneath it, the
+same prefix rule `List`/`Count` use everywhere else. A caller scoped to a
+workspace, with no project level, sees a `"deploy-bot"` agent that lives under
+either of two projects in that workspace as an equally valid match. If both
+exist, `GetByName` runs no `ORDER BY` over that result set, so which of the
+two rows comes back is whatever order the database happens to return them
+in, not a deterministic pick.
+
+This is a real behavior change from before v1.8.0's scope conversion: the old
+`UNIQUE (app_id, name)` index made the equivalent lookup unambiguous, because
+nothing could collide under one `app_id`. It is not a defect, and it will not
+be fixed by adding an `ORDER BY` — it's the same prefix-then-first-match
+semantics that runs, memories, and checkpoints have used since v1.7.0, now
+applied consistently to named entities too. If your host needs a
+deterministic `GetByName` under a shared parent scope, add a level that
+disambiguates the two rows (a `project` level, in the example above) and
+scope your read to it, rather than relying on lookup order.
+
 ## Upgrading: rows from before v1.7.0/v1.8.0 carry no scope
 
 The migrations that added `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` do **not**
