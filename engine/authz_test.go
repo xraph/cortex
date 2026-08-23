@@ -52,24 +52,28 @@ func TestEmitToolDenied_RecordsExactlyOneDenial(t *testing.T) {
 // Authorize was actually consulted rather than Visible's filtering being
 // trusted in its place.
 type recordingAuthorizer struct {
-	mu             sync.Mutex
-	visible        []llm.Tool
-	authorizeErr   error
-	authorizeCalls int
-	visibleCalls   int
+	mu               sync.Mutex
+	visible          []llm.Tool
+	authorizeErr     error
+	authorizeCalls   int
+	visibleCalls     int
+	visibleSubject   cortex.Subject
+	authorizeSubject cortex.Subject
 }
 
-func (r *recordingAuthorizer) Visible(_ context.Context, _ cortex.Subject, _ []llm.Tool) []llm.Tool {
+func (r *recordingAuthorizer) Visible(_ context.Context, s cortex.Subject, _ []llm.Tool) []llm.Tool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.visibleCalls++
+	r.visibleSubject = s
 	return r.visible
 }
 
-func (r *recordingAuthorizer) Authorize(_ context.Context, _ cortex.Subject, _ llm.ToolCall) error {
+func (r *recordingAuthorizer) Authorize(_ context.Context, s cortex.Subject, _ llm.ToolCall) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.authorizeCalls++
+	r.authorizeSubject = s
 	return r.authorizeErr
 }
 
@@ -216,5 +220,73 @@ func TestNilAuthorizer_LeavesBothPathsPermissive(t *testing.T) {
 	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
 	if got != `echoed:{"x":1}` {
 		t.Fatalf("executeTool with a nil authorizer = %q, want the handler's result unmodified", got)
+	}
+}
+
+// TestExecuteTool_DispatchesWhenAuthorizerAllows is the missing permissive
+// case for a real (non-nil) authorizer: every existing test that installs
+// one has it deny. This proves Authorize returning nil actually lets
+// dispatch through to the handler rather than the gate accidentally
+// denying-by-default or the handler path being unreachable once an
+// authorizer exists at all.
+func TestExecuteTool_DispatchesWhenAuthorizerAllows(t *testing.T) {
+	def, h := echoTool()
+	authz := &recordingAuthorizer{visible: []llm.Tool{def}, authorizeErr: nil}
+	e, err := New(WithTool(def, h), WithToolAuthorizer(authz))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
+	if got != `echoed:{"x":1}` {
+		t.Fatalf("executeTool with a permissive authorizer = %q, want the handler's result unmodified", got)
+	}
+	if authz.authorizeCalls != 1 {
+		t.Errorf("Authorize called %d times, want 1", authz.authorizeCalls)
+	}
+}
+
+// TestPrincipalFromContext_ReachesAuthorizerUnchanged is the regression
+// guard for the gap the fix-round review caught: cortex.Subject.Principal
+// existed but nothing could ever populate it, since none of the three
+// Subject construction sites read it from anywhere. WithPrincipal/
+// PrincipalFromContext close that gap; this proves a principal attached
+// to ctx reaches both authorizer methods, and specifically that cortex
+// carries it rather than copying or reinterpreting it: putting a pointer
+// in and getting the identical pointer back out is the only way to prove
+// "never interpreted" rather than merely "roughly preserved."
+func TestPrincipalFromContext_ReachesAuthorizerUnchanged(t *testing.T) {
+	type callerIdentity struct{ id string }
+	principal := &callerIdentity{id: "user-42"}
+
+	authz := &recordingAuthorizer{visible: []llm.Tool{{Name: "public"}}, authorizeErr: nil}
+	e := newEngineWithTools(t, authz, llm.Tool{Name: "public"})
+
+	ctx := cortex.WithPrincipal(context.Background(), principal)
+	ctx = cortex.WithScope(ctx, cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	if _, err := e.RunAgent(ctx, "assistant", "call public", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+
+	gotVisible, ok := authz.visibleSubject.Principal.(*callerIdentity)
+	if !ok || gotVisible != principal {
+		t.Errorf("Visible saw Principal %#v, want the identical pointer %p", authz.visibleSubject.Principal, principal)
+	}
+	gotAuthorize, ok := authz.authorizeSubject.Principal.(*callerIdentity)
+	if !ok || gotAuthorize != principal {
+		t.Errorf("Authorize saw Principal %#v, want the identical pointer %p", authz.authorizeSubject.Principal, principal)
+	}
+}
+
+// TestPrincipalFromContext_AbsentReturnsNil mirrors ScopeFromContext's
+// zero-value-on-absence contract: a context nobody attached a principal
+// to must not panic, and must yield nil rather than some other zero-ish
+// stand-in a caller might mistake for "no host principal configured" vs.
+// "host configured principal, and it happens to be nil".
+func TestPrincipalFromContext_AbsentReturnsNil(t *testing.T) {
+	if got := cortex.PrincipalFromContext(context.Background()); got != nil {
+		t.Errorf("PrincipalFromContext on a bare context = %#v, want nil", got)
 	}
 }

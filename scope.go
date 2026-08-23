@@ -9,7 +9,10 @@ import (
 
 type contextKey int
 
-const scopeKey contextKey = 0
+const (
+	scopeKey contextKey = iota
+	principalKey
+)
 
 // ErrNoScope is returned when an operation that requires a scope receives
 // a zero one. A zero scope means the thread broke somewhere upstream, so
@@ -141,4 +144,26 @@ func ScopeFromContext(ctx context.Context) Scope {
 		return Scope{}
 	}
 	return v
+}
+
+// WithPrincipal attaches the host's caller identity to ctx. Cortex never
+// interprets this value — it only carries it from wherever a host
+// authenticates a request through to Subject.Principal, for a
+// ToolAuthorizer to interpret however its host defines identity.
+//
+// It travels on the context, alongside Scope, rather than through
+// RunOverrides: both are ambient request identity with the same
+// lifetime, and RunOverrides mirrors a JSON wire type that either can't
+// carry an uninterpreted any or would force cortex to start interpreting
+// it. Dispatch also has no overrides parameter, so a struct field would
+// leave direct dispatch permanently principal-less.
+func WithPrincipal(ctx context.Context, principal any) context.Context {
+	return context.WithValue(ctx, principalKey, principal)
+}
+
+// PrincipalFromContext extracts the caller identity WithPrincipal
+// attached. A missing principal returns nil, mirroring ScopeFromContext's
+// zero-value-on-absence shape rather than panicking.
+func PrincipalFromContext(ctx context.Context) any {
+	return ctx.Value(principalKey)
 }

@@ -81,7 +81,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		// Built once per step and threaded to both authorizer calls
 		// below (Visible via resolveTools, Authorize via executeTool)
 		// so they judge the same subject.
-		subject := cortex.Subject{Scope: scope, AgentID: ag.ID, RunID: r.ID}
+		subject := cortex.Subject{Scope: scope, Principal: cortex.PrincipalFromContext(ctx), AgentID: ag.ID, RunID: r.ID}
 
 		req := &llm.Request{
 			Model:       cfg.Model,
@@ -311,7 +311,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 			// Built once per step and threaded to both authorizer calls
 			// below (Visible via resolveTools, Authorize via executeTool)
 			// so they judge the same subject.
-			subject := cortex.Subject{Scope: scope, AgentID: ag.ID, RunID: r.ID}
+			subject := cortex.Subject{Scope: scope, Principal: cortex.PrincipalFromContext(ctx), AgentID: ag.ID, RunID: r.ID}
 
 			req := &llm.Request{
 				Model:       cfg.Model,
