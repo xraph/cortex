@@ -14,5 +14,8 @@ import (
 // of its own, so an authorizer keyed on those will see them zero-valued.
 func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 	subject := cortex.Subject{Scope: cortex.ScopeFromContext(ctx), Principal: cortex.PrincipalFromContext(ctx)}
-	return e.executeTool(ctx, subject, llm.ToolCall{Name: name, Arguments: arguments})
+	// The outcome is what tells the ReAct loop whether a ToolCompleted event
+	// is still owed. Dispatch has no run to attribute one to, so it drops it.
+	result, _ := e.executeTool(ctx, subject, llm.ToolCall{Name: name, Arguments: arguments})
+	return result
 }

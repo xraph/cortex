@@ -179,3 +179,56 @@ func (t *toolCallingLLM) Complete(_ context.Context, _ *llm.Request) (*llm.Respo
 func (t *toolCallingLLM) CompleteStream(_ context.Context, _ *llm.Request) (llm.Stream, error) {
 	return nil, errors.New("scopespy: CompleteStream not supported by ToolCallingLLM")
 }
+
+// toolCallingStreamLLM is the streaming twin of toolCallingLLM: its first
+// CompleteStream yields a single chunk requesting tool, and every stream
+// after that answers plainly, so streamReAct dispatches one tool call and
+// then finishes.
+type toolCallingStreamLLM struct {
+	mu       sync.Mutex
+	tool     string
+	answered bool
+}
+
+// ToolCallingStreamLLM returns an llm.Client whose stream requests toolName
+// once and then answers plainly, so the streaming react loop reaches its
+// tool-dispatch branch. Complete is implemented for interface completeness
+// and is not what the streaming tests exercise.
+func ToolCallingStreamLLM(toolName string) llm.Client {
+	return &toolCallingStreamLLM{tool: toolName}
+}
+
+func (t *toolCallingStreamLLM) Complete(_ context.Context, _ *llm.Request) (*llm.Response, error) {
+	return &llm.Response{Content: "done"}, nil
+}
+
+func (t *toolCallingStreamLLM) CompleteStream(_ context.Context, _ *llm.Request) (llm.Stream, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.answered {
+		t.answered = true
+		return &toolCallingStream{tool: t.tool}, nil
+	}
+	return &staticStream{reply: "done"}, nil
+}
+
+// toolCallingStream yields one chunk carrying a tool call, then io.EOF.
+type toolCallingStream struct {
+	tool string
+	sent bool
+}
+
+func (t *toolCallingStream) Next(_ context.Context) (*llm.Chunk, error) {
+	if t.sent {
+		return nil, io.EOF
+	}
+	t.sent = true
+	return &llm.Chunk{
+		ToolCalls:    []llm.ToolCall{{ID: "spy-stream-tool-call-1", Name: t.tool, Arguments: "{}"}},
+		FinishReason: "tool_calls",
+	}, nil
+}
+
+func (t *toolCallingStream) Close() error { return nil }
+
+func (t *toolCallingStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 1} }

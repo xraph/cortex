@@ -45,7 +45,7 @@ func TestWithTool_DispatchedInExecuteTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "echo", Arguments: `{"x":1}`})
+	got, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "echo", Arguments: `{"x":1}`})
 	if got != `echoed:{"x":1}` {
 		t.Fatalf("executeTool = %q, want %q", got, `echoed:{"x":1}`)
 	}
@@ -56,7 +56,7 @@ func TestExecuteTool_UnknownStillErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "nope"})
+	got, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "nope"})
 	if !strings.Contains(got, "unknown tool") {
 		t.Fatalf("executeTool = %q, want it to contain %q", got, "unknown tool")
 	}

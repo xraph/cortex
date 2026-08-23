@@ -217,7 +217,7 @@ func TestNilAuthorizer_LeavesBothPathsPermissive(t *testing.T) {
 		t.Fatalf("resolveTools with a nil authorizer dropped %q; a nil authorizer must allow everything", def.Name)
 	}
 
-	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
+	got, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
 	if got != `echoed:{"x":1}` {
 		t.Fatalf("executeTool with a nil authorizer = %q, want the handler's result unmodified", got)
 	}
@@ -237,7 +237,7 @@ func TestExecuteTool_DispatchesWhenAuthorizerAllows(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
+	got, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name, Arguments: `{"x":1}`})
 	if got != `echoed:{"x":1}` {
 		t.Fatalf("executeTool with a permissive authorizer = %q, want the handler's result unmodified", got)
 	}

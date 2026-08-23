@@ -154,7 +154,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				result := e.executeTool(ctx, subject, tc)
+				result, outcome := e.executeTool(ctx, subject, tc)
 
 				tcEnd := time.Now().UTC()
 				toolCall := &run.ToolCall{
@@ -172,7 +172,12 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 					e.logger.Error("create tool call", log.String("error", err.Error()))
 				}
 
-				e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+				// executeTool already emitted the terminal event for a denial
+				// or a failure. Emitting completed here too would report the
+				// same call twice, with the second one calling it a success.
+				if outcome == outcomeCompleted {
+					e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+				}
 
 				// Append tool result message.
 				messages = append(messages, llm.Message{
@@ -455,7 +460,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 						"tool_id":   tc.ID,
 					}}
 
-					result := e.executeTool(ctx, subject, tc)
+					result, outcome := e.executeTool(ctx, subject, tc)
 
 					tcEnd := time.Now().UTC()
 					toolCall := &run.ToolCall{
@@ -473,7 +478,12 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 						e.logger.Error("create tool call", log.String("error", err.Error()))
 					}
 
-					e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+					// Same as the non-streaming loop: one terminal event per
+					// call, and executeTool already emitted it for a denial
+					// or a failure.
+					if outcome == outcomeCompleted {
+						e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+					}
 
 					messages = append(messages, llm.Message{
 						Role:       "tool",
@@ -610,34 +620,60 @@ func filterByName(tools []llm.Tool, names []string) []llm.Tool {
 	return out
 }
 
-// executeTool executes a tool call and returns the result. The authorizer is
-// consulted here even though resolveTools already filtered what the model
-// was shown: a model can name a tool it was never shown, so Visible having
-// filtered the list is not a substitute for gating the dispatch itself.
-func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) string {
+// toolOutcome says how a tool call ended, so the caller knows whether a
+// terminal plugin event is still owed. Exactly one of ToolCompleted,
+// ToolFailed and ToolDenied fires per call: executeTool emits the failed
+// and denied ones itself, and the ReAct loop emits completed only when it
+// gets outcomeCompleted back. Before this existed the loop emitted
+// ToolCompleted unconditionally, so a subscriber counting completions
+// counted every denial and every failure as a success.
+type toolOutcome int
+
+const (
+	outcomeCompleted toolOutcome = iota
+	outcomeFailed
+	outcomeDenied
+)
+
+// executeTool executes a tool call and returns the result plus how it ended.
+// The authorizer is consulted here even though resolveTools already filtered
+// what the model was shown: a model can name a tool it was never shown, so
+// Visible having filtered the list is not a substitute for gating the
+// dispatch itself.
+//
+// The result string is the same in all three outcomes, an error payload for a
+// denial or a failure, and it always flows back to the model. Only the plugin
+// event differs.
+func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome) {
 	if e.authorizer != nil {
 		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
 			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, err.Error())
-			return jsonResult("error", err.Error())
+			return jsonResult("error", err.Error()), outcomeDenied
 		}
 	}
 
 	inv := cortex.Invocation{Subject: s, Call: tc}
 
 	if result, handled := e.executeBuiltinTool(ctx, inv); handled {
-		return result
+		return result, outcomeCompleted
 	}
 	for _, rt := range e.tools {
 		if rt.def.Name == tc.Name {
 			out, err := rt.handler(ctx, inv)
 			if err != nil {
 				e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, err)
-				return jsonResult("error", err.Error())
+				return jsonResult("error", err.Error()), outcomeFailed
 			}
-			return out
+			return out, outcomeCompleted
 		}
 	}
-	return jsonResult("error", fmt.Sprintf("unknown tool %q", tc.Name))
+
+	// A name that matches nothing is a failure like any other, and it gets
+	// the same terminal event. Reporting it as completed would put a tool
+	// that never ran into a subscriber's success count.
+	err := fmt.Errorf("unknown tool %q", tc.Name)
+	e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, err)
+	return jsonResult("error", err.Error()), outcomeFailed
 }
 
 // memoryToLLM converts memory messages to llm messages.
