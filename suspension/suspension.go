@@ -40,6 +40,32 @@ type PendingCall struct {
 	Arguments string `json:"arguments"`
 }
 
+// RunConfig is the resolved configuration a run was executing under: the
+// merge of engine defaults, agent config and that run's overrides,
+// already flattened.
+//
+// It is stored for the same reason SystemPrompt is stored assembled
+// rather than as the sections it came from. A run's overrides live only
+// in the call that started it, so a resume that rebuilt the config from
+// the agent would silently drop them: a run deliberately started with a
+// narrowed Tools list would come back with the agent's full tool set,
+// which is authority widening across a pause, and a run started with a
+// raised MaxSteps would come back on the agent's smaller budget and
+// refuse to continue at all.
+//
+// Storing the resolved values also pins what the run was actually
+// executing, so an agent-config edit landing during the pause cannot
+// shift a conversation already in flight.
+type RunConfig struct {
+	Model         string   `json:"model,omitempty"`
+	Temperature   *float64 `json:"temperature,omitempty"`
+	MaxSteps      int      `json:"max_steps,omitempty"`
+	MaxTokens     int      `json:"max_tokens,omitempty"`
+	ReasoningLoop string   `json:"reasoning_loop,omitempty"`
+	Tools         []string `json:"tools,omitempty"`
+	PersonaRef    string   `json:"persona_ref,omitempty"`
+}
+
 // Continuation is everything the loop needs to pick up where it stopped.
 // It is stored in typed columns rather than an untyped metadata map, so a
 // malformed continuation is a scan error at the boundary instead of a
@@ -76,6 +102,12 @@ type Continuation struct {
 	// pause can land on a different session than the one the messages
 	// above came from.
 	SessionID id.SessionID `json:"session_id,omitempty"`
+
+	// Config is the resolved configuration the run was executing under.
+	// See RunConfig: a resume builds its config from this and never
+	// re-merges the agent's, so the run's own overrides survive the
+	// pause.
+	Config RunConfig `json:"config"`
 }
 
 // Suspension is a paused run.

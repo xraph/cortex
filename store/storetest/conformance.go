@@ -328,6 +328,11 @@ func newSuspension(runID id.AgentRunID) *suspension.Suspension {
 			TokensUsed:      17,
 			NewMessagesFrom: 1,
 			SessionID:       id.NewSessionID(),
+			Config: suspension.RunConfig{
+				Model:    "conformance-model",
+				MaxSteps: 9,
+				Tools:    []string{"conformance-tool"},
+			},
 		},
 	}
 }
@@ -2989,6 +2994,17 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		if len(got.Cont.Messages) != 1 || got.Cont.Messages[0].Content != susp.Cont.Messages[0].Content {
 			t.Errorf("continuation messages round-tripped as %+v, want %+v", got.Cont.Messages, susp.Cont.Messages)
 		}
+		// A backend that drops the config hands a resume the agent's
+		// current settings instead of the run's own: the tool list the
+		// run was narrowed to widens back out, and the step budget it
+		// was started with is gone.
+		gotCfg, wantCfg := got.Cont.Config, susp.Cont.Config
+		if gotCfg.Model != wantCfg.Model || gotCfg.MaxSteps != wantCfg.MaxSteps {
+			t.Errorf("continuation config round-tripped as %+v, want %+v", gotCfg, wantCfg)
+		}
+		if len(gotCfg.Tools) != 1 || gotCfg.Tools[0] != wantCfg.Tools[0] {
+			t.Errorf("continuation config tools round-tripped as %v, want %v", gotCfg.Tools, wantCfg.Tools)
+		}
 	})
 
 	t.Run("Orchestration", func(t *testing.T) {
@@ -3122,8 +3138,10 @@ func testClaimSuspensionConcurrency(t *testing.T, newStore func(t *testing.T) st
 // error, since the error alone cannot tell the two implementations
 // apart.
 //
-// The three fixtures differ only in the suspension's deadline (past,
-// future, absent), which is the thing under test.
+// The first three subtests run the deadline axis end to end, on fixtures
+// that differ only in the deadline: past, still ahead, none at all. The
+// fourth is the classification's other side, and its fixture differs by
+// having no suspension at all, which is the thing that subtest is about.
 func testClaimSuspensionExpiry(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("ClaimSuspension_ExpiredRefusesAndLeavesTheRunPaused", func(t *testing.T) {
 		s := newStore(t)
@@ -3166,6 +3184,32 @@ func testClaimSuspensionExpiry(t *testing.T, newStore func(t *testing.T) store.S
 		claimed, err := s.ClaimSuspension(ctx, r.ID)
 		if err != nil {
 			t.Fatalf("ClaimSuspension with the deadline still ahead: %v", err)
+		}
+		if claimed.ID != susp.ID {
+			t.Fatalf("claim returned %s, want %s", claimed.ID, susp.ID)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the claim: %v", err)
+		}
+		if reloaded.State != run.StateRunning {
+			t.Errorf("run state after a successful claim = %q, want %q", reloaded.State, run.StateRunning)
+		}
+	})
+
+	// No deadline at all is the third point on the same axis, and the
+	// case nearly every real suspension takes: expiry is opt-in, so a
+	// predicate that got the NULL branch wrong would refuse every
+	// ordinary resume rather than just the expired ones.
+	t.Run("ClaimSuspension_NoDeadlineClaimsNormally", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, nil)
+
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("ClaimSuspension with no deadline: %v", err)
 		}
 		if claimed.ID != susp.ID {
 			t.Fatalf("claim returned %s, want %s", claimed.ID, susp.ID)

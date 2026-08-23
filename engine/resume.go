@@ -168,7 +168,13 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, e.failResume(ctx, r, ag.ID, fmt.Errorf("delete claimed suspension: %w", err))
 	}
 
-	cfg := e.effectiveConfig(ag, nil)
+	// The config comes from the continuation, never from a fresh merge of
+	// the agent's. A rebuild would drop the run's own overrides: cfg.Tools
+	// feeds resolveTools, so a run deliberately started with a narrowed
+	// tool list would resume with the agent's full set, which is exactly
+	// the authority widening this whole path exists to refuse. A rebuilt
+	// MaxSteps misfires the guard just below it, too.
+	cfg := configFromContinuation(susp.Cont.Config)
 	if st.stepIndex >= cfg.MaxSteps {
 		// Suspending on the last step stores a step index the budget has
 		// no room for. Re-entering the loop here would fall straight

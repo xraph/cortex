@@ -576,6 +576,121 @@ func TestResume_FinalStepFailsRatherThanCompletingEmpty(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────
+// The config the run was executing under
+// ──────────────────────────────────────────────────
+
+// TestResume_KeepsTheRunsNarrowedToolSet is the authority half of the
+// config question, and it is the one that matters most. cfg.Tools feeds
+// resolveTools, so a resume that rebuilt the config from the agent would
+// hand the model back the agent's FULL tool set: a run deliberately
+// started with a narrowed list would come back able to call tools it was
+// never given, which is authority widening across a pause in the release
+// whose whole point is that a resume re-derives authority from the run.
+func TestResume_KeepsTheRunsNarrowedToolSet(t *testing.T) {
+	def := externalTool()
+	withheld := llm.Tool{Name: "echo_back", Description: "a registered tool this run was not given"}
+	spy := scopespy.New()
+	llmSpy := &requestRecordingLLM{scriptedLLM: answeringLLM(def.Name)}
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(llmSpy),
+		WithExternalTool(def),
+		WithTool(withheld, func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil }),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), scopeA())
+	r, err := e.RunAgent(ctx, "assistant", "ask the human", &RunOverrides{Tools: []string{def.Name}})
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if r.State != run.StatePaused {
+		t.Fatalf("run state = %q, want %q", r.State, run.StatePaused)
+	}
+	if got := llmSpy.toolNames(0); len(got) != 1 || got[0] != def.Name {
+		t.Fatalf("the run advertised %v before the pause, want only %q; the fixture never narrowed anything", got, def.Name)
+	}
+
+	if _, err := e.Resume(resumeCtx(scopeA()), r.ID, oneResult(t, spy, "the human said yes")); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	if llmSpy.requestCount() < 2 {
+		t.Fatalf("the resumed loop made %d model calls, want at least 2", llmSpy.requestCount())
+	}
+	after := llmSpy.toolNames(1)
+	for _, name := range after {
+		if name == withheld.Name {
+			t.Fatalf("the resumed run advertised %q, a tool the run was never given: %v", withheld.Name, after)
+		}
+	}
+	if len(after) != 1 || after[0] != def.Name {
+		t.Errorf("the resumed run advertised %v, want the same narrowed list the run started with (%q)", after, def.Name)
+	}
+}
+
+// TestResume_KeepsTheRunsStepBudget is the other half. A run started with
+// a budget larger than its agent's would resume on the agent's smaller
+// one, and the final-step guard would then refuse a run with steps still
+// to spend.
+func TestResume_KeepsTheRunsStepBudget(t *testing.T) {
+	base := scopespy.New()
+	// The agent's own budget is 1, so a rebuilt config refuses to resume
+	// at all; the run was started with 3.
+	spy := &lastStepAgentSpy{Spy: base}
+	e := mustResumeEngine(t, spy)
+
+	ctx := cortex.WithScope(context.Background(), scopeA())
+	r, err := e.RunAgent(ctx, "assistant", "ask the human", &RunOverrides{MaxSteps: 3})
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if r.State != run.StatePaused {
+		t.Fatalf("run state = %q, want %q", r.State, run.StatePaused)
+	}
+
+	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, oneResult(t, base, "the human said yes"))
+	if err != nil {
+		t.Fatalf("Resume: %v; the run had steps left on the budget it was started with", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("resumed run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+}
+
+// TestResume_WithNoSessionSkipsTheConversationSave covers a gap rather
+// than a live bug: nothing this version writes produces a continuation
+// with no session. An empty session id is the sentinel that meant "the
+// shared one" before scope existed, though, and conversation rows written
+// under it are how history leaked between tenants, so the save is skipped
+// and logged rather than attempted.
+func TestResume_WithNoSessionSkipsTheConversationSave(t *testing.T) {
+	spy := scopespy.New()
+	e := mustResumeEngine(t, spy)
+	r := suspendedFixture(t, spy, e)
+
+	in := oneResult(t, spy, "the human said yes")
+	spy.Suspensions()[0].Cont.SessionID = id.SessionID{}
+
+	before := len(spy.Calls())
+	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, in)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("resumed run state = %q, want %q; a missing session must not cost the run", resumed.State, run.StateCompleted)
+	}
+	for _, c := range spy.Calls()[before:] {
+		if c.Method == "SaveConversation" {
+			t.Errorf("SaveConversation ran with session %q; an empty session id is the shared bucket, not a session", c.SessionID)
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────
 // Streaming
 // ──────────────────────────────────────────────────
 
@@ -685,14 +800,14 @@ func oneResult(t *testing.T, spy interface {
 // only place a tool result is observable before it reaches a provider.
 type requestRecordingLLM struct {
 	*scriptedLLM
-	mu   sync.Mutex
-	last *llm.Request
+	mu       sync.Mutex
+	requests []*llm.Request
 }
 
 func (r *requestRecordingLLM) Complete(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	r.mu.Lock()
 	cp := *req
-	r.last = &cp
+	r.requests = append(r.requests, &cp)
 	r.mu.Unlock()
 	return r.scriptedLLM.Complete(ctx, req)
 }
@@ -700,7 +815,31 @@ func (r *requestRecordingLLM) Complete(ctx context.Context, req *llm.Request) (*
 func (r *requestRecordingLLM) lastRequest() *llm.Request {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.last
+	if len(r.requests) == 0 {
+		return nil
+	}
+	return r.requests[len(r.requests)-1]
+}
+
+// toolNames returns the tools advertised on the nth request, which is
+// the only place cfg.Tools is observable.
+func (r *requestRecordingLLM) toolNames(n int) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n >= len(r.requests) {
+		return nil
+	}
+	names := make([]string, 0, len(r.requests[n].Tools))
+	for _, t := range r.requests[n].Tools {
+		names = append(names, t.Name)
+	}
+	return names
+}
+
+func (r *requestRecordingLLM) requestCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.requests)
 }
 
 // alwaysCallingLLM never stops asking for the tool, so a resumed run

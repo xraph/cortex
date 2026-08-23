@@ -42,8 +42,11 @@ type reactState struct {
 	sessionID id.SessionID
 }
 
-// continuation snapshots the state for a suspension row.
-func (s *reactState) continuation() suspension.Continuation {
+// continuation snapshots the state for a suspension row. cfg travels
+// with it because a resume must not re-merge the agent's config: the
+// run's own overrides live nowhere else, and rebuilding without them
+// widens the tool list and resets the step budget.
+func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 	return suspension.Continuation{
 		Messages:        s.messages,
 		SystemPrompt:    s.systemPrompt,
@@ -51,6 +54,29 @@ func (s *reactState) continuation() suspension.Continuation {
 		TokensUsed:      s.tokensUsed,
 		NewMessagesFrom: s.newMessagesFrom,
 		SessionID:       s.sessionID,
+		Config: suspension.RunConfig{
+			Model:         cfg.Model,
+			Temperature:   cfg.Temperature,
+			MaxSteps:      cfg.MaxSteps,
+			MaxTokens:     cfg.MaxTokens,
+			ReasoningLoop: cfg.ReasoningLoop,
+			Tools:         cfg.Tools,
+			PersonaRef:    cfg.PersonaRef,
+		},
+	}
+}
+
+// configFromContinuation is the inverse, and the only config a resumed
+// run ever runs on.
+func configFromContinuation(c suspension.RunConfig) resolvedConfig {
+	return resolvedConfig{
+		Model:         c.Model,
+		Temperature:   c.Temperature,
+		MaxSteps:      c.MaxSteps,
+		MaxTokens:     c.MaxTokens,
+		ReasoningLoop: c.ReasoningLoop,
+		Tools:         c.Tools,
+		PersonaRef:    c.PersonaRef,
 	}
 }
 
@@ -276,7 +302,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			}
 
 			if len(pending) > 0 {
-				cont := st.continuation()
+				cont := st.continuation(cfg)
 				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
 					return nil, fmt.Errorf("suspend run: %w", err)
@@ -314,13 +340,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		break
 	}
 
-	// Save only the messages this run actually added, not the whole
-	// reloaded history alongside them. See newMessagesFrom's comment on
-	// reactState for why that distinction matters.
-	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
-	if err := e.store.SaveConversation(ctx, ag.ID, st.sessionID, convMsgs); err != nil {
-		e.logger.Error("save conversation", log.String("error", err.Error()))
-	}
+	e.saveConversation(ctx, ag.ID, st)
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
@@ -618,7 +638,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 
 			if len(pending) > 0 {
-				cont := st.continuation()
+				cont := st.continuation(cfg)
 				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
 					events <- StreamEvent{Type: EventError, Data: map[string]any{
@@ -674,12 +694,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		break
 	}
 
-	// Save only the messages this run actually added, same as
-	// continueReAct. See newMessagesFrom's comment on reactState.
-	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
-	if err := e.store.SaveConversation(ctx, ag.ID, st.sessionID, convMsgs); err != nil {
-		e.logger.Error("save conversation", log.String("error", err.Error()))
-	}
+	e.saveConversation(ctx, ag.ID, st)
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
@@ -705,6 +720,29 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 // ──────────────────────────────────────────────────
 // Helper functions
 // ──────────────────────────────────────────────────
+
+// saveConversation persists only the messages this run actually added,
+// not the whole reloaded history alongside them. See newMessagesFrom's
+// comment on reactState for why that distinction matters.
+//
+// A state with no session is skipped rather than written. Nothing in this
+// version produces one, since both loops resolve a session before the run
+// starts and a continuation carries it across a pause, but an empty
+// session id is the sentinel that meant "the shared one" before scope
+// existed, and writing conversation rows under it is how history leaked
+// between tenants. A future writer that forgets to carry the session
+// should lose a save and say so, not quietly write into the shared bucket.
+func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *reactState) {
+	if st.sessionID.IsNil() {
+		e.logger.Warn("skipping conversation save: the run carries no session",
+			log.String("agent_id", agentID.String()))
+		return
+	}
+	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
+	if err := e.store.SaveConversation(ctx, agentID, st.sessionID, convMsgs); err != nil {
+		e.logger.Error("save conversation", log.String("error", err.Error()))
+	}
+}
 
 // failRun marks a run as failed and emits the RunFailed hook.
 func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error, _ time.Time) {
