@@ -33,4 +33,19 @@ var (
 	ErrBudgetExhausted  = errors.New("cortex: budget exhausted")
 	ErrMaxStepsReached  = errors.New("cortex: maximum steps reached")
 	ErrMaxTokensReached = errors.New("cortex: maximum tokens reached")
+
+	// Suspension errors.
+	//
+	// ErrNotSuspended is returned by ClaimSuspension to the losing side of
+	// a double resume: the run was not paused (or another caller already
+	// claimed it) when the claim ran.
+	ErrNotSuspended = errors.New("cortex: run not suspended")
+	// ErrSuspensionExpired is returned when a resume targets a suspension
+	// past its ExpiresAt. The suspension row still exists for the expiry
+	// sweep to find and clean up; it is simply no longer resumable.
+	ErrSuspensionExpired = errors.New("cortex: suspension expired")
+	// ErrResultsMismatch is returned when the results a caller supplies to
+	// resume an external-tool suspension do not correspond to the pending
+	// calls it was waiting on.
+	ErrResultsMismatch = errors.New("cortex: suspension results do not match pending calls")
 )

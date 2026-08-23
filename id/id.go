@@ -38,6 +38,7 @@ const (
 	PrefixBehavior            Prefix = "bhv"
 	PrefixPersona             Prefix = "prs"
 	PrefixSession             Prefix = "ses"
+	PrefixSuspension          Prefix = "sus"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -160,6 +161,9 @@ type PersonaID = ID
 // SessionID is a type-safe identifier for sessions (prefix: "ses").
 type SessionID = ID
 
+// SuspensionID is a type-safe identifier for suspensions (prefix: "sus").
+type SuspensionID = ID
+
 // AnyID is a type alias that accepts any valid prefix.
 type AnyID = ID
 
@@ -209,6 +213,9 @@ func NewPersonaID() ID { return New(PrefixPersona) }
 // NewSessionID generates a new unique session ID.
 func NewSessionID() ID { return New(PrefixSession) }
 
+// NewSuspensionID generates a new unique suspension ID.
+func NewSuspensionID() ID { return New(PrefixSuspension) }
+
 // ──────────────────────────────────────────────────
 // Convenience parsers
 // ──────────────────────────────────────────────────
@@ -256,6 +263,9 @@ func ParsePersonaID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPers
 
 // ParseSessionID parses a string and validates the "ses" prefix.
 func ParseSessionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSession) }
+
+// ParseSuspensionID parses a string and validates the "sus" prefix.
+func ParseSuspensionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSuspension) }
 
 // ParseOptionalSessionID parses s as a session ID, returning the zero ID
 // (rather than an error) when s is empty. Run and memory rows written
