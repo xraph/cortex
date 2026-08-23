@@ -43,11 +43,18 @@ func (t tableShape) isDependent() bool {
 
 // legacyRow is one row awaiting a scope, with whichever legacy identifier
 // columns its table happened to carry. Fields for columns the table
-// doesn't have are left as the empty string. ID is `any`, not `string`:
-// cortex_memories.id is BIGSERIAL, every other scoped table's id is TEXT,
-// and pgx (no database/sql convertAssign layer) refuses to scan an int8
-// into a *string, which would abort the whole pass on the first unscoped
-// memory row.
+// doesn't have are left as the empty string.
+//
+// ID is `any` rather than `string` because these tables do not agree on a
+// key type: cortex_memories.id is BIGSERIAL, while every other scoped
+// table uses a TEXT TypeID. Keeping the scanned value in its real type
+// means the driver binds it back unchanged.
+//
+// A string would in fact work today: pgx wraps *string via
+// TryWrapBuiltinTypeScanPlan so Int8Codec accepts it, and text format is
+// chosen for the write-back. That is an implementation detail of the
+// driver's scan-plan resolution, not a documented contract, and relying
+// on it buys nothing here.
 type legacyRow struct {
 	Table     string
 	ID        any

@@ -133,11 +133,9 @@ func insertScopedAgentRow(t *testing.T, s *Store, agentID, name string, scope co
 
 // insertLegacyMemory writes an unscoped cortex_memories row and returns
 // its auto-generated integer id. cortex_memories.id is INTEGER
-// AUTOINCREMENT, unlike every other scoped table's TEXT id -- this is
-// the exact shape mismatch that made rescopeLegacyRows unable to scan a
-// legacy memory row at all (a Go string destination can't receive it on
-// postgres, whose pgx driver has no database/sql convertAssign layer to
-// paper over the mismatch the way sqlite's driver does).
+// AUTOINCREMENT on sqlite (and BIGSERIAL on postgres), unlike every
+// other scoped table's TEXT id -- this is why legacyRow.ID has to be
+// `any`, not `string` (see the comment on legacyRow).
 func insertLegacyMemory(t *testing.T, s *Store, agentID, tenantID, kind, key string) int64 {
 	t.Helper()
 	const q = `INSERT INTO cortex_memories
@@ -331,14 +329,13 @@ func TestRescope_StepInheritsFromAlreadyScopedRunNeedsNoRescoper(t *testing.T) {
 	}
 }
 
-// TestRescope_MemoriesAndCheckpointsRescope is the direct regression test
-// for Finding 1: cortex_memories.id is INTEGER AUTOINCREMENT, not TEXT
-// like every other scoped table. Scanning it into a plain Go string
-// aborted the whole pass on postgres (whose pgx driver refuses int8 ->
-// *string outright) the moment a single legacy memory row existed --
-// exactly the database this pass exists to migrate. cortex_checkpoints
-// is covered in the same test since neither table had any coverage at
-// all before this round.
+// TestRescope_MemoriesAndCheckpointsRescope is coverage cortex_memories
+// and cortex_checkpoints had none of before this round: cortex_memories.id
+// is INTEGER AUTOINCREMENT, not TEXT like every other scoped table, so
+// it's the one row shape that actually needs legacyRow.ID to be `any`
+// (see the comment on legacyRow) -- exactly the database this pass
+// exists to migrate. cortex_checkpoints is covered in the same test
+// since neither table had any coverage at all before this round.
 func TestRescope_MemoriesAndCheckpointsRescope(t *testing.T) {
 	s := newTestStore(t)
 	agentID := id.NewAgentID().String()

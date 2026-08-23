@@ -256,15 +256,13 @@ func TestRescope(t *testing.T) {
 		}
 	})
 
-	// MemoriesAndCheckpointsRescope is the direct regression test for
-	// Finding 1: cortex_memories.id is BIGSERIAL, not TEXT like every
-	// other scoped table. Scanning it into a plain Go string aborted the
-	// whole pass on postgres -- whose pgx driver refuses int8 -> *string
-	// outright, unlike sqlite's database/sql layer, which silently
-	// coerces -- the moment a single legacy memory row existed. This is
-	// the exact database this pass exists to migrate, and it had zero
-	// coverage before this round. cortex_checkpoints is covered in the
-	// same subtest since it had none either.
+	// MemoriesAndCheckpointsRescope is coverage cortex_memories and
+	// cortex_checkpoints had none of before this round: cortex_memories.id
+	// is BIGSERIAL, not TEXT like every other scoped table, so it's the
+	// one row shape that actually needs legacyRow.ID to be `any` (see the
+	// comment on legacyRow) -- this is the exact database this pass
+	// exists to migrate. cortex_checkpoints is covered in the same
+	// subtest since it had no coverage either.
 	t.Run("MemoriesAndCheckpointsRescope", func(t *testing.T) {
 		st := fresh(t)
 		agentID := id.NewAgentID().String()
@@ -549,10 +547,9 @@ func legacyScopeCanon(t *testing.T, s *Store, table string, id any) string {
 }
 
 // insertLegacyMemory writes an unscoped cortex_memories row and returns
-// its auto-generated BIGSERIAL id. This is the exact shape mismatch
-// behind Finding 1: postgres's pgx driver (no database/sql
-// convertAssign layer) refuses to scan an int8 into a *string, so
-// legacyRow.ID has to be `any`, not `string`.
+// its auto-generated BIGSERIAL id -- the one scoped-table id that isn't
+// TEXT, which is why legacyRow.ID has to be `any`, not `string` (see the
+// comment on legacyRow).
 func insertLegacyMemory(t *testing.T, s *Store, agentID, tenantID, kind, key string) int64 {
 	t.Helper()
 	const q = `INSERT INTO cortex_memories

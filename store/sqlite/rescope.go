@@ -43,15 +43,21 @@ func (t tableShape) isDependent() bool {
 
 // legacyRow is one row awaiting a scope, with whichever legacy identifier
 // columns its table happened to carry. Fields for columns the table
-// doesn't have are left as the empty string. ID is `any`, not `string`:
-// cortex_memories.id is INTEGER AUTOINCREMENT, every other scoped
-// table's id is TEXT. sqlite's driver will happily convertAssign an
-// integer into a *string, but binding it back into a `WHERE id = ?`
-// against every OTHER backend (postgres in particular, whose pgx driver
-// refuses int8 -> *string outright) is exactly the mismatch that made
-// this pass unable to migrate a database with real conversation history.
-// Scanning into `any` here keeps the same row type across all three
-// backends.
+// doesn't have are left as the empty string.
+//
+// ID is `any` rather than `string` because these tables do not agree on a
+// key type: cortex_memories.id is INTEGER AUTOINCREMENT on sqlite (and
+// BIGSERIAL on postgres), while every other scoped table uses a TEXT
+// TypeID. Keeping the scanned value in its real type means the driver
+// binds it back unchanged, and keeps the row shape consistent with the
+// other two backends.
+//
+// A string would in fact work today on both backends: sqlite's
+// database/sql layer converts the integer via convertAssign, and on
+// postgres pgx wraps *string via TryWrapBuiltinTypeScanPlan so Int8Codec
+// accepts it, with text format chosen for the write-back. Those are
+// implementation details of each driver's scan-plan resolution, not a
+// documented contract, and relying on them buys nothing here.
 type legacyRow struct {
 	Table     string
 	ID        any
