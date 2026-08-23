@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -28,7 +29,7 @@ type Store interface {
 	orchestration.ConfigStore
 	orchestration.RunStore
 
-	Migrate(ctx context.Context) error
+	Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	Ping(ctx context.Context) error
 	Close() error
 }

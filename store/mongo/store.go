@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/mongodriver"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store"
 )
 
@@ -48,7 +49,10 @@ func New(db *grove.DB) *Store {
 }
 
 // Migrate creates indexes for all cortex collections.
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
+	o := cortex.ApplyMigrateOptions(opts...)
+	_ = o // consumed in Task 3
+
 	if err := s.dropStaleWorkingMemoryIndex(ctx); err != nil {
 		return err
 	}

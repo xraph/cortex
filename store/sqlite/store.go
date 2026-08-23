@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/grove/migrate"
 	"modernc.org/sqlite"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store"
 )
 
@@ -33,7 +34,10 @@ func New(db *grove.DB) *Store {
 }
 
 // Migrate runs programmatic migrations via the grove orchestrator.
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
+	o := cortex.ApplyMigrateOptions(opts...)
+	_ = o // consumed in Task 3
+
 	executor, err := migrate.NewExecutorFor(s.sdb)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: create migration executor: %w", err)
