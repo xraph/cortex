@@ -693,14 +693,17 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 	t.Run("Conversation", func(t *testing.T) {
 		s := newStore(t)
 		// Distinct scope tokens from the rest of this function's
-		// ws_a/ws_b, not because conversation memory itself needs them,
-		// but because this subtest now also creates sessions
+		// ws_a/ws_b. This subtest now also creates sessions
 		// (SaveConversation requires one), and the later "Session"
 		// subtest's ListSessions(ctxA, &session.ListFilter{}) call is
-		// deliberately unfiltered by agent — it would otherwise pick up
-		// these two rows too, since newStore(t) is one shared backend
-		// across every subtest in this function, not a fresh one per
-		// subtest.
+		// deliberately unfiltered by agent. Each newStore(t) call now
+		// truncates/clears every table this suite touches (including
+		// cortex_sessions) before handing back the backend, so a stray
+		// session left at literal "ws_a" wouldn't actually survive into
+		// that later subtest's own newStore(t) call anymore -- but the
+		// rename costs nothing and stands as a second line of defense
+		// against the same class of cross-subtest leak the truncate
+		// fix was itself written to close.
 		ctxA := ctxWithScope("ws_conv_a")
 		ctxB := ctxWithScope("ws_conv_b")
 		// One shared agent ID, not two distinct ones. Two distinct IDs
@@ -836,6 +839,73 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 		if afterClear.LastMessage != "" {
 			t.Errorf("session.LastMessage after ClearConversation = %q, want empty", afterClear.LastMessage)
+		}
+	})
+
+	// ConversationRejectsCrossAgentSession is the store-level proof for
+	// fix round 1's Finding 1: the session UPDATE inside
+	// SaveConversation/ClearConversation used to match on id+scope_canon
+	// alone, with no agent_id predicate, while the message-row
+	// insert/delete in the same call DOES filter on agent_id. That gap
+	// let a caller who supplied the right session id but the wrong
+	// agent id write/delete zero message rows (agent_id doesn't match
+	// the real rows) while still resetting the session's own
+	// message_count/last_message -- exactly the counter drift the
+	// design forbids, reachable from api/memory_handler.go's
+	// caller-supplied ?session_id= before that handler validated
+	// ownership. Both calls must now fail outright (ErrSessionNotFound)
+	// and leave the victim's session and rows untouched.
+	t.Run("ConversationRejectsCrossAgentSession", func(t *testing.T) {
+		s := newStore(t)
+		agentCtx := ctxWithScope("ws_cross_agent")
+		victimAgent := id.NewAgentID()
+		attackerAgent := id.NewAgentID()
+		victimSession := mustCreateSession(t, s, agentCtx, victimAgent, "victim-session")
+
+		if err := s.SaveConversation(agentCtx, victimAgent, victimSession, []memory.Message{
+			{Role: "user", Content: "victim's real message"},
+		}); err != nil {
+			t.Fatalf("save conversation for the victim agent: %v", err)
+		}
+
+		before, err := s.GetSession(agentCtx, victimSession)
+		if err != nil {
+			t.Fatalf("get session before cross-agent attempt: %v", err)
+		}
+		if before.MessageCount != 1 || before.LastMessage != "victim's real message" {
+			t.Fatalf("setup assumption broken: MessageCount=%d LastMessage=%q, want 1 and %q",
+				before.MessageCount, before.LastMessage, "victim's real message")
+		}
+
+		// attackerAgent supplies the victim's real session id -- the
+		// shape of a caller-supplied ?session_id= that doesn't belong to
+		// the agent named in the request path.
+		if saveErr := s.SaveConversation(agentCtx, attackerAgent, victimSession, []memory.Message{
+			{Role: "user", Content: "smuggled in under the wrong agent"},
+		}); !errors.Is(saveErr, cortex.ErrSessionNotFound) {
+			t.Errorf("SaveConversation(attackerAgent, victimSession) = %v, want ErrSessionNotFound", saveErr)
+		}
+		if clearErr := s.ClearConversation(agentCtx, attackerAgent, victimSession); !errors.Is(clearErr, cortex.ErrSessionNotFound) {
+			t.Errorf("ClearConversation(attackerAgent, victimSession) = %v, want ErrSessionNotFound", clearErr)
+		}
+
+		after, err := s.GetSession(agentCtx, victimSession)
+		if err != nil {
+			t.Fatalf("get session after cross-agent attempt: %v", err)
+		}
+		if after.MessageCount != before.MessageCount {
+			t.Errorf("session.MessageCount after a rejected cross-agent call = %d, want unchanged %d", after.MessageCount, before.MessageCount)
+		}
+		if after.LastMessage != before.LastMessage {
+			t.Errorf("session.LastMessage after a rejected cross-agent call = %q, want unchanged %q", after.LastMessage, before.LastMessage)
+		}
+
+		rows, err := s.LoadConversation(agentCtx, victimAgent, victimSession, 0)
+		if err != nil {
+			t.Fatalf("load conversation after cross-agent attempt: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Errorf("conversation rows after a rejected cross-agent call = %d, want unchanged 1 (the attacker's message must not have been inserted, and the victim's must survive)", len(rows))
 		}
 	})
 

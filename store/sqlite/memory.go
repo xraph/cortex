@@ -93,6 +93,11 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
 
 	models := make([]memoryModel, len(messages))
+	// lastMessage tracks the most recent message with non-empty content,
+	// not simply the last message in the batch: a run that hits MaxSteps
+	// mid tool-call exits with an assistant message that carries
+	// ToolCalls but no Content, and writing that as last_message would
+	// blank a field message_count says just grew.
 	var lastMessage string
 	for i, msg := range messages {
 		content, marshalErr := json.Marshal(&msg)
@@ -110,15 +115,22 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 			ScopeExtra: extra,
 			ScopeCanon: canon,
 		}
-		lastMessage = msg.Content
+		if msg.Content != "" {
+			lastMessage = msg.Content
+		}
 	}
 	if _, insErr := tx.NewInsert(&models).Exec(ctx); insErr != nil {
 		return fmt.Errorf("cortex/sqlite: save conversation: %w", insErr)
 	}
 
+	// id + scope_canon alone identify a row, but not which agent it
+	// belongs to: a caller-supplied session id from another agent in the
+	// same scope would otherwise match here too. agent_id closes that --
+	// see resolveConversationSession in api/memory_handler.go for the
+	// ownership check on the read side of the same hole.
 	res, err := tx.NewRaw(
-		`UPDATE cortex_sessions SET message_count = message_count + ?, last_message = ?, updated_at = ? WHERE id = ? AND scope_canon = ?`,
-		len(messages), lastMessage, time.Now().UTC(), sid, canon,
+		`UPDATE cortex_sessions SET message_count = message_count + ?, last_message = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND scope_canon = ?`,
+		len(messages), lastMessage, time.Now().UTC(), sid, agentID.String(), canon,
 	).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: update session counters: %w", err)
@@ -196,9 +208,10 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 		return fmt.Errorf("cortex/sqlite: clear conversation: %w", delErr)
 	}
 
+	// Same agent_id guard as SaveConversation's counter update above.
 	res, err := tx.NewRaw(
-		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = ? WHERE id = ? AND scope_canon = ?`,
-		time.Now().UTC(), sid, canon,
+		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = ? WHERE id = ? AND agent_id = ? AND scope_canon = ?`,
+		time.Now().UTC(), sid, agentID.String(), canon,
 	).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: reset session counters: %w", err)

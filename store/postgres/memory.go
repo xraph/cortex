@@ -41,6 +41,11 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 	// triggered this defer already is.
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
 
+	// lastMessage tracks the most recent message with non-empty content,
+	// not simply the last message in the batch: a run that hits MaxSteps
+	// mid tool-call exits with an assistant message that carries
+	// ToolCalls but no Content, and writing that as last_message would
+	// blank a field message_count says just grew.
 	var lastMessage string
 	for _, msg := range messages {
 		content, marshalErr := json.Marshal(&msg)
@@ -68,12 +73,19 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 		if _, insErr := tx.NewInsert(m).Exec(ctx); insErr != nil {
 			return fmt.Errorf("cortex: save conversation: %w", insErr)
 		}
-		lastMessage = msg.Content
+		if msg.Content != "" {
+			lastMessage = msg.Content
+		}
 	}
 
+	// id + scope_canon alone identify a row, but not which agent it
+	// belongs to: a caller-supplied session id from another agent in the
+	// same scope would otherwise match here too. agent_id closes that --
+	// see resolveConversationSession in api/memory_handler.go for the
+	// ownership check on the read side of the same hole.
 	res, err := tx.NewRaw(
-		`UPDATE cortex_sessions SET message_count = message_count + $1, last_message = $2, updated_at = $3 WHERE id = $4 AND scope_canon = $5`,
-		len(messages), lastMessage, time.Now().UTC(), sid, scope.Canonical(),
+		`UPDATE cortex_sessions SET message_count = message_count + $1, last_message = $2, updated_at = $3 WHERE id = $4 AND agent_id = $5 AND scope_canon = $6`,
+		len(messages), lastMessage, time.Now().UTC(), sid, agentID.String(), scope.Canonical(),
 	).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: update session counters: %w", err)
@@ -151,9 +163,10 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 		return fmt.Errorf("cortex: clear conversation: %w", delErr)
 	}
 
+	// Same agent_id guard as SaveConversation's counter update above.
 	res, err := tx.NewRaw(
-		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = $1 WHERE id = $2 AND scope_canon = $3`,
-		time.Now().UTC(), sid, scope.Canonical(),
+		`UPDATE cortex_sessions SET message_count = 0, last_message = '', updated_at = $1 WHERE id = $2 AND agent_id = $3 AND scope_canon = $4`,
+		time.Now().UTC(), sid, agentID.String(), scope.Canonical(),
 	).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: reset session counters: %w", err)

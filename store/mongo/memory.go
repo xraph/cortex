@@ -89,6 +89,11 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 	sid := sessionID.String()
 
 	models := make([]memoryModel, len(messages))
+	// lastMessage tracks the most recent message with non-empty content,
+	// not simply the last message in the batch: a run that hits MaxSteps
+	// mid tool-call exits with an assistant message that carries
+	// ToolCalls but no Content, and writing that as last_message would
+	// blank a field message_count says just grew.
 	var lastMessage string
 	for i, msg := range messages {
 		content, err := json.Marshal(&msg)
@@ -117,7 +122,9 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 			ScopeCanon: canon,
 			CreatedAt:  now(),
 		}
-		lastMessage = msg.Content
+		if msg.Content != "" {
+			lastMessage = msg.Content
+		}
 	}
 
 	sess, err := s.mdb.Client().StartSession()
@@ -131,8 +138,14 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 			return nil, fmt.Errorf("cortex/mongo: save conversation: %w", insErr)
 		}
 
+		// _id + scope_canon alone identify a document, but not which
+		// agent it belongs to: a caller-supplied session id from another
+		// agent in the same scope would otherwise match here too.
+		// agent_id closes that -- see resolveConversationSession in
+		// api/memory_handler.go for the ownership check on the read
+		// side of the same hole.
 		res, updErr := s.mdb.NewUpdate((*sessionModel)(nil)).
-			Filter(bson.M{"_id": sid, "scope_canon": canon}).
+			Filter(bson.M{"_id": sid, "agent_id": agentID.String(), "scope_canon": canon}).
 			SetUpdate(bson.M{
 				"$inc": bson.M{"message_count": len(messages)},
 				"$set": bson.M{"last_message": lastMessage, "updated_at": now()},
@@ -226,8 +239,9 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 			return nil, fmt.Errorf("cortex/mongo: clear conversation: %w", delErr)
 		}
 
+		// Same agent_id guard as SaveConversation's counter update above.
 		res, updErr := s.mdb.NewUpdate((*sessionModel)(nil)).
-			Filter(bson.M{"_id": sid, "scope_canon": canon}).
+			Filter(bson.M{"_id": sid, "agent_id": agentID.String(), "scope_canon": canon}).
 			SetUpdate(bson.M{"$set": bson.M{"message_count": 0, "last_message": "", "updated_at": now()}}).
 			Exec(sc)
 		if updErr != nil {

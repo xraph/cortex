@@ -188,6 +188,17 @@ All endpoints are under `/cortex`:
 | Memory | 2 | Get/clear conversation |
 | Tools | 2 | List tools, get schema |
 
+## Deployment Notes
+
+**MongoDB requires a replica set (or sharded cluster) in production.**
+`memory.Store`'s `SaveConversation`/`ClearConversation` write inside a
+multi-document transaction on the `store/mongo` backend — message rows
+and the owning session's `message_count`/`last_message` counters have to
+commit or roll back together, or the counter can drift from the rows it
+describes. A standalone `mongod` cannot run transactions at all and every
+conversation write will fail against one. `store/postgres` and
+`store/sqlite` have no such requirement.
+
 ## Documentation
 
 Full documentation is in the `docs/` directory, built with Fumadocs and Next.js.

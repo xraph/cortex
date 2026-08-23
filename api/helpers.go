@@ -40,7 +40,8 @@ func isNotFound(err error) bool {
 		errors.Is(err, cortex.ErrRunNotFound) ||
 		errors.Is(err, cortex.ErrCheckpointNotFound) ||
 		errors.Is(err, cortex.ErrOrchestrationNotFound) ||
-		errors.Is(err, cortex.ErrOrchestrationRunNotFound)
+		errors.Is(err, cortex.ErrOrchestrationRunNotFound) ||
+		errors.Is(err, cortex.ErrSessionNotFound)
 }
 
 func isConflict(err error) bool {

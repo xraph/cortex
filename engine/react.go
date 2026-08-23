@@ -59,6 +59,14 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	// Load conversation history.
 	history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 	messages := memoryToLLM(history)
+	// Everything from here on is new to this run. SaveConversation below
+	// persists only messages[newMessagesFrom:] -- saving the whole slice
+	// (history included) would re-insert the reloaded history as new
+	// rows on every run, and LoadConversation's LIMIT 100/no-offset read
+	// would then freeze on an ever-older prefix once duplication pushed
+	// the row count past the limit, silently blinding the agent to
+	// recent turns.
+	newMessagesFrom := len(messages)
 	messages = append(messages, llm.Message{Role: "user", Content: input})
 
 	var totalTokens int
@@ -200,8 +208,10 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		break
 	}
 
-	// Save updated conversation.
-	convMsgs := llmToMemory(messages)
+	// Save only the messages this run actually added -- not the whole
+	// reloaded history alongside them. See newMessagesFrom's comment
+	// above for why that distinction matters.
+	convMsgs := llmToMemory(messages[newMessagesFrom:])
 	if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
 		e.logger.Error("save conversation", log.String("error", err.Error()))
 	}
@@ -273,6 +283,9 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		// Load conversation history.
 		history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
 		messages := memoryToLLM(history)
+		// See runReAct's identical comment: only messages[newMessagesFrom:]
+		// get saved below, not the whole reloaded history.
+		newMessagesFrom := len(messages)
 		messages = append(messages, llm.Message{Role: "user", Content: input})
 
 		var totalTokens int
@@ -495,8 +508,9 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 			break
 		}
 
-		// Save updated conversation.
-		convMsgs := llmToMemory(messages)
+		// Save only the messages this run actually added -- see
+		// runReAct's newMessagesFrom comment for why.
+		convMsgs := llmToMemory(messages[newMessagesFrom:])
 		if err := e.store.SaveConversation(ctx, ag.ID, sessionID, convMsgs); err != nil {
 			e.logger.Error("save conversation", log.String("error", err.Error()))
 		}

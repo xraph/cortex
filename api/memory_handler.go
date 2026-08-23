@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/forge"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/session"
@@ -91,17 +92,42 @@ func (a *API) clearConversation(ctx forge.Context, req *ClearConversationRequest
 
 // resolveConversationSession resolves which session a memory API call
 // should operate on. An explicit raw session id (from the request's
-// session_id query param) wins; otherwise it looks up the agent's
-// default session for the caller's scope, returning the zero id when
-// none has been created yet. Unlike engine.resolveSession, this never
-// lazily creates one: Get/ClearConversation are read and maintenance
-// operations, not run-starting ones, and an agent that has never run has
-// legitimately nothing to load or clear.
+// session_id query param) wins, but only after confirming it actually
+// belongs to the agent in the path: the session UPDATE predicates in
+// every backend's SaveConversation/ClearConversation match on
+// id+agent_id+scope, but nothing upstream of them checked that a
+// caller-supplied session id was the right agent's session at all before
+// this. Without this check, DELETE .../agents/a/memory?session_id=<a
+// session belonging to agent b in the same scope> deleted zero rows (the
+// message filter's own agent_id predicate saved it) while still
+// resetting b's message_count to 0 and last_message to "" -- the exact
+// counter-drift the session design exists to prevent, reachable by any
+// caller who can guess or enumerate another agent's session id in scope.
+//
+// A mismatch is folded into the same ErrSessionNotFound a genuinely
+// missing session returns, rather than a distinct "forbidden" error:
+// telling the caller their guess belongs to *some* real session would
+// leak the existence of another agent's session, which the 404 shape
+// otherwise hides.
+//
+// With no raw id, this looks up the agent's default session for the
+// caller's scope, returning the zero id when none has been created yet.
+// Unlike engine.resolveSession, this never lazily creates one:
+// Get/ClearConversation are read and maintenance operations, not
+// run-starting ones, and an agent that has never run has legitimately
+// nothing to load or clear.
 func (a *API) resolveConversationSession(ctx context.Context, agentID id.AgentID, raw string) (id.SessionID, error) {
 	if raw != "" {
 		sessionID, err := id.ParseSessionID(raw)
 		if err != nil {
 			return id.SessionID{}, fmt.Errorf("parse session_id: %w", err)
+		}
+		sess, err := a.eng.Store().GetSession(ctx, sessionID)
+		if err != nil {
+			return id.SessionID{}, fmt.Errorf("resolve session: %w", err)
+		}
+		if sess.AgentID != agentID {
+			return id.SessionID{}, fmt.Errorf("resolve session: %w", cortex.ErrSessionNotFound)
 		}
 		return sessionID, nil
 	}
