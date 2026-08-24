@@ -60,12 +60,17 @@ const (
 	rejectedDecision = "rejected"
 )
 
-func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest) (*struct{}, error) {
-	cpID, err := id.ParseCheckpointID(req.CheckpointID)
-	if err != nil {
-		return nil, forge.BadRequest(fmt.Sprintf("invalid checkpoint ID: %v", err))
-	}
-
+// decisionFromRequest turns the wire decision into the one the engine
+// acts on.
+//
+// It is a function rather than a switch inline in the handler so the
+// mapping itself can be tested. Which string means approval is now a
+// live decision about a live run: "approved" resumes it and dispatches
+// the call a human just granted, "rejected" fails it outright. Inverting
+// the two would pass every test written against the handler's error
+// paths, and the first thing to notice would be a production run that
+// failed on an approval.
+func decisionFromRequest(req *ResolveCheckpointRequest) (checkpoint.Decision, error) {
 	var approved bool
 	switch req.Decision {
 	case approvedDecision:
@@ -73,14 +78,25 @@ func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest
 	case rejectedDecision:
 		approved = false
 	default:
-		return nil, forge.BadRequest(fmt.Sprintf(
+		return checkpoint.Decision{}, forge.BadRequest(fmt.Sprintf(
 			"invalid decision %q: must be %q or %q", req.Decision, approvedDecision, rejectedDecision))
 	}
-
-	decision := checkpoint.Decision{
+	return checkpoint.Decision{
 		Approved:  approved,
 		DecidedBy: req.DecidedBy,
 		Reason:    req.Reason,
+	}, nil
+}
+
+func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest) (*struct{}, error) {
+	cpID, err := id.ParseCheckpointID(req.CheckpointID)
+	if err != nil {
+		return nil, forge.BadRequest(fmt.Sprintf("invalid checkpoint ID: %v", err))
+	}
+
+	decision, err := decisionFromRequest(req)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := a.eng.ResolveCheckpoint(ctx.Context(), cpID, decision); err != nil {
