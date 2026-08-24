@@ -316,10 +316,11 @@ func TestRunAgent_ApprovalFiresTheCheckpointCreatedHook(t *testing.T) {
 }
 
 // TestSuspend_CheckpointWriteFailureDoesNotPauseTheRun is the write-order
-// assertion for the row this task adds. A run paused for approval with no
-// checkpoint behind it is waiting on a decision nobody can see: it never
-// appears in ListPending, so nothing ever resolves it, and the only way
-// out is a caller who knows to resume it by hand.
+// assertion for the checkpoint row approval-gating adds. A run paused
+// for approval with no checkpoint behind it is waiting on a decision
+// nobody can see: it never appears in ListPending, so nothing ever
+// resolves it, and the only way out is a caller who knows to resume it
+// by hand.
 func TestSuspend_CheckpointWriteFailureDoesNotPauseTheRun(t *testing.T) {
 	base := scopespy.New()
 	base.FailCheckpointWrites(errors.New("store is down"))

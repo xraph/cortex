@@ -250,8 +250,8 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 //
 // The terminal event is the part worth stating outright. v1.10.0
 // established that every tool call fires exactly one of completed, failed
-// or denied, and Task 3 correctly fired none for a pending call, because
-// pending is not an ending. That only stays true if the resume supplies
+// or denied, and a pending call correctly fires none, because pending is
+// not an ending. That only stays true if the resume supplies
 // the missing one, so it does: a call the host executed emits
 // ToolCompleted, a call the host could not execute emits ToolFailed. A
 // tool call that suspends and then completes must not vanish from an

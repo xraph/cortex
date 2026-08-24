@@ -174,10 +174,10 @@ func TestExecuteTool_DeniesAToolThatWasNeverVisible(t *testing.T) {
 	}
 }
 
-// TestResolveTools_HonoursCfgToolsNames is the resolveTools half of Task
-// 3: when cfg.Tools names a subset, only those tools are returned, and
-// tools left out never reach the model regardless of what the authorizer
-// would have allowed.
+// TestResolveTools_HonoursCfgToolsNames covers the resolveTools side of
+// tool-name filtering: when cfg.Tools names a subset, only those tools
+// are returned, and tools left out never reach the model regardless of
+// what the authorizer would have allowed.
 func TestResolveTools_HonoursCfgToolsNames(t *testing.T) {
 	toolA, _ := echoTool()
 	toolB := llm.Tool{Name: "other", Description: "a second tool"}
@@ -196,10 +196,10 @@ func TestResolveTools_HonoursCfgToolsNames(t *testing.T) {
 	}
 }
 
-// TestNilAuthorizer_LeavesBothPathsPermissive is the "no authorizer set"
-// half of Task 3: WithToolAuthorizer is never called, so both resolveTools
-// (Visible) and executeTool (Authorize) must behave exactly as they did
-// before the authorizer seam existed.
+// TestNilAuthorizer_LeavesBothPathsPermissive covers the "no authorizer
+// set" side of the same guard: WithToolAuthorizer is never called, so
+// both resolveTools (Visible) and executeTool (Authorize) must behave
+// exactly as they did before the authorizer seam existed.
 func TestNilAuthorizer_LeavesBothPathsPermissive(t *testing.T) {
 	def, h := echoTool()
 	e, err := New(WithTool(def, h))

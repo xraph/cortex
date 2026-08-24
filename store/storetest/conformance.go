@@ -516,12 +516,12 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 	// calls, and working memory above.
 	//
 	// The two subtests below still cover personas and orchestration
-	// configs — the subsystems that remain unconverted. Neither store
+	// configs, the subsystems that remain unconverted. Neither store
 	// checks scope at all right now, so both are expected to fail:
 	// Create/GetByName/List all succeed against a scopeless context
 	// instead of returning cortex.ErrNoScope. That is the correct
 	// starting state for a suite meant to go green as each subsystem is
-	// converted in a later task.
+	// converted.
 
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
@@ -1689,9 +1689,9 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 
 	// Agent is the one entity below that IS scope-guarded: the same name
 	// reused across two scopes must resolve to two distinct rows, proving
-	// UNIQUE (scope_canon, name) — not the retired UNIQUE (app_id, name)
-	// — is what the store enforces now. Before this task, the second
-	// mustCreateAgent call below failed outright with
+	// UNIQUE (scope_canon, name), not the retired UNIQUE (app_id, name),
+	// is what the store enforces now. Before the scope conversion, the
+	// second mustCreateAgent call below failed outright with
 	// cortex.ErrAlreadyExists, colliding on the old app_id-keyed index
 	// before the fixture could even get two rows on the books to compare.
 	// It no longer does: two different scopes can each use "assistant".
@@ -2157,8 +2157,8 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
-	// Agent already had a Scope field going into this task (Phase 0), but
-	// this subtest itself did not — List's scope predicate went untested
+	// Agent already had a Scope field before this conversion started, but
+	// this subtest itself did not: List's scope predicate went untested
 	// against a broader-than-stored filter until now.
 	t.Run("Agent", func(t *testing.T) {
 		s := newStore(t)
@@ -2183,10 +2183,9 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
-	// Skill, Trait, and Behavior lost their Scope field only this task
-	// (Task 6), so their List predicate against a broader-than-stored
-	// filter went untested until now, the same as Agent's did going into
-	// this task.
+	// Skill, Trait, and Behavior only just lost their Scope field, so
+	// their List predicate against a broader-than-stored filter went
+	// untested until now, the same as Agent's did before that happened.
 	t.Run("Skill", func(t *testing.T) {
 		s := newStore(t)
 		skillID := mustCreateSkill(t, s, ctxWithScope("ws_x", "p1"), "")
@@ -2256,9 +2255,9 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
-	// Persona lost its Scope field only this task (Task 7), so its List
-	// predicate against a broader-than-stored filter went untested until
-	// now, the same as Skill/Trait/Behavior's did going into Task 6.
+	// Persona lost its Scope field most recently, so its List predicate
+	// against a broader-than-stored filter went untested until now, the
+	// same as Skill/Trait/Behavior's did before that.
 	t.Run("Persona", func(t *testing.T) {
 		s := newStore(t)
 		personaID := mustCreatePersona(t, s, ctxWithScope("ws_x", "p1"), "")
@@ -2331,9 +2330,9 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
-	// Orchestration is the last entity converted in this phase, so its
-	// List predicate against a broader-than-stored filter went untested
-	// until now, the same as Persona's did going into Task 7.
+	// Orchestration is the last entity converted, so its List predicate
+	// against a broader-than-stored filter went untested until now, the
+	// same as Persona's did before it.
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		orchID := mustCreateOrchestration(t, s, ctxWithScope("ws_x", "p1"), "")

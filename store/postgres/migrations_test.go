@@ -162,10 +162,10 @@ func TestMigrate_workingMemoryIndexRecoversFromInvalidBuild(t *testing.T) {
 // (agent_id, scope) pair, already carrying a real scope_canon) is the
 // "ordinary" post-v1.8.0-pre-v1.9.0 shape and also covers the
 // message_count dedup: two of the three rows simulate the pre-daa7e44
-// duplication bug this phase's prior task uncovered -- the reasoning
-// loop used to re-save a run's entire reloaded history on every turn, so
-// the same logical message can appear as more than one physical row
-// with a different Timestamp field but identical Role/Content -- see
+// duplication bug: the reasoning loop used to re-save a run's entire
+// reloaded history on every turn, so the same logical message can
+// appear as more than one physical row with a different Timestamp
+// field but identical Role/Content -- see
 // backfillDefaultSessions' comment in migrations.go for the full
 // reasoning behind counting message_count as distinct (role, content)
 // pairs instead of a raw row count. The second group (one row, scope_l0

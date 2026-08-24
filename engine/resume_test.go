@@ -380,9 +380,9 @@ func TestResume_ExpiredSuspensionIsReportedAndNothingIsWritten(t *testing.T) {
 // ──────────────────────────────────────────────────
 
 // TestResume_FiresTheTerminalEventTheSuspendedCallNeverGot holds the
-// v1.10.0 invariant across a pause. Task 3 fires nothing for a pending
-// call, correctly, because pending is not an ending. That is only correct
-// if the resume supplies the missing terminal event.
+// v1.10.0 invariant across a pause. A pending call correctly fires
+// nothing, because pending is not an ending. That stays correct only if
+// the resume supplies the missing terminal event.
 func TestResume_FiresTheTerminalEventTheSuspendedCallNeverGot(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -433,8 +433,8 @@ func TestResume_FiresTheTerminalEventTheSuspendedCallNeverGot(t *testing.T) {
 }
 
 // TestResume_WritesTheToolCallRowOnTheStepThatMadeTheCall covers the
-// audit trail. Task 3 deliberately wrote no row for a pending call, since
-// a row stamped complete for a call that never ran is a lie no resume can
+// audit trail. A pending call deliberately writes no row, since a row
+// stamped complete for a call that never ran is a lie no resume can
 // correct. The row is owed here instead, and it belongs to the step whose
 // generation asked for the call, alongside any sibling that ran inline.
 func TestResume_WritesTheToolCallRowOnTheStepThatMadeTheCall(t *testing.T) {

@@ -16,13 +16,13 @@ import (
 	"github.com/xraph/cortex/store/storetest"
 )
 
-// mongoConformanceImage pins the mongod build used for TestConformance. The
-// task's literal "mongodb/mongodb-community-server:8.3.2" tag doesn't
-// exist on Docker Hub for this image — mongodb-community-server only
-// publishes OS-qualified tags (verified: `docker manifest inspect
+// mongoConformanceImage pins the mongod build used for TestConformance.
+// The literal "mongodb/mongodb-community-server:8.3.2" tag doesn't exist
+// on Docker Hub for this image: mongodb-community-server only publishes
+// OS-qualified tags (verified: `docker manifest inspect
 // mongodb/mongodb-community-server:8.3.2` 404s, while the -ubi9-slim
-// variant resolves). This is the same 8.3.2 build the prior wave used,
-// just with the OS suffix Docker Hub actually requires.
+// variant resolves). This is the same 8.3.2 build used previously, just
+// with the OS suffix Docker Hub actually requires.
 const mongoConformanceImage = "mongodb/mongodb-community-server:8.3.2-ubi9-slim"
 
 // TestConformance runs the backend-agnostic scope-isolation contract

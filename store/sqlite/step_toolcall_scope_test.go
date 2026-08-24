@@ -68,7 +68,7 @@ func TestToolCallStore_ZeroScopeRejected(t *testing.T) {
 // steps are created under different top-level scopes for runs that
 // otherwise share nothing distinguishing, and listing from one scope must
 // return only the matching step. This is the regression shape for the
-// gap this task closes: before the guard, every reader that skipped a
+// gap the scope guard closes: before it, every reader that skipped a
 // scoped GetRun could read another tenant's step trail by run ID alone.
 func TestStepStore_CrossScopeReadsRefused(t *testing.T) {
 	s := newTestStore(t)

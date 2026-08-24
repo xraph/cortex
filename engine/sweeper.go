@@ -139,9 +139,9 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 //
 // It claims first, and the claim is the whole design rather than a
 // precaution. A sweep is the third writer to these runs, after a resume
-// and a rejected checkpoint, and Task 5 already paid for the version of
-// this where one of the three skipped the claim: a rejection stomped a
-// run an approval had moved. ClaimExpiredSuspension refuses a run that
+// and a rejected checkpoint, and skipping the claim has already cost a
+// real bug: without it, a rejection stomped a run an approval had
+// moved. ClaimExpiredSuspension refuses a run that
 // is no longer paused, so a resume that got in before the deadline keeps
 // its run and the sweep leaves it alone.
 //

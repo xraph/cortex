@@ -215,9 +215,9 @@ func TestDispatch_ExternalToolIsNotDispatchable(t *testing.T) {
 	}
 }
 
-// TestRunAgent_SuspendsOnExternalToolCall is the whole point of this
-// task: run.StatePaused has existed since v1.x and has never been
-// assigned until here.
+// TestRunAgent_SuspendsOnExternalToolCall proves the point of external
+// tool suspension: run.StatePaused has existed since v1.x and has never
+// been assigned until here.
 func TestRunAgent_SuspendsOnExternalToolCall(t *testing.T) {
 	r, spy := suspendingRun(t)
 
@@ -516,7 +516,7 @@ func (h *historySpy) LoadConversation(ctx context.Context, agentID id.AgentID, s
 // agent stops seeing recent turns.
 //
 // The end-to-end proof (suspend, resume, assert no duplicate rows) needs
-// Task 4's Resume to exist. What is provable here is that the writer put
+// Resume to exist first. What is provable here is that the writer put
 // the right boundary and the right session in the row Resume will read.
 func TestRunAgent_ContinuationSeparatesHistoryFromNewMessages(t *testing.T) {
 	const historyLen = 3
