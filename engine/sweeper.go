@@ -170,6 +170,18 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 	// earlier writes did.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
+	// Before the claim, same as every other claimant: a read that fails
+	// after one leaves the run running with no way back, and the next
+	// sweep can no longer touch it. Failing here instead costs one tick.
+	snapshot, err := e.store.GetRun(ctx, susp.RunID)
+	if err != nil {
+		if errors.Is(err, cortex.ErrRunNotFound) {
+			// No run to fail. The row is all that is left of it.
+			return e.deleteOrphanRow(ctx, susp)
+		}
+		return fmt.Errorf("load the run behind an expired suspension: %w", err)
+	}
+
 	if _, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now); err != nil {
 		if errors.Is(err, cortex.ErrNotSuspended) {
 			// Somebody else owns this run: it was resumed, decided, or
@@ -188,10 +200,7 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 	// its cancellation.
 	ctx = context.WithoutCancel(ctx)
 
-	r, err := e.store.GetRun(ctx, susp.RunID)
-	if err != nil {
-		return fmt.Errorf("load expired run: %w", err)
-	}
+	r := e.claimedRun(ctx, susp.RunID, snapshot)
 
 	if err := e.persistFailure(ctx, r, r.AgentID, expiryError(susp)); err != nil {
 		// The suspension stays. It is the only record of what the run

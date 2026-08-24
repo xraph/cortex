@@ -529,6 +529,45 @@ func (l *lastStepAgentSpy) Get(ctx context.Context, agentID id.AgentID) (*agent.
 	return ag, nil
 }
 
+// TestResume_AFailedReadAfterTheClaimDoesNotStrandTheRun covers the one
+// window a claim opens and cannot close by itself.
+//
+// A claim flips the run to running and hands it to this call. If the read
+// that follows fails and the call just returns, the run sits running for
+// good: every claim wants a paused run, so nothing takes it again, and
+// the sweeper only drops rows off runs that reached a terminal state, so
+// its suspension is never cleared either. Nobody is coming. The run is
+// therefore read once BEFORE the claim, and that copy carries the resume
+// through when the read after it does not come back.
+func TestResume_AFailedReadAfterTheClaimDoesNotStrandTheRun(t *testing.T) {
+	spy := scopespy.New()
+	e := mustResumeEngine(t, spy)
+	r := suspendedFixture(t, spy, e)
+
+	// One read gets through, which is the one before the claim. The read
+	// after it, and every later one, fails.
+	spy.FailRunReadsAfter(1, errors.New("read rejected"))
+
+	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, oneResult(t, spy, "the human said yes"))
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Fatalf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+
+	// The claimed run must not be left running with a suspension nothing
+	// can claim, which is the shape this test exists to refuse. Read
+	// through Runs rather than GetRun, which is still armed to fail.
+	stored := spy.Runs()[0]
+	if stored.State == run.StateRunning {
+		t.Errorf("run state = %q; a claimed run left running is a run nothing can ever move", stored.State)
+	}
+	if got := len(spy.Suspensions()); got != 0 {
+		t.Errorf("%d suspensions left, want 0: the row outlived the claim that took it", got)
+	}
+}
+
 // TestResume_FinalStepFailsRatherThanCompletingEmpty covers the edge the
 // step budget creates. Suspending on the last step stores a step index
 // the budget has no room for, so re-entering the loop falls straight

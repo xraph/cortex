@@ -910,6 +910,43 @@ func TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending(
 	}
 }
 
+// TestResolveCheckpoint_ARejectionSurvivesAFailedReadAfterTheClaim is the
+// rejecting twin of the resume's stranding case. A rejection claims the
+// suspension too, so a read that fails right after the claim used to
+// leave the run running: the decider was told it failed, the run said
+// otherwise, and no later claim or sweep could reach it.
+func TestResolveCheckpoint_ARejectionSurvivesAFailedReadAfterTheClaim(t *testing.T) {
+	spy := scopespy.New()
+	e := approvalEngine(t, WithStore(spy))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+
+	// One read gets through, which is the one before the claim.
+	spy.FailRunReadsAfter(1, errors.New("read rejected"))
+
+	if err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "wrong cluster"}); err != nil {
+		t.Fatalf("ResolveCheckpoint: %v", err)
+	}
+
+	stored := spy.Runs()[0]
+	if stored.State != run.StateFailed {
+		t.Fatalf("run state = %q, want %q; the decider was told this run was rejected", stored.State, run.StateFailed)
+	}
+	if !strings.Contains(stored.Error, "wrong cluster") {
+		t.Errorf("run error = %q, want the decider's own reason", stored.Error)
+	}
+	if got := len(spy.Suspensions()); got != 0 {
+		t.Errorf("%d suspensions left, want 0", got)
+	}
+}
+
 // TestResume_ExecuteOnAnApprovalSuspensionIsRefused is the gate itself.
 // Resume is in-process API and Execute is a bool, so without this check
 // any caller could hand back Execute results on a run waiting for a

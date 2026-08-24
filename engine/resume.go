@@ -156,6 +156,20 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		}
 	}
 
+	// The run is read BEFORE the claim, and a read that does not come
+	// back ends the resume here. Nothing has moved at that point: the run
+	// is still paused, its suspension is still claimable, and the caller
+	// can try again. Reading only after the claim is what used to strand
+	// a run on a store hiccup, since a claimed run nobody fails is
+	// running forever.
+	//
+	// The caller's scope is enough for this read. A claim matches on a
+	// scope prefix, so a caller who can claim this run can read it.
+	snapshot, err := e.store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load run to resume: %w", err)
+	}
+
 	susp, err := e.store.ClaimSuspension(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
@@ -168,13 +182,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// did rather than wherever the resumer happened to be standing.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
-	r, err := e.store.GetRun(ctx, runID)
-	if err != nil {
-		// The one exit that cannot mark the run failed: there is no run
-		// object to write a terminal state onto. Reported rather than
-		// papered over.
-		return nil, nil, fmt.Errorf("load resumed run: %w", err)
-	}
+	r := e.claimedRun(ctx, runID, snapshot)
 
 	ag, err := e.store.Get(ctx, r.AgentID)
 	if err != nil {
@@ -240,6 +248,34 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 
 	return ctx, &resumption{ag: ag, cfg: cfg, run: r, state: st, startedAt: startedAt}, nil
+}
+
+// claimedRun is the run a successful claim just took: read fresh, and
+// falling back to the snapshot taken just before the claim when that
+// read does not come back.
+//
+// The fallback is the difference between a store hiccup and a stranded
+// run. Once a claim succeeds the run is running and only this call can
+// move it, so returning without a terminal write leaves it running for
+// good: every claim wants a paused run, so nothing takes it again, and
+// the sweeper's orphan drop wants a terminal one, so nothing clears its
+// suspension either.
+//
+// The snapshot is the same row read a moment earlier while the run was
+// still paused, and nothing but a claim moves a paused run. Every caller
+// here uses it for one thing, writing a terminal state onto a run that
+// is ending, and the fields that decides are the ones this call sets
+// itself.
+func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot *run.Run) *run.Run {
+	r, err := e.store.GetRun(ctx, runID)
+	if err == nil {
+		return r
+	}
+	e.logger.Error("read a claimed run, falling back to the pre-claim snapshot",
+		log.String("run_id", runID.String()),
+		log.String("error", err.Error()),
+	)
+	return snapshot
 }
 
 // failResume marks a claimed run failed and hands the reason back

@@ -671,6 +671,16 @@ func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) 
 // on, and a delete that landed while the state write failed would throw
 // that away for nothing.
 func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
+	// Read before the claim, for the reason claimedRun spells out: a
+	// read that fails here costs nothing, because the run is still
+	// paused and the decider can decide again, while the same failure
+	// after the claim would leave the run running with nothing able to
+	// take it.
+	snapshot, err := e.store.GetRun(ctx, cp.RunID)
+	if err != nil {
+		return fmt.Errorf("load run for rejected checkpoint: %w", err)
+	}
+
 	susp, err := e.store.ClaimSuspension(ctx, cp.RunID)
 	if err != nil {
 		return fmt.Errorf("claim suspension for rejected checkpoint %s: %w", cp.ID, err)
@@ -681,10 +691,7 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 	// run records has to land where its earlier writes did.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
-	r, err := e.store.GetRun(ctx, cp.RunID)
-	if err != nil {
-		return fmt.Errorf("load run for rejected checkpoint: %w", err)
-	}
+	r := e.claimedRun(ctx, cp.RunID, snapshot)
 
 	reason := decision.Reason
 	if reason == "" {

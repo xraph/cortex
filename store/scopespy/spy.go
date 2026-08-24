@@ -51,6 +51,8 @@ type Spy struct {
 	toolCalls     []run.ToolCall
 	checkpoints   []*checkpoint.Checkpoint
 	checkpointErr error
+	runReadErr    error
+	runReadsLeft  int
 }
 
 // FailCheckpointWrites makes every later CreateCheckpoint return err, so
@@ -190,6 +192,16 @@ func (s *Spy) Runs() []run.Run {
 	return out
 }
 
+// FailRunReadsAfter lets the next n GetRun calls through and fails every
+// one after them, so a test can break the read that follows a claim
+// without breaking the reads that set the claim up.
+func (s *Spy) FailRunReadsAfter(n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runReadsLeft = n
+	s.runReadErr = err
+}
+
 // GetRun returns a copy, the way a real store would. Handing back the
 // same object the engine already holds would let a test pass on a run the
 // engine never actually persisted.
@@ -197,6 +209,13 @@ func (s *Spy) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error)
 	s.record(ctx, "GetRun")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.runReadErr != nil {
+		if s.runReadsLeft > 0 {
+			s.runReadsLeft--
+		} else {
+			return nil, s.runReadErr
+		}
+	}
 	r, ok := s.runs[runID]
 	if !ok {
 		return nil, cortex.ErrRunNotFound
