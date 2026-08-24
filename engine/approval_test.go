@@ -632,6 +632,18 @@ func TestResolveCheckpoint_RejectionFailsTheRunWithTheDecisionsReason(t *testing
 	if got := rec.resolvedEvents(); len(got) != 1 || !strings.HasSuffix(got[0], "rejected") {
 		t.Errorf("OnCheckpointResolved got %v, want one event saying rejected", got)
 	}
+
+	// A rejection is final. With the suspension gone there is nothing left
+	// to claim, so a resume afterwards cannot restart the call a human
+	// just refused.
+	if _, err := e.Resume(ctx, paused.ID, ResumeInput{
+		ToolResults: []ToolResult{{ToolCallID: "call-1", Content: "sneaked in"}},
+	}); !errors.Is(err, cortex.ErrNotSuspended) {
+		t.Errorf("Resume after a rejection = %v, want ErrNotSuspended", err)
+	}
+	if got := atomic.LoadInt32(&ran); got != 0 {
+		t.Errorf("the rejected tool ran %d times after a resume attempt, want 0", got)
+	}
 }
 
 // TestResolveCheckpoint_ADecidedCheckpointCannotBeDecidedAgain stops the
@@ -795,13 +807,14 @@ func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
 	return w.Spy.UpdateRun(ctx, r)
 }
 
-// TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable
-// pins the order inside the rejection. The suspension is the only thing
-// that can move a paused run, so it goes after the state write, never
-// before: a delete that succeeded while the run stayed paused would leave
-// a run nothing could ever pick up, which is the same wedge suspend's own
-// write order exists to avoid, reached from the other side.
-func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *testing.T) {
+// TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision
+// pins the order inside the rejection. The suspension goes after the
+// state write, never before: it is the only record of what the run was
+// waiting on, and a delete that landed while the state write failed would
+// throw that away for nothing. The decision is not recorded either, so
+// deciding again is a decision rather than ErrInvalidState against a row
+// claiming a rejection that never happened.
+func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *testing.T) {
 	base := scopespy.New()
 	spy := &wedgeSpy{Spy: base}
 	e := approvalEngine(t, WithStore(spy))
@@ -817,7 +830,7 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *tes
 
 	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"})
 	if got := len(base.Suspensions()); got != 1 {
-		t.Errorf("%d suspensions left, want 1; the run is still paused and nothing else can move it", got)
+		t.Errorf("%d suspensions left, want 1; it is the only record of what the run was waiting on", got)
 	}
 	if err == nil {
 		t.Error("ResolveCheckpoint reported success though the run could not be failed; the caller has no idea it has to decide again")
@@ -825,7 +838,7 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *tes
 
 	// And the decision itself is not recorded, so deciding again is a
 	// decision rather than ErrInvalidState against a row that says
-	// resolved about a run still paused.
+	// resolved about a run that never failed.
 	stored, getErr := base.GetCheckpoint(ctx, cps[0].ID)
 	if getErr != nil {
 		t.Fatalf("reload the checkpoint: %v", getErr)
@@ -955,5 +968,195 @@ func TestResume_ExecuteOnAnExternalSuspensionIsStillAllowed(t *testing.T) {
 	}
 	if resumed.State != run.StateCompleted {
 		t.Errorf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+}
+
+// TestResolveCheckpoint_ApproveAndRejectRacingOneCheckpointHaveOneWinner
+// is a real race, not two sequential calls: both deciders target the SAME
+// checkpoint on the SAME run and are released together.
+//
+// The rejection used to be a plain read followed by an unconditional
+// write, so an approval that won could resume the run, even finish it,
+// and the rejection would then stomp the result to failed. That is
+// corruption of a run that had already moved, not a stale row. Both paths
+// now go through the same atomic claim, so exactly one decision takes
+// effect and the run's final state is the winner's, not the last
+// writer's.
+func TestResolveCheckpoint_ApproveAndRejectRacingOneCheckpointHaveOneWinner(t *testing.T) {
+	var ran int32
+	spy := scopespy.New()
+	def := gatedTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
+			atomic.AddInt32(&ran, 1)
+			return "deleted", nil
+		}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+
+	// One checkpoint, one run, two decisions differing only in what they
+	// decide.
+	decisions := []checkpoint.Decision{
+		{Approved: true, DecidedBy: "approver"},
+		{DecidedBy: "rejecter", Reason: "not on a Friday"},
+	}
+	errs := make([]error, len(decisions))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, d := range decisions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = e.ResolveCheckpoint(ctx, cps[0].ID, d)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	approvalWon := false
+	for i, resolveErr := range errs {
+		if resolveErr == nil {
+			winners++
+			approvalWon = decisions[i].Approved
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("%d of the two decisions succeeded, want exactly 1: %v", winners, errs)
+	}
+	// Which side wins is up to the scheduler, and both are correct. Logged
+	// so a run of this test says which one it actually exercised.
+	t.Logf("the %s decision won this run", decisionWord(approvalWon))
+
+	wantState := run.StateFailed
+	wantRan := int32(0)
+	if approvalWon {
+		wantState = run.StateCompleted
+		wantRan = 1
+	}
+	final, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if final.State != wantState {
+		t.Errorf("the %s decision won but the run ended %q, want %q; the losing decision wrote over it",
+			decisionWord(approvalWon), final.State, wantState)
+	}
+	if got := atomic.LoadInt32(&ran); got != wantRan {
+		t.Errorf("the escalated tool ran %d times after the %s decision won, want %d", got, decisionWord(approvalWon), wantRan)
+	}
+
+	// The row records the decision that took effect, not whichever call
+	// happened to write last.
+	stored, err := spy.GetCheckpoint(ctx, cps[0].ID)
+	if err != nil {
+		t.Fatalf("reload the checkpoint: %v", err)
+	}
+	if stored.Decision == nil {
+		t.Fatal("the checkpoint records no decision though one of them won")
+	}
+	if stored.Decision.Approved != approvalWon {
+		t.Errorf("the checkpoint records approved=%t, want the winner's %t", stored.Decision.Approved, approvalWon)
+	}
+}
+
+// decisionWord names which side of the race won, for failure messages.
+func decisionWord(approved bool) string {
+	if approved {
+		return "approving"
+	}
+	return "rejecting"
+}
+
+// TestResolveCheckpoint_ARejectionArrivingMidApprovalCannotStompTheRun
+// covers the direction the simultaneous race above cannot schedule
+// reliably, and it is the one that used to corrupt a run: the approval
+// wins the claim, the run resumes, and the rejection lands while that run
+// is still in flight.
+//
+// The tool handler blocks, so the rejection is guaranteed to arrive with
+// the approved run running. Before the rejecting path claimed, it went
+// straight from a read to an unconditional write and marked that run
+// failed underneath the loop.
+func TestResolveCheckpoint_ARejectionArrivingMidApprovalCannotStompTheRun(t *testing.T) {
+	base := scopespy.New()
+	spy := &runStateSpy{Spy: base}
+	def := gatedTool()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
+			close(entered)
+			<-release
+			return "deleted", nil
+		}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := base.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+
+	approveErr := make(chan error, 1)
+	go func() {
+		approveErr <- e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "approver"})
+	}()
+
+	// The approved call is now executing, so the run is running and the
+	// rejection is arriving at the worst possible moment.
+	<-entered
+	rejectErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{DecidedBy: "rejecter", Reason: "not on a Friday"})
+	if rejectErr == nil {
+		t.Error("the rejection succeeded against a run an approval had already claimed")
+	}
+
+	close(release)
+	if approved := <-approveErr; approved != nil {
+		t.Fatalf("the approving decision, which won the claim, failed: %v", approved)
+	}
+
+	// The stomp, caught even if a later write masks it: at no point may
+	// the run have been persisted as failed.
+	for _, st := range spy.wroteStates() {
+		if st == run.StateFailed {
+			t.Errorf("the run was written %q while an approval held it; states written: %v", run.StateFailed, spy.wroteStates())
+			break
+		}
+	}
+	final, err := base.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if final.State != run.StateCompleted {
+		t.Errorf("run state = %q, want %q; the approval won and its run finished", final.State, run.StateCompleted)
 	}
 }

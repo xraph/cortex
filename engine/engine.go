@@ -602,36 +602,55 @@ func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) 
 // failRejected ends a run whose pending calls a human refused, carrying
 // the decider's own words onto the run.
 //
-// The run is failed BEFORE the suspension is dropped, and the order is
-// the same one suspend uses read backwards. A delete that succeeded and
-// a state write that then failed would leave the run paused with nothing
-// to resume from, which is precisely the wedge nothing can recover.
-// This way round the worst case is a suspension attached to a failed
-// run, which no claim will ever take.
+// It claims the suspension first, through the same atomic paused-to-
+// running transition the approving path goes through, and that is what
+// makes two deciders exclusive rather than merely unlikely to collide.
+// Without it a rejection was a plain read followed by an unconditional
+// write: an approval racing it could resume the run, or finish it, and
+// the rejection would then stomp the result to failed afterwards. A
+// stale checkpoint is an audit problem; that was corruption of a run
+// that had already moved.
+//
+// A lost claim means somebody else decided first, and it is reported
+// rather than worked around: ErrNotSuspended travels back to the caller
+// through this error, and nothing is written.
+//
+// Once the claim succeeds the run belongs to this call, exactly as it
+// does in Resume, so every exit below either fails the run or reports
+// why it could not. The suspension is deleted after the state write and
+// never before: the row is the only record of what the run was waiting
+// on, and a delete that landed while the state write failed would throw
+// that away for nothing.
 func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
+	susp, err := e.store.ClaimSuspension(ctx, cp.RunID)
+	if err != nil {
+		return fmt.Errorf("claim suspension for rejected checkpoint %s: %w", cp.ID, err)
+	}
+
+	// Write under the run's own scope, not the decider's. A checkpoint is
+	// resolvable by anyone whose scope covers the run, and everything the
+	// run records has to land where its earlier writes did.
+	ctx = cortex.WithScope(ctx, susp.Scope)
+
 	r, err := e.store.GetRun(ctx, cp.RunID)
 	if err != nil {
 		return fmt.Errorf("load run for rejected checkpoint: %w", err)
 	}
-	// Write under the run's own scope, not the decider's. A checkpoint is
-	// resolvable by anyone whose scope covers the run, and everything the
-	// run records has to land where its earlier writes did.
-	ctx = cortex.WithScope(ctx, r.Scope)
 
 	reason := decision.Reason
 	if reason == "" {
 		reason = "no reason given"
 	}
 	if err := e.persistFailure(ctx, r, cp.AgentID, fmt.Errorf("checkpoint rejected: %s", reason)); err != nil {
-		// The run is still paused, so its suspension stays exactly where
-		// it is: it is the only thing that can move the run at all, and
-		// dropping it now would leave a paused run nothing could ever
-		// pick up. The checkpoint is still pending too, because nothing
-		// has recorded this decision yet, so the caller really can
-		// decide again rather than reading back ErrInvalidState.
+		// The suspension stays: it is the only record of what the run was
+		// waiting on, and the checkpoint stays pending too, because
+		// nothing has recorded this decision yet.
 		return fmt.Errorf("fail rejected run %s: %w", cp.RunID, err)
 	}
 
+	// The run is failed and no claim will ever take it again, so the row
+	// is dead weight. Dropping it is also what makes the rejection final:
+	// a resume after this finds nothing to claim.
 	if err := e.store.DeleteSuspension(ctx, cp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logger.Error("delete suspension of a rejected run", log.String("error", err.Error()))
 	}
