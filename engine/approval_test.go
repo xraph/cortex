@@ -815,3 +815,85 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *tes
 		t.Error("ResolveCheckpoint reported success though the run could not be failed; the caller has no idea it has to decide again")
 	}
 }
+
+// TestResume_ExecuteOnAnApprovalSuspensionIsRefused is the gate itself.
+// Resume is in-process API and Execute is a bool, so without this check
+// any caller could hand back Execute results on a run waiting for a
+// decision and have the escalated call dispatched: no decision recorded,
+// no authorizer re-check, and a checkpoint left pending forever. A gate a
+// caller walks around by setting a bool is not a gate.
+func TestResume_ExecuteOnAnApprovalSuspensionIsRefused(t *testing.T) {
+	var ran int32
+	spy := scopespy.New()
+	def := gatedTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
+			atomic.AddInt32(&ran, 1)
+			return "deleted", nil
+		}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+
+	resumed, err := e.Resume(ctx, paused.ID, ResumeInput{
+		ToolResults: []ToolResult{{ToolCallID: "call-1", Execute: true}},
+	})
+	if !errors.Is(err, cortex.ErrRequiresApproval) {
+		t.Fatalf("Resume with execute on an approval suspension = (%v, %v), want ErrRequiresApproval", resumed, err)
+	}
+	if got := atomic.LoadInt32(&ran); got != 0 {
+		t.Errorf("the escalated tool ran %d times, want 0; the approval gate was walked around", got)
+	}
+
+	// Nothing moved: the run is still waiting, and the checkpoint it is
+	// waiting on is still there to be decided.
+	stillPaused, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if stillPaused.State != run.StatePaused {
+		t.Errorf("run state = %q, want %q; a refused resume must not cost the run its decision", stillPaused.State, run.StatePaused)
+	}
+	if got := len(spy.Suspensions()); got != 1 {
+		t.Errorf("%d suspensions left, want 1", got)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 || cps[0].State != "pending" {
+		t.Errorf("checkpoints = %+v, want one still pending", cps)
+	}
+}
+
+// TestResume_ExecuteOnAnExternalSuspensionIsStillAllowed keeps the gate
+// narrow. An external-tool pause never went to a human, so there is no
+// decision to walk around, and refusing Execute there would only stop a
+// caller asking the engine to run a tool it may well own.
+func TestResume_ExecuteOnAnExternalSuspensionIsStillAllowed(t *testing.T) {
+	spy := scopespy.New()
+	e := mustResumeEngine(t, spy)
+	r := suspendedFixture(t, spy, e)
+
+	susps := spy.Suspensions()
+	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, ResumeInput{
+		ToolResults: []ToolResult{{ToolCallID: susps[0].Pending[0].ID, Execute: true}},
+	})
+	if errors.Is(err, cortex.ErrRequiresApproval) {
+		t.Fatalf("Resume with execute on an external suspension = %v, want the gate not to apply", err)
+	}
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+}

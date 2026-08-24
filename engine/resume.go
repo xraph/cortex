@@ -76,7 +76,14 @@ type resumption struct {
 // or a rebuilt message list are three different ways to corrupt a run
 // that looked fine at the call site and went wrong several turns later.
 func (e *Engine) Resume(ctx context.Context, runID id.AgentRunID, in ResumeInput) (*run.Run, error) {
-	ctx, rz, err := e.claimForResume(ctx, runID, in)
+	return e.resume(ctx, runID, in, false)
+}
+
+// resume is Resume with the one thing a public caller must not be able to
+// say: whether a checkpoint approved this. Only ResolveCheckpoint passes
+// true, and it does so having just read a pending checkpoint for the run.
+func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, approved bool) (*run.Run, error) {
+	ctx, rz, err := e.claimForResume(ctx, runID, in, approved)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +93,7 @@ func (e *Engine) Resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 // ResumeStream is Resume over the streaming loop. The channel is closed
 // when execution completes, same as StreamAgent's.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) error {
-	ctx, rz, err := e.claimForResume(ctx, runID, in)
+	ctx, rz, err := e.claimForResume(ctx, runID, in, false)
 	if err != nil {
 		close(events)
 		return err
@@ -120,7 +127,7 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 // the run. Returning an error with the run left running would be the
 // wedge the claim's expiry guard exists to prevent, reached from the
 // other side.
-func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in ResumeInput) (context.Context, *resumption, error) {
+func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in ResumeInput, approved bool) (context.Context, *resumption, error) {
 	if e.store == nil {
 		return nil, nil, cortex.ErrNoStore
 	}
@@ -138,6 +145,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if susp, err := e.store.GetSuspension(ctx, runID); err == nil {
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
 			return nil, nil, vErr
+		}
+		if aErr := checkExecuteAuthority(susp.Reason, in.ToolResults, approved); aErr != nil {
+			return nil, nil, aErr
 		}
 	}
 
@@ -167,6 +177,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 
 	if err := validateResults(susp.Pending, in.ToolResults); err != nil {
+		return nil, nil, e.failResume(ctx, r, ag.ID, err)
+	}
+	if err := checkExecuteAuthority(susp.Reason, in.ToolResults, approved); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
 
@@ -375,6 +388,32 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 	}
 	e.logger.Warn("no step found for resumed tool calls", log.String("run_id", runID.String()))
 	return id.StepID{}
+}
+
+// checkExecuteAuthority is the approval gate itself, and it exists
+// because Execute is a bool on a host-facing struct.
+//
+// A run suspended for approval is waiting on a decision. Resume is
+// in-process API, so without this check any caller could hand back
+// Execute results on that run and have the escalated call dispatched
+// with no decision recorded, no authorizer re-check, and the checkpoint
+// left pending forever. A gate a caller walks around by setting a bool
+// is not a gate.
+//
+// So Execute is refused on an approval suspension unless the resume came
+// from ResolveCheckpoint, which reached it having read a pending
+// checkpoint for that run. Any other pause is unaffected: an
+// external-tool suspension never went to a human in the first place.
+func checkExecuteAuthority(reason suspension.SuspendReason, results []ToolResult, approved bool) error {
+	if approved || reason != suspension.ReasonApproval {
+		return nil
+	}
+	for _, r := range results {
+		if r.Execute {
+			return fmt.Errorf("%w: call %q is waiting on a checkpoint; resolve it rather than resuming the run with execute", cortex.ErrRequiresApproval, r.ToolCallID)
+		}
+	}
+	return nil
 }
 
 // validateResults enforces the bijection between pending calls and the
