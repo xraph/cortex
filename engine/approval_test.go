@@ -384,7 +384,8 @@ func (c *checkpointOrphanSpy) resolutions() []id.CheckpointID {
 func TestSuspend_FailedStateFlipResolvesTheCheckpoint(t *testing.T) {
 	base := scopespy.New()
 	spy := &checkpointOrphanSpy{Spy: base}
-	e := approvalEngine(t, WithStore(spy))
+	rec := &checkpointEventRecorder{}
+	e := approvalEngine(t, WithStore(spy), WithExtension(rec))
 
 	r, err := e.RunAgent(cortex.WithScope(context.Background(), approvalScope()), "assistant", "clean up", nil)
 	if err == nil {
@@ -401,6 +402,13 @@ func TestSuspend_FailedStateFlipResolvesTheCheckpoint(t *testing.T) {
 	}
 	if got[0] != cps[0].ID {
 		t.Errorf("Resolve got checkpoint %q, want the stranded one %q", got[0], cps[0].ID)
+	}
+
+	// And no subscriber was told a checkpoint opened. The self-resolve
+	// above goes straight to the store and emits nothing, so a created
+	// event here would be one no resolved event ever answers.
+	if got := rec.createdEvents(); len(got) != 0 {
+		t.Errorf("OnCheckpointCreated fired %v for a run that never paused; nothing will ever close it", got)
 	}
 }
 

@@ -113,6 +113,13 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		}
 		return fmt.Errorf("update run to paused: %w", err)
 	}
+
+	// Emitted after the flip, not where the row is written: subscribers
+	// hear about a checkpoint only once the run it belongs to is really
+	// waiting on it.
+	if cp != nil {
+		e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
+	}
 	return nil
 }
 
@@ -159,7 +166,10 @@ func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension
 	if err := e.store.CreateCheckpoint(ctx, cp); err != nil {
 		return nil, err
 	}
-
-	e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
+	// No hook fires here. The run is not paused yet, and a flip that
+	// then fails resolves this checkpoint through a store call that
+	// emits nothing, so a subscriber would be left holding a created
+	// event with no resolved event ever to match it. suspend emits once
+	// the pause is real.
 	return cp, nil
 }
