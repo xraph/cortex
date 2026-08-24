@@ -3,6 +3,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -115,6 +117,65 @@ func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 func WithExternalTool(def llm.Tool) Option {
 	return func(e *Engine) error {
 		e.externalTools = append(e.externalTools, def)
+		return nil
+	}
+}
+
+// WithSuspensionTTL sets how long a suspended run waits for the outside
+// world before the expiry sweeper fails it. It defaults to
+// defaultSuspensionTTL.
+//
+// A TTL of zero disables expiry outright: suspensions are written with
+// no deadline, and no sweeper runs. That is the right setting for a host
+// whose pauses are answered by a person on their own schedule and who
+// would rather have a run sit paused for a week than have it failed out
+// from under them. It is not the default, because the failure it
+// prevents is visible and recoverable while the one it allows (a run
+// paused forever on a browser tab somebody closed) is neither.
+//
+// A negative duration is refused rather than clamped. It reads as an
+// already-passed deadline, so accepting it would have every suspension
+// swept on the next tick, which is the opposite of what anyone typing a
+// negative number means.
+func WithSuspensionTTL(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d < 0 {
+			return fmt.Errorf("cortex: suspension TTL %s is negative; use 0 to disable expiry", d)
+		}
+		e.suspensionTTL = d
+		return nil
+	}
+}
+
+// WithSuspensionSweepInterval sets how often the expiry sweeper looks
+// for suspensions past their deadline. It defaults to
+// defaultSweepInterval.
+//
+// The interval is the granularity of expiry, not its accuracy: a run
+// whose deadline passes just after a sweep waits up to one more interval
+// to be failed. Setting it far below the TTL buys nothing but load,
+// since a deadline measured in hours does not need checking every
+// second.
+func WithSuspensionSweepInterval(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d <= 0 {
+			return fmt.Errorf("cortex: suspension sweep interval %s must be positive; use WithSuspensionTTL(0) to switch expiry off", d)
+		}
+		e.sweepInterval = d
+		return nil
+	}
+}
+
+// WithSuspensionSweepLimit caps how many expired suspensions one sweep
+// takes on. A sweep that tried to drain an unbounded backlog would hold
+// the store for as long as the backlog was long; the leftovers are
+// picked up by the next tick.
+func WithSuspensionSweepLimit(n int) Option {
+	return func(e *Engine) error {
+		if n <= 0 {
+			return fmt.Errorf("cortex: suspension sweep limit %d must be positive", n)
+		}
+		e.sweepLimit = n
 		return nil
 	}
 }

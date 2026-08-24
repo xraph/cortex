@@ -57,13 +57,14 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 // history and answer them twice.
 func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.SuspendReason, pending []suspension.PendingCall, cont suspension.Continuation) error {
 	s := &suspension.Suspension{
-		Entity:  cortex.NewEntity(),
-		ID:      id.NewSuspensionID(),
-		RunID:   r.ID,
-		Scope:   r.Scope,
-		Reason:  reason,
-		Pending: pending,
-		Cont:    cont,
+		Entity:    cortex.NewEntity(),
+		ID:        id.NewSuspensionID(),
+		RunID:     r.ID,
+		Scope:     r.Scope,
+		Reason:    reason,
+		Pending:   pending,
+		Cont:      cont,
+		ExpiresAt: e.suspensionDeadline(),
 	}
 	if err := e.store.CreateSuspension(ctx, s); err != nil {
 		return fmt.Errorf("create suspension: %w", err)
@@ -88,11 +89,16 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 	r.TokensUsed = cont.TokensUsed
 	if err := e.store.UpdateRun(ctx, r); err != nil {
 		// The suspension is written and now belongs to nobody: the
-		// caller is about to fail the run, ExpiresAt is nil so the
-		// sweeper never sees the row, and nothing else deletes it. Best
-		// effort, since the store just failed a write, and logged
-		// rather than returned: the caller needs the reason the run
-		// could not be paused, not the reason the cleanup also failed.
+		// caller is about to fail the run, and nothing else deletes the
+		// row. Best effort, since the store just failed a write, and
+		// logged rather than returned: the caller needs the reason the
+		// run could not be paused, not the reason the cleanup also
+		// failed. If this delete fails too the row outlives its run;
+		// the sweeper will not clear it either, because its claim wants
+		// a paused run and this one is about to be failed. A leaked row
+		// on a failed run is inert, and the alternative (a sweeper that
+		// deletes rows off runs it does not own) is how a resume in
+		// flight loses the row out from under it.
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
 			e.logger.Error("delete orphaned suspension", log.String("error", delErr.Error()))
 		}
@@ -121,6 +127,19 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
 	}
 	return nil
+}
+
+// suspensionDeadline is when the sweeper may fail this run, or nil when
+// expiry is switched off. It is stamped at suspend time rather than
+// derived at sweep time so a TTL change never moves the deadline of a
+// run that is already waiting: whoever was told to answer by Tuesday
+// still has until Tuesday.
+func (e *Engine) suspensionDeadline() *time.Time {
+	if e.suspensionTTL <= 0 {
+		return nil
+	}
+	t := time.Now().UTC().Add(e.suspensionTTL)
+	return &t
 }
 
 // createCheckpoint opens the human-facing half of an approval

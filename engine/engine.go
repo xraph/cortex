@@ -46,6 +46,14 @@ type Engine struct {
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []llm.Tool
+
+	// suspensionTTL is how long a paused run waits before the sweeper
+	// fails it. Zero switches expiry off entirely: suspensions are
+	// written with no deadline and no sweeper runs.
+	suspensionTTL time.Duration
+	sweepInterval time.Duration
+	sweepLimit    int
+	sweep         sweeper
 }
 
 // LLM returns the configured LLM client, or nil if none is set.
@@ -78,6 +86,12 @@ func New(opts ...Option) (*Engine, error) {
 	e := &Engine{
 		config: cortex.DefaultConfig(),
 		logger: log.NewNoopLogger(),
+		// Set before the options run, so WithSuspensionTTL(0) reads as
+		// the caller switching expiry off rather than as a field nobody
+		// filled in.
+		suspensionTTL: defaultSuspensionTTL,
+		sweepInterval: defaultSweepInterval,
+		sweepLimit:    defaultSweepLimit,
 	}
 
 	for _, opt := range opts {
@@ -104,13 +118,24 @@ func (e *Engine) Health(ctx context.Context) error {
 }
 
 // Start initializes the engine for operation.
+//
+// The context is deliberately still ignored. Start takes one to match
+// every other lifecycle hook in the ecosystem, but a caller's start
+// context is not the engine's lifetime: the expiry sweeper it launches
+// here runs on a handle of its own and is stopped by Stop.
 func (e *Engine) Start(_ context.Context) error {
+	e.startSweeper()
 	e.logger.Info("cortex engine started")
 	return nil
 }
 
 // Stop gracefully shuts down the engine.
+//
+// The sweeper is joined, not merely signalled, and it is joined before
+// the shutdown hook fires: a subscriber told the engine has stopped
+// while a sweep is still failing runs has been told something untrue.
 func (e *Engine) Stop(ctx context.Context) error {
+	e.stopSweeper()
 	e.extensions.EmitShutdown(ctx)
 	e.logger.Info("cortex engine stopped")
 	return nil
