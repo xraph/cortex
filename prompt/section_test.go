@@ -162,3 +162,16 @@ func TestAssemble_Empty(t *testing.T) {
 		t.Errorf("Assemble(nil) = %q, want empty string", out)
 	}
 }
+
+// An append carrying nothing should leave the section exactly as it was.
+// The separator lands before the body does, so without a guard an empty
+// addition still grows a trailing newline that rides all the way into the
+// assembled prompt.
+func TestApplyOverlay_EmptyAppendLeavesTheBodyAlone(t *testing.T) {
+	sections := []prompt.Section{{ID: "role", Body: "you are helpful"}}
+	got, _ := prompt.ApplyOverlay(sections, []prompt.Patch{{ID: "role", Mode: prompt.PatchAppend}})
+
+	if got[0].Body != "you are helpful" {
+		t.Errorf("an empty append changed the body: %q, want %q", got[0].Body, "you are helpful")
+	}
+}

@@ -116,6 +116,12 @@ func appendBody(existing, addition string) string {
 	if existing == "" {
 		return addition
 	}
+	// An append with nothing to add is a no-op, not a blank line. Without
+	// this the separator still lands and the section grows a trailing
+	// newline that survives into the assembled prompt.
+	if addition == "" {
+		return existing
+	}
 
 	return existing + "\n" + addition
 }
