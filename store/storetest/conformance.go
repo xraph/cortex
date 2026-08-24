@@ -3468,15 +3468,19 @@ func testSweeperReads(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// A resume and a sweep answer against the same stored deadline from
 	// opposite sides, so the same row can never look claimable to both.
 	// This is the partition argument itself, asserted rather than
-	// reasoned about.
+	// reasoned about, and it names which side is meant to win rather
+	// than settling for "not both": a partition that refused BOTH claims
+	// would wedge the row, and one that let either side win whichever
+	// way the deadline fell would not be a partition at all.
 	t.Run("ClaimsPartitionTheSameRow", func(t *testing.T) {
 		tests := []struct {
-			name      string
-			expiresAt *time.Time
+			name           string
+			expiresAt      *time.Time
+			wantResumeWins bool
 		}{
-			{name: "past", expiresAt: pastDeadline()},
-			{name: "still ahead", expiresAt: futureDeadline()},
-			{name: "none at all", expiresAt: nil},
+			{name: "past", expiresAt: pastDeadline(), wantResumeWins: false},
+			{name: "still ahead", expiresAt: futureDeadline(), wantResumeWins: true},
+			{name: "none at all", expiresAt: nil, wantResumeWins: true},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -3488,13 +3492,72 @@ func testSweeperReads(t *testing.T, newStore func(t *testing.T) store.Store) {
 				// Whatever the resume did, the sweep asks second and
 				// against the same row.
 				_, sweepErr := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC())
+
 				if resumeErr == nil && sweepErr == nil {
 					t.Fatal("both a resume and a sweep claimed the same suspension; the deadline predicates overlap")
 				}
-				if resumeErr != nil && sweepErr != nil && tc.expiresAt != nil && tc.expiresAt.Before(time.Now().UTC()) {
-					t.Fatalf("neither a resume nor a sweep could claim an expired suspension: resume = %v, sweep = %v; the row is wedged", resumeErr, sweepErr)
+				if resumeErr != nil && sweepErr != nil {
+					t.Fatalf("neither a resume nor a sweep could claim the suspension: resume = %v, sweep = %v; the row is wedged", resumeErr, sweepErr)
+				}
+				if got := resumeErr == nil; got != tc.wantResumeWins {
+					t.Errorf("the resume won = %v, want %v (resume = %v, sweep = %v); the row went to the wrong side of the partition", got, tc.wantResumeWins, resumeErr, sweepErr)
 				}
 			})
 		}
+
+		// The boundary, and the one value where a partition most
+		// plausibly goes wrong in either direction: a row whose deadline
+		// is EXACTLY the instant both sides ask about. One side uses
+		// <=, the other >, and a backend that got either comparison
+		// inclusive-by-one would either hand the row to both or to
+		// neither.
+		//
+		// The instant is read back from the store rather than the value
+		// handed to it, because every backend truncates timestamps to
+		// its own precision on write (mongo to milliseconds, postgres to
+		// microseconds). Passing the untruncated value would test a
+		// deadline slightly in the past instead of one exactly equal,
+		// which is the case already covered above.
+		t.Run("deadline exactly at the instant both sides ask about", func(t *testing.T) {
+			s := newStore(t)
+			ctx := ctxWithScope("ws_x")
+			at := time.Now().UTC()
+			r, _ := mustSuspendRun(t, s, ctx, &at)
+
+			stored, err := s.GetSuspension(ctx, r.ID)
+			if err != nil {
+				t.Fatalf("read the stored deadline back: %v", err)
+			}
+			if stored.ExpiresAt == nil {
+				t.Fatal("the stored suspension carries no deadline; this subtest cannot pin the boundary")
+			}
+			exact := stored.ExpiresAt.UTC()
+
+			// The resume asks first and against its own clock, which is
+			// past the deadline by the time it runs. It must be refused
+			// as expired rather than as missing: an expired row is the
+			// sweeper's, and a caller told "not suspended" would go
+			// looking for a run that is sitting right there.
+			claimed, resumeErr := s.ClaimSuspension(ctx, r.ID)
+			if !errors.Is(resumeErr, cortex.ErrSuspensionExpired) {
+				t.Fatalf("ClaimSuspension on a deadline that has just passed = (%v, %v), want ErrSuspensionExpired", claimed, resumeErr)
+			}
+
+			swept, sweepErr := s.ClaimExpiredSuspension(ctx, r.ID, exact)
+			if sweepErr != nil {
+				t.Fatalf("ClaimExpiredSuspension at exactly the stored deadline: %v; the row belongs to neither side and is wedged", sweepErr)
+			}
+			if swept == nil {
+				t.Fatal("the winning sweep claim returned no suspension")
+			}
+
+			reloaded, err := s.GetRun(ctx, r.ID)
+			if err != nil {
+				t.Fatalf("reload run after the boundary claim: %v", err)
+			}
+			if reloaded.State != run.StateRunning {
+				t.Errorf("run state = %q, want %q; the sweep reported a win it did not take", reloaded.State, run.StateRunning)
+			}
+		})
 	})
 }

@@ -10,6 +10,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
 )
 
@@ -173,7 +174,7 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 		if errors.Is(err, cortex.ErrNotSuspended) {
 			// Somebody else owns this run: it was resumed, decided, or
 			// already swept. Not an error, and nothing to log.
-			return nil
+			return e.dropOrphanedSuspension(ctx, susp)
 		}
 		return fmt.Errorf("claim expired suspension: %w", err)
 	}
@@ -200,11 +201,74 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 
 	// The run is failed and no claim will ever take it again, so the row
 	// is dead weight. Dropping it is also what makes the expiry final: a
-	// resume after this finds nothing to claim.
+	// resume after this finds nothing to claim. A failure here is logged
+	// rather than returned, because the run really did fail and that is
+	// what the caller cares about; the leftover row is picked up by
+	// dropOrphanedSuspension on the next sweep.
 	if err := e.store.DeleteSuspension(ctx, susp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logger.Error("delete suspension of an expired run", log.String("error", err.Error()))
 	}
 	return nil
+}
+
+// dropOrphanedSuspension clears a row whose run has already finished.
+//
+// A sweep that fails a run and then cannot delete its suspension leaves
+// the row behind, and it is permanently unclaimable: the claim wants a
+// paused run and this one is failed. Every later sweep re-lists it,
+// refuses it and moves on, so it occupies a slot of the batch forever.
+// A handful of those across a fleet slowly starve the sweep of room for
+// runs that still need failing. The same is true of the row suspend
+// leaves behind when its rollback delete fails.
+//
+// The rule is narrow on purpose: only a run in a TERMINAL state. A
+// resume in flight leaves its run running, never terminal, so this can
+// never take a row out from under one. Nothing can resume a terminal run
+// either, since every claim needs a paused one, which makes the row pure
+// dead weight rather than a record anybody could still act on.
+//
+// Everything else the refused claim could mean (the run is paused again,
+// running, or the row is simply gone) is left exactly as found.
+func (e *Engine) dropOrphanedSuspension(ctx context.Context, susp *suspension.Suspension) error {
+	r, err := e.store.GetRun(ctx, susp.RunID)
+	if err != nil {
+		if errors.Is(err, cortex.ErrRunNotFound) {
+			// No run to be orphaned from. Dropping the row is the only
+			// thing left that can ever be done with it.
+			return e.deleteOrphanRow(ctx, susp)
+		}
+		return fmt.Errorf("load run behind a refused claim: %w", err)
+	}
+	if !isTerminalRunState(r.State) {
+		return nil
+	}
+	return e.deleteOrphanRow(ctx, susp)
+}
+
+func (e *Engine) deleteOrphanRow(ctx context.Context, susp *suspension.Suspension) error {
+	// WithoutCancel for the same reason the terminal write uses it: this
+	// is cleanup of a run that has already ended, and half-doing it just
+	// leaves the next sweep the same work.
+	if err := e.store.DeleteSuspension(context.WithoutCancel(ctx), susp.RunID); err != nil &&
+		!errors.Is(err, cortex.ErrNotSuspended) {
+		return fmt.Errorf("delete orphaned suspension: %w", err)
+	}
+	return nil
+}
+
+// isTerminalRunState says whether a run has finished for good. Written
+// as an allowlist rather than "not paused and not running", so a state
+// added later is treated as live until somebody decides otherwise: the
+// cost of being wrong the other way is deleting a row a run still needs.
+func isTerminalRunState(s run.State) bool {
+	switch s {
+	case run.StateCompleted, run.StateFailed, run.StateCancelled:
+		return true
+	case run.StateCreated, run.StateRunning, run.StatePaused:
+		return false
+	default:
+		return false
+	}
 }
 
 // expiryError is what the run's Error field ends up saying. It wraps

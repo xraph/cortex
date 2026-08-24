@@ -93,12 +93,11 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		// row. Best effort, since the store just failed a write, and
 		// logged rather than returned: the caller needs the reason the
 		// run could not be paused, not the reason the cleanup also
-		// failed. If this delete fails too the row outlives its run;
-		// the sweeper will not clear it either, because its claim wants
-		// a paused run and this one is about to be failed. A leaked row
-		// on a failed run is inert, and the alternative (a sweeper that
-		// deletes rows off runs it does not own) is how a resume in
-		// flight loses the row out from under it.
+		// failed. If this delete fails too the row outlives its run,
+		// and the sweeper picks it up: its claim wants a paused run and
+		// this one is about to be failed, so the claim is refused and
+		// dropOrphanedSuspension clears the row once the run reaches a
+		// terminal state.
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
 			e.logger.Error("delete orphaned suspension", log.String("error", delErr.Error()))
 		}

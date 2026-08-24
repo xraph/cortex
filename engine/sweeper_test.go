@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,9 +33,11 @@ type sweepStore struct {
 	crossScopeCtxs []cortex.Scope
 	claimScopes    []cortex.Scope
 
-	// onList runs at the top of every cross-scope list, so a test can
-	// hold a sweep open and observe what happens around it.
-	onList func()
+	// onList runs at the top of every cross-scope list, carrying the
+	// sweeper's own context, so a test can hold a sweep open and release
+	// it on something the sweeper itself observes rather than on a
+	// stopwatch.
+	onList func(ctx context.Context)
 
 	// sweptWhileHeld is written by the sweeper goroutine and read by the
 	// test only after Stop returns. It is a plain field on purpose: if
@@ -52,7 +55,7 @@ func newSweepStore() *sweepStore {
 // prove the sweeper is not quietly relying on one.
 func (s *sweepStore) ListExpiredAcrossScopes(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error) {
 	if s.onList != nil {
-		s.onList()
+		s.onList(ctx)
 	}
 	s.mu.Lock()
 	s.crossScopeCtxs = append(s.crossScopeCtxs, cortex.ScopeFromContext(ctx))
@@ -103,6 +106,48 @@ func (s *sweepStore) ClaimExpiredSuspension(ctx context.Context, runID id.AgentR
 		return nil, err
 	}
 	return susp, nil
+}
+
+// GetRun, UpdateRun and DeleteSuspension are wrapped so this double
+// ENFORCES scope the way a real backend does. scopespy.Spy records the
+// scope it was called with but serves every read regardless, which means
+// a sweeper that did its post-claim writes under the wrong scope, or
+// under none, would still pass a test that only inspected the recorded
+// calls. These three refuse instead, so the property the cross-scope
+// ruling rests on (crossing scopes to find work does not license doing
+// the work unscoped) fails loudly rather than silently.
+func (s *sweepStore) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	r, err := s.Spy.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if !sameScope(ctx, r.Scope) {
+		return nil, cortex.ErrRunNotFound
+	}
+	return r, nil
+}
+
+func (s *sweepStore) UpdateRun(ctx context.Context, r *run.Run) error {
+	if !sameScope(ctx, r.Scope) {
+		return cortex.ErrRunNotFound
+	}
+	return s.Spy.UpdateRun(ctx, r)
+}
+
+func (s *sweepStore) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error {
+	for _, susp := range s.Suspensions() {
+		if susp.RunID == runID && !sameScope(ctx, susp.Scope) {
+			return cortex.ErrNotSuspended
+		}
+	}
+	return s.Spy.DeleteSuspension(ctx, runID)
+}
+
+// sameScope is the exact-match a scoped store applies. Prefix matching
+// is not modelled: nothing in the sweeper resumes from a broader scope,
+// so an exact comparison is both simpler and stricter here.
+func sameScope(ctx context.Context, want cortex.Scope) bool {
+	return cortex.ScopeFromContext(ctx).Canonical() == want.Canonical()
 }
 
 func (s *sweepStore) crossScopeCalls() []cortex.Scope {
@@ -240,6 +285,12 @@ func TestSweepOnce_FailsThePastDeadlineAndLeavesTheFutureOneAlone(t *testing.T) 
 // design the cross-scope read does not cover. Finding work everywhere
 // does not license doing it nowhere in particular: each run's writes
 // have to land in the scope that run started under.
+//
+// Two scopes, so a sweeper that reached only the one it happened to
+// start in fails, and a scope-ENFORCING store double, so a sweeper that
+// reached both but wrote under the wrong one fails too. Asserting on
+// the recorded calls alone would not catch the second: scopespy.Spy
+// records the scope it was handed and then serves the read regardless.
 func TestSweepOnce_WorksUnderTheSuspensionsOwnScope(t *testing.T) {
 	s := newSweepStore()
 	scopeA := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_a"}}}
@@ -251,6 +302,7 @@ func TestSweepOnce_WorksUnderTheSuspensionsOwnScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	before := len(s.Calls())
 	e.sweepOnce(context.Background())
 
 	for _, c := range []struct {
@@ -266,25 +318,57 @@ func TestSweepOnce_WorksUnderTheSuspensionsOwnScope(t *testing.T) {
 		}
 	}
 
-	// The list is asked without a scope; the claims are made with one.
+	// The list is asked without a scope.
 	for i, sc := range s.crossScopeCalls() {
 		if !sc.IsZero() {
 			t.Errorf("cross-scope list %d carried scope %v; the sweeper has no request scope to pass", i, sc)
 		}
 	}
+
+	// EVERY store call the sweep made, not just the claim: the claim
+	// being scoped says nothing about the GetRun, UpdateRun and
+	// DeleteSuspension that follow it, and those are the writes.
+	swept := s.Calls()[before:]
+	if len(swept) == 0 {
+		t.Fatal("the sweep made no store calls; this test proves nothing")
+	}
+	byScope := map[string]map[string]bool{}
+	for _, c := range swept {
+		if c.Scope.IsZero() {
+			t.Errorf("%s ran with no scope at all; the per-run work must carry the suspension's own", c.Method)
+			continue
+		}
+		if c.Scope.Canonical() != scopeA.Canonical() && c.Scope.Canonical() != scopeB.Canonical() {
+			t.Errorf("%s ran under scope %q, which belongs to neither suspension", c.Method, c.Scope.Canonical())
+			continue
+		}
+		if byScope[c.Scope.Canonical()] == nil {
+			byScope[c.Scope.Canonical()] = map[string]bool{}
+		}
+		byScope[c.Scope.Canonical()][c.Method] = true
+	}
+
+	// Each run's whole sequence has to have happened under its own
+	// scope, so a sweeper that scoped the claim and then wrote under the
+	// other run's scope is caught by the missing method rather than by a
+	// scope that merely looks plausible.
+	for _, want := range []cortex.Scope{scopeA, scopeB} {
+		got := byScope[want.Canonical()]
+		for _, method := range []string{"GetRun", "UpdateRun", "DeleteSuspension"} {
+			if !got[method] {
+				t.Errorf("%s never ran under %q; the post-claim writes did not follow the suspension's scope", method, want.Canonical())
+			}
+		}
+	}
+
 	claims := s.claimCalls()
 	if len(claims) != 2 {
 		t.Fatalf("%d claims, want 2 (one per expired suspension)", len(claims))
 	}
-	seen := map[string]bool{}
 	for _, sc := range claims {
 		if sc.IsZero() {
 			t.Fatal("a claim was made with no scope; the per-run work must run under the suspension's own scope")
 		}
-		seen[sc.Canonical()] = true
-	}
-	if !seen[scopeA.Canonical()] || !seen[scopeB.Canonical()] {
-		t.Errorf("claims were made under %v, want one under each of ws_a and ws_b", seen)
 	}
 }
 
@@ -463,11 +547,16 @@ func TestStartStop_TheSweeperRunsAndStopJoinsIt(t *testing.T) {
 func TestStop_WaitsForASweepAlreadyInFlight(t *testing.T) {
 	s := newSweepStore()
 	entered := make(chan struct{})
-	release := make(chan struct{})
 	var once sync.Once
-	s.onList = func() {
+	// The sweep does not come back until the sweeper's OWN context is
+	// cancelled, which only Stop does. No sleep decides when Stop has
+	// been entered: the sweep is blocked on the cancel itself, so it is
+	// still in flight at that moment by construction. What follows the
+	// cancel is work Stop is obliged to wait for.
+	s.onList = func(ctx context.Context) {
 		once.Do(func() { close(entered) })
-		<-release
+		<-ctx.Done()
+		time.Sleep(5 * time.Millisecond)
 		s.sweptWhileHeld = true
 	}
 
@@ -479,12 +568,8 @@ func TestStop_WaitsForASweepAlreadyInFlight(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// The sweeper is now inside a sweep and cannot get out of it.
+	// The sweeper is now inside a sweep it cannot leave until Stop acts.
 	<-entered
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		close(release)
-	}()
 
 	if err := e.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
@@ -500,7 +585,19 @@ func TestStop_WaitsForASweepAlreadyInFlight(t *testing.T) {
 // channel nothing will close).
 func TestStartStop_AreIdempotent(t *testing.T) {
 	s := newSweepStore()
-	e, err := New(WithStore(s), WithSuspensionSweepInterval(time.Hour))
+	release := make(chan struct{})
+	var inFlight atomic.Int32
+	// Every sweeper that exists parks itself here on its first tick and
+	// stays parked. The count of arrivals is therefore the number of
+	// loops running, which is the thing a second Start must not change.
+	// A one-hour interval would have hidden a leaked goroutine
+	// completely, since neither loop would ever tick.
+	s.onList = func(_ context.Context) {
+		inFlight.Add(1)
+		<-release
+	}
+
+	e, err := New(WithStore(s), WithSuspensionSweepInterval(time.Millisecond))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -509,6 +606,16 @@ func TestStartStop_AreIdempotent(t *testing.T) {
 			t.Fatalf("Start: %v", err)
 		}
 	}
+
+	// Fifty ticks' worth of room for a second loop to arrive if one
+	// exists. Errorf rather than Fatalf: the release below has to happen
+	// or Stop blocks forever and the failure reads as a timeout.
+	time.Sleep(50 * time.Millisecond)
+	if got := inFlight.Load(); got != 1 {
+		t.Errorf("%d sweep loops are running, want 1; a second Start leaked a goroutine", got)
+	}
+
+	close(release)
 	for range 2 {
 		if err := e.Stop(context.Background()); err != nil {
 			t.Fatalf("Stop: %v", err)
@@ -557,4 +664,66 @@ func (s *failingUpdateStore) UpdateRun(ctx context.Context, r *run.Run) error {
 		return s.sweepStore.UpdateRun(ctx, r)
 	}
 	return s.err
+}
+
+// TestSweepOnce_ClearsARowLeftOnATerminalRun covers the retry the first
+// sweep could not do. A sweep that fails a run and then cannot delete
+// its suspension leaves a row no claim will ever match again, because
+// the claim wants a paused run and this one is failed. Every later sweep
+// would re-list it, refuse it and move on, so it would hold a slot of
+// the batch forever and a fleet with a few of them slowly starves the
+// sweep.
+//
+// The three fixtures differ only in the state of the run behind the row,
+// which is the thing that decides whether the row is dead weight or
+// somebody's work in progress.
+func TestSweepOnce_ClearsARowLeftOnATerminalRun(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     run.State
+		wantGone  bool
+		wantState run.State
+	}{
+		{name: "failed run", state: run.StateFailed, wantGone: true, wantState: run.StateFailed},
+		{name: "completed run", state: run.StateCompleted, wantGone: true, wantState: run.StateCompleted},
+		{name: "cancelled run", state: run.StateCancelled, wantGone: true, wantState: run.StateCancelled},
+		// The one that must survive: a resume holds its row from the
+		// claim until its own delete, and its run is running the whole
+		// time. Taking this row is how a resume in flight loses it.
+		{name: "running run", state: run.StateRunning, wantGone: false, wantState: run.StateRunning},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSweepStore()
+			scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}}
+			r := sweepFixture(t, s, scope, past())
+
+			ctx := cortex.WithScope(context.Background(), scope)
+			moved, err := s.GetRun(ctx, r.ID)
+			if err != nil {
+				t.Fatalf("load the run: %v", err)
+			}
+			moved.State = tc.state
+			if upErr := s.UpdateRun(ctx, moved); upErr != nil {
+				t.Fatalf("move the run to %q: %v", tc.state, upErr)
+			}
+
+			e, newErr := New(WithStore(s))
+			if newErr != nil {
+				t.Fatalf("New: %v", newErr)
+			}
+			e.sweepOnce(context.Background())
+
+			if got := hasSuspension(s, r.ID); got == tc.wantGone {
+				if tc.wantGone {
+					t.Error("the row survived on a run that has already finished; it will occupy a batch slot on every sweep from now on")
+				} else {
+					t.Error("the sweep deleted a row whose run is still live; a resume in flight has just lost it")
+				}
+			}
+			if got := stateOf(t, s, scope, r.ID); got != tc.wantState {
+				t.Errorf("run state = %q, want %q; clearing a leftover row must not move the run", got, tc.wantState)
+			}
+		})
+	}
 }
