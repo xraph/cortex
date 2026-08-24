@@ -246,19 +246,18 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			// pending is collected rather than recorded: the whole step
 			// runs first, and one suspension carrying every pending call
 			// is written after it.
-			var pending []suspension.PendingCall
-			// One reason per step, folded from what executeTool
+			// One reason per step, taken from what executeTool
 			// classified rather than named here: nothing downstream,
 			// including the persisted row, gets to invent a reason of
-			// its own.
-			var reason suspension.SuspendReason
+			// its own. A step whose calls disagree is refused at
+			// suspend rather than folded into one of them.
+			var pending pendingCalls
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
 				if outcome == outcomePending {
-					reason = mergeSuspendReason(reason, pendingReason)
 					// No tool call row: nothing ran, and a row with a
 					// completion timestamp on it would be a lie the
 					// resume has no way to correct (run.Store has no
@@ -266,7 +265,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					// either, and no tool result message: the model must
 					// not see an empty result standing in for a call
 					// that is still outstanding.
-					pending = append(pending, pendingCall(tc))
+					pending.add(tc, pendingReason)
 					continue
 				}
 
@@ -301,9 +300,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				})
 			}
 
-			if len(pending) > 0 {
+			if pending.any() {
 				cont := st.continuation(cfg)
-				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
+				if _, err := e.suspend(ctx, r, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
 					return nil, fmt.Errorf("suspend run: %w", err)
 				}
@@ -586,11 +585,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			// Same collect-then-suspend shape as the synchronous
 			// loop: see its comments for why a pending call gets no
 			// row, no terminal event and no result message.
-			var pending []suspension.PendingCall
 			// One reason per step, same as the synchronous loop: the
-			// event below reports what suspend was actually given
-			// rather than naming a reason of its own.
-			var reason suspension.SuspendReason
+			// event below reports the reason suspend settled on rather
+			// than naming one of its own, and a step whose calls
+			// disagree never gets that far.
+			var pending pendingCalls
 			for _, tc := range toolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -603,8 +602,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
 				if outcome == outcomePending {
-					reason = mergeSuspendReason(reason, pendingReason)
-					pending = append(pending, pendingCall(tc))
+					pending.add(tc, pendingReason)
 					continue
 				}
 
@@ -638,9 +636,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				})
 			}
 
-			if len(pending) > 0 {
+			if pending.any() {
 				cont := st.continuation(cfg)
-				if err := e.suspend(ctx, r, reason, pending, cont); err != nil {
+				reason, err := e.suspend(ctx, r, pending, cont)
+				if err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
 					events <- StreamEvent{Type: EventError, Data: map[string]any{
 						"message": err.Error(),
@@ -655,7 +654,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
 					"run_id":  r.ID.String(),
 					"reason":  string(reason),
-					"pending": pending,
+					"pending": pending.calls,
 				}}
 				return
 			}
@@ -948,23 +947,6 @@ func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.Tool
 	// success count.
 	err := fmt.Errorf("unknown tool %q", tc.Name)
 	return jsonResult("error", err.Error()), outcomeFailed, err
-}
-
-// mergeSuspendReason folds a step's pending reasons into the one reason
-// its single suspension carries.
-//
-// Approval wins. A step can pend for both reasons at once (one call the
-// authorizer escalated, another the host executes), and the suspension
-// holds one reason, so the choice decides whether a checkpoint is opened
-// at all. Losing the checkpoint because a sibling call happened to be
-// external would let a call somebody asked to have reviewed proceed with
-// nobody ever asked, which is the one outcome this whole path exists to
-// refuse.
-func mergeSuspendReason(cur, next suspension.SuspendReason) suspension.SuspendReason {
-	if cur == suspension.ReasonApproval || next == suspension.ReasonApproval {
-		return suspension.ReasonApproval
-	}
-	return next
 }
 
 // memoryToLLM converts memory messages to llm messages.

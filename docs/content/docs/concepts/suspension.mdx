@@ -364,6 +364,23 @@ Keep escalations on tools you registered with `WithTool`. If a call needs both
 a human decision and your execution, gate it in your own handler after the
 approval, or model it as an external tool and do the asking on your side.
 
+### A step that needs both
+
+Don't do this either, and cortex won't let you. If one step carries a call the
+authorizer escalated and a call your host executes, the run fails there and the
+error names both tools.
+
+One suspension carries one reason, and everything downstream reads that reason
+as the reason for every call under it. Approval hands back `Execute` for the
+whole set, so the external call is failed for something it never did. External
+drops the checkpoint, so a call somebody asked to have reviewed goes ahead with
+nobody ever asked. There is no third answer while a run has one suspension, and
+failing at the step is at least a failure you can read.
+
+Keep them apart. Narrow the agent's `Tools` so the two can't be asked for
+together, or register the external tool with `WithTool` so the engine runs it
+and only the approval is left pending.
+
 ## Expiry
 
 A suspended run waits 24 hours by default, and then a background sweeper fails

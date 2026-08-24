@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -43,6 +44,54 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 	return suspension.PendingCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
 }
 
+// pendingCalls is everything one step could not finish: the calls, and
+// the reason each of them is waiting on.
+//
+// The reasons are kept per call rather than folded together as they
+// arrive, because folding is where a step carrying two of them went
+// wrong. A suspension holds one reason and every path downstream reads
+// it as the reason for ALL of its pending calls: an approved checkpoint
+// hands back "execute" for every call in the set, so a plain external
+// sibling folded into an approval was force-failed for something it
+// never did. Keeping them apart is what lets suspend refuse the step
+// instead of quietly corrupting one of its calls.
+type pendingCalls struct {
+	calls   []suspension.PendingCall
+	reasons []suspension.SuspendReason
+}
+
+func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason) {
+	p.calls = append(p.calls, pendingCall(tc))
+	p.reasons = append(p.reasons, reason)
+}
+
+func (p *pendingCalls) any() bool { return len(p.calls) > 0 }
+
+// reason is the one reason this step's suspension carries, or the error
+// that says why these calls cannot share one.
+//
+// Refusing here is the whole point. The alternative downstream is worse
+// than a failed run: an approval can only be answered through
+// ResolveCheckpoint, which grants every pending call at once, so the
+// external call in the set is failed with a message about a tool nobody
+// asked the engine to run, three steps away from anything that explains
+// it.
+func (p *pendingCalls) reason() (suspension.SuspendReason, error) {
+	if len(p.reasons) == 0 {
+		return "", errors.New("suspend was asked for with no pending calls")
+	}
+	first := p.reasons[0]
+	for i, r := range p.reasons {
+		if r == first {
+			continue
+		}
+		return "", fmt.Errorf(
+			"tool %q pends for %s and tool %q pends for %s in the same step: one suspension carries one reason, and that reason decides how every call under it is answered, so the engine will not pause for both at once. Keep them out of one step by narrowing the agent's tool list, or give the engine a handler for the external tool so only the approval is pending",
+			p.calls[0].Name, first, p.calls[i].Name, r)
+	}
+	return first, nil
+}
+
 // suspend stops a run that cannot go on until something outside the
 // engine answers, and it is the only place in the loop that writes a
 // suspension. Reason is a parameter because the loop does not care why a
@@ -62,19 +111,24 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 // the messages, and Resume is what eventually persists them: saving now
 // would have the resumed run reload its own in-flight messages as
 // history and answer them twice.
-func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.SuspendReason, pending []suspension.PendingCall, cont suspension.Continuation) error {
+func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, cont suspension.Continuation) (suspension.SuspendReason, error) {
+	reason, err := pend.reason()
+	if err != nil {
+		return "", err
+	}
+
 	s := &suspension.Suspension{
 		Entity:    cortex.NewEntity(),
 		ID:        id.NewSuspensionID(),
 		RunID:     r.ID,
 		Scope:     r.Scope,
 		Reason:    reason,
-		Pending:   pending,
+		Pending:   pend.calls,
 		Cont:      cont,
 		ExpiresAt: e.suspensionDeadline(),
 	}
-	if err := e.store.CreateSuspension(ctx, s); err != nil {
-		return fmt.Errorf("create suspension: %w", err)
+	if err = e.store.CreateSuspension(ctx, s); err != nil {
+		return "", fmt.Errorf("create suspension: %w", err)
 	}
 
 	// The checkpoint goes between the two writes above and below for the
@@ -88,7 +142,7 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
 			e.logger.Error("delete suspension after a failed checkpoint write", log.String("error", delErr.Error()))
 		}
-		return fmt.Errorf("create checkpoint: %w", err)
+		return "", fmt.Errorf("create checkpoint: %w", err)
 	}
 
 	r.State = run.StatePaused
@@ -123,7 +177,7 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 				e.logger.Error("resolve orphaned checkpoint", log.String("error", resErr.Error()))
 			}
 		}
-		return fmt.Errorf("update run to paused: %w", err)
+		return "", fmt.Errorf("update run to paused: %w", err)
 	}
 
 	// Emitted after the flip, not where the row is written: subscribers
@@ -132,7 +186,7 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 	if cp != nil {
 		e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
 	}
-	return nil
+	return reason, nil
 }
 
 // suspensionDeadline is when the sweeper may fail this run, or nil when

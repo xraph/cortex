@@ -413,16 +413,24 @@ func TestSuspend_FailedStateFlipResolvesTheCheckpoint(t *testing.T) {
 	}
 }
 
-// TestRunAgent_AStepPendingForBothReasonsSuspendsForApproval settles what
-// one suspension's reason says when a step pends for two of them. A
-// suspension holds one reason, and that reason decides whether a
-// checkpoint is opened at all, so external winning would mean a call
-// somebody asked to have reviewed proceeds with nobody ever asked.
+// TestRunAgent_AStepPendingForBothReasonsIsRefused settles what happens
+// when a step pends for two reasons at once: one call the authorizer
+// escalated, another the host executes.
 //
-// The two cases differ only in which of the two calls the model asks for
-// first. Order is the whole point: a rule that just keeps the last reason
-// it saw gets one of them right by accident.
-func TestRunAgent_AStepPendingForBothReasonsSuspendsForApproval(t *testing.T) {
+// A suspension holds one reason and everything downstream reads it as the
+// reason for every call under it, so there is no reason that is right for
+// both. Approval was the old answer, and it corrupted the innocent call:
+// an approved checkpoint hands back "execute" for the whole set, so the
+// external sibling was failed with a message about a tool the engine
+// never owned. External was never on the table either, since it drops
+// the checkpoint and a call somebody asked to have reviewed would
+// proceed with nobody ever asked.
+//
+// So the step is refused where the problem is, and the run fails saying
+// what it could not do. The two cases differ only in which call the model
+// asks for first, because a rule that keeps whichever reason it saw last
+// gets one of them right by accident.
+func TestRunAgent_AStepPendingForBothReasonsIsRefused(t *testing.T) {
 	gated := gatedTool()
 	ext := externalTool()
 	gatedCall := llm.ToolCall{ID: "call-gated", Name: gated.Name, Arguments: "{}"}
@@ -450,26 +458,38 @@ func TestRunAgent_AStepPendingForBothReasonsSuspendsForApproval(t *testing.T) {
 				t.Fatalf("New: %v", err)
 			}
 
-			r, err := e.RunAgent(cortex.WithScope(context.Background(), approvalScope()), "assistant", "clean up", nil)
-			if err != nil {
-				t.Fatalf("RunAgent: %v", err)
-			}
-			if r.State != run.StatePaused {
-				t.Fatalf("run state = %q, want %q", r.State, run.StatePaused)
+			ctx := cortex.WithScope(context.Background(), approvalScope())
+			r, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+			if err == nil {
+				t.Fatalf("RunAgent = %+v, want the mixed step refused: pausing for one reason force-fails the call waiting on the other", r)
 			}
 
-			susps := spy.Suspensions()
-			if len(susps) != 1 {
-				t.Fatalf("the step wrote %d suspensions, want 1", len(susps))
+			// The message has to name both halves. "cannot suspend" on
+			// its own sends whoever reads it to the store.
+			for _, want := range []string{gated.Name, ext.Name, string(suspension.ReasonApproval), string(suspension.ReasonExternalTool)} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("RunAgent error = %q, want it to name %q", err, want)
+				}
 			}
-			if susps[0].Reason != suspension.ReasonApproval {
-				t.Errorf("suspension reason = %q, want %q: the escalated call must not lose its checkpoint to a sibling", susps[0].Reason, suspension.ReasonApproval)
+
+			if got := len(spy.Suspensions()); got != 0 {
+				t.Errorf("%d suspensions written, want 0: the step was refused before anything paused", got)
 			}
-			if len(susps[0].Pending) != 2 {
-				t.Errorf("pending calls = %+v, want both", susps[0].Pending)
+			if got := len(spy.Checkpoints()); got != 0 {
+				t.Errorf("%d checkpoints written, want 0: nobody is being asked to decide a run that never paused", got)
 			}
-			if got := len(spy.Checkpoints()); got != 1 {
-				t.Errorf("the step wrote %d checkpoints, want 1", got)
+
+			// And the run really ended, rather than sitting running with
+			// nothing left to move it.
+			stored, getErr := spy.GetRun(ctx, spy.Runs()[0].ID)
+			if getErr != nil {
+				t.Fatalf("reload the run: %v", getErr)
+			}
+			if stored.State != run.StateFailed {
+				t.Errorf("run state = %q, want %q", stored.State, run.StateFailed)
+			}
+			if !strings.Contains(stored.Error, ext.Name) {
+				t.Errorf("run error = %q, want the reason it could not pause", stored.Error)
 			}
 		})
 	}

@@ -200,7 +200,7 @@ before upgrading.
 
 ### Known limitations
 
-Three gaps ship with this release. None of them corrupts a run and each
+Four gaps ship with this release. None of them corrupts a run and each
 one fails where you can see it, but you should know they're there.
 
 - **An approval on an external tool cannot be closed by the engine.** The
@@ -214,6 +214,19 @@ one fails where you can see it, but you should know they're there.
   because resumed calls are recorded before the loop re-enters while the
   classify-and-collect block lives inside the per-step iteration over the
   model's tool calls. That is real design work, not a routing change.
+- **A step cannot pend for both reasons at once.** Ask the model for a
+  call the authorizer escalates and a call the host executes in the same
+  step, and the run fails right there with an error naming both tools and
+  both reasons. A suspension carries one reason and everything
+  downstream reads it as the reason for every call under it, so neither
+  reason is right for both. Approval hands back `Execute` for the whole
+  set, which fails the external call for something it never did.
+  External drops the checkpoint, which lets a call somebody asked to have
+  reviewed go ahead with nobody ever asked. Until a run can hold more
+  than one suspension there is nothing better to do than stop, so the
+  step stops. Keep the two kinds apart by narrowing the agent's tool
+  list, or register the external tool with `WithTool` so the engine runs
+  it and only the approval is left pending.
 - **An approval suspension that expires leaves its checkpoint pending
   forever.** The sweeper fails the run and drops the suspension, but it
   has no checkpoint in hand and `checkpoint.Store` has no resolve-by-run-id,

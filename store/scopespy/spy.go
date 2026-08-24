@@ -177,6 +177,19 @@ func (s *Spy) UpdateRun(ctx context.Context, r *run.Run) error {
 	return nil
 }
 
+// Runs returns every run the engine wrote, so a test whose RunAgent
+// returned an error rather than a run can still ask what state that run
+// ended in. Order is undefined: the map behind it has none.
+func (s *Spy) Runs() []run.Run {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]run.Run, 0, len(s.runs))
+	for _, r := range s.runs {
+		out = append(out, r)
+	}
+	return out
+}
+
 // GetRun returns a copy, the way a real store would. Handing back the
 // same object the engine already holds would let a test pass on a run the
 // engine never actually persisted.
