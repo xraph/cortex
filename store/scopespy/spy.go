@@ -273,6 +273,28 @@ func (s *Spy) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpo
 	return nil, cortex.ErrCheckpointNotFound
 }
 
+// ListPending serves the pending rows back, filtered by run the way the
+// real stores filter them. A cancelled run resolves whatever it left in
+// the queue, and a spy that returned nothing could not tell that apart
+// from a cancel that skipped the queue entirely.
+func (s *Spy) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) {
+	s.record(ctx, "ListPending")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*checkpoint.Checkpoint, 0, len(s.checkpoints))
+	for _, cp := range s.checkpoints {
+		if cp.State != "pending" {
+			continue
+		}
+		if filter != nil && filter.RunID != "" && cp.RunID.String() != filter.RunID {
+			continue
+		}
+		stored := *cp
+		out = append(out, &stored)
+	}
+	return out, nil
+}
+
 // Resolve records the decision on the stored row, the way a real store
 // does. A spy that only counted the call could not tell a checkpoint
 // resolved once from one resolved twice.

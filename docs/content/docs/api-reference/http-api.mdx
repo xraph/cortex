@@ -170,9 +170,15 @@ host-defined ordered hierarchy, instead of a single tenant string. See
 
 ### `POST /cortex/runs/:id/cancel`
 
-Cancel a running run. Sets state to `cancelled`.
+Cancel a run that is still running or paused. Sets state to `cancelled`.
 
-**Response** `200 OK`
+A paused run is claimed before it's written, the same way a resume claims it, so
+a cancel arriving while somebody is already resuming or deciding that run loses
+and comes back `409`. The cancel that wins drops the run's suspension and
+resolves whatever checkpoint the pause opened. A run that already finished is
+`400`.
+
+**Response** `204 No Content`
 
 ---
 

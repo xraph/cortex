@@ -211,6 +211,37 @@ func reachedMethods(t *testing.T) map[string]bool {
 		reached[c.Method] = true
 	}
 
+	// A paused run an operator cancels. Cancel claims the suspension the
+	// way every other writer to a paused run does, and then clears what
+	// the pause left behind, which is the only route to ListPending.
+	const cancelToolName = "spy-completeness-cancel-tool"
+	cancelSpy := New()
+	cancelEngine, err := engine.New(
+		engine.WithStore(cancelSpy),
+		engine.WithLLM(ToolCallingLLM(cancelToolName)),
+		engine.WithTool(
+			llm.Tool{Name: cancelToolName, Description: "test-only tool for cancel coverage"},
+			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
+		),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+	)
+	if err != nil {
+		t.Fatalf("engine.New (cancel): %v", err)
+	}
+	cancelled, err := cancelEngine.RunAgent(runCtx, "assistant", "do the risky thing", nil)
+	if err != nil {
+		t.Fatalf("RunAgent (cancel): %v", err)
+	}
+	if cancelled.State != run.StatePaused {
+		t.Fatalf("the cancel scenario left the run in %q, so there was no paused run to cancel", cancelled.State)
+	}
+	if cancelErr := cancelEngine.CancelRun(runCtx, cancelled.ID); cancelErr != nil {
+		t.Fatalf("CancelRun: %v", cancelErr)
+	}
+	for _, c := range cancelSpy.Calls() {
+		reached[c.Method] = true
+	}
+
 	streamSpy := New()
 	streamEngine, err := engine.New(
 		engine.WithStore(streamSpy),

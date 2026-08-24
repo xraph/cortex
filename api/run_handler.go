@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/xraph/forge"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 )
@@ -78,18 +80,21 @@ func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, erro
 		return nil, forge.BadRequest(fmt.Sprintf("invalid run ID: %v", err))
 	}
 
-	r, err := a.eng.GetRun(ctx.Context(), runID)
-	if err != nil {
+	// The engine cancels, rather than this handler reading the run and
+	// writing it back: a paused run has to be claimed before it is
+	// written, and the claim is engine machinery.
+	if err := a.eng.CancelRun(ctx.Context(), runID); err != nil {
+		if errors.Is(err, cortex.ErrInvalidState) {
+			return nil, forge.BadRequest(err.Error())
+		}
+		if errors.Is(err, cortex.ErrNotSuspended) {
+			// The run was paused when it was read and somebody else had
+			// claimed it by the time the cancel tried to. A retry is the
+			// right answer, and the run's new state says whether one is
+			// still wanted, so this is a conflict rather than a failure.
+			return nil, forge.NewHTTPError(http.StatusConflict, err.Error())
+		}
 		return nil, mapStoreError(err)
-	}
-
-	if r.State != run.StateRunning && r.State != run.StatePaused {
-		return nil, forge.BadRequest("run is not in a cancellable state")
-	}
-
-	r.State = run.StateCancelled
-	if err := a.eng.UpdateRun(ctx.Context(), r); err != nil {
-		return nil, fmt.Errorf("cancel run: %w", err)
 	}
 
 	return nil, ctx.NoContent(http.StatusNoContent)

@@ -713,6 +713,119 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 	return nil
 }
 
+// CancelRun ends a run at an operator's request, and it is the only way
+// a host should end one: a plain UpdateRun to cancelled is the fourth
+// writer to a paused run, and the other three go through a claim for a
+// reason.
+//
+// A paused run is cancelled through ClaimSuspension, the same atomic
+// paused-to-running transition a resume, a rejected checkpoint and the
+// expiry sweep all take. Without it, cancel read a paused run and wrote
+// unconditionally, so a resume that had already claimed the run got its
+// state stomped to cancelled and then wrote its own terminal state back
+// over the cancel a moment later. The operator was told the run was
+// cancelled and the run went on to complete. Losing the claim is
+// reported as cortex.ErrNotSuspended rather than worked around, because
+// somebody else is already moving this run.
+//
+// The claim also hands back the row, which is what lets cancel clean up
+// after itself: the suspension is dropped, and any checkpoint the pause
+// opened is resolved, so nobody is left holding a decision on a run that
+// has ended.
+//
+// A run that is merely running is cancelled as before, with no claim to
+// take: there is no suspension behind it, and a running run has no
+// engine-side transition to race with that a store predicate could
+// settle.
+func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
+	if e.store == nil {
+		return cortex.ErrNoStore
+	}
+
+	r, err := e.store.GetRun(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("load run to cancel: %w", err)
+	}
+	if r.State != run.StateRunning && r.State != run.StatePaused {
+		return fmt.Errorf("cancel run %s: run is %s, which is not cancellable: %w", runID, r.State, cortex.ErrInvalidState)
+	}
+	if r.State == run.StatePaused {
+		return e.cancelPaused(ctx, r)
+	}
+
+	r.State = run.StateCancelled
+	if err := e.store.UpdateRun(ctx, r); err != nil {
+		return fmt.Errorf("cancel run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// cancelPaused is the claimed half of CancelRun. Once the claim succeeds
+// the run belongs to this call and is no longer paused, so every exit
+// below either ends it or says why it could not, exactly as the resume
+// and rejection paths do.
+func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
+	susp, err := e.store.ClaimSuspension(ctx, r.ID)
+	if err != nil {
+		return fmt.Errorf("claim suspension to cancel run %s: %w", r.ID, err)
+	}
+
+	// Under the run's own scope, not the operator's, for the same reason
+	// every other writer here rebinds: a canceller whose scope is one
+	// level broader than the run still writes where the run's earlier
+	// writes landed.
+	ctx = cortex.WithScope(ctx, susp.Scope)
+
+	// The run already read above is the snapshot, so a read that fails
+	// after the claim cannot leave the run running with nothing able to
+	// take it again.
+	r = e.claimedRun(ctx, r.ID, r)
+	r.State = run.StateCancelled
+	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
+		// The suspension stays. It is the only record of what the run was
+		// waiting on, and the run is still running from the claim, so
+		// dropping the row now would throw that away for nothing.
+		return fmt.Errorf("cancel paused run %s: %w", r.ID, err)
+	}
+
+	// The run is cancelled and no claim will ever take it again, so the
+	// row is dead weight, and dropping it is what makes the cancel final.
+	if err := e.store.DeleteSuspension(ctx, r.ID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+		e.logger.Error("delete suspension of a cancelled run", log.String("error", err.Error()))
+	}
+	e.closePendingCheckpoints(ctx, r.ID)
+	return nil
+}
+
+// closePendingCheckpoints resolves whatever a cancelled run left in the
+// decision queue, so nobody is asked to approve a run that has ended.
+//
+// It is best effort and logged rather than returned: the run really was
+// cancelled, which is what the caller asked for, and a row left in a
+// queue is not worth telling them the cancel failed. checkpoint.Store has
+// no resolve-by-run-id, so the rows are found through the pending list,
+// which does filter by run.
+func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunID) {
+	cps, err := e.store.ListPending(ctx, &checkpoint.ListFilter{RunID: runID.String()})
+	if err != nil {
+		e.logger.Error("list the checkpoints of a cancelled run", log.String("error", err.Error()))
+		return
+	}
+	decision := checkpoint.Decision{
+		DecidedBy: checkpointDecidedByEngine,
+		Reason:    "the run was cancelled, so there is nothing left to decide",
+		DecidedAt: time.Now().UTC(),
+	}
+	for _, cp := range cps {
+		if err := e.store.Resolve(ctx, cp.ID, decision); err != nil {
+			e.logger.Error("resolve the checkpoint of a cancelled run",
+				log.String("checkpoint_id", cp.ID.String()),
+				log.String("error", err.Error()),
+			)
+		}
+	}
+}
+
 // ──────────────────────────────────────────────────
 // Agent execution
 // ──────────────────────────────────────────────────

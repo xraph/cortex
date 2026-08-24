@@ -363,6 +363,12 @@ call answered with `Execute` would dispatch a tool nobody granted, and one
 answered with `Content` would feed the model output no tool produced and finish
 the run with its checkpoint still in the queue. Neither is a decision.
 
+If the answer is "neither, drop it", cancel the run. `Engine.CancelRun`, and
+`POST /runs/:id/cancel` behind it, claims the suspension the same way a resume
+does, so it can't cut in front of a decision already being carried out. It
+resolves the checkpoint on its way out too, and that's the only reason the row
+leaves your queue.
+
 ### Approval on an external tool
 
 Don't do this yet. The authorizer runs before the external-tool check, so it

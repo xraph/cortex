@@ -97,9 +97,13 @@ before upgrading.
   in practice. It'll meet it now. Anything of yours that switches
   exhaustively on run state, or that assumes a run still in flight reads
   as `running`, needs the case. Cancelling a paused run through
-  `POST /runs/:id/cancel` still works and was already allowed; the
-  suspension it leaves behind is dropped by the next sweep, which clears
-  rows whose run has reached a terminal state.
+  `POST /runs/:id/cancel` still works, and it now takes the same claim
+  every other writer to a paused run takes. If a resume or a decision got
+  there first the cancel loses, and you get a 409 rather than a run
+  stomped out from under whoever already owned it. A cancel that wins
+  drops the suspension itself and resolves whatever checkpoint the pause
+  opened, so an operator's queue does not fill up with decisions about
+  runs that already ended.
 
 ### Added
 
@@ -173,6 +177,15 @@ before upgrading.
   paused without finishing. Its data carries `run_id`, `reason` and
   `pending`. A streaming consumer that does not handle it sees the
   channel close and reads a paused run as a finished one.
+- **`Engine.CancelRun(ctx, runID)`**, which is what `POST
+  /runs/:id/cancel` calls now. The handler used to read the run, check
+  its state and write `cancelled` back unconditionally, which made it a
+  fourth writer to a paused run with none of the gating the other three
+  have. Cancelling a paused run claims its suspension first, so losing
+  that claim is `cortex.ErrNotSuspended` and a 409, and winning it drops
+  the suspension and resolves whatever checkpoint the pause opened. A run
+  that is merely running is cancelled the way it always was. One that has
+  already ended is `cortex.ErrInvalidState`, and still a 400.
 - **`id.SuspensionID`, `id.NewSuspensionID` and `id.ParseSuspensionID`**,
   prefix `sus`, the same identifier shape every other entity has.
 
