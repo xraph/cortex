@@ -72,9 +72,9 @@ before upgrading.
   so every checkpoint that exists today is one of yours, and none of them
   has a paused run behind it. The two kinds are told apart by a
   `suspension_id` key the loop stamps into the row's metadata rather than
-  by asking the store what it holds right now, so an approval that
-  expired and took its suspension with it still routes as loop-created
-  and still tells the operator so.
+  by asking the store what it holds right now, so a row that outlived its
+  suspension still routes as loop-created and still tells the operator
+  so.
 
   What does change for a row of your own is the read in front of the
   write. A checkpoint whose state is not `pending` is refused instead of
@@ -84,7 +84,8 @@ before upgrading.
 - **`Engine.Start` now launches a background goroutine, and
   `Engine.Stop` joins it.** The goroutine is the expiry sweeper: it ticks
   once a minute, reads suspensions past their deadline across every
-  scope, and fails those runs. `Stop` cancels it and waits for it to
+  scope, fails those runs, and closes the checkpoint of any approval
+  among them. `Stop` cancels it and waits for it to
   exit before emitting `OnShutdown`, so `Stop` can now block for as long
   as a sweep already in flight takes. A second `Start` is a no-op rather
   than a second loop. Two consequences worth checking for: a host that
@@ -222,7 +223,7 @@ before upgrading.
 
 ### Known limitations
 
-Four gaps ship with this release. None of them corrupts a run and each
+Three gaps ship with this release. None of them corrupts a run and each
 one fails where you can see it, but you should know they're there.
 
 - **An approval on an external tool cannot be closed by the engine.** The
@@ -249,15 +250,6 @@ one fails where you can see it, but you should know they're there.
   step stops. Keep the two kinds apart by narrowing the agent's tool
   list, or register the external tool with `WithTool` so the engine runs
   it and only the approval is left pending.
-- **An approval suspension that expires leaves its checkpoint pending
-  forever.** The sweeper fails the run and drops the suspension, but it
-  has no checkpoint in hand and `checkpoint.Store` has no resolve-by-run-id,
-  so the row stays in `ListPending` asking for a decision on a run that
-  already failed. It fails in the visible direction. An operator who acts
-  on it gets a loud error at the point of use, because there's no
-  suspension left to claim. Fixing it needs either a new store method
-  across three backends or a `checkpoint_id` column on the suspension and
-  a migration.
 - **A decision whose `Resolve` write then fails leaves a pending
   checkpoint on a run that already moved.** `ResolveCheckpoint` acts
   first and records afterwards, so this is the leftover that ordering

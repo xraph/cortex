@@ -217,6 +217,14 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 	if err := e.store.DeleteSuspension(ctx, susp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logger.Error("delete suspension of an expired run", log.String("error", err.Error()))
 	}
+
+	// An approval pause opened a checkpoint, and the run it belongs to
+	// has just been failed. Left pending, the row sits in ListPending
+	// asking somebody to decide a run that ended hours ago, and there is
+	// no suspension behind it any more, so whoever does decide it gets an
+	// error out of the claim. Resolved here, the queue only ever holds
+	// decisions that can still change something.
+	e.closePendingCheckpoints(ctx, susp.RunID, "nobody answered in time, so the run was failed and there is nothing left to decide")
 	return nil
 }
 

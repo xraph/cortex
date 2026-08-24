@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/scopespy"
@@ -725,5 +726,74 @@ func TestSweepOnce_ClearsARowLeftOnATerminalRun(t *testing.T) {
 				t.Errorf("run state = %q, want %q; clearing a leftover row must not move the run", got, tc.wantState)
 			}
 		})
+	}
+}
+
+// TestSweepOnce_ExpiringAnApprovalClosesItsCheckpoint covers the other
+// half of an expired approval.
+//
+// Failing the run is not the whole job. An approval pause opens a
+// checkpoint, and a sweep that fails the run and drops the suspension
+// used to leave that row pending forever: it stayed in ListPending
+// asking somebody to decide a run that ended hours ago, and deciding it
+// got them an error out of a claim with nothing left to claim. The queue
+// must only hold decisions that can still change something.
+//
+// The fixture is a real approval run rather than a hand-built row, so
+// the checkpoint carries the provenance the loop stamps on it and the
+// sweep has to find it the same way anything else would.
+func TestSweepOnce_ExpiringAnApprovalClosesItsCheckpoint(t *testing.T) {
+	s := newSweepStore()
+	e := approvalEngine(t, WithStore(s))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if paused.State != run.StatePaused {
+		t.Fatalf("fixture run state = %q, want %q", paused.State, run.StatePaused)
+	}
+	cps := s.Checkpoints()
+	if len(cps) != 1 || cps[0].State != "pending" {
+		t.Fatalf("the approval wrote %+v, want one pending checkpoint", cps)
+	}
+
+	// Only the deadline is moved. Everything else is what the loop wrote.
+	susps := s.Suspensions()
+	if len(susps) != 1 {
+		t.Fatalf("the approval wrote %d suspensions, want 1", len(susps))
+	}
+	susps[0].ExpiresAt = past()
+
+	e.sweepOnce(context.Background())
+
+	if got := stateOf(t, s, approvalScope(), paused.ID); got != run.StateFailed {
+		t.Fatalf("expired run state = %q, want %q", got, run.StateFailed)
+	}
+	if hasSuspension(s, paused.ID) {
+		t.Error("the expired suspension survived the sweep")
+	}
+
+	stored := s.Checkpoints()
+	if len(stored) != 1 {
+		t.Fatalf("checkpoints = %+v, want the one the approval opened", stored)
+	}
+	if stored[0].State == "pending" {
+		t.Error("the expired run left its checkpoint pending; it sits in the queue against a run that already failed, and deciding it hits a claim with nothing to claim")
+	}
+	if stored[0].Decision == nil || stored[0].Decision.Approved {
+		t.Errorf("checkpoint decision = %+v, want a rejection recorded against the expiry", stored[0].Decision)
+	}
+	if stored[0].Decision != nil && stored[0].Decision.Reason == "" {
+		t.Error("the checkpoint says nothing about why it was closed; whoever finds it has nothing to go on")
+	}
+
+	pending, err := e.ListPendingCheckpoints(ctx, &checkpoint.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListPendingCheckpoints: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("pending queue = %+v, want it empty: nothing here can change anything now", pending)
 	}
 }

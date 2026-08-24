@@ -453,11 +453,13 @@ theirs. A resume that started before the deadline and is still executing an
 approved tool when it passes keeps its run: the sweeper's claim wants a paused
 run, and that one is running.
 
-One gap to know about here. If an approval suspension expires, the run fails
-and its suspension is dropped, but the checkpoint stays pending: the sweeper
-has no checkpoint in hand and `checkpoint.Store` has no resolve-by-run-id. The
-row keeps showing up in `ListPendingCheckpoints`, and an operator who acts on
-it gets a loud error, because there's no suspension left to claim.
+An approval that expires takes its checkpoint with it. The run is failed, the
+suspension is dropped, and the checkpoint is resolved as a rejection saying
+nobody answered in time, so it stops showing up in `ListPendingCheckpoints`
+where it would otherwise ask an operator to decide a run that ended hours ago.
+That resolve is best effort. If the write fails the row stays and the failure
+is logged, because the run really did fail and that's the part worth telling
+you about.
 
 ## Custom stores
 

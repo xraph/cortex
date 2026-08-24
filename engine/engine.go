@@ -599,11 +599,12 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 //
 // It reads the provenance suspend stamped on the row, not the store's
 // current state. Asking whether a suspension exists right now would agree
-// with this on most rows and then be quietly wrong on one: an approval
-// suspension that expired leaves its checkpoint pending with its
-// suspension already dropped, and the operator who decides that row has
-// to hear about it. A provenance check gives them the claim's refusal.
-// A state check would give them a success that moved nothing.
+// with this on most rows and then be quietly wrong on one: a checkpoint
+// can outlive its suspension, when the write recording a decision failed
+// or when an expiry could not close the row it left, and the operator who
+// decides such a row has to hear about it. A provenance check gives them
+// the claim's refusal. A state check would give them a success that moved
+// nothing.
 func openedASuspendedRun(cp *checkpoint.Checkpoint) bool {
 	_, ok := cp.Metadata[checkpointSuspensionKey]
 	return ok
@@ -793,32 +794,39 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	if err := e.store.DeleteSuspension(ctx, r.ID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logger.Error("delete suspension of a cancelled run", log.String("error", err.Error()))
 	}
-	e.closePendingCheckpoints(ctx, r.ID)
+	e.closePendingCheckpoints(ctx, r.ID, "the run was cancelled, so there is nothing left to decide")
 	return nil
 }
 
-// closePendingCheckpoints resolves whatever a cancelled run left in the
-// decision queue, so nobody is asked to approve a run that has ended.
+// closePendingCheckpoints resolves whatever a run that has ended left in
+// the decision queue, so nobody is asked to approve a run nothing can
+// act on. reason is what the operator reads on the row, and it differs
+// by how the run ended.
 //
-// It is best effort and logged rather than returned: the run really was
-// cancelled, which is what the caller asked for, and a row left in a
-// queue is not worth telling them the cancel failed. checkpoint.Store has
-// no resolve-by-run-id, so the rows are found through the pending list,
+// Called once the run's terminal state is written and never before. A
+// checkpoint resolved against a run that then failed to move would be
+// the audit lie ResolveCheckpoint's ordering exists to avoid, reached
+// from the other side.
+//
+// It is best effort and logged rather than returned: the run really did
+// end, which is what the caller cares about, and a row left in a queue
+// is not worth reporting that as a failure. checkpoint.Store has no
+// resolve-by-run-id, so the rows are found through the pending list,
 // which does filter by run.
-func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunID) {
+func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunID, reason string) {
 	cps, err := e.store.ListPending(ctx, &checkpoint.ListFilter{RunID: runID.String()})
 	if err != nil {
-		e.logger.Error("list the checkpoints of a cancelled run", log.String("error", err.Error()))
+		e.logger.Error("list the checkpoints of a run that ended", log.String("error", err.Error()))
 		return
 	}
 	decision := checkpoint.Decision{
 		DecidedBy: checkpointDecidedByEngine,
-		Reason:    "the run was cancelled, so there is nothing left to decide",
+		Reason:    reason,
 		DecidedAt: time.Now().UTC(),
 	}
 	for _, cp := range cps {
 		if err := e.store.Resolve(ctx, cp.ID, decision); err != nil {
-			e.logger.Error("resolve the checkpoint of a cancelled run",
+			e.logger.Error("resolve the checkpoint of a run that ended",
 				log.String("checkpoint_id", cp.ID.String()),
 				log.String("error", err.Error()),
 			)
