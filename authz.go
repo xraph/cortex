@@ -2,10 +2,20 @@ package cortex
 
 import (
 	"context"
+	"errors"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 )
+
+// ErrRequiresApproval is the authorizer's third answer. Returning it from
+// Authorize suspends the run and opens a checkpoint rather than denying
+// the call, so a human can decide and the run can carry on afterwards.
+//
+// It was held back in v1.10.0 on purpose: with nowhere to suspend into,
+// returning it would have read as an ordinary denial and quietly turned
+// "ask someone" into "no".
+var ErrRequiresApproval = errors.New("cortex: tool call requires approval")
 
 // Subject is who is asking. Principal is host-defined and cortex never
 // interprets it: a host puts whatever its own authorization layer needs
@@ -45,5 +55,11 @@ type ToolAuthorizer interface {
 	// Authorize gates one dispatch. Returning nil allows the call; any
 	// error denies it, and the error's text is fed back to the model as
 	// the tool result so it can react rather than silently retrying.
+	//
+	// The one exception is ErrRequiresApproval, which is not a denial:
+	// nothing goes back to the model, the run pauses, and a checkpoint
+	// carries the call to whoever decides. Wrap it if you want to say
+	// why (fmt.Errorf("...: %w", cortex.ErrRequiresApproval)); it is
+	// matched with errors.Is.
 	Authorize(ctx context.Context, s Subject, call llm.ToolCall) error
 }

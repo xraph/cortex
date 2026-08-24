@@ -81,6 +81,20 @@ func overriddenMethods(t *testing.T) map[string]bool {
 //     Running only RunAgent here would make the equality check in
 //     TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches fail on any
 //     override Spy carries solely for the streaming path.
+//
+// escalatingAuthorizer answers every dispatch with ErrRequiresApproval,
+// which is the authorizer's third answer: not a denial, a request for a
+// human.
+type escalatingAuthorizer struct{}
+
+func (escalatingAuthorizer) Visible(_ context.Context, _ cortex.Subject, tools []llm.Tool) []llm.Tool {
+	return tools
+}
+
+func (escalatingAuthorizer) Authorize(_ context.Context, _ cortex.Subject, _ llm.ToolCall) error {
+	return cortex.ErrRequiresApproval
+}
+
 func reachedMethods(t *testing.T) map[string]bool {
 	t.Helper()
 	reached := make(map[string]bool)
@@ -148,6 +162,35 @@ func reachedMethods(t *testing.T) map[string]bool {
 		t.Fatalf("the resume scenario left the run in %q, so it never ran the loop to completion", resumed.State)
 	}
 	for _, c := range suspendSpy.Calls() {
+		reached[c.Method] = true
+	}
+
+	// A run whose authorizer escalates instead of denying. This is the
+	// only scenario that reaches CreateCheckpoint: an approval is the
+	// one suspension reason that opens a checkpoint, so without it the
+	// override would look dead.
+	const approvalToolName = "spy-completeness-approval-tool"
+	approvalSpy := New()
+	approvalEngine, err := engine.New(
+		engine.WithStore(approvalSpy),
+		engine.WithLLM(ToolCallingLLM(approvalToolName)),
+		engine.WithTool(
+			llm.Tool{Name: approvalToolName, Description: "test-only tool for approval coverage"},
+			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
+		),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+	)
+	if err != nil {
+		t.Fatalf("engine.New (approval): %v", err)
+	}
+	approved, err := approvalEngine.RunAgent(runCtx, "assistant", "do the risky thing", nil)
+	if err != nil {
+		t.Fatalf("RunAgent (approval): %v", err)
+	}
+	if approved.State != run.StatePaused {
+		t.Fatalf("the approval scenario left the run in %q, so it never reached CreateCheckpoint", approved.State)
+	}
+	for _, c := range approvalSpy.Calls() {
 		reached[c.Method] = true
 	}
 

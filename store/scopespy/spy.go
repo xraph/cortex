@@ -8,6 +8,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/persona"
@@ -40,14 +41,49 @@ type Call struct {
 type Spy struct {
 	store.Store
 
-	mu          sync.Mutex
-	calls       []Call
-	suspensions []*suspension.Suspension
-	suspendErr  error
-	claimed     map[id.AgentRunID]bool
-	runs        map[id.AgentRunID]run.Run
-	steps       []run.Step
-	toolCalls   []run.ToolCall
+	mu            sync.Mutex
+	calls         []Call
+	suspensions   []*suspension.Suspension
+	suspendErr    error
+	claimed       map[id.AgentRunID]bool
+	runs          map[id.AgentRunID]run.Run
+	steps         []run.Step
+	toolCalls     []run.ToolCall
+	checkpoints   []*checkpoint.Checkpoint
+	checkpointErr error
+}
+
+// FailCheckpointWrites makes every later CreateCheckpoint return err, so
+// a test can drive the engine's "the checkpoint could not be written"
+// branch without a real store.
+func (s *Spy) FailCheckpointWrites(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checkpointErr = err
+}
+
+// Checkpoints returns the checkpoints the engine wrote, in order.
+func (s *Spy) Checkpoints() []*checkpoint.Checkpoint {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*checkpoint.Checkpoint, len(s.checkpoints))
+	copy(out, s.checkpoints)
+	return out
+}
+
+// CreateCheckpoint records the checkpoint itself, not just that the call
+// happened: an approval suspension's whole point is what the row a human
+// will read says.
+func (s *Spy) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error {
+	s.record(ctx, "CreateCheckpoint")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.checkpointErr != nil {
+		return s.checkpointErr
+	}
+	stored := *cp
+	s.checkpoints = append(s.checkpoints, &stored)
+	return nil
 }
 
 // FailSuspensionWrites makes every later CreateSuspension return err, so

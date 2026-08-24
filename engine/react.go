@@ -247,18 +247,18 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			// runs first, and one suspension carrying every pending call
 			// is written after it.
 			var pending []suspension.PendingCall
-			// One reason per step, bound where the pending calls are
-			// collected and handed to suspend from here. Task 5 sets
-			// this from executeTool's classification instead of a
-			// literal; nothing downstream, including the persisted row,
-			// gets to name a reason of its own.
-			reason := suspension.ReasonExternalTool
+			// One reason per step, folded from what executeTool
+			// classified rather than named here: nothing downstream,
+			// including the persisted row, gets to invent a reason of
+			// its own.
+			var reason suspension.SuspendReason
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				result, outcome := e.executeTool(ctx, subject, tc)
+				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
 				if outcome == outcomePending {
+					reason = mergeSuspendReason(reason, pendingReason)
 					// No tool call row: nothing ran, and a row with a
 					// completion timestamp on it would be a lie the
 					// resume has no way to correct (run.Store has no
@@ -590,7 +590,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			// One reason per step, same as the synchronous loop: the
 			// event below reports what suspend was actually given
 			// rather than naming a reason of its own.
-			reason := suspension.ReasonExternalTool
+			var reason suspension.SuspendReason
 			for _, tc := range toolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -601,8 +601,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					"tool_id":   tc.ID,
 				}}
 
-				result, outcome := e.executeTool(ctx, subject, tc)
+				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
 				if outcome == outcomePending {
+					reason = mergeSuspendReason(reason, pendingReason)
 					pending = append(pending, pendingCall(tc))
 					continue
 				}
@@ -857,47 +858,94 @@ const (
 // Only the plugin event differs. outcomePending is the exception: nothing ran,
 // so there is no result, and the empty string it returns must not be fed back
 // to the model as one.
-func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome) {
+func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, suspension.SuspendReason) {
 	if e.authorizer != nil {
 		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
+			// ErrRequiresApproval is the authorizer's third answer and it
+			// is not a denial: it says a human has to decide first. So
+			// the call is classified pending, exactly like an external
+			// one, and nothing here suspends anything. The loop collects
+			// it with the rest of the step and suspends once, with
+			// approval as the reason. Nothing goes back to the model
+			// either: a denial's error text would tell it the call was
+			// refused when it is only waiting.
+			if errors.Is(err, cortex.ErrRequiresApproval) {
+				return "", outcomePending, suspension.ReasonApproval
+			}
 			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, err.Error())
-			return jsonResult("error", err.Error()), outcomeDenied
+			return jsonResult("error", err.Error()), outcomeDenied, ""
 		}
 	}
 
+	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
+	if outcome == outcomeFailed {
+		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, failErr)
+	}
+	if outcome == outcomePending {
+		return result, outcome, suspension.ReasonExternalTool
+	}
+	return result, outcome, ""
+}
+
+// dispatchTool runs a call that has already cleared authorization, and it
+// is where the actual tool lives: builtin, registered, or external and
+// therefore not runnable here at all.
+//
+// It emits no plugin event and returns the failure error instead, because
+// it has two callers with different books to close. executeTool reports a
+// failure as it happens; a resume dispatching a call a human just
+// approved reports it with the timings of the whole pause, and two
+// emitters for one call is how a subscriber ends up counting it twice.
+func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, error) {
 	inv := cortex.Invocation{Subject: s, Call: tc}
 
 	if result, handled := e.executeBuiltinTool(ctx, inv); handled {
-		return result, outcomeCompleted
+		return result, outcomeCompleted, nil
 	}
 	for _, rt := range e.tools {
 		if rt.def.Name == tc.Name {
 			out, err := rt.handler(ctx, inv)
 			if err != nil {
-				e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, err)
-				return jsonResult("error", err.Error()), outcomeFailed
+				return jsonResult("error", err.Error()), outcomeFailed, err
 			}
-			return out, outcomeCompleted
+			return out, outcomeCompleted, nil
 		}
 	}
 
 	// External tools are matched after the registered ones so a host that
 	// registers both under one name keeps the executable registration,
 	// same as the first-match-wins rule WithTool already documents.
-	// Nothing runs here and no terminal event fires: the call has not
-	// completed, failed or been denied, it is waiting on the caller.
+	// Nothing runs here: the call has not completed, failed or been
+	// denied, it is waiting on the caller.
 	for _, def := range e.externalTools {
 		if def.Name == tc.Name {
-			return "", outcomePending
+			return "", outcomePending, nil
 		}
 	}
 
 	// A name that matches nothing is a failure like any other, and it gets
-	// the same terminal event. Reporting it as completed would put a tool
-	// that never ran into a subscriber's success count.
+	// the same terminal event from whoever called us. Reporting it as
+	// completed would put a tool that never ran into a subscriber's
+	// success count.
 	err := fmt.Errorf("unknown tool %q", tc.Name)
-	e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, err)
-	return jsonResult("error", err.Error()), outcomeFailed
+	return jsonResult("error", err.Error()), outcomeFailed, err
+}
+
+// mergeSuspendReason folds a step's pending reasons into the one reason
+// its single suspension carries.
+//
+// Approval wins. A step can pend for both reasons at once (one call the
+// authorizer escalated, another the host executes), and the suspension
+// holds one reason, so the choice decides whether a checkpoint is opened
+// at all. Losing the checkpoint because a sibling call happened to be
+// external would let a call somebody asked to have reviewed proceed with
+// nobody ever asked, which is the one outcome this whole path exists to
+// refuse.
+func mergeSuspendReason(cur, next suspension.SuspendReason) suspension.SuspendReason {
+	if cur == suspension.ReasonApproval || next == suspension.ReasonApproval {
+		return suspension.ReasonApproval
+	}
+	return next
 }
 
 // memoryToLLM converts memory messages to llm messages.

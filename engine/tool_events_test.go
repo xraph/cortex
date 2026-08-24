@@ -225,7 +225,7 @@ func TestExecuteTool_UnknownToolFiresFailed(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "nope"})
+	result, outcome, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: "nope"})
 
 	if outcome != outcomeFailed {
 		t.Errorf("outcome = %d, want outcomeFailed (%d)", outcome, outcomeFailed)

@@ -155,7 +155,7 @@ func TestExecuteTool_ExternalToolIsPending(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name})
+	result, outcome, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name})
 	if outcome != outcomePending {
 		t.Errorf("outcome = %d, want outcomePending (%d)", outcome, outcomePending)
 	}
@@ -181,7 +181,7 @@ func TestExecuteTool_DeniedExternalToolStaysDenied(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, outcome := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name})
+	_, outcome, _ := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{Name: def.Name})
 	if outcome != outcomeDenied {
 		t.Errorf("outcome = %d, want outcomeDenied (%d)", outcome, outcomeDenied)
 	}

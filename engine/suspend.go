@@ -3,15 +3,27 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
 )
+
+// checkpointDecidedByEngine is the DecidedBy the engine stamps on a
+// decision no human made, so an audit reader can tell one from an
+// operator's.
+const checkpointDecidedByEngine = "cortex"
+
+// checkpointStatePending is the state a checkpoint is created in, and the
+// one ListPending selects on.
+const checkpointStatePending = "pending"
 
 // pendingCall records one tool call the loop could not finish itself.
 //
@@ -57,6 +69,20 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		return fmt.Errorf("create suspension: %w", err)
 	}
 
+	// The checkpoint goes between the two writes above and below for the
+	// same reason the suspension goes before the state flip. A run paused
+	// for approval with no checkpoint behind it is a run waiting on a
+	// decision nobody can see: ListPending never shows it, so nothing
+	// resolves it. Written here, a failed checkpoint write takes the
+	// suspension down with it and the run never reaches paused at all.
+	cp, err := e.createCheckpoint(ctx, r, s, reason)
+	if err != nil {
+		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
+			e.logger.Error("delete suspension after a failed checkpoint write", log.String("error", delErr.Error()))
+		}
+		return fmt.Errorf("create checkpoint: %w", err)
+	}
+
 	r.State = run.StatePaused
 	r.StepCount = cont.StepIndex
 	r.TokensUsed = cont.TokensUsed
@@ -70,7 +96,70 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, reason suspension.Susp
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
 			e.logger.Error("delete orphaned suspension", log.String("error", delErr.Error()))
 		}
+		// Same cleanup for the checkpoint, by the only route the store
+		// offers: there is no delete, so it is resolved against itself.
+		// Left pending it would sit in every operator's queue forever,
+		// asking for a decision on a run that never paused, and
+		// approving it would try to resume a run that is about to fail.
+		if cp != nil {
+			decision := checkpoint.Decision{
+				DecidedBy: checkpointDecidedByEngine,
+				Reason:    "the run could not be paused, so this checkpoint can never be resolved into a resume",
+				DecidedAt: time.Now().UTC(),
+			}
+			if resErr := e.store.Resolve(ctx, cp.ID, decision); resErr != nil {
+				e.logger.Error("resolve orphaned checkpoint", log.String("error", resErr.Error()))
+			}
+		}
 		return fmt.Errorf("update run to paused: %w", err)
 	}
 	return nil
+}
+
+// createCheckpoint opens the human-facing half of an approval
+// suspension. The suspension is what the loop resumes from; the
+// checkpoint is what somebody actually sees and answers, and it is the
+// only one of the two the REST surface and the plugin hooks know about.
+//
+// Nothing is created for any other reason: an external-tool pause is
+// answered by the host that registered the tool, not by a person, and a
+// checkpoint queue full of rows no human is meant to decide is a queue
+// people stop reading.
+func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension.Suspension, reason suspension.SuspendReason) (*checkpoint.Checkpoint, error) {
+	if reason != suspension.ReasonApproval {
+		return nil, nil
+	}
+
+	names := make([]string, 0, len(s.Pending))
+	for _, p := range s.Pending {
+		names = append(names, p.Name)
+	}
+
+	// The step that asked for these calls, not the next one to run.
+	// Cont.StepIndex is where the loop resumes, which is one past it.
+	stepIndex := s.Cont.StepIndex - 1
+	if stepIndex < 0 {
+		stepIndex = 0
+	}
+
+	cp := &checkpoint.Checkpoint{
+		Entity:    cortex.NewEntity(),
+		ID:        id.NewCheckpointID(),
+		RunID:     r.ID,
+		AgentID:   r.AgentID,
+		Scope:     r.Scope,
+		Reason:    "tool call requires approval: " + strings.Join(names, ", "),
+		StepIndex: stepIndex,
+		State:     checkpointStatePending,
+		Metadata: map[string]any{
+			"suspension_id": s.ID.String(),
+			"tools":         names,
+		},
+	}
+	if err := e.store.CreateCheckpoint(ctx, cp); err != nil {
+		return nil, err
+	}
+
+	e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
+	return cp, nil
 }
