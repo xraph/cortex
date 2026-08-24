@@ -50,14 +50,35 @@ func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) (*
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
+// Decision values the API accepts on the wire. These are the only two
+// strings ResolveCheckpointRequest.Decision documents, and resolveCheckpoint
+// rejects anything else outright rather than folding an unrecognised value
+// into approvedDecision, which used to read a typo as a rejection and fail
+// a live run instead of reporting the bad request.
+const (
+	approvedDecision = "approved"
+	rejectedDecision = "rejected"
+)
+
 func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest) (*struct{}, error) {
 	cpID, err := id.ParseCheckpointID(req.CheckpointID)
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid checkpoint ID: %v", err))
 	}
 
+	var approved bool
+	switch req.Decision {
+	case approvedDecision:
+		approved = true
+	case rejectedDecision:
+		approved = false
+	default:
+		return nil, forge.BadRequest(fmt.Sprintf(
+			"invalid decision %q: must be %q or %q", req.Decision, approvedDecision, rejectedDecision))
+	}
+
 	decision := checkpoint.Decision{
-		Approved:  req.Decision == "approved",
+		Approved:  approved,
 		DecidedBy: req.DecidedBy,
 		Reason:    req.Reason,
 	}
