@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -492,11 +493,119 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 	return e.store.CountPending(ctx, filter)
 }
 
+// ResolveCheckpoint records a human decision and then acts on it: an
+// approval continues the run, a rejection ends it with the reason the
+// decider gave.
+//
+// Until this release the method wrote the decision and stopped there, on
+// a checkpoint nothing created, so both halves were theoretical. An
+// approved run is resumed synchronously, same as RunAgent: the caller
+// waits for the run rather than getting a receipt for one.
 func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
-	return e.store.Resolve(ctx, cpID, decision)
+	if decision.DecidedAt.IsZero() {
+		decision.DecidedAt = time.Now().UTC()
+	}
+
+	// Read before write: the row is what says which run this decision is
+	// about, and Resolve does not hand it back.
+	cp, err := e.store.GetCheckpoint(ctx, cpID)
+	if err != nil {
+		return fmt.Errorf("load checkpoint: %w", err)
+	}
+	if cp.State != checkpointStatePending {
+		// A decided checkpoint is not re-decidable. Without this, a
+		// rejection could be followed by an approval that tries to
+		// resume a run the rejection already failed, and the caller
+		// would read the claim's refusal instead of being told the
+		// decision was already made.
+		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
+	}
+
+	if err := e.store.Resolve(ctx, cpID, decision); err != nil {
+		return fmt.Errorf("resolve checkpoint: %w", err)
+	}
+	e.extensions.EmitCheckpointResolved(ctx, cpID, decisionLabel(decision))
+
+	if decision.Approved {
+		return e.resumeApproved(ctx, cp)
+	}
+	return e.failRejected(ctx, cp, decision)
+}
+
+// decisionLabel is what a hook subscriber sees. Approved and rejected
+// rather than a bool, because the hook takes a string and "true" tells a
+// reader nothing about what was true.
+func decisionLabel(d checkpoint.Decision) string {
+	if d.Approved {
+		return "approved"
+	}
+	return "rejected"
+}
+
+// resumeApproved continues a run whose pending calls a human just
+// granted.
+//
+// Every pending call is handed back as a result asking the engine to
+// execute it, which is what an approval actually means: the calls were
+// stopped before dispatch, so there is no result to report, only
+// permission to go and get one. Building the input here rather than
+// making the caller do it is the point of the method: a REST client
+// resolving a checkpoint has no idea what the run was waiting on.
+func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) error {
+	susp, err := e.store.GetSuspension(ctx, cp.RunID)
+	if err != nil {
+		return fmt.Errorf("load suspension for approved checkpoint: %w", err)
+	}
+
+	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(susp.Pending))}
+	for _, p := range susp.Pending {
+		in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true})
+	}
+
+	if _, err := e.Resume(ctx, cp.RunID, in); err != nil {
+		return fmt.Errorf("resume approved run %s: %w", cp.RunID, err)
+	}
+	return nil
+}
+
+// failRejected ends a run whose pending calls a human refused, carrying
+// the decider's own words onto the run.
+//
+// The run is failed BEFORE the suspension is dropped, and the order is
+// the same one suspend uses read backwards. A delete that succeeded and
+// a state write that then failed would leave the run paused with nothing
+// to resume from, which is precisely the wedge nothing can recover.
+// This way round the worst case is a suspension attached to a failed
+// run, which no claim will ever take.
+func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
+	r, err := e.store.GetRun(ctx, cp.RunID)
+	if err != nil {
+		return fmt.Errorf("load run for rejected checkpoint: %w", err)
+	}
+	// Write under the run's own scope, not the decider's. A checkpoint is
+	// resolvable by anyone whose scope covers the run, and everything the
+	// run records has to land where its earlier writes did.
+	ctx = cortex.WithScope(ctx, r.Scope)
+
+	reason := decision.Reason
+	if reason == "" {
+		reason = "no reason given"
+	}
+	if err := e.persistFailure(ctx, r, cp.AgentID, fmt.Errorf("checkpoint rejected: %s", reason)); err != nil {
+		// The run is still paused, so its suspension stays exactly where
+		// it is: it is the only thing that can move the run at all, and
+		// dropping it now would leave a paused run nothing could ever
+		// pick up. The caller gets the error and can decide again.
+		return fmt.Errorf("fail rejected run %s: %w", cp.RunID, err)
+	}
+
+	if err := e.store.DeleteSuspension(ctx, cp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+		e.logger.Error("delete suspension of a rejected run", log.String("error", err.Error()))
+	}
+	return nil
 }
 
 // ──────────────────────────────────────────────────

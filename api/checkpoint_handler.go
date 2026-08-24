@@ -59,6 +59,7 @@ func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest
 	decision := checkpoint.Decision{
 		Approved:  req.Decision == "approved",
 		DecidedBy: req.DecidedBy,
+		Reason:    req.Reason,
 	}
 
 	if err := a.eng.ResolveCheckpoint(ctx.Context(), cpID, decision); err != nil {

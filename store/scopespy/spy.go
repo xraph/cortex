@@ -225,6 +225,40 @@ func (s *Spy) CreateSuspension(ctx context.Context, susp *suspension.Suspension)
 }
 
 // GetSuspension serves back what CreateSuspension recorded.
+// GetCheckpoint serves back what CreateCheckpoint recorded, including
+// the state Resolve moved it to: a decision routed off a stale read is
+// a decision applied twice.
+func (s *Spy) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) {
+	s.record(ctx, "GetCheckpoint")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cp := range s.checkpoints {
+		if cp.ID == cpID {
+			stored := *cp
+			return &stored, nil
+		}
+	}
+	return nil, cortex.ErrCheckpointNotFound
+}
+
+// Resolve records the decision on the stored row, the way a real store
+// does. A spy that only counted the call could not tell a checkpoint
+// resolved once from one resolved twice.
+func (s *Spy) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
+	s.record(ctx, "Resolve")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cp := range s.checkpoints {
+		if cp.ID == cpID {
+			cp.State = "resolved"
+			d := decision
+			cp.Decision = &d
+			return nil
+		}
+	}
+	return cortex.ErrCheckpointNotFound
+}
+
 func (s *Spy) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
 	s.record(ctx, "GetSuspension")
 	s.mu.Lock()

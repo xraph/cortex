@@ -745,8 +745,25 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 	}
 }
 
-// failRun marks a run as failed and emits the RunFailed hook.
+// failRun marks a run as failed and emits the RunFailed hook. The store
+// write is best effort here: the loop's callers have nothing to do with
+// the failure but log it. A caller with cleanup waiting on the state
+// actually landing calls persistFailure instead.
 func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error, _ time.Time) {
+	if err := e.persistFailure(ctx, r, agentID, runErr); err != nil {
+		e.logger.Error("update run on failure", log.String("error", err.Error()))
+	}
+}
+
+// persistFailure is failRun with the store error handed back, for the one
+// caller that has to know whether the run really moved: a rejected
+// checkpoint drops the suspension afterwards, and dropping it while the
+// run is still paused would leave a run nothing can ever resume.
+//
+// The RunFailed hook fires either way. A subscriber told about a failure
+// that did not persist is recoverable; one told nothing about a run that
+// did fail is not.
+func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
 	completedAt := time.Now().UTC()
 	r.State = run.StateFailed
 	r.Error = runErr.Error()
@@ -759,14 +776,16 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 	// every context value (including scope) while dropping the
 	// cancellation signal for this one terminal write, exactly like the
 	// cancel branches do.
-	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
-		e.logger.Error("update run on failure", log.String("error", err.Error()))
-	}
+	writeErr := e.store.UpdateRun(context.WithoutCancel(ctx), r)
 	// Same reasoning as the store write above: a hook subscriber (audit,
 	// for instance) that does its own I/O keyed on ctx would otherwise
 	// silently drop the failure event on an already-cancelled ctx, even
 	// though the store now correctly recorded it.
 	e.extensions.EmitRunFailed(context.WithoutCancel(ctx), agentID, r.ID, runErr)
+	if writeErr != nil {
+		return fmt.Errorf("update run on failure: %w", writeErr)
+	}
+	return nil
 }
 
 // resolveTools converts tool name references to llm.Tool definitions,

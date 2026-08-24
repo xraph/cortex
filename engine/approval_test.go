@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -285,6 +286,12 @@ func (c *checkpointEventRecorder) createdEvents() []string {
 	return append([]string(nil), c.created...)
 }
 
+func (c *checkpointEventRecorder) resolvedEvents() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.resolved...)
+}
+
 // TestRunAgent_ApprovalFiresTheCheckpointCreatedHook proves the hook is
 // live rather than declared. plugin.Registry has carried
 // EmitCheckpointCreated since v1.x with no caller anywhere in the repo.
@@ -456,5 +463,355 @@ func TestRunAgent_AStepPendingForBothReasonsSuspendsForApproval(t *testing.T) {
 				t.Errorf("the step wrote %d checkpoints, want 1", got)
 			}
 		})
+	}
+}
+
+// ──────────────────────────────────────────────────
+// Resolving the checkpoint
+// ──────────────────────────────────────────────────
+
+// TestResolveCheckpoint_ApprovalRunsTheCallAndFinishesTheRun is the
+// second half of the end-to-end path, and the assertion that matters most
+// is that the tool actually ran. An approved call was stopped before
+// dispatch, so approval means "now go and run it", not "here is its
+// result": a resume that only wrote a tool message would finish the run
+// having told the model about work nobody did.
+func TestResolveCheckpoint_ApprovalRunsTheCallAndFinishesTheRun(t *testing.T) {
+	var ran int32
+	rec := &checkpointEventRecorder{}
+	tools := &toolEventRecorder{}
+	spy := scopespy.New()
+	def := gatedTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: def.Name, Arguments: `{"target":"everything"}`},
+		}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
+			atomic.AddInt32(&ran, 1)
+			return "deleted", nil
+		}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithExtension(rec),
+		WithExtension(tools),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if atomic.LoadInt32(&ran) != 0 {
+		t.Fatal("the tool ran before anyone approved it")
+	}
+
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+	if resolveErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}); resolveErr != nil {
+		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
+	}
+
+	if got := atomic.LoadInt32(&ran); got != 1 {
+		t.Errorf("the approved tool ran %d times, want 1; an approval that never dispatches tells the model about work nobody did", got)
+	}
+	resumed, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+
+	// The row and the event the pause deliberately withheld.
+	rows := spy.ToolCalls()
+	if len(rows) != 1 {
+		t.Fatalf("the approved call wrote %d tool call rows, want 1", len(rows))
+	}
+	if rows[0].Result != "deleted" {
+		t.Errorf("tool call row result = %q, want the handler's own output", rows[0].Result)
+	}
+	if rows[0].Error != "" {
+		t.Errorf("tool call row carries error %q, want none", rows[0].Error)
+	}
+	if got := countEvent(tools.snapshot(), "completed"); got != 1 {
+		t.Errorf("ToolCompleted fired %d times, want 1: %v", got, tools.snapshot())
+	}
+	if got := countEvent(tools.snapshot(), "denied"); got != 0 {
+		t.Errorf("ToolDenied fired %d times, want 0", got)
+	}
+
+	// The suspension is gone and the checkpoint is decided, so neither
+	// says paused about a run that finished.
+	if got := len(spy.Suspensions()); got != 0 {
+		t.Errorf("%d suspensions survived a completed run", got)
+	}
+	stored, err := spy.GetCheckpoint(ctx, cps[0].ID)
+	if err != nil {
+		t.Fatalf("reload the checkpoint: %v", err)
+	}
+	if stored.State == "pending" {
+		t.Error("the checkpoint is still pending after being decided; it stays in every operator's queue")
+	}
+	if len(rec.createdEvents()) != 1 {
+		t.Errorf("OnCheckpointCreated fired %d times, want 1", len(rec.createdEvents()))
+	}
+	if got := rec.resolvedEvents(); len(got) != 1 || !strings.HasSuffix(got[0], "approved") {
+		t.Errorf("OnCheckpointResolved got %v, want one event saying approved", got)
+	}
+}
+
+// TestResolveCheckpoint_RejectionFailsTheRunWithTheDecisionsReason is the
+// other answer. A rejected run must not sit paused forever, and the run
+// has to carry the words the person who stopped it used: whoever finds
+// the run later reads the reason, not a bare "rejected".
+func TestResolveCheckpoint_RejectionFailsTheRunWithTheDecisionsReason(t *testing.T) {
+	const reason = "we do not delete production data on a Friday"
+	var ran int32
+	rec := &checkpointEventRecorder{}
+	spy := scopespy.New()
+	def := gatedTool()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
+			atomic.AddInt32(&ran, 1)
+			return "deleted", nil
+		}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithExtension(rec),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+
+	if resolveErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{DecidedBy: "operator", Reason: reason}); resolveErr != nil {
+		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
+	}
+
+	rejected, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if rejected.State != run.StateFailed {
+		t.Fatalf("run state = %q, want %q; a rejected run left paused waits forever", rejected.State, run.StateFailed)
+	}
+	if !strings.Contains(rejected.Error, reason) {
+		t.Errorf("run error = %q, want it to carry the decision's reason %q", rejected.Error, reason)
+	}
+	if got := atomic.LoadInt32(&ran); got != 0 {
+		t.Errorf("the rejected tool ran %d times, want 0", got)
+	}
+	if got := len(spy.Suspensions()); got != 0 {
+		t.Errorf("%d suspensions survived a rejected run", got)
+	}
+	if got := rec.resolvedEvents(); len(got) != 1 || !strings.HasSuffix(got[0], "rejected") {
+		t.Errorf("OnCheckpointResolved got %v, want one event saying rejected", got)
+	}
+}
+
+// TestResolveCheckpoint_ADecidedCheckpointCannotBeDecidedAgain stops the
+// second decision. Approving a checkpoint somebody already rejected would
+// try to resume a run the rejection failed, and the caller would read the
+// claim's refusal rather than being told the decision was already made.
+func TestResolveCheckpoint_ADecidedCheckpointCannotBeDecidedAgain(t *testing.T) {
+	_, spy := approvalRun(t)
+	e := approvalEngine(t, WithStore(spy))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+	if resolveErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); resolveErr != nil {
+		t.Fatalf("first ResolveCheckpoint: %v", resolveErr)
+	}
+
+	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
+	if !errors.Is(err, cortex.ErrInvalidState) {
+		t.Fatalf("second ResolveCheckpoint = %v, want ErrInvalidState", err)
+	}
+}
+
+// countingEscalator is escalatingAuthorizer with a tally, for the one
+// question that needs counting rather than an outcome.
+type countingEscalator struct {
+	tool  string
+	calls int32
+}
+
+func (c *countingEscalator) Visible(_ context.Context, _ cortex.Subject, tools []llm.Tool) []llm.Tool {
+	return tools
+}
+
+func (c *countingEscalator) Authorize(_ context.Context, _ cortex.Subject, call llm.ToolCall) error {
+	atomic.AddInt32(&c.calls, 1)
+	if call.Name == c.tool {
+		return fmt.Errorf("%s is destructive: %w", call.Name, cortex.ErrRequiresApproval)
+	}
+	return nil
+}
+
+// TestResolveCheckpoint_AnApprovedCallIsNotSentBackToTheAuthorizer pins
+// the one rule that makes an approval terminate. The authorizer already
+// answered and a human answered after it; asking again would escalate the
+// same call forever, and the run would pause on every resume.
+func TestResolveCheckpoint_AnApprovedCallIsNotSentBackToTheAuthorizer(t *testing.T) {
+	def := gatedTool()
+	auth := &countingEscalator{tool: def.Name}
+	spy := scopespy.New()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
+		WithToolAuthorizer(auth),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+	if resolveErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}); resolveErr != nil {
+		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
+	}
+
+	if got := atomic.LoadInt32(&auth.calls); got != 1 {
+		t.Errorf("Authorize ran %d times, want 1; an approved call re-asked would escalate forever", got)
+	}
+	resumed, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+	if got := len(spy.Suspensions()); got != 0 {
+		t.Errorf("%d suspensions survived; the approved run paused again", got)
+	}
+}
+
+// TestResolveCheckpoint_AnApprovedExternalCallIsClosedAsAFailure covers
+// the combination the engine cannot finish: the authorizer runs before
+// the external check, so an external call can be escalated, and then
+// approving it asks the engine to run a tool it does not own. Closing it
+// as a failure that says what to do instead is the honest answer;
+// suspending again would mean a second place in the codebase where a run
+// pauses.
+func TestResolveCheckpoint_AnApprovedExternalCallIsClosedAsAFailure(t *testing.T) {
+	def := externalTool()
+	tools := &toolEventRecorder{}
+	spy := scopespy.New()
+
+	e, err := New(
+		WithStore(spy),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithExternalTool(def),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithExtension(tools),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	paused, err := e.RunAgent(ctx, "assistant", "ask the human", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+	if resolveErr := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}); resolveErr != nil {
+		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
+	}
+
+	rows := spy.ToolCalls()
+	if len(rows) != 1 {
+		t.Fatalf("the approved call wrote %d tool call rows, want 1", len(rows))
+	}
+	if !strings.Contains(rows[0].Error, "external") {
+		t.Errorf("tool call row error = %q, want it to say the call is external and how to answer it", rows[0].Error)
+	}
+	if got := countEvent(tools.snapshot(), "failed"); got != 1 {
+		t.Errorf("ToolFailed fired %d times, want 1: %v", got, tools.snapshot())
+	}
+	if got := countEvent(tools.snapshot(), "completed"); got != 0 {
+		t.Errorf("ToolCompleted fired %d times, want 0; nothing ran", got)
+	}
+	// The run still ends rather than hanging on a call nobody can close.
+	resumed, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if resumed.State != run.StateCompleted {
+		t.Errorf("run state = %q, want %q", resumed.State, run.StateCompleted)
+	}
+}
+
+// wedgeSpy refuses the write that marks a run failed, so a test can ask
+// what a rejection does when the run will not move.
+type wedgeSpy struct {
+	*scopespy.Spy
+}
+
+func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
+	if r.State == run.StateFailed {
+		return errors.New("update rejected")
+	}
+	return w.Spy.UpdateRun(ctx, r)
+}
+
+// TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable
+// pins the order inside the rejection. The suspension is the only thing
+// that can move a paused run, so it goes after the state write, never
+// before: a delete that succeeded while the run stayed paused would leave
+// a run nothing could ever pick up, which is the same wedge suspend's own
+// write order exists to avoid, reached from the other side.
+func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *testing.T) {
+	base := scopespy.New()
+	spy := &wedgeSpy{Spy: base}
+	e := approvalEngine(t, WithStore(spy))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := base.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+
+	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"})
+	if got := len(base.Suspensions()); got != 1 {
+		t.Errorf("%d suspensions left, want 1; the run is still paused and nothing else can move it", got)
+	}
+	if err == nil {
+		t.Error("ResolveCheckpoint reported success though the run could not be failed; the caller has no idea it has to decide again")
 	}
 }

@@ -33,6 +33,21 @@ type ToolResult struct {
 	// The model is told so in the same error payload shape an
 	// engine-side tool failure produces, and Content is ignored.
 	Error string `json:"error,omitempty"`
+	// Execute says the call was never run and the engine should run it
+	// now. It is what an approval produces: a call the authorizer
+	// escalated was stopped before dispatch, so a human granting it hands
+	// back permission, not a result, and somebody still has to execute
+	// the tool.
+	//
+	// It exists so approval keeps the one-result-per-pending-call rule
+	// rather than bending it. Content and Error are ignored when it is
+	// set, and the authorizer is not consulted a second time: it already
+	// answered, and a human answered after it.
+	//
+	// Only a tool the engine can run can be executed this way. An
+	// external tool is answered by supplying its result, since the engine
+	// is not the thing that runs it.
+	Execute bool `json:"execute,omitempty"`
 }
 
 // ResumeInput is everything a caller supplies to continue a suspended
@@ -237,7 +252,16 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 
 	stepID := e.stepForPendingCalls(ctx, r.ID, susp.Cont.StepIndex)
 	startedAt := susp.CreatedAt
-	completedAt := time.Now().UTC()
+
+	// The subject an approved call is dispatched under. It is the run's
+	// own, rebuilt from the run rather than the resumer, for the same
+	// reason the whole resume path re-derives scope from the suspension.
+	subject := cortex.Subject{
+		Scope:     cortex.ScopeFromContext(ctx),
+		Principal: cortex.PrincipalFromContext(ctx),
+		AgentID:   r.AgentID,
+		RunID:     r.ID,
+	}
 
 	// Pending order, not results order: the model sees its tool results
 	// in the order it asked for them, and a caller is not obliged to
@@ -246,13 +270,8 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 		// validateResults has already proven there is exactly one result
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
-		content := res.Content
-		if res.Error != "" {
-			// The same payload shape an engine-side failure feeds back,
-			// so the model cannot tell where the tool ran from how its
-			// failure is phrased.
-			content = jsonResult("error", res.Error)
-		}
+		content, errText := e.resumedCallResult(ctx, subject, p, res)
+		completedAt := time.Now().UTC()
 
 		if !stepID.IsNil() {
 			toolCall := &run.ToolCall{
@@ -263,7 +282,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 				ToolName:  p.Name,
 				Arguments: p.Arguments,
 				Result:    content,
-				Error:     res.Error,
+				Error:     errText,
 				// The call really was outstanding from the moment the run
 				// paused until now. Stamping it as instantaneous would
 				// hide exactly the latency an external tool introduces.
@@ -275,8 +294,8 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 			}
 		}
 
-		if res.Error != "" {
-			e.extensions.EmitToolFailed(ctx, r.ID, p.Name, errors.New(res.Error))
+		if errText != "" {
+			e.extensions.EmitToolFailed(ctx, r.ID, p.Name, errors.New(errText))
 		} else {
 			e.extensions.EmitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
 		}
@@ -286,6 +305,47 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 			Content:    content,
 			ToolCallID: p.ID,
 		})
+	}
+}
+
+// resumedCallResult turns one caller-supplied result into the pair the
+// model and the audit trail need: what the tool said, and whether it
+// failed. It is also where an approved call is finally executed.
+//
+// Approval does not produce a result. The call was stopped before
+// dispatch, so there is nothing for whoever approved it to hand back:
+// the decision produces permission, and the engine still has to run the
+// tool. Hence Execute, and hence the bijection rule surviving intact,
+// with one result per pending call whichever kind it is.
+//
+// The authorizer is deliberately not consulted again. It already
+// answered, a human answered after it, and re-asking would escalate the
+// same call forever.
+func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p suspension.PendingCall, res ToolResult) (content, errText string) {
+	if !res.Execute {
+		if res.Error != "" {
+			// The same payload shape an engine-side failure feeds back,
+			// so the model cannot tell where the tool ran from how its
+			// failure is phrased.
+			return jsonResult("error", res.Error), res.Error
+		}
+		return res.Content, ""
+	}
+
+	out, outcome, err := e.dispatchTool(ctx, s, llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments})
+	switch outcome {
+	case outcomeCompleted:
+		return out, ""
+	case outcomeFailed:
+		return out, err.Error()
+	default:
+		// An approved call that turns out to be external: the engine
+		// cannot run it, and the only honest close is a failure that
+		// says what to do instead. Suspending again is the alternative,
+		// and it would mean a second place in the codebase where a run
+		// pauses, which is the one thing this design refuses.
+		msg := fmt.Sprintf("tool %q is external: an approved external call is answered by supplying its result, not by asking the engine to run it", p.Name)
+		return jsonResult("error", msg), msg
 	}
 }
 

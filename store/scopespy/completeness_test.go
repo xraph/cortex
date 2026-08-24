@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
@@ -189,6 +190,22 @@ func reachedMethods(t *testing.T) map[string]bool {
 	}
 	if approved.State != run.StatePaused {
 		t.Fatalf("the approval scenario left the run in %q, so it never reached CreateCheckpoint", approved.State)
+	}
+	// Approving it is the only route to GetCheckpoint and Resolve, and it
+	// carries the run through to completion on the same spy.
+	approvalCps := approvalSpy.Checkpoints()
+	if len(approvalCps) != 1 {
+		t.Fatalf("the approval scenario wrote %d checkpoints; resolving needs exactly 1", len(approvalCps))
+	}
+	if resolveErr := approvalEngine.ResolveCheckpoint(runCtx, approvalCps[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "completeness"}); resolveErr != nil {
+		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
+	}
+	resolvedRun, err := approvalSpy.GetRun(runCtx, approved.ID)
+	if err != nil {
+		t.Fatalf("reload the approved run: %v", err)
+	}
+	if resolvedRun.State != run.StateCompleted {
+		t.Fatalf("the approval scenario left the run in %q, so the approved resume never ran the loop", resolvedRun.State)
 	}
 	for _, c := range approvalSpy.Calls() {
 		reached[c.Method] = true

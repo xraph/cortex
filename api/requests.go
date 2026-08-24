@@ -350,6 +350,10 @@ type ResolveCheckpointRequest struct {
 	CheckpointID string `path:"id" description:"Checkpoint ID"`
 	Decision     string `json:"decision" description:"approved or rejected"`
 	DecidedBy    string `json:"decided_by,omitempty"`
+	// Reason is what a rejection puts on the failed run, so whoever finds
+	// the run later reads why a person stopped it rather than a bare
+	// "rejected".
+	Reason string `json:"reason,omitempty" description:"Why the decision was made; recorded on the run when rejecting"`
 }
 
 // ── Memory requests ───────────────────────────────────
