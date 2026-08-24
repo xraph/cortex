@@ -25,6 +25,13 @@ const checkpointDecidedByEngine = "cortex"
 // one ListPending selects on.
 const checkpointStatePending = "pending"
 
+// checkpointSuspensionKey is the metadata key createCheckpoint stamps
+// with the id of the suspension the row was opened alongside. Its
+// presence is how ResolveCheckpoint knows a paused run is waiting behind
+// a checkpoint, so a host that wrote its own row still gets the
+// record-only behavior it has always had.
+const checkpointSuspensionKey = "suspension_id"
+
 // pendingCall records one tool call the loop could not finish itself.
 //
 // Arguments travel with it rather than being left in the continuation's
@@ -177,8 +184,8 @@ func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension
 		StepIndex: stepIndex,
 		State:     checkpointStatePending,
 		Metadata: map[string]any{
-			"suspension_id": s.ID.String(),
-			"tools":         names,
+			checkpointSuspensionKey: s.ID.String(),
+			"tools":                 names,
 		},
 	}
 	if err := e.store.CreateCheckpoint(ctx, cp); err != nil {

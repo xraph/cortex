@@ -518,22 +518,29 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 	return e.store.CountPending(ctx, filter)
 }
 
-// ResolveCheckpoint acts on a human decision and then records it: an
-// approval continues the run, a rejection ends it with the reason the
-// decider gave.
+// ResolveCheckpoint records a human decision, and, when the checkpoint
+// belongs to a run the loop paused, carries that decision to the run: an
+// approval continues it, a rejection ends it with the reason the decider
+// gave.
 //
-// Until this release the method wrote the decision and stopped there, on
-// a checkpoint nothing created, so both halves were theoretical. An
-// approved run is resumed synchronously, same as RunAgent: the caller
+// A checkpoint a host wrote itself resolves exactly as it always has,
+// with nothing else touched. Only the loop knows how to pause a run, so
+// only a checkpoint the loop opened has a run waiting behind it, and
+// treating every checkpoint as though it did would break every caller
+// that has been writing its own rows since before suspension existed.
+// openedASuspendedRun is what tells the two apart.
+//
+// Acting before recording is deliberate. The checkpoint store has no
+// un-resolve, so recording the decision up front and then failing to act
+// on it leaves a row marked resolved against a run still paused, dropped
+// out of ListPending, with nothing but a direct Resume call able to
+// recover it. That is the audit lie this surface exists to prevent.
+// Written this way round, a decision that could not be carried out
+// leaves the checkpoint exactly as it found it and the caller can decide
+// again.
+//
+// An approved run is resumed synchronously, same as RunAgent: the caller
 // waits for the run rather than getting a receipt for one.
-//
-// Acting first is deliberate. The checkpoint store has no un-resolve, so
-// recording the decision up front and then failing to act on it leaves a
-// row marked resolved against a run still paused, dropped out of
-// ListPending, with nothing but a direct Resume call able to recover it.
-// That is the audit lie this surface exists to prevent. Written this way
-// round, a decision that could not be carried out leaves the checkpoint
-// exactly as it found it and the caller can decide again.
 //
 // The cost is that two operators deciding the same checkpoint at once
 // both pass the pending guard. Nothing runs twice for it: ClaimSuspension
@@ -564,12 +571,14 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
 	}
 
-	if decision.Approved {
-		if err := e.resumeApproved(ctx, cp); err != nil {
+	if openedASuspendedRun(cp) {
+		if decision.Approved {
+			if err := e.resumeApproved(ctx, cp); err != nil {
+				return err
+			}
+		} else if err := e.failRejected(ctx, cp, decision); err != nil {
 			return err
 		}
-	} else if err := e.failRejected(ctx, cp, decision); err != nil {
-		return err
 	}
 
 	// Recorded last, so the row says decided only about a decision that
@@ -583,6 +592,21 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 	}
 	e.extensions.EmitCheckpointResolved(ctx, cpID, decisionLabel(decision))
 	return nil
+}
+
+// openedASuspendedRun reports whether the loop wrote this checkpoint, and
+// therefore whether a paused run is waiting on the decision.
+//
+// It reads the provenance suspend stamped on the row, not the store's
+// current state. Asking whether a suspension exists right now would agree
+// with this on most rows and then be quietly wrong on one: an approval
+// suspension that expired leaves its checkpoint pending with its
+// suspension already dropped, and the operator who decides that row has
+// to hear about it. A provenance check gives them the claim's refusal.
+// A state check would give them a success that moved nothing.
+func openedASuspendedRun(cp *checkpoint.Checkpoint) bool {
+	_, ok := cp.Metadata[checkpointSuspensionKey]
+	return ok
 }
 
 // decisionLabel is what a hook subscriber sees. Approved and rejected

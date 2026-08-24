@@ -185,3 +185,134 @@ func TestApprovalCheckpoint_RejectionIsVisibleThroughTheCheckpointAPI(t *testing
 		t.Error("the suspension survived a rejected run; it says paused about a failed run")
 	}
 }
+
+// TestResolveCheckpoint_AHostCreatedCheckpointIsRecordedAndNothingElse
+// covers the shape that existed before this release and still has to
+// work: a checkpoint a host wrote itself, with no suspension and no
+// paused run behind it.
+//
+// The loop never created a checkpoint before v1.11.0, so every row in
+// every existing host is one of these. If resolving one went looking for
+// a suspension, the whole current user base would get an error on a call
+// that has always succeeded.
+//
+// The two subtests differ only in the decision, because the routing has
+// to skip both halves and not just the resuming one: a rejection that
+// claimed its way to a run would fail a run nobody suspended.
+func TestResolveCheckpoint_AHostCreatedCheckpointIsRecordedAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		approved bool
+	}{
+		{"approved", true},
+		{"rejected", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := cortex.WithScope(context.Background(), approvalScope())
+			st := newApprovalStore(ctx, t)
+			e, err := New(WithStore(st))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			ag, err := st.GetByName(ctx, "assistant")
+			if err != nil {
+				t.Fatalf("load agent: %v", err)
+			}
+			r := &run.Run{
+				Entity:  cortex.NewEntity(),
+				ID:      id.NewAgentRunID(),
+				AgentID: ag.ID,
+				State:   run.StateRunning,
+				Input:   "do the thing",
+			}
+			if err := st.CreateRun(ctx, r); err != nil {
+				t.Fatalf("create run: %v", err)
+			}
+
+			// No suspension_id in the metadata, because a host writing
+			// its own row has no suspension to name.
+			cp := &checkpoint.Checkpoint{
+				Entity:   cortex.NewEntity(),
+				ID:       id.NewCheckpointID(),
+				RunID:    r.ID,
+				AgentID:  ag.ID,
+				Reason:   "the host wants a second opinion",
+				State:    "pending",
+				Metadata: map[string]any{"ticket": "OPS-41"},
+			}
+			if err := st.CreateCheckpoint(ctx, cp); err != nil {
+				t.Fatalf("create checkpoint: %v", err)
+			}
+
+			decision := checkpoint.Decision{Approved: tc.approved, DecidedBy: "operator", Reason: "reviewed"}
+			if err := e.ResolveCheckpoint(ctx, cp.ID, decision); err != nil {
+				t.Fatalf("ResolveCheckpoint on a host-created checkpoint: %v; it has no suspension and never needed one", err)
+			}
+
+			decided, err := st.GetCheckpoint(ctx, cp.ID)
+			if err != nil {
+				t.Fatalf("reload the checkpoint: %v", err)
+			}
+			if decided.State == "pending" {
+				t.Errorf("checkpoint state = %q, want it recorded as decided", decided.State)
+			}
+			if decided.Decision == nil || decided.Decision.Approved != tc.approved {
+				t.Errorf("checkpoint decision = %+v, want approved=%v", decided.Decision, tc.approved)
+			}
+
+			after, err := st.GetRun(ctx, r.ID)
+			if err != nil {
+				t.Fatalf("reload the run: %v", err)
+			}
+			if after.State != run.StateRunning {
+				t.Errorf("run state = %q, want %q; resolving a checkpoint nothing paused must not move the run", after.State, run.StateRunning)
+			}
+			if after.Error != "" {
+				t.Errorf("run error = %q, want empty; nothing failed this run", after.Error)
+			}
+		})
+	}
+}
+
+// TestResolveCheckpoint_ALoopCreatedCheckpointNamesItsSuspension pins the
+// signal the routing above keys on. Without it, a change to
+// createCheckpoint that dropped the metadata key would send every
+// approval down the record-only path and quietly stop resuming runs,
+// with no test failing.
+func TestResolveCheckpoint_ALoopCreatedCheckpointNamesItsSuspension(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := newApprovalStore(ctx, t)
+	def := gatedTool()
+	e, err := New(
+		WithStore(st),
+		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
+		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	pending, err := e.ListPendingCheckpoints(ctx, nil)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("ListPendingCheckpoints = (%d rows, %v), want 1 row", len(pending), err)
+	}
+
+	if !openedASuspendedRun(pending[0]) {
+		t.Fatalf("a checkpoint the loop wrote does not carry %q: %+v; resolving it would record a decision and leave the run paused",
+			checkpointSuspensionKey, pending[0].Metadata)
+	}
+
+	susp, err := st.GetSuspension(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("load the suspension: %v", err)
+	}
+	if got := pending[0].Metadata[checkpointSuspensionKey]; got != susp.ID.String() {
+		t.Errorf("checkpoint %s = %v, want the suspension it was opened with, %s", checkpointSuspensionKey, got, susp.ID)
+	}
+}
