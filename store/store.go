@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
@@ -28,6 +29,7 @@ type Store interface {
 	trait.Store
 	behavior.Store
 	persona.Store
+	prompt.Store
 	session.Store
 	suspension.Store
 	orchestration.ConfigStore

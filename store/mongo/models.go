@@ -17,6 +17,7 @@ import (
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/perception"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
@@ -48,6 +49,7 @@ type agentModel struct {
 	InlineSkills    []string          `grove:"inline_skills"      bson:"inline_skills,omitempty"`
 	InlineTraits    []string          `grove:"inline_traits"      bson:"inline_traits,omitempty"`
 	InlineBehaviors []string          `grove:"inline_behaviors"   bson:"inline_behaviors,omitempty"`
+	Sections        []prompt.Section  `grove:"sections"           bson:"sections,omitempty"`
 	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
 	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
 	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
@@ -83,6 +85,7 @@ func agentToModel(c *agent.Config) *agentModel {
 		InlineSkills:    c.InlineSkills,
 		InlineTraits:    c.InlineTraits,
 		InlineBehaviors: c.InlineBehaviors,
+		Sections:        c.Sections,
 		ScopeL0:         l0,
 		ScopeL1:         l1,
 		ScopeL2:         l2,
@@ -122,6 +125,7 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 		InlineSkills:    m.InlineSkills,
 		InlineTraits:    m.InlineTraits,
 		InlineBehaviors: m.InlineBehaviors,
+		Sections:        m.Sections,
 	}, nil
 }
 
@@ -1107,5 +1111,97 @@ func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
 		Pending:   m.Pending,
 		Cont:      m.Continuation,
 		ExpiresAt: m.ExpiresAt,
+	}, nil
+}
+
+// ──────────────────────────────────────────────────
+// Overlay model
+// ──────────────────────────────────────────────────
+
+// overlayModel stores Patches as native BSON rather than as an encoded
+// JSON string, the same way suspensionModel stores Pending: mongo is a
+// document store, so a nested document reads and indexes as itself
+// instead of as an opaque blob. The postgres/sqlite models encode theirs
+// to JSON text because their columns are JSONB/TEXT; all three
+// round-trip the same Go values.
+type overlayModel struct {
+	grove.BaseModel `grove:"table:cortex_overlays"`
+	ID              string            `grove:"id,pk"         bson:"_id"`
+	AgentID         string            `grove:"agent_id"      bson:"agent_id"`
+	Patches         []prompt.Patch    `grove:"patches"       bson:"patches"`
+	ToolsAdded      []string          `grove:"tools_added"   bson:"tools_added"`
+	ToolsRemoved    []string          `grove:"tools_removed" bson:"tools_removed"`
+	Model           string            `grove:"model"         bson:"model"`
+	Temperature     *float64          `grove:"temperature"   bson:"temperature,omitempty"`
+	MaxTokens       *int              `grove:"max_tokens"    bson:"max_tokens,omitempty"`
+	ScopeL0         string            `grove:"scope_l0"      bson:"scope_l0"`
+	ScopeL1         string            `grove:"scope_l1"      bson:"scope_l1"`
+	ScopeL2         string            `grove:"scope_l2"      bson:"scope_l2"`
+	ScopeExtra      map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
+	ScopeCanon      string            `grove:"scope_canon"   bson:"scope_canon"`
+	CreatedAt       time.Time         `grove:"created_at"    bson:"created_at"`
+	UpdatedAt       time.Time         `grove:"updated_at"    bson:"updated_at"`
+}
+
+func overlayToModel(o *prompt.Overlay) *overlayModel {
+	l0, l1, l2, extra := scopeColumns(o.Scope)
+	// A nil slice's zero value writes as bson null rather than as an
+	// empty array. Coerce all three so a reader always gets an array
+	// back, matching what postgres/sqlite store.
+	patches := o.Patches
+	if patches == nil {
+		patches = []prompt.Patch{}
+	}
+	added := o.ToolsAdded
+	if added == nil {
+		added = []string{}
+	}
+	removed := o.ToolsRemoved
+	if removed == nil {
+		removed = []string{}
+	}
+	return &overlayModel{
+		ID:           o.ID.String(),
+		AgentID:      o.AgentID.String(),
+		Patches:      patches,
+		ToolsAdded:   added,
+		ToolsRemoved: removed,
+		Model:        o.Model,
+		Temperature:  o.Temperature,
+		MaxTokens:    o.MaxTokens,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   o.Scope.Canonical(),
+		CreatedAt:    o.CreatedAt,
+		UpdatedAt:    o.UpdatedAt,
+	}
+}
+
+func overlayFromModel(m *overlayModel) (*prompt.Overlay, error) {
+	overlayID, err := id.ParseOverlayID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("overlay %s: %w", overlayID, err)
+	}
+	return &prompt.Overlay{
+		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:           overlayID,
+		AgentID:      agentID,
+		Scope:        scope,
+		Patches:      m.Patches,
+		ToolsAdded:   m.ToolsAdded,
+		ToolsRemoved: m.ToolsRemoved,
+		Model:        m.Model,
+		Temperature:  m.Temperature,
+		MaxTokens:    m.MaxTokens,
 	}, nil
 }

@@ -22,6 +22,7 @@ var (
 	ErrOrchestrationNotFound    = errors.New("cortex: orchestration not found")
 	ErrOrchestrationRunNotFound = errors.New("cortex: orchestration run not found")
 	ErrWorkingMemoryNotFound    = errors.New("cortex: working memory not found")
+	ErrOverlayNotFound          = errors.New("cortex: prompt overlay not found")
 
 	// Conflict errors.
 	ErrAlreadyExists = errors.New("cortex: resource already exists")

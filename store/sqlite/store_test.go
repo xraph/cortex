@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 )
 
 // newTestStore opens a migrated SQLite store backed by a temporary file.
@@ -68,5 +69,55 @@ func TestCreatePersonaDuplicateReturnsAlreadyExists(t *testing.T) {
 	err := s.CreatePersona(ctx, dup)
 	if !errors.Is(err, cortex.ErrAlreadyExists) {
 		t.Fatalf("duplicate create err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+// TestAgentWithoutSectionsRoundTripsEmpty pins the compatibility promise
+// the sections column has to keep. cortex_agents is created without that
+// column and gains it by ALTER TABLE, so an agent that only ever set
+// SystemPrompt has to come back with its prompt untouched and no
+// sections at all. Assembly falls back to SystemPrompt when the section
+// list is empty, so this is what keeps an upgraded agent producing the
+// exact prompt it produced before.
+func TestAgentWithoutSectionsRoundTripsEmpty(t *testing.T) {
+	s := newTestStore(t)
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
+
+	cfg := &agent.Config{ID: id.NewAgentID(), Name: "legacy", SystemPrompt: "you are helpful"}
+	if err := s.Create(ctx, cfg); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	got, err := s.Get(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	if got.SystemPrompt != "you are helpful" {
+		t.Errorf("SystemPrompt = %q, want %q", got.SystemPrompt, "you are helpful")
+	}
+	if len(got.Sections) != 0 {
+		t.Errorf("Sections = %+v, want empty; an agent that never set sections must not gain any", got.Sections)
+	}
+}
+
+// TestAgentSectionsRoundTrip is the other half: an agent that DOES carry
+// sections has to get them back intact, or the column would be a
+// write-only field nothing could read.
+func TestAgentSectionsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
+
+	want := []prompt.Section{{ID: "identity", Title: "Identity", Body: "you are helpful", Order: 10, Locked: true}}
+	cfg := &agent.Config{ID: id.NewAgentID(), Name: "sectioned", Sections: want}
+	if err := s.Create(ctx, cfg); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	got, err := s.Get(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	if len(got.Sections) != 1 || got.Sections[0] != want[0] {
+		t.Errorf("Sections round-tripped as %+v, want %+v", got.Sections, want)
 	}
 }

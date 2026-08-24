@@ -1136,6 +1136,99 @@ CREATE INDEX IF NOT EXISTS idx_cortex_suspensions_expiry
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_overlays",
+			Version: "20260826000001",
+			Comment: "Create cortex_overlays table, scoped from birth",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Overlay is new this release, so like cortex_sessions and
+				// cortex_suspensions before it there is no unscoped legacy
+				// shape to carry forward: the table is created with its
+				// scope columns already in place rather than getting them
+				// bolted on by a later migration.
+				//
+				// temperature and max_tokens are the only nullable value
+				// columns here, and they are nullable on purpose. An
+				// overlay that does not touch them has to be
+				// distinguishable from one that pins them to zero, and a
+				// NOT NULL DEFAULT 0 would collapse those two into the
+				// same row.
+				if _, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_overlays (
+    id            TEXT PRIMARY KEY,
+    agent_id      TEXT NOT NULL,
+    patches       JSONB NOT NULL DEFAULT '[]',
+    tools_added   JSONB NOT NULL DEFAULT '[]',
+    tools_removed JSONB NOT NULL DEFAULT '[]',
+    model         TEXT NOT NULL DEFAULT '',
+    temperature   DOUBLE PRECISION,
+    max_tokens    INTEGER,
+    scope_l0      TEXT NOT NULL DEFAULT '',
+    scope_l1      TEXT NOT NULL DEFAULT '',
+    scope_l2      TEXT NOT NULL DEFAULT '',
+    scope_extra   JSONB NOT NULL DEFAULT '{}',
+    scope_canon   TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_overlays_scope
+    ON cortex_overlays (scope_l0, scope_l1, scope_l2);
+`); err != nil {
+					return fmt.Errorf("create cortex_overlays: %w", err)
+				}
+
+				// One overlay per agent per scope. Prompt assembly reads
+				// "the" overlay for an agent at a scope, so two rows
+				// competing for that slot would make which one applies a
+				// matter of row order.
+				//
+				// scope_canon != '' keeps this in step with every other
+				// partial unique index in this codebase. Migrate builds
+				// indexes before rescopeLegacyRows fills scope columns, so
+				// a plain unique index over a scope column would collide on
+				// the empty string across every pre-existing row.
+				// cortex_overlays carries no legacy rows of its own, but
+				// the predicate also stops a zero-scope row (if a future
+				// caller ever slipped one past the guard) from taking the
+				// one slot every other scope's agent needs.
+				if _, err := exec.Exec(ctx, `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_overlays_agent_scope
+    ON cortex_overlays (agent_id, scope_canon)
+    WHERE scope_canon != '';
+`); err != nil {
+					return fmt.Errorf("agent+scope unique index on cortex_overlays: %w", err)
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS cortex_overlays CASCADE`)
+				return err
+			},
+		},
+		&migrate.Migration{
+			Name:    "add_agent_sections",
+			Version: "20260826000002",
+			Comment: "Carry the system prompt as addressable sections on an agent",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// DEFAULT '[]' rather than NULL or '{}', and it is what
+				// every existing row holds the moment this runs: an empty
+				// JSON array. That is the whole compatibility story. An
+				// agent written before this release has no sections, an
+				// empty sections list means assembly falls back to
+				// system_prompt untouched, and the prompt that agent
+				// produces after the upgrade is byte-identical to the one
+				// it produced before it. A NULL default would have worked
+				// too, but only because every reader remembered to handle
+				// it; an empty array needs no such memory.
+				_, err := exec.Exec(ctx, `ALTER TABLE cortex_agents ADD COLUMN IF NOT EXISTS sections JSONB NOT NULL DEFAULT '[]'`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE cortex_agents DROP COLUMN IF EXISTS sections`)
+				return err
+			},
+		},
 	)
 	return g
 }()

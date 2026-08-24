@@ -39,6 +39,7 @@ const (
 	PrefixPersona             Prefix = "prs"
 	PrefixSession             Prefix = "ses"
 	PrefixSuspension          Prefix = "sus"
+	PrefixOverlay             Prefix = "ovl"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -164,6 +165,9 @@ type SessionID = ID
 // SuspensionID is a type-safe identifier for suspensions (prefix: "sus").
 type SuspensionID = ID
 
+// OverlayID is a type-safe identifier for prompt overlays (prefix: "ovl").
+type OverlayID = ID
+
 // AnyID is a type alias that accepts any valid prefix.
 type AnyID = ID
 
@@ -216,6 +220,9 @@ func NewSessionID() ID { return New(PrefixSession) }
 // NewSuspensionID generates a new unique suspension ID.
 func NewSuspensionID() ID { return New(PrefixSuspension) }
 
+// NewOverlayID generates a new unique overlay ID.
+func NewOverlayID() ID { return New(PrefixOverlay) }
+
 // ──────────────────────────────────────────────────
 // Convenience parsers
 // ──────────────────────────────────────────────────
@@ -266,6 +273,9 @@ func ParseSessionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSess
 
 // ParseSuspensionID parses a string and validates the "sus" prefix.
 func ParseSuspensionID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSuspension) }
+
+// ParseOverlayID parses a string and validates the "ovl" prefix.
+func ParseOverlayID(s string) (ID, error) { return ParseWithPrefix(s, PrefixOverlay) }
 
 // ParseOptionalSessionID parses s as a session ID, returning the zero ID
 // (rather than an error) when s is empty. Run and memory rows written

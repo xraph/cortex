@@ -23,6 +23,7 @@ import (
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
@@ -205,6 +206,39 @@ func mustCreateSession(t *testing.T, s store.Store, ctx context.Context, agentID
 		t.Fatalf("fixture: create session: %v", err)
 	}
 	return sid
+}
+
+// newOverlay builds an unpersisted overlay fixture for agentID. Every
+// optional field is populated, including both pointer fields, so the
+// round-trip assertion in ScopeExtraNeverNull has something to catch a
+// backend that drops one.
+func newOverlay(agentID id.AgentID) *prompt.Overlay {
+	temperature := 0.25
+	maxTokens := 512
+	return &prompt.Overlay{
+		ID:           id.NewOverlayID(),
+		AgentID:      agentID,
+		Patches:      []prompt.Patch{{ID: "identity", Body: "answer in French", Mode: prompt.PatchAppend}},
+		ToolsAdded:   []string{"translate"},
+		ToolsRemoved: []string{"delete_account"},
+		Model:        "conformance-model",
+		Temperature:  &temperature,
+		MaxTokens:    &maxTokens,
+	}
+}
+
+// mustCreateOverlay creates an overlay under ctx and returns it. It takes
+// agentID rather than creating its own agent, the same way
+// mustCreateSession does: every overlay subtest below turns on one agent
+// id being shared across two scopes, so the caller has to own that
+// decision.
+func mustCreateOverlay(t *testing.T, s store.Store, ctx context.Context, agentID id.AgentID) *prompt.Overlay { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	o := newOverlay(agentID)
+	if err := s.CreateOverlay(ctx, o); err != nil {
+		t.Fatalf("fixture: create overlay: %v", err)
+	}
+	return o
 }
 
 // mustCreateOrchestration creates an orchestration config under ctx and
@@ -646,6 +680,34 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		// silently switching the sweeper off.
 		if _, err := s.ListExpiredAcrossScopes(ctx, time.Now().UTC(), 10); err != nil {
 			t.Errorf("ListExpiredAcrossScopes with no scope = %v, want nil; the sweeper never has one", err)
+		}
+	})
+
+	// Overlay is new this release: store.Store now embeds prompt.Store,
+	// and all three backends implement it. GetOverlayForAgent gets its
+	// guard asserted alongside GetOverlay because it is the read prompt
+	// assembly performs on every run, so a missing guard there is the one
+	// that would actually leak.
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		o := newOverlay(id.NewAgentID())
+		if err := s.CreateOverlay(ctx, o); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("CreateOverlay with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetOverlay(ctx, o.ID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetOverlay with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetOverlayForAgent(ctx, o.AgentID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetOverlayForAgent with no scope = %v, want ErrNoScope", err)
+		}
+		if err := s.UpdateOverlay(ctx, o); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("UpdateOverlay with no scope = %v, want ErrNoScope", err)
+		}
+		if err := s.DeleteOverlay(ctx, o.ID); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("DeleteOverlay with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ListOverlays(ctx, &prompt.ListFilter{}); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ListOverlays with no scope = %v, want ErrNoScope", err)
 		}
 	})
 
@@ -1438,6 +1500,52 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		}
 	})
 
+	// One agent shared by both overlays: only the scope differs between
+	// them, so a predicate that filtered on agent_id instead of scope
+	// would still pass this test by accident. It is also the case the
+	// unique index has to permit, since it keys one overlay per agent PER
+	// SCOPE rather than one per agent.
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		agentID := mustCreateAgent(t, s, ctxA, "shared-agent")
+		overlayA := mustCreateOverlay(t, s, ctxA, agentID)
+		overlayB := mustCreateOverlay(t, s, ctxB, agentID)
+
+		gotA, err := s.ListOverlays(ctxA, &prompt.ListFilter{})
+		if err != nil {
+			t.Fatalf("list overlays A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].ID != overlayA.ID {
+			t.Fatalf("ListOverlays(ctxA) = %d overlay(s), want exactly overlayA (predicate isn't filtering)", len(gotA))
+		}
+
+		gotB, err := s.ListOverlays(ctxB, &prompt.ListFilter{})
+		if err != nil {
+			t.Fatalf("list overlays B: %v", err)
+		}
+		if len(gotB) != 1 || gotB[0].ID != overlayB.ID {
+			t.Fatalf("ListOverlays(ctxB) = %d overlay(s), want exactly overlayB", len(gotB))
+		}
+
+		if _, getErr := s.GetOverlay(ctxB, overlayA.ID); !errors.Is(getErr, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlay(ctxB, overlayA.ID) = %v, want ErrOverlayNotFound", getErr)
+		}
+
+		// The per-agent read is the one prompt assembly runs, and both
+		// scopes answer it for the SAME agent id. Scope is the only thing
+		// that can tell the two answers apart.
+		forB, err := s.GetOverlayForAgent(ctxB, agentID)
+		if err != nil {
+			t.Fatalf("get overlay for agent B: %v", err)
+		}
+		if forB.ID != overlayB.ID {
+			t.Errorf("GetOverlayForAgent(ctxB) = %s, want %s (scope B got scope A's overlay)", forB.ID, overlayB.ID)
+		}
+	})
+
 	t.Run("Orchestration", func(t *testing.T) {
 		s := newStore(t)
 		ctxA := ctxWithScope("ws_a")
@@ -2038,6 +2146,42 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
+	// One agent, one overlay, reached from a second scope. Separating the
+	// fixtures by agent instead would mean agent_id alone distinguishes
+	// the rows and the scope predicate is never exercised at all.
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		agentA := mustCreateAgent(t, s, ctxA, "shared-name")
+		overlayA := mustCreateOverlay(t, s, ctxA, agentA)
+
+		if _, err := s.GetOverlay(ctxB, overlayA.ID); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlay from scope B = %v, want ErrOverlayNotFound", err)
+		}
+		if _, err := s.GetOverlayForAgent(ctxB, agentA); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlayForAgent from scope B = %v, want ErrOverlayNotFound", err)
+		}
+
+		mutated := *overlayA
+		mutated.Model = "mutated-from-B"
+		if err := s.UpdateOverlay(ctxB, &mutated); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("UpdateOverlay(ctxB, overlayA) = %v, want ErrOverlayNotFound", err)
+		}
+		if err := s.DeleteOverlay(ctxB, overlayA.ID); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("DeleteOverlay(ctxB, overlayA.ID) = %v, want ErrOverlayNotFound", err)
+		}
+
+		stillA, err := s.GetOverlay(ctxA, overlayA.ID)
+		if err != nil {
+			t.Fatalf("scope A lost its own overlay after B's attempts: %v", err)
+		}
+		if stillA.Model == "mutated-from-B" {
+			t.Error("UpdateOverlay(ctxB, overlayA) mutated scope A's row; a cross-scope update must be a no-op")
+		}
+	})
+
 	// Orchestration gets the same treatment as Agent/Skill/Trait/Behavior/
 	// Persona above: the same name reused across two scopes must resolve
 	// to two distinct rows, proving UNIQUE (scope_canon, name) is what the
@@ -2330,6 +2474,40 @@ func testPrefixMatching(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		agentID := mustCreateAgent(t, s, createCtx, "")
+		o := mustCreateOverlay(t, s, createCtx, agentID)
+
+		broad := ctxWithScope("ws_x")
+		got, err := s.ListOverlays(broad, &prompt.ListFilter{})
+		if err != nil {
+			t.Fatalf("list overlays (broad): %v", err)
+		}
+		if !containsOverlayID(got, o.ID) {
+			t.Errorf("ListOverlays({workspace=ws_x}) didn't return an overlay scoped to {workspace=ws_x, project=p1} (prefix matching broken)")
+		}
+
+		other := ctxWithScope("ws_y")
+		gotOther, err := s.ListOverlays(other, &prompt.ListFilter{})
+		if err != nil {
+			t.Fatalf("list overlays (other workspace): %v", err)
+		}
+		if containsOverlayID(gotOther, o.ID) {
+			t.Errorf("ListOverlays({workspace=ws_y}) incorrectly returned an overlay scoped to {workspace=ws_x, project=p1}")
+		}
+
+		// GetOverlayForAgent is the one overlay read that deliberately
+		// does NOT prefix-match, so the broader context has to miss what
+		// ListOverlays just found. Pinning both here keeps the exact match
+		// from reading as an oversight in whichever of the two a later
+		// reader opens first.
+		if _, err := s.GetOverlayForAgent(broad, agentID); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlayForAgent({workspace=ws_x}) = %v, want ErrOverlayNotFound; the per-agent read matches exactly, not by prefix", err)
+		}
+	})
+
 	// Orchestration is the last entity converted, so its List predicate
 	// against a broader-than-stored filter went untested until now, the
 	// same as Persona's did before it.
@@ -2423,6 +2601,15 @@ func containsPersonaID(ps []*persona.Persona, want id.PersonaID) bool {
 func containsOrchestrationID(cfgs []*orchestration.Config, want id.OrchestrationConfigID) bool {
 	for _, c := range cfgs {
 		if c.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsOverlayID(overlays []*prompt.Overlay, want id.OverlayID) bool {
+	for _, o := range overlays {
+		if o.ID == want {
 			return true
 		}
 	}
@@ -2721,6 +2908,41 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		if reloadedRun.Scope.Canonical() != want {
 			t.Errorf("run scope after claim = %q, want %q (scope must be immutable)", reloadedRun.Scope.Canonical(), want)
+		}
+	})
+
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		createCtx := ctxWithScope("ws_x", "p1")
+		agentID := mustCreateAgent(t, s, createCtx, "")
+		o := mustCreateOverlay(t, s, createCtx, agentID)
+
+		loaded, err := s.GetOverlay(createCtx, o.ID)
+		if err != nil {
+			t.Fatalf("get overlay: %v", err)
+		}
+		if got := loaded.Scope.Canonical(); got != want {
+			t.Fatalf("scope after create = %q, want %q", got, want)
+		}
+		loaded.Model = "mutated"
+
+		// A broader context (workspace only, no project) still
+		// authorizes the update via prefix matching, but must not
+		// collapse the row's own stored scope down to the broader one.
+		updateCtx := ctxWithScope("ws_x")
+		if err = s.UpdateOverlay(updateCtx, loaded); err != nil {
+			t.Fatalf("update overlay: %v", err)
+		}
+
+		reloaded, err := s.GetOverlay(createCtx, o.ID)
+		if err != nil {
+			t.Fatalf("reload overlay: %v", err)
+		}
+		if reloaded.Scope.Canonical() != want {
+			t.Errorf("scope after update = %q, want %q (scope must be immutable)", reloaded.Scope.Canonical(), want)
+		}
+		if reloaded.Model != "mutated" {
+			t.Errorf("Model after update = %q, want %q (the update must actually land, not silently no-op)", reloaded.Model, "mutated")
 		}
 	})
 
@@ -3024,6 +3246,48 @@ func testScopeExtraNeverNull(t *testing.T, newStore func(t *testing.T) store.Sto
 		}
 		if len(gotCfg.Tools) != 1 || gotCfg.Tools[0] != wantCfg.Tools[0] {
 			t.Errorf("continuation config tools round-tripped as %v, want %v", gotCfg.Tools, wantCfg.Tools)
+		}
+	})
+
+	t.Run("Overlay", func(t *testing.T) {
+		s := newStore(t)
+		agentID := mustCreateAgent(t, s, ctx, "")
+		o := mustCreateOverlay(t, s, ctx, agentID)
+		got, err := s.GetOverlay(ctx, o.ID)
+		if err != nil {
+			t.Fatalf("get overlay after create with no overflow levels: %v (scope_extra NOT NULL hazard?)", err)
+		}
+		if got.Scope.Canonical() != want {
+			t.Errorf("Scope.Canonical() = %q, want %q", got.Scope.Canonical(), want)
+		}
+		// The round-trip is asserted here for the same reason the
+		// Suspension subtest above does it: this is the one place an
+		// overlay is written and read back with nothing else going on, so
+		// a backend that mangled the patch encoding would otherwise pass
+		// every scope assertion in this file with two empty slices
+		// comparing equal.
+		if len(got.Patches) != 1 || got.Patches[0] != o.Patches[0] {
+			t.Errorf("patches round-tripped as %+v, want %+v", got.Patches, o.Patches)
+		}
+		if len(got.ToolsAdded) != 1 || got.ToolsAdded[0] != o.ToolsAdded[0] {
+			t.Errorf("tools_added round-tripped as %v, want %v", got.ToolsAdded, o.ToolsAdded)
+		}
+		if len(got.ToolsRemoved) != 1 || got.ToolsRemoved[0] != o.ToolsRemoved[0] {
+			t.Errorf("tools_removed round-tripped as %v, want %v", got.ToolsRemoved, o.ToolsRemoved)
+		}
+		if got.Model != o.Model {
+			t.Errorf("model round-tripped as %q, want %q", got.Model, o.Model)
+		}
+		// Both are pointers so that an unset override stays
+		// distinguishable from one pinned to zero. A backend that stored
+		// them as plain values would come back non-nil here with a zero
+		// inside, which is why the value is checked and not just the
+		// pointer.
+		if got.Temperature == nil || *got.Temperature != *o.Temperature {
+			t.Errorf("temperature round-tripped as %v, want %v", got.Temperature, *o.Temperature)
+		}
+		if got.MaxTokens == nil || *got.MaxTokens != *o.MaxTokens {
+			t.Errorf("max_tokens round-tripped as %v, want %v", got.MaxTokens, *o.MaxTokens)
 		}
 	})
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/prompt"
 )
 
 // Config defines an agent's configuration. Supports both flat mode (tools list + system prompt)
@@ -32,6 +33,14 @@ type Config struct {
 	InlineSkills    []string `json:"inline_skills,omitempty"`
 	InlineTraits    []string `json:"inline_traits,omitempty"`
 	InlineBehaviors []string `json:"inline_behaviors,omitempty"`
+
+	// Sections is the system prompt as an ordered set of addressable
+	// pieces, which is what a scope overlay patches. It is empty for
+	// every agent that only ever set SystemPrompt, and an empty Sections
+	// means "use SystemPrompt as-is" rather than "this agent has no
+	// prompt": an agent written before sections existed has to assemble
+	// to the exact string it always did.
+	Sections []prompt.Section `json:"sections,omitempty"`
 }
 
 // HasPersona returns true if this agent uses the persona system.

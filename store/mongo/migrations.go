@@ -168,6 +168,21 @@ const (
 	suspensionExpiryIndexName    = "cortex_suspensions_expiry"
 )
 
+// overlayAgentScopeUniqueIndexName is the fixed name for the partial
+// unique index on cortex_overlays that enforces one overlay per agent
+// per scope, so a future migration can find and drop it by name the same
+// way the stale *AppNameIndexName constants above are used. Like
+// cortex_sessions and cortex_suspensions, cortex_overlays is new and
+// carries no stale predecessor to drop.
+const overlayAgentScopeUniqueIndexName = "cortex_overlays_agent_scope_unique"
+
+// The postgres and sqlite backends carry a second migration this release
+// (20260826000002) that adds a sections column to cortex_agents. Mongo
+// has no counterpart because it has no DDL: a document simply gains the
+// field the first time something writes it, and a document without it
+// decodes to an empty section list, which is exactly what an agent that
+// only ever set system_prompt is supposed to have.
+
 // migrationIndexes returns the index definitions for all cortex collections.
 // This is what Store.Migrate actually runs on every startup (idempotent
 // CreateMany).
@@ -352,6 +367,31 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 				Options: options.Index().SetName(suspensionExpiryIndexName).
 					SetPartialFilterExpression(bson.M{"expires_at": bson.M{"$exists": true}}),
 			},
+			scopeIndex,
+		},
+		colOverlays: {
+			// One overlay per agent per scope. Prompt assembly reads
+			// "the" overlay for an agent at a scope, so two documents
+			// competing for that slot would make which one applies a
+			// matter of document order.
+			//
+			// scope_canon $gt "" keeps this in step with every other
+			// partial unique index in this file (colAgents above
+			// documents why), even though cortex_overlays carries no
+			// legacy unscoped documents of its own: it is new this
+			// release, and CreateOverlay always stamps a real scope
+			// before the first write.
+			//
+			// $gt rather than $ne for the same reason as colAgents:
+			// Mongo's partial-index filter language rejects $ne outright,
+			// and "greater than the empty string" is equivalent to
+			// "non-empty" under BSON string ordering.
+			{
+				Keys: bson.D{{Key: "agent_id", Value: 1}, {Key: "scope_canon", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName(overlayAgentScopeUniqueIndexName).
+					SetPartialFilterExpression(bson.M{"scope_canon": bson.M{"$gt": ""}}),
+			},
+			{Keys: bson.D{{Key: "created_at", Value: 1}}},
 			scopeIndex,
 		},
 		colOrchestrationConfigs: {

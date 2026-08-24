@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
@@ -56,6 +57,7 @@ type agentModel struct {
 	InlineSkills    string    `grove:"inline_skills"`
 	InlineTraits    string    `grove:"inline_traits"`
 	InlineBehaviors string    `grove:"inline_behaviors"`
+	Sections        string    `grove:"sections,notnull"`
 	ScopeL0         string    `grove:"scope_l0,notnull"`
 	ScopeL1         string    `grove:"scope_l1,notnull"`
 	ScopeL2         string    `grove:"scope_l2,notnull"`
@@ -91,13 +93,18 @@ func agentToModel(c *agent.Config) *agentModel {
 		InlineSkills:    mustJSON(c.InlineSkills),
 		InlineTraits:    mustJSON(c.InlineTraits),
 		InlineBehaviors: mustJSON(c.InlineBehaviors),
-		ScopeL0:         l0,
-		ScopeL1:         l1,
-		ScopeL2:         l2,
-		ScopeExtra:      extra,
-		ScopeCanon:      c.Scope.Canonical(),
-		CreatedAt:       c.CreatedAt,
-		UpdatedAt:       c.UpdatedAt,
+		// A nil Sections would render as "null", and the column's
+		// DEFAULT '[]' never applies to an explicit write. Coerce it so
+		// the stored value is always a JSON array, which is what the
+		// migration leaves on every pre-existing row too.
+		Sections:   mustJSON(sectionsOrEmpty(c.Sections)),
+		ScopeL0:    l0,
+		ScopeL1:    l1,
+		ScopeL2:    l2,
+		ScopeExtra: extra,
+		ScopeCanon: c.Scope.Canonical(),
+		CreatedAt:  c.CreatedAt,
+		UpdatedAt:  c.UpdatedAt,
 	}
 }
 
@@ -142,6 +149,13 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 	}
 	if err := json.Unmarshal([]byte(m.InlineBehaviors), &c.InlineBehaviors); err != nil {
 		return nil, fmt.Errorf("unmarshal inline_behaviors: %w", err)
+	}
+	// unmarshalField rather than a bare Unmarshal: an agent row that
+	// predates this column reads back "" on a backend that ever hands one
+	// through, and an empty sections list is the correct answer there
+	// rather than a decode failure.
+	if err := unmarshalField("sections", m.Sections, &c.Sections); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
@@ -1206,4 +1220,116 @@ func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// ──────────────────────────────────────────────────
+// Overlay model
+// ──────────────────────────────────────────────────
+
+type overlayModel struct {
+	grove.BaseModel `grove:"table:cortex_overlays"`
+	ID              string    `grove:"id,pk"`
+	AgentID         string    `grove:"agent_id,notnull"`
+	Patches         string    `grove:"patches,notnull"`
+	ToolsAdded      string    `grove:"tools_added,notnull"`
+	ToolsRemoved    string    `grove:"tools_removed,notnull"`
+	Model           string    `grove:"model,notnull"`
+	Temperature     *float64  `grove:"temperature"`
+	MaxTokens       *int      `grove:"max_tokens"`
+	ScopeL0         string    `grove:"scope_l0,notnull"`
+	ScopeL1         string    `grove:"scope_l1,notnull"`
+	ScopeL2         string    `grove:"scope_l2,notnull"`
+	ScopeExtra      string    `grove:"scope_extra,notnull"`
+	ScopeCanon      string    `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time `grove:"created_at"`
+	UpdatedAt       time.Time `grove:"updated_at"`
+}
+
+func overlayToModel(o *prompt.Overlay) *overlayModel {
+	l0, l1, l2, extra := scopeColumns(o.Scope)
+	return &overlayModel{
+		ID:      o.ID.String(),
+		AgentID: o.AgentID.String(),
+		// The three JSON columns are NOT NULL DEFAULT '[]', and a
+		// DEFAULT never applies to an explicit write, so a nil slice
+		// rendered as "null" would land in the column verbatim. Coerce
+		// each one so a reader always gets an array back.
+		Patches:      mustJSON(patchesOrEmpty(o.Patches)),
+		ToolsAdded:   mustJSON(stringsOrEmpty(o.ToolsAdded)),
+		ToolsRemoved: mustJSON(stringsOrEmpty(o.ToolsRemoved)),
+		Model:        o.Model,
+		Temperature:  o.Temperature,
+		MaxTokens:    o.MaxTokens,
+		ScopeL0:      l0,
+		ScopeL1:      l1,
+		ScopeL2:      l2,
+		ScopeExtra:   extra,
+		ScopeCanon:   o.Scope.Canonical(),
+		CreatedAt:    o.CreatedAt,
+		UpdatedAt:    o.UpdatedAt,
+	}
+}
+
+func overlayFromModel(m *overlayModel) (*prompt.Overlay, error) {
+	overlayID, err := id.ParseOverlayID(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := id.ParseAgentID(m.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("overlay %s: %w", overlayID, err)
+	}
+	o := &prompt.Overlay{
+		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:          overlayID,
+		AgentID:     agentID,
+		Scope:       scope,
+		Model:       m.Model,
+		Temperature: m.Temperature,
+		MaxTokens:   m.MaxTokens,
+	}
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"patches", m.Patches, &o.Patches},
+		{"tools_added", m.ToolsAdded, &o.ToolsAdded},
+		{"tools_removed", m.ToolsRemoved, &o.ToolsRemoved},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return o, nil
+}
+
+// sectionsOrEmpty, patchesOrEmpty and stringsOrEmpty turn a nil slice
+// into an empty one so mustJSON renders "[]" instead of "null". Three
+// one-liners rather than one generic helper because the JSON these feed
+// is what a NOT NULL column stores, and a shared helper that silently
+// changed shape would change what every one of those columns holds.
+func sectionsOrEmpty(v []prompt.Section) []prompt.Section {
+	if v == nil {
+		return []prompt.Section{}
+	}
+	return v
+}
+
+func patchesOrEmpty(v []prompt.Patch) []prompt.Patch {
+	if v == nil {
+		return []prompt.Patch{}
+	}
+	return v
+}
+
+func stringsOrEmpty(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
