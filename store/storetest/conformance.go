@@ -61,6 +61,14 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// it in front of the FindOneAndUpdate because it has no cross-
 	// collection filter to fold it into.
 	t.Run("ClaimSuspensionExpiry", func(t *testing.T) { testClaimSuspensionExpiry(t, newStore) })
+
+	// The sweeper reads its work through two methods nothing else calls:
+	// one that deliberately crosses scopes, and one whose deadline
+	// predicate is the inverse of the resume claim's. Neither is
+	// exercised by the six scope groups above, and the cross-scope one
+	// is exempt from the rule they enforce, so it needs a group that
+	// says so on purpose.
+	t.Run("SweeperReads", func(t *testing.T) { testSweeperReads(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -625,6 +633,19 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 		if _, err := s.ListExpired(ctx, time.Now().UTC(), 10); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("ListExpired with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.ClaimExpiredSuspension(ctx, susp.RunID, time.Now().UTC()); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("ClaimExpiredSuspension with no scope = %v, want ErrNoScope", err)
+		}
+
+		// ListExpiredAcrossScopes is the one method in this file that
+		// must NOT reject an unscoped context. The sweeper has no
+		// request scope, so guarding it would make it useless; the
+		// asymmetry is deliberate and it is asserted here so a later
+		// tidy-up that "fixes" the missing guard fails loudly instead of
+		// silently switching the sweeper off.
+		if _, err := s.ListExpiredAcrossScopes(ctx, time.Now().UTC(), 10); err != nil {
+			t.Errorf("ListExpiredAcrossScopes with no scope = %v, want nil; the sweeper never has one", err)
 		}
 	})
 
@@ -3245,6 +3266,235 @@ func testClaimSuspensionExpiry(t *testing.T, newStore func(t *testing.T) store.S
 		}
 		if reloaded.State != run.StatePaused {
 			t.Errorf("run state after a claim that found no suspension = %q, want %q", reloaded.State, run.StatePaused)
+		}
+	})
+}
+
+// ──────────────────────────────────────────────────
+// The sweeper's two methods
+// ──────────────────────────────────────────────────
+
+// testSweeperReads covers the pair of methods the expiry sweeper uses
+// and nothing else does: a list that deliberately crosses scopes, and a
+// claim whose deadline predicate is the exact inverse of the resume
+// claim's.
+//
+// Both need proving per backend for the same reason the resume claim
+// does. The SQL backends fold the deadline into an UPDATE predicate and
+// read the scope filter out of a shared helper; mongo checks the
+// deadline in front of a FindOneAndUpdate and builds its filter from a
+// bson map. Proving one says nothing about the others.
+func testSweeperReads(t *testing.T, newStore func(t *testing.T) store.Store) {
+	// The cross-scope read is the whole reason the method exists, so the
+	// fixture is two suspensions in two unrelated scopes and the
+	// assertion is that one unscoped call sees both. A scoped ListExpired
+	// over the same rows is asserted alongside it, because "returns
+	// everything" is only meaningful next to "returns one".
+	t.Run("ListExpiredAcrossScopes_SeesEveryScope", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+		_, suspA := mustSuspendRun(t, s, ctxA, pastDeadline())
+		_, suspB := mustSuspendRun(t, s, ctxB, pastDeadline())
+
+		// Two contexts, one assertion. The unscoped one is what the
+		// sweeper actually holds; the scope A one is what catches an
+		// implementation that reads the context's scope and filters by
+		// it, which an unscoped call alone cannot catch because an
+		// empty scope filters nothing.
+		for _, c := range []struct {
+			name string
+			ctx  context.Context
+		}{
+			{name: "no scope at all", ctx: context.Background()},
+			{name: "somebody else's scope on the context", ctx: ctxA},
+		} {
+			all, err := s.ListExpiredAcrossScopes(c.ctx, time.Now().UTC(), 100)
+			if err != nil {
+				t.Fatalf("ListExpiredAcrossScopes with %s: %v", c.name, err)
+			}
+			if !containsSuspensionID(all, suspA.ID) || !containsSuspensionID(all, suspB.ID) {
+				t.Fatalf("ListExpiredAcrossScopes with %s returned %d rows, missing one of %s / %s; a sweeper that cannot see every scope sweeps nothing", c.name, len(all), suspA.ID, suspB.ID)
+			}
+		}
+
+		scoped, err := s.ListExpired(ctxA, time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("ListExpired(ctxA): %v", err)
+		}
+		if !containsSuspensionID(scoped, suspA.ID) || containsSuspensionID(scoped, suspB.ID) {
+			t.Errorf("ListExpired(ctxA) returned %d rows and did not hold exactly scope A's; the scoped read must still filter", len(scoped))
+		}
+	})
+
+	// Every returned row carries its own scope, because that is what the
+	// sweeper rebinds its context to before touching the run. A
+	// cross-scope list that dropped the scope on the way back would leave
+	// the caller with no way to do the per-run work where the run lives.
+	t.Run("ListExpiredAcrossScopes_RowsCarryTheirOwnScope", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a", "p1")
+		_, suspA := mustSuspendRun(t, s, ctxA, pastDeadline())
+
+		all, err := s.ListExpiredAcrossScopes(context.Background(), time.Now().UTC(), 100)
+		if err != nil {
+			t.Fatalf("ListExpiredAcrossScopes: %v", err)
+		}
+		var got *suspension.Suspension
+		for _, sp := range all {
+			if sp.ID == suspA.ID {
+				got = sp
+			}
+		}
+		if got == nil {
+			t.Fatalf("ListExpiredAcrossScopes did not return %s", suspA.ID)
+		}
+		if got.Scope.Canonical() != scopeOf("ws_a", "p1").Canonical() {
+			t.Errorf("row scope = %v, want ws_a/p1; the sweeper has nothing else to rebind its context to", got.Scope)
+		}
+	})
+
+	// The deadline axis, on three fixtures that differ ONLY in the
+	// deadline: past, still ahead, none at all. The claim must take the
+	// first and refuse the other two, which is the exact inverse of what
+	// ClaimSuspension does with the same three rows.
+	t.Run("ClaimExpiredSuspension_TakesOnlyThePastDeadline", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			expiresAt *time.Time
+			wantClaim bool
+		}{
+			{name: "past", expiresAt: pastDeadline(), wantClaim: true},
+			{name: "still ahead", expiresAt: futureDeadline(), wantClaim: false},
+			{name: "none at all", expiresAt: nil, wantClaim: false},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				s := newStore(t)
+				ctx := ctxWithScope("ws_x")
+				r, susp := mustSuspendRun(t, s, ctx, tc.expiresAt)
+
+				claimed, err := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC())
+				if tc.wantClaim {
+					if err != nil {
+						t.Fatalf("ClaimExpiredSuspension on an expired suspension: %v", err)
+					}
+					if claimed == nil || claimed.ID != susp.ID {
+						t.Fatalf("claim returned %v, want suspension %s", claimed, susp.ID)
+					}
+				} else {
+					if !errors.Is(err, cortex.ErrNotSuspended) {
+						t.Fatalf("ClaimExpiredSuspension = (%v, %v), want ErrNotSuspended; a sweep must not take a run somebody can still resume", claimed, err)
+					}
+					if claimed != nil {
+						t.Errorf("refused claim returned a suspension alongside the error: %v", claimed)
+					}
+				}
+
+				wantState := run.StatePaused
+				if tc.wantClaim {
+					wantState = run.StateRunning
+				}
+				reloaded, err := s.GetRun(ctx, r.ID)
+				if err != nil {
+					t.Fatalf("reload run after the claim: %v", err)
+				}
+				if reloaded.State != wantState {
+					t.Errorf("run state after the claim = %q, want %q; the error alone cannot tell a claim that moved the run from one that did not", reloaded.State, wantState)
+				}
+			})
+		}
+	})
+
+	// The exclusivity property, stated as a sequence rather than a race
+	// so it fails deterministically. A resume claims the run first; the
+	// sweep then finds the deadline passed and must still refuse,
+	// because the run is no longer paused. Without that the sweep would
+	// fail a run mid-resume, which is exactly the corruption the whole
+	// claim exists to prevent.
+	t.Run("ClaimExpiredSuspension_RefusesARunAResumeAlreadyClaimed", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		// The deadline is ahead at claim time and behind by the time the
+		// sweep asks, which is the real interleaving: a resume that beat
+		// the deadline and is still running when the sweeper comes past.
+		r, _ := mustSuspendRun(t, s, ctx, futureDeadline())
+
+		if _, err := s.ClaimSuspension(ctx, r.ID); err != nil {
+			t.Fatalf("the resume's claim: %v", err)
+		}
+
+		claimed, err := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC().Add(2*time.Hour))
+		if !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Fatalf("ClaimExpiredSuspension against a run a resume already claimed = (%v, %v), want ErrNotSuspended", claimed, err)
+		}
+
+		reloaded, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("reload run after the refused sweep claim: %v", err)
+		}
+		if reloaded.State != run.StateRunning {
+			t.Errorf("run state = %q, want %q; the sweep moved a run the resume owns", reloaded.State, run.StateRunning)
+		}
+	})
+
+	// A second sweep of the same row finds nothing, for the same reason
+	// a second resume does: the first claim moved the run out of paused.
+	t.Run("ClaimExpiredSuspension_SecondClaimAfterWinReturnsNotSuspended", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_x")
+		r, susp := mustSuspendRun(t, s, ctx, pastDeadline())
+
+		first, err := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC())
+		if err != nil {
+			t.Fatalf("first claim: %v", err)
+		}
+		if first.ID != susp.ID {
+			t.Fatalf("first claim returned %s, want %s", first.ID, susp.ID)
+		}
+
+		second, err := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC())
+		if !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Fatalf("second claim = (%v, %v), want ErrNotSuspended", second, err)
+		}
+
+		// The row survives the claim. Dropping it is DeleteSuspension's
+		// job, once the sweep has actually failed the run.
+		if _, err := s.GetSuspension(ctx, r.ID); err != nil {
+			t.Errorf("suspension gone after a sweep claim: %v (the claim must not delete it)", err)
+		}
+	})
+
+	// A resume and a sweep answer against the same stored deadline from
+	// opposite sides, so the same row can never look claimable to both.
+	// This is the partition argument itself, asserted rather than
+	// reasoned about.
+	t.Run("ClaimsPartitionTheSameRow", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			expiresAt *time.Time
+		}{
+			{name: "past", expiresAt: pastDeadline()},
+			{name: "still ahead", expiresAt: futureDeadline()},
+			{name: "none at all", expiresAt: nil},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				s := newStore(t)
+				ctx := ctxWithScope("ws_x")
+				r, _ := mustSuspendRun(t, s, ctx, tc.expiresAt)
+
+				_, resumeErr := s.ClaimSuspension(ctx, r.ID)
+				// Whatever the resume did, the sweep asks second and
+				// against the same row.
+				_, sweepErr := s.ClaimExpiredSuspension(ctx, r.ID, time.Now().UTC())
+				if resumeErr == nil && sweepErr == nil {
+					t.Fatal("both a resume and a sweep claimed the same suspension; the deadline predicates overlap")
+				}
+				if resumeErr != nil && sweepErr != nil && tc.expiresAt != nil && tc.expiresAt.Before(time.Now().UTC()) {
+					t.Fatalf("neither a resume nor a sweep could claim an expired suspension: resume = %v, sweep = %v; the row is wedged", resumeErr, sweepErr)
+				}
+			})
 		}
 	})
 }

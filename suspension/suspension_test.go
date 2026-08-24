@@ -106,6 +106,14 @@ func (fakeStore) ListExpired(_ context.Context, _ time.Time, _ int) ([]*suspensi
 	return nil, nil
 }
 
+func (fakeStore) ListExpiredAcrossScopes(_ context.Context, _ time.Time, _ int) ([]*suspension.Suspension, error) {
+	return nil, nil
+}
+
+func (fakeStore) ClaimExpiredSuspension(_ context.Context, _ id.AgentRunID, _ time.Time) (*suspension.Suspension, error) {
+	return nil, nil
+}
+
 // A pending call has to carry enough for the caller to execute it. If
 // Arguments is dropped on the way through storage, the external-tool
 // path still compiles and still round-trips, and the caller is simply

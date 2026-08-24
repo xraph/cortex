@@ -157,7 +157,44 @@ type Store interface {
 	DeleteSuspension(ctx context.Context, runID id.AgentRunID) error
 
 	// ListExpired returns suspensions whose ExpiresAt is at or before
-	// now, bounded to at most limit rows, for the expiry sweep to pick
-	// up and resolve.
+	// now, bounded to at most limit rows, within the caller's scope.
 	ListExpired(ctx context.Context, now time.Time, limit int) ([]*Suspension, error)
+
+	// ListExpiredAcrossScopes is ListExpired with the scope filter
+	// DELIBERATELY BYPASSED: it returns expired suspensions from every
+	// scope in the database, and it is the one read in this interface
+	// that does.
+	//
+	// It exists for the engine's expiry sweeper and nothing else. A
+	// sweeper is process infrastructure started by Engine.Start, so
+	// there is no request scope on its context and no way to enumerate
+	// the scopes that have rows; ListExpired would sweep whichever scope
+	// the sweeper's context happened to carry, which in practice is
+	// none. Hence a second method rather than a flag or a sentinel
+	// scope: a cross-scope read has to be visible as one at the call
+	// site, and no handler can reach this by passing a zero value.
+	//
+	// Crossing scopes to FIND the work does not license doing the work
+	// unscoped. Callers must rebind their context to each returned
+	// suspension's own Scope before touching that run, exactly as Resume
+	// does.
+	ListExpiredAcrossScopes(ctx context.Context, now time.Time, limit int) ([]*Suspension, error)
+
+	// ClaimExpiredSuspension is ClaimSuspension's mirror for the expiry
+	// sweeper: the same atomic paused-to-running transition, conditioned
+	// on the suspension being PAST its deadline rather than short of it.
+	//
+	// The two predicates partition the same row, which is what makes a
+	// resume and a sweep exclusive rather than merely unlikely to
+	// collide. A resume that beats the deadline claims the run and the
+	// sweeper can no longer take it; a sweep that finds the deadline
+	// passed takes the run and no resume can claim it afterwards. Both
+	// answer against the same stored ExpiresAt, so there is no window
+	// where the two agree the row is theirs.
+	//
+	// Zero rows matched means somebody else got there first, and it
+	// returns cortex.ErrNotSuspended. The sweeper skips such a run
+	// rather than failing it: it is either gone, already resumed, or no
+	// longer paused.
+	ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*Suspension, error)
 }

@@ -108,7 +108,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		Set("updated_at = ?", now).
 		Where("id = ?", runID.String()).
 		Where("state = ?", string(run.StatePaused))
-	q = q.Where(unexpiredSuspensionExists(scope), unexpiredSuspensionArgs(scope, runID, now)...)
+	q = q.Where(unexpiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, now)...)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -138,6 +138,65 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	return suspensionFromModel(m)
 }
 
+// ClaimExpiredSuspension is ClaimSuspension with the deadline predicate
+// inverted, for the sweeper. See the interface doc for why the two
+// partition the same row rather than overlapping on it.
+//
+// The rowcount check carries more weight here than it does above,
+// because the sweeper's next move is to fail the run. Without it a sweep
+// would mark failed a run some resume had already taken and was part way
+// through continuing, and the run would keep executing under a terminal
+// state nothing put it in.
+//
+// Zero rows is reported as ErrNotSuspended without a second read to
+// classify it. The three ways to get here (the row is gone, the run is
+// no longer paused, the deadline moved) all mean the same thing to the
+// only caller: somebody else owns this run, leave it alone.
+func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*suspension.Suspension, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+
+	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: begin claim expired suspension: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // no-op after commit, unactionable otherwise
+
+	at := now.UTC()
+	q := tx.NewUpdate((*runModel)(nil)).
+		Set("state = ?", string(run.StateRunning)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", runID.String()).
+		Where("state = ?", string(run.StatePaused))
+	q = q.Where(expiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, at)...)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	res, err := q.Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: claim expired suspension: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("cortex: claim expired suspension rows affected: %w", err)
+	}
+	if n == 0 {
+		return nil, cortex.ErrNotSuspended
+	}
+
+	m, err := selectSuspensionRow(ctx, tx, scope, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("cortex: commit claim expired suspension: %w", err)
+	}
+	return suspensionFromModel(m)
+}
+
 // unexpiredSuspensionExists is the claim's expiry predicate. It is a
 // subquery rather than a join because the state transition it guards
 // writes to cortex_runs while the deadline lives on cortex_suspensions,
@@ -152,9 +211,25 @@ func unexpiredSuspensionExists(scope cortex.Scope) string {
 	return q + ")"
 }
 
-// unexpiredSuspensionArgs supplies unexpiredSuspensionExists's bind
-// values in the order its placeholders appear.
-func unexpiredSuspensionArgs(scope cortex.Scope, runID id.AgentRunID, now time.Time) []any {
+// expiredSuspensionExists is the sweeper's half of the same split: the
+// suspension is there, it carries a deadline, and the deadline has
+// passed. It is the exact complement of unexpiredSuspensionExists over
+// rows that have a suspension at all, so no row can satisfy both and a
+// resume and a sweep can never each believe they own the same run.
+func expiredSuspensionExists(scope cortex.Scope) string {
+	q := "EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ?" +
+		" AND cs.expires_at IS NOT NULL AND cs.expires_at <= ?"
+	for _, p := range scopePredicates(scope, false) {
+		q += " AND cs." + p.Column + " = ?"
+	}
+	return q + ")"
+}
+
+// suspensionDeadlineArgs supplies the bind values for either deadline
+// predicate above, in the order their placeholders appear. The two share
+// it because they take the same three things in the same order, and a
+// second copy would be a second place to get the ordering wrong.
+func suspensionDeadlineArgs(scope cortex.Scope, runID id.AgentRunID, now time.Time) []any {
 	preds := scopePredicates(scope, false)
 	args := make([]any, 0, len(preds)+2)
 	args = append(args, runID.String(), now)
@@ -211,12 +286,30 @@ func (s *Store) ListExpired(ctx context.Context, now time.Time, limit int) ([]*s
 	if scope.IsZero() {
 		return nil, cortex.ErrNoScope
 	}
+	return s.expiredSuspensions(ctx, scopePredicates(scope, false), now, limit)
+}
+
+// ListExpiredAcrossScopes reads expired suspensions from every scope,
+// with no scope guard and no scope predicates. That is deliberate and it
+// is why the method is named for it: the expiry sweeper runs without a
+// request scope, and a sweep that filtered would silently sweep nothing.
+// See the suspension.Store doc for the full argument.
+func (s *Store) ListExpiredAcrossScopes(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error) {
+	return s.expiredSuspensions(ctx, nil, now, limit)
+}
+
+// expiredSuspensions is the query both list methods run, differing only
+// in whether they hand it scope predicates. Sharing it keeps the
+// deadline condition and the ordering identical, so the sweeper can
+// never see a row a scoped ListExpired would have hidden for any reason
+// other than scope.
+func (s *Store) expiredSuspensions(ctx context.Context, preds []scopePredicate, now time.Time, limit int) ([]*suspension.Suspension, error) {
 	var models []suspensionModel
 	q := s.pgdb.NewSelect(&models).
 		Where("expires_at IS NOT NULL").
 		Where("expires_at <= ?", now.UTC()).
 		OrderExpr("expires_at ASC")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range preds {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if limit > 0 {
