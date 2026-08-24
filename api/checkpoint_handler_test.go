@@ -70,8 +70,13 @@ func TestDecisionFromRequest_ApprovedAndRejectedAreNotInterchangeable(t *testing
 		decision string
 		want     bool
 	}{
-		{name: "approved grants the call", decision: approvedDecision, want: true},
-		{name: "rejected fails the run", decision: rejectedDecision, want: false},
+		// The wire strings on purpose, not the constants. A table written
+		// over approvedDecision and rejectedDecision pins the switch arms
+		// to each other and nothing to the protocol, so swapping the two
+		// constant values leaves it green while the dashboard, which sends
+		// the literal "approved", starts rejecting what an operator approved.
+		{name: "approved grants the call", decision: "approved", want: true},
+		{name: "rejected fails the run", decision: "rejected", want: false},
 	}
 
 	for _, tc := range tests {
