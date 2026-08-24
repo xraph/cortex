@@ -210,14 +210,14 @@ func TestResolveCheckpoint_AHostCreatedCheckpointIsRecordedAndNothingElse(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := cortex.WithScope(context.Background(), approvalScope())
 			st := newApprovalStore(ctx, t)
-			e, err := New(WithStore(st))
-			if err != nil {
-				t.Fatalf("New: %v", err)
+			e, newErr := New(WithStore(st))
+			if newErr != nil {
+				t.Fatalf("New: %v", newErr)
 			}
 
-			ag, err := st.GetByName(ctx, "assistant")
-			if err != nil {
-				t.Fatalf("load agent: %v", err)
+			ag, agErr := st.GetByName(ctx, "assistant")
+			if agErr != nil {
+				t.Fatalf("load agent: %v", agErr)
 			}
 			r := &run.Run{
 				Entity:  cortex.NewEntity(),
