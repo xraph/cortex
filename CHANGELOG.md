@@ -58,21 +58,29 @@ before upgrading.
   your backend.
 - **`Engine.ResolveCheckpoint` now carries the decision to the run.** It
   used to be a one-line passthrough to `store.Resolve` that always
-  succeeded. It now reads the checkpoint first and refuses
-  one that is not `pending` with `cortex.ErrInvalidState`, then approves
-  by claiming the run's suspension and resuming it, or rejects by
-  claiming the suspension and failing the run with `decision.Reason`, and
-  only records the decision once that has taken effect. An approval
-  resumes synchronously, the same way `RunAgent` runs synchronously, so
-  the call returns when the run does and a REST client holds its request
-  open for the length of the rest of the run.
+  succeeded. It now reads the checkpoint first and refuses one that is
+  not `pending` with `cortex.ErrInvalidState`. For a checkpoint the loop
+  opened it then approves by claiming the run's suspension and resuming
+  it, or rejects by claiming the suspension and failing the run with
+  `decision.Reason`, and it records the decision only once that has taken
+  effect. An approval resumes synchronously, the same way `RunAgent` runs
+  synchronously, so the call returns when the run does and a REST client
+  holds its request open for the length of the rest of the run.
 
-  If you were creating checkpoints yourself through the store and
-  resolving them through the engine, that stops working. There's no
-  suspension behind such a checkpoint, so an approval comes back with
-  `cortex: run not suspended` from the suspension read and a rejection
-  gets the same from the claim. Neither one records anything. For a
-  checkpoint the engine didn't open, call `Store().Resolve` directly.
+  A checkpoint you wrote yourself is still recorded and nothing else is
+  touched. Nothing in the tree created a checkpoint before this release,
+  so every checkpoint that exists today is one of yours, and none of them
+  has a paused run behind it. The two kinds are told apart by a
+  `suspension_id` key the loop stamps into the row's metadata rather than
+  by asking the store what it holds right now, so an approval that
+  expired and took its suspension with it still routes as loop-created
+  and still tells the operator so.
+
+  What does change for a row of your own is the read in front of the
+  write. A checkpoint whose state is not `pending` is refused instead of
+  resolved again, so if you keep states of your own on those rows, or you
+  resolve the same one twice and rely on the second call succeeding, that
+  call comes back `cortex.ErrInvalidState` now.
 - **`Engine.Start` now launches a background goroutine, and
   `Engine.Stop` joins it.** The goroutine is the expiry sweeper: it ticks
   once a minute, reads suspensions past their deadline across every
