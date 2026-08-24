@@ -42,6 +42,7 @@ The central Engine coordinator and all CRUD passthroughs.
 | `Engine.GetRun`, `ListRuns` | Run reads (2 methods) |
 | `Engine.LoadConversation`, `ClearConversation` | Memory (2 methods) |
 | `Engine.ListPendingCheckpoints`, `ResolveCheckpoint` | Checkpoint (2 methods) |
+| `Engine.Resume`, `ResumeStream` | Continue a suspended run (2 methods) |
 | `Option`, `WithStore`, `WithExtension`, `WithLogger`, `WithConfig` | Engine options |
 
 ## Domain packages
@@ -416,7 +417,9 @@ func (e *Extension) API() *api.API
 | `perception` | Domain | Perception models |
 | `run` | Execution | Run tracking |
 | `memory` | Execution | Conversation memory |
+| `session` | Execution | Conversation threads |
 | `checkpoint` | Execution | Human-in-the-loop |
+| `suspension` | Execution | Paused runs and their continuations |
 | `id` | Identity | TypeID identifiers |
 | `store` | Infrastructure | Composite store interface |
 | `store/postgres` | Infrastructure | PostgreSQL implementation |

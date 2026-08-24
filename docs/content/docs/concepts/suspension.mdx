@@ -1,0 +1,462 @@
+---
+title: Suspension
+description: Pausing a run mid-step for an external tool or a human approval, and resuming it later.
+---
+
+A run normally goes from start to finish inside one call. Suspension is what
+happens when it can't: the model asks for something the engine cannot supply on
+its own, so the loop writes down everything it needs to carry on, stops, and
+waits. Later you hand back what it was missing and it continues from the same
+step, with the same messages, under the same scope.
+
+Two things make a run suspend, and they share one mechanism because they're the
+same problem. A tool the engine advertises but doesn't execute, registered with
+`engine.WithExternalTool`. And a tool call an authorizer escalates by returning
+`cortex.ErrRequiresApproval`, which pauses the run and opens a checkpoint for a
+person to decide. Either way you get one `suspension.Suspension` row, the run
+lands in `run.StatePaused`, and `Engine.Resume` picks it up.
+
+## Registering an external tool
+
+An external tool is a tool definition with no handler behind it. The model sees
+it and can call it exactly like any other; you're the one who runs it.
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExternalTool(llm.Tool{
+        Name:        "ask_human",
+        Description: "Ask the person running this agent a question and wait for their answer.",
+        Parameters: map[string]any{
+            "type": "object",
+            "properties": map[string]any{
+                "question": map[string]any{"type": "string"},
+            },
+            "required": []string{"question"},
+        },
+    }),
+)
+```
+
+That's the whole registration. There's no handler argument, because if there
+were one the engine would just call it and nothing would ever pause.
+
+Two things behave the same as a `WithTool` registration and one doesn't. The
+definition reaches the model through `resolveTools` like any other, and
+`ToolAuthorizer.Visible` can hide it and `Authorize` can deny a call to it. The
+difference is `cfg.Tools`: an external tool is filtered by an agent's tool
+list, where the builtins cortex ships are exempt. A builtin exists because of
+engine configuration the agent never named, so filtering it by name would
+silently kill an agent's knowledge search. An external tool is a host
+registration like any other, and `cfg.Tools` is exactly how an agent picks
+among those.
+
+`Engine.Dispatch` refuses external tools outright. Dispatch has no run behind
+it, so it has nowhere to suspend, and it says so rather than returning a blank
+result that reads like a tool that ran and said nothing.
+
+## What a suspended run looks like
+
+`RunAgent` returns normally when a run suspends. It doesn't error, and the run
+you get back is in `paused` with its `StepCount` and `TokensUsed` already
+counting the work it did before it stopped. Check the state, then read the
+suspension for the detail:
+
+```go
+if r.State != run.StatePaused {
+    return nil
+}
+
+susp, err := eng.Store().GetSuspension(ctx, r.ID)
+if err != nil {
+    return err
+}
+
+fmt.Println(susp.Reason) // "external_tool" or "approval"
+for _, p := range susp.Pending {
+    fmt.Printf("call %s: %s(%s)\n", p.ID, p.Name, p.Arguments)
+}
+```
+
+`Pending` carries the model's arguments verbatim, so you can execute the call
+without cross-referencing the message history by id to find out what it asked
+for.
+
+A whole step suspends at once, not one call per suspension. If the model asks
+for three tools in one turn and two of them are external, the registered one
+runs inline and fires its normal `ToolCompleted`, and the two external ones
+land in `Pending` together in the order the model asked for them. One
+suspension, two pending calls.
+
+The rest of the suspension is the `Continuation`, and you mostly don't need to
+look at it. It holds the messages, the assembled system prompt, the step index
+to resume at, the token count, the index where this run's own messages start,
+the session id, and the resolved config the run was executing under. All typed
+fields, so a continuation that got mangled fails as a scan error at the store
+boundary instead of as a half-restored run three steps later.
+
+### Streaming
+
+The streaming loop suspends too, and it emits `engine.EventSuspended` as its
+terminal event:
+
+```go
+events := make(chan engine.StreamEvent, 32)
+if err := eng.StreamAgent(ctx, "researcher", "find the flight", nil, events); err != nil {
+    return err
+}
+for ev := range events {
+    if ev.Type == engine.EventSuspended {
+        fmt.Println("paused:", ev.Data["reason"], ev.Data["pending"])
+    }
+}
+```
+
+The data carries `run_id`, `reason` and `pending`. A consumer that doesn't
+handle it sees the channel close after the last delta and reads a paused run as
+a finished one, so wire it up before you register your first external tool.
+`Engine.ResumeStream` is the streaming half of resume, and it announces itself
+with the ordinary `run_started` event carrying `"resumed": true`, because every
+existing consumer already waits for `run_started` and would drop a new type on
+the floor.
+
+## Resuming
+
+You give `Resume` one result per pending call:
+
+```go
+susp, err := eng.Store().GetSuspension(ctx, runID)
+if err != nil {
+    return nil, err
+}
+
+in := engine.ResumeInput{}
+for _, p := range susp.Pending {
+    in.ToolResults = append(in.ToolResults, engine.ToolResult{
+        ToolCallID: p.ID,
+        Content:    answers[p.ID],
+    })
+}
+
+return eng.Resume(ctx, runID, in)
+```
+
+The run continues from the step it stopped on, the model sees your `Content` as
+the tool message for that call, and `Resume` returns the finished run the same
+way `RunAgent` would have.
+
+If your own execution failed, say so instead of dressing the failure up as a
+result:
+
+```go
+return eng.Resume(ctx, runID, engine.ResumeInput{
+    ToolResults: []engine.ToolResult{
+        {ToolCallID: callID, Error: "the operator closed the dialog without answering"},
+    },
+})
+```
+
+`Error` feeds the model the same payload shape an engine-side tool failure
+produces, so the model can't tell where the tool ran from how its failure is
+phrased. It also fires `ToolFailed` where a `Content` result fires
+`ToolCompleted`. That matters more than it looks: v1.10.0 established that
+every tool call ends in exactly one of completed, failed or denied, and a
+pending call fires none of them while it's pending. The resume is what supplies
+the missing one. Without it a call that suspends and then completes would
+vanish from an audit trail entirely, `ToolCalled` with nothing after it,
+forever.
+
+The resumed call also gets its `run.ToolCall` row, on the step whose generation
+asked for it, so it sits next to any sibling call that ran inline. Its
+`StartedAt` is when the run paused and its `CompletedAt` is now, so the latency
+an external tool actually introduces shows up rather than being stamped as
+instantaneous.
+
+### One result per pending call, exactly
+
+The rule is a bijection, and it's checked on the way in. Every pending call
+needs exactly one result, and every result needs to name a pending call. An extra
+result, a duplicate id, or a missing one all come back as
+`cortex.ErrResultsMismatch` with the offending call id in the message.
+
+The reason it's this strict is what the model is about to read. A suspended
+step's last assistant message carries N tool calls, and a conversation where an
+assistant tool call has no matching tool message is malformed for most
+providers, which either error on it or quietly drop the turn. Two results for
+one call is the same problem from the other direction.
+
+A violation costs you nothing. The results are checked once before the
+suspension is claimed and once after, and the first check is the reason a bad
+request is cheap: nothing has moved, so the run is still paused, the suspension
+is still there, and you can fix the ids and call again.
+
+```go
+_, err := eng.Resume(ctx, runID, in)
+switch {
+case errors.Is(err, cortex.ErrResultsMismatch):
+    // Your results and the pending calls do not line up. The run is
+    // untouched and still paused, so fix the ids and call again.
+    return err
+case errors.Is(err, cortex.ErrSuspensionExpired):
+    // The deadline passed. The run is still paused and the sweeper
+    // will fail it on its next tick.
+    return err
+case errors.Is(err, cortex.ErrNotSuspended):
+    // Somebody else resumed it, the sweeper failed it, or it was
+    // never paused at all.
+    return err
+default:
+    return err
+}
+```
+
+`ErrNotSuspended` is also what the loser of a double resume gets. Two calls
+racing the same paused run go through one atomic paused-to-running transition
+in the store, so exactly one of them proceeds and the other is told the run
+isn't suspended. You never get two loops running the same run.
+
+One more error worth knowing: a run that suspended on its last step comes back
+as `cortex.ErrMaxStepsReached` and the run is failed. Your results are still
+recorded and their events still fire, so nothing you did is thrown away. What's
+refused is the pretence that the run finished, because re-entering the loop
+with no step budget left would complete it with empty output, which reads to a
+user as a model that had nothing to say.
+
+## Resume runs under the scope the run started with
+
+A resume continues under the scope stored on the suspension, not the scope on
+the context you passed to `Resume`. Your context still has to carry a scope,
+and it still has to cover the run or the claim finds nothing. But once the
+claim succeeds, cortex rebinds the context to the run's own scope, and every
+read and write from there lands where the run's earlier writes did.
+
+```go
+ctx = cortex.WithScope(ctx, cortex.Scope{
+    Levels: []cortex.Level{{Key: "workspace", Value: "acme"}},
+})
+return eng.Resume(ctx, runID, in)
+```
+
+Say that run started at `workspace=acme/project=payments`. The scope above is
+one level broader, so it covers the run and the claim succeeds. The resumed run
+still saves its conversation into `workspace=acme/project=payments`, still
+writes its steps and tool calls there, and still reads its agent from there.
+
+Why it works this way: a claim matches on a scope prefix, so a caller one level
+broader than the run reaches `Resume` legitimately. A resume operator's console
+is usually exactly that. If the continued run adopted the resumer's scope, half
+a run's rows would sit at the project level and half at the workspace level,
+and the conversation would go missing from the session it started in. Worse, a
+resume arriving with wider authority would quietly continue with it. That's
+authority widening across a pause, and this rule exists to refuse it.
+
+The same rule governs everything else about a resumed run. The config comes
+from the continuation, never from a fresh merge of the agent's, so a run
+started with `RunOverrides{Tools: [...]}` resumes on that narrowed list and a
+run started with a raised `MaxSteps` keeps the raised budget. An agent-config
+edit that lands during the pause doesn't shift a conversation already in
+flight.
+
+## Approval
+
+An authorizer's third answer is `cortex.ErrRequiresApproval`. Return it, or
+wrap it, and the call isn't denied. Nothing goes back to the model, the run
+pauses, and a checkpoint carries the call to whoever decides.
+
+```go
+func (authorizer) Authorize(_ context.Context, s cortex.Subject, call llm.ToolCall) error {
+    switch call.Name {
+    case "read_docs":
+        return nil
+    case "delete_everything":
+        return fmt.Errorf("%q needs a second pair of eyes: %w", call.Name, cortex.ErrRequiresApproval)
+    default:
+        return fmt.Errorf("%q is not available to %v", call.Name, s.Principal)
+    }
+}
+```
+
+Wrap it with `fmt.Errorf` when you want to say why. It's matched with
+`errors.Is`, so the wrapping text is yours to use.
+
+### How an approval differs from a denial
+
+They come out of the same method and they're nothing alike.
+
+A denial is an answer. The error's text goes back to the model as the tool
+result, `ToolDenied` fires, and the run keeps going. The model sees a tool that
+said no and reacts: tries something else, explains to the user, asks for
+different input. The run finishes in the same call.
+
+An approval is a question. Nothing goes back to the model at all, because there
+is no answer yet. The run pauses and a `checkpoint.Checkpoint` is written with
+the calls in its metadata, which is the row `ListPendingCheckpoints` returns and
+the REST endpoints serve. If the decision is yes the run continues and the tool
+finally runs. If it's no the run fails, and the model never learns what the
+tool would have said.
+
+Only an approval opens a checkpoint. An external-tool pause is answered by the
+host that registered the tool, not by a person, and a queue full of rows no
+human is meant to decide is a queue people stop reading.
+
+### Deciding
+
+```go
+pending, err := eng.ListPendingCheckpoints(ctx, &checkpoint.ListFilter{Limit: 50})
+if err != nil {
+    return err
+}
+
+for _, cp := range pending {
+    fmt.Println(cp.ID, cp.RunID, cp.Reason, cp.Metadata["tools"])
+}
+if len(pending) == 0 {
+    return nil
+}
+
+return eng.ResolveCheckpoint(ctx, pending[0].ID, checkpoint.Decision{
+    Approved:  true,
+    DecidedBy: "ops@example.com",
+    Reason:    "checked the ticket, it is the right cluster",
+})
+```
+
+An approval resumes the run synchronously, the same way `RunAgent` runs
+synchronously, so the call returns when the run does. You don't build the
+`ResumeInput` yourself: a person granting permission hands back permission, not
+a result, so cortex turns each pending call into a result asking the engine to
+execute it now. The authorizer isn't consulted a second time. It already
+answered, and a human answered after it, so asking again would get the same
+escalation and the run would pause forever.
+
+A rejection fails the run and puts your `Reason` on it:
+
+```go
+return eng.ResolveCheckpoint(ctx, cpID, checkpoint.Decision{
+    Approved:  false,
+    DecidedBy: "ops@example.com",
+    Reason:    "wrong cluster, the agent misread the ticket",
+})
+```
+
+Whoever finds that run later reads your words in `run.Error` rather than a bare
+"rejected". Over HTTP the same field is `reason` on the resolve body.
+
+Two operators deciding the same checkpoint at once is safe. Both pass the
+pending guard, but both then go through the same atomic claim, so exactly one
+of them moves the run and the other gets `cortex: run not suspended` back.
+There's no interleaving where a rejection stomps a run an approval already
+finished.
+
+Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
+The decision is recorded only after it has taken effect, so a decision that
+couldn't be carried out leaves the checkpoint pending and you can decide again.
+
+### Approval on an external tool
+
+Don't do this yet. The authorizer runs before the external-tool check, so it
+can escalate a call to a tool the engine doesn't own. Approving that asks the
+engine to run something it has no handler for, and the call ends as a failure
+whose message tells you to answer it by supplying the result yourself. The run
+carries on and the model sees the failure.
+
+Keep escalations on tools you registered with `WithTool`. If a call needs both
+a human decision and your execution, gate it in your own handler after the
+approval, or model it as an external tool and do the asking on your side.
+
+## Expiry
+
+A suspended run waits 24 hours by default, and then a background sweeper fails
+it with `cortex.ErrSuspensionExpired`. The deadline exists because the
+alternative is worse: a run paused on a browser tab somebody closed sits in the
+paused list for a quarter, and nothing ever tells you.
+
+`Engine.Start` launches the sweeper and `Engine.Stop` joins it. Stop waits for
+a sweep already in flight rather than just signalling it, so a shutdown never
+leaves a run flipped out of `paused` with nothing to continue it.
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithSuspensionTTL(2*time.Hour),
+    engine.WithSuspensionSweepInterval(30*time.Second),
+    engine.WithSuspensionSweepLimit(500),
+)
+```
+
+The interval is the granularity of expiry, not its accuracy: a run whose
+deadline passes just after a sweep waits up to one more interval to be failed.
+Setting it far below the TTL buys load and nothing else. The limit caps one
+sweep's batch so a restart after a long outage doesn't hold the store for the
+length of the backlog; leftovers go on the next tick.
+
+The deadline is stamped when the run pauses, not worked out at sweep time.
+Changing the TTL never moves the deadline of a run somebody has already been
+asked to answer by Tuesday.
+
+### Turning it off
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithSuspensionTTL(0),
+)
+```
+
+Zero disables expiry outright. Suspensions are written with no deadline and no
+sweeper goroutine starts at all. That's the right setting if your pauses are
+answered by a person on their own schedule and you'd rather have a run sit
+paused for a week than have it failed out from under them.
+
+A negative TTL is refused by `engine.New` rather than clamped, because it reads
+as a deadline that has already passed and would sweep everything on the first
+tick.
+
+A sweep and a resume can't collide. A resume claims only a suspension short of
+its deadline, a sweep claims only one past it, and both answer against the same
+stored `ExpiresAt`, so there's no instant where the two think the row is
+theirs. A resume that started before the deadline and is still executing an
+approved tool when it passes keeps its run: the sweeper's claim wants a paused
+run, and that one is running.
+
+One gap to know about here. If an approval suspension expires, the run fails
+and its suspension is dropped, but the checkpoint stays pending: the sweeper
+has no checkpoint in hand and `checkpoint.Store` has no resolve-by-run-id. The
+row keeps showing up in `ListPendingCheckpoints`, and an operator who acts on
+it gets a loud error, because there's no suspension left to claim.
+
+## Custom stores
+
+`store.Store` embeds `suspension.Store` as of v1.11.0, seven methods your
+backend has to implement. Five are ordinary scoped CRUD. The two claims are
+not, and they're where the correctness lives.
+
+`ClaimSuspension` has to perform the run's paused-to-running transition and the
+suspension read as one atomic operation, not a read followed by a separate
+write. That gap is the whole race: two concurrent resumes must not both see a
+paused run and proceed. The loser gets `cortex.ErrNotSuspended`. It also has to
+refuse a suspension past its deadline, without moving the run, or an expired
+resume leaves a run stuck in `running` that nobody can claim.
+
+`ClaimExpiredSuspension` is the same transition with the deadline predicate
+inverted, and it exists for the sweeper. The two predicates have to partition
+the same row exactly.
+
+`ListExpiredAcrossScopes` is the one read in the whole interface that
+deliberately ignores scope, because a sweeper started by `Engine.Start` has no
+request scope and no way to enumerate the scopes holding rows. It's a separate
+method rather than a flag so a cross-scope read is visible as one at the call
+site and no handler can reach it by passing a zero value. Crossing scopes to
+find the work doesn't license doing the work unscoped: the sweeper rebinds to
+each suspension's own scope before it touches a run.
+
+`store/storetest`'s conformance suite covers all seven, including the claim
+concurrency and the deadline partition, on every backend. Run it against yours.
+
+## See also
+
+- [Tool Authorization](/docs/concepts/authorization) for `ToolAuthorizer` and
+  the other two outcomes.
+- [Checkpoints](/docs/execution/checkpoints) for the checkpoint entity and its
+  REST surface.
+- [Multi-tenancy](/docs/concepts/multi-tenancy) for how scope matching works.

@@ -25,6 +25,8 @@ type ToolAuthorizer interface {
     // Authorize gates one dispatch. Returning nil allows the call; any
     // error denies it, and the error's text is fed back to the model as
     // the tool result so it can react rather than silently retrying.
+    // The one exception is ErrRequiresApproval, which suspends the run
+    // and opens a checkpoint instead of denying anything.
     Authorize(ctx context.Context, s Subject, call llm.ToolCall) error
 }
 ```
@@ -194,16 +196,30 @@ just for a human debugging a log line later. `"caller not permitted to call
 %q"` is fine. A bare `errors.New("denied")` leaves the model with nothing to
 reason about.
 
-## What's not here yet
+## The third outcome: ask a human
 
-An authorizer can allow a call or deny it. It cannot, in this release, defer
-a call for a human to approve later. That third outcome needs a way to
-suspend a run mid-step and resume it once someone's granted or refused the
-call, and that suspension mechanism doesn't exist yet. It's arriving in
-v1.11.0, alongside `ErrRequiresApproval`, together rather than piecemeal.
+`Authorize` has a third answer as of v1.11.0. Return `cortex.ErrRequiresApproval`,
+or an error wrapping it, and the call is neither allowed nor denied: nothing
+goes back to the model, the run pauses mid-step, and a checkpoint carries the
+call to whoever decides.
 
-If your authorizer wants "ask a human," today it has one option: deny, with
-an error explaining that the action needs approval a human hasn't given yet.
-That's a real answer, just not the deferred one. Don't build against an
-approval outcome that doesn't exist; a call to `Authorize` today only ever
-resolves to allow or deny.
+```go
+func (a *myAuthorizer) Authorize(ctx context.Context, s cortex.Subject, call llm.ToolCall) error {
+    if call.Name == "delete_everything" {
+        return fmt.Errorf("%q needs a second pair of eyes: %w", call.Name, cortex.ErrRequiresApproval)
+    }
+    return nil
+}
+```
+
+It was held back from v1.10.0 on purpose. With nowhere to suspend into, an
+authorizer returning it would have read as an ordinary denial, and "ask
+somebody" would have quietly become "no". v1.11.0 added the suspension
+mechanism, so both halves shipped together.
+
+A denial and an escalation come out of the same method and behave nothing
+alike. A denial is an answer the model reads and reacts to, and the run
+finishes in the same call. An escalation stops the run until a person resolves
+the checkpoint, and only then does the tool run. See
+[Suspension](/docs/concepts/suspension) for how to list pending checkpoints,
+resolve them, and what happens to a run nobody answers.

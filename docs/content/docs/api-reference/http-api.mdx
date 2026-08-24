@@ -452,9 +452,15 @@ Resolve a checkpoint.
 ```json
 {
   "decision": "approved",
-  "decided_by": "admin@acme.com"
+  "decided_by": "admin@acme.com",
+  "reason": "checked the ticket, it is the right cluster"
 }
 ```
+
+`reason` is optional. On a rejection it lands on the run's `error` field, so
+whoever finds the failed run later reads why a person stopped it. An approval
+resumes the run synchronously, so this request stays open for as long as the
+rest of the run takes.
 
 **Response** `200 OK`
 

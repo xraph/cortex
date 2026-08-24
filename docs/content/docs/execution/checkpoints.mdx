@@ -37,18 +37,26 @@ type Decision struct {
 
 ## Lifecycle
 
-1. During a run, the agent encounters a sensitive action
-2. A checkpoint is created with state `pending` and the run pauses
-3. A human reviews the checkpoint via the API
-4. The human resolves the checkpoint with a Decision (approve or reject)
-5. If approved, the run resumes; if rejected, the run is cancelled
+1. During a run, a `ToolAuthorizer` escalates a tool call by returning
+   `cortex.ErrRequiresApproval`
+2. The run suspends, and a checkpoint is created with state `pending`
+3. A human reviews the checkpoint through `Engine.ListPendingCheckpoints` or the
+   REST endpoint
+4. The human resolves it with a Decision (approve or reject)
+5. An approval resumes the run and finally dispatches the call. A rejection
+   fails the run, with the decision's `Reason` on `run.Error`
 
 ```
-Run (running) → Checkpoint created (pending) → Run (paused)
-                                               ↓
-                              Decision made → Run (running) [approved]
-                                            → Run (cancelled) [rejected]
+Run (running) -> Checkpoint created (pending) -> Run (paused)
+                                                 |
+                                Decision made -> Run (running) [approved]
+                                              -> Run (failed)  [rejected]
 ```
+
+The loop only started creating checkpoints in v1.11.0. Before that the entity,
+the store and these endpoints all existed and nothing ever wrote a row. See
+[Suspension](/docs/concepts/suspension) for the mechanism underneath, including
+what an approval hands back to the engine and what happens when nobody answers.
 
 ## Store interface
 

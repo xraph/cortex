@@ -4,6 +4,246 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.11.0] - Unreleased
+
+Adds run suspension. A run can now stop in the middle of a step, persist
+everything it needs to carry on, and be picked up later by whoever it was
+waiting for. One primitive serves two reasons. There's the tool the
+caller executes and the engine doesn't, registered with
+`engine.WithExternalTool`, and there's the tool call a human has to
+approve, escalated by an authorizer returning
+`cortex.ErrRequiresApproval`. Both pause the loop the same way, both write
+one `suspension.Suspension` row, and both come back through
+`Engine.Resume`. An expiry sweeper fails a run whose resumer never came
+back, so nothing sits paused forever.
+
+`ErrRequiresApproval` completes the authorizer's three outcomes. v1.10.0
+shipped allow and deny, and said in its own changelog and in
+`docs/content/docs/concepts/authorization.mdx` that the third was arriving
+here. It was held back on purpose. With nowhere to suspend into, an
+authorizer returning it would've read as an ordinary denial, and "ask
+somebody" would have quietly become "no".
+
+Two things that already existed finally do something. `run.StatePaused`
+has been declared since v1.x and had never once been assigned; the engine
+assigns it now. Checkpoints have had an entity, a store, REST endpoints
+and two plugin hooks for just as long, and nothing in the tree ever
+created one, so `EmitCheckpointCreated` had exactly one occurrence before
+this release and that was its own definition. An approval pause writes a
+real checkpoint, `ListPendingCheckpoints` returns it, and
+`ResolveCheckpoint` carries the decision back to the run it belongs to.
+
+As with v1.7.0 through v1.10.0, this ships inside v1 rather than as
+v2.0.0. The module path is `github.com/xraph/cortex`, carries no `/v2`
+suffix, and migrating it was declined. Go refuses to resolve a `v2.x` tag
+against an unsuffixed module path, so a minor version is the only release
+channel available, and the breaking changes below are enumerated here
+instead of signaled by a major version bump. Read this whole section
+before upgrading.
+
+### Breaking changes
+
+- **`store.Store` now embeds `suspension.Store`**, seven additional
+  methods (`CreateSuspension`, `GetSuspension`, `ClaimSuspension`,
+  `DeleteSuspension`, `ListExpired`, `ListExpiredAcrossScopes`,
+  `ClaimExpiredSuspension`) on top of everything the composite already
+  required. A custom `store.Store` implementation (see
+  `docs/content/docs/guides/custom-store.mdx`) no longer satisfies the
+  interface until it implements these too. The three bundled backends
+  already do. `ClaimSuspension` and `ClaimExpiredSuspension` are the hard
+  part of that work: both have to perform the run's paused-to-running
+  transition and the suspension read as one atomic operation, because
+  that gap is the race two concurrent resumes would otherwise both win.
+  `store/storetest`'s conformance suite covers all seven. Run it against
+  your backend.
+- **`Engine.ResolveCheckpoint` now carries the decision to the run.** It
+  used to be a one-line passthrough to `store.Resolve` that always
+  succeeded. It now reads the checkpoint first and refuses
+  one that is not `pending` with `cortex.ErrInvalidState`, then approves
+  by claiming the run's suspension and resuming it, or rejects by
+  claiming the suspension and failing the run with `decision.Reason`, and
+  only records the decision once that has taken effect. An approval
+  resumes synchronously, the same way `RunAgent` runs synchronously, so
+  the call returns when the run does and a REST client holds its request
+  open for the length of the rest of the run.
+
+  If you were creating checkpoints yourself through the store and
+  resolving them through the engine, that stops working. There's no
+  suspension behind such a checkpoint, so an approval comes back with
+  `cortex: run not suspended` from the suspension read and a rejection
+  gets the same from the claim. Neither one records anything. For a
+  checkpoint the engine didn't open, call `Store().Resolve` directly.
+- **`Engine.Start` now launches a background goroutine, and
+  `Engine.Stop` joins it.** The goroutine is the expiry sweeper: it ticks
+  once a minute, reads suspensions past their deadline across every
+  scope, and fails those runs. `Stop` cancels it and waits for it to
+  exit before emitting `OnShutdown`, so `Stop` can now block for as long
+  as a sweep already in flight takes. A second `Start` is a no-op rather
+  than a second loop. Two consequences worth checking for: a host that
+  calls `Start` and never `Stop` leaks a ticker, and a host that wants no
+  background work at all sets `engine.WithSuspensionTTL(0)`, which turns
+  off the deadlines and the loop together.
+- **A run's state can now really be `paused`.** The constant has been in
+  `run.State` since v1.x with nothing ever assigning it, so no dashboard,
+  list filter or state machine written against this API has met the value
+  in practice. It'll meet it now. Anything of yours that switches
+  exhaustively on run state, or that assumes a run still in flight reads
+  as `running`, needs the case. Cancelling a paused run through
+  `POST /runs/:id/cancel` still works and was already allowed; the
+  suspension it leaves behind is dropped by the next sweep, which clears
+  rows whose run has reached a terminal state.
+
+### Added
+
+- **The `suspension` package.** `suspension.Suspension` is a paused run:
+  its `RunID`, the `Scope` the run started under, a `SuspendReason` of
+  `approval` or `external_tool`, the `PendingCall`s it is waiting on
+  (id, name and the model's verbatim `Arguments`), a `Continuation`, and
+  an optional `ExpiresAt`. `suspension.Continuation` is what the loop
+  needs to pick up where it stopped: the messages, the assembled system
+  prompt, the step index, tokens used, the index where the run's own
+  messages begin, the session id, and the resolved `RunConfig` the run
+  was executing under. Typed fields, not an untyped metadata map: a
+  malformed continuation is a scan error at the boundary, so you find out
+  there and not three steps into a half-restored run.
+- **`suspension.Store` on the composite store**, backed by a new
+  `cortex_suspensions` table on Postgres and SQLite (migration
+  `20260825000001`) and a collection of the same name on Mongo.
+- **`engine.WithExternalTool(def llm.Tool)`**, registering a tool the
+  engine advertises but never runs. The definition reaches the model
+  exactly like a `WithTool` registration and the authorizer gates a call
+  to it exactly like any other. Only dispatch differs: there is no
+  handler, so the call goes pending and the run suspends. External tools
+  are subject to `cfg.Tools` name filtering, unlike the builtins v1.10.0
+  exempted. A builtin exists because of engine configuration an agent
+  never named, so filtering it by name would silently kill an agent's
+  knowledge search; an external tool is a host registration like any
+  other, and `cfg.Tools` is exactly how an agent picks among those.
+- **`Engine.Resume(ctx, runID, ResumeInput) (*run.Run, error)`** and
+  **`Engine.ResumeStream(ctx, runID, ResumeInput, chan<- StreamEvent) error`**,
+  with `engine.ResumeInput` and `engine.ToolResult`. You supply exactly
+  one `ToolResult` per pending call, keyed by `ToolCallID`: an extra, a
+  duplicate or a missing one is `cortex.ErrResultsMismatch` and the run
+  stays paused so you can fix the call and try again. `Content` carries
+  what the tool returned, `Error` says your own execution failed and
+  feeds the model the same payload shape an engine-side failure produces,
+  and `Execute` asks the engine to run the call itself, which is what an
+  approval hands back. A resume continues under the scope stored on the
+  suspension, not the scope of whoever called `Resume`.
+- **`cortex.ErrRequiresApproval`.** Return it from `ToolAuthorizer.Authorize`,
+  or wrap it with `fmt.Errorf("...: %w", cortex.ErrRequiresApproval)` to
+  say why, and the call is not denied: nothing goes back to the model,
+  the run pauses, and a checkpoint carries the call to whoever decides.
+  It's matched with `errors.Is`.
+- **`cortex.ErrNotSuspended`, `cortex.ErrSuspensionExpired`,
+  `cortex.ErrResultsMismatch` and `cortex.ErrInvalidContinuation`.** The
+  first is what the losing side of a double resume gets, and what a
+  resume against a run that was never paused gets. The second is a resume
+  past the deadline, which leaves the run paused for the sweeper. The
+  third is the bijection rule above. The fourth is a continuation the
+  loop cannot run, which today means one carrying no step budget, and it
+  gets its own sentinel, not `ErrMaxStepsReached`, so nobody goes off
+  raising a budget that was never the problem.
+- **`engine.WithSuspensionTTL`, `engine.WithSuspensionSweepInterval` and
+  `engine.WithSuspensionSweepLimit`**, defaulting to 24 hours, one minute
+  and 100 rows per sweep. `WithSuspensionTTL(0)` disables expiry: no
+  deadline is written and no sweeper runs. A negative TTL is refused
+  rather than clamped, since it reads as a deadline already passed and
+  would sweep everything on the first tick. The deadline is stamped when
+  the run pauses, not worked out at sweep time, so changing the TTL never
+  moves the deadline of a run somebody has already been asked to answer.
+- **`engine.EventSuspended`**, the terminal stream event of a run that
+  paused without finishing. Its data carries `run_id`, `reason` and
+  `pending`. A streaming consumer that does not handle it sees the
+  channel close and reads a paused run as a finished one.
+- **`id.SuspensionID`, `id.NewSuspensionID` and `id.ParseSuspensionID`**,
+  prefix `sus`, the same identifier shape every other entity has.
+
+### Changed
+
+- **`engine.Dispatch` refuses external and escalated tools explicitly.**
+  It shares `executeTool` with the ReAct loop, and a pending call can
+  only be answered by suspending a run, which `Dispatch` does not have.
+  Rather than hand back the empty pending result, which reads like a tool
+  that ran and said nothing, it returns an error saying which kind of
+  pause the call needs. Either a result you supply, or a checkpoint
+  somebody decides.
+- **`checkpoint.Decision.DecidedAt` is stamped by the engine when you
+  leave it zero.** Nothing filled it in before, so a decision recorded
+  through the REST endpoint carried no timestamp at all.
+
+### Fixed
+
+- **The REST checkpoint resolve endpoint had no `reason` field.**
+  `ResolveCheckpointRequest` carried `decision` and `decided_by` and
+  nothing else, so `checkpoint.Decision.Reason` arrived empty on every
+  call that came in over HTTP. "Fail the run with the decision's reason"
+  would have failed every run with an empty string. `POST
+  /checkpoints/:id/resolve` now accepts `reason`, and a rejection puts it
+  on the run's `Error` where whoever finds the run later will read it.
+- **`plugin.OnCheckpointCreated` and `plugin.OnCheckpointResolved` now
+  fire.** Both hooks have been declared, documented and implemented by
+  the bundled audit and metrics extensions for releases, and
+  `EmitCheckpointCreated` had no caller anywhere in the tree. If you
+  implemented either one and never saw it run, you'll see it now. `created`
+  fires once the run is genuinely paused, not when the row is written, so
+  a subscriber is never told about a checkpoint that a failed pause then
+  cleaned up.
+
+### Known limitations
+
+Three gaps ship with this release. None of them corrupts a run and each
+one fails where you can see it, but you should know they're there.
+
+- **An approval on an external tool cannot be closed by the engine.** The
+  authorizer runs before the external check, so it can escalate a call to
+  a tool the engine does not own. Approve that and the engine is being
+  asked to run something it has no handler for, so the call ends as a
+  failure whose message tells you to answer it by supplying the result
+  yourself. The run carries on and the model sees the failure. Closing it
+  properly means the loop has to accept a pre-seeded pending set plus a
+  fresh continuation that folds in the sibling calls which already ran,
+  because resumed calls are recorded before the loop re-enters while the
+  classify-and-collect block lives inside the per-step iteration over the
+  model's tool calls. That is real design work, not a routing change.
+- **An approval suspension that expires leaves its checkpoint pending
+  forever.** The sweeper fails the run and drops the suspension, but it
+  has no checkpoint in hand and `checkpoint.Store` has no resolve-by-run-id,
+  so the row stays in `ListPending` asking for a decision on a run that
+  already failed. It fails in the visible direction. An operator who acts
+  on it gets a loud error at the point of use, because there's no
+  suspension left to claim. Fixing it needs either a new store method
+  across three backends or a `checkpoint_id` column on the suspension and
+  a migration.
+- **A decision whose `Resolve` write then fails leaves a pending
+  checkpoint on a run that already moved.** `ResolveCheckpoint` acts
+  first and records afterwards, so this is the leftover that ordering
+  cannot remove. It was chosen over its inverse deliberately. Recording
+  first would mean a decision that could not be carried out drops out of
+  `ListPending` while the run stays paused, invisible and recoverable
+  only by a direct `Resume` call. This way round the row is still there,
+  still listed, and deciding again returns the run's own "not suspended"
+  error, not silence.
+
+### Migration notes
+
+- **The suspension table is created by `Store.Migrate()` and needs no
+  backfill.** Suspensions are new this release, so there is no unscoped
+  legacy shape to carry forward: the table is created with its scope
+  columns already in place, and its partial unique index on `run_id`
+  follows the `scope_canon` convention every other index in this codebase
+  uses.
+- **Mongo gains no new replica-set requirement.** On that backend the
+  paused-to-running transition is a single `FindOneAndUpdate` against the
+  run document, which Mongo applies atomically on its own, so neither
+  claim needs a multi-document transaction. v1.9.0's requirement for
+  conversation writes still stands and is unchanged.
+- **Read the guide before you register an external tool.**
+  `docs/content/docs/concepts/suspension.mdx` covers registering one,
+  what a suspended run looks like, the one-result-per-pending-call rule,
+  why a resume runs under the scope the run started with, and how to
+  switch expiry off.
+
 ## [1.10.0] - Unreleased
 
 Adds tool authorization: a host-implemented `cortex.ToolAuthorizer` that
