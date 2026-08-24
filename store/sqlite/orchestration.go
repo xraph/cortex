@@ -25,8 +25,8 @@ import (
 // so orchestrationConfigToModel always writes AppID as "" now, and
 // including "app_id" here would blank whatever a pre-fix row's app_id
 // column still holds on its very first update. The column itself is
-// vestigial but intentionally left in place; erasing its content is not
-// this task's call to make.
+// vestigial but intentionally left in place; erasing its content belongs
+// to whatever change finally drops the column.
 var mutableOrchestrationConfigColumns = []string{
 	"name",
 	"description",

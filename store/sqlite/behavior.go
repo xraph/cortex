@@ -87,7 +87,7 @@ func (s *Store) GetBehaviorByName(ctx context.Context, name string) (*behavior.B
 // from), so including "app_id" here would blank whatever a pre-v1.8.0
 // row's app_id column still holds on its very first update. The column
 // itself is vestigial but intentionally left in place; erasing its
-// content is not this task's call to make.
+// content belongs to whatever change finally drops the column.
 var mutableBehaviorColumns = []string{
 	"name",
 	"description",

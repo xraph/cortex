@@ -87,7 +87,7 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (*persona.Per
 // from), so including "app_id" here would blank whatever a pre-v1.8.0
 // row's app_id column still holds on its very first update. The column
 // itself is vestigial but intentionally left in place; erasing its
-// content is not this task's call to make.
+// content belongs to whatever change finally drops the column.
 var mutablePersonaColumns = []string{
 	"name",
 	"description",

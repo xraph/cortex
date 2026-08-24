@@ -105,7 +105,7 @@ func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, erro
 // field to draw from), so including it here would blank whatever a
 // pre-v1.8.0 document's app_id field still holds on its very first
 // Update. The field itself is vestigial but intentionally left in place;
-// erasing its content is not this task's call to make.
+// erasing its content belongs to whatever change finally drops the column.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
