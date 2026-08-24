@@ -138,6 +138,15 @@ before upgrading.
   and `Execute` asks the engine to run the call itself, which is what an
   approval hands back. A resume continues under the scope stored on the
   suspension, not the scope of whoever called `Resume`.
+
+  Both answer an external-tool pause. A run paused for approval is not
+  resumable this way at all: it is waiting on a decision, and
+  `ResolveCheckpoint` is the only thing that carries one, so `Resume`
+  against it is `cortex.ErrRequiresApproval` and the run stays paused.
+  Gating only `Execute` would leave you free to answer an escalated call
+  with content you made up, feed the model output no tool ever produced,
+  and finish the run with its checkpoint still sitting in somebody's
+  queue.
 - **`cortex.ErrRequiresApproval`.** Return it from `ToolAuthorizer.Authorize`,
   or wrap it with `fmt.Errorf("...: %w", cortex.ErrRequiresApproval)` to
   say why, and the call is not denied: nothing goes back to the model,

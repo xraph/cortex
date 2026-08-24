@@ -122,6 +122,11 @@ the floor.
 
 ## Resuming
 
+`Resume` answers an external-tool pause. A run paused for approval is waiting
+on a decision instead, and [Deciding](#deciding) is how that one comes back:
+calling `Resume` on it gets you `cortex.ErrRequiresApproval` and the run stays
+paused.
+
 You give `Resume` one result per pending call:
 
 ```go
@@ -351,6 +356,12 @@ finished.
 Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
 The decision is recorded only after it has taken effect, so a decision that
 couldn't be carried out leaves the checkpoint pending and you can decide again.
+
+`ResolveCheckpoint` is the only way to answer an approval. `Resume` against a
+run waiting on one is refused, whatever you put in the results: an escalated
+call answered with `Execute` would dispatch a tool nobody granted, and one
+answered with `Content` would feed the model output no tool produced and finish
+the run with its checkpoint still in the queue. Neither is a decision.
 
 ### Approval on an external tool
 

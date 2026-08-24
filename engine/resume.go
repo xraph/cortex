@@ -69,6 +69,11 @@ type resumption struct {
 // Resume continues a suspended run synchronously once every pending call
 // has a result.
 //
+// It answers an external-tool pause. A run paused for approval is not
+// resumable this way: it is waiting on a decision, and the decision is
+// what ResolveCheckpoint carries. Resuming one here is
+// cortex.ErrRequiresApproval and the run stays paused.
+//
 // It re-derives authority from the STORED scope rather than the caller's,
 // re-enters the loop at the step the suspension recorded, and restores
 // the history boundary and the session from the continuation instead of
@@ -146,7 +151,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
 			return nil, nil, vErr
 		}
-		if aErr := checkExecuteAuthority(susp.Reason, in.ToolResults, approved); aErr != nil {
+		if aErr := checkResumeAuthority(susp.Reason, approved); aErr != nil {
 			return nil, nil, aErr
 		}
 	}
@@ -179,7 +184,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if err := validateResults(susp.Pending, in.ToolResults); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
-	if err := checkExecuteAuthority(susp.Reason, in.ToolResults, approved); err != nil {
+	if err := checkResumeAuthority(susp.Reason, approved); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
 
@@ -390,30 +395,28 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 	return id.StepID{}
 }
 
-// checkExecuteAuthority is the approval gate itself, and it exists
-// because Execute is a bool on a host-facing struct.
+// checkResumeAuthority is the approval gate itself, and it covers the
+// whole resume rather than the Execute flag on its results.
 //
-// A run suspended for approval is waiting on a decision. Resume is
-// in-process API, so without this check any caller could hand back
-// Execute results on that run and have the escalated call dispatched
-// with no decision recorded, no authorizer re-check, and the checkpoint
-// left pending forever. A gate a caller walks around by setting a bool
-// is not a gate.
+// A run suspended for approval is waiting on a decision, and Resume is
+// in-process API with no decision behind it. The narrow version of this
+// gate refused Execute and let everything else through, which left a
+// caller free to answer an escalated call with invented Content: the
+// model is fed output no tool produced, the run carries on, and the
+// checkpoint stays pending forever with nobody the wiser. Nothing
+// privileged is dispatched that way, so it is not the hole Execute was,
+// but it is the same authority arriving by a different door.
 //
-// So Execute is refused on an approval suspension unless the resume came
-// from ResolveCheckpoint, which reached it having read a pending
-// checkpoint for that run. Any other pause is unaffected: an
-// external-tool suspension never went to a human in the first place.
-func checkExecuteAuthority(reason suspension.SuspendReason, results []ToolResult, approved bool) error {
+// So an approval suspension is resumable only through ResolveCheckpoint,
+// which reaches this having read a pending checkpoint for the run. Every
+// other pause is unaffected: an external-tool suspension never went to a
+// human in the first place, and Resume is exactly how it is meant to be
+// answered.
+func checkResumeAuthority(reason suspension.SuspendReason, approved bool) error {
 	if approved || reason != suspension.ReasonApproval {
 		return nil
 	}
-	for _, r := range results {
-		if r.Execute {
-			return fmt.Errorf("%w: call %q is waiting on a checkpoint; resolve it rather than resuming the run with execute", cortex.ErrRequiresApproval, r.ToolCallID)
-		}
-	}
-	return nil
+	return fmt.Errorf("%w: this run is waiting on a checkpoint decision, so resolve the checkpoint rather than resuming the run", cortex.ErrRequiresApproval)
 }
 
 // validateResults enforces the bijection between pending calls and the

@@ -968,6 +968,52 @@ func TestResume_ExecuteOnAnApprovalSuspensionIsRefused(t *testing.T) {
 	}
 }
 
+// TestResume_AnApprovalSuspensionIsNotResumableWithAFabricatedResult is
+// the same gate reached by the other door. Refusing only Execute left a
+// caller free to answer an escalated call with content it invented: the
+// tool never runs, so nothing privileged is dispatched, but the model is
+// fed output no tool produced, the run carries on to completion, and the
+// checkpoint sits pending on a run that already finished.
+//
+// The decision is the thing being protected, not the dispatch.
+func TestResume_AnApprovalSuspensionIsNotResumableWithAFabricatedResult(t *testing.T) {
+	spy := scopespy.New()
+	e := approvalEngine(t, WithStore(spy))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	paused, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+
+	resumed, err := e.Resume(ctx, paused.ID, ResumeInput{
+		ToolResults: []ToolResult{{ToolCallID: "call-1", Content: "deleted, all good"}},
+	})
+	if !errors.Is(err, cortex.ErrRequiresApproval) {
+		t.Fatalf("Resume with a made-up result on an approval suspension = (%v, %v), want ErrRequiresApproval", resumed, err)
+	}
+
+	stillPaused, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("reload the run: %v", err)
+	}
+	if stillPaused.State != run.StatePaused {
+		t.Errorf("run state = %q, want %q; the run continued on a result nobody decided", stillPaused.State, run.StatePaused)
+	}
+	if got := len(spy.Suspensions()); got != 1 {
+		t.Errorf("%d suspensions left, want 1", got)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 || cps[0].State != "pending" {
+		t.Errorf("checkpoints = %+v, want one still pending", cps)
+	}
+	// Nothing was written back to the model either: a tool message for a
+	// call that never ran is the payload this gate exists to stop.
+	if got := len(spy.ToolCalls()); got != 0 {
+		t.Errorf("%d tool call rows written, want 0", got)
+	}
+}
+
 // TestResume_ExecuteOnAnExternalSuspensionIsStillAllowed keeps the gate
 // narrow. An external-tool pause never went to a human, so there is no
 // decision to walk around, and refusing Execute there would only stop a
