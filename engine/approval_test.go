@@ -814,6 +814,58 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunKeepsItResumable(t *tes
 	if err == nil {
 		t.Error("ResolveCheckpoint reported success though the run could not be failed; the caller has no idea it has to decide again")
 	}
+
+	// And the decision itself is not recorded, so deciding again is a
+	// decision rather than ErrInvalidState against a row that says
+	// resolved about a run still paused.
+	stored, getErr := base.GetCheckpoint(ctx, cps[0].ID)
+	if getErr != nil {
+		t.Fatalf("reload the checkpoint: %v", getErr)
+	}
+	if stored.State != "pending" {
+		t.Errorf("checkpoint state = %q, want %q; it dropped out of the pending queue over a decision that never took effect", stored.State, "pending")
+	}
+	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); errors.Is(again, cortex.ErrInvalidState) {
+		t.Errorf("deciding again = %v, want the retry the first error invites, not a refusal", again)
+	}
+}
+
+// TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending
+// is the approving twin. The checkpoint store has no un-resolve, so a row
+// recorded decided against a run that never continued is a lie no
+// operator can correct and no queue shows them.
+func TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending(t *testing.T) {
+	rec := &checkpointEventRecorder{}
+	spy := scopespy.New()
+	e := approvalEngine(t, WithStore(spy), WithExtension(rec))
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+
+	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	cps := spy.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
+	}
+	// A continuation the resume will refuse, which is the cheapest way to
+	// make the acting half fail after the decision has been made.
+	spy.Suspensions()[0].Cont.Config = suspension.RunConfig{}
+
+	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
+	if !errors.Is(err, cortex.ErrInvalidContinuation) {
+		t.Fatalf("ResolveCheckpoint on a run that cannot resume = %v, want the resume's own error", err)
+	}
+
+	stored, err := spy.GetCheckpoint(ctx, cps[0].ID)
+	if err != nil {
+		t.Fatalf("reload the checkpoint: %v", err)
+	}
+	if stored.State != "pending" {
+		t.Errorf("checkpoint state = %q, want %q; nothing acted on this decision", stored.State, "pending")
+	}
+	if got := rec.resolvedEvents(); len(got) != 0 {
+		t.Errorf("OnCheckpointResolved fired %v, want nothing: no decision took effect", got)
+	}
 }
 
 // TestResume_ExecuteOnAnApprovalSuspensionIsRefused is the gate itself.

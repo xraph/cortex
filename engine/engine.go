@@ -493,7 +493,7 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 	return e.store.CountPending(ctx, filter)
 }
 
-// ResolveCheckpoint records a human decision and then acts on it: an
+// ResolveCheckpoint acts on a human decision and then records it: an
 // approval continues the run, a rejection ends it with the reason the
 // decider gave.
 //
@@ -501,6 +501,21 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // a checkpoint nothing created, so both halves were theoretical. An
 // approved run is resumed synchronously, same as RunAgent: the caller
 // waits for the run rather than getting a receipt for one.
+//
+// Acting first is deliberate. The checkpoint store has no un-resolve, so
+// recording the decision up front and then failing to act on it leaves a
+// row marked resolved against a run still paused, dropped out of
+// ListPending, with nothing but a direct Resume call able to recover it.
+// That is the audit lie this surface exists to prevent. Written this way
+// round, a decision that could not be carried out leaves the checkpoint
+// exactly as it found it and the caller can decide again.
+//
+// The cost is that two operators deciding the same checkpoint at once
+// both pass the pending guard. Nothing runs twice for it: ClaimSuspension
+// is atomic, so the second approval gets ErrNotSuspended back rather than
+// a second dispatch. Closing that window properly needs a state the store
+// can move a checkpoint into while a decision is in flight, which is a
+// store interface change rather than an engine one.
 func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
@@ -524,15 +539,25 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
 	}
 
+	if decision.Approved {
+		if err := e.resumeApproved(ctx, cp); err != nil {
+			return err
+		}
+	} else if err := e.failRejected(ctx, cp, decision); err != nil {
+		return err
+	}
+
+	// Recorded last, so the row says decided only about a decision that
+	// actually took effect. A failure here is the one leftover this
+	// ordering cannot remove: the run has already moved, and the
+	// checkpoint stays pending on a run that is no longer waiting. It is
+	// visible and it is recoverable, which is more than the reverse
+	// order offers.
 	if err := e.store.Resolve(ctx, cpID, decision); err != nil {
-		return fmt.Errorf("resolve checkpoint: %w", err)
+		return fmt.Errorf("record checkpoint %s as resolved after acting on it: %w", cpID, err)
 	}
 	e.extensions.EmitCheckpointResolved(ctx, cpID, decisionLabel(decision))
-
-	if decision.Approved {
-		return e.resumeApproved(ctx, cp)
-	}
-	return e.failRejected(ctx, cp, decision)
+	return nil
 }
 
 // decisionLabel is what a hook subscriber sees. Approved and rejected
@@ -601,7 +626,9 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 		// The run is still paused, so its suspension stays exactly where
 		// it is: it is the only thing that can move the run at all, and
 		// dropping it now would leave a paused run nothing could ever
-		// pick up. The caller gets the error and can decide again.
+		// pick up. The checkpoint is still pending too, because nothing
+		// has recorded this decision yet, so the caller really can
+		// decide again rather than reading back ErrInvalidState.
 		return fmt.Errorf("fail rejected run %s: %w", cp.RunID, err)
 	}
 
