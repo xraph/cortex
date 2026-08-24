@@ -175,6 +175,16 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// the authority widening this whole path exists to refuse. A rebuilt
 	// MaxSteps misfires the guard just below it, too.
 	cfg := configFromContinuation(susp.Cont.Config)
+	// A continuation with no config at all is unusable, and it has to say
+	// so in its own words. MaxSteps reads as 0, the guard just below
+	// fires, and the run fails with ErrMaxStepsReached: an error that
+	// means "this run used up its budget" and sends whoever reads it to
+	// raise the budget, when nothing was ever going to run. Failing loud
+	// is right; failing under somebody else's contract is not.
+	if cfg.MaxSteps <= 0 {
+		return nil, nil, e.failResume(ctx, r, ag.ID,
+			fmt.Errorf("resume run %s: continuation carries no step budget: %w", runID, cortex.ErrInvalidContinuation))
+	}
 	if st.stepIndex >= cfg.MaxSteps {
 		// Suspending on the last step stores a step index the budget has
 		// no room for. Re-entering the loop here would fall straight

@@ -48,4 +48,14 @@ var (
 	// resume an external-tool suspension do not correspond to the pending
 	// calls it was waiting on.
 	ErrResultsMismatch = errors.New("cortex: suspension results do not match pending calls")
+	// ErrInvalidContinuation is returned when a suspension carries a
+	// continuation the loop cannot run: today that means a zero Config,
+	// which a resume would otherwise read as a step budget of nothing.
+	//
+	// It is its own sentinel rather than ErrMaxStepsReached, which is what
+	// a zero budget looks like from inside the loop. That error is a
+	// matched-on contract meaning "this run used up its steps", and it
+	// sends an operator to raise the budget for a run whose real problem
+	// is a continuation nothing could have resumed.
+	ErrInvalidContinuation = errors.New("cortex: suspension continuation is unusable")
 )

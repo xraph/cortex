@@ -575,6 +575,41 @@ func TestResume_FinalStepFailsRatherThanCompletingEmpty(t *testing.T) {
 	}
 }
 
+// TestResume_ContinuationWithNoStepBudgetIsRefusedInItsOwnWords covers
+// the neighbouring edge, and it is about which error a caller reads.
+// A continuation whose Config never made it comes back with MaxSteps 0,
+// so the budget guard above fires and the run fails with
+// ErrMaxStepsReached: a matched-on contract that means "this run used up
+// its steps" and sends an operator to raise the budget, for a run that
+// was never runnable at all. Failing loud is right. Failing under
+// somebody else's error is not.
+func TestResume_ContinuationWithNoStepBudgetIsRefusedInItsOwnWords(t *testing.T) {
+	spy := scopespy.New()
+	e := mustResumeEngine(t, spy)
+	r := suspendedFixture(t, spy, e)
+
+	// What a suspension written without a config looks like coming back.
+	spy.Suspensions()[0].Cont.Config = suspension.RunConfig{}
+
+	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, oneResult(t, spy, "the human said yes"))
+	if !errors.Is(err, cortex.ErrInvalidContinuation) {
+		t.Fatalf("Resume on a continuation with no config = (%v, %v), want ErrInvalidContinuation", resumed, err)
+	}
+	if errors.Is(err, cortex.ErrMaxStepsReached) {
+		t.Errorf("Resume reported %v, which tells an operator to raise a step budget that was never the problem", err)
+	}
+
+	// Same invariant as the budget case: the claim already moved the run
+	// out of paused, so this exit has to fail it.
+	persisted, err := spy.GetRun(resumeCtx(scopeA()), r.ID)
+	if err != nil {
+		t.Fatalf("reload the resumed run: %v", err)
+	}
+	if persisted.State != run.StateFailed {
+		t.Errorf("run ended as %q, want %q; a run left running after a claim can never be picked up again", persisted.State, run.StateFailed)
+	}
+}
+
 // ──────────────────────────────────────────────────
 // The config the run was executing under
 // ──────────────────────────────────────────────────
