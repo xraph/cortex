@@ -107,6 +107,7 @@ var mutableAgentColumns = []string{
 	"inline_skills",
 	"inline_traits",
 	"inline_behaviors",
+	"sections",
 	"created_at",
 	"updated_at",
 }

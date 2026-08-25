@@ -136,6 +136,7 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 		"inline_skills":    m.InlineSkills,
 		"inline_traits":    m.InlineTraits,
 		"inline_behaviors": m.InlineBehaviors,
+		"sections":         m.Sections,
 		"updated_at":       m.UpdatedAt,
 	}
 
