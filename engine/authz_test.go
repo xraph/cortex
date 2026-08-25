@@ -190,7 +190,7 @@ func TestResolveTools_HonoursCfgToolsNames(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got := e.resolveTools(context.Background(), cortex.Subject{}, []string{toolB.Name})
+	got := e.resolveTools(context.Background(), cortex.Subject{}, []string{toolB.Name}, false)
 	if len(got) != 1 || got[0].Name != toolB.Name {
 		t.Fatalf("resolveTools with names=[%q] = %v, want only %q", toolB.Name, got, toolB.Name)
 	}
@@ -207,7 +207,7 @@ func TestNilAuthorizer_LeavesBothPathsPermissive(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	tools := e.resolveTools(context.Background(), cortex.Subject{}, nil)
+	tools := e.resolveTools(context.Background(), cortex.Subject{}, nil, false)
 	var found bool
 	for _, tl := range tools {
 		if tl.Name == def.Name {
@@ -325,7 +325,7 @@ func TestResolveTools_BuiltinsSurviveCfgToolsFiltering(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got := e.resolveTools(context.Background(), cortex.Subject{}, []string{toolB.Name})
+	got := e.resolveTools(context.Background(), cortex.Subject{}, []string{toolB.Name}, false)
 
 	names := make([]string, 0, len(got))
 	for _, tl := range got {

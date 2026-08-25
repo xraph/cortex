@@ -26,11 +26,25 @@ type resolvedConfig struct {
 	ReasoningLoop string
 	Tools         []string
 	PersonaRef    string
+
+	// ToolsRestricted says Tools is an explicit allowlist even when it
+	// is empty, so tool resolution does not fall back to "every
+	// registered tool". An overlay that withdraws the last tool an agent
+	// had is the case this exists for: without it, a removal would read
+	// as a grant.
+	ToolsRestricted bool
 }
 
-// effectiveConfig merges agent config + engine defaults + overrides.
-// Priority: overrides > agent > engine defaults.
-func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides) resolvedConfig {
+// effectiveConfig layers the run settings four deep: engine defaults,
+// then the agent's own config, then the overlays that apply to the run's
+// scope, then the per-run overrides.
+//
+// The overlays arrive broadest scope first, so a narrower one assigns
+// last and wins, matching the way its patches reach the prompt.
+// Per-run overrides sit above every overlay because a caller naming a
+// model for this one run means it, and an overlay is a standing
+// preference rather than an instruction about this call.
+func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides, overlays []*prompt.Overlay) resolvedConfig {
 	cfg := resolvedConfig{
 		Model:         coalesceStr(ag.Model, e.config.DefaultModel),
 		MaxSteps:      coalesceInt(ag.MaxSteps, e.config.DefaultMaxSteps),
@@ -47,6 +61,35 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides) reso
 	} else {
 		t := e.config.DefaultTemperature
 		cfg.Temperature = &t
+	}
+
+	for _, o := range overlays {
+		if o.Model != "" {
+			cfg.Model = o.Model
+		}
+		// Temperature and MaxTokens are honored whenever the pointer is
+		// set, zero included. That is what the pointers on Overlay are
+		// for: a host writing 0 is asking for 0, not leaving the field
+		// alone, and quietly ignoring it would make the one value a host
+		// cannot express the one it most obviously might want.
+		if o.Temperature != nil {
+			t := *o.Temperature
+			cfg.Temperature = &t
+		}
+		if o.MaxTokens != nil {
+			cfg.MaxTokens = *o.MaxTokens
+		}
+		if len(o.ToolsAdded) > 0 || len(o.ToolsRemoved) > 0 {
+			// An agent that names no tools is allowed all of them, so
+			// the implicit list has to be written out before a removal
+			// can subtract from it.
+			base := cfg.Tools
+			if len(base) == 0 {
+				base = e.registeredToolNames()
+			}
+			cfg.Tools = applyToolDelta(base, o.ToolsAdded, o.ToolsRemoved)
+			cfg.ToolsRestricted = true
+		}
 	}
 
 	// Apply overrides.
@@ -95,17 +138,24 @@ const knowledgeTopK = 5
 // would let an agent quietly stop being itself with no signal anywhere.
 // Section collection returns those errors rather than logging past them.
 func (e *Engine) BuildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (string, error) {
+	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
+	if err != nil {
+		return "", err
+	}
+
+	return e.buildSystemPrompt(ctx, ag, overrides, overlays)
+}
+
+// buildSystemPrompt is the half of BuildSystemPrompt that takes overlays
+// already loaded, so a run can walk the scope once and spend the result
+// on both its prompt and its config.
+func (e *Engine) buildSystemPrompt(ctx context.Context, ag *agent.Config, overrides *RunOverrides, overlays []*prompt.Overlay) (string, error) {
 	sections, err := e.collectSections(ctx, ag, overrides)
 	if err != nil {
 		return "", err
 	}
 
-	sections, err = e.applyScopeOverlays(ctx, ag.ID, sections)
-	if err != nil {
-		return "", err
-	}
-
-	return prompt.Assemble(sections), nil
+	return prompt.Assemble(e.applyOverlaySections(sections, overlays)), nil
 }
 
 // collectSections gathers every producer's contribution in the order the
@@ -286,22 +336,23 @@ func knowledgeBody(source string, chunks []knowledge.ScoredChunk) string {
 	return b.String()
 }
 
-// applyScopeOverlays applies the overlay found at every rung of the run
-// scope's own ancestry, broadest scope first.
+// loadScopeOverlays returns the overlays that apply to a run in the
+// caller's scope, ordered broadest scope first.
 //
-// The ordering is the point, not a side effect. Patches are applied in
-// the order the overlays arrive, so a narrower scope has to patch last
-// to win. "Most specific wins" and "every overlay applies" only agree
-// when patches never collide, and append mode makes collisions ordinary.
-// The loop below walks prefixes from shortest to longest, so the index
-// IS the scope depth and the broadest-first order is produced here
-// rather than inherited from whatever order a store returned rows in.
+// The ordering is the point, not a side effect. Both consumers of this
+// slice apply what they find in the order it arrives, so a narrower
+// scope has to come last to win. "Most specific wins" and "every
+// overlay applies" only agree when nothing collides, and append-mode
+// patches and tool deltas both collide routinely. The loop walks
+// prefixes from shortest to longest, so the index IS the scope depth
+// and broadest-first is produced here rather than inherited from
+// whatever order a store returned rows in.
 //
 // Inheritance is this explicit ancestor walk, one exact lookup per
 // prefix, and never a listing. Prefix matching in the stores widens
 // DOWNWARD: listing overlays from [ws=A] hands back every project's
-// overlay inside that workspace. Feeding those into one run would
-// assemble a sibling project's instructions into a prompt that must
+// overlay inside that workspace. Feeding those into one run would mix a
+// sibling project's instructions and tool grants into a run that must
 // never see them, and the call site would look perfectly reasonable
 // while it happened.
 //
@@ -310,15 +361,21 @@ func knowledgeBody(source string, chunks []knowledge.ScoredChunk) string {
 // refuses an empty one, so no overlay can be stored at the zero scope,
 // and every backend answers a zero scope argument with
 // ErrOverlayNotFound regardless.
-func (e *Engine) applyScopeOverlays(ctx context.Context, agentID id.AgentID, sections []prompt.Section) ([]prompt.Section, error) {
+//
+// One walk serves both the prompt and the run config. Two traversals
+// would be two orderings to keep in agreement, and they would drift the
+// first time only one of them was edited.
+func (e *Engine) loadScopeOverlays(ctx context.Context, agentID id.AgentID) ([]*prompt.Overlay, error) {
 	if e.store == nil {
-		return sections, nil
+		return nil, nil
 	}
 
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
-		return sections, nil
+		return nil, nil
 	}
+
+	out := make([]*prompt.Overlay, 0, len(scope.Levels))
 
 	for depth := 1; depth <= len(scope.Levels); depth++ {
 		ancestor := cortex.Scope{Levels: scope.Levels[:depth]}
@@ -330,7 +387,20 @@ func (e *Engine) applyScopeOverlays(ctx context.Context, agentID id.AgentID, sec
 			}
 			return nil, fmt.Errorf("load overlay at scope %q: %w", ancestor.Canonical(), err)
 		}
-		if o == nil || len(o.Patches) == 0 {
+		if o == nil {
+			continue
+		}
+		out = append(out, o)
+	}
+
+	return out, nil
+}
+
+// applyOverlaySections patches the assembled sections with each
+// overlay's patches, in the order loadScopeOverlays produced.
+func (e *Engine) applyOverlaySections(sections []prompt.Section, overlays []*prompt.Overlay) []prompt.Section {
+	for _, o := range overlays {
+		if len(o.Patches) == 0 {
 			continue
 		}
 
@@ -339,7 +409,64 @@ func (e *Engine) applyScopeOverlays(ctx context.Context, agentID id.AgentID, sec
 		e.logDeclinedPatches(o, declined)
 	}
 
-	return sections, nil
+	return sections
+}
+
+// applyToolDelta applies one overlay's tool additions and removals.
+//
+// Removals run after additions, so a tool an overlay both grants and
+// withdraws ends up withdrawn. An overlay naming the same tool in both
+// lists is stating a restriction, and resolving that toward "granted"
+// would hand out a tool the same document asked to take away.
+//
+// Across overlays the narrower scope simply comes last, so it can
+// withdraw what a broader one granted and can re-grant what a broader
+// one withdrew. That is the same "narrowest wins" rule the patches
+// follow. It does mean a workspace-level removal is not a floor a
+// project overlay is unable to lift, which is a real tradeoff: both
+// overlays are written by the same host at scopes it controls, and a
+// removal that outranked everything beneath it would be the only piece
+// of an overlay that inherited downward instead of being overridden.
+func applyToolDelta(tools, added, removed []string) []string {
+	out := make([]string, 0, len(tools)+len(added))
+	seen := make(map[string]struct{}, len(tools)+len(added))
+
+	keep := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, dup := seen[name]; dup {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+
+	for _, t := range tools {
+		keep(t)
+	}
+	for _, t := range added {
+		keep(t)
+	}
+
+	if len(removed) == 0 {
+		return out
+	}
+
+	drop := make(map[string]struct{}, len(removed))
+	for _, t := range removed {
+		drop[t] = struct{}{}
+	}
+
+	kept := make([]string, 0, len(out))
+	for _, t := range out {
+		if _, gone := drop[t]; gone {
+			continue
+		}
+		kept = append(kept, t)
+	}
+
+	return kept
 }
 
 // logDeclinedPatches surfaces the patches ApplyOverlay refused, which is

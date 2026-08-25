@@ -64,6 +64,17 @@ type RunConfig struct {
 	ReasoningLoop string   `json:"reasoning_loop,omitempty"`
 	Tools         []string `json:"tools,omitempty"`
 	PersonaRef    string   `json:"persona_ref,omitempty"`
+
+	// ToolsRestricted says Tools is an explicit allowlist even when it
+	// is empty, which is what an overlay that withdrew the agent's last
+	// tool produces. It travels with the continuation because a resumed
+	// run rebuilds its config from here and from nowhere else: without
+	// it, an empty list would read as "every registered tool" and the
+	// resume would hand back exactly what the overlay took away.
+	//
+	// It is absent from rows written before this field existed, and
+	// decodes there as false, which is the behavior those runs had.
+	ToolsRestricted bool `json:"tools_restricted,omitempty"`
 }
 
 // Continuation is everything the loop needs to pick up where it stopped.

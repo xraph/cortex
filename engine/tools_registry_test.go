@@ -27,7 +27,7 @@ func TestWithTool_AdvertisedInResolveTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	tools := e.resolveTools(context.Background(), cortex.Subject{}, nil)
+	tools := e.resolveTools(context.Background(), cortex.Subject{}, nil, false)
 	var found bool
 	for _, tl := range tools {
 		if tl.Name == "echo" {

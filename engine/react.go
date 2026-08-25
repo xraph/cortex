@@ -55,13 +55,14 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 		NewMessagesFrom: s.newMessagesFrom,
 		SessionID:       s.sessionID,
 		Config: suspension.RunConfig{
-			Model:         cfg.Model,
-			Temperature:   cfg.Temperature,
-			MaxSteps:      cfg.MaxSteps,
-			MaxTokens:     cfg.MaxTokens,
-			ReasoningLoop: cfg.ReasoningLoop,
-			Tools:         cfg.Tools,
-			PersonaRef:    cfg.PersonaRef,
+			Model:           cfg.Model,
+			Temperature:     cfg.Temperature,
+			MaxSteps:        cfg.MaxSteps,
+			MaxTokens:       cfg.MaxTokens,
+			ReasoningLoop:   cfg.ReasoningLoop,
+			Tools:           cfg.Tools,
+			ToolsRestricted: cfg.ToolsRestricted,
+			PersonaRef:      cfg.PersonaRef,
 		},
 	}
 }
@@ -70,13 +71,14 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 // run ever runs on.
 func configFromContinuation(c suspension.RunConfig) resolvedConfig {
 	return resolvedConfig{
-		Model:         c.Model,
-		Temperature:   c.Temperature,
-		MaxSteps:      c.MaxSteps,
-		MaxTokens:     c.MaxTokens,
-		ReasoningLoop: c.ReasoningLoop,
-		Tools:         c.Tools,
-		PersonaRef:    c.PersonaRef,
+		Model:           c.Model,
+		Temperature:     c.Temperature,
+		MaxSteps:        c.MaxSteps,
+		MaxTokens:       c.MaxTokens,
+		ReasoningLoop:   c.ReasoningLoop,
+		Tools:           c.Tools,
+		ToolsRestricted: c.ToolsRestricted,
+		PersonaRef:      c.PersonaRef,
 	}
 }
 
@@ -107,8 +109,15 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 		return nil, fmt.Errorf("resolve session: %w", err)
 	}
 
-	cfg := e.effectiveConfig(ag, overrides)
-	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
+	// One ancestor walk feeds both the prompt and the run config, so the
+	// two can never disagree about which overlays applied to this run.
+	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load prompt overlays: %w", err)
+	}
+
+	cfg := e.effectiveConfig(ag, overrides, overlays)
+	systemPrompt, err := e.buildSystemPrompt(ctx, ag, overrides, overlays)
 	if err != nil {
 		return nil, fmt.Errorf("build system prompt: %w", err)
 	}
@@ -182,7 +191,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			Messages:    st.messages,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
-			Tools:       e.resolveTools(ctx, subject, cfg.Tools),
+			Tools:       e.resolveTools(ctx, subject, cfg.Tools, cfg.ToolsRestricted),
 		}
 
 		// Safety: scan input before LLM call.
@@ -371,8 +380,15 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		return fmt.Errorf("resolve session: %w", err)
 	}
 
-	cfg := e.effectiveConfig(ag, overrides)
-	systemPrompt, err := e.BuildSystemPrompt(ctx, ag, overrides)
+	// Same single walk as runReAct, for the same reason.
+	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
+	if err != nil {
+		close(events)
+		return fmt.Errorf("load prompt overlays: %w", err)
+	}
+
+	cfg := e.effectiveConfig(ag, overrides, overlays)
+	systemPrompt, err := e.buildSystemPrompt(ctx, ag, overrides, overlays)
 	if err != nil {
 		close(events)
 		return fmt.Errorf("build system prompt: %w", err)
@@ -456,7 +472,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			Messages:    st.messages,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
-			Tools:       e.resolveTools(ctx, subject, cfg.Tools),
+			Tools:       e.resolveTools(ctx, subject, cfg.Tools, cfg.ToolsRestricted),
 		}
 
 		// Safety: scan input before LLM call.
@@ -809,13 +825,19 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 // and does not name an external one has said it does not use it, and
 // advertising it anyway would suspend runs the agent never asked to have
 // suspended.
-func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string) []llm.Tool {
+// resolveTools picks the tools a run may call. An empty names list means
+// every registered tool, UNLESS restricted is set, which says the list
+// is an explicit allowlist that happens to be empty. That distinction
+// exists because an overlay can withdraw the last tool an agent had, and
+// without it a removal that emptied the list would read as a grant of
+// everything registered.
+func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string, restricted bool) []llm.Tool {
 	registered := make([]llm.Tool, 0, len(e.tools)+len(e.externalTools))
 	for _, rt := range e.tools {
 		registered = append(registered, rt.def)
 	}
 	registered = append(registered, e.externalTools...)
-	if len(names) > 0 {
+	if restricted || len(names) > 0 {
 		registered = filterByName(registered, names)
 	}
 
@@ -824,6 +846,23 @@ func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []str
 		tools = e.authorizer.Visible(ctx, s, tools)
 	}
 	return tools
+}
+
+// registeredToolNames is every tool an agent could name, used to
+// materialize the implicit "all of them" list before an overlay's
+// removals are applied. Without materializing, a removal against an
+// agent that never named its tools would subtract from an empty list
+// and silently do nothing.
+func (e *Engine) registeredToolNames() []string {
+	out := make([]string, 0, len(e.tools)+len(e.externalTools))
+	for _, rt := range e.tools {
+		out = append(out, rt.def.Name)
+	}
+	for _, t := range e.externalTools {
+		out = append(out, t.Name)
+	}
+
+	return out
 }
 
 // filterByName keeps only the tools whose name appears in names,

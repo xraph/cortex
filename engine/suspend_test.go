@@ -83,7 +83,7 @@ func TestWithExternalTool_AdvertisedInResolveTools(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got := e.resolveTools(context.Background(), cortex.Subject{}, nil)
+	got := e.resolveTools(context.Background(), cortex.Subject{}, nil, false)
 	if len(got) != 1 || got[0].Name != def.Name {
 		t.Fatalf("resolveTools = %v, want the external tool %q; a tool the model is never shown can never be called", got, def.Name)
 	}
@@ -119,7 +119,7 @@ func TestResolveTools_ExternalToolsObeyCfgToolsNames(t *testing.T) {
 			}
 
 			var found bool
-			for _, tl := range e.resolveTools(context.Background(), cortex.Subject{}, tc.names) {
+			for _, tl := range e.resolveTools(context.Background(), cortex.Subject{}, tc.names, false) {
 				if tl.Name == def.Name {
 					found = true
 				}
@@ -143,7 +143,7 @@ func TestResolveTools_ExternalToolsGoThroughVisible(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if got := e.resolveTools(context.Background(), cortex.Subject{}, nil); len(got) != 0 {
+	if got := e.resolveTools(context.Background(), cortex.Subject{}, nil, false); len(got) != 0 {
 		t.Fatalf("resolveTools = %v, want nothing; the authorizer hid every tool", got)
 	}
 }

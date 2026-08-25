@@ -42,16 +42,37 @@ type Overlay struct {
 	// because a host that only wants to withdraw one tool should not
 	// have to restate the agent's whole surface, and would silently
 	// re-grant anything the agent gained later if it did.
+	//
+	// Resolution order, since the two lists can disagree: within ONE
+	// overlay the removals apply after the additions, so a tool named in
+	// both ends up withdrawn. An overlay that both grants and withdraws
+	// the same tool is stating a restriction, and reading it the other
+	// way would hand out a tool the same document asked to take away.
+	//
+	// ACROSS overlays the narrower scope applies last, so it can
+	// withdraw what a broader scope granted and can re-grant what a
+	// broader scope withdrew. This is the same "narrowest wins" rule the
+	// patches follow. A workspace-level removal is therefore not a floor
+	// a project overlay cannot lift: making it one would leave removal
+	// as the only part of an overlay that inherited downward instead of
+	// being overridden, and a host wanting a tool gone everywhere takes
+	// it off the agent rather than off one scope.
 	ToolsAdded   []string `json:"tools_added,omitempty"`
 	ToolsRemoved []string `json:"tools_removed,omitempty"`
 
-	// Model overrides the agent's model when non-empty.
+	// Model overrides the agent's model when non-empty. A per-run
+	// override still beats it: a caller naming a model for one call
+	// means it, where an overlay is a standing preference.
 	Model string `json:"model,omitempty"`
 
 	// Temperature and MaxTokens are pointers so that "leave the agent's
 	// value alone" is distinguishable from "set this to zero". A plain
 	// float64 would make an unset temperature read as a request for 0,
 	// which is a real and very different setting.
+	//
+	// Both are honored whenever the pointer is set, zero included, which
+	// is the whole reason they are pointers. Like Model, a per-run
+	// override outranks them.
 	Temperature *float64 `json:"temperature,omitempty"`
 	MaxTokens   *int     `json:"max_tokens,omitempty"`
 }
