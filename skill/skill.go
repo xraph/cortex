@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/prompt"
 )
 
 // Proficiency represents mastery level of a skill or tool binding.
@@ -89,4 +90,31 @@ type ListFilter struct {
 	Search string
 	Limit  int
 	Offset int
+}
+
+// Sections returns the skill's contribution to an agent's system prompt:
+// one section carrying the prompt fragment, or nothing when the skill
+// has no fragment.
+//
+// order is where this skill's section sits in the assembled prompt. A
+// caller walking an agent's skill list starts at prompt.OrderSkill and
+// advances by one section each time, because assembly falls back to
+// sorting by ID when two sections share an order and that would put the
+// skills in alphabetical order instead of the order the agent lists
+// them.
+//
+// The heading stays inside Body rather than moving to Title, so the
+// assembled text is byte-identical to the prompt this fragment has
+// always produced. Title is for sections a host authors.
+func (s *Skill) Sections(order int) []prompt.Section {
+	if s.SystemPromptFragment == "" {
+		return nil
+	}
+
+	return []prompt.Section{{
+		ID:     "skill:" + s.Name,
+		Source: prompt.SourceSkill,
+		Body:   "## Skill: " + s.Name + "\n" + s.SystemPromptFragment,
+		Order:  order,
+	}}
 }

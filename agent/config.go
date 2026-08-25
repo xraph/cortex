@@ -13,10 +13,13 @@ import (
 // and persona mode (PersonaRef or inline skill/trait/behavior assignments).
 type Config struct {
 	cortex.Entity
-	ID            id.AgentID     `json:"id"`
-	Name          string         `json:"name"`
-	Description   string         `json:"description,omitempty"`
-	Scope         cortex.Scope   `json:"scope"`
+	ID          id.AgentID   `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	Scope       cortex.Scope `json:"scope"`
+	// SystemPrompt is the agent's own instructions. It is a derived
+	// field once Sections is in play: see Sections for which of the two
+	// wins.
 	SystemPrompt  string         `json:"system_prompt"`
 	Model         string         `json:"model,omitempty"`
 	Tools         []string       `json:"tools,omitempty"`
@@ -40,7 +43,73 @@ type Config struct {
 	// means "use SystemPrompt as-is" rather than "this agent has no
 	// prompt": an agent written before sections existed has to assemble
 	// to the exact string it always did.
+	//
+	// Sections and SystemPrompt can both be set, so they need a stated
+	// precedence, and it is this: sections are the truth.
+	//
+	//   - Sections non-empty: the prompt comes from the sections, and
+	//     SystemPrompt is derived from them. Whatever a host put in
+	//     SystemPrompt is overwritten rather than merged, because two
+	//     sources of truth for one prompt is how a prompt starts lying
+	//     about itself.
+	//   - Sections empty and SystemPrompt non-empty: SystemPrompt lowers
+	//     into a single section with id "role", which is what keeps
+	//     every agent written before sections existed assembling to the
+	//     byte-identical string it always did.
+	//   - Both empty: the agent contributes nothing of its own, and the
+	//     prompt is whatever its persona, skills and traits produce.
+	//
+	// PromptSections and SyncSystemPrompt are the two directions of that
+	// rule.
 	Sections []prompt.Section `json:"sections,omitempty"`
+}
+
+// RoleSectionID is the section an agent's plain SystemPrompt lowers into
+// when the agent has no sections of its own. An overlay that wants to
+// reach a legacy agent's instructions patches this id.
+const RoleSectionID = "role"
+
+// PromptSections returns the agent's own contribution to its assembled
+// prompt, applying the precedence documented on Config.Sections: its
+// sections when it has any, otherwise its SystemPrompt lowered into a
+// single role section.
+//
+// The returned slice is a copy, so a caller reordering or patching it
+// does not reach back into the stored config.
+func (c *Config) PromptSections() []prompt.Section {
+	if len(c.Sections) > 0 {
+		out := make([]prompt.Section, len(c.Sections))
+		copy(out, c.Sections)
+
+		return out
+	}
+
+	if c.SystemPrompt == "" {
+		return nil
+	}
+
+	return []prompt.Section{{
+		ID:     RoleSectionID,
+		Source: prompt.SourceHost,
+		Body:   c.SystemPrompt,
+		Order:  prompt.OrderRole,
+	}}
+}
+
+// SyncSystemPrompt rewrites SystemPrompt from Sections so the stored
+// string matches the sections it is derived from. It is a no-op for an
+// agent with no sections, whose SystemPrompt is the source rather than
+// the derivative.
+//
+// Callers run this before a write. Without it a host that edits sections
+// leaves a stale SystemPrompt behind, and every reader that has not been
+// taught about sections yet keeps serving the old prompt.
+func (c *Config) SyncSystemPrompt() {
+	if len(c.Sections) == 0 {
+		return
+	}
+
+	c.SystemPrompt = prompt.Assemble(c.Sections)
 }
 
 // HasPersona returns true if this agent uses the persona system.

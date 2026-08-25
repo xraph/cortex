@@ -22,11 +22,55 @@ const (
 	PatchAppend PatchMode = "append"
 )
 
+// Source names what produced a section. It is descriptive only: nothing
+// in assembly branches on it, and it exists so an operator reading an
+// assembled prompt can tell which part of the configuration to go and
+// edit.
+type Source string
+
+const (
+	// SourceHost marks a section the host wrote directly on the agent,
+	// including the one an agent's plain SystemPrompt lowers into.
+	SourceHost Source = "host"
+
+	// SourcePersona marks a section produced by a persona.
+	SourcePersona Source = "persona"
+
+	// SourceSkill marks a section produced by a skill.
+	SourceSkill Source = "skill"
+
+	// SourceTrait marks a section produced by a trait.
+	SourceTrait Source = "trait"
+
+	// SourceKnowledge marks a section produced by retrieved knowledge.
+	SourceKnowledge Source = "knowledge"
+)
+
+// Order bands place each producer's sections in the assembled prompt.
+// The values reproduce the order the prompt has always had: the agent's
+// own instructions, then the persona's identity, then one section per
+// skill, then retrieved knowledge, then one section per trait injection.
+//
+// They are spaced a thousand apart for two reasons. A host can slot a
+// section of its own between any two bands by picking a value in the
+// gap, and a producer that emits several sections can take consecutive
+// orders from its band without ever colliding with the next one.
+const (
+	OrderRole      = 1000
+	OrderPersona   = 2000
+	OrderSkill     = 3000
+	OrderKnowledge = 4000
+	OrderTrait     = 5000
+)
+
 // Section is one addressable piece of a system prompt.
 type Section struct {
 	// ID identifies the section for patching. Stable across assemblies of
 	// the same producer so an overlay can keep targeting it.
 	ID string `json:"id"`
+
+	// Source names what produced this section. Purely informational.
+	Source Source `json:"source,omitempty"`
 
 	// Title is prefixed to Body when assembling, if non-empty. Sections
 	// emitted by the existing producers leave this empty so assembly stays

@@ -7,9 +7,11 @@ package trait
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/prompt"
 )
 
 // Dimension represents a bipolar personality axis.
@@ -83,4 +85,53 @@ type ListFilter struct {
 	Search   string
 	Limit    int
 	Offset   int
+}
+
+// Sections returns the trait's contribution to an agent's system prompt:
+// one section per prompt-injection influence, in the order the
+// influences are declared. A trait with no prompt injections returns
+// nothing, which is the common case for traits that only move
+// temperature or tool selection.
+//
+// order is where the trait's first section sits in the assembled prompt,
+// and further sections take consecutive orders from there. A caller
+// walking an agent's trait list starts at prompt.OrderTrait and advances
+// by the number of sections each trait returned, since assembly falls
+// back to sorting by ID when two sections share an order and that would
+// reorder the traits alphabetically.
+//
+// The heading stays inside Body rather than moving to Title so the
+// assembled text is byte-identical to the prompt this injection has
+// always produced. Title is for sections a host authors.
+//
+// The first injection is addressed as "trait:<name>". A trait with more
+// than one gets "trait:<name>:2" onwards, so the ordinary single
+// injection keeps the ID an overlay author would guess.
+func (t *Trait) Sections(order int) []prompt.Section {
+	var out []prompt.Section
+
+	for _, inf := range t.Influences {
+		if inf.Target != TargetPromptInjection {
+			continue
+		}
+
+		v, ok := inf.Value.(string)
+		if !ok || v == "" {
+			continue
+		}
+
+		sectionID := "trait:" + t.Name
+		if len(out) > 0 {
+			sectionID = fmt.Sprintf("trait:%s:%d", t.Name, len(out)+1)
+		}
+
+		out = append(out, prompt.Section{
+			ID:     sectionID,
+			Source: prompt.SourceTrait,
+			Body:   "## Trait: " + t.Name + "\n" + v,
+			Order:  order + len(out),
+		})
+	}
+
+	return out
 }

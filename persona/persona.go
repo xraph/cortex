@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/communication"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/perception"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/skill"
 )
 
@@ -64,4 +65,30 @@ type ListFilter struct {
 	Search string
 	Limit  int
 	Offset int
+}
+
+// Sections returns the persona's contribution to an agent's system
+// prompt: one section carrying the identity, or nothing at all when the
+// persona has no identity text.
+//
+// order is where this persona's first section sits in the assembled
+// prompt; callers pass prompt.OrderPersona unless they are deliberately
+// relocating it.
+//
+// The heading lives inside Body rather than in the section's Title. A
+// Title is prefixed by assembly and would land in the prompt at a
+// different place than the heading has always occupied, so every
+// producer here leaves Title empty and keeps its own heading in the
+// body. Title is for sections a host authors.
+func (p *Persona) Sections(order int) []prompt.Section {
+	if p.Identity == "" {
+		return nil
+	}
+
+	return []prompt.Section{{
+		ID:     "persona:identity",
+		Source: prompt.SourcePersona,
+		Body:   "## Identity\n" + p.Identity,
+		Order:  order,
+	}}
 }
