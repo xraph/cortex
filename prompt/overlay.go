@@ -57,6 +57,20 @@ type Overlay struct {
 	// as the only part of an overlay that inherited downward instead of
 	// being overridden, and a host wanting a tool gone everywhere takes
 	// it off the agent rather than off one scope.
+	//
+	// Re-granting takes NAMING the tool. A narrower overlay that adds
+	// something unrelated leaves every withdrawal above it in place: an
+	// overlay only moves the tools it mentions, so no addition can lift
+	// a removal by accident, and no tool nobody named can appear.
+	//
+	// That "narrower may re-grant" policy is right while overlays are
+	// written by the host at scopes the host controls, which is the only
+	// way they can be written today. It would be the wrong default if
+	// sub-scope overlays were ever delegated to the tenants living in
+	// those scopes, since a tenant could then restore a tool the
+	// platform withdrew above it. Delegation would need broader
+	// removals to become floors, and that is a policy change, not a bug
+	// fix.
 	ToolsAdded   []string `json:"tools_added,omitempty"`
 	ToolsRemoved []string `json:"tools_removed,omitempty"`
 

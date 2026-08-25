@@ -72,6 +72,11 @@ func (e *Engine) CloneAgent(ctx context.Context, sourceName, newName string) (*a
 	if err != nil {
 		return nil, err
 	}
+	// A clone copies its source's sections, so the derived prompt is
+	// rebuilt here too. It would inherit a correct one today, which is
+	// exactly how a derived field starts drifting: one write path that
+	// skips the derivation is enough.
+	clone.SyncSystemPrompt()
 	if err := e.store.Create(ctx, clone); err != nil {
 		return nil, err
 	}

@@ -74,6 +74,11 @@ type RunConfig struct {
 	//
 	// It is absent from rows written before this field existed, and
 	// decodes there as false, which is the behavior those runs had.
+	// The flag can therefore be LOST across an upgrade, but it can
+	// never be spuriously SET. That is the safe direction here: losing
+	// it resumes an old run under the tool rules it was suspended
+	// under, where inventing it would strip tools from a run nobody
+	// restricted.
 	ToolsRestricted bool `json:"tools_restricted,omitempty"`
 }
 

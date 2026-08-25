@@ -250,6 +250,29 @@ func TestEffectiveConfig_ToolDeltasResolveAsDocumented(t *testing.T) {
 			workspace: func(o *prompt.Overlay) { o.ToolsRemoved = []string{"alpha"} },
 			want:      []string{},
 		},
+		{
+			// The broader overlay empties the list, and the narrower one
+			// then adds something else. The emptied list must stay a
+			// decision rather than reverting to "all of them": otherwise
+			// a project overlay that grants one unrelated tool hands
+			// back the tool the workspace withdrew, plus every tool
+			// nobody named.
+			name:      "a narrower addition does not re-expand a list a broader removal emptied",
+			agent:     []string{"alpha"},
+			workspace: func(o *prompt.Overlay) { o.ToolsRemoved = []string{"alpha"} },
+			project:   func(o *prompt.Overlay) { o.ToolsAdded = []string{"beta"} },
+			want:      []string{"beta"},
+		},
+		{
+			// The same widening one rung less far along: the broader
+			// overlay leaves tools behind, so only the withdrawn one is
+			// at stake.
+			name:      "a narrower addition does not lift an unnamed broader removal",
+			agent:     []string{"alpha", "beta"},
+			workspace: func(o *prompt.Overlay) { o.ToolsRemoved = []string{"alpha"} },
+			project:   func(o *prompt.Overlay) { o.ToolsAdded = []string{"gamma"} },
+			want:      []string{"beta", "gamma"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -81,10 +81,14 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides, over
 		}
 		if len(o.ToolsAdded) > 0 || len(o.ToolsRemoved) > 0 {
 			// An agent that names no tools is allowed all of them, so
-			// the implicit list has to be written out before a removal
-			// can subtract from it.
+			// the implicit list is written out before a delta subtracts
+			// from it. An empty list is only implicit until an overlay
+			// has spoken: once one has, the emptiness is a decision, and
+			// re-expanding it here would let the next overlay in this
+			// same loop hand back everything a broader scope withdrew
+			// while naming something else entirely.
 			base := cfg.Tools
-			if len(base) == 0 {
+			if len(base) == 0 && !cfg.ToolsRestricted {
 				base = e.registeredToolNames()
 			}
 			cfg.Tools = applyToolDelta(base, o.ToolsAdded, o.ToolsRemoved)
@@ -109,8 +113,13 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides, over
 		if overrides.Temperature != nil {
 			cfg.Temperature = overrides.Temperature
 		}
+		// A per-run tool list is an explicit allowlist, so it carries
+		// the restriction with it. An empty override is "no override"
+		// rather than "no tools", which is what it has always meant and
+		// is the one reading that cannot widen anything.
 		if len(overrides.Tools) > 0 {
 			cfg.Tools = overrides.Tools
+			cfg.ToolsRestricted = true
 		}
 		if overrides.PersonaRef != "" {
 			cfg.PersonaRef = overrides.PersonaRef

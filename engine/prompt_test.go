@@ -459,3 +459,36 @@ func TestCreateAgent_SyncsTheStoredSystemPromptFromSections(t *testing.T) {
 		t.Errorf("the edited section never reached the stored prompt: %q", updated.SystemPrompt)
 	}
 }
+
+// TestCloneAgent_SyncsTheClonesSystemPrompt covers the third agent-write
+// path. A clone inherits its source's sections, so it inherits whatever
+// the source's derived prompt was, stale included. Writing the clone
+// without re-deriving is how a derived field starts drifting: one write
+// path that skips the derivation is enough. The source here is stored
+// straight through the store, which is the only way to produce the stale
+// row the engine's own writes prevent.
+func TestCloneAgent_SyncsTheClonesSystemPrompt(t *testing.T) {
+	e, s := newPromptEngine(t)
+	ctx := overlayCtx(overlayWorkspace)
+
+	src := sectionedAgent(id.NewAgentID())
+	src.Entity = cortex.NewEntity()
+	src.SystemPrompt = "a prompt these sections never produced"
+	if err := s.Create(ctx, src); err != nil {
+		t.Fatalf("create source agent: %v", err)
+	}
+
+	clone, err := e.CloneAgent(ctx, src.Name, "layered-copy")
+	if err != nil {
+		t.Fatalf("CloneAgent: %v", err)
+	}
+
+	stored, err := s.Get(ctx, clone.ID)
+	if err != nil {
+		t.Fatalf("get clone: %v", err)
+	}
+	want := prompt.Assemble(src.Sections)
+	if stored.SystemPrompt != want {
+		t.Errorf("cloned SystemPrompt = %q, want %q re-derived from the sections it copied", stored.SystemPrompt, want)
+	}
+}
