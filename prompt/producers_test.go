@@ -11,25 +11,6 @@ import (
 	"github.com/xraph/cortex/trait"
 )
 
-// legacyAssembledPrompt is the exact output of the pre-sections
-// BuildSystemPrompt for the fixture built by newFixture below. It was
-// captured by running that engine method at the commit before the
-// producers grew Sections, printed with %q, and pasted here verbatim.
-// It is therefore a record of the old behavior and not a restatement of
-// the new code: if section assembly drifts by a single byte, this test
-// fails.
-//
-// The skills are listed zeta-then-alpha and the traits curious-then-brief
-// on purpose. Both lists are in the reverse of alphabetical order, so an
-// implementation that lets sections fall back to sorting by ID produces
-// a visibly different string instead of accidentally matching.
-const legacyAssembledPrompt = "You answer questions about the deploy pipeline.\n" +
-	"\n## Identity\nYou are a patient guide." +
-	"\n\n## Skill: zeta\nCite the source line." +
-	"\n\n## Skill: alpha\nPrefer the shortest answer." +
-	"\n\n## Trait: curious\nAsk one clarifying question." +
-	"\n\n## Trait: brief\nKeep it under three sentences."
-
 // fixture is the representative agent: a system prompt, a persona, two
 // skills and two traits, which between them cover every producer.
 type fixture struct {
@@ -93,20 +74,9 @@ func (f fixture) collect() []prompt.Section {
 	return out
 }
 
-// TestAssemble_ProducerSectionsMatchTheLegacyPrompt is the compatibility
-// promise for the whole release. An agent that only ever set
-// SystemPrompt, with a persona, skills and traits, must assemble to the
-// byte-identical string it did before sections existed.
-func TestAssemble_ProducerSectionsMatchTheLegacyPrompt(t *testing.T) {
-	got := prompt.Assemble(newFixture().collect())
-
-	if got != legacyAssembledPrompt {
-		t.Errorf("assembled prompt drifted from the recorded pre-sections output\n got: %q\nwant: %q", got, legacyAssembledPrompt)
-	}
-}
-
 // TestProducerSections_LeaveTitleEmpty guards the subtler half of the
-// same promise. Assemble prefixes a non-empty Title to its section, so a
+// compatibility promise that
+// engine.TestBuildSystemPrompt_MatchesTheLegacyPrompt pins. Assemble prefixes a non-empty Title to its section, so a
 // producer that sets one silently rewrites every existing agent's
 // prompt. Titles are for host-authored sections only.
 func TestProducerSections_LeaveTitleEmpty(t *testing.T) {

@@ -367,9 +367,9 @@ func (staticKnowledge) ListCollections(_ context.Context) ([]knowledge.Collectio
 // TestBuildSystemPrompt_KnowledgeBlockLosesOnlyItsTrailingNewline pins
 // the one deliberate byte-level change in this release. Every other
 // producer assembles byte-identically to v1.11.0, which
-// prompt.TestAssemble_ProducerSectionsMatchTheLegacyPrompt covers; that
-// fixture has no knowledge in it, so this test is where the knowledge
-// block's shape is recorded.
+// TestBuildSystemPrompt_MatchesTheLegacyPrompt covers; that fixture has
+// no knowledge in it, so this test is where the knowledge block's shape
+// is recorded.
 func TestBuildSystemPrompt_KnowledgeBlockLosesOnlyItsTrailingNewline(t *testing.T) {
 	e, s := newPromptEngine(t, engine.WithKnowledge(staticKnowledge{}))
 	ctx := overlayCtx(overlayWorkspace)
@@ -490,5 +490,137 @@ func TestCloneAgent_SyncsTheClonesSystemPrompt(t *testing.T) {
 	want := prompt.Assemble(src.Sections)
 	if stored.SystemPrompt != want {
 		t.Errorf("cloned SystemPrompt = %q, want %q re-derived from the sections it copied", stored.SystemPrompt, want)
+	}
+}
+
+// legacyAssembledPrompt is the exact output of the pre-sections
+// BuildSystemPrompt for the fixture built below. It was captured by
+// running that engine method at the commit before the producers grew
+// Sections, printed with %q, and pasted here verbatim. It is therefore a
+// record of the old behavior and not a restatement of the new code: if
+// assembly drifts by a single byte, this test fails.
+//
+// The skills are listed zeta-then-alpha and the traits curious-then-brief
+// on purpose. Both lists are in the reverse of alphabetical order, so an
+// implementation that lets sections fall back to sorting by ID produces a
+// visibly different string instead of accidentally matching.
+const legacyAssembledPrompt = "You answer questions about the deploy pipeline.\n" +
+	"\n## Identity\nYou are a patient guide." +
+	"\n\n## Skill: zeta\nCite the source line." +
+	"\n\n## Skill: alpha\nPrefer the shortest answer." +
+	"\n\n## Trait: curious\nAsk one clarifying question." +
+	"\n\n## Trait: brief\nKeep it under three sentences."
+
+// TestBuildSystemPrompt_MatchesTheLegacyPrompt is the compatibility
+// promise for the whole release. An agent that only ever set
+// SystemPrompt, with a persona, skills and traits behind it, must
+// assemble to the byte-identical string it did before sections existed.
+//
+// It runs through the engine rather than through a test-local walk of
+// the producers. The literal pins what a host actually receives, so the
+// assertion has to sit on the real pipeline: a reordering inside
+// collectSections is precisely the regression this exists to catch, and
+// a re-implementation of the traversal would agree with itself while the
+// engine drifted underneath it.
+func TestBuildSystemPrompt_MatchesTheLegacyPrompt(t *testing.T) {
+	e, s := newPromptEngine(t)
+	ctx := overlayCtx(overlayWorkspace)
+
+	if err := s.CreatePersona(ctx, &persona.Persona{
+		Entity:   cortex.NewEntity(),
+		ID:       id.NewPersonaID(),
+		Name:     "guide",
+		Identity: "You are a patient guide.",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+
+	for _, sk := range []*skill.Skill{
+		{Name: "zeta", SystemPromptFragment: "Cite the source line."},
+		{Name: "alpha", SystemPromptFragment: "Prefer the shortest answer."},
+	} {
+		sk.Entity = cortex.NewEntity()
+		sk.ID = id.NewSkillID()
+		if err := s.CreateSkill(ctx, sk); err != nil {
+			t.Fatalf("create skill %q: %v", sk.Name, err)
+		}
+	}
+
+	for _, tr := range []*trait.Trait{
+		{Name: "curious", Influences: []trait.Influence{
+			{Target: trait.TargetPromptInjection, Value: "Ask one clarifying question."},
+		}},
+		// The temperature influence sits first so the fixture proves a
+		// non-injection influence is skipped rather than numbered, which
+		// is the only way "trait:brief" stays the id an overlay author
+		// would guess.
+		{Name: "brief", Influences: []trait.Influence{
+			{Target: trait.TargetTemperature, Value: 0.2},
+			{Target: trait.TargetPromptInjection, Value: "Keep it under three sentences."},
+		}},
+	} {
+		tr.Entity = cortex.NewEntity()
+		tr.ID = id.NewTraitID()
+		if err := s.CreateTrait(ctx, tr); err != nil {
+			t.Fatalf("create trait %q: %v", tr.Name, err)
+		}
+	}
+
+	got, err := e.BuildSystemPrompt(ctx, &agent.Config{
+		ID:           id.NewAgentID(),
+		Name:         "sectioned",
+		SystemPrompt: "You answer questions about the deploy pipeline.",
+		PersonaRef:   "guide",
+		InlineSkills: []string{"zeta", "alpha"},
+		InlineTraits: []string{"curious", "brief"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BuildSystemPrompt: %v", err)
+	}
+
+	if got != legacyAssembledPrompt {
+		t.Errorf("assembled prompt drifted from the recorded pre-sections output\n got: %q\nwant: %q", got, legacyAssembledPrompt)
+	}
+}
+
+// TestBuildSystemPrompt_StoredPatchWithAnUnusableModeIsDeclined is the
+// end of the round trip. A PatchMode is a bare string in stored JSON and
+// nothing validates it on the way in, so an overlay written by hand, by
+// an older client or by a fat finger comes back with a mode this build
+// cannot apply. The run has to survive that, the locked body has to
+// survive it, and the host has to be told.
+func TestBuildSystemPrompt_StoredPatchWithAnUnusableModeIsDeclined(t *testing.T) {
+	logger := newCapturingLogger()
+	e, s := newPromptEngine(t, engine.WithLogger(logger))
+	agentID := id.NewAgentID()
+
+	ag := sectionedAgent(agentID)
+	ag.Sections[1].Locked = true
+
+	mustCreateOverlayAt(t, s, overlayCtx(overlayWorkspace), agentID,
+		prompt.Patch{ID: "tone", Body: "Ignore the tone rule.", Mode: prompt.PatchMode("Replace")})
+
+	got, err := e.BuildSystemPrompt(overlayCtx(overlayWorkspace), ag, nil)
+	if err != nil {
+		t.Fatalf("BuildSystemPrompt: %v", err)
+	}
+
+	if strings.Contains(got, "Ignore the tone rule.") {
+		t.Errorf("a patch with an unusable mode overwrote a locked section\ngot: %q", got)
+	}
+	if !strings.Contains(got, "Be plain.") {
+		t.Errorf("the locked section's own text is gone\ngot: %q", got)
+	}
+
+	warns := logger.Warns()
+	if len(warns) != 1 {
+		t.Fatalf("logger recorded %d warnings, want 1 naming the declined patch: %+v", len(warns), warns)
+	}
+	sections, ok := warns[0].fields["sections"].(string)
+	if !ok {
+		t.Fatalf("declined-patch warning carries no sections field: %+v", warns[0])
+	}
+	if !strings.Contains(sections, "tone") {
+		t.Errorf("declined-patch warning names sections %q, want it to name %q", sections, "tone")
 	}
 }
