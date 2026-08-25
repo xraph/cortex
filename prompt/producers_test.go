@@ -75,8 +75,8 @@ func (f fixture) collect() []prompt.Section {
 }
 
 // TestProducerSections_LeaveTitleEmpty guards the subtler half of the
-// compatibility promise that
-// engine.TestBuildSystemPrompt_MatchesTheLegacyPrompt pins. Assemble prefixes a non-empty Title to its section, so a
+// compatibility promise that engine.TestBuildSystemPrompt_MatchesTheLegacyPrompt
+// pins. Assemble prefixes a non-empty Title to its section, so a
 // producer that sets one silently rewrites every existing agent's
 // prompt. Titles are for host-authored sections only.
 func TestProducerSections_LeaveTitleEmpty(t *testing.T) {
