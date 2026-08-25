@@ -10,6 +10,9 @@ import (
 )
 
 // PatchMode selects how a Patch applies to the section it targets.
+// Only the two values below are implemented. A Patch carrying anything
+// else names a mode this package cannot apply, and ApplyOverlay
+// declines it rather than guessing which one was meant.
 type PatchMode string
 
 const (
@@ -21,6 +24,28 @@ const (
 	// it. It is the only mode a Locked section accepts.
 	PatchAppend PatchMode = "append"
 )
+
+// resolveMode maps a Patch's Mode onto a mode this package implements,
+// reporting false for anything it does not recognize.
+//
+// The empty mode is the single alias, and it means replace, which is
+// what every Patch written before Mode existed depends on. Nothing else
+// is normalized. "Replace" and "REPLACE" are not accepted spellings of
+// PatchReplace: a PatchMode is a bare string that arrives from stored
+// JSON with nothing validating it on the way in, so a value that is not
+// one of the two constants is as likely to be a typo as an intention,
+// and treating it as replace is the one reading that can quietly
+// overwrite text somebody pinned.
+func resolveMode(m PatchMode) (PatchMode, bool) {
+	switch m {
+	case "":
+		return PatchReplace, true
+	case PatchReplace, PatchAppend:
+		return m, true
+	default:
+		return "", false
+	}
+}
 
 // Source names what produced a section. It is descriptive only: nothing
 // in assembly branches on it, and it exists so an operator reading an
@@ -84,8 +109,16 @@ type Section struct {
 	Order int `json:"order"`
 
 	// Locked marks a section a host pins as a guarantee to the platform.
-	// A replace Patch against a locked section is declined; an append
-	// Patch is still accepted.
+	// An append Patch is the only thing a locked section accepts.
+	// Everything else is declined, replace and unrecognized modes both.
+	//
+	// The pin covers overlay patches and stops there. A caller who can
+	// set a per-run system prompt discards the agent's stored sections
+	// outright, the locked ones with them, and what that caller wrote
+	// comes back as a single unlocked "role" section. So Locked pins a
+	// preamble against the tenants who write overlays, not against the
+	// callers who start runs. If you need it held against both, hold the
+	// second one at whatever API boundary lets a caller set that field.
 	Locked bool `json:"locked,omitempty"`
 }
 
@@ -105,7 +138,10 @@ type Patch struct {
 	Body string `json:"body"`
 
 	// Mode selects how Body is applied. An empty Mode defaults to
-	// PatchReplace.
+	// PatchReplace. Any value other than those two is declined, on a
+	// locked section and an unlocked one alike, so a mode that arrives
+	// misspelled from a stored overlay changes nothing rather than
+	// falling through to a replace nobody asked for.
 	Mode PatchMode `json:"mode,omitempty"`
 }
 
@@ -113,15 +149,28 @@ type Patch struct {
 // section set. It copies sections rather than mutating the input, so a
 // caller's slice is unaffected by the patches applied here.
 //
-// A replace Patch against a Locked section is declined: the run proceeds
-// with the section unchanged rather than failing over a patch the platform
-// pinned against. Declined patches are returned in the second value so the
-// caller can surface them, since a patch that looks applied and silently
-// is not has been a recurring source of confusion in prompt configuration.
-// An append Patch is always accepted, locked or not. An unknown ID adds a
-// new section, placed after every section already present so that a patch
-// naming an ID nothing emitted cannot outrank a Locked one. Several
-// creations in one call keep the order the patches were given in.
+// A Locked section accepts an append and nothing else. The rule is
+// written that way round on purpose. Enumerating the modes to refuse
+// leaves every value nobody thought of permitted, and PatchMode is a
+// bare string persisted as JSON, so "Replace" or a typo would sail past
+// a refusal list and overwrite the body a host pinned.
+//
+// A patch this package cannot apply is declined wherever it lands,
+// locked section or not, and it never creates a section either. Reading
+// an unrecognized mode as a replace would make every future mode name a
+// destructive operation on today's build, which is the wrong way for
+// that mistake to fail.
+//
+// A declined patch does not fail the run: assembly proceeds with the
+// section as the host wrote it. The declined patches come back in the
+// second value so the caller can surface them, since a patch that looks
+// applied and silently is not has been a recurring source of confusion
+// in prompt configuration.
+//
+// An unknown ID adds a new section, placed after every section already
+// present so that a patch naming an ID nothing emitted cannot outrank a
+// Locked one. Several creations in one call keep the order the patches
+// were given in.
 func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 	out := make([]Section, len(sections))
 	copy(out, sections)
@@ -138,9 +187,12 @@ func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 	var declined []Patch
 
 	for _, p := range patches {
-		mode := p.Mode
-		if mode == "" {
-			mode = PatchReplace
+		// Resolve the mode before anything else so an unusable patch
+		// cannot create a section on its way to being declined.
+		mode, known := resolveMode(p.Mode)
+		if !known {
+			declined = append(declined, p)
+			continue
 		}
 
 		i, exists := index[p.ID]
@@ -154,14 +206,15 @@ func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 			continue
 		}
 
-		if out[i].Locked && mode == PatchReplace {
+		if out[i].Locked && mode != PatchAppend {
 			declined = append(declined, p)
 			continue
 		}
 
-		if mode == PatchAppend {
+		switch mode {
+		case PatchAppend:
 			out[i].Body = appendBody(out[i].Body, p.Body)
-		} else {
+		case PatchReplace:
 			out[i].Body = p.Body
 		}
 	}

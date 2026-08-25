@@ -480,8 +480,9 @@ func applyToolDelta(tools, added, removed []string) []string {
 
 // logDeclinedPatches surfaces the patches ApplyOverlay refused, which is
 // the whole reason it returns them separately. A replace against a
-// locked section is dropped so the run can proceed, and a host whose
-// patch silently did nothing has no other way to find out.
+// locked section is dropped so the run can proceed, and so is a patch
+// carrying a mode the prompt package does not implement. Either way the
+// host whose patch silently did nothing has no other way to find out.
 func (e *Engine) logDeclinedPatches(o *prompt.Overlay, declined []prompt.Patch) {
 	if len(declined) == 0 {
 		return
@@ -492,7 +493,7 @@ func (e *Engine) logDeclinedPatches(o *prompt.Overlay, declined []prompt.Patch) 
 		ids = append(ids, p.ID)
 	}
 
-	e.logger.Warn("prompt overlay patches declined by locked sections",
+	e.logger.Warn("prompt overlay patches declined",
 		log.String("overlay_id", o.ID.String()),
 		log.String("agent_id", o.AgentID.String()),
 		log.String("scope", o.Scope.Canonical()),
