@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/persona"
+	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
@@ -459,6 +460,17 @@ func (s *Spy) GetPersonaByName(ctx context.Context, name string) (*persona.Perso
 func (s *Spy) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
 	s.record(ctx, "GetSkillByName")
 	return &skill.Skill{ID: id.NewSkillID(), Name: name, SystemPromptFragment: "spy skill fragment"}, nil
+}
+
+// GetOverlayForAgentAt records the scope of one rung of the ancestor
+// walk BuildSystemPrompt makes, then reports no overlay. The spy models
+// an agent with none, which is the ordinary case: the layering behavior
+// itself is exercised against a real backend, since a fake that answers
+// this call from a map proves nothing about which rows a store hands
+// back for a given scope.
+func (s *Spy) GetOverlayForAgentAt(ctx context.Context, _ id.AgentID, _ cortex.Scope) (*prompt.Overlay, error) {
+	s.record(ctx, "GetOverlayForAgentAt")
+	return nil, cortex.ErrOverlayNotFound
 }
 
 // GetTraitByName returns a usable trait so BuildSystemPrompt's trait

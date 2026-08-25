@@ -179,6 +179,11 @@ func (e *Engine) CreateAgent(ctx context.Context, config *agent.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
+	// Keep the stored SystemPrompt in step with the sections it is
+	// derived from. Every reader that predates sections still serves
+	// that column, so a section edit that skipped this would leave them
+	// all handing out the previous prompt with nothing to explain it.
+	config.SyncSystemPrompt()
 	return e.store.Create(ctx, config)
 }
 
@@ -200,6 +205,7 @@ func (e *Engine) UpdateAgent(ctx context.Context, config *agent.Config) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
+	config.SyncSystemPrompt()
 	return e.store.Update(ctx, config)
 }
 
