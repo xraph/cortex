@@ -62,13 +62,24 @@ type Config struct {
     Temperature float64
     ReasoningLoop string
     InlineSkills, InlineTraits, InlineBehaviors []string
+    Sections []prompt.Section         // addressable prompt, wins over SystemPrompt
     Guardrails, Metadata map[string]any
 }
+
+func (c *Config) PromptSections() []prompt.Section
+func (c *Config) SyncSystemPrompt()
+
+const RoleSectionID = "role"
 
 type Store interface {  // 6 methods
     Create, Get, GetByName(ctx, name), Update, Delete, List
 }
 ```
+
+`Sections` and `SystemPrompt` have a stated precedence: a non-empty `Sections`
+derives `SystemPrompt` and overwrites it, and an empty `Sections` with a
+non-empty `SystemPrompt` lowers into one section with id `role`. See
+[Prompt Composition](/docs/concepts/prompt-composition).
 
 ### `github.com/xraph/cortex/skill`
 
@@ -153,6 +164,51 @@ type Store interface {  // 6 methods
     CreatePersona, GetPersona, GetPersonaByName(ctx, name), UpdatePersona, DeletePersona, ListPersonas
 }
 ```
+
+### `github.com/xraph/cortex/prompt`
+
+Prompt sections, the overlay that patches them, and the overlay store.
+
+```go
+type Section struct {
+    ID, Body string
+    Source   Source   // host, persona, skill, trait, knowledge
+    Title    string   // prefixed to Body when non-empty
+    Order    int      // low first, ties broken by ID
+    Locked   bool     // refuses replace, still accepts append
+}
+
+type Patch struct {
+    ID, Body string
+    Mode     PatchMode // replace (default) or append
+}
+
+func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch)
+func Assemble(sections []Section) string
+
+const OrderRole, OrderPersona, OrderSkill, OrderKnowledge, OrderTrait = 1000, 2000, 3000, 4000, 5000
+
+type Overlay struct {
+    cortex.Entity
+    ID      id.OverlayID
+    AgentID id.AgentID
+    Scope   cortex.Scope
+    Patches []Patch
+    ToolsAdded, ToolsRemoved []string
+    Model       string
+    Temperature *float64
+    MaxTokens   *int
+}
+
+type Store interface {  // 7 methods
+    CreateOverlay, GetOverlay, GetOverlayForAgent, GetOverlayForAgentAt,
+    UpdateOverlay, DeleteOverlay, ListOverlays
+}
+```
+
+`ApplyOverlay` returns the patches it declined as its second value. A replace
+against a `Locked` section is declined; an append is not. See
+[Prompt Composition](/docs/concepts/prompt-composition).
 
 ### `github.com/xraph/cortex/cognitive`
 
@@ -412,6 +468,7 @@ func (e *Extension) API() *api.API
 | `trait` | Domain | Personality traits |
 | `behavior` | Domain | Reactive behaviors |
 | `persona` | Domain | Persona composition |
+| `prompt` | Domain | Prompt sections and scope overlays |
 | `cognitive` | Domain | Cognitive styles |
 | `communication` | Domain | Communication styles |
 | `perception` | Domain | Perception models |

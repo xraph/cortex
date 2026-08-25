@@ -17,8 +17,8 @@ Cortex is organized as a set of focused Go packages. The `engine` package is the
 │                     Agent resolution flow                         │
 │  1. Load agent config (flat or persona mode)                      │
 │  2. If persona mode: resolve persona → load skills + traits       │
-│  3. Assemble system prompt from persona identity + skill          │
-│     fragments + trait influences + behavior rules                 │
+│  3. Assemble prompt sections, then apply scope overlays           │
+│     broadest to narrowest                                         │
 │  4. Apply cognitive style (phase-based reasoning strategy)        │
 │  5. Execute reasoning loop (Run → Steps → ToolCalls)              │
 │  6. Record results, emit plugin hooks                             │
@@ -67,7 +67,7 @@ When an agent run begins, the engine resolves the agent's full configuration:
 
 2. **Resolve persona** — If `PersonaRef` is set, load the `persona.Persona` from the store. The persona contains `SkillAssignment`s, `TraitAssignment`s, behavior names, cognitive style, communication style, and perception.
 
-3. **Assemble system prompt** — Concatenate the persona's `Identity` field with each skill's `SystemPromptFragment`, trait influences that target `prompt_injection`, and behavior actions that inject prompts.
+3. **Assemble system prompt** from `prompt.Section` values: one for the agent's own instructions, one for the persona's `Identity`, one per skill `SystemPromptFragment`, one per retrieved knowledge source, and one per trait influence targeting `prompt_injection`. Then walk the run scope's ancestry, apply the `prompt.Overlay` found at each rung broadest first, and assemble the result in order. See [Prompt Composition](/docs/concepts/prompt-composition).
 
 4. **Apply runtime parameters** — Trait influences modify runtime parameters like `Temperature`, `MaxSteps`, and tool selection preferences. Cognitive style determines the reasoning loop strategy.
 

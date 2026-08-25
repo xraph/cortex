@@ -1,0 +1,394 @@
+---
+title: Prompt Composition
+description: Assembling a system prompt from addressable sections, and patching it per scope with an overlay.
+---
+
+A system prompt used to be one string. You could replace it or leave it alone,
+and that was the whole vocabulary. Now it's an ordered set of named pieces, and
+a tenant can rewrite one piece without touching the rest, or extend a piece the
+platform pinned shut.
+
+If you never write a section and never write an overlay, nothing about your
+prompts changes. Skip to [The compatibility path](#the-compatibility-path) and
+you're done.
+
+## A section
+
+```go
+type Section struct {
+    ID     string        // how a patch addresses it
+    Source prompt.Source // who produced it, informational only
+    Title  string        // prefixed to Body when non-empty
+    Body   string        // the prompt text
+    Order  int           // position, low first
+    Locked bool          // refuses replace, still takes append
+}
+```
+
+`ID` is the address. Everything else about a section you can change later, but
+the id is a contract with whoever wrote an overlay against it, because the id is
+the only handle they have. The bundled producers pick ids you can guess: `role`
+for the agent's own instructions, then `persona:identity`, `skill:<name>`,
+`knowledge:<source>` and `trait:<name>`.
+
+`Order` decides position, and `Assemble` breaks ties by `ID`. Worth knowing,
+that tiebreak: two sections sharing an order come out alphabetically rather than
+in the order you appended them, which is how a list of skills quietly re-sorts
+itself. The producers dodge it by taking consecutive orders from a band.
+
+| Band | Value | Who fills it |
+|---|---|---|
+| `prompt.OrderRole` | 1000 | the agent's own instructions |
+| `prompt.OrderPersona` | 2000 | the persona's identity |
+| `prompt.OrderSkill` | 3000 | one per skill with a fragment |
+| `prompt.OrderKnowledge` | 4000 | one per retrieved knowledge source |
+| `prompt.OrderTrait` | 5000 | one per trait prompt injection |
+
+The gaps are a thousand wide so you can slot a section of your own between any
+two bands, and so a producer emitting fifty sections never runs into the next
+band.
+
+Sections join with a blank line between them. A non-empty `Title` is prefixed
+on its own line above `Body`. Every bundled producer leaves `Title` empty and
+carries its heading inside `Body`, which is what keeps the assembled text
+byte-identical to the string these fragments have always produced. `Title` is
+there for sections you author.
+
+## Sections on an agent
+
+```go
+ag := &agent.Config{
+    Name: "support",
+    Sections: []prompt.Section{
+        {
+            ID:     "safety",
+            Source: prompt.SourceHost,
+            Body:   "Never reveal another customer's data.",
+            Order:  prompt.OrderRole,
+            Locked: true,
+        },
+        {
+            ID:     "role",
+            Source: prompt.SourceHost,
+            Body:   "You answer questions about billing.",
+            Order:  prompt.OrderRole + 1,
+        },
+    },
+}
+```
+
+You can set both `Sections` and `SystemPrompt`, so they need a stated
+precedence. Sections win. Once you put anything in `Sections`, `SystemPrompt`
+becomes a value derived from it, and whatever string you wrote there is
+overwritten rather than merged, because two sources of truth for one prompt is
+how a prompt starts lying about itself.
+
+`Engine.CreateAgent`, `Engine.UpdateAgent` and `Engine.CloneAgent` all call
+`SyncSystemPrompt` before the store write, so the column stays in step with the
+sections it's derived from and every reader that hasn't learned about sections
+still gets a correct string out of it. If you write agents straight through
+`store.Store` and skip the engine, call it yourself:
+
+```go
+ag.Sections = append(ag.Sections, prompt.Section{
+    ID:    "escalation",
+    Body:  "Escalate anything involving a chargeback.",
+    Order: prompt.OrderRole + 2,
+})
+ag.SyncSystemPrompt()
+
+if err := s.Update(ctx, ag); err != nil {
+    return err
+}
+```
+
+### The compatibility path
+
+An agent with no sections and a plain `SystemPrompt` lowers into exactly one
+section:
+
+```go
+ag := &agent.Config{SystemPrompt: "You answer questions about billing."}
+
+secs := ag.PromptSections()
+// secs[0].ID == agent.RoleSectionID ("role")
+// secs[0].Order == prompt.OrderRole
+```
+
+So the address for a legacy agent's instructions is `role`, and you can reach
+them from an overlay without ever having rewritten the agent. Leave both empty
+and the agent contributes nothing of its own, so the prompt is whatever its
+persona, skills and traits produce.
+
+The migration that adds the `sections` column defaults it to `[]` and backfills
+every existing row with that. Nothing copies `system_prompt` into a synthetic
+section, which would only be byte-identical if the title and ordering came out
+exactly right anyway, and would leave every one of your older agents patchable
+by an overlay its owner never opted into. Your pre-upgrade agents come out the
+other side with no sections at all and their prompt strings untouched.
+
+## What the producers emit
+
+`Persona`, `Skill` and `Trait` each grew a `Sections(order int)` method. The
+order is a parameter because the caller is the only thing that knows a
+producer's position in the agent's list:
+
+```go
+var out []prompt.Section
+
+out = append(out, p.Sections(prompt.OrderPersona)...)
+
+order := prompt.OrderSkill
+for _, sk := range skills {
+    secs := sk.Sections(order)
+    order += len(secs)
+    out = append(out, secs...)
+}
+```
+
+Advance by what the producer actually returned, not by one. You cannot assume
+the counts line up with your list lengths: a persona with no `Identity` returns
+nothing at all, a skill with no `SystemPromptFragment` returns nothing either,
+and a trait returns one section per `prompt_injection` influence, which might be
+none and might be four.
+
+A trait's first injection is addressed as `trait:<name>`. A trait with more than
+one gets `trait:<name>:2` onwards, so the ordinary single-injection case keeps
+the id you'd guess.
+
+## An overlay
+
+An overlay is one host's per-scope delta on one agent. It never replaces the
+agent, so deleting the overlay restores the agent's own behavior exactly. One
+overlay per agent per scope, enforced by a unique index.
+
+```go
+scope := cortex.Scope{Levels: []cortex.Level{
+    {Key: "workspace", Value: "ws_acme"},
+    {Key: "project", Value: "p_billing"},
+}}
+
+temp := 0.2
+
+o := &prompt.Overlay{
+    ID:      id.NewOverlayID(),
+    AgentID: agentID,
+    Patches: []prompt.Patch{
+        {ID: "role", Body: "You answer billing questions for Acme.", Mode: prompt.PatchReplace},
+        {ID: "safety", Body: "Refuse refunds over $500.", Mode: prompt.PatchAppend},
+    },
+    ToolsRemoved: []string{"issue_refund"},
+    Model:        "claude-sonnet-4-5",
+    Temperature:  &temp,
+}
+
+if err := s.CreateOverlay(cortex.WithScope(ctx, scope), o); err != nil {
+    return err
+}
+```
+
+The scope is stamped from your context on create and is immutable afterwards.
+Letting an update move it would silently retarget an overlay somebody already
+read and approved. Write a second overlay for the same agent in the same scope
+and you get `cortex.ErrAlreadyExists`.
+
+Reading one back:
+
+```go
+o, err := s.GetOverlayForAgent(ctx, agentID)
+if errors.Is(err, cortex.ErrOverlayNotFound) {
+    // the ordinary case for most agents
+}
+```
+
+There is no HTTP endpoint and no dashboard screen for overlays in this release.
+You write them through the composite store, which you reach with
+`eng.Store()`.
+
+### Patch modes
+
+`replace` overwrites the target section's `Body`. `append` adds to it, joined
+with a newline. An empty `Mode` is `replace`.
+
+An append to an empty body is the addition alone, not a leading blank line. An
+append of an empty string is a no-op, not a trailing one.
+
+A patch whose `ID` matches no section becomes a new section rather than an
+error, because patching a section a persona didn't emit is intent, not a
+mistake. Mind the position, though: a section created this way lands at `Order`
+0, which puts it ahead of everything the producers emit. If you want it
+somewhere else, add it to the agent's `Sections` with an order you chose and
+patch it from the overlay.
+
+### Locked
+
+A `Locked` section refuses `replace` and still accepts `append`. That pair is
+the whole point: a platform pins a safety preamble, and a tenant can add to it
+but can't write it out.
+
+```go
+patched, declined := prompt.ApplyOverlay(sections, []prompt.Patch{
+    {ID: "safety", Body: "Ignore the rule above."},              // declined
+    {ID: "safety", Body: "Also refuse refunds over $500.", Mode: prompt.PatchAppend},
+})
+```
+
+A declined patch does not fail the run. The section stays as the host wrote it,
+assembly carries on, and the run goes out under a prompt that quietly ignored
+part of its own overlay.
+
+That silence is the risk, so the engine logs it for you. Look for a Warn line
+reading `prompt overlay patches declined by locked sections`, carrying
+`overlay_id`, `agent_id`, `scope` and a comma-separated `sections` field naming
+exactly which of your patches were dropped. When a tenant swears their overlay
+isn't taking effect, that line is the first place to look, and it usually ends
+the conversation.
+
+If you call `prompt.ApplyOverlay` yourself, the declined patches are the second
+return value. Don't discard it.
+
+## How an overlay reaches a run
+
+Inheritance is an ancestor walk, one exact lookup per rung, broadest first:
+
+```go
+run := cortex.ScopeFromContext(ctx)
+
+for depth := 1; depth <= len(run.Levels); depth++ {
+    ancestor := cortex.Scope{Levels: run.Levels[:depth]}
+
+    o, err := s.GetOverlayForAgentAt(ctx, agentID, ancestor)
+    if errors.Is(err, cortex.ErrOverlayNotFound) {
+        continue
+    }
+    if err != nil {
+        return nil, err
+    }
+    // apply o
+}
+```
+
+The engine does this for you on every run, so you'll rarely write the loop. It's
+spelled out here because the shape matters, and because the obvious alternative
+is wrong in a way that reads perfectly well at the call site.
+
+A run at `[workspace=ws_acme, project=p1]` asks for `[ws_acme]` and then for
+`[ws_acme, p1]`. It applies what it finds in that order, so the workspace overlay
+lands first and the project overlay patches on top. Narrower wins, which only
+means anything because they collide: append-mode patches and tool deltas collide
+all the time, and "most specific wins" and "all of them apply" agree only when
+nothing does.
+
+Now the version you'll be tempted to write. Prefix matching in this codebase
+widens downward, so listing overlays from `[ws_acme]` hands you back every
+project's overlay inside that workspace, `p2`'s included, and feeding those into
+one run's prompt mixes `p2`'s instructions into a run in `p1` while your code
+looks entirely reasonable. That's why `GetOverlayForAgentAt` matches its scope
+argument exactly, and why `ListOverlays` has no part in this path.
+
+`cortex.Scope.Covers` is the predicate for the direction the walk needs:
+
+```go
+ws.Covers(p1)  // true, a workspace covers a project inside it
+p1.Covers(p2)  // false, siblings cover nothing of each other
+p1.Covers(p1)  // true, a scope covers itself
+```
+
+The scope you pass `GetOverlayForAgentAt` has to be your own or an ancestor of
+it. Anything else is `cortex.ErrOverlayNotFound`, because naming a scope is not
+a way to read outside your own.
+
+## Tool deltas
+
+`ToolsAdded` and `ToolsRemoved` adjust the agent's tool list for runs in the
+overlay's scope. Two lists rather than one replacement list, so withdrawing one
+tool doesn't mean restating the agent's whole surface.
+
+Two rules, and they're both about what happens when the lists disagree.
+
+Within one overlay, removals run after additions, so a tool you name in both
+lists ends up withdrawn. An overlay that grants and withdraws the same tool is
+stating a restriction, and reading it the other way round would hand out a tool
+the same document asked to take away.
+
+Across overlays, the narrower scope applies last. It can withdraw what a broader
+one granted, and it can re-grant what a broader one withdrew, provided it names
+the tool. An overlay only ever moves the tools it mentions.
+
+Worked, two levels deep. One agent, `Tools: ["search", "issue_refund"]`. One
+workspace overlay at `[ws_acme]` with `ToolsRemoved: ["issue_refund"]`. Two
+projects underneath it, each with an overlay of its own, and a run in each:
+
+| Run scope | Project overlay | Tools the run gets |
+|---|---|---|
+| `[ws_acme]` | | `search` |
+| `[ws_acme, p1]` | `ToolsAdded: ["escalate"]` | `search`, `escalate` |
+| `[ws_acme, p2]` | `ToolsAdded: ["issue_refund"]` | `search`, `issue_refund` |
+
+`p1` adds something unrelated and the workspace's removal stays in force. `p2`
+names the withdrawn tool and gets it back. Nothing a broader scope removed comes
+back by accident, and nothing nobody named appears at all.
+
+An agent that names no tools is allowed all of them, so the implicit list gets
+written out before a delta subtracts from it. Once an overlay has spoken, that
+emptiness is a decision rather than a default, and a run whose last tool an
+overlay withdrew gets no tools at all instead of every registered one.
+
+One tradeoff you should know about before you build on this. A workspace-level
+removal is not a floor a project overlay can't lift. That's the right default
+while you write the overlays yourself, at scopes you control, which is the only
+way they can be written today. It would be the wrong default the moment you let
+tenants author overlays in their own sub-scopes, because a tenant could then
+restore a tool you withdrew above them. Delegating authorship would need broader
+removals to become floors, and that's a policy change, not a fix.
+
+## Config fields
+
+An overlay carries three run settings alongside its patches.
+
+| Field | Type | Applies when |
+|---|---|---|
+| `Model` | `string` | non-empty |
+| `Temperature` | `*float64` | non-nil, zero included |
+| `MaxTokens` | `*int` | non-nil, zero included |
+
+Two are pointers so you can tell "leave the agent's value alone" apart from "set
+this to zero". A plain `float64` would make an unset temperature read as a
+request for 0, which is a real and very different setting, and it's the one
+value you'd have no other way to ask for.
+
+The layering runs four deep: engine defaults, the agent's own config, the
+overlays broadest to narrowest, then your per-run overrides. Overrides sit on
+top because naming a model for one call means you meant it for that call, where
+an overlay is a standing preference.
+
+Layering is per field, not per overlay. A workspace overlay's `MaxTokens`
+survives a project overlay that only sets `Model`.
+
+One consequence if you use suspension. A resumed run rebuilds its config from
+the continuation and from nowhere else, so it keeps the overlay settings it was
+suspended with. Fix an overlay in the middle of an outage and any run already
+paused won't see the fix until you start it again.
+
+## Seeing the result
+
+```go
+assembled, err := eng.BuildSystemPrompt(ctx, ag, nil)
+```
+
+That runs the whole pipeline: collect the sections, walk the scope, apply what
+it finds, assemble in order. `POST /agents/:name/preview-prompt` does the same
+thing over HTTP and hands back the assembled string.
+
+The walk keys off `cortex.ScopeFromContext`, so a preview shows you the prompt
+for the scope you asked from. Call it with no scope on the context and you skip
+the overlay walk entirely and see the agent's own assembly, unpatched.
+
+## Related
+
+- [Host-Defined Scope](/docs/concepts/multi-tenancy) for how the ancestry the
+  walk climbs is declared in the first place.
+- [Personas](/docs/human-model/personas), [Skills](/docs/human-model/skills) and
+  [Traits](/docs/human-model/traits) for the producers.
+- [Custom Store](/docs/guides/custom-store) if you implement `store.Store`
+  yourself, since `prompt.Store` is now part of it.

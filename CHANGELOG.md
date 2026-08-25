@@ -4,6 +4,279 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.12.0] - Unreleased
+
+A system prompt stops being one opaque string. It's an ordered set of
+addressable sections now, and a persona, its skills and its traits emit
+`prompt.Section` values instead of string fragments. A `prompt.Overlay`
+stored at a scope patches those sections by id, so a tenant can rewrite
+one piece of an agent's prompt without the platform handing over the
+whole thing. The overlay carries per-scope run settings too: `Model`,
+`Temperature`, `MaxTokens`, `ToolsAdded` and `ToolsRemoved`.
+
+Overlays are inherited by walking a run's scope ancestry, broadest
+first, so the narrowest one patches last and wins. A `Locked` section
+refuses a `replace` patch and still accepts an `append`, which is the
+pair that lets you pin a safety preamble and still let a tenant extend
+it.
+
+**Your prompts do not change.** An agent that only ever set
+`SystemPrompt`, with a persona, skills and traits behind it, assembles
+to a byte-identical string. That is pinned by a golden test,
+`prompt.TestAssemble_ProducerSectionsMatchTheLegacyPrompt`, whose
+literal was captured by running the previous release's
+`BuildSystemPrompt` before any producer was touched. It's the first
+question every upgrading host asks, and the answer is a test rather than
+a promise.
+
+Two byte-level divergences sit outside that promise, and if you diff
+prompts across the upgrade you'll see both. An agent with an **empty**
+`SystemPrompt` used to get a leading newline, because the persona chunk
+was then the first part and every part after the first began with one.
+Section assembly starts at `## Identity` instead. And a knowledge block
+used to be followed by three newlines where every other part had two,
+because the block ended its last bullet with a newline and the join then
+added its own on top; a section carries no trailing separator, so a
+prompt with knowledge in it loses one blank line.
+`engine.TestBuildSystemPrompt_KnowledgeBlockLosesOnlyItsTrailingNewline`
+pins the legacy string and tolerates exactly that one byte.
+
+`SystemPrompt` and `Sections` can both be set, so they need a stated
+precedence, and it's this: sections are the truth. A non-empty
+`Sections` derives `SystemPrompt` from itself and overwrites whatever
+you put there. An empty `Sections` with a non-empty `SystemPrompt`
+lowers into a single section with id `"role"`, which is what keeps every
+agent written before this release assembling the way it always did, and
+what gives an overlay an address to reach it by.
+
+As with v1.7.0 through v1.11.0, this ships inside v1 rather than as
+v2.0.0. The module path is `github.com/xraph/cortex`, carries no `/v2`
+suffix, and migrating it was declined. Go refuses to resolve a `v2.x`
+tag against an unsuffixed module path, so a minor version is the only
+release channel available, and the breaking changes below are enumerated
+here instead of signaled by a major version bump. Read this whole
+section before upgrading.
+
+### Breaking changes
+
+- **`store.Store` now embeds `prompt.Store`**, seven additional methods
+  (`CreateOverlay`, `GetOverlay`, `GetOverlayForAgent`,
+  `GetOverlayForAgentAt`, `UpdateOverlay`, `DeleteOverlay`,
+  `ListOverlays`) on top of everything the composite already required. A
+  custom `store.Store` implementation (see
+  `docs/content/docs/guides/custom-store.mdx`) no longer satisfies the
+  interface until it implements these too. The three bundled backends
+  already do.
+
+  Two of those seven are the ones to read twice. `GetOverlayForAgent`
+  matches the caller's scope **exactly** and `GetOverlayForAgentAt`
+  matches a named ancestor of it exactly. Neither prefix-matches, unlike
+  almost every other read in this codebase, and that asymmetry is
+  deliberate, not an oversight. `store/storetest`'s conformance suite
+  covers all seven and asserts the exact-match behavior, so changing it
+  later takes editing a test on purpose. Run it against your backend.
+- **`agent.Config` gained `Sections []prompt.Section`**, and
+  `SystemPrompt` is a derived field whenever that slice is non-empty.
+  If you read `SystemPrompt` expecting it to be the authoritative
+  string a host wrote, you now get a value assembled from the sections,
+  and a write of your own to that field is overwritten, not merged.
+  Nothing changes for an agent with no sections: there the string is the
+  source, and the derivation is a no-op.
+
+  `Engine.CreateAgent`, `Engine.UpdateAgent` and `Engine.CloneAgent`
+  call `Config.SyncSystemPrompt()` before the store write to keep the
+  column in step. If you write agents straight through `store.Store` and
+  skip the engine you get no sync, so call it yourself or the stored
+  string drifts from the sections it claims to come from.
+- **`suspension.RunConfig` gained `ToolsRestricted bool`.** A resumed
+  run rebuilds its config from the continuation and from nowhere else,
+  so the flag that says "this empty tool list is a decision" has to
+  travel with it. Without that, a pause and resume would undo an
+  overlay's withdrawal and hand the run back more tools than it was
+  suspended with. The field is `omitempty` and decodes as `false` on
+  rows written before it existed, which is the behavior those runs
+  already had. It can therefore be lost across an upgrade and can never
+  be spuriously set, which is the safe direction: losing it resumes an
+  old run under the rules it was suspended under, where inventing it
+  would strip tools from a run nobody restricted.
+- **Two migrations on Postgres and SQLite.** `20260826000001`
+  (`create_overlays`) creates `cortex_overlays`, scoped from birth, with
+  a partial unique index on `(agent_id, scope_canon)`. `20260826000002`
+  (`add_agent_sections`) adds a `sections` column to `cortex_agents`,
+  `NOT NULL DEFAULT '[]'`. Mongo has no counterpart to the second
+  because it has no DDL, and gains the overlay collection's indexes
+  through `Store.Migrate()` like every other collection.
+- **A prompt with retrieved knowledge in it loses one blank line**, as
+  described above. If you pin assembled prompts in your own tests and
+  your fixture has a skill with a `KnowledgeRef` behind it, that's the
+  diff you'll see, and it's the only one.
+
+### Added
+
+- **The `prompt` package.** `prompt.Section` is one addressable piece of
+  a system prompt: an `ID`, an informational `Source`, an optional
+  `Title` prefixed on assembly, a `Body`, an `Order`, and `Locked`.
+  `prompt.Patch` is an overlay's change to one section, matched by `ID`,
+  applied in `PatchReplace` or `PatchAppend` mode. `ApplyOverlay` runs
+  the algebra and returns the resulting sections **plus the patches it
+  declined**, which is the second return value and is not to be
+  discarded. `Assemble` sorts by `Order`, breaks ties by `ID`, and joins
+  with a blank line. The package is pure: no store, no logger, no engine.
+- **`prompt.Overlay` and `prompt.Store` on the composite store**, backed
+  by a new `cortex_overlays` table on Postgres and SQLite and a
+  collection of the same name on Mongo. An overlay is a per-scope delta
+  on one agent, never a replacement, so deleting it restores the agent's
+  own behavior exactly. One per agent per scope. Its `Scope` is stamped
+  from the creating context and is immutable afterwards, because letting
+  an update move it would silently retarget an overlay somebody already
+  approved.
+- **`Sections(order int) []prompt.Section` on `Persona`, `Skill` and
+  `Trait`.** The order is a parameter rather than a fixed band because
+  assembly falls back to sorting by `ID` when two sections share an
+  order, and a fixed band would put an agent's skills in alphabetical
+  order instead of the order the agent lists them. A caller walks a list
+  starting at the band and advancing by the number of sections each
+  producer actually returned. A persona with no `Identity`, a skill with
+  no fragment and a trait with no prompt injection each return nothing,
+  so the counts do not line up with the list lengths.
+- **`agent.Config.PromptSections()`, `agent.Config.SyncSystemPrompt()`
+  and `agent.RoleSectionID`.** The first two are the two directions of
+  the precedence rule above. `RoleSectionID` is `"role"`, the id a plain
+  `SystemPrompt` lowers into and therefore the address an overlay uses
+  to reach a legacy agent's instructions.
+- **`cortex.Scope.Covers(other Scope) bool`**, reporting whether the
+  receiver is `other` or an ancestor of it. A scope covers itself. This
+  asks "is s somewhere in other's own ancestry", which is the upward
+  question, and it is deliberately not the downward prefix matching the
+  stores do on a list.
+- **`cortex.ErrOverlayNotFound`**, returned when an agent has no overlay
+  at the scope asked for. That is the ordinary case for most agents on
+  most runs, so the ancestor walk treats it as "keep going", not as a
+  failure.
+- **`id.OverlayID`, `id.NewOverlayID` and `id.ParseOverlayID`**, prefix
+  `ovl`, the same identifier shape every other entity has.
+
+### Changed
+
+- **Overlay inheritance is an explicit ancestor walk, not prefix
+  matching.** A run at `[workspace=A, project=B]` asks
+  `GetOverlayForAgentAt` for `[A]`, then for `[A, B]`, and applies what
+  it finds in that order. At most one lookup per scope level.
+
+  The obvious alternative is wrong in a way that reads fine at the call
+  site. Prefix matching in this codebase widens **downward**, so listing
+  overlays from `[A]` hands back every project's overlay inside that
+  workspace, and feeding those into one run mixes a sibling project's
+  instructions and tool grants into a run that must never see them.
+  `engine.TestBuildSystemPrompt_ASiblingProjectsOverlayNeverApplies` is
+  the test that catches it, and swapping the walk for a listing
+  reproduces the leak in one line.
+
+  Broadest first comes out of the walk itself, never from a sort
+  applied afterwards: the loop index is the scope depth. One walk per
+  run feeds both the prompt and the run config, so the two can never
+  disagree about which overlays applied.
+- **A declined patch is logged, not raised.** A `replace` against a
+  `Locked` section is dropped and the run proceeds with the section as
+  the host wrote it. The engine logs it at Warn as `prompt overlay
+  patches declined by locked sections`, carrying `overlay_id`,
+  `agent_id`, `scope`, and a comma-separated `sections` field naming
+  exactly which patches were dropped. If a host swears its overlay is
+  not taking effect, that line is the first place to look.
+- **A per-run `SystemPrompt` override replaces the agent's whole
+  contribution**, its stored `Sections` included, and arrives as the
+  `role` section so an overlay targeting `role` still reaches it. That
+  is what overriding a prompt for one run has always meant.
+- **Skills are resolved once per prompt build instead of twice.** The
+  old code looked a skill up for its fragment, aborting on error, and
+  again for its knowledge references, silently skipping on error. The
+  second lookup could never see an error the first had not already
+  aborted on, so folding them removes a lookup whose error handling
+  contradicted its sibling. No behavior change, one less round trip per
+  skill.
+
+### Fixed
+
+Three holes in tool resolution, each of which turned a removal into a
+grant. All three are reachable from an ordinary overlay and none of them
+needed anything unusual to trigger.
+
+- **An agent that named no tools was immune to `ToolsRemoved`.** An
+  empty `agent.Config.Tools` means "every registered tool", so
+  subtracting from it subtracted from an empty list and did nothing at
+  all, silently. The implicit list is now written out before a delta
+  applies to it.
+- **Withdrawing the last tool granted every tool.** Tool resolution read
+  an empty name list as "no filter", so an overlay that removed an
+  agent's only tool produced an empty list, which read as every
+  registered tool. A removal became the broadest possible grant. An
+  explicit restriction flag now distinguishes "nobody named a list" from
+  "somebody named one and it is empty".
+- **A narrower overlay adding one unrelated tool re-granted everything.**
+  The materialize step above asked only whether the list was empty, not
+  whether an overlay had already emptied it, so the flag guarded
+  resolution but not the next iteration of the loop it sat in. Agent
+  `["alpha"]`, a workspace overlay removing `alpha`, a project overlay
+  adding `beta`, and the run received `[alpha beta gamma]`: the tool the
+  workspace explicitly withdrew, plus every registered tool nobody
+  named. Once an overlay has spoken, an empty list is a decision and
+  stays one.
+
+  `engine.TestEffectiveConfig_ToolDeltasResolveAsDocumented` covers all
+  three, plus the six other combinations around them.
+
+### Known limitations
+
+- **There is no HTTP endpoint and no dashboard screen for overlays in
+  this release.** You write them through the composite store, which you
+  reach with `eng.Store()`. Nothing's hiding behind a route you haven't
+  found.
+- **Tool deltas resolve narrowest-wins, and that is a policy choice with
+  a stated limit.** A narrower scope can withdraw what a broader one
+  granted and can re-grant what a broader one withdrew, provided it
+  names the tool. A workspace-level removal is therefore not a floor a
+  project overlay is unable to lift. That default is right while
+  overlays are written by the host at scopes the host controls, which is
+  the only way they can be written today. It'd be the wrong default the
+  moment you let tenants author overlays in their own sub-scopes, since
+  a tenant could then restore a tool you withdrew above them. Delegating
+  would need broader removals to become floors, and that is a policy
+  change, not a bug fix.
+- **A resumed run keeps the overlay settings it was suspended with**,
+  the same way it keeps the prompt it was suspended with. Fix an overlay
+  in the middle of an outage and a run that is already paused will not
+  see the fix until it is started again.
+- **A patch whose id matches no section becomes a new section at order
+  0**, which puts it ahead of everything the producers emit. That is
+  deliberate, since patching a section a persona did not emit is intent,
+  not a mistake, but the position surprises people. If you want it
+  elsewhere, put the section on the agent with an order you chose and
+  patch it from the overlay.
+
+### Migration notes
+
+- **`sections` backfills to `[]` and nothing copies `system_prompt` into
+  it.** The column is added `NOT NULL DEFAULT '[]'`, and on both SQL
+  backends an `ADD COLUMN` with a non-null default fills every existing
+  row as part of the statement. So the moment the migration finishes,
+  every agent written before this release has an empty section list and
+  a `system_prompt` untouched byte for byte, which is exactly the state
+  the compatibility promise needs. Backfilling a synthetic section
+  wrapping the old string would have been worse than useless: it is only
+  byte-identical if the title and ordering are exactly right, and it
+  would make every legacy agent's prompt patchable by an overlay its
+  owner never opted into.
+- **The overlays table is created scoped and needs no backfill.**
+  Overlays are new this release, so there is no unscoped legacy shape to
+  carry forward. The unique index is partial on `scope_canon` on all
+  three backends, following the convention every other index here uses.
+- **Read the guide before you write your first overlay.**
+  `docs/content/docs/concepts/prompt-composition.mdx` covers what a
+  section is and how to address one, what the producers emit, writing an
+  overlay, what `Locked` means and where a declined patch shows up, the
+  ancestor walk and why a sibling's overlay never reaches you, and the
+  tool delta rules with a worked two-level example.
+
 ## [1.11.0] - Unreleased
 
 Adds run suspension. A run can now stop in the middle of a step, persist
