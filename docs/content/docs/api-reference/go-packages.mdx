@@ -180,7 +180,7 @@ type Section struct {
 
 type Patch struct {
     ID, Body string
-    Mode     PatchMode // replace (default) or append
+    Mode     PatchMode // replace (default), append, and nothing else
 }
 
 func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch)
@@ -206,8 +206,9 @@ type Store interface {  // 7 methods
 }
 ```
 
-`ApplyOverlay` returns the patches it declined as its second value. A replace
-against a `Locked` section is declined; an append is not. See
+`ApplyOverlay` returns the patches it declined as its second value. A `Locked`
+section takes an append and nothing else, so a replace is declined and so is any
+`Mode` outside the two constants. See
 [Prompt Composition](/docs/concepts/prompt-composition).
 
 ### `github.com/xraph/cortex/cognitive`

@@ -210,6 +210,13 @@ You write them through the composite store, which you reach with
 `replace` overwrites the target section's `Body`. `append` adds to it, joined
 with a newline. An empty `Mode` is `replace`.
 
+Those are the only modes there are. A `Mode` holding anything else is declined
+wherever it lands, and it doesn't create a section either. You'll want that if
+you ever hand-edit a stored overlay: `PatchMode` is a bare string in JSON and
+nothing validates it on the way in, so `"Replace"` reaches the engine exactly as
+easily as `"replace"` does. It changes nothing and shows up in the declined list
+instead of silently overwriting a body.
+
 An append to an empty body is the addition alone, not a leading blank line. An
 append of an empty string is a no-op, not a trailing one.
 
@@ -229,9 +236,10 @@ lock would hold and be outranked anyway. That is also why `Patch` has no
 
 ### Locked
 
-A `Locked` section refuses `replace` and still accepts `append`. That pair is
-the whole point: a platform pins a safety preamble, and a tenant can add to it
-but can't write it out.
+A `Locked` section takes an `append` and nothing else. Every other mode is
+declined, `replace` and the unrecognized ones alike. That pair is the whole
+point: a platform pins a safety preamble, and a tenant can add to it but can't
+write it out.
 
 ```go
 patched, declined := prompt.ApplyOverlay(sections, []prompt.Patch{
@@ -245,14 +253,23 @@ assembly carries on, and the run goes out under a prompt that quietly ignored
 part of its own overlay.
 
 That silence is the risk, so the engine logs it for you. Look for a Warn line
-reading `prompt overlay patches declined by locked sections`, carrying
-`overlay_id`, `agent_id`, `scope` and a comma-separated `sections` field naming
-exactly which of your patches were dropped. When a tenant swears their overlay
+reading `prompt overlay patches declined`, carrying `overlay_id`, `agent_id`,
+`scope` and a comma-separated `sections` field naming exactly which of your
+patches were dropped. When a tenant swears their overlay
 isn't taking effect, that line is the first place to look, and it usually ends
 the conversation.
 
 If you call `prompt.ApplyOverlay` yourself, the declined patches are the second
 return value. Don't discard it.
+
+One boundary to know about before you rely on a lock. `Locked` pins a section
+against overlay patches, and that is the whole of what it does. A caller who can
+set a per-run system prompt discards the agent's stored `Sections` outright, the
+locked ones with them, and what that caller passed comes back as a single
+unlocked `role` section. An explicit per-run value has always won, and it still
+does. So the lock holds against the tenants who write overlays, not against the
+callers who start runs, and if you need it held against both you hold the second
+one at whatever API boundary lets a caller set that field.
 
 ## How an overlay reaches a run
 

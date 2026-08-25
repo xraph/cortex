@@ -23,9 +23,10 @@ it.
 **Your prompts do not change.** An agent that only ever set
 `SystemPrompt`, with a persona, skills and traits behind it, assembles
 to a byte-identical string. That is pinned by a golden test,
-`prompt.TestAssemble_ProducerSectionsMatchTheLegacyPrompt`, whose
-literal was captured by running the previous release's
-`BuildSystemPrompt` before any producer was touched. It's the first
+`engine.TestBuildSystemPrompt_MatchesTheLegacyPrompt`, whose literal was
+captured by running the previous release's `BuildSystemPrompt` before
+any producer was touched. It calls the real pipeline, so a reordering
+anywhere inside assembly fails it. It's the first
 question every upgrading host asks, and the answer is a test rather than
 a promise.
 
@@ -179,14 +180,50 @@ section before upgrading.
 - **A declined patch is logged, not raised.** A `replace` against a
   `Locked` section is dropped and the run proceeds with the section as
   the host wrote it. The engine logs it at Warn as `prompt overlay
-  patches declined by locked sections`, carrying `overlay_id`,
-  `agent_id`, `scope`, and a comma-separated `sections` field naming
-  exactly which patches were dropped. If a host swears its overlay is
-  not taking effect, that line is the first place to look.
+  patches declined`, carrying `overlay_id`, `agent_id`, `scope`, and a
+  comma-separated `sections` field naming exactly which patches were
+  dropped. If a host swears its overlay is not taking effect, that line
+  is the first place to look.
+- **A `Mode` outside `replace` and `append` is declined, not applied.**
+  The check on a `Locked` section now names the one mode it accepts.
+  Written the other way round, as a list of what to refuse, it left
+  every value nobody had thought of permitted. A `PatchMode` is a bare
+  string persisted as JSON with nothing validating it on the way in, so
+  `"Replace"` or a plain typo sailed past the refusal and overwrote the
+  body a host had pinned. The same validation runs on unlocked sections,
+  for a different reason: a mode this build cannot apply is as likely to
+  be a typo as an intention, and reading it as a replace would turn
+  every mode name somebody invents later into a destructive operation
+  against today's code. An empty `Mode` still means `replace`, which is
+  what every patch written before `Mode` existed depends on. A patch
+  declined this way creates no section either, so a garbage mode against
+  an id nobody emitted adds nothing to the prompt.
+  `prompt.TestApplyOverlay_UnrecognizedModeCannotTouchALockedSection`
+  and `prompt.TestApplyOverlay_ModeIsValidatedOnUnlockedSectionsToo`
+  cover both halves.
+- **A created section lands last, and `Patch` has no `Order` field.** A
+  patch whose id matches no section becomes a new section rather than an
+  error, and it goes after everything already in the set; several of
+  them in one overlay come out in patch order. That position is a
+  security property, not a gap waiting to be filled. A created section
+  sitting at order 0 would land ahead of every producer band, so an
+  overlay naming an id nobody emitted could slide text above a `Locked`
+  safety preamble without ever replacing it, and the lock would hold
+  while being outranked. Adding `Patch.Order` reopens that. Position is
+  the host's call. Put the section on the agent with the order you want,
+  then patch it from the overlay by id.
 - **A per-run `SystemPrompt` override replaces the agent's whole
   contribution**, its stored `Sections` included, and arrives as the
   `role` section so an overlay targeting `role` still reaches it. That
   is what overriding a prompt for one run has always meant.
+
+  Read that alongside `Locked`, because the two meet and the answer is
+  not the one a host guesses. Locked sections go with the rest, and what
+  the caller passed comes back as a single unlocked `role` section. The
+  lock covers what an overlay can do and stops at the edge of it. If you
+  need a preamble held against a run's own caller too, hold it at
+  whatever API boundary lets that field be set. The `Locked` doc comment
+  and the guide both say so now.
 - **Skills are resolved once per prompt build instead of twice.** The
   old code looked a skill up for its fragment, aborting on error, and
   again for its knowledge references, silently skipping on error. The
@@ -246,16 +283,6 @@ needed anything unusual to trigger.
   the same way it keeps the prompt it was suspended with. Fix an overlay
   in the middle of an outage and a run that is already paused will not
   see the fix until it is started again.
-- **A patch whose id matches no section becomes a new section, and an
-  overlay cannot choose where that section goes.** It lands after
-  everything already in the set, and several of them in one overlay come
-  out in patch order. `Patch` has no `Order` field, deliberately. A
-  created section sitting at order 0 would land ahead of every producer
-  band, so an overlay naming an id nobody emitted could slide text above
-  a `Locked` safety preamble without ever replacing it, and the lock
-  would hold while being outranked. Position is the host's call. Put the
-  section on the agent with the order you want, then patch it from the
-  overlay by id.
 
 ### Migration notes
 
