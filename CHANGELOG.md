@@ -246,12 +246,16 @@ needed anything unusual to trigger.
   the same way it keeps the prompt it was suspended with. Fix an overlay
   in the middle of an outage and a run that is already paused will not
   see the fix until it is started again.
-- **A patch whose id matches no section becomes a new section at order
-  0**, which puts it ahead of everything the producers emit. That is
-  deliberate, since patching a section a persona did not emit is intent,
-  not a mistake, but the position surprises people. If you want it
-  elsewhere, put the section on the agent with an order you chose and
-  patch it from the overlay.
+- **A patch whose id matches no section becomes a new section, and an
+  overlay cannot choose where that section goes.** It lands after
+  everything already in the set, and several of them in one overlay come
+  out in patch order. `Patch` has no `Order` field, deliberately. A
+  created section sitting at order 0 would land ahead of every producer
+  band, so an overlay naming an id nobody emitted could slide text above
+  a `Locked` safety preamble without ever replacing it, and the lock
+  would hold while being outranked. Position is the host's call. Put the
+  section on the agent with the order you want, then patch it from the
+  overlay by id.
 
 ### Migration notes
 

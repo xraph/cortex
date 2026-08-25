@@ -95,6 +95,10 @@ type Patch struct {
 	// ID names the target section. An ID with no matching section becomes
 	// a new section rather than an error, since a host patching a section
 	// a persona did not emit is expressing intent, not making a mistake.
+	// A section created that way is placed after every section already
+	// present, so an overlay cannot use an unrecognized ID to land text
+	// ahead of a Locked one. Position stays a host decision: put the
+	// section on the agent with the Order you want, then patch it by ID.
 	ID string `json:"id"`
 
 	// Body is the replacement or appended text, depending on Mode.
@@ -115,7 +119,9 @@ type Patch struct {
 // caller can surface them, since a patch that looks applied and silently
 // is not has been a recurring source of confusion in prompt configuration.
 // An append Patch is always accepted, locked or not. An unknown ID adds a
-// new section instead of erroring.
+// new section, placed after every section already present so that a patch
+// naming an ID nothing emitted cannot outrank a Locked one. Several
+// creations in one call keep the order the patches were given in.
 func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 	out := make([]Section, len(sections))
 	copy(out, sections)
@@ -124,6 +130,10 @@ func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 	for i, s := range out {
 		index[s.ID] = i
 	}
+
+	// Read the tail of the existing set once. Nothing below moves a
+	// section that is already here, so the boundary does not shift.
+	nextOrder := highestOrder(out) + 1
 
 	var declined []Patch
 
@@ -136,7 +146,10 @@ func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 		i, exists := index[p.ID]
 		if !exists {
 			index[p.ID] = len(out)
-			out = append(out, Section{ID: p.ID, Body: p.Body})
+			out = append(out, Section{ID: p.ID, Body: p.Body, Order: nextOrder})
+			// One order per creation, so two new sections come out in
+			// patch order rather than falling back to the ID tie-break.
+			nextOrder++
 
 			continue
 		}
@@ -154,6 +167,21 @@ func ApplyOverlay(sections []Section, patches []Patch) ([]Section, []Patch) {
 	}
 
 	return out, declined
+}
+
+// highestOrder reports the largest Order in sections, or zero when there
+// are none. Zero is the right floor for an empty set: the producer bands
+// all sit well above it, so a section created against no sections at all
+// still sorts sanely once producers show up.
+func highestOrder(sections []Section) int {
+	highest := 0
+	for _, s := range sections {
+		if s.Order > highest {
+			highest = s.Order
+		}
+	}
+
+	return highest
 }
 
 func appendBody(existing, addition string) string {

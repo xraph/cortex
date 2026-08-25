@@ -215,10 +215,17 @@ append of an empty string is a no-op, not a trailing one.
 
 A patch whose `ID` matches no section becomes a new section rather than an
 error, because patching a section a persona didn't emit is intent, not a
-mistake. Mind the position, though: a section created this way lands at `Order`
-0, which puts it ahead of everything the producers emit. If you want it
-somewhere else, add it to the agent's `Sections` with an order you chose and
-patch it from the overlay.
+mistake. The new section lands after everything already in the set, one order
+past the highest one present. Write two of these patches in the same overlay
+and the sections come out in the order you wrote the patches, not
+alphabetically.
+
+Position is load-bearing here. `Order` 0 sits ahead of every producer band, so
+if a created section landed there, an overlay could name an id nobody emitted
+and slide text above a `Locked` safety preamble without ever replacing it. The
+lock would hold and be outranked anyway. That is also why `Patch` has no
+`Order` field: where a section sits is the host's call. Put it on the agent's
+`Sections` with the order you want, then patch it from the overlay by id.
 
 ### Locked
 
