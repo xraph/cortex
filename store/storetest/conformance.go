@@ -63,6 +63,21 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// collection filter to fold it into.
 	t.Run("ClaimSuspensionExpiry", func(t *testing.T) { testClaimSuspensionExpiry(t, newStore) })
 
+	// Inheritance is an ancestor walk, not a prefix match, and
+	// GetOverlayForAgentAt is what makes that walk expressible. It gets
+	// its own group because none of the six above can express the shape
+	// it has to prove: a read that deliberately reaches ABOVE the
+	// caller's own scope, bounded to the caller's own ancestry, next to
+	// a demonstration of what the prefix-matching list would have handed
+	// the same run instead.
+	t.Run("OverlayAncestorLookup", func(t *testing.T) { testOverlayAncestorLookup(t, newStore) })
+
+	// The agent's sections column is written on create and has to stay
+	// writable on update. A whitelist that silently drops a column is
+	// invisible to every scope group, since nothing there updates an
+	// agent's sections, so it gets its own group.
+	t.Run("AgentSections", func(t *testing.T) { testAgentSections(t, newStore) })
+
 	// The sweeper reads its work through two methods nothing else calls:
 	// one that deliberately crosses scopes, and one whose deadline
 	// predicate is the inverse of the resume claim's. Neither is
@@ -699,6 +714,9 @@ func testZeroScopeRejection(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 		if _, err := s.GetOverlayForAgent(ctx, o.AgentID); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("GetOverlayForAgent with no scope = %v, want ErrNoScope", err)
+		}
+		if _, err := s.GetOverlayForAgentAt(ctx, o.AgentID, scopeOf("ws_x")); !errors.Is(err, cortex.ErrNoScope) {
+			t.Errorf("GetOverlayForAgentAt with no scope = %v, want ErrNoScope", err)
 		}
 		if err := s.UpdateOverlay(ctx, o); !errors.Is(err, cortex.ErrNoScope) {
 			t.Errorf("UpdateOverlay with no scope = %v, want ErrNoScope", err)
@@ -3822,5 +3840,234 @@ func testSweeperReads(t *testing.T, newStore func(t *testing.T) store.Store) {
 				t.Errorf("run state = %q, want %q; the sweep reported a win it did not take", reloaded.State, run.StateRunning)
 			}
 		})
+	})
+}
+
+// ──────────────────────────────────────────────────
+// Overlay ancestor lookup
+// ──────────────────────────────────────────────────
+
+// testOverlayAncestorLookup covers GetOverlayForAgentAt, the read prompt
+// assembly uses to inherit an overlay from a broader scope.
+//
+// The rule it has to hold up is narrow and easy to get wrong in either
+// direction. Reaching UP the caller's own ancestry is allowed, and it is
+// the only read in this suite that returns a row stored above the
+// caller. Reaching anywhere else, sideways into another tenant or down
+// into a descendant, is refused. The last subtest shows what happens if
+// somebody reaches for ListOverlays instead, which is the mistake the
+// method exists to prevent.
+func testOverlayAncestorLookup(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("AncestorAndOwnScopeAreDistinct", func(t *testing.T) {
+		s := newStore(t)
+		workspaceCtx := ctxWithScope("ws_x")
+		projectCtx := ctxWithScope("ws_x", "p1")
+
+		// One agent carrying an overlay at two depths, which is the
+		// case the whole method exists for. Two agents here would let a
+		// missing scope predicate pass unnoticed.
+		agentID := mustCreateAgent(t, s, workspaceCtx, "shared-agent")
+		atWorkspace := mustCreateOverlay(t, s, workspaceCtx, agentID)
+		atProject := mustCreateOverlay(t, s, projectCtx, agentID)
+
+		gotWorkspace, err := s.GetOverlayForAgentAt(projectCtx, agentID, scopeOf("ws_x"))
+		if err != nil {
+			t.Fatalf("get overlay at the ancestor scope: %v", err)
+		}
+		if gotWorkspace.ID != atWorkspace.ID {
+			t.Errorf("GetOverlayForAgentAt(%q) = %s, want %s", "workspace=ws_x", gotWorkspace.ID, atWorkspace.ID)
+		}
+
+		gotProject, err := s.GetOverlayForAgentAt(projectCtx, agentID, scopeOf("ws_x", "p1"))
+		if err != nil {
+			t.Fatalf("get overlay at the caller's own scope: %v", err)
+		}
+		if gotProject.ID != atProject.ID {
+			t.Errorf("GetOverlayForAgentAt(%q) = %s, want %s", "workspace=ws_x/project=p1", gotProject.ID, atProject.ID)
+		}
+
+		// GetOverlayForAgent, which reads at the caller's own scope,
+		// has to agree with the explicit call for that same scope.
+		own, err := s.GetOverlayForAgent(projectCtx, agentID)
+		if err != nil {
+			t.Fatalf("get overlay for agent: %v", err)
+		}
+		if own.ID != atProject.ID {
+			t.Errorf("GetOverlayForAgent = %s, want %s", own.ID, atProject.ID)
+		}
+	})
+
+	t.Run("UnrelatedScopeIsRefused", func(t *testing.T) {
+		s := newStore(t)
+		ctxA := ctxWithScope("ws_a")
+		ctxB := ctxWithScope("ws_b")
+
+		agentID := mustCreateAgent(t, s, ctxA, "shared-agent")
+		mustCreateOverlay(t, s, ctxA, agentID)
+
+		// Naming a scope must not be a way to read outside your own.
+		if _, err := s.GetOverlayForAgentAt(ctxB, agentID, scopeOf("ws_a")); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlayForAgentAt(ctxB, %q) = %v, want ErrOverlayNotFound", "workspace=ws_a", err)
+		}
+	})
+
+	t.Run("DescendantScopeIsRefused", func(t *testing.T) {
+		s := newStore(t)
+		workspaceCtx := ctxWithScope("ws_x")
+		projectCtx := ctxWithScope("ws_x", "p1")
+
+		agentID := mustCreateAgent(t, s, workspaceCtx, "shared-agent")
+		mustCreateOverlay(t, s, projectCtx, agentID)
+
+		// This method walks up, never down. A caller that wants to
+		// enumerate what sits beneath it already has ListOverlays, and
+		// letting this one answer downward too would make it a second,
+		// subtly different list.
+		if _, err := s.GetOverlayForAgentAt(workspaceCtx, agentID, scopeOf("ws_x", "p1")); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("GetOverlayForAgentAt(ctx@ws_x, %q) = %v, want ErrOverlayNotFound", "workspace=ws_x/project=p1", err)
+		}
+	})
+
+	t.Run("PrefixListingReturnsSiblingsNotAncestors", func(t *testing.T) {
+		s := newStore(t)
+		workspaceCtx := ctxWithScope("ws_x")
+		p1Ctx := ctxWithScope("ws_x", "p1")
+
+		agentID := mustCreateAgent(t, s, workspaceCtx, "shared-agent")
+		sibling := mustCreateOverlay(t, s, p1Ctx, agentID)
+
+		// A run in p2 has no overlay of its own and none above it, so
+		// the ancestor walk correctly finds nothing at either step.
+		p2Ctx := ctxWithScope("ws_x", "p2")
+		if _, err := s.GetOverlayForAgentAt(p2Ctx, agentID, scopeOf("ws_x")); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("ancestor lookup from p2 = %v, want ErrOverlayNotFound", err)
+		}
+		if _, err := s.GetOverlayForAgentAt(p2Ctx, agentID, scopeOf("ws_x", "p2")); !errors.Is(err, cortex.ErrOverlayNotFound) {
+			t.Errorf("own-scope lookup from p2 = %v, want ErrOverlayNotFound", err)
+		}
+
+		// ListOverlays from the workspace, which is what a reader
+		// looking for "the overlays that apply" would reach for, hands
+		// back p1's overlay. That is prefix matching working exactly as
+		// designed, and it is why inheritance is not built on it: p2's
+		// prompt must never contain p1's instructions.
+		listed, err := s.ListOverlays(workspaceCtx, &prompt.ListFilter{AgentID: agentID})
+		if err != nil {
+			t.Fatalf("list overlays: %v", err)
+		}
+		if !containsOverlayID(listed, sibling.ID) {
+			t.Fatalf("ListOverlays({workspace=ws_x}) didn't return p1's overlay; the premise of this test no longer holds")
+		}
+	})
+}
+
+// ──────────────────────────────────────────────────
+// Agent sections
+// ──────────────────────────────────────────────────
+
+// testAgentSections covers the agent's sections field end to end. Create
+// then Get is not enough on its own: every backend builds its update
+// from an explicit column whitelist, and a field left out of that
+// whitelist is written once at creation and then silently refuses to
+// change, with no error anywhere to explain it.
+func testAgentSections(t *testing.T, newStore func(t *testing.T) store.Store) {
+	ctx := ctxWithScope("ws_x")
+
+	firstDraft := []prompt.Section{{ID: "identity", Title: "Identity", Body: "you are helpful", Order: 10, Locked: true}}
+	secondDraft := []prompt.Section{
+		{ID: "identity", Title: "Identity", Body: "you are terse", Order: 10, Locked: true},
+		{ID: "tone", Body: "no exclamation marks", Order: 20},
+	}
+
+	t.Run("UpdateChangesSections", func(t *testing.T) {
+		s := newStore(t)
+		cfg := &agent.Config{ID: id.NewAgentID(), Name: "sectioned", Sections: firstDraft}
+		if err := s.Create(ctx, cfg); err != nil {
+			t.Fatalf("create agent: %v", err)
+		}
+
+		loaded, getErr := s.Get(ctx, cfg.ID)
+		if getErr != nil {
+			t.Fatalf("get agent: %v", getErr)
+		}
+		loaded.Sections = secondDraft
+		if err := s.Update(ctx, loaded); err != nil {
+			t.Fatalf("update agent: %v", err)
+		}
+
+		reloaded, err := s.Get(ctx, cfg.ID)
+		if err != nil {
+			t.Fatalf("reload agent: %v", err)
+		}
+		if len(reloaded.Sections) != len(secondDraft) {
+			t.Fatalf("Sections after update = %+v, want %+v (a column missing from the update whitelist fails exactly like this, silently)", reloaded.Sections, secondDraft)
+		}
+		for i := range secondDraft {
+			if reloaded.Sections[i] != secondDraft[i] {
+				t.Errorf("Sections[%d] after update = %+v, want %+v", i, reloaded.Sections[i], secondDraft[i])
+			}
+		}
+	})
+
+	t.Run("UpdateClearsSections", func(t *testing.T) {
+		s := newStore(t)
+		cfg := &agent.Config{ID: id.NewAgentID(), Name: "sectioned", Sections: firstDraft}
+		if err := s.Create(ctx, cfg); err != nil {
+			t.Fatalf("create agent: %v", err)
+		}
+
+		loaded, getErr := s.Get(ctx, cfg.ID)
+		if getErr != nil {
+			t.Fatalf("get agent: %v", getErr)
+		}
+		loaded.Sections = nil
+		if err := s.Update(ctx, loaded); err != nil {
+			t.Fatalf("update agent: %v", err)
+		}
+
+		reloaded, err := s.Get(ctx, cfg.ID)
+		if err != nil {
+			t.Fatalf("reload agent: %v", err)
+		}
+		if len(reloaded.Sections) != 0 {
+			t.Errorf("Sections after clearing = %+v, want empty; removing every section has to be expressible", reloaded.Sections)
+		}
+	})
+
+	t.Run("AgentWithoutSectionsKeepsItsPrompt", func(t *testing.T) {
+		s := newStore(t)
+		cfg := &agent.Config{ID: id.NewAgentID(), Name: "legacy", SystemPrompt: "you are helpful"}
+		if err := s.Create(ctx, cfg); err != nil {
+			t.Fatalf("create agent: %v", err)
+		}
+
+		loaded, getErr := s.Get(ctx, cfg.ID)
+		if getErr != nil {
+			t.Fatalf("get agent: %v", getErr)
+		}
+		if loaded.SystemPrompt != "you are helpful" {
+			t.Errorf("SystemPrompt = %q, want %q", loaded.SystemPrompt, "you are helpful")
+		}
+		if len(loaded.Sections) != 0 {
+			t.Errorf("Sections = %+v, want empty; an agent that never set sections must not gain any", loaded.Sections)
+		}
+
+		// An unrelated update must not conjure sections either, which is
+		// the other half of the compatibility promise: assembly falls
+		// back to SystemPrompt only while the section list stays empty.
+		loaded.Description = "touched"
+		if err := s.Update(ctx, loaded); err != nil {
+			t.Fatalf("update agent: %v", err)
+		}
+		reloaded, err := s.Get(ctx, cfg.ID)
+		if err != nil {
+			t.Fatalf("reload agent: %v", err)
+		}
+		if len(reloaded.Sections) != 0 {
+			t.Errorf("Sections after an unrelated update = %+v, want empty", reloaded.Sections)
+		}
+		if reloaded.SystemPrompt != "you are helpful" {
+			t.Errorf("SystemPrompt after an unrelated update = %q, want %q", reloaded.SystemPrompt, "you are helpful")
+		}
 	})
 }

@@ -76,6 +76,35 @@ func (s *Store) GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*pr
 	return overlayFromModel(m)
 }
 
+// GetOverlayForAgentAt reads the overlay an agent has at exactly the
+// given scope. See prompt.Store for why inheritance is an ancestor walk
+// rather than a prefix match, and why the scope argument is bounded to
+// the caller's own ancestry.
+func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*prompt.Overlay, error) {
+	caller := cortex.ScopeFromContext(ctx)
+	if caller.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	// A scope outside the caller's own ancestry is refused as absent
+	// rather than as an error: from where the caller stands, that
+	// overlay does not exist.
+	if scope.IsZero() || !scope.Covers(caller) {
+		return nil, cortex.ErrOverlayNotFound
+	}
+	m := new(overlayModel)
+	q := s.sdb.NewSelect(m).Where("agent_id = ?", agentID.String())
+	for _, p := range scopePredicates(scope, true) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
+		if isNoRows(err) {
+			return nil, cortex.ErrOverlayNotFound
+		}
+		return nil, fmt.Errorf("cortex/sqlite: get overlay for agent at scope: %w", err)
+	}
+	return overlayFromModel(m)
+}
+
 // mutableOverlayColumns is every cortex_overlays column UpdateOverlay is
 // allowed to write. An overlay's scope is set once at creation and never
 // rewritten: scope_l0/l1/l2/extra/canon are deliberately absent here.

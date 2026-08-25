@@ -36,6 +36,27 @@ type Scope struct {
 
 func (s Scope) IsZero() bool { return len(s.Levels) == 0 }
 
+// Covers reports whether s is other, or an ancestor of it: every level s
+// carries appears in other at the same position, with the same key and
+// value. A scope covers itself.
+//
+// This asks "is s somewhere in other's own ancestry", which is a
+// different question from the prefix matching the stores do on a list.
+// Prefix matching widens DOWNWARD, so a workspace filter reaches every
+// project inside it. Covers reads UPWARD, which is what a project-level
+// run needs when it wants to know what its workspace configured.
+func (s Scope) Covers(other Scope) bool {
+	if len(s.Levels) > len(other.Levels) {
+		return false
+	}
+	for i, lvl := range s.Levels {
+		if other.Levels[i] != lvl {
+			return false
+		}
+	}
+	return true
+}
+
 // Get returns the value for key, and whether the level was present.
 func (s Scope) Get(key string) (string, bool) {
 	for _, l := range s.Levels {

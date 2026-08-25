@@ -79,6 +79,31 @@ type Store interface {
 	// this scope, which is the ordinary case for most agents.
 	GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*Overlay, error)
 
+	// GetOverlayForAgentAt reads the overlay an agent has at exactly the
+	// given scope, rather than at the caller's own. It is how assembly
+	// inherits: a run walks its scope's ancestor chain from broadest to
+	// narrowest, asking for each prefix in turn and applying what it
+	// finds in that order, so a run at [ws=A, proj=B] picks up the
+	// overlay written at [ws=A] and then the one written at
+	// [ws=A, proj=B].
+	//
+	// It matches the given scope EXACTLY, and inheritance is that walk
+	// rather than a prefix match. Reaching for ListOverlays instead is
+	// the mistake this method exists to prevent: prefix matching in this
+	// codebase widens DOWNWARD, so listing from [ws=A] returns every
+	// project's overlay inside that workspace. Feeding those into one
+	// run's prompt would mix a sibling project's instructions into a
+	// prompt that must never see them, and the call site would look
+	// perfectly reasonable while it happened.
+	//
+	// The scope argument must be the caller's own scope or an ancestor
+	// of it. Anything else returns cortex.ErrOverlayNotFound, because
+	// naming a scope is not a way to read outside your own. That upward
+	// reach is a deliberate widening: no other read here returns a row
+	// stored above the caller, and this one does only within the
+	// caller's own ancestry.
+	GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*Overlay, error)
+
 	// UpdateOverlay rewrites an overlay's mutable fields within the
 	// caller's scope. Scope itself is never rewritten.
 	UpdateOverlay(ctx context.Context, o *Overlay) error

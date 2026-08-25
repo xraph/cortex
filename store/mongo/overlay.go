@@ -82,6 +82,37 @@ func (s *Store) GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*pr
 	return overlayFromModel(&m)
 }
 
+// GetOverlayForAgentAt reads the overlay an agent has at exactly the
+// given scope. See prompt.Store for why inheritance is an ancestor walk
+// rather than a prefix match, and why the scope argument is bounded to
+// the caller's own ancestry.
+func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*prompt.Overlay, error) {
+	caller := cortex.ScopeFromContext(ctx)
+	if caller.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	// A scope outside the caller's own ancestry is refused as absent
+	// rather than as an error: from where the caller stands, that
+	// overlay does not exist.
+	if scope.IsZero() || !scope.Covers(caller) {
+		return nil, cortex.ErrOverlayNotFound
+	}
+	var m overlayModel
+
+	filter := bson.M{"agent_id": agentID.String()}
+	for k, v := range scopeFilter(scope, true) {
+		filter[k] = v
+	}
+
+	if err := s.mdb.NewFind(&m).Filter(filter).Scan(ctx); err != nil {
+		if isNoDocuments(err) {
+			return nil, cortex.ErrOverlayNotFound
+		}
+		return nil, fmt.Errorf("cortex/mongo: get overlay for agent at scope: %w", err)
+	}
+	return overlayFromModel(&m)
+}
+
 // UpdateOverlay rewrites an overlay's mutable fields within the caller's
 // scope. Scope is immutable after creation: the context scope is used
 // only as an authorization predicate (the caller must be at or above the

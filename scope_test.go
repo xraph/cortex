@@ -187,3 +187,33 @@ func TestWithScope_AcceptsExactlyMaxLevels(t *testing.T) {
 		t.Errorf("ScopeFromContext = %q, want %q", got.Canonical(), want.Canonical())
 	}
 }
+
+func TestScopeCovers(t *testing.T) {
+	ws := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_a"}}}
+	wsProject := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_a"}, {Key: "project", Value: "p1"}}}
+	otherWS := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_b"}}}
+	otherProject := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_a"}, {Key: "project", Value: "p2"}}}
+	renamedLevel := cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "ws_a"}}}
+
+	tests := []struct {
+		name string
+		s    cortex.Scope
+		of   cortex.Scope
+		want bool
+	}{
+		{"a scope covers itself", wsProject, wsProject, true},
+		{"an ancestor covers its descendant", ws, wsProject, true},
+		{"a descendant does not cover its ancestor", wsProject, ws, false},
+		{"a sibling covers nothing", otherWS, wsProject, false},
+		{"a sibling at the same depth covers nothing", otherProject, wsProject, false},
+		{"the empty scope covers everything", cortex.Scope{}, wsProject, true},
+		{"a level key must match, not just its value", renamedLevel, wsProject, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.s.Covers(tt.of); got != tt.want {
+				t.Errorf("%q.Covers(%q) = %v, want %v", tt.s.Canonical(), tt.of.Canonical(), got, tt.want)
+			}
+		})
+	}
+}
