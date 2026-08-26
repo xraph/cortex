@@ -4,15 +4,12 @@ go 1.26.0
 
 replace github.com/xraph/cortex => ../
 
-replace github.com/xraph/cortex/api => ../api
-
 replace github.com/xraph/cortex/dashboard => ../dashboard
 
 replace github.com/xraph/cortex/sentinel => ../sentinel
 
 require (
 	github.com/xraph/cortex v1.6.1
-	github.com/xraph/cortex/api v1.6.1
 	github.com/xraph/cortex/dashboard v1.6.1
 	github.com/xraph/cortex/sentinel v1.6.1
 	github.com/xraph/forge v1.9.13

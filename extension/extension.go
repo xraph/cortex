@@ -20,7 +20,6 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
-	"github.com/xraph/cortex/api"
 	cortexdash "github.com/xraph/cortex/dashboard"
 	"github.com/xraph/cortex/engine"
 	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
@@ -59,7 +58,8 @@ type Extension struct {
 
 	config          Config
 	eng             *engine.Engine
-	apiHandler      *api.API
+	routes          RouteSet
+	buildRoutes     func(*engine.Engine, forge.Router) RouteSet
 	engineOpts      []engine.Option
 	useGrove        bool
 	modelSource     cortexdash.ModelSource
@@ -82,8 +82,20 @@ func New(opts ...ExtOption) *Extension {
 // This is nil until Register is called.
 func (e *Extension) Engine() *engine.Engine { return e.eng }
 
-// API returns the API handler.
-func (e *Extension) API() *api.API { return e.apiHandler }
+// RouteSet is the HTTP surface an extension mounts.
+//
+// It is an interface so the REST handlers can live in their own module. A
+// host that wants them passes WithRoutes and takes the dependency; a host
+// that does not never compiles them in. The api package satisfies this.
+type RouteSet interface {
+	Handler() http.Handler
+	RegisterRoutes(router forge.Router) error
+}
+
+// Routes returns the mounted HTTP surface, or nil when the extension was
+// built without one. Nil is the ordinary case for a host that wants the
+// engine and the dashboard and no REST API.
+func (e *Extension) Routes() RouteSet { return e.routes }
 
 // Register implements [forge.Extension]. It loads configuration,
 // initializes the engine, and registers it in the DI container.
@@ -166,19 +178,11 @@ func (e *Extension) init(fapp forge.App) error {
 	}
 	e.eng = eng
 
-	e.apiHandler = api.New(e.eng, fapp.Router())
-
-	if !e.config.DisableRoutes {
-		basePath := e.config.BasePath
-		if basePath == "" {
-			basePath = "/cortex"
-		}
-		if err := e.apiHandler.RegisterRoutes(fapp.Router().Group(basePath)); err != nil {
-			return fmt.Errorf("cortex: register routes: %w", err)
-		}
+	if e.buildRoutes != nil {
+		e.routes = e.buildRoutes(e.eng, fapp.Router())
 	}
 
-	return nil
+	return e.mountRoutes(fapp.Router())
 }
 
 // Start begins the Cortex engine and runs auto-migration if enabled.
@@ -230,19 +234,39 @@ func (e *Extension) Health(ctx context.Context) error {
 	return s.Ping(ctx)
 }
 
+// mountRoutes groups the route set under the configured base path.
+//
+// A nil route set is the ordinary case now that the REST handlers are a
+// separate module, so this returns cleanly rather than dereferencing. It is
+// split out of Register because Register needs a whole forge.App and this
+// needs a router.
+func (e *Extension) mountRoutes(router forge.Router) error {
+	if e.routes == nil || e.config.DisableRoutes {
+		return nil
+	}
+	basePath := e.config.BasePath
+	if basePath == "" {
+		basePath = "/cortex"
+	}
+	if err := e.routes.RegisterRoutes(router.Group(basePath)); err != nil {
+		return fmt.Errorf("cortex: register routes: %w", err)
+	}
+	return nil
+}
+
 // Handler returns the HTTP handler for all API routes.
 // Convenience for standalone use outside Forge.
 func (e *Extension) Handler() http.Handler {
-	if e.apiHandler == nil {
+	if e.routes == nil {
 		return http.NotFoundHandler()
 	}
-	return e.apiHandler.Handler()
+	return e.routes.Handler()
 }
 
 // RegisterRoutes registers all Cortex API routes into a Forge router.
 func (e *Extension) RegisterRoutes(router forge.Router) error {
-	if e.apiHandler != nil {
-		return e.apiHandler.RegisterRoutes(router)
+	if e.routes != nil {
+		return e.routes.RegisterRoutes(router)
 	}
 	return nil
 }

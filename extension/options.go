@@ -1,6 +1,8 @@
 package extension
 
 import (
+	"github.com/xraph/forge"
+
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/plugin"
 	"github.com/xraph/cortex/store"
@@ -63,5 +65,26 @@ func WithGroveDatabase(name string) ExtOption {
 	return func(e *Extension) {
 		e.config.GroveDatabase = name
 		e.useGrove = true
+	}
+}
+
+// WithRoutes mounts an HTTP surface on the extension.
+//
+// The REST handlers live in github.com/xraph/cortex/api, a separate module,
+// so nothing here forces a host to compile them in. Pass this when you want
+// them:
+//
+//	extension.New(
+//		extension.WithRoutes(func(eng *engine.Engine, r forge.Router) extension.RouteSet {
+//			return api.New(eng, r)
+//		}),
+//	)
+//
+// Leave it out and the extension registers no routes, Routes returns nil and
+// Handler answers 404. The engine, the dashboard and the DI wiring are
+// unaffected either way.
+func WithRoutes(build func(eng *engine.Engine, router forge.Router) RouteSet) ExtOption {
+	return func(e *Extension) {
+		e.buildRoutes = build
 	}
 }
