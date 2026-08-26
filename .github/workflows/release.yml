@@ -47,11 +47,75 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Verify build
+      - name: Verify root module
         run: |
           go mod download
+          go mod tidy
+          git diff --exit-code go.mod go.sum
           go build ./...
           go test -race -count=1 ./...
+
+      - name: Verify sub-modules
+        run: |
+          for mod in api dashboard sentinel extension integrations/fabriq; do
+            echo "::group::Verifying $mod"
+            pushd "$mod" > /dev/null
+            go mod download
+            go mod tidy
+            git diff --exit-code go.mod go.sum
+            go build ./...
+            go test -race -count=1 ./...
+            popd > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Tag sub-modules
+        run: |
+          TAG="${{ steps.set-tag.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # A sub-module's replace directive is ignored once it is somebody
+          # else's dependency, so its require line is what a consumer really
+          # resolves. On main that line names the previous release, which is
+          # right for local work and wrong for the tag we are cutting: a
+          # consumer would get an engine older than the code that needs it.
+          # Pin the requires to this tag, commit, and tag that commit.
+          #
+          # The commit is never pushed to a branch. It is reachable through
+          # the sub-module tags alone, so main keeps pointing sub-modules at
+          # the last release and stays buildable against the working tree.
+          scripts/pin-submodules.sh "$TAG"
+          git add api/go.mod dashboard/go.mod sentinel/go.mod extension/go.mod integrations/fabriq/go.mod
+          git commit -m "chore: pin sub-modules to $TAG"
+
+          for mod in api dashboard sentinel extension integrations/fabriq; do
+            MOD_TAG="$mod/$TAG"
+            if git rev-parse -q --verify "refs/tags/$MOD_TAG" > /dev/null; then
+              echo "$MOD_TAG already exists, skipping"
+              continue
+            fi
+            echo "Tagging $MOD_TAG"
+            git tag "$MOD_TAG"
+            git push origin "$MOD_TAG"
+          done
+
+          git reset --hard HEAD~1
+
+      - name: Verify sub-modules resolve from the proxy
+        run: |
+          TAG="${{ steps.set-tag.outputs.tag }}"
+          # The failure this catches is a sub-module tag whose require names a
+          # root version the proxy cannot serve. It looks fine in CI, where the
+          # replace hides it, and fails for the first person to run go get.
+          PROBE=$(mktemp -d)
+          cd "$PROBE"
+          go mod init example.com/probe
+          for mod in api dashboard sentinel extension integrations/fabriq; do
+            echo "::group::go get github.com/xraph/cortex/$mod@$TAG"
+            GOFLAGS=-mod=mod GOPROXY=proxy.golang.org go get "github.com/xraph/cortex/$mod@$TAG"
+            echo "::endgroup::"
+          done
 
       - name: Generate release notes
         id: notes
@@ -82,6 +146,17 @@ jobs:
             ### Installation
 
             ```bash
-            go get github.com/xraph/warden@${{ steps.set-tag.outputs.tag }}
+            go get github.com/xraph/cortex@${{ steps.set-tag.outputs.tag }}
+            ```
+
+            The engine is the root module. Everything that pulls a heavy
+            dependency ships separately, so take only what you use:
+
+            ```bash
+            go get github.com/xraph/cortex/api@${{ steps.set-tag.outputs.tag }}
+            go get github.com/xraph/cortex/dashboard@${{ steps.set-tag.outputs.tag }}
+            go get github.com/xraph/cortex/sentinel@${{ steps.set-tag.outputs.tag }}
+            go get github.com/xraph/cortex/extension@${{ steps.set-tag.outputs.tag }}
+            go get github.com/xraph/cortex/integrations/fabriq@${{ steps.set-tag.outputs.tag }}
             ```
           generate_release_notes: true

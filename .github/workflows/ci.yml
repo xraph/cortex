@@ -47,12 +47,58 @@ jobs:
 
       - name: Check formatting (goimports)
         run: |
-          OUTPUT=$(goimports -l -local github.com/xraph/warden .)
+          OUTPUT=$(goimports -l -local github.com/xraph/cortex .)
           if [ -n "$OUTPUT" ]; then
             echo "::error::The following files need goimports formatting:"
             echo "$OUTPUT"
             exit 1
           fi
+
+  # ─── Sub-modules ────────────────────────────────────────────────────
+  # The root module is the agent engine on its own. Everything that drags
+  # in a heavy dependency lives in its own module so a consumer can take
+  # the engine without forge, templ or fabriq. Each one still has to build
+  # and test, and its go.mod has to already be tidy.
+  submodules:
+    name: Sub-module (${{ matrix.module }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - api
+          - dashboard
+          - sentinel
+          - extension
+          - integrations/fabriq
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Verify tidy
+        run: |
+          go mod download
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
 
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
