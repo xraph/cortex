@@ -17,21 +17,31 @@ Cortex defines sentinel errors in the root `cortex` package. All errors are crea
 
 | Error | Description |
 |-------|-------------|
-| `ErrAgentNotFound` | Agent with the given ID does not exist |
+| `ErrAgentNotFound` | Agent with the given ID or name does not exist |
 | `ErrRunNotFound` | Run with the given ID does not exist |
 | `ErrStepNotFound` | Step with the given ID does not exist |
 | `ErrToolCallNotFound` | Tool call with the given ID does not exist |
-| `ErrSkillNotFound` | Skill with the given ID does not exist |
-| `ErrTraitNotFound` | Trait with the given ID does not exist |
-| `ErrBehaviorNotFound` | Behavior with the given ID does not exist |
-| `ErrPersonaNotFound` | Persona with the given ID does not exist |
+| `ErrSkillNotFound` | Skill with the given ID or name does not exist |
+| `ErrTraitNotFound` | Trait with the given ID or name does not exist |
+| `ErrBehaviorNotFound` | Behavior with the given ID or name does not exist |
+| `ErrPersonaNotFound` | Persona with the given ID or name does not exist |
+| `ErrSessionNotFound` | Session with the given ID does not exist |
 | `ErrCheckpointNotFound` | Checkpoint with the given ID does not exist |
+| `ErrOrchestrationNotFound` | Orchestration config with the given ID or name does not exist |
+| `ErrOrchestrationRunNotFound` | Orchestration run with the given ID does not exist |
+| `ErrWorkingMemoryNotFound` | The run has no working-memory value under that key |
+| `ErrOverlayNotFound` | The agent has no prompt overlay at this scope |
+
+A not-found is also what a cross-scope read looks like. A row that exists in another
+scope is not a 403 and not an empty result: the store reports it missing, because
+telling a caller that something exists somewhere they cannot see it is itself a leak.
+See [Host-Defined Scope](/docs/concepts/multi-tenancy).
 
 ## Conflict errors
 
 | Error | Description |
 |-------|-------------|
-| `ErrAlreadyExists` | A resource with the same name already exists in this app |
+| `ErrAlreadyExists` | A resource with the same name already exists in this scope |
 
 ## State errors
 
@@ -43,6 +53,55 @@ Cortex defines sentinel errors in the root `cortex` package. All errors are crea
 | `ErrBudgetExhausted` | Token or cost budget exhausted |
 | `ErrMaxStepsReached` | Maximum reasoning steps reached |
 | `ErrMaxTokensReached` | Maximum output tokens reached |
+
+## Scope errors
+
+| Error | Description |
+|-------|-------------|
+| `ErrNoScope` | The context carries no scope, so the host never called `cortex.WithScope` |
+| `ErrNoRescoper` | `Migrate` found rows written before v1.8.0 and no `cortex.Rescoper` was supplied |
+
+`ErrNoScope` is a refusal, not a fallback. Every scope-guarded call rejects a zero
+scope outright rather than reading across everything, which is what makes
+cross-scope access structurally impossible instead of merely unlikely. `ErrNoRescoper`
+is the migration's version of the same refusal: see the
+[rescope guide](/docs/guides/v1.8-rescope).
+
+## Approval and suspension errors
+
+| Error | Description |
+|-------|-------------|
+| `ErrRequiresApproval` | An authorizer wants a human to answer this tool call, so the run suspends and a checkpoint opens |
+| `ErrNotSuspended` | The run was not paused when a resume tried to claim it, or another caller claimed it first |
+| `ErrSuspensionExpired` | The resume arrived after the suspension's deadline |
+| `ErrResultsMismatch` | The results supplied to resume do not correspond to the calls the run was waiting on |
+| `ErrInvalidContinuation` | The suspension carries a continuation the loop cannot run, today a zero `Config` |
+
+`ErrRequiresApproval` is returned by your authorizer rather than to it, which makes
+it the one error in this list you write instead of match. See
+[Suspension](/docs/concepts/suspension) for how each of these reaches a caller.
+
+## Declared but never returned
+
+Eight sentinels are declared in the root package and returned by nothing in the tree.
+They compile, they are part of the public API, and matching on them costs you
+nothing, but they will not arrive:
+
+`ErrStoreClosed`, `ErrMigrationFailed`, `ErrStepNotFound`, `ErrToolCallNotFound`,
+`ErrRunCancelled`, `ErrRunAlreadyDone`, `ErrBudgetExhausted`, `ErrMaxTokensReached`.
+
+Some are placeholders for work that has not landed. There is no token or cost
+accounting in the engine, so nothing can exhaust a budget. The rest were made
+unnecessary by the shape of the API around them. `MaxTokens` goes to the provider as
+a generation cap, so the provider stops the response and cortex never has to report
+the limit itself. Steps and tool calls are only ever read as a list through
+`ListSteps` and `ListToolCalls`, and an empty list already answers the question
+`ErrStepNotFound` would have. A cancelled run says so through `run.State` rather than
+by failing later reads. Compare `ErrMaxStepsReached`, which is live: the step budget
+is cortex's own, counted in its own loop, so cortex is the only thing that can
+enforce it.
+
+Handle them if you want to be exhaustive. Just do not write a test that expects one.
 
 ## Error wrapping
 
@@ -63,11 +122,30 @@ if errors.Is(err, cortex.ErrAgentNotFound) {
 
 ## API error mapping
 
-The HTTP API maps sentinel errors to HTTP status codes:
+`mapStoreError` in `api/helpers.go` is the only place the HTTP layer translates a
+sentinel. It recognises three groups and lets everything else through:
 
 | Sentinel error | HTTP status |
 |----------------|-------------|
-| `ErrAgentNotFound`, `ErrRunNotFound`, etc. | `404 Not Found` |
+| `ErrAgentNotFound`, `ErrRunNotFound`, `ErrSkillNotFound`, `ErrTraitNotFound`, `ErrBehaviorNotFound`, `ErrPersonaNotFound`, `ErrCheckpointNotFound`, `ErrSessionNotFound`, `ErrOrchestrationNotFound`, `ErrOrchestrationRunNotFound` | `404 Not Found` |
 | `ErrAlreadyExists` | `409 Conflict` |
-| `ErrInvalidState`, `ErrRunCancelled`, etc. | `400 Bad Request` |
-| `ErrNoStore` | `500 Internal Server Error` |
+| `ErrNoScope` | `412 Precondition Failed` |
+| anything else | `500 Internal Server Error` |
+
+That 404 list is the whole of it. `ErrWorkingMemoryNotFound` and `ErrOverlayNotFound`
+are absent because nothing behind the HTTP surface returns them yet: working memory
+and prompt overlays have no endpoints.
+
+`ErrNoScope` gets a 412 rather than a 500 because it is the host's own precondition
+that is missing. Some middleware was supposed to attach a scope with
+`cortex.WithScope` and did not, on every scope-guarded call rather than this one, and
+a 500 would send an operator looking for a fault in the server.
+
+Everything else is returned unchanged. Forge renders an error that carries no status
+as a 500 and redacts the message unless the app has enabled internal error exposure,
+so a state error that reaches this point reads as a server fault. Two handlers map
+theirs first for that reason: cancelling a run turns `ErrInvalidState` into a 400 and
+`ErrNotSuspended` into a 409, since both describe the run's state rather than a
+broken server. Request validation, a missing `name`, an unparseable ID, an
+unrecognised checkpoint decision, is a 400 at the handler and never reaches
+`mapStoreError` at all.

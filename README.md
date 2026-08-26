@@ -12,7 +12,7 @@ Cortex is a Go framework for building AI agents with human-like traits. Instead 
 - **Checkpoints** — Human-in-the-loop approval gates that pause runs for review
 - **Plugin System** — 16 lifecycle hooks with type-cached dispatch (zero-cost for unimplemented hooks)
 - **Host-Defined Scope** — Context-based scope and app isolation across all operations; the host declares its own levels (workspace, org, tenant, whatever it needs) and cortex enforces them structurally
-- **36 REST Endpoints** — Full CRUD for all entities, agent execution, streaming, and tools
+- **55 REST Endpoints** — Full CRUD for all entities, agent execution, streaming, sessions, orchestration, and tools
 - **Forge Integration** — First-class extension for the Forge application framework
 - **TypeID Identifiers** — 12 type-prefixed, UUIDv7-based, K-sortable IDs
 
@@ -101,14 +101,14 @@ cortex (root)           — Config, context helpers, errors, Entity base type
 ├── memory              — Conversation, working memory, summaries
 ├── checkpoint          — Human-in-the-loop approval gates
 ├── id                  — 12 TypeID types (agt_, skl_, trt_, bhv_, prs_, arun_, ...)
-├── store               — Composite store interface (8 sub-interfaces, 50 methods)
+├── store               — Composite store interface (13 sub-interfaces, 89 methods)
 │   ├── postgres        — Production PostgreSQL store
 │   ├── sqlite          — SQLite store
 │   └── mongo           — MongoDB store
 ├── plugin              — Extension system, 16 hook interfaces, Registry
 ├── observability       — Prometheus-compatible metrics (11 counters)
 ├── audit_hook          — Structured audit trail (18 actions, 8 resources)
-├── api                 — 36 REST endpoints with Forge-style handlers
+├── api                 — 55 REST endpoints with Forge-style handlers
 └── extension           — Forge integration extension
 ```
 
@@ -151,7 +151,7 @@ Cortex agents are built from composable human-model primitives:
 | `github.com/xraph/cortex/plugin` | Plugin system |
 | `github.com/xraph/cortex/observability` | Metrics extension |
 | `github.com/xraph/cortex/audit_hook` | Audit trail extension |
-| `github.com/xraph/cortex/api` | HTTP API (36 routes) |
+| `github.com/xraph/cortex/api` | HTTP API (55 routes) |
 | `github.com/xraph/cortex/extension` | Forge integration |
 
 ## Forge Integration
@@ -165,28 +165,32 @@ import (
 
 app := forge.New()
 app.RegisterExtension(extension.New(
-    extension.WithStore(pgstore.New(bunDB)),
+    extension.WithStore(pgstore.New(db)),
 ))
 app.Run()
 ```
 
-This gives you auto-migration, 36 REST endpoints, health checks, and graceful shutdown out of the box.
+This gives you auto-migration, 55 REST endpoints, health checks, and graceful shutdown out of the box.
 
 ## API
 
-All endpoints are under `/cortex`:
+Routes are registered under `/cortex/v1` by default. The prefix is the extension's,
+so `extension.WithBasePath` moves all of them at once:
 
 | Resource | Routes | Operations |
 |----------|--------|------------|
-| Agents | 7 | CRUD + run + stream |
+| Agents | 9 | CRUD + run, stream, preview-prompt, clone |
 | Runs | 3 | List, get, cancel |
 | Skills | 5 | CRUD |
 | Traits | 5 | CRUD |
 | Behaviors | 5 | CRUD |
-| Personas | 5 | CRUD |
+| Personas | 6 | CRUD + clone |
+| Sessions | 6 | Create, get, update, delete, list, count (per agent) |
 | Checkpoints | 2 | List pending, resolve |
 | Memory | 2 | Get/clear conversation |
+| Orchestrations | 8 | CRUD + run, plus list/get orchestration runs |
 | Tools | 2 | List tools, get schema |
+| Config | 2 | Get, update engine config |
 
 ## Deployment Notes
 

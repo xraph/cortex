@@ -3,25 +3,29 @@ title: Custom Store
 description: Implement a custom persistence backend by satisfying the composite store.Store interface.
 ---
 
-Every Cortex persistence operation goes through the composite `store.Store` interface. This guide shows how to implement your own backend — whether that's MySQL, DynamoDB, or an in-memory store for tests.
+Every Cortex persistence operation goes through the composite `store.Store` interface. This guide shows how to implement your own backend, whether that's MySQL, DynamoDB, or an in-memory store for tests.
 
 ## The composite interface
 
-The `store.Store` interface embeds 9 domain-specific sub-interfaces plus 3 lifecycle methods:
+`store.Store` embeds thirteen domain-specific sub-interfaces plus three lifecycle methods:
 
 ```go
 import "github.com/xraph/cortex/store"
 
 type Store interface {
-    agent.Store      // 6 methods
-    skill.Store      // 6 methods
-    trait.Store      // 6 methods
-    behavior.Store   // 6 methods
-    persona.Store    // 6 methods
-    run.Store        // 8 methods
-    memory.Store     // 8 methods
-    checkpoint.Store // 4 methods
-    session.Store    // 6 methods
+    agent.Store               // 7 methods
+    run.Store                 // 9 methods
+    memory.Store              // 8 methods
+    checkpoint.Store          // 5 methods
+    skill.Store               // 7 methods
+    trait.Store               // 7 methods
+    behavior.Store            // 7 methods
+    persona.Store             // 7 methods
+    prompt.Store              // 7 methods
+    session.Store             // 6 methods
+    suspension.Store          // 7 methods
+    orchestration.ConfigStore // 7 methods
+    orchestration.RunStore    // 5 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -29,103 +33,64 @@ type Store interface {
 }
 ```
 
-**Total: 53 methods** across all sub-interfaces plus 3 lifecycle methods.
+**Total: 89 methods** across the thirteen sub-interfaces, plus the three lifecycle
+methods.
 
-`session.Store` is new: `store.Store` didn't embed it before this release,
-so a custom backend that satisfied the interface last release no longer
-does until it adds these six methods. See the breakdown below.
+That number grows. `session.Store` arrived in v1.9.0 and `suspension.Store` in
+v1.11.0, and each time a backend that satisfied the interface last release stopped
+satisfying it until it implemented the new methods. Check this page against the
+version you are on, and run `store/storetest`'s conformance suite against your
+backend rather than trusting a compile.
 
 ## Sub-interface breakdown
 
-### agent.Store (6 methods)
+Types are shown the way you will write them from outside cortex, so `agent`'s own
+file says `*Config` where this says `*agent.Config`. Method names and order are as
+declared.
+
+### agent.Store (7 methods)
+
+`Get` and `GetByName` both resolve against the scope on the context, so neither takes one.
 
 ```go
 type Store interface {
-    Create(ctx context.Context, config *Config) error
-    Get(ctx context.Context, id id.AgentID) (*Config, error)
-    GetByName(ctx context.Context, name string) (*Config, error)
-    Update(ctx context.Context, config *Config) error
-    Delete(ctx context.Context, id id.AgentID) error
-    List(ctx context.Context, filter *ListFilter) ([]*Config, error)
+    Create(ctx context.Context, cfg *agent.Config) error
+    Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error)
+    GetByName(ctx context.Context, name string) (*agent.Config, error)
+    Update(ctx context.Context, cfg *agent.Config) error
+    Delete(ctx context.Context, agentID id.AgentID) error
+    List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error)
+    CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error)
 }
 ```
 
-### skill.Store (6 methods)
+### run.Store (9 methods)
+
+Steps and tool calls have no by-name lookup and no scope of their own. They are always created inside the request that created the parent run, so they inherit its scope.
 
 ```go
 type Store interface {
-    CreateSkill(ctx context.Context, s *Skill) error
-    GetSkill(ctx context.Context, id id.SkillID) (*Skill, error)
-    GetSkillByName(ctx context.Context, name string) (*Skill, error)
-    UpdateSkill(ctx context.Context, s *Skill) error
-    DeleteSkill(ctx context.Context, id id.SkillID) error
-    ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
-}
-```
-
-### trait.Store (6 methods)
-
-```go
-type Store interface {
-    CreateTrait(ctx context.Context, t *Trait) error
-    GetTrait(ctx context.Context, id id.TraitID) (*Trait, error)
-    GetTraitByName(ctx context.Context, name string) (*Trait, error)
-    UpdateTrait(ctx context.Context, t *Trait) error
-    DeleteTrait(ctx context.Context, id id.TraitID) error
-    ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
-}
-```
-
-### behavior.Store (6 methods)
-
-```go
-type Store interface {
-    CreateBehavior(ctx context.Context, b *Behavior) error
-    GetBehavior(ctx context.Context, id id.BehaviorID) (*Behavior, error)
-    GetBehaviorByName(ctx context.Context, name string) (*Behavior, error)
-    UpdateBehavior(ctx context.Context, b *Behavior) error
-    DeleteBehavior(ctx context.Context, id id.BehaviorID) error
-    ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
-}
-```
-
-### persona.Store (6 methods)
-
-```go
-type Store interface {
-    CreatePersona(ctx context.Context, p *Persona) error
-    GetPersona(ctx context.Context, id id.PersonaID) (*Persona, error)
-    GetPersonaByName(ctx context.Context, name string) (*Persona, error)
-    UpdatePersona(ctx context.Context, p *Persona) error
-    DeletePersona(ctx context.Context, id id.PersonaID) error
-    ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
-}
-```
-
-### run.Store (8 methods)
-
-```go
-type Store interface {
-    CreateRun(ctx context.Context, r *Run) error
-    GetRun(ctx context.Context, id id.AgentRunID) (*Run, error)
-    UpdateRun(ctx context.Context, r *Run) error
-    ListRuns(ctx context.Context, filter *ListFilter) ([]*Run, error)
-    CreateStep(ctx context.Context, s *Step) error
-    ListSteps(ctx context.Context, runID id.AgentRunID) ([]*Step, error)
-    CreateToolCall(ctx context.Context, tc *ToolCall) error
-    ListToolCalls(ctx context.Context, stepID id.StepID) ([]*ToolCall, error)
+    CreateRun(ctx context.Context, r *run.Run) error
+    GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error)
+    UpdateRun(ctx context.Context, r *run.Run) error
+    ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error)
+    CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error)
+    CreateStep(ctx context.Context, step *run.Step) error
+    ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error)
+    CreateToolCall(ctx context.Context, tc *run.ToolCall) error
+    ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error)
 }
 ```
 
 ### memory.Store (8 methods)
 
+Conversation methods carry a `SessionID` as well as an agent: messages belong to a thread, not to the agent directly. Working memory is keyed by run instead, and `LoadWorking` returns `cortex.ErrWorkingMemoryNotFound` when the key is absent.
+
 ```go
 type Store interface {
-    // Conversation and summary methods carry no tenant or scope parameter:
-    // the scope comes from the context via cortex.ScopeFromContext.
-    SaveConversation(ctx context.Context, agentID id.AgentID, msgs []Message) error
-    LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]Message, error)
-    ClearConversation(ctx context.Context, agentID id.AgentID) error
+    SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error
+    LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error)
+    ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error
     SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error
     LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error)
     ClearWorking(ctx context.Context, runID id.AgentRunID) error
@@ -134,32 +99,151 @@ type Store interface {
 }
 ```
 
-### checkpoint.Store (4 methods)
+### checkpoint.Store (5 methods)
+
+`Resolve` writes the decision. Carrying it back to the paused run is the engine's job, not the store's.
 
 ```go
 type Store interface {
-    CreateCheckpoint(ctx context.Context, cp *Checkpoint) error
-    GetCheckpoint(ctx context.Context, id id.CheckpointID) (*Checkpoint, error)
-    Resolve(ctx context.Context, id id.CheckpointID, decision Decision) error
-    ListPending(ctx context.Context, filter *ListFilter) ([]*Checkpoint, error)
+    CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error
+    GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error)
+    Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error
+    ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error)
+    CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error)
+}
+```
+
+### skill.Store (7 methods)
+
+```go
+type Store interface {
+    CreateSkill(ctx context.Context, sk *skill.Skill) error
+    GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error)
+    GetSkillByName(ctx context.Context, name string) (*skill.Skill, error)
+    UpdateSkill(ctx context.Context, sk *skill.Skill) error
+    DeleteSkill(ctx context.Context, skillID id.SkillID) error
+    ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error)
+    CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error)
+}
+```
+
+### trait.Store (7 methods)
+
+```go
+type Store interface {
+    CreateTrait(ctx context.Context, t *trait.Trait) error
+    GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error)
+    GetTraitByName(ctx context.Context, name string) (*trait.Trait, error)
+    UpdateTrait(ctx context.Context, t *trait.Trait) error
+    DeleteTrait(ctx context.Context, traitID id.TraitID) error
+    ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error)
+    CountTraits(ctx context.Context, filter *trait.ListFilter) (int64, error)
+}
+```
+
+### behavior.Store (7 methods)
+
+```go
+type Store interface {
+    CreateBehavior(ctx context.Context, b *behavior.Behavior) error
+    GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error)
+    GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error)
+    UpdateBehavior(ctx context.Context, b *behavior.Behavior) error
+    DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error
+    ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error)
+    CountBehaviors(ctx context.Context, filter *behavior.ListFilter) (int64, error)
+}
+```
+
+### persona.Store (7 methods)
+
+```go
+type Store interface {
+    CreatePersona(ctx context.Context, p *persona.Persona) error
+    GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error)
+    GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error)
+    UpdatePersona(ctx context.Context, p *persona.Persona) error
+    DeletePersona(ctx context.Context, personaID id.PersonaID) error
+    ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error)
+    CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error)
+}
+```
+
+### prompt.Store (7 methods)
+
+`GetOverlayForAgent` matches the caller's scope exactly, and `GetOverlayForAgentAt` matches a named ancestor of it exactly. Neither one prefix-matches, and that is the whole point: prefix matching widens downward, so a workspace-level list returns every project's overlay beneath it. Feed those into one run's prompt and you have mixed a sibling project's instructions into it.
+
+```go
+type Store interface {
+    CreateOverlay(ctx context.Context, o *prompt.Overlay) error
+    GetOverlay(ctx context.Context, overlayID id.OverlayID) (*prompt.Overlay, error)
+    GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*prompt.Overlay, error)
+    GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*prompt.Overlay, error)
+    UpdateOverlay(ctx context.Context, o *prompt.Overlay) error
+    DeleteOverlay(ctx context.Context, overlayID id.OverlayID) error
+    ListOverlays(ctx context.Context, filter *prompt.ListFilter) ([]*prompt.Overlay, error)
 }
 ```
 
 ### session.Store (6 methods)
 
-Scope arrives on the context via `cortex.ScopeFromContext`, same as every
-other sub-interface here — no method carries it explicitly.
+Exactly one session per agent per scope carries `IsDefault`. Enforce that in your backend, because a run that names no session lands in whichever one you return.
 
 ```go
 type Store interface {
-    CreateSession(ctx context.Context, s *Session) error
-    GetSession(ctx context.Context, sessionID id.SessionID) (*Session, error)
-    UpdateSession(ctx context.Context, s *Session) error
+    CreateSession(ctx context.Context, sess *session.Session) error
+    GetSession(ctx context.Context, sessionID id.SessionID) (*session.Session, error)
+    UpdateSession(ctx context.Context, sess *session.Session) error
     DeleteSession(ctx context.Context, sessionID id.SessionID) error
-    ListSessions(ctx context.Context, filter *ListFilter) ([]*Session, error)
-    CountSessions(ctx context.Context, filter *ListFilter) (int64, error)
+    ListSessions(ctx context.Context, filter *session.ListFilter) ([]*session.Session, error)
+    CountSessions(ctx context.Context, filter *session.ListFilter) (int64, error)
 }
 ```
+
+### suspension.Store (7 methods)
+
+The two `Claim` methods are the hard part. Each has to do the run's paused-to-running transition and the suspension read as one atomic operation, not a read followed by a write, because that gap is the race two concurrent resumes would otherwise both win. `ListExpiredAcrossScopes` is the one read here that deliberately ignores scope; it exists for the engine's expiry sweeper, which runs with no request scope on its context.
+
+```go
+type Store interface {
+    CreateSuspension(ctx context.Context, susp *suspension.Suspension) error
+    GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error)
+    ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error)
+    DeleteSuspension(ctx context.Context, runID id.AgentRunID) error
+    ListExpired(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error)
+    ListExpiredAcrossScopes(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error)
+    ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*suspension.Suspension, error)
+}
+```
+
+### orchestration.ConfigStore (7 methods)
+
+```go
+type ConfigStore interface {
+    CreateOrchestration(ctx context.Context, c *orchestration.Config) error
+    GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error)
+    GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error)
+    UpdateOrchestration(ctx context.Context, c *orchestration.Config) error
+    DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error
+    ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error)
+    CountOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) (int64, error)
+}
+```
+
+### orchestration.RunStore (5 methods)
+
+```go
+type RunStore interface {
+    CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error
+    GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error)
+    UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error
+    ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error)
+    CountOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) (int64, error)
+}
+```
+
+Scope never appears in a signature. It arrives on the context and you read it with
+`cortex.ScopeFromContext`, on every method above without exception.
 
 ## Skeleton implementation
 
@@ -168,6 +252,7 @@ package mystore
 
 import (
     "context"
+    "time"
 
     "github.com/xraph/cortex"
     "github.com/xraph/cortex/agent"
@@ -175,10 +260,14 @@ import (
     "github.com/xraph/cortex/checkpoint"
     "github.com/xraph/cortex/id"
     "github.com/xraph/cortex/memory"
+    "github.com/xraph/cortex/orchestration"
     "github.com/xraph/cortex/persona"
+    "github.com/xraph/cortex/prompt"
     "github.com/xraph/cortex/run"
+    "github.com/xraph/cortex/session"
     "github.com/xraph/cortex/skill"
     "github.com/xraph/cortex/store"
+    "github.com/xraph/cortex/suspension"
     "github.com/xraph/cortex/trait"
 )
 
@@ -187,85 +276,135 @@ type MyStore struct {
     // your database client, connection pool, etc.
 }
 
-// Compile-time check.
+// Compile-time check. This line is the whole reason the list below is worth
+// typing out: add a method to store.Store upstream and this stops building.
 var _ store.Store = (*MyStore)(nil)
 
 // Migrate creates tables or runs schema migrations. opts carries a
 // cortex.Rescoper for populating scope on rows written before v1.8.0;
 // see the rescope guide.
-func (s *MyStore) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error { return nil }
+func (s *MyStore) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error { /* ... */ }
 
 // Ping verifies database connectivity.
-func (s *MyStore) Ping(ctx context.Context) error { return nil }
+func (s *MyStore) Ping(ctx context.Context) error { /* ... */ }
 
 // Close releases any held resources.
-func (s *MyStore) Close() error { return nil }
+func (s *MyStore) Close() error { /* ... */ }
 
-// ── Agent methods (6) ────────────────────────────
-func (s *MyStore) Create(ctx context.Context, config *agent.Config) error { /* ... */ }
+// agent.Store (7)
+func (s *MyStore) Create(ctx context.Context, cfg *agent.Config) error { /* ... */ }
 func (s *MyStore) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) { /* ... */ }
 func (s *MyStore) GetByName(ctx context.Context, name string) (*agent.Config, error) { /* ... */ }
-func (s *MyStore) Update(ctx context.Context, config *agent.Config) error { /* ... */ }
+func (s *MyStore) Update(ctx context.Context, cfg *agent.Config) error { /* ... */ }
 func (s *MyStore) Delete(ctx context.Context, agentID id.AgentID) error { /* ... */ }
 func (s *MyStore) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) { /* ... */ }
+func (s *MyStore) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) { /* ... */ }
 
-// ── Skill methods (6) ────────────────────────────
-func (s *MyStore) CreateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
-func (s *MyStore) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) { /* ... */ }
-func (s *MyStore) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) { /* ... */ }
-func (s *MyStore) UpdateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
-func (s *MyStore) DeleteSkill(ctx context.Context, skillID id.SkillID) error { /* ... */ }
-func (s *MyStore) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) { /* ... */ }
-
-// ── Trait methods (6) ────────────────────────────
-func (s *MyStore) CreateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
-func (s *MyStore) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) { /* ... */ }
-func (s *MyStore) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) { /* ... */ }
-func (s *MyStore) UpdateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
-func (s *MyStore) DeleteTrait(ctx context.Context, traitID id.TraitID) error { /* ... */ }
-func (s *MyStore) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) { /* ... */ }
-
-// ── Behavior methods (6) ─────────────────────────
-func (s *MyStore) CreateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
-func (s *MyStore) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) { /* ... */ }
-func (s *MyStore) GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error) { /* ... */ }
-func (s *MyStore) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
-func (s *MyStore) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error { /* ... */ }
-func (s *MyStore) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) { /* ... */ }
-
-// ── Persona methods (6) ──────────────────────────
-func (s *MyStore) CreatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
-func (s *MyStore) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) { /* ... */ }
-func (s *MyStore) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) { /* ... */ }
-func (s *MyStore) UpdatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
-func (s *MyStore) DeletePersona(ctx context.Context, personaID id.PersonaID) error { /* ... */ }
-func (s *MyStore) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) { /* ... */ }
-
-// ── Run methods (8) ──────────────────────────────
+// run.Store (9)
 func (s *MyStore) CreateRun(ctx context.Context, r *run.Run) error { /* ... */ }
 func (s *MyStore) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) { /* ... */ }
 func (s *MyStore) UpdateRun(ctx context.Context, r *run.Run) error { /* ... */ }
 func (s *MyStore) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) { /* ... */ }
+func (s *MyStore) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) { /* ... */ }
 func (s *MyStore) CreateStep(ctx context.Context, step *run.Step) error { /* ... */ }
 func (s *MyStore) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) { /* ... */ }
 func (s *MyStore) CreateToolCall(ctx context.Context, tc *run.ToolCall) error { /* ... */ }
 func (s *MyStore) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) { /* ... */ }
 
-// ── Memory methods (8) ───────────────────────────
-func (s *MyStore) SaveConversation(ctx context.Context, agentID id.AgentID, msgs []memory.Message) error { /* ... */ }
-func (s *MyStore) LoadConversation(ctx context.Context, agentID id.AgentID, limit int) ([]memory.Message, error) { /* ... */ }
-func (s *MyStore) ClearConversation(ctx context.Context, agentID id.AgentID) error { /* ... */ }
+// memory.Store (8)
+func (s *MyStore) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error { /* ... */ }
+func (s *MyStore) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) { /* ... */ }
+func (s *MyStore) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error { /* ... */ }
 func (s *MyStore) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error { /* ... */ }
 func (s *MyStore) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) { /* ... */ }
 func (s *MyStore) ClearWorking(ctx context.Context, runID id.AgentRunID) error { /* ... */ }
 func (s *MyStore) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error { /* ... */ }
 func (s *MyStore) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) { /* ... */ }
 
-// ── Checkpoint methods (4) ───────────────────────
+// checkpoint.Store (5)
 func (s *MyStore) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error { /* ... */ }
 func (s *MyStore) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) { /* ... */ }
 func (s *MyStore) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error { /* ... */ }
 func (s *MyStore) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) { /* ... */ }
+func (s *MyStore) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) { /* ... */ }
+
+// skill.Store (7)
+func (s *MyStore) CreateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
+func (s *MyStore) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) { /* ... */ }
+func (s *MyStore) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) { /* ... */ }
+func (s *MyStore) UpdateSkill(ctx context.Context, sk *skill.Skill) error { /* ... */ }
+func (s *MyStore) DeleteSkill(ctx context.Context, skillID id.SkillID) error { /* ... */ }
+func (s *MyStore) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) { /* ... */ }
+func (s *MyStore) CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error) { /* ... */ }
+
+// trait.Store (7)
+func (s *MyStore) CreateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
+func (s *MyStore) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) { /* ... */ }
+func (s *MyStore) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) { /* ... */ }
+func (s *MyStore) UpdateTrait(ctx context.Context, t *trait.Trait) error { /* ... */ }
+func (s *MyStore) DeleteTrait(ctx context.Context, traitID id.TraitID) error { /* ... */ }
+func (s *MyStore) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) { /* ... */ }
+func (s *MyStore) CountTraits(ctx context.Context, filter *trait.ListFilter) (int64, error) { /* ... */ }
+
+// behavior.Store (7)
+func (s *MyStore) CreateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
+func (s *MyStore) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error { /* ... */ }
+func (s *MyStore) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error { /* ... */ }
+func (s *MyStore) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) { /* ... */ }
+func (s *MyStore) CountBehaviors(ctx context.Context, filter *behavior.ListFilter) (int64, error) { /* ... */ }
+
+// persona.Store (7)
+func (s *MyStore) CreatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
+func (s *MyStore) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) { /* ... */ }
+func (s *MyStore) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) { /* ... */ }
+func (s *MyStore) UpdatePersona(ctx context.Context, p *persona.Persona) error { /* ... */ }
+func (s *MyStore) DeletePersona(ctx context.Context, personaID id.PersonaID) error { /* ... */ }
+func (s *MyStore) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) { /* ... */ }
+func (s *MyStore) CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error) { /* ... */ }
+
+// prompt.Store (7)
+func (s *MyStore) CreateOverlay(ctx context.Context, o *prompt.Overlay) error { /* ... */ }
+func (s *MyStore) GetOverlay(ctx context.Context, overlayID id.OverlayID) (*prompt.Overlay, error) { /* ... */ }
+func (s *MyStore) GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*prompt.Overlay, error) { /* ... */ }
+func (s *MyStore) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*prompt.Overlay, error) { /* ... */ }
+func (s *MyStore) UpdateOverlay(ctx context.Context, o *prompt.Overlay) error { /* ... */ }
+func (s *MyStore) DeleteOverlay(ctx context.Context, overlayID id.OverlayID) error { /* ... */ }
+func (s *MyStore) ListOverlays(ctx context.Context, filter *prompt.ListFilter) ([]*prompt.Overlay, error) { /* ... */ }
+
+// session.Store (6)
+func (s *MyStore) CreateSession(ctx context.Context, sess *session.Session) error { /* ... */ }
+func (s *MyStore) GetSession(ctx context.Context, sessionID id.SessionID) (*session.Session, error) { /* ... */ }
+func (s *MyStore) UpdateSession(ctx context.Context, sess *session.Session) error { /* ... */ }
+func (s *MyStore) DeleteSession(ctx context.Context, sessionID id.SessionID) error { /* ... */ }
+func (s *MyStore) ListSessions(ctx context.Context, filter *session.ListFilter) ([]*session.Session, error) { /* ... */ }
+func (s *MyStore) CountSessions(ctx context.Context, filter *session.ListFilter) (int64, error) { /* ... */ }
+
+// suspension.Store (7)
+func (s *MyStore) CreateSuspension(ctx context.Context, susp *suspension.Suspension) error { /* ... */ }
+func (s *MyStore) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) { /* ... */ }
+func (s *MyStore) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) { /* ... */ }
+func (s *MyStore) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error { /* ... */ }
+func (s *MyStore) ListExpired(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error) { /* ... */ }
+func (s *MyStore) ListExpiredAcrossScopes(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error) { /* ... */ }
+func (s *MyStore) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*suspension.Suspension, error) { /* ... */ }
+
+// orchestration.ConfigStore (7)
+func (s *MyStore) CreateOrchestration(ctx context.Context, c *orchestration.Config) error { /* ... */ }
+func (s *MyStore) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) { /* ... */ }
+func (s *MyStore) GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error) { /* ... */ }
+func (s *MyStore) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error { /* ... */ }
+func (s *MyStore) DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error { /* ... */ }
+func (s *MyStore) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) { /* ... */ }
+func (s *MyStore) CountOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) (int64, error) { /* ... */ }
+
+// orchestration.RunStore (5)
+func (s *MyStore) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error { /* ... */ }
+func (s *MyStore) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) { /* ... */ }
+func (s *MyStore) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error { /* ... */ }
+func (s *MyStore) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) { /* ... */ }
+func (s *MyStore) CountOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) (int64, error) { /* ... */ }
 ```
 
 ## Register with the engine
@@ -280,13 +419,17 @@ eng, err := engine.New(
 
 1. **Scope isolation.** Every query must filter by the caller's scope and reject a zero scope with `cortex.ErrNoScope`. Use `cortex.ScopeFromContext(ctx)`. There is no separate app dimension to read: a host that wants one declares an `app` level on the same `cortex.Scope`.
 
-2. **ID generation** — Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
+2. **A cross-scope read is a not-found.** Do not return an empty result and do not return a permission error. A caller who can tell that a row exists in a scope they cannot read has already learned something they should not know.
 
-3. **JSONB columns** — Complex nested structures (tools, dimensions, triggers, etc.) should be serialized as JSON. The PostgreSQL store uses `bun:"type:jsonb"` annotations.
+3. **ID generation.** Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
 
-4. **Migrate()** — Should be idempotent. Create tables if they don't exist, add columns if missing.
+4. **JSONB columns.** Complex nested structures (tools, dimensions, triggers, etc.) should be serialized as JSON. The bundled stores use grove models and annotate those columns `grove:"name,type:jsonb"`.
 
-5. **Compile-time check** — Always include `var _ store.Store = (*MyStore)(nil)` to catch missing methods at compile time.
+5. **Migrate().** Should be idempotent. Create tables if they don't exist, add columns if missing.
+
+6. **Compile-time check.** Always include `var _ store.Store = (*MyStore)(nil)` to catch missing methods at compile time.
+
+7. **Run the conformance suite.** `store/storetest` exercises scope isolation, the suspension claim races, and the counter invariants against a live backend. A store that compiles and passes its own tests can still leak across scopes, and that suite is what catches it.
 
 ## Existing implementations
 
@@ -294,4 +437,4 @@ eng, err := engine.New(
 |---------|---------|-------|
 | `store/postgres` | PostgreSQL | Production-ready, embedded migrations |
 | `store/sqlite` | SQLite | Embedded migrations |
-| `store/mongo` | MongoDB | Embedded migrations |
+| `store/mongo` | MongoDB | Embedded migrations, needs a replica set for conversation writes |

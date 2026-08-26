@@ -68,6 +68,14 @@ Execution entities that record an agent's reasoning process:
 
 See [Runs](/docs/execution/runs).
 
+### Session
+
+A conversation thread. One agent holds many sessions in the same scope, and exactly
+one of them is the default: the thread a run lands in when its caller names no
+session. Messages belong to a session rather than to the agent directly, which is
+why `SaveConversation` and `LoadConversation` both take a `SessionID` alongside the
+agent ID. See [Sessions](/docs/concepts/sessions).
+
 ### Message
 
 A conversation message with role, content, and timestamp. See [Memory](/docs/execution/memory).
@@ -75,6 +83,14 @@ A conversation message with role, content, and timestamp. See [Memory](/docs/exe
 ### Checkpoint
 
 A point where a run pauses for human approval. See [Checkpoints](/docs/execution/checkpoints).
+
+### Suspension
+
+What a paused run persists so somebody else can pick it up: the continuation, the
+calls it is waiting on, and a deadline. A run has at most one. The same row covers
+both reasons a run stops, a tool the caller runs instead of the engine and a tool
+call a human still has to approve, so a resume works the same way whichever it was.
+See [Suspension](/docs/concepts/suspension).
 
 ## Entity relationship diagram
 
@@ -96,30 +112,48 @@ Persona
 Agent Config
   ├── PersonaRef ──→ Persona (persona mode)
   ├── SystemPrompt + Tools (flat mode)
+  ├── Session[]
+  │     └── Message[] (via Memory)
   └── Run[]
+        ├── SessionID ──→ Session
         ├── Step[]
         │     └── ToolCall[]
         ├── Checkpoint[]
-        └── Message[] (via Memory)
+        └── Suspension (at most one, while paused)
 ```
 
 ## Store interfaces
 
-Each entity type defines its own store interface. These are composed into the single `store.Store` composite:
+Each entity type defines its own store interface, and `store.Store` embeds all
+thirteen of them. There is no partial implementation: a backend satisfies the whole
+composite or none of it.
 
 ```go
 type Store interface {
-    agent.Store      // Create, Get, GetByName, Update, Delete, List
-    skill.Store      // CreateSkill, GetSkill, GetSkillByName, ...
-    trait.Store      // CreateTrait, GetTrait, GetTraitByName, ...
-    behavior.Store   // CreateBehavior, GetBehavior, ...
-    persona.Store    // CreatePersona, GetPersona, ...
-    run.Store        // CreateRun, GetRun, UpdateRun, ListRuns, ...
-    memory.Store     // SaveConversation, LoadConversation, ...
-    checkpoint.Store // CreateCheckpoint, GetCheckpoint, ...
+    agent.Store               // Create, Get, GetByName, Update, Delete, List, CountAgents
+    run.Store                 // CreateRun, GetRun, UpdateRun, ListRuns, CountRuns, ...
+    memory.Store              // SaveConversation, LoadConversation, SaveWorking, ...
+    checkpoint.Store          // CreateCheckpoint, GetCheckpoint, Resolve, ...
+    skill.Store               // CreateSkill, GetSkill, GetSkillByName, ...
+    trait.Store               // CreateTrait, GetTrait, GetTraitByName, ...
+    behavior.Store            // CreateBehavior, GetBehavior, GetBehaviorByName, ...
+    persona.Store             // CreatePersona, GetPersona, GetPersonaByName, ...
+    prompt.Store              // CreateOverlay, GetOverlayForAgent, ListOverlays, ...
+    session.Store             // CreateSession, GetSession, ListSessions, ...
+    suspension.Store          // CreateSuspension, ClaimSuspension, ListExpired, ...
+    orchestration.ConfigStore // CreateOrchestration, GetOrchestration, ...
+    orchestration.RunStore    // CreateOrchestrationRun, GetOrchestrationRun, ...
 
-    Migrate(ctx context.Context) error
+    Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
     Close() error
 }
 ```
+
+That comes to 89 methods across the thirteen sub-interfaces, plus the three
+lifecycle methods. `Migrate` takes options rather than nothing because a host
+upgrading a database written before v1.8.0 has to hand it a `cortex.Rescoper` to
+give the old rows a scope; see the [rescope guide](/docs/guides/v1.8-rescope).
+
+For the method-by-method breakdown, and a skeleton you can fill in, see
+[Custom Store](/docs/guides/custom-store).
