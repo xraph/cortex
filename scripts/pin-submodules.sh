@@ -27,10 +27,15 @@ SUBMODULES=(api dashboard sentinel extension integrations/fabriq)
 for mod in "${SUBMODULES[@]}"; do
 	f="$mod/go.mod"
 	[ -f "$f" ] || { echo "error: $f not found" >&2; exit 1; }
-	# Rewrite the root require and any sibling sub-module require. Only the
-	# github.com/xraph/cortex tree is touched; third-party pins are left to
-	# go mod tidy.
-	perl -pi -e "s{^(\t)(github\.com/xraph/cortex(?:/\S+)?) v\S+}{\$1\$2 $VERSION}" "$f"
+	# go mod edit rather than a regex: it understands both the parenthesised
+	# block and the single-line require form, it never touches a replace, and
+	# it refuses a version whose major does not match the path suffix. A sed
+	# would quietly accept all three.
+	paths=$(go mod edit -json "$f" \
+		| jq -r '.Require[]? | select(.Path == "github.com/xraph/cortex" or (.Path | startswith("github.com/xraph/cortex/"))) | .Path')
+	for path in $paths; do
+		go mod edit -require="${path}@${VERSION}" "$f"
+	done
 	echo "pinned $f -> $VERSION"
 done
 
