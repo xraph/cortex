@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -111,4 +112,21 @@ type RunOrchestrationResponse struct {
 	Strategy   string `json:"strategy"`
 	Output     string `json:"output"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// ListA2AConversationsResponse is a page of messaging conversations.
+type ListA2AConversationsResponse struct {
+	Items []*a2a.Conversation `json:"items"`
+}
+
+// A2AConversationResponse is one messaging conversation with its
+// transcript, oldest message first.
+type A2AConversationResponse struct {
+	Conversation *a2a.Conversation `json:"conversation"`
+	Messages     []*a2a.Envelope   `json:"messages"`
+}
+
+// AgentInboxResponse is what an agent has waiting for it.
+type AgentInboxResponse struct {
+	Items []a2a.InboxItem `json:"items"`
 }

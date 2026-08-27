@@ -491,3 +491,45 @@ type ClonePersonaRequest struct {
 	Name    string `path:"name" description:"Source persona name"`
 	NewName string `json:"new_name,omitempty" description:"Name for the clone; auto-generated if omitted"`
 }
+
+// ──────────────────────────────────────────────────
+// Agent-to-agent messaging
+// ──────────────────────────────────────────────────
+
+// ListA2AConversationsRequest paginates and filters messaging
+// conversations. The a2a prefix is not decoration: "conversation" already
+// means an agent's chat history elsewhere in this API, and these are the
+// other kind.
+type ListA2AConversationsRequest struct {
+	Status string `query:"status" description:"Filter by status: open|closed|expired"`
+	Limit  int    `query:"limit" description:"Max results (default: 50)"`
+	Offset int    `query:"offset" description:"Results to skip"`
+}
+
+// GetA2AConversationRequest addresses one messaging conversation by ID.
+type GetA2AConversationRequest struct {
+	ID string `path:"id" description:"Conversation ID"`
+}
+
+// AgentInboxRequest reads one agent's delivered messages.
+type AgentInboxRequest struct {
+	Name           string `path:"name" description:"Agent name"`
+	ConversationID string `query:"conversation_id" description:"Only messages on this conversation"`
+	IncludeRead    bool   `query:"include_read" description:"Include messages already read (default: unread only)"`
+	Limit          int    `query:"limit" description:"Max results (default: 50)"`
+}
+
+// SendMessageRequest injects a message from outside a run.
+//
+// InReplyTo is what makes this more than an inbox write: a reply carrying
+// the reply-with token of a waiting ask resumes the run behind it, which
+// is how a person answers an agent that asked a question.
+type SendMessageRequest struct {
+	Name           string `path:"name" description:"Recipient agent name"`
+	From           string `json:"from" description:"Sender name, as it should appear to the recipient"`
+	Content        string `json:"content" description:"The message body"`
+	Performative   string `json:"performative,omitempty" description:"FIPA-ACL speech act (default: inform)"`
+	ConversationID string `json:"conversation_id,omitempty" description:"Continue an existing conversation"`
+	InReplyTo      string `json:"in_reply_to,omitempty" description:"Reply-with token of the ask this answers"`
+	Ontology       string `json:"ontology,omitempty" description:"Optional subject-matter label"`
+}
