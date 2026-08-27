@@ -183,7 +183,12 @@ func writeRPC(w http.ResponseWriter, resp rpcResponse) {
 	// The status stays 200 even for an error: a JSON-RPC error is a
 	// well-formed response, and a client reading HTTP status instead of
 	// the error member would see a transport failure that did not happen.
-	_ = json.NewEncoder(w).Encode(resp)
+	//
+	// An encode failure means the connection went away mid-write, which
+	// there is nothing useful to do about and nobody left to tell.
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		return
+	}
 }
 
 // credentialsOf lifts what a resolver can authenticate on out of the
@@ -233,7 +238,9 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 	card := BuildCard(a, s.skillsOf(r.Context(), a), opts)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(card)
+	if err := json.NewEncoder(w).Encode(card); err != nil {
+		return
+	}
 }
 
 func (s *Service) exposed(name string) bool {
