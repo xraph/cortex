@@ -19,26 +19,26 @@ func TestCancelClosesTheConversationAndFailsWaitingAsks(t *testing.T) {
 		t.Fatalf("Ask: %v", err)
 	}
 
-	if _, err := b.Send(ctx, SendParams{
+	if _, sendErr := b.Send(ctx, SendParams{
 		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}},
 		Performative: Cancel, Content: "never mind", ConversationID: ask.ConversationID,
-	}); err != nil {
-		t.Fatalf("cancel Send: %v", err)
+	}); sendErr != nil {
+		t.Fatalf("cancel Send: %v", sendErr)
 	}
 
 	// Deliver the cancel only. The original request is still queued, which
 	// is exactly the state a real cancel races with.
 	queued, _ := st.ListQueuedDeliveries(ctx, 10)
 	for _, d := range queued {
-		msg, err := st.GetMessage(ctx, d.MessageID)
-		if err != nil {
-			t.Fatalf("GetMessage: %v", err)
+		msg, getErr := st.GetMessage(ctx, d.MessageID)
+		if getErr != nil {
+			t.Fatalf("GetMessage: %v", getErr)
 		}
 		if msg.Performative != Cancel {
 			continue
 		}
-		if err := b.deliverOne(ctx, d.ID); err != nil {
-			t.Fatalf("deliverOne: %v", err)
+		if delErr := b.deliverOne(ctx, d.ID); delErr != nil {
+			t.Fatalf("deliverOne: %v", delErr)
 		}
 	}
 

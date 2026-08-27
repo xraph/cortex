@@ -49,11 +49,11 @@ func TestRedrivePicksUpOrphanedDeliveries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBus: %v", err)
 	}
-	if _, err := first.Send(ctx, SendParams{
+	if _, sendErr := first.Send(ctx, SendParams{
 		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}},
 		Performative: Request, Content: "survive this",
-	}); err != nil {
-		t.Fatalf("Send: %v", err)
+	}); sendErr != nil {
+		t.Fatalf("Send: %v", sendErr)
 	}
 	// first "crashes" here: nothing drained it.
 

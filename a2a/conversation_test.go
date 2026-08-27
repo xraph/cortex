@@ -104,8 +104,8 @@ func TestListInboxReturnsUnreadOnly(t *testing.T) {
 		t.Fatalf("got %d deliveries, want 1", len(got))
 	}
 
-	if err := s.MarkDeliveryRead(ctx, got[0].ID); err != nil {
-		t.Fatalf("MarkDeliveryRead: %v", err)
+	if readErr := s.MarkDeliveryRead(ctx, got[0].ID); readErr != nil {
+		t.Fatalf("MarkDeliveryRead: %v", readErr)
 	}
 	got, err = s.ListInbox(ctx, "worker", InboxFilter{UnreadOnly: true})
 	if err != nil {

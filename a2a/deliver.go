@@ -116,8 +116,8 @@ func (b *Bus) handleControl(ctx context.Context, e *Envelope) error {
 	}
 	reason := fmt.Sprintf("conversation cancelled by %s: %s", e.Sender, e.Content)
 	for _, a := range asks {
-		if err := b.resolveAskWithFailure(ctx, a.ReplyWith, reason); err != nil {
-			return err
+		if failErr := b.resolveAskWithFailure(ctx, a.ReplyWith, reason); failErr != nil {
+			return failErr
 		}
 	}
 

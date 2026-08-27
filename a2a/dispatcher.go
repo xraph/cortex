@@ -97,8 +97,11 @@ func (d *dispatcher) work(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		// A drain error is per batch and the loop keeps going: one bad row
-		// must not stop delivery for everyone else.
-		_, _ = d.bus.Drain(ctx)
+		// must not stop delivery for everyone else. A cancelled context is
+		// the exception, because that is the worker being shut down.
+		if _, err := d.bus.Drain(ctx); errors.Is(err, context.Canceled) {
+			return
+		}
 
 		select {
 		case <-ctx.Done():

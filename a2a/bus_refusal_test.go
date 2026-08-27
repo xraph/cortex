@@ -10,7 +10,7 @@ import (
 
 // assertNoMessagesWritten is the guarantee every refusal shares: nothing
 // reached the store, so nothing can be waiting on a message that is not there.
-func assertNoMessagesWritten(t *testing.T, ctx context.Context, st *memStore) {
+func assertNoMessagesWritten(ctx context.Context, t *testing.T, st *memStore) {
 	t.Helper()
 	msgs, err := st.ListMessages(ctx, &MessageListFilter{Limit: 10})
 	if err != nil {
@@ -38,8 +38,8 @@ func TestSendRefusesAClosedConversation(t *testing.T) {
 		t.Fatalf("GetConversation: %v", err)
 	}
 	conv.Status = StatusClosed
-	if err := st.UpdateConversation(ctx, conv); err != nil {
-		t.Fatalf("UpdateConversation: %v", err)
+	if updErr := st.UpdateConversation(ctx, conv); updErr != nil {
+		t.Fatalf("UpdateConversation: %v", updErr)
 	}
 
 	_, err = b.Send(ctx, SendParams{
@@ -89,7 +89,7 @@ func TestSendRefusesAnUnroutableAddress(t *testing.T) {
 	if !errorsIs(err, ErrUnroutable) {
 		t.Fatalf("err = %v, want ErrUnroutable", err)
 	}
-	assertNoMessagesWritten(t, ctx, st)
+	assertNoMessagesWritten(ctx, t, st)
 }
 
 func TestSendRequiresAScope(t *testing.T) {
@@ -102,7 +102,7 @@ func TestSendRequiresAScope(t *testing.T) {
 	if !errorsIs(err, cortex.ErrNoScope) {
 		t.Fatalf("err = %v, want cortex.ErrNoScope", err)
 	}
-	assertNoMessagesWritten(t, testCtx(), st)
+	assertNoMessagesWritten(testCtx(), t, st)
 }
 
 func TestSendRefusesAnUnknownPerformativeBeforeOpeningAConversation(t *testing.T) {

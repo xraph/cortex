@@ -18,8 +18,8 @@ func TestDeliverInformativeLandsInTheInboxAndStartsNoRun(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	queued, _ := st.ListQueuedDeliveries(ctx, 10)
-	if err := b.deliverOne(ctx, queued[0].ID); err != nil {
-		t.Fatalf("deliverOne: %v", err)
+	if delErr := b.deliverOne(ctx, queued[0].ID); delErr != nil {
+		t.Fatalf("deliverOne: %v", delErr)
 	}
 
 	if runner.callCount() != 0 {
@@ -34,6 +34,9 @@ func TestDeliverInformativeLandsInTheInboxAndStartsNoRun(t *testing.T) {
 	}
 	if hooks.delivered() != 1 {
 		t.Fatalf("MessageDelivered fired %d times, want 1", hooks.delivered())
+	}
+	if hooks.refused() != 0 {
+		t.Fatalf("MessageRefused fired %d times on a clean delivery, want 0", hooks.refused())
 	}
 }
 
@@ -50,8 +53,8 @@ func TestDeliverDirectiveStartsARunAndRepliesWithItsOutput(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	queued, _ := st.ListQueuedDeliveries(ctx, 10)
-	if err := b.deliverOne(ctx, queued[0].ID); err != nil {
-		t.Fatalf("deliverOne: %v", err)
+	if delErr := b.deliverOne(ctx, queued[0].ID); delErr != nil {
+		t.Fatalf("deliverOne: %v", delErr)
 	}
 
 	if runner.callCount() != 1 {
@@ -114,8 +117,8 @@ func TestDeliverMarksTheRowDelivered(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	queued, _ := st.ListQueuedDeliveries(ctx, 10)
-	if err := b.deliverOne(ctx, queued[0].ID); err != nil {
-		t.Fatalf("deliverOne: %v", err)
+	if delErr := b.deliverOne(ctx, queued[0].ID); delErr != nil {
+		t.Fatalf("deliverOne: %v", delErr)
 	}
 	if left, _ := st.ListQueuedDeliveries(ctx, 10); len(left) != 0 {
 		t.Fatalf("%d rows still queued after delivery, want 0", len(left))
