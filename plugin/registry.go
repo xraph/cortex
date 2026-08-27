@@ -96,6 +96,21 @@ type agentHandoffEntry struct {
 	hook AgentHandoff
 }
 
+type messageSentEntry struct {
+	name string
+	hook MessageSent
+}
+
+type messageDeliveredEntry struct {
+	name string
+	hook MessageDelivered
+}
+
+type messageRefusedEntry struct {
+	name string
+	hook MessageRefused
+}
+
 type shutdownEntry struct {
 	name string
 	hook Shutdown
@@ -125,6 +140,9 @@ type Registry struct {
 	orchestrationStarted   []orchestrationStartedEntry
 	orchestrationCompleted []orchestrationCompletedEntry
 	agentHandoff           []agentHandoffEntry
+	messageSent            []messageSentEntry
+	messageDelivered       []messageDeliveredEntry
+	messageRefused         []messageRefusedEntry
 	shutdown               []shutdownEntry
 }
 
@@ -189,6 +207,15 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(AgentHandoff); ok {
 		r.agentHandoff = append(r.agentHandoff, agentHandoffEntry{name, h})
+	}
+	if h, ok := e.(MessageSent); ok {
+		r.messageSent = append(r.messageSent, messageSentEntry{name, h})
+	}
+	if h, ok := e.(MessageDelivered); ok {
+		r.messageDelivered = append(r.messageDelivered, messageDeliveredEntry{name, h})
+	}
+	if h, ok := e.(MessageRefused); ok {
+		r.messageRefused = append(r.messageRefused, messageRefusedEntry{name, h})
 	}
 	if h, ok := e.(Shutdown); ok {
 		r.shutdown = append(r.shutdown, shutdownEntry{name, h})
@@ -357,6 +384,34 @@ func (r *Registry) EmitAgentHandoff(ctx context.Context, orchID id.Orchestration
 	for _, e := range r.agentHandoff {
 		if err := e.hook.OnAgentHandoff(ctx, orchID, fromAgent, toAgent, payload); err != nil {
 			r.logHookError("OnAgentHandoff", e.name, err)
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────
+// Messaging event emitters
+// ──────────────────────────────────────────────────
+
+func (r *Registry) EmitMessageSent(ctx context.Context, msgID id.MessageID, from, to, performative string) {
+	for _, e := range r.messageSent {
+		if err := e.hook.OnMessageSent(ctx, msgID, from, to, performative); err != nil {
+			r.logHookError("OnMessageSent", e.name, err)
+		}
+	}
+}
+
+func (r *Registry) EmitMessageDelivered(ctx context.Context, msgID id.MessageID, to string) {
+	for _, e := range r.messageDelivered {
+		if err := e.hook.OnMessageDelivered(ctx, msgID, to); err != nil {
+			r.logHookError("OnMessageDelivered", e.name, err)
+		}
+	}
+}
+
+func (r *Registry) EmitMessageRefused(ctx context.Context, msgID id.MessageID, to, reason string) {
+	for _, e := range r.messageRefused {
+		if err := e.hook.OnMessageRefused(ctx, msgID, to, reason); err != nil {
+			r.logHookError("OnMessageRefused", e.name, err)
 		}
 	}
 }

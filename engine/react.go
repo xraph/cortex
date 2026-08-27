@@ -939,9 +939,19 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, failErr)
 	}
 	if outcome == outcomePending {
-		return result, outcome, suspension.ReasonExternalTool
+		return result, outcome, pendingReason(tc.Name)
 	}
 	return result, outcome, ""
+}
+
+// pendingReason says what a pending call is waiting on. External tools
+// wait on the caller; agent_ask waits on a peer agent, and telling a host
+// to go execute that one would be asking it to forge the peer's reply.
+func pendingReason(toolName string) suspension.SuspendReason {
+	if toolName == toolAgentAsk {
+		return suspension.ReasonAgentReply
+	}
+	return suspension.ReasonExternalTool
 }
 
 // dispatchTool runs a call that has already cleared authorization, and it
@@ -956,8 +966,11 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, error) {
 	inv := cortex.Invocation{Subject: s, Call: tc}
 
-	if result, handled := e.executeBuiltinTool(ctx, inv); handled {
-		return result, outcomeCompleted, nil
+	if result, outcome, handled := e.executeBuiltinTool(ctx, inv); handled {
+		if outcome == outcomeFailed {
+			return result, outcome, fmt.Errorf("builtin tool %q failed", tc.Name)
+		}
+		return result, outcome, nil
 	}
 	for _, rt := range e.tools {
 		if rt.def.Name == tc.Name {

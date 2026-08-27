@@ -35,6 +35,20 @@ type Transport interface {
 	Handles(addr Address) bool
 }
 
+// Resolver answers whether an address names an agent that actually
+// exists in the caller's scope. The engine implements it with an agent
+// lookup; a remote transport's node would answer for its own peers.
+//
+// It is separate from Transport.Handles, and the difference matters: a
+// transport says "I know how to reach addresses of this shape", while a
+// resolver says "this particular agent is there". Without the second
+// question, an ask addressed to a typo suspends the asking run against a
+// recipient that will never answer, and the run sits until its deadline
+// to learn what could have been said immediately.
+type Resolver interface {
+	ResolveAddress(ctx context.Context, addr Address) error
+}
+
 // HookEmitter receives messaging lifecycle events. The engine adapts
 // plugin.Registry to it; tests pass a recorder.
 type HookEmitter interface {

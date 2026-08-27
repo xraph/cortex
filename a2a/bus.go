@@ -24,6 +24,9 @@ var (
 	ErrHopCeiling = errors.New("cortex: a2a: conversation hop ceiling exceeded")
 	// ErrUnroutable means no transport handles the receiver's address.
 	ErrUnroutable = errors.New("cortex: a2a: no transport handles that address")
+	// ErrUnknownReceiver means the address is routable in shape but names
+	// no agent the sender can reach.
+	ErrUnknownReceiver = errors.New("cortex: a2a: receiver does not resolve")
 )
 
 // BusConfig builds a Bus. Store and Runner are required; everything else
@@ -32,6 +35,7 @@ type BusConfig struct {
 	Store      Store
 	Runner     cortex.AgentRunner
 	Resumer    Resumer
+	Resolver   Resolver
 	Hooks      HookEmitter
 	Clock      Clock
 	Transports []Transport
@@ -47,6 +51,7 @@ type Bus struct {
 	store      Store
 	runner     cortex.AgentRunner
 	resumer    Resumer
+	resolver   Resolver
 	hooks      HookEmitter
 	clock      Clock
 	transports []Transport
@@ -72,6 +77,7 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		store:      cfg.Store,
 		runner:     cfg.Runner,
 		resumer:    cfg.Resumer,
+		resolver:   cfg.Resolver,
 		hooks:      cfg.Hooks,
 		clock:      cfg.Clock,
 		transports: cfg.Transports,
@@ -165,6 +171,9 @@ func (b *Bus) prepare(ctx context.Context, p SendParams) (*Envelope, *Conversati
 		if !b.routable(r) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrUnroutable, r)
 		}
+		if resolveErr := b.resolve(ctx, r); resolveErr != nil {
+			return nil, nil, resolveErr
+		}
 	}
 
 	conv, err := b.resolveConversation(ctx, p, scope)
@@ -252,6 +261,19 @@ func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*Sen
 
 	b.hooks.MessageSent(ctx, e.ID, e.Sender.String(), addressList(e.Receivers), string(e.Performative))
 	return res, nil
+}
+
+// resolve asks the host whether the receiver exists. A bus with no
+// resolver skips the question, which is what the package's own tests do:
+// they have no agents, only a fake runner that answers to any name.
+func (b *Bus) resolve(ctx context.Context, addr Address) error {
+	if b.resolver == nil {
+		return nil
+	}
+	if err := b.resolver.ResolveAddress(ctx, addr); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrUnknownReceiver, addr, err)
+	}
+	return nil
 }
 
 func (b *Bus) routable(addr Address) bool {
