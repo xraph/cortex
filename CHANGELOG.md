@@ -111,11 +111,12 @@ when cross-process messaging lands.
   resolves on its deadline either way, but an informative message caught
   in that window is lost. The delivery row already carries `claimed_at`
   for the reclaim to key on.
-- Postgres and mongo were written against the conformance suite but not
-  executed: the environment this landed in could not start database
-  containers. Sqlite is exercised, including the raced claim. Run
-  `go test ./store/postgres/ ./store/mongo/` with docker up before
-  trusting either.
+- Mongo was written against the conformance suite but never executed:
+  the environment this landed in could not start a mongo container, and
+  could not before this branch either. Sqlite and postgres both run the
+  full suite, including the raced claim on each. Run
+  `go test ./store/mongo/` with a working mongo container before
+  trusting that backend.
 
 ## [1.12.0] - Unreleased
 

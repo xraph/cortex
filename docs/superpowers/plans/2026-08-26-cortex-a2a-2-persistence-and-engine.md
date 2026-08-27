@@ -171,7 +171,7 @@ Same as Task 1, against [store/postgres/orchestration.go](../../../store/postgre
 - JSON columns are `jsonb`.
 - `ClaimPendingAsk` can use `UPDATE ... RETURNING`, which collapses the claim and the read into one statement. Prefer it.
 
-Run: `go test ./store/postgres/ -race -run TestConformance`. **If Docker is unavailable, this cannot be verified. Say so plainly rather than reporting a pass.**
+Run: `go test ./store/postgres/ -race -run TestConformance`. Postgres containers start fine in this environment, so this one is genuinely verifiable.
 
 ---
 
