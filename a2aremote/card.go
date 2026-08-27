@@ -96,6 +96,9 @@ type CardOptions struct {
 	Version          string
 	Provider         AgentProvider
 	DocumentationURL string
+	// Streaming says the card should advertise streaming, which it does
+	// only when the service actually serves it.
+	Streaming bool
 	// Bindings names which bindings the card advertises. Empty means
 	// JSON-RPC only, which is what this module serves on its own.
 	//
@@ -147,7 +150,7 @@ func BuildCard(a *agent.Config, skills []*skill.Skill, opts CardOptions) AgentCa
 			// Everything cortex does not implement is declared false
 			// rather than left out, so a peer reads a refusal here
 			// instead of discovering it mid-conversation.
-			Streaming:         false,
+			Streaming:         opts.Streaming,
 			PushNotifications: false,
 			ExtendedAgentCard: false,
 			Extensions: []AgentExtension{{

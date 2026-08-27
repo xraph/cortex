@@ -156,6 +156,26 @@ reply; it is now `{"replies": [...], "complete": bool}`, with one entry
 for a single-recipient ask. Shipping two shapes, one per recipient count,
 would have cost every prompt forever; a list costs one sentence.
 
+### Added later in this release: the other two bindings, and streaming
+
+Cortex now serves all three A2A bindings over one service. HTTP+JSON is
+`svc.RESTHandler()` at the protocol's own colon-verb paths. gRPC is its
+own module, `a2aremote/grpcbind`, so a host serving JSON-RPC does not
+inherit grpc-go and protobuf; its types are generated from the normative
+a2a.proto, vendored with the script that regenerates them.
+
+Whatever a rule says about scope or sender namespacing holds on all
+three, because the rule lives in the service and the bindings only
+translate. A test asserts the bindings agree on identical input, since
+that is the property the shared service exists to provide.
+
+Streaming is there too, off unless you ask for it:
+`SendStreamingMessage` and `SubscribeToTask`, over server-sent events on
+the HTTP bindings and native server streaming on gRPC. It is task-level
+streaming rather than tokens, which is what A2A's streaming is: the
+subscriber gets the task, then each transition, and the last one carries
+the output with `final` set.
+
 ### Fixed
 
 - **A refusal ended a round it should not have.** `refuse` and

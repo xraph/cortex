@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -80,9 +81,14 @@ func (g *gateway) GetSkillByName(context.Context, string) (*skill.Skill, error) 
 
 func dial(t *testing.T, gw a2aremote.Gateway, res a2aremote.PeerResolver) a2apb.A2AServiceClient {
 	t.Helper()
+	return dialWith(t, gw, res, a2aremote.Options{})
+}
+
+func dialWith(t *testing.T, gw a2aremote.Gateway, res a2aremote.PeerResolver, opts a2aremote.Options) a2apb.A2AServiceClient {
+	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	grpcbind.Register(srv, a2aremote.NewService(gw, res, a2aremote.Options{}))
+	grpcbind.Register(srv, a2aremote.NewService(gw, res, opts))
 
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
@@ -191,7 +197,7 @@ func TestGRPCUnauthenticated(t *testing.T) {
 	}
 }
 
-func TestGRPCStreamingIsRefusedRatherThanHanging(t *testing.T) {
+func TestGRPCStreamingIsRefusedWhenItIsOff(t *testing.T) {
 	client := dial(t, newGateway(), okResolver())
 
 	stream, err := client.SendStreamingMessage(authed(context.Background()), &a2apb.SendMessageRequest{
@@ -201,7 +207,81 @@ func TestGRPCStreamingIsRefusedRatherThanHanging(t *testing.T) {
 	if err == nil {
 		_, err = stream.Recv()
 	}
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("code = %s, want Unimplemented for something the card says is not there", status.Code(err))
+	if status.Code(err) == codes.OK {
+		t.Fatalf("streaming answered while it is switched off")
+	}
+}
+
+// movingGateway walks a run through its states so a subscriber sees
+// transitions rather than one snapshot.
+type movingGateway struct {
+	*gateway
+	states []run.State
+	runID  id.AgentRunID
+}
+
+func (g *movingGateway) GetRun(_ context.Context, runID id.AgentRunID) (*run.Run, error) {
+	if runID != g.runID {
+		return nil, errors.New("not found")
+	}
+	state := g.states[0]
+	if len(g.states) > 1 {
+		g.states = g.states[1:]
+	}
+	r := &run.Run{ID: g.runID, State: state}
+	if state == run.StateCompleted {
+		r.Output = "done over grpc"
+	}
+	return r, nil
+}
+
+func (g *movingGateway) GetDelivery(_ context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
+	return &a2a.Delivery{ID: deliveryID, State: a2a.DeliveryDelivered, RunID: g.runID}, nil
+}
+
+// gRPC streams the same events the other bindings do, because the events
+// come from the service rather than from any binding.
+func TestGRPCSendStreamingMessage(t *testing.T) {
+	base := newGateway()
+	gw := &movingGateway{gateway: base, states: []run.State{run.StateRunning, run.StateCompleted}, runID: id.NewAgentRunID()}
+	client := dialWith(t, gw, okResolver(), a2aremote.Options{Streaming: true, StreamPoll: time.Millisecond})
+
+	stream, err := client.SendStreamingMessage(authed(context.Background()), &a2apb.SendMessageRequest{
+		Tenant: "worker",
+		Message: &a2apb.Message{
+			MessageId: "m1", Role: a2apb.Role_ROLE_USER,
+			Parts: []*a2apb.Part{{Content: &a2apb.Part_Text{Text: "stream this"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendStreamingMessage: %v", err)
+	}
+
+	var sawTask, sawFinal, sawArtifact bool
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			break
+		}
+		switch {
+		case resp.GetTask() != nil:
+			sawTask = true
+		case resp.GetStatusUpdate() != nil:
+			if resp.GetStatusUpdate().GetStatus().GetState() == a2apb.TaskState_TASK_STATE_COMPLETED {
+				sawFinal = true
+			}
+		case resp.GetArtifactUpdate() != nil:
+			sawArtifact = true
+		}
+	}
+
+	if !sawTask {
+		t.Error("the stream never opened with the task")
+	}
+	if !sawFinal {
+		t.Error("the stream never reported the task finishing")
+	}
+	if !sawArtifact {
+		t.Error("the output never arrived")
 	}
 }

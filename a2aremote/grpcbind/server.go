@@ -264,3 +264,72 @@ func roleToProto(r a2aremote.Role) a2apb.Role {
 	}
 	return a2apb.Role_ROLE_USER
 }
+
+// SendStreamingMessage sends a message and streams the task's progress.
+func (s *Server) SendStreamingMessage(req *a2apb.SendMessageRequest, stream a2apb.A2AService_SendStreamingMessageServer) error {
+	return s.svc.StreamMessage(stream.Context(), credentialsOf(stream.Context()), a2aremote.SendMessageRequest{
+		Tenant:  req.GetTenant(),
+		Message: messageFromProto(req.GetMessage()),
+	}, emitTo(stream))
+}
+
+// SubscribeToTask streams the progress of a task already running.
+func (s *Server) SubscribeToTask(req *a2apb.SubscribeToTaskRequest, stream a2apb.A2AService_SubscribeToTaskServer) error {
+	return s.svc.SubscribeTask(stream.Context(), credentialsOf(stream.Context()),
+		req.GetTenant(), req.GetId(), emitTo(stream))
+}
+
+// streamSender is the half of a generated server stream this package
+// uses. Naming it lets both streaming methods share one adapter rather
+// than repeating the translation twice.
+type streamSender interface {
+	Send(*a2apb.StreamResponse) error
+}
+
+// emitTo adapts a generated stream to the service's emitter.
+//
+// A send failure ends the stream by returning, which is how a gRPC
+// server learns its client hung up.
+func emitTo(stream streamSender) a2aremote.Emit {
+	return func(ev a2aremote.StreamEvent) error {
+		return stream.Send(streamResponseOf(ev))
+	}
+}
+
+func streamResponseOf(ev a2aremote.StreamEvent) *a2apb.StreamResponse {
+	switch {
+	case ev.Task != nil:
+		return &a2apb.StreamResponse{Payload: &a2apb.StreamResponse_Task{Task: taskToProto(ev.Task)}}
+	case ev.Message != nil:
+		return &a2apb.StreamResponse{Payload: &a2apb.StreamResponse_Message{Message: messageToProto(ev.Message)}}
+	case ev.StatusUpdate != nil:
+		return &a2apb.StreamResponse{Payload: &a2apb.StreamResponse_StatusUpdate{
+			StatusUpdate: &a2apb.TaskStatusUpdateEvent{
+				TaskId:    ev.StatusUpdate.TaskID,
+				ContextId: ev.StatusUpdate.ContextID,
+				Status: &a2apb.TaskStatus{
+					State:     taskStateToProto(ev.StatusUpdate.Status.State),
+					Message:   messageToProto(ev.StatusUpdate.Status.Message),
+					Timestamp: timestamppb.Now(),
+				},
+			},
+		}}
+	case ev.ArtifactUpdate != nil:
+		artifact := &a2apb.Artifact{
+			ArtifactId: ev.ArtifactUpdate.Artifact.ArtifactID,
+			Name:       ev.ArtifactUpdate.Artifact.Name,
+		}
+		for _, p := range ev.ArtifactUpdate.Artifact.Parts {
+			artifact.Parts = append(artifact.Parts, &a2apb.Part{Content: &a2apb.Part_Text{Text: p.Text}})
+		}
+		return &a2apb.StreamResponse{Payload: &a2apb.StreamResponse_ArtifactUpdate{
+			ArtifactUpdate: &a2apb.TaskArtifactUpdateEvent{
+				TaskId:    ev.ArtifactUpdate.TaskID,
+				ContextId: ev.ArtifactUpdate.ContextID,
+				Artifact:  artifact,
+			},
+		}}
+	default:
+		return &a2apb.StreamResponse{}
+	}
+}

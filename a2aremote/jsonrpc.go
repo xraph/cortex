@@ -75,6 +75,13 @@ func (s *Service) JSONRPCHandler() http.Handler {
 			writeRPC(w, rpcResponse{JSONRPC: "2.0", Error: ErrParse()})
 			return
 		}
+
+		// A streaming method answers with an event stream rather than one
+		// response, so it leaves the request/response path here.
+		if isStreamingMethod(req.Method) {
+			s.serveRPCStream(w, r, req)
+			return
+		}
 		// A request with no id is a notification: it is acted on and it
 		// gets no response, which JSON-RPC is explicit about.
 		notification := len(req.ID) == 0
@@ -142,11 +149,6 @@ func (s *Service) call(ctx context.Context, cred Credentials, method string, par
 			return nil, err
 		}
 		return s.CancelTask(ctx, cred, req)
-
-	case MethodSendStreamingMessage, MethodSubscribeToTask:
-		// Declared unsupported in the card too, so a client that read the
-		// card never gets here.
-		return nil, ErrUnsupportedOperation(method)
 
 	case MethodGetExtendedCard:
 		return nil, ErrExtendedCardNotConfigured()
@@ -241,6 +243,7 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 	}
 
 	opts := s.opts.Card
+	opts.Streaming = s.opts.Streaming
 	card := BuildCard(a, s.skillsOf(ctx, a), opts)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -272,3 +275,69 @@ func (s *Service) skillsOf(ctx context.Context, a *agent.Config) []*skill.Skill 
 	}
 	return out
 }
+
+func isStreamingMethod(method string) bool {
+	return method == MethodSendStreamingMessage || method == MethodSubscribeToTask
+}
+
+// serveRPCStream answers a streaming method with server-sent events,
+// each frame carrying a JSON-RPC response whose result is one event.
+func (s *Service) serveRPCStream(w http.ResponseWriter, r *http.Request, req rpcRequest) {
+	if !s.opts.Streaming {
+		// The card says the same thing, so a client that read it never
+		// arrives here.
+		writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: ErrUnsupportedOperation(req.Method)})
+		return
+	}
+
+	cred := credentialsOf(r)
+	// Everything that can refuse the stream is settled before the status
+	// line goes out. Once a stream has started, the only way left to
+	// report a failure is to hang up, which tells a client nothing.
+	var (
+		tenant string
+		taskID string
+		send   SendMessageRequest
+	)
+	switch req.Method {
+	case MethodSendStreamingMessage:
+		if err := decodeParams(req.Params, &send); err != nil {
+			writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: asProtocolError(err)})
+			return
+		}
+		tenant = send.Tenant
+	case MethodSubscribeToTask:
+		var sub GetTaskRequest
+		if err := decodeParams(req.Params, &sub); err != nil {
+			writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: asProtocolError(err)})
+			return
+		}
+		tenant, taskID = sub.Tenant, sub.ID
+	}
+
+	stream, err := newSSEWriter(w, func(ev StreamEvent) any {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: ev}
+	})
+	if err != nil {
+		writeSSEError(w, ErrInternal("this server cannot stream"))
+		return
+	}
+
+	// Once the stream has started there is no status line left to say a
+	// failure with, so the error ends the stream and the client sees the
+	// connection close without a final event. That is the protocol's own
+	// answer to a mid-stream failure.
+	if req.Method == MethodSendStreamingMessage {
+		endStream(s.StreamMessage(r.Context(), cred, send, stream.emit))
+		return
+	}
+	endStream(s.SubscribeTask(r.Context(), cred, tenant, taskID, stream.emit))
+}
+
+// endStream is where a stream's error goes.
+//
+// There is nowhere left to report it: the status line is spent, the
+// client has been reading events, and inventing a final event that said
+// "something went wrong" would be indistinguishable from the task
+// itself failing. Closing without a final event is the signal.
+func endStream(error) {}

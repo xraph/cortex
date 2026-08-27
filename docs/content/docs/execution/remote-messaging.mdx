@@ -128,18 +128,80 @@ sqlite answers a concurrent writer with `SQLITE_BUSY` unless told to wait.
 Without the timeout you will see run writes fail under load for no reason you
 can see. Postgres needs nothing here.
 
-## What is not implemented
+## All three bindings
+
+A2A defines three, all equivalent, and cortex serves all three over one
+service. Whatever a rule says about scope or sender namespacing holds on every
+binding, because the rule lives in the service and the bindings only translate
+formats.
+
+**JSON-RPC 2.0** is the default and needs nothing beyond `svc.Handler()`.
+
+**HTTP+JSON** is `svc.RESTHandler()`, at the protocol's own paths:
+`POST /{tenant}/message:send`, `GET /{tenant}/tasks/{id}`,
+`POST /{tenant}/tasks/{id}:cancel`. Errors say the same thing twice, as an HTTP
+status and as the protocol's numeric code, so a client that reads only one of
+them still knows what happened.
+
+**gRPC** lives in its own module, because grpc-go and protobuf are a large
+dependency graph and a host serving JSON-RPC should not inherit it:
+
+```bash
+go get github.com/xraph/cortex/a2aremote/grpcbind
+```
+
+```go
+srv := grpc.NewServer()
+grpcbind.Register(srv, svc)
+```
+
+Its types are generated from the normative `a2a.proto`, vendored verbatim, so
+the wire format is the specification's rather than an approximation.
+
+Advertise only what you actually serve. A card is a promise, and a client that
+picks `GRPC` because the card offered it has nowhere to go when nothing answers:
+
+```go
+Card: a2aremote.CardOptions{
+    BaseURL:  "https://agents.example.com/a2a",
+    Bindings: []string{a2aremote.BindingJSONRPC, a2aremote.BindingREST, a2aremote.BindingGRPC},
+    URLs:     map[string]string{a2aremote.BindingGRPC: "grpc.example.com:443"},
+},
+```
+
+## Streaming
+
+Off by default, on with one option:
+
+```go
+Service: a2aremote.Options{
+    Streaming:  true,
+    StreamPoll: 500 * time.Millisecond,
+},
+```
+
+`SendStreamingMessage` and `SubscribeToTask` then work on every binding, over
+server-sent events for the two HTTP ones and native server streaming for gRPC.
+A subscriber gets the task immediately, then each status transition, and the
+last one carries the output with `final` set so a client knows to stop reading.
+
+This is task-level streaming, which is what A2A's streaming is: the events are
+`TaskStatusUpdateEvent` and `TaskArtifactUpdateEvent`, not tokens. Cortex learns
+of a transition by re-reading the task on `StreamPoll`, so that interval bounds
+how stale an update can be and nothing else. A client that disconnects ends its
+own subscription; the task carries on without it.
+
+## What is still not implemented
 
 Declared in the card rather than discovered by failing:
 
-- **Streaming.** `SendStreamingMessage` and `SubscribeToTask` return
-  `UnsupportedOperationError`, and `capabilities.streaming` is false.
 - **Push notifications.** The config methods return
-  `PushNotificationNotSupportedError`.
+  `PushNotificationNotSupportedError`, and `capabilities.pushNotifications` is
+  false.
 - **The extended agent card.** `GetExtendedAgentCard` returns
   `ExtendedAgentCardNotConfiguredError`.
-- **gRPC and HTTP+JSON bindings.** Only `JSONRPC` appears in the card's
-  `supportedInterfaces`.
+- **Agent card signatures.** Cards are unsigned, which matters for a public
+  registry and not for peers you configured by hand.
 
 One behaviour worth knowing about rather than discovering: a peer that quotes a
 `contextId` from its own database gets a fresh conversation on this side, with

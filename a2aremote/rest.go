@@ -40,7 +40,16 @@ func (s *Service) RESTHandler() http.Handler {
 			})
 			writeREST(w, task, err)
 		case "subscribe":
-			writeREST(w, nil, ErrUnsupportedOperation("SubscribeToTask"))
+			if !s.opts.Streaming {
+				writeREST(w, nil, ErrUnsupportedOperation("SubscribeToTask"))
+				return
+			}
+			stream, err := newSSEWriter(w, nil)
+			if err != nil {
+				writeSSEError(w, ErrInternal("this server cannot stream"))
+				return
+			}
+			endStream(s.SubscribeTask(r.Context(), credentialsOf(r), r.PathValue("tenant"), id, stream.emit))
 		default:
 			writeREST(w, nil, ErrMethodNotFound(verb))
 		}
@@ -65,8 +74,23 @@ func (s *Service) RESTHandler() http.Handler {
 		writeREST(w, task, err)
 	})
 
-	mux.HandleFunc("POST /{tenant}/message:stream", func(w http.ResponseWriter, _ *http.Request) {
-		writeREST(w, nil, ErrUnsupportedOperation("SendStreamingMessage"))
+	mux.HandleFunc("POST /{tenant}/message:stream", func(w http.ResponseWriter, r *http.Request) {
+		if !s.opts.Streaming {
+			writeREST(w, nil, ErrUnsupportedOperation("SendStreamingMessage"))
+			return
+		}
+		var req SendMessageRequest
+		if !decodeREST(w, r, &req) {
+			return
+		}
+		req.Tenant = r.PathValue("tenant")
+
+		stream, err := newSSEWriter(w, nil)
+		if err != nil {
+			writeSSEError(w, ErrInternal("this server cannot stream"))
+			return
+		}
+		endStream(s.StreamMessage(r.Context(), credentialsOf(r), req, stream.emit))
 	})
 	mux.HandleFunc("GET /{tenant}/extendedAgentCard", func(w http.ResponseWriter, _ *http.Request) {
 		writeREST(w, nil, ErrExtendedCardNotConfigured())

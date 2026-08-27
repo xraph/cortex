@@ -3,6 +3,7 @@ package a2aremote
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
@@ -36,6 +37,13 @@ type Options struct {
 	// DefaultAgent also gets its card served at the root well-known
 	// path, so plain discovery finds something.
 	DefaultAgent string
+	// Streaming turns on SendStreamingMessage and SubscribeToTask, and
+	// makes the card advertise them. Off by default: a card that offers
+	// a stream nobody serves is a promise the server cannot keep.
+	Streaming bool
+	// StreamPoll is how often a subscription re-reads its task. It
+	// bounds how stale an update can be and nothing else.
+	StreamPoll time.Duration
 }
 
 // Service holds every semantic decision the remote transport makes.
