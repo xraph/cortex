@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -85,6 +86,18 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// is exempt from the rule they enforce, so it needs a group that
 	// says so on purpose.
 	t.Run("SweeperReads", func(t *testing.T) { testSweeperReads(t, newStore) })
+
+	// The a2a groups below prove what the package's in-memory double
+	// cannot. The claim is a conditional UPDATE on sqlite and postgres and
+	// a FindOneAndUpdate on mongo, and the ledger's exactly-once
+	// guarantee rests entirely on it, so it is raced here against each
+	// real backend. The inbox and redrive reads are the other two: one
+	// filters by scope, and the other deliberately does not.
+	t.Run("A2ARoundTrip", func(t *testing.T) { testA2ARoundTrip(t, newStore) })
+	t.Run("A2AClaimPendingAskConcurrency", func(t *testing.T) { testA2AClaimPendingAskConcurrency(t, newStore) })
+	t.Run("A2AClaimDeliveryConcurrency", func(t *testing.T) { testA2AClaimDeliveryConcurrency(t, newStore) })
+	t.Run("A2AExpiredAsks", func(t *testing.T) { testA2AExpiredAsks(t, newStore) })
+	t.Run("A2AScopeIsolation", func(t *testing.T) { testA2AScopeIsolation(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -4070,4 +4083,349 @@ func testAgentSections(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("SystemPrompt after an unrelated update = %q, want %q", reloaded.SystemPrompt, "you are helpful")
 		}
 	})
+}
+
+// ──────────────────────────────────────────────────
+// a2a messaging
+// ──────────────────────────────────────────────────
+
+// newA2AEnvelope builds a valid envelope on the given conversation.
+func newA2AEnvelope(convID id.ConversationID, sender, receiver string) *a2a.Envelope {
+	return &a2a.Envelope{
+		Entity:         cortex.NewEntity(),
+		ID:             id.NewMessageID(),
+		Performative:   a2a.Request,
+		Sender:         a2a.Address{Agent: sender},
+		Receivers:      []a2a.Address{{Agent: receiver}},
+		Content:        "do the thing",
+		ConversationID: convID,
+		ReplyWith:      "rw-" + receiver,
+		Hops:           1,
+	}
+}
+
+func newA2AConversation(initiator string) *a2a.Conversation {
+	return &a2a.Conversation{
+		Entity:     cortex.NewEntity(),
+		ID:         id.NewConversationID(),
+		Initiator:  a2a.Address{Agent: initiator},
+		Status:     a2a.StatusOpen,
+		HopCeiling: 8,
+	}
+}
+
+func testA2ARoundTrip(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	conv := newA2AConversation("planner")
+	if err := s.CreateConversation(ctx, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	e := newA2AEnvelope(conv.ID, "planner", "worker")
+	e.Ontology = "ops"
+	e.Protocol = "fipa-request"
+	e.Metadata = map[string]any{"trace": "abc"}
+	if err := s.CreateMessage(ctx, e); err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+
+	got, err := s.GetMessage(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if got.Performative != a2a.Request || got.Content != "do the thing" {
+		t.Fatalf("envelope lost its ACL fields: %+v", got)
+	}
+	if got.Ontology != "ops" || got.Protocol != "fipa-request" || got.ReplyWith != "rw-worker" {
+		t.Fatalf("envelope lost its correlation fields: %+v", got)
+	}
+	if len(got.Receivers) != 1 || got.Receivers[0].Agent != "worker" {
+		t.Fatalf("receivers did not round trip: %+v", got.Receivers)
+	}
+	if got.ConversationID != conv.ID || got.Hops != 1 {
+		t.Fatalf("conversation link did not round trip: %+v", got)
+	}
+
+	// The conversation's hop counter is the containment budget, so it has
+	// to survive an update.
+	conv.HopsUsed = 3
+	conv.AddParticipant(a2a.Address{Agent: "worker"})
+	if updErr := s.UpdateConversation(ctx, conv); updErr != nil {
+		t.Fatalf("UpdateConversation: %v", updErr)
+	}
+	gotConv, err := s.GetConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if gotConv.HopsUsed != 3 || len(gotConv.Participants) != 1 {
+		t.Fatalf("conversation update lost fields: %+v", gotConv)
+	}
+
+	msgs, err := s.ListMessages(ctx, &a2a.MessageListFilter{ConversationID: conv.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("ListMessages returned %d, want 1", len(msgs))
+	}
+
+	// A delivery is the inbox row, and it only shows once it has arrived.
+	d := &a2a.Delivery{
+		Entity:    cortex.NewEntity(),
+		ID:        id.NewDeliveryID(),
+		MessageID: e.ID,
+		Receiver:  a2a.Address{Agent: "worker"},
+		State:     a2a.DeliveryQueued,
+	}
+	if createErr := s.CreateDelivery(ctx, d); createErr != nil {
+		t.Fatalf("CreateDelivery: %v", createErr)
+	}
+	inbox, err := s.ListInbox(ctx, "worker", a2a.InboxFilter{UnreadOnly: true})
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(inbox) != 0 {
+		t.Fatalf("a queued delivery has not arrived and must not be in an inbox, got %d", len(inbox))
+	}
+
+	claimed, err := s.ClaimDelivery(ctx, d.ID)
+	if err != nil {
+		t.Fatalf("ClaimDelivery: %v", err)
+	}
+	now := time.Now().UTC()
+	claimed.State = a2a.DeliveryDelivered
+	claimed.DeliveredAt = &now
+	if updErr := s.UpdateDelivery(ctx, claimed); updErr != nil {
+		t.Fatalf("UpdateDelivery: %v", updErr)
+	}
+
+	inbox, err = s.ListInbox(ctx, "worker", a2a.InboxFilter{UnreadOnly: true})
+	if err != nil {
+		t.Fatalf("ListInbox after delivery: %v", err)
+	}
+	if len(inbox) != 1 {
+		t.Fatalf("inbox holds %d, want 1", len(inbox))
+	}
+	if readErr := s.MarkDeliveryRead(ctx, d.ID); readErr != nil {
+		t.Fatalf("MarkDeliveryRead: %v", readErr)
+	}
+	inbox, err = s.ListInbox(ctx, "worker", a2a.InboxFilter{UnreadOnly: true})
+	if err != nil {
+		t.Fatalf("ListInbox after read: %v", err)
+	}
+	if len(inbox) != 0 {
+		t.Fatalf("inbox holds %d unread after a read, want 0", len(inbox))
+	}
+}
+
+// testA2AClaimPendingAskConcurrency is the ledger's whole guarantee: a
+// reply, a deadline sweep and a cancel can all reach for one row, and only
+// one of them may resume the waiting run.
+func testA2AClaimPendingAskConcurrency(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	conv := newA2AConversation("planner")
+	if err := s.CreateConversation(ctx, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	ask := &a2a.PendingAsk{
+		Entity:         cortex.NewEntity(),
+		ReplyWith:      "rw-race",
+		ConversationID: conv.ID,
+		MessageID:      id.NewMessageID(),
+		AskerRunID:     id.NewAgentRunID(),
+		AskerAgent:     "planner",
+		ToolCallID:     "call-1",
+		Expected:       a2a.Address{Agent: "worker"},
+	}
+	if err := s.CreatePendingAsk(ctx, ask); err != nil {
+		t.Fatalf("CreatePendingAsk: %v", err)
+	}
+
+	// Two racers, not a storm. Sqlite serialises writers outright, so a
+	// larger crowd measures lock contention rather than atomicity, and a
+	// SQLITE_BUSY is not a lost race: it is a retryable error the
+	// dispatcher redrives. Two is what the suspension claim races above,
+	// and two is enough: a read-then-write implementation loses to it.
+	const racers = 2
+	var (
+		wg      sync.WaitGroup
+		start   = make(chan struct{})
+		results = make([]error, racers)
+	)
+	for i := range racers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := s.ClaimPendingAsk(ctx, "rw-race")
+			results[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var won, lost int
+	for i, err := range results {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, a2a.ErrAskAlreadyClaimed):
+			lost++
+		default:
+			t.Errorf("racer %d: unexpected error %v", i, err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d racers claimed the ask, want exactly 1", won)
+	}
+	if lost != racers-1 {
+		t.Fatalf("%d racers lost, want %d", lost, racers-1)
+	}
+}
+
+func testA2AClaimDeliveryConcurrency(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	d := &a2a.Delivery{
+		Entity:    cortex.NewEntity(),
+		ID:        id.NewDeliveryID(),
+		MessageID: id.NewMessageID(),
+		Receiver:  a2a.Address{Agent: "worker"},
+		State:     a2a.DeliveryQueued,
+	}
+	if err := s.CreateDelivery(ctx, d); err != nil {
+		t.Fatalf("CreateDelivery: %v", err)
+	}
+
+	const racers = 2
+	var (
+		wg      sync.WaitGroup
+		start   = make(chan struct{})
+		results = make([]error, racers)
+	)
+	for i := range racers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := s.ClaimDelivery(ctx, d.ID)
+			results[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var won int
+	for i, err := range results {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, a2a.ErrDeliveryAlreadyClaimed):
+		default:
+			t.Errorf("racer %d: unexpected error %v", i, err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d workers claimed the delivery, want exactly 1: a directive would have run %d times", won, won)
+	}
+}
+
+func testA2AExpiredAsks(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	past := time.Now().UTC().Add(-time.Hour)
+	future := time.Now().UTC().Add(time.Hour)
+	overdue := &a2a.PendingAsk{
+		Entity: cortex.NewEntity(), ReplyWith: "rw-overdue", MessageID: id.NewMessageID(),
+		AskerRunID: id.NewAgentRunID(), ToolCallID: "c1", Expected: a2a.Address{Agent: "w"}, Deadline: &past,
+	}
+	pending := &a2a.PendingAsk{
+		Entity: cortex.NewEntity(), ReplyWith: "rw-pending", MessageID: id.NewMessageID(),
+		AskerRunID: id.NewAgentRunID(), ToolCallID: "c2", Expected: a2a.Address{Agent: "w"}, Deadline: &future,
+	}
+	for _, a := range []*a2a.PendingAsk{overdue, pending} {
+		if err := s.CreatePendingAsk(ctx, a); err != nil {
+			t.Fatalf("CreatePendingAsk: %v", err)
+		}
+	}
+
+	got, err := s.ListExpiredAsks(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("ListExpiredAsks: %v", err)
+	}
+	if len(got) != 1 || got[0].ReplyWith != "rw-overdue" {
+		t.Fatalf("ListExpiredAsks returned %+v, want only the overdue one", got)
+	}
+
+	// A claimed ask is somebody else's already, so the sweep must not see
+	// it again. This is what makes sweeping idempotent.
+	if _, claimErr := s.ClaimPendingAsk(ctx, "rw-overdue"); claimErr != nil {
+		t.Fatalf("ClaimPendingAsk: %v", claimErr)
+	}
+	got, err = s.ListExpiredAsks(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatalf("ListExpiredAsks after claim: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a claimed ask is still listed as expired: %+v", got)
+	}
+}
+
+func testA2AScopeIsolation(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	acme, other := ctxWithScope("acme"), ctxWithScope("other")
+
+	conv := newA2AConversation("planner")
+	if err := s.CreateConversation(acme, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	e := newA2AEnvelope(conv.ID, "planner", "worker")
+	if err := s.CreateMessage(acme, e); err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+	d := &a2a.Delivery{
+		Entity: cortex.NewEntity(), ID: id.NewDeliveryID(), MessageID: e.ID,
+		Receiver: a2a.Address{Agent: "worker"}, State: a2a.DeliveryDelivered,
+	}
+	if err := s.CreateDelivery(acme, d); err != nil {
+		t.Fatalf("CreateDelivery: %v", err)
+	}
+	ask := &a2a.PendingAsk{
+		Entity: cortex.NewEntity(), ReplyWith: "rw-scoped", ConversationID: conv.ID,
+		MessageID: e.ID, AskerRunID: id.NewAgentRunID(), ToolCallID: "c1", Expected: a2a.Address{Agent: "worker"},
+	}
+	if err := s.CreatePendingAsk(acme, ask); err != nil {
+		t.Fatalf("CreatePendingAsk: %v", err)
+	}
+
+	if _, err := s.GetMessage(other, e.ID); err == nil {
+		t.Error("a message must not be readable from another scope")
+	}
+	if _, err := s.GetConversation(other, conv.ID); err == nil {
+		t.Error("a conversation must not be readable from another scope")
+	}
+	inbox, err := s.ListInbox(other, "worker", a2a.InboxFilter{UnreadOnly: true})
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(inbox) != 0 {
+		t.Errorf("another scope sees %d inbox rows, want 0", len(inbox))
+	}
+	// The claim is a write, and a write that crossed scopes would resume a
+	// run in a tenant the claimant cannot see.
+	if _, claimErr := s.ClaimPendingAsk(other, "rw-scoped"); !errors.Is(claimErr, a2a.ErrAskNotFound) {
+		t.Errorf("cross-scope claim: err = %v, want ErrAskNotFound", claimErr)
+	}
+	msgs, err := s.ListMessages(other, &a2a.MessageListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("another scope lists %d messages, want 0", len(msgs))
+	}
 }

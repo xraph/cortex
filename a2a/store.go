@@ -2,9 +2,20 @@ package a2a
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/xraph/cortex/id"
+)
+
+// Store lookup errors. They are package sentinels rather than each
+// backend's own error, so a caller matches one thing with errors.Is
+// whichever database is underneath.
+var (
+	// ErrMessageNotFound means no envelope carries that id in this scope.
+	ErrMessageNotFound = errors.New("cortex: a2a: message not found")
+	// ErrConversationNotFound means no conversation carries that id in this scope.
+	ErrConversationNotFound = errors.New("cortex: a2a: conversation not found")
 )
 
 // InboxFilter controls an inbox listing. Scope arrives on the context.

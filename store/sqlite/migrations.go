@@ -1214,6 +1214,129 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_overlays_agent_scope
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "create_a2a",
+			Version: "20260826000003",
+			Comment: "Create the four cortex_a2a_* tables: messages, conversations, deliveries and pending asks",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				// Scope columns are here from the start, unlike the older
+				// tables that had to have them added later: nothing has
+				// ever written an unscoped a2a row, so there is no
+				// backfill to do and no scope migration to follow.
+				//
+				// The unique index on pending asks is load-bearing rather
+				// than hygiene. ClaimPendingAsk resolves exactly one
+				// waiting run, and two rows sharing a reply-with token
+				// would let a reply resume a run that never asked.
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS cortex_a2a_messages (
+    id              TEXT PRIMARY KEY,
+    performative    TEXT NOT NULL,
+    sender_agent    TEXT NOT NULL,
+    sender_node     TEXT NOT NULL DEFAULT '',
+    receivers       TEXT NOT NULL DEFAULT '[]',
+    reply_to        TEXT NOT NULL DEFAULT '[]',
+    content         TEXT NOT NULL DEFAULT '',
+    language        TEXT NOT NULL DEFAULT '',
+    encoding        TEXT NOT NULL DEFAULT '',
+    ontology        TEXT NOT NULL DEFAULT '',
+    protocol        TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT NOT NULL DEFAULT '',
+    reply_with      TEXT NOT NULL DEFAULT '',
+    in_reply_to     TEXT NOT NULL DEFAULT '',
+    reply_by        TEXT,
+    hops            INTEGER NOT NULL DEFAULT 0,
+    origin_run_id   TEXT NOT NULL DEFAULT '',
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    scope_l0        TEXT NOT NULL DEFAULT '',
+    scope_l1        TEXT NOT NULL DEFAULT '',
+    scope_l2        TEXT NOT NULL DEFAULT '',
+    scope_extra     TEXT NOT NULL DEFAULT '{}',
+    scope_canon     TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_messages_scope_conv ON cortex_a2a_messages (scope_canon, conversation_id);
+
+CREATE TABLE IF NOT EXISTS cortex_a2a_conversations (
+    id               TEXT PRIMARY KEY,
+    protocol         TEXT NOT NULL DEFAULT '',
+    initiator_agent  TEXT NOT NULL DEFAULT '',
+    initiator_node   TEXT NOT NULL DEFAULT '',
+    participants     TEXT NOT NULL DEFAULT '[]',
+    status           TEXT NOT NULL DEFAULT 'open',
+    hop_ceiling      INTEGER NOT NULL DEFAULT 0,
+    hops_used        INTEGER NOT NULL DEFAULT 0,
+    deadline         TEXT,
+    scope_l0         TEXT NOT NULL DEFAULT '',
+    scope_l1         TEXT NOT NULL DEFAULT '',
+    scope_l2         TEXT NOT NULL DEFAULT '',
+    scope_extra      TEXT NOT NULL DEFAULT '{}',
+    scope_canon      TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_conversations_scope_status ON cortex_a2a_conversations (scope_canon, status);
+
+CREATE TABLE IF NOT EXISTS cortex_a2a_deliveries (
+    id             TEXT PRIMARY KEY,
+    message_id     TEXT NOT NULL,
+    receiver_agent TEXT NOT NULL,
+    receiver_node  TEXT NOT NULL DEFAULT '',
+    state          TEXT NOT NULL DEFAULT 'queued',
+    error          TEXT NOT NULL DEFAULT '',
+    claimed_at     TEXT,
+    delivered_at   TEXT,
+    read_at        TEXT,
+    run_id         TEXT NOT NULL DEFAULT '',
+    scope_l0       TEXT NOT NULL DEFAULT '',
+    scope_l1       TEXT NOT NULL DEFAULT '',
+    scope_l2       TEXT NOT NULL DEFAULT '',
+    scope_extra    TEXT NOT NULL DEFAULT '{}',
+    scope_canon    TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_deliveries_inbox ON cortex_a2a_deliveries (scope_canon, receiver_agent, state);
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_deliveries_state ON cortex_a2a_deliveries (state);
+
+CREATE TABLE IF NOT EXISTS cortex_a2a_pending_asks (
+    reply_with      TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    message_id      TEXT NOT NULL DEFAULT '',
+    asker_run_id    TEXT NOT NULL DEFAULT '',
+    asker_agent     TEXT NOT NULL DEFAULT '',
+    tool_call_id    TEXT NOT NULL DEFAULT '',
+    expected_agent  TEXT NOT NULL DEFAULT '',
+    expected_node   TEXT NOT NULL DEFAULT '',
+    deadline        TEXT,
+    claimed_at      TEXT,
+    scope_l0        TEXT NOT NULL DEFAULT '',
+    scope_l1        TEXT NOT NULL DEFAULT '',
+    scope_l2        TEXT NOT NULL DEFAULT '',
+    scope_extra     TEXT NOT NULL DEFAULT '{}',
+    scope_canon     TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_pending_asks_deadline ON cortex_a2a_pending_asks (claimed_at, deadline);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP TABLE IF EXISTS cortex_a2a_pending_asks;
+DROP TABLE IF EXISTS cortex_a2a_deliveries;
+DROP TABLE IF EXISTS cortex_a2a_conversations;
+DROP TABLE IF EXISTS cortex_a2a_messages;
+`)
+				return err
+			},
+		},
 	)
 }
 
