@@ -63,4 +63,7 @@ type Store interface {
 	// before resuming is what keeps a run from being resumed twice.
 	ClaimPendingAsk(ctx context.Context, replyWith string) (*PendingAsk, error)
 	ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*PendingAsk, error)
+	// ListPendingAsksByConversation returns the unclaimed asks waiting on a
+	// conversation, which is what a cancel has to un-pause.
+	ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*PendingAsk, error)
 }

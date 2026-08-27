@@ -273,4 +273,19 @@ func (s *memStore) ListExpiredAsks(_ context.Context, now time.Time, limit int) 
 	return out, nil
 }
 
+func (s *memStore) ListPendingAsksByConversation(_ context.Context, convID id.ConversationID) ([]*PendingAsk, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*PendingAsk
+	for _, key := range s.askKeys {
+		a := s.asks[key]
+		if a.ClaimedAt != nil || a.ConversationID != convID {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
 var _ Store = (*memStore)(nil)

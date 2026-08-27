@@ -102,8 +102,32 @@ func (b *Bus) failDelivery(ctx context.Context, d *Delivery, cause error) error 
 	return nil
 }
 
-// handleControl interprets a control message. Task 11 fills it in.
-func (b *Bus) handleControl(context.Context, *Envelope) error { return nil }
+// handleControl interprets a control message. cancel closes the
+// conversation and un-pauses everyone waiting on it: a run paused behind a
+// cancelled conversation would otherwise sit until its deadline and learn
+// nothing when it got there.
+func (b *Bus) handleControl(ctx context.Context, e *Envelope) error {
+	if e.Performative != Cancel {
+		return nil
+	}
+	asks, err := b.store.ListPendingAsksByConversation(ctx, e.ConversationID)
+	if err != nil {
+		return err
+	}
+	reason := fmt.Sprintf("conversation cancelled by %s: %s", e.Sender, e.Content)
+	for _, a := range asks {
+		if err := b.resolveAskWithFailure(ctx, a.ReplyWith, reason); err != nil {
+			return err
+		}
+	}
+
+	conv, err := b.store.GetConversation(ctx, e.ConversationID)
+	if err != nil {
+		return err
+	}
+	conv.Status = StatusClosed
+	return b.store.UpdateConversation(ctx, conv)
+}
 
 // resolveAskWithFailure un-pauses a waiting ask with a failure the asking
 // agent can read: a timeout, a cancelled conversation, a reply that could
