@@ -256,3 +256,78 @@ func addressList(addrs []Address) string {
 	}
 	return strings.Join(out, ",")
 }
+
+// Ask errors.
+var (
+	// ErrAskNeedsOneReceiver means Ask was given zero or several receivers.
+	// A durable ask correlates one reply to one waiting run.
+	ErrAskNeedsOneReceiver = errors.New("cortex: a2a: ask needs exactly one receiver")
+	// ErrAskNeedsDirective means the performative does not demand an answer,
+	// so nothing would ever resume the asker.
+	ErrAskNeedsDirective = errors.New("cortex: a2a: ask needs a directive performative")
+)
+
+// AskParams is one message whose sender suspends until the answer arrives.
+type AskParams struct {
+	SendParams
+	AskerRunID id.AgentRunID
+	ToolCallID string
+}
+
+// AskResult identifies the message and the token a reply must carry.
+type AskResult struct {
+	MessageID      id.MessageID      `json:"message_id"`
+	ConversationID id.ConversationID `json:"conversation_id"`
+	ReplyWith      string            `json:"reply_with"`
+}
+
+// Ask sends a directive and records the sender's run as waiting on the
+// answer. The caller suspends its run once this returns.
+//
+// The ledger row is written AFTER the message, and the whole thing is
+// refused before either write when the send could not go out. A pending
+// ask with no message behind it is a run nothing could ever resume.
+func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
+	if p.Performative == "" {
+		p.Performative = Request
+	}
+	if len(p.Receivers) != 1 {
+		return nil, ErrAskNeedsOneReceiver
+	}
+	if c, ok := p.Performative.Class(); !ok || c != ClassDirective {
+		return nil, ErrAskNeedsDirective
+	}
+	if p.ReplyWith == "" {
+		p.ReplyWith = id.NewMessageID().String()
+	}
+	if p.ReplyBy == nil {
+		by := b.clock.Now().Add(b.opts.DefaultReplyBy)
+		p.ReplyBy = &by
+	}
+
+	e, conv, err := b.prepare(ctx, p.SendParams)
+	if err != nil {
+		return nil, err
+	}
+	sent, err := b.submit(ctx, e, conv)
+	if err != nil {
+		return nil, err
+	}
+
+	ask := &PendingAsk{
+		Entity:         cortex.NewEntity(),
+		Scope:          e.Scope,
+		ReplyWith:      e.ReplyWith,
+		ConversationID: e.ConversationID,
+		MessageID:      e.ID,
+		AskerRunID:     p.AskerRunID,
+		AskerAgent:     e.Sender.Agent,
+		ToolCallID:     p.ToolCallID,
+		Expected:       e.Receivers[0],
+		Deadline:       e.ReplyBy,
+	}
+	if err := b.store.CreatePendingAsk(ctx, ask); err != nil {
+		return nil, err
+	}
+	return &AskResult{MessageID: sent.MessageID, ConversationID: sent.ConversationID, ReplyWith: e.ReplyWith}, nil
+}
