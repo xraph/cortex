@@ -649,7 +649,7 @@ func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) 
 	// resume rather than Resume: this is the one caller allowed to say a
 	// checkpoint approved these calls, and it says so having just read a
 	// pending checkpoint for this run.
-	if _, err := e.resume(ctx, cp.RunID, in, true); err != nil {
+	if _, err := e.resume(ctx, cp.RunID, in, resumeSourceApproval); err != nil {
 		return fmt.Errorf("resume approved run %s: %w", cp.RunID, err)
 	}
 	return nil

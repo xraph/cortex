@@ -16,6 +16,10 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
+// ErrNotAgentReplyResumable is returned when something other than the
+// messaging bus tries to answer a run that is waiting on a peer agent.
+var ErrNotAgentReplyResumable = errors.New("cortex: run is waiting on an agent reply")
+
 // ToolResult is one pending call's outcome, reported by whoever executed
 // it while the run was paused.
 //
@@ -81,14 +85,34 @@ type resumption struct {
 // or a rebuilt message list are three different ways to corrupt a run
 // that looked fine at the call site and went wrong several turns later.
 func (e *Engine) Resume(ctx context.Context, runID id.AgentRunID, in ResumeInput) (*run.Run, error) {
-	return e.resume(ctx, runID, in, false)
+	return e.resume(ctx, runID, in, resumeSourcePublic)
 }
 
+// resumeSource is who is answering a paused run, which is the thing a
+// public caller must not be able to claim for itself.
+//
+// It replaced an `approved bool` when agent-reply pauses arrived. Two
+// callers with two authorities was expressible as a boolean; three is
+// where a boolean starts lying, because "not approved" would have to mean
+// both "an ordinary caller" and "the message bus", which are the two
+// things that most need telling apart.
+type resumeSource int
+
+const (
+	// resumeSourcePublic is an ordinary caller through Resume.
+	resumeSourcePublic resumeSource = iota
+	// resumeSourceApproval is ResolveCheckpoint, reaching here having
+	// read a pending checkpoint for the run.
+	resumeSourceApproval
+	// resumeSourceAgentReply is the messaging bus, reaching here having
+	// claimed the pending-ask row that proves the reply is genuine.
+	resumeSourceAgentReply
+)
+
 // resume is Resume with the one thing a public caller must not be able to
-// say: whether a checkpoint approved this. Only ResolveCheckpoint passes
-// true, and it does so having just read a pending checkpoint for the run.
-func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, approved bool) (*run.Run, error) {
-	ctx, rz, err := e.claimForResume(ctx, runID, in, approved)
+// say: which authority this is arriving under.
+func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
+	ctx, rz, err := e.claimForResume(ctx, runID, in, source)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +122,7 @@ func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 // ResumeStream is Resume over the streaming loop. The channel is closed
 // when execution completes, same as StreamAgent's.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) error {
-	ctx, rz, err := e.claimForResume(ctx, runID, in, false)
+	ctx, rz, err := e.claimForResume(ctx, runID, in, resumeSourcePublic)
 	if err != nil {
 		close(events)
 		return err
@@ -132,7 +156,7 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 // the run. Returning an error with the run left running would be the
 // wedge the claim's expiry guard exists to prevent, reached from the
 // other side.
-func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in ResumeInput, approved bool) (context.Context, *resumption, error) {
+func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (context.Context, *resumption, error) {
 	if e.store == nil {
 		return nil, nil, cortex.ErrNoStore
 	}
@@ -151,7 +175,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
 			return nil, nil, vErr
 		}
-		if aErr := checkResumeAuthority(susp.Reason, approved); aErr != nil {
+		if aErr := checkResumeAuthority(susp.Reason, source); aErr != nil {
 			return nil, nil, aErr
 		}
 	}
@@ -192,7 +216,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if err := validateResults(susp.Pending, in.ToolResults); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
-	if err := checkResumeAuthority(susp.Reason, approved); err != nil {
+	if err := checkResumeAuthority(susp.Reason, source); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
 
@@ -448,11 +472,29 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 // other pause is unaffected: an external-tool suspension never went to a
 // human in the first place, and Resume is exactly how it is meant to be
 // answered.
-func checkResumeAuthority(reason suspension.SuspendReason, approved bool) error {
-	if approved || reason != suspension.ReasonApproval {
+func checkResumeAuthority(reason suspension.SuspendReason, source resumeSource) error {
+	switch reason {
+	case suspension.ReasonApproval:
+		if source == resumeSourceApproval {
+			return nil
+		}
+		return fmt.Errorf("%w: this run is waiting on a checkpoint decision, so resolve the checkpoint rather than resuming the run", cortex.ErrRequiresApproval)
+
+	case suspension.ReasonAgentReply:
+		// The same reasoning as an approval pause, with a different
+		// authority behind it. A run waiting on a peer is answered by
+		// whoever holds the ledger row proving the reply is genuine, and
+		// that is the bus. A caller answering it here would feed the
+		// model an answer no agent gave, and the run would carry on with
+		// nobody the wiser.
+		if source == resumeSourceAgentReply {
+			return nil
+		}
+		return fmt.Errorf("%w: this run is waiting on another agent's reply, which only the messaging bus can deliver", ErrNotAgentReplyResumable)
+
+	default:
 		return nil
 	}
-	return fmt.Errorf("%w: this run is waiting on a checkpoint decision, so resolve the checkpoint rather than resuming the run", cortex.ErrRequiresApproval)
 }
 
 // validateResults enforces the bijection between pending calls and the
