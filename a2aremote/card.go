@@ -196,7 +196,7 @@ func FetchCard(ctx context.Context, c *http.Client, baseURL string) (AgentCard, 
 	}
 	url := strings.TrimSuffix(baseURL, "/") + WellKnownCardPath
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return AgentCard{}, fmt.Errorf("build card request: %w", err)
 	}
