@@ -1,4 +1,10 @@
 {
   "title": "Execution",
-  "pages": ["runs", "orchestration", "memory", "checkpoints"]
+  "pages": [
+    "runs",
+    "orchestration",
+    "messaging",
+    "memory",
+    "checkpoints"
+  ]
 }
