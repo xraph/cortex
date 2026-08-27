@@ -13,6 +13,8 @@ import (
 	"github.com/xraph/cortex/skill"
 )
 
+var errTest = errors.New("refused for the test")
+
 func testScope() cortex.Scope {
 	return cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "resolved"}}}
 }
