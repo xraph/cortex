@@ -26,6 +26,14 @@ func (b *Bus) deliverOne(ctx context.Context, deliveryID id.DeliveryID) error {
 		return b.failDelivery(ctx, d, err)
 	}
 
+	// A remote receiver is carried by a transport, whatever the
+	// performative says. Routing by class first would run a LOCAL agent
+	// named like the remote one, which is how a question addressed to
+	// somebody else's system ends up answered by yours.
+	if !d.Receiver.IsLocal() {
+		return b.deliverRemote(ctx, d, e)
+	}
+
 	class, ok := e.Performative.Class()
 	if !ok {
 		return b.failDelivery(ctx, d, ErrInvalidPerformative)
@@ -78,6 +86,30 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 		return b.resolveAskWithFailure(ctx, e.ReplyWith, err.Error())
 	}
 	return nil
+}
+
+// deliverRemote hands one delivery to whichever transport claims the
+// address. A transport failure is a failed delivery and never a
+// fallback: answering another system's question with a local agent of
+// the same name would be worse than not answering it.
+//
+// Nothing waits here for a reply. The transport's job is to get the
+// envelope there; the answer arrives later as an ordinary inbound
+// message carrying InReplyTo, which is the path a local reply takes too.
+func (b *Bus) deliverRemote(ctx context.Context, d *Delivery, e *Envelope) error {
+	t := b.transportFor(d.Receiver)
+	if t == nil {
+		return b.failDelivery(ctx, d, fmt.Errorf("%w: %s", ErrUnroutable, d.Receiver))
+	}
+	if err := t.Deliver(ctx, e, d.Receiver); err != nil {
+		// An unreachable peer is something the asking agent can act on,
+		// so it hears about it now rather than at its deadline.
+		if askErr := b.resolveAskWithFailure(ctx, e.ReplyWith, err.Error()); askErr != nil {
+			return askErr
+		}
+		return b.failDelivery(ctx, d, err)
+	}
+	return b.finishDelivery(ctx, d, e, id.AgentRunID{})
 }
 
 func (b *Bus) finishDelivery(ctx context.Context, d *Delivery, e *Envelope, runID id.AgentRunID) error {

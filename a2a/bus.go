@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xraph/cortex"
@@ -48,15 +49,45 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
-	store      Store
-	runner     cortex.AgentRunner
-	resumer    Resumer
-	resolver   Resolver
-	hooks      HookEmitter
-	clock      Clock
+	store    Store
+	runner   cortex.AgentRunner
+	resumer  Resumer
+	resolver Resolver
+	hooks    HookEmitter
+	clock    Clock
+	opts     Options
+	dispatch *dispatcher
+
+	// mu guards transports, which AddTransport appends to after the bus
+	// exists. Registration happens at startup and reads happen once per
+	// delivery, so a plain mutex is the right weight here.
+	mu         sync.RWMutex
 	transports []Transport
-	opts       Options
-	dispatch   *dispatcher
+}
+
+// AddTransport registers a transport after the bus has been built.
+//
+// It exists because construction cannot be circular. A remote transport
+// needs the bus, since a peer's reply is fed back through Send so it can
+// resolve a waiting ask, and the bus needs the transport to carry the
+// question out. The host builds the bus, builds the transport with it,
+// and registers it here.
+func (b *Bus) AddTransport(t Transport) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.transports = append(b.transports, t)
+}
+
+// transportFor returns the transport that claims addr, or nil.
+func (b *Bus) transportFor(addr Address) Transport {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, t := range b.transports {
+		if t.Handles(addr) {
+			return t
+		}
+	}
+	return nil
 }
 
 // NewBus builds a Bus from cfg.
@@ -276,14 +307,7 @@ func (b *Bus) resolve(ctx context.Context, addr Address) error {
 	return nil
 }
 
-func (b *Bus) routable(addr Address) bool {
-	for _, t := range b.transports {
-		if t.Handles(addr) {
-			return true
-		}
-	}
-	return false
-}
+func (b *Bus) routable(addr Address) bool { return b.transportFor(addr) != nil }
 
 func addressList(addrs []Address) string {
 	out := make([]string, len(addrs))
