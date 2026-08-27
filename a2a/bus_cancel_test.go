@@ -56,8 +56,8 @@ func TestCancelClosesTheConversationAndFailsWaitingAsks(t *testing.T) {
 	if err := json.Unmarshal([]byte(resumer.last().Result), &payload); err != nil {
 		t.Fatalf("unmarshal resume payload: %v", err)
 	}
-	if payload.Performative != string(Failure) {
-		t.Fatalf("a cancelled ask must resume with a failure, got %s", payload.Performative)
+	if !lastReplyContains(payload, "cancelled") {
+		t.Fatalf("a cancelled ask must resume saying so: %+v", payload.Replies)
 	}
 }
 

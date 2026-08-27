@@ -68,20 +68,26 @@ func TestAskDefaultsToRequest(t *testing.T) {
 	}
 }
 
-func TestAskRefusesMoreThanOneReceiver(t *testing.T) {
+// Several receivers is a call for proposals, which is a tender rather
+// than a mistake.
+func TestAskAcceptsMoreThanOneReceiver(t *testing.T) {
 	b, _, _, _, _, _ := newTestBus(t)
 	ctx := testCtx()
 
-	_, err := b.Ask(ctx, AskParams{
+	res, err := b.Ask(ctx, AskParams{
 		SendParams: SendParams{
-			Sender:    Address{Agent: "planner"},
-			Receivers: []Address{{Agent: "w1"}, {Agent: "w2"}},
-			Content:   "?",
+			Sender:       Address{Agent: "planner"},
+			Receivers:    []Address{{Agent: "w1"}, {Agent: "w2"}},
+			Performative: CFP,
+			Content:      "who can take this?",
 		},
 		AskerRunID: id.NewAgentRunID(), ToolCallID: "c1",
 	})
-	if !errorsIs(err, ErrAskNeedsOneReceiver) {
-		t.Fatalf("err = %v, want ErrAskNeedsOneReceiver", err)
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if res.ReplyWith == "" {
+		t.Fatal("a tender needs a token to collect answers against")
 	}
 }
 

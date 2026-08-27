@@ -326,9 +326,8 @@ func addressList(addrs []Address) string {
 
 // Ask errors.
 var (
-	// ErrAskNeedsOneReceiver means Ask was given zero or several receivers.
-	// A durable ask correlates one reply to one waiting run.
-	ErrAskNeedsOneReceiver = errors.New("cortex: a2a: ask needs exactly one receiver")
+	// ErrAskNeedsReceivers means Ask was given nobody to ask.
+	ErrAskNeedsReceivers = errors.New("cortex: a2a: ask needs at least one receiver")
 	// ErrAskNeedsDirective means the performative does not demand an answer,
 	// so nothing would ever resume the asker.
 	ErrAskNeedsDirective = errors.New("cortex: a2a: ask needs a directive performative")
@@ -358,8 +357,8 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 	if p.Performative == "" {
 		p.Performative = Request
 	}
-	if len(p.Receivers) != 1 {
-		return nil, ErrAskNeedsOneReceiver
+	if len(p.Receivers) == 0 {
+		return nil, ErrAskNeedsReceivers
 	}
 	if c, ok := p.Performative.Class(); !ok || c != ClassDirective {
 		return nil, ErrAskNeedsDirective
@@ -400,23 +399,54 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 }
 
 // AskReply is what a resumed agent_ask tool call returns to the model.
+//
+// Replies is plural because an ask may have gone to several agents at
+// once, which is what a call for proposals is. A single-recipient ask
+// carries exactly one entry, so the payload never changes shape with the
+// number of recipients: an agent reads the same structure either way.
 type AskReply struct {
+	Replies []AskReplyItem `json:"replies"`
+	// Complete says every recipient answered. False means the deadline
+	// arrived first and Replies holds whoever did, which is an ordinary
+	// outcome for a tender rather than a failure.
+	Complete bool `json:"complete"`
+}
+
+// AskReplyItem is one agent's answer.
+type AskReplyItem struct {
 	Performative   string `json:"performative"`
 	Sender         string `json:"sender"`
 	Content        string `json:"content"`
 	ConversationID string `json:"conversation_id"`
 }
 
-// resolveAsk matches an inbound reply to a waiting ask and resumes it,
-// reporting whether a run was resumed.
+// resolveAsk matches an inbound reply to a waiting ask and resumes it
+// once the ask has everything it was waiting for, reporting whether a run
+// was resumed.
+//
+// An ask addressed to one agent resumes on that agent's answer. An ask
+// addressed to several waits for the whole field, because an initiator
+// that resumed on the first proposal would be choosing before the others
+// had spoken, which is the opposite of what a tender is for.
 //
 // The claim happens before the resume, and that ordering is the design
 // rather than a precaution: a late reply, the deadline sweep and a cancel
 // are three writers racing for one row, and only the winner may resume.
 func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
-	if e.InReplyTo == "" || !e.Performative.ResolvesAsk() {
+	if e.InReplyTo == "" || !e.Performative.AnswersAsk() {
 		return false, nil
 	}
+
+	ready, replies, err := b.tallyAnswers(ctx, e)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
+		// Somebody is still to answer. The message is stored either way,
+		// so nothing is lost by waiting for them.
+		return false, nil
+	}
+
 	ask, err := b.store.ClaimPendingAsk(ctx, e.InReplyTo)
 	switch {
 	case errors.Is(err, ErrAskNotFound), errors.Is(err, ErrAskAlreadyClaimed):
@@ -428,12 +458,7 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		return false, nil
 	}
 
-	payload, err := json.Marshal(AskReply{
-		Performative:   string(e.Performative),
-		Sender:         e.Sender.String(),
-		Content:        e.Content,
-		ConversationID: e.ConversationID.String(),
-	})
+	payload, err := json.Marshal(AskReply{Replies: replies, Complete: true})
 	if err != nil {
 		return false, err
 	}
@@ -441,6 +466,58 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// tallyAnswers reads what an ask has collected so far and says whether
+// that is everyone.
+//
+// The expected count is the recipient count on the ask's own message, and
+// the answers are the messages carrying its reply-with token. Both are
+// stored already, so a tender keeps no state of its own: the count is a
+// read of the conversation rather than a table to hold in step with it.
+func (b *Bus) tallyAnswers(ctx context.Context, latest *Envelope) (bool, []AskReplyItem, error) {
+	msgs, err := b.store.ListMessages(ctx, &MessageListFilter{ConversationID: latest.ConversationID})
+	if err != nil {
+		return false, nil, err
+	}
+
+	var expected int
+	replies := make([]AskReplyItem, 0, len(msgs))
+	answered := make(map[string]bool, len(msgs))
+
+	for _, m := range msgs {
+		if m.ReplyWith == latest.InReplyTo {
+			expected = len(m.Receivers)
+			continue
+		}
+		if m.InReplyTo != latest.InReplyTo || !m.Performative.AnswersAsk() {
+			continue
+		}
+		// One answer per agent. A participant that says two things has
+		// still answered once, and counting both would resume an
+		// initiator while somebody else was still thinking.
+		if answered[m.Sender.String()] {
+			continue
+		}
+		answered[m.Sender.String()] = true
+		replies = append(replies, askReplyItem(m))
+	}
+
+	if expected == 0 {
+		// The ask's own message is not in this conversation, so this
+		// reply answers something else. Ordinary mail.
+		return false, nil, nil
+	}
+	return len(replies) >= expected, replies, nil
+}
+
+func askReplyItem(e *Envelope) AskReplyItem {
+	return AskReplyItem{
+		Performative:   string(e.Performative),
+		Sender:         e.Sender.String(),
+		Content:        e.Content,
+		ConversationID: e.ConversationID.String(),
+	}
 }
 
 // InboxItem is one delivered message as an agent sees it.

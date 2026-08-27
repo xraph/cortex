@@ -24,11 +24,27 @@ func (b *Bus) SweepExpiredAsks(ctx context.Context) (int, error) {
 	}
 	var n int
 	for _, a := range asks {
-		reason := fmt.Sprintf("no reply from %s before the deadline", a.Expected)
-		if err := b.resolveAskWithFailure(ctx, a.ReplyWith, reason); err != nil {
+		if err := b.resolveAskWithFailure(ctx, a.ReplyWith, b.timeoutReason(ctx, a)); err != nil {
 			return n, err
 		}
 		n++
 	}
 	return n, nil
+}
+
+// timeoutReason phrases an overdue ask for the agent that has to read it.
+//
+// Naming one agent is right when only one was asked and wrong when
+// several were: an initiator whose tender timed out with two of three
+// bids in hand should not be told that a particular agent went quiet, as
+// though it were the only one it was waiting on.
+func (b *Bus) timeoutReason(ctx context.Context, a *PendingAsk) string {
+	if a.MessageID.IsNil() {
+		return "no reply before the deadline"
+	}
+	e, err := b.store.GetMessage(ctx, a.MessageID)
+	if err != nil || len(e.Receivers) <= 1 {
+		return fmt.Sprintf("no reply from %s before the deadline", a.Expected)
+	}
+	return "not every agent answered before the deadline"
 }

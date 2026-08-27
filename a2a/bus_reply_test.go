@@ -38,7 +38,7 @@ func TestReplyResumesTheWaitingRun(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.Result), &payload); err != nil {
 		t.Fatalf("the resume result must be JSON the tool can return: %v", err)
 	}
-	if payload.Content != "all clear" || payload.Performative != string(Inform) || payload.Sender != "w1" {
+	if firstReply(t, payload).Content != "all clear" || firstReply(t, payload).Performative != string(Inform) || firstReply(t, payload).Sender != "w1" {
 		t.Fatalf("reply payload is wrong: %+v", payload)
 	}
 }

@@ -2,7 +2,6 @@ package a2a
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -48,8 +47,8 @@ func TestSweepResolvesAnOverdueAskIntoAFailure(t *testing.T) {
 	if err := json.Unmarshal([]byte(resumer.last().Result), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if payload.Performative != string(Failure) || !strings.Contains(payload.Content, "deadline") {
-		t.Fatalf("a swept ask must resume with a timeout failure, got %+v", payload)
+	if !lastReplyContains(payload, "deadline") {
+		t.Fatalf("a swept ask must resume with a timeout failure, got %+v", payload.Replies)
 	}
 }
 

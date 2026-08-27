@@ -97,14 +97,20 @@ func (p Performative) Valid() bool {
 	return ok
 }
 
-// ResolvesAsk reports whether a reply carrying p un-pauses a waiting ask.
+// AnswersAsk reports whether a reply carrying p counts as an answer to a
+// waiting ask.
 //
 // agree is deliberately excluded. It means the peer accepted the task and
-// is still working on it, so an asker that treated it as an answer would
-// resume on a message carrying no answer.
-func (p Performative) ResolvesAsk() bool {
+// is still working on it, so an asker that counted it would resume on a
+// message carrying no answer.
+//
+// refuse and reject-proposal DO count. Declining is an answer: in a
+// tender, a participant that will not bid has told the initiator what it
+// needed to know about that participant.
+func (p Performative) AnswersAsk() bool {
 	switch p {
-	case Inform, InformIf, InformRef, Confirm, Disconfirm, Refuse, Failure, NotUnderstood, RejectProposal:
+	case Inform, InformIf, InformRef, Confirm, Disconfirm,
+		Refuse, Failure, NotUnderstood, RejectProposal, Propose:
 		return true
 	default:
 		return false

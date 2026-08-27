@@ -243,3 +243,51 @@ func TestAgentInboxReadsDeliveredMessages(t *testing.T) {
 		t.Fatal("the inbox tool result never carried the message to the model")
 	}
 }
+
+// A call for proposals goes to several agents at once, so the tool has
+// to take a list as readily as it takes a name.
+func TestAgentAskAcceptsSeveralRecipients(t *testing.T) {
+	e, st, ctx := a2aEngine(t, []llm.ToolCall{{
+		ID: "call-1", Name: toolAgentAsk,
+		Arguments: `{"to":["worker","assistant"],"performative":"cfp","content":"who can take this?","protocol":"fipa-contract-net"}`,
+	}})
+
+	r, err := e.RunAgent(ctx, "planner", "put it out to tender", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if r.State != run.StatePaused {
+		t.Fatalf("state = %s, want paused while the field answers", r.State)
+	}
+
+	msgs, err := st.ListMessages(ctx, &a2a.MessageListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("stored %d messages, want the call for proposals", len(msgs))
+	}
+	if len(msgs[0].Receivers) != 2 {
+		t.Fatalf("the call reached %d agents, want 2", len(msgs[0].Receivers))
+	}
+	if msgs[0].Performative != a2a.CFP || msgs[0].Protocol != a2a.ProtocolContractNet {
+		t.Fatalf("message = %s/%s, want a contract-net cfp", msgs[0].Performative, msgs[0].Protocol)
+	}
+}
+
+// The single-recipient spelling is what most asks use, and it has to
+// keep working unchanged.
+func TestAgentAskStillAcceptsOneName(t *testing.T) {
+	e, st, ctx := a2aEngine(t, []llm.ToolCall{{
+		ID: "call-1", Name: toolAgentAsk,
+		Arguments: `{"to":"worker","content":"status?"}`,
+	}})
+
+	if _, err := e.RunAgent(ctx, "planner", "ask", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	msgs, _ := st.ListMessages(ctx, &a2a.MessageListFilter{Limit: 10})
+	if len(msgs) != 1 || len(msgs[0].Receivers) != 1 {
+		t.Fatalf("messages = %+v", msgs)
+	}
+}

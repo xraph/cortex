@@ -161,6 +161,28 @@ func (b *Bus) handleControl(ctx context.Context, e *Envelope) error {
 	return b.store.UpdateConversation(ctx, conv)
 }
 
+// collected reads the answers an ask already has, so a failure or a
+// timeout hands back what arrived rather than throwing it away.
+func (b *Bus) collected(ctx context.Context, ask *PendingAsk) ([]AskReplyItem, error) {
+	if ask.ConversationID.IsNil() {
+		return nil, nil
+	}
+	msgs, err := b.store.ListMessages(ctx, &MessageListFilter{ConversationID: ask.ConversationID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AskReplyItem, 0, len(msgs))
+	seen := make(map[string]bool, len(msgs))
+	for _, m := range msgs {
+		if m.InReplyTo != ask.ReplyWith || !m.Performative.AnswersAsk() || seen[m.Sender.String()] {
+			continue
+		}
+		seen[m.Sender.String()] = true
+		out = append(out, askReplyItem(m))
+	}
+	return out, nil
+}
+
 // resolveAskWithFailure un-pauses a waiting ask with a failure the asking
 // agent can read: a timeout, a cancelled conversation, a reply that could
 // not be sent. It is the sweep's and the cancel path's way in.
@@ -178,12 +200,22 @@ func (b *Bus) resolveAskWithFailure(ctx context.Context, replyWith, reason strin
 	if b.resumer == nil {
 		return nil
 	}
-	payload, err := json.Marshal(AskReply{
+	// A failure carries whatever the ask had collected, plus the reason.
+	// An initiator whose tender timed out with two proposals in hand
+	// should get those two, not an empty result and a sentence.
+	// A read failure here costs the collected answers, not the resume: an
+	// asker told nothing is worse than an asker told only the reason.
+	replies, collectErr := b.collected(ctx, ask)
+	if collectErr != nil {
+		replies = nil
+	}
+	replies = append(replies, AskReplyItem{
 		Performative:   string(Failure),
 		Sender:         ask.Expected.String(),
 		Content:        reason,
 		ConversationID: ask.ConversationID.String(),
 	})
+	payload, err := json.Marshal(AskReply{Replies: replies, Complete: false})
 	if err != nil {
 		return err
 	}

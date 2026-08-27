@@ -36,9 +36,8 @@ func (e *Engine) a2aTools() []llm.Tool {
 				"type": "object",
 				"properties": map[string]any{
 					"to": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Names of the agents to send to",
+						"description": "The agent to send to, or a list of them. " +
+							"Address a remote agent as name@node.",
 					},
 					"content": map[string]any{
 						"type":        "string",
@@ -48,7 +47,9 @@ func (e *Engine) a2aTools() []llm.Tool {
 						"type": "string",
 						"description": "The FIPA-ACL speech act. Defaults to inform. " +
 							"Use inform to tell, confirm/disconfirm to answer a query, " +
-							"refuse to decline, failure to report that something went wrong, " +
+							"propose to bid on a cfp, refuse to decline it, " +
+							"reject-proposal to turn down a bid you did not pick, " +
+							"failure to report that something went wrong, " +
 							"cancel to end a conversation.",
 					},
 					"conversation_id": map[string]any{
@@ -65,15 +66,17 @@ func (e *Engine) a2aTools() []llm.Tool {
 		},
 		{
 			Name: toolAgentAsk,
-			Description: "Ask another agent something and wait for the answer. " +
-				"Your run pauses until they reply, and their answer comes back as this tool's result. " +
-				"The wait survives a restart, so use this whenever you genuinely need their answer.",
+			Description: "Ask one or more agents something and wait for the answer. " +
+				"Your run pauses until they reply, and their answers come back as this tool's result. " +
+				"Ask several at once with a cfp to put work out to tender: you get every proposal and " +
+				"refusal back together, and you pick. The wait survives a restart, so use this " +
+				"whenever you genuinely need an answer before carrying on.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"to": map[string]any{
-						"type":        "string",
-						"description": "Name of the agent to ask",
+						"description": "The agent to ask, or a list of agents to put the question to at once. " +
+							"Address a remote agent as name@node.",
 					},
 					"content": map[string]any{
 						"type":        "string",
@@ -83,7 +86,14 @@ func (e *Engine) a2aTools() []llm.Tool {
 						"type": "string",
 						"description": "The FIPA-ACL speech act. Defaults to request. " +
 							"Use request to ask for work, query-if to ask whether something holds, " +
-							"query-ref to ask for a value, cfp to invite proposals, propose to offer one.",
+							"query-ref to ask for a value, cfp to invite proposals from several agents, " +
+							"accept-proposal to award work to whoever you picked.",
+					},
+					"protocol": map[string]any{
+						"type": "string",
+						"description": "Optional interaction protocol name. Use fipa-contract-net when " +
+							"you are running a tender: cfp to everyone, then accept-proposal to the winner " +
+							"and reject-proposal to the rest.",
 					},
 					"conversation_id": map[string]any{
 						"type":        "string",
@@ -138,19 +148,44 @@ func (e *Engine) executeA2ATool(ctx context.Context, inv cortex.Invocation) (str
 }
 
 type agentSendArgs struct {
-	To             []string `json:"to"`
-	Content        string   `json:"content"`
-	Performative   string   `json:"performative"`
-	ConversationID string   `json:"conversation_id"`
-	Ontology       string   `json:"ontology"`
+	To             recipients `json:"to"`
+	Content        string     `json:"content"`
+	Performative   string     `json:"performative"`
+	ConversationID string     `json:"conversation_id"`
+	Ontology       string     `json:"ontology"`
+	Protocol       string     `json:"protocol"`
 }
 
 type agentAskArgs struct {
-	To             string `json:"to"`
-	Content        string `json:"content"`
-	Performative   string `json:"performative"`
-	ConversationID string `json:"conversation_id"`
-	Ontology       string `json:"ontology"`
+	To             recipients `json:"to"`
+	Content        string     `json:"content"`
+	Performative   string     `json:"performative"`
+	ConversationID string     `json:"conversation_id"`
+	Ontology       string     `json:"ontology"`
+	Protocol       string     `json:"protocol"`
+}
+
+// recipients accepts either one name or a list of them.
+//
+// Both spellings exist because both readings are natural: asking one
+// agent is a name, and putting work out to tender is a list. Forcing a
+// model to wrap a single name in an array is the kind of papercut that
+// shows up as a malformed tool call rather than as a complaint.
+type recipients []string
+
+// UnmarshalJSON accepts "worker" and ["worker","assistant"] alike.
+func (r *recipients) UnmarshalJSON(data []byte) error {
+	var one string
+	if err := json.Unmarshal(data, &one); err == nil {
+		*r = recipients{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return fmt.Errorf("to must be an agent name or a list of them: %w", err)
+	}
+	*r = many
+	return nil
 }
 
 type agentInboxArgs struct {
@@ -177,6 +212,7 @@ func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation) st
 		Performative: performativeOr(args.Performative, a2a.Inform),
 		Content:      args.Content,
 		Ontology:     args.Ontology,
+		Protocol:     args.Protocol,
 		OriginRunID:  inv.RunID,
 	}
 	if convID, convErr := parseConversationID(args.ConversationID); convErr != nil {
@@ -207,7 +243,7 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
 		return jsonResult("error", "invalid arguments: "+err.Error()), outcomeFailed, true
 	}
-	if args.To == "" || args.Content == "" {
+	if len(args.To) == 0 || args.Content == "" {
 		return jsonResult("error", "to and content are required"), outcomeFailed, true
 	}
 
@@ -218,10 +254,11 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 	params := a2a.AskParams{
 		SendParams: a2a.SendParams{
 			Sender:       sender,
-			Receivers:    []a2a.Address{a2a.ParseAddress(args.To)},
+			Receivers:    addressesOf(args.To),
 			Performative: performativeOr(args.Performative, a2a.Request),
 			Content:      args.Content,
 			Ontology:     args.Ontology,
+			Protocol:     args.Protocol,
 			OriginRunID:  inv.RunID,
 		},
 		AskerRunID: inv.RunID,

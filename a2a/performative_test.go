@@ -70,16 +70,24 @@ func TestUnknownPerformativeIsNotClassified(t *testing.T) {
 
 // ResolvesAsk is the pair most likely to be got backwards: agree means the
 // peer took the job and is still working, so it must not un-pause the asker.
-func TestResolvesAsk(t *testing.T) {
-	resolving := []Performative{Inform, InformIf, InformRef, Confirm, Disconfirm, Refuse, Failure, NotUnderstood, RejectProposal}
-	for _, p := range resolving {
-		if !p.ResolvesAsk() {
-			t.Errorf("%s should resolve a waiting ask", p)
+func TestAnswersAsk(t *testing.T) {
+	// propose is an answer to a call for proposals, and refusing is an
+	// answer too: a participant that will not bid has told the initiator
+	// what it needed to know about that participant.
+	answering := []Performative{
+		Inform, InformIf, InformRef, Confirm, Disconfirm,
+		Refuse, Failure, NotUnderstood, RejectProposal, Propose,
+	}
+	for _, p := range answering {
+		if !p.AnswersAsk() {
+			t.Errorf("%s should count as an answer", p)
 		}
 	}
+	// agree means "working on it", so counting it would resume an asker
+	// on a message carrying no answer.
 	for _, p := range []Performative{Agree, Subscribe, Request, CFP} {
-		if p.ResolvesAsk() {
-			t.Errorf("%s must not resolve a waiting ask", p)
+		if p.AnswersAsk() {
+			t.Errorf("%s must not count as an answer", p)
 		}
 	}
 }

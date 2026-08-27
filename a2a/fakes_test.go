@@ -65,6 +65,9 @@ func (f *fakeRunner) setErr(err error) {
 	f.err = err
 }
 
+// what stops the next test having to change the double.
+//
+//nolint:unparam // every current caller answers as w1; the parameter is
 func (f *fakeRunner) setOutput(agent, out string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

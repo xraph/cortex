@@ -27,8 +27,14 @@ import (
 // checkpoint, because they are not what a REST caller reads.
 func newApprovalStore(ctx context.Context, t *testing.T) *sqlitestore.Store {
 	t.Helper()
+	// The busy timeout is a requirement rather than test hygiene once
+	// messaging is on: the dispatcher writes on its own goroutines while
+	// a run writes on the caller's, and sqlite refuses a concurrent
+	// writer rather than waiting unless it is told to. The docs say the
+	// same thing to anyone deploying on sqlite.
+	dsn := filepath.Join(t.TempDir(), "cortex_approval.db") + "?_pragma=busy_timeout(5000)"
 	drv := sqlitedriver.New()
-	if err := drv.Open(ctx, filepath.Join(t.TempDir(), "cortex_approval.db")); err != nil {
+	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlite driver: %v", err)
 	}
 	db, err := grove.Open(drv)
