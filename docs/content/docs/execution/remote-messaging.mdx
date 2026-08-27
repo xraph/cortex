@@ -203,6 +203,8 @@ Declared in the card rather than discovered by failing:
 - **Agent card signatures.** Cards are unsigned, which matters for a public
   registry and not for peers you configured by hand.
 
-One behaviour worth knowing about rather than discovering: a peer that quotes a
-`contextId` from its own database gets a fresh conversation on this side, with
-its id kept as metadata. Conversations are not stitched across engines.
+One behaviour worth knowing about rather than discovering: a peer's `contextId`
+names a conversation in the peer's own database, so cortex keeps a conversation
+of its own for each remote thread and remembers which is which. A peer
+continuing a thread continues the same conversation here, which is what keeps
+the hop budget accumulating across turns rather than resetting every message.

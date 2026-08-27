@@ -215,15 +215,25 @@ message takes the ordinary path with the ordinary claim, and a worker
 that turns out to be alive after all loses the race instead of
 duplicating the work.
 
+### Fixed: a peer's thread stays together
+
+An inbound `contextId` names a conversation in the peer's own database,
+and cortex used to open a new conversation for every inbound message
+because of it. That was worse than untidy: a new conversation is a new
+hop budget, so a peer that never reused an id could keep talking past a
+ceiling it should have hit.
+
+A conversation now records which remote thread it stands in for, keyed
+by node as well as context id. Two peers can use the same id, and
+joining one peer's thread to another's would leak a conversation across
+a trust boundary.
+
 ### Known gaps
 
 - **Sqlite needs a busy timeout** once messaging is on. The dispatcher
   writes while your runs write, and sqlite refuses a concurrent writer
   rather than waiting unless told to. Open with
   `cortex.db?_pragma=busy_timeout(5000)`.
-- Conversations are not stitched across engines. A peer quoting a
-  `contextId` from its own database gets a fresh conversation on this
-  side, with its id kept as metadata.
 - Mongo was written against the conformance suite but never executed:
   the environment this landed in could not start a mongo container, and
   could not before this branch either. Sqlite and postgres both run the
