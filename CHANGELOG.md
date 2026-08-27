@@ -131,8 +131,38 @@ in. Nothing in a message body or a header can influence that. Outbound
 peers are configuration rather than data, so an agent's own output
 cannot introduce a host to call.
 
+### Added later in this release: contract net
+
+An agent can put work out to tender now. Ask several agents at once with
+a `cfp` and your run waits for the whole field, then resumes with every
+proposal and every refusal together, and the agent picks.
+
+Almost none of that was new. The four Contract Net performatives were
+already carried and routed, and a tender is a conversation like any
+other. What was missing was an ask addressed to more than one agent, so
+that is what landed: an ask to one agent still resumes on that agent's
+answer, and an ask to several waits for everyone or for the deadline.
+
+Cortex does not choose the winner and will not. Awarding is
+`accept-proposal`, which is an ordinary directive, so awarding with
+`agent_ask` rather than `agent_send` gets you the work back instead of an
+acknowledgement.
+
+`a2a.ContractNet` and `a2a.CollectTender` are there for hosts driving a
+tender from Go.
+
+**Breaking:** the `agent_ask` tool result changed shape. It was one
+reply; it is now `{"replies": [...], "complete": bool}`, with one entry
+for a single-recipient ask. Shipping two shapes, one per recipient count,
+would have cost every prompt forever; a list costs one sentence.
+
 ### Fixed
 
+- **A refusal ended a round it should not have.** `refuse` and
+  `reject-proposal` used to resolve a waiting ask outright. With several
+  recipients that is wrong: one participant declining a tender must not
+  un-pause an initiator that is still waiting on the others. They now
+  count as answers.
 - **Remote receivers were never carried by their transport.** The first
   round shipped a `Transport` seam that the delivery path did not
   consult, so an envelope addressed to `worker@peer.example` would have
