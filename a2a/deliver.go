@@ -2,6 +2,8 @@ package a2a
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xraph/cortex/id"
@@ -103,5 +105,31 @@ func (b *Bus) failDelivery(ctx context.Context, d *Delivery, cause error) error 
 // handleControl interprets a control message. Task 11 fills it in.
 func (b *Bus) handleControl(context.Context, *Envelope) error { return nil }
 
-// resolveAskWithFailure un-pauses a waiting ask. Task 10 fills it in.
-func (b *Bus) resolveAskWithFailure(context.Context, string, string) error { return nil }
+// resolveAskWithFailure un-pauses a waiting ask with a failure the asking
+// agent can read: a timeout, a cancelled conversation, a reply that could
+// not be sent. It is the sweep's and the cancel path's way in.
+func (b *Bus) resolveAskWithFailure(ctx context.Context, replyWith, reason string) error {
+	if replyWith == "" {
+		return nil
+	}
+	ask, err := b.store.ClaimPendingAsk(ctx, replyWith)
+	switch {
+	case errors.Is(err, ErrAskNotFound), errors.Is(err, ErrAskAlreadyClaimed):
+		return nil
+	case err != nil:
+		return err
+	}
+	if b.resumer == nil {
+		return nil
+	}
+	payload, err := json.Marshal(AskReply{
+		Performative:   string(Failure),
+		Sender:         ask.Expected.String(),
+		Content:        reason,
+		ConversationID: ask.ConversationID.String(),
+	})
+	if err != nil {
+		return err
+	}
+	return b.resumer.ResumeAgentReply(ctx, ask.AskerRunID, ask.ToolCallID, string(payload))
+}

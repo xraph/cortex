@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -219,6 +220,19 @@ func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*Sen
 	}
 
 	res := &SendResult{MessageID: e.ID, ConversationID: e.ConversationID}
+
+	// A reply that answers a waiting ask reaches its asker through the
+	// resume, so queueing a delivery as well would hand the same agent the
+	// same words twice.
+	resumed, err := b.resolveAsk(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	if resumed {
+		b.hooks.MessageSent(ctx, e.ID, e.Sender.String(), addressList(e.Receivers), string(e.Performative))
+		return res, nil
+	}
+
 	for _, r := range e.Receivers {
 		d := &Delivery{
 			Entity:    cortex.NewEntity(),
@@ -330,4 +344,48 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 		return nil, err
 	}
 	return &AskResult{MessageID: sent.MessageID, ConversationID: sent.ConversationID, ReplyWith: e.ReplyWith}, nil
+}
+
+// AskReply is what a resumed agent_ask tool call returns to the model.
+type AskReply struct {
+	Performative   string `json:"performative"`
+	Sender         string `json:"sender"`
+	Content        string `json:"content"`
+	ConversationID string `json:"conversation_id"`
+}
+
+// resolveAsk matches an inbound reply to a waiting ask and resumes it,
+// reporting whether a run was resumed.
+//
+// The claim happens before the resume, and that ordering is the design
+// rather than a precaution: a late reply, the deadline sweep and a cancel
+// are three writers racing for one row, and only the winner may resume.
+func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
+	if e.InReplyTo == "" || !e.Performative.ResolvesAsk() {
+		return false, nil
+	}
+	ask, err := b.store.ClaimPendingAsk(ctx, e.InReplyTo)
+	switch {
+	case errors.Is(err, ErrAskNotFound), errors.Is(err, ErrAskAlreadyClaimed):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	if b.resumer == nil {
+		return false, nil
+	}
+
+	payload, err := json.Marshal(AskReply{
+		Performative:   string(e.Performative),
+		Sender:         e.Sender.String(),
+		Content:        e.Content,
+		ConversationID: e.ConversationID.String(),
+	})
+	if err != nil {
+		return false, err
+	}
+	if err := b.resumer.ResumeAgentReply(ctx, ask.AskerRunID, ask.ToolCallID, string(payload)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
