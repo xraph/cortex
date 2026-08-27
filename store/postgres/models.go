@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/grove"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -1324,4 +1325,351 @@ func stringsOrEmpty(v []string) []string {
 		return []string{}
 	}
 	return v
+}
+
+// ──────────────────────────────────────────────────
+// a2a models
+// ──────────────────────────────────────────────────
+
+type a2aMessageModel struct {
+	grove.BaseModel `grove:"table:cortex_a2a_messages"`
+	ID              string            `grove:"id,pk"`
+	Performative    string            `grove:"performative,notnull"`
+	SenderAgent     string            `grove:"sender_agent,notnull"`
+	SenderNode      string            `grove:"sender_node,notnull"`
+	Receivers       string            `grove:"receivers,type:jsonb,notnull"`
+	ReplyTo         string            `grove:"reply_to,type:jsonb,notnull"`
+	Content         string            `grove:"content,notnull"`
+	Language        string            `grove:"language,notnull"`
+	Encoding        string            `grove:"encoding,notnull"`
+	Ontology        string            `grove:"ontology,notnull"`
+	Protocol        string            `grove:"protocol,notnull"`
+	ConversationID  string            `grove:"conversation_id,notnull"`
+	ReplyWith       string            `grove:"reply_with,notnull"`
+	InReplyTo       string            `grove:"in_reply_to,notnull"`
+	ReplyBy         *time.Time        `grove:"reply_by"`
+	Hops            int               `grove:"hops,notnull"`
+	OriginRunID     string            `grove:"origin_run_id,notnull"`
+	Metadata        string            `grove:"metadata,type:jsonb,notnull"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+}
+
+func a2aMessageToModel(e *a2a.Envelope) *a2aMessageModel {
+	l0, l1, l2, extra := scopeColumns(e.Scope)
+	return &a2aMessageModel{
+		ID:             e.ID.String(),
+		Performative:   string(e.Performative),
+		SenderAgent:    e.Sender.Agent,
+		SenderNode:     e.Sender.Node,
+		Receivers:      mustJSON(e.Receivers),
+		ReplyTo:        mustJSON(e.ReplyTo),
+		Content:        e.Content,
+		Language:       e.Language,
+		Encoding:       e.Encoding,
+		Ontology:       e.Ontology,
+		Protocol:       e.Protocol,
+		ConversationID: e.ConversationID.String(),
+		ReplyWith:      e.ReplyWith,
+		InReplyTo:      e.InReplyTo,
+		ReplyBy:        e.ReplyBy,
+		Hops:           e.Hops,
+		OriginRunID:    e.OriginRunID.String(),
+		Metadata:       mustJSON(e.Metadata),
+		ScopeL0:        l0,
+		ScopeL1:        l1,
+		ScopeL2:        l2,
+		ScopeExtra:     extra,
+		ScopeCanon:     e.Scope.Canonical(),
+		CreatedAt:      e.CreatedAt,
+		UpdatedAt:      e.UpdatedAt,
+	}
+}
+
+func a2aMessageFromModel(m *a2aMessageModel) (*a2a.Envelope, error) {
+	msgID, err := id.ParseWithPrefix(m.ID, id.PrefixMessage)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("a2a message %s: %w", msgID, err)
+	}
+	e := &a2a.Envelope{
+		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:           msgID,
+		Scope:        scope,
+		Performative: a2a.Performative(m.Performative),
+		Sender:       a2a.Address{Agent: m.SenderAgent, Node: m.SenderNode},
+		Content:      m.Content,
+		Language:     m.Language,
+		Encoding:     m.Encoding,
+		Ontology:     m.Ontology,
+		Protocol:     m.Protocol,
+		ReplyWith:    m.ReplyWith,
+		InReplyTo:    m.InReplyTo,
+		ReplyBy:      m.ReplyBy,
+		Hops:         m.Hops,
+	}
+	if m.ConversationID != "" {
+		convID, convErr := id.ParseWithPrefix(m.ConversationID, id.PrefixConversation)
+		if convErr != nil {
+			return nil, fmt.Errorf("a2a message %s: conversation id: %w", msgID, convErr)
+		}
+		e.ConversationID = convID
+	}
+	if m.OriginRunID != "" {
+		runID, runErr := id.ParseWithPrefix(m.OriginRunID, id.PrefixAgentRun)
+		if runErr != nil {
+			return nil, fmt.Errorf("a2a message %s: origin run id: %w", msgID, runErr)
+		}
+		e.OriginRunID = runID
+	}
+	for _, f := range []struct {
+		name string
+		data string
+		dest any
+	}{
+		{"receivers", m.Receivers, &e.Receivers},
+		{"reply_to", m.ReplyTo, &e.ReplyTo},
+		{"metadata", m.Metadata, &e.Metadata},
+	} {
+		if err := unmarshalField(f.name, f.data, f.dest); err != nil {
+			return nil, err
+		}
+	}
+	return e, nil
+}
+
+type a2aConversationModel struct {
+	grove.BaseModel `grove:"table:cortex_a2a_conversations"`
+	ID              string            `grove:"id,pk"`
+	Protocol        string            `grove:"protocol,notnull"`
+	InitiatorAgent  string            `grove:"initiator_agent,notnull"`
+	InitiatorNode   string            `grove:"initiator_node,notnull"`
+	Participants    string            `grove:"participants,type:jsonb,notnull"`
+	Status          string            `grove:"status,notnull"`
+	HopCeiling      int               `grove:"hop_ceiling,notnull"`
+	HopsUsed        int               `grove:"hops_used,notnull"`
+	Deadline        *time.Time        `grove:"deadline"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+}
+
+func a2aConversationToModel(c *a2a.Conversation) *a2aConversationModel {
+	l0, l1, l2, extra := scopeColumns(c.Scope)
+	return &a2aConversationModel{
+		ID:             c.ID.String(),
+		Protocol:       c.Protocol,
+		InitiatorAgent: c.Initiator.Agent,
+		InitiatorNode:  c.Initiator.Node,
+		Participants:   mustJSON(c.Participants),
+		Status:         c.Status,
+		HopCeiling:     c.HopCeiling,
+		HopsUsed:       c.HopsUsed,
+		Deadline:       c.Deadline,
+		ScopeL0:        l0,
+		ScopeL1:        l1,
+		ScopeL2:        l2,
+		ScopeExtra:     extra,
+		ScopeCanon:     c.Scope.Canonical(),
+		CreatedAt:      c.CreatedAt,
+		UpdatedAt:      c.UpdatedAt,
+	}
+}
+
+func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error) {
+	convID, err := id.ParseWithPrefix(m.ID, id.PrefixConversation)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("a2a conversation %s: %w", convID, err)
+	}
+	c := &a2a.Conversation{
+		Entity:     cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:         convID,
+		Scope:      scope,
+		Protocol:   m.Protocol,
+		Initiator:  a2a.Address{Agent: m.InitiatorAgent, Node: m.InitiatorNode},
+		Status:     m.Status,
+		HopCeiling: m.HopCeiling,
+		HopsUsed:   m.HopsUsed,
+		Deadline:   m.Deadline,
+	}
+	if err := unmarshalField("participants", m.Participants, &c.Participants); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+type a2aDeliveryModel struct {
+	grove.BaseModel `grove:"table:cortex_a2a_deliveries"`
+	ID              string            `grove:"id,pk"`
+	MessageID       string            `grove:"message_id,notnull"`
+	ReceiverAgent   string            `grove:"receiver_agent,notnull"`
+	ReceiverNode    string            `grove:"receiver_node,notnull"`
+	State           string            `grove:"state,notnull"`
+	Error           string            `grove:"error,notnull"`
+	ClaimedAt       *time.Time        `grove:"claimed_at"`
+	DeliveredAt     *time.Time        `grove:"delivered_at"`
+	ReadAt          *time.Time        `grove:"read_at"`
+	RunID           string            `grove:"run_id,notnull"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+}
+
+func a2aDeliveryToModel(d *a2a.Delivery) *a2aDeliveryModel {
+	l0, l1, l2, extra := scopeColumns(d.Scope)
+	return &a2aDeliveryModel{
+		ID:            d.ID.String(),
+		MessageID:     d.MessageID.String(),
+		ReceiverAgent: d.Receiver.Agent,
+		ReceiverNode:  d.Receiver.Node,
+		State:         d.State,
+		Error:         d.Error,
+		DeliveredAt:   d.DeliveredAt,
+		ReadAt:        d.ReadAt,
+		RunID:         d.RunID.String(),
+		ScopeL0:       l0,
+		ScopeL1:       l1,
+		ScopeL2:       l2,
+		ScopeExtra:    extra,
+		ScopeCanon:    d.Scope.Canonical(),
+		CreatedAt:     d.CreatedAt,
+		UpdatedAt:     d.UpdatedAt,
+	}
+}
+
+func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
+	dlvID, err := id.ParseWithPrefix(m.ID, id.PrefixDelivery)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("a2a delivery %s: %w", dlvID, err)
+	}
+	msgID, err := id.ParseWithPrefix(m.MessageID, id.PrefixMessage)
+	if err != nil {
+		return nil, fmt.Errorf("a2a delivery %s: message id: %w", dlvID, err)
+	}
+	d := &a2a.Delivery{
+		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:          dlvID,
+		Scope:       scope,
+		MessageID:   msgID,
+		Receiver:    a2a.Address{Agent: m.ReceiverAgent, Node: m.ReceiverNode},
+		State:       m.State,
+		Error:       m.Error,
+		DeliveredAt: m.DeliveredAt,
+		ReadAt:      m.ReadAt,
+	}
+	if m.RunID != "" {
+		runID, runErr := id.ParseWithPrefix(m.RunID, id.PrefixAgentRun)
+		if runErr != nil {
+			return nil, fmt.Errorf("a2a delivery %s: run id: %w", dlvID, runErr)
+		}
+		d.RunID = runID
+	}
+	return d, nil
+}
+
+type a2aPendingAskModel struct {
+	grove.BaseModel `grove:"table:cortex_a2a_pending_asks"`
+	ReplyWith       string            `grove:"reply_with,pk"`
+	ConversationID  string            `grove:"conversation_id,notnull"`
+	MessageID       string            `grove:"message_id,notnull"`
+	AskerRunID      string            `grove:"asker_run_id,notnull"`
+	AskerAgent      string            `grove:"asker_agent,notnull"`
+	ToolCallID      string            `grove:"tool_call_id,notnull"`
+	ExpectedAgent   string            `grove:"expected_agent,notnull"`
+	ExpectedNode    string            `grove:"expected_node,notnull"`
+	Deadline        *time.Time        `grove:"deadline"`
+	ClaimedAt       *time.Time        `grove:"claimed_at"`
+	ScopeL0         string            `grove:"scope_l0,notnull"`
+	ScopeL1         string            `grove:"scope_l1,notnull"`
+	ScopeL2         string            `grove:"scope_l2,notnull"`
+	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon      string            `grove:"scope_canon,notnull"`
+	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+}
+
+func a2aPendingAskToModel(a *a2a.PendingAsk) *a2aPendingAskModel {
+	l0, l1, l2, extra := scopeColumns(a.Scope)
+	return &a2aPendingAskModel{
+		ReplyWith:      a.ReplyWith,
+		ConversationID: a.ConversationID.String(),
+		MessageID:      a.MessageID.String(),
+		AskerRunID:     a.AskerRunID.String(),
+		AskerAgent:     a.AskerAgent,
+		ToolCallID:     a.ToolCallID,
+		ExpectedAgent:  a.Expected.Agent,
+		ExpectedNode:   a.Expected.Node,
+		Deadline:       a.Deadline,
+		ClaimedAt:      a.ClaimedAt,
+		ScopeL0:        l0,
+		ScopeL1:        l1,
+		ScopeL2:        l2,
+		ScopeExtra:     extra,
+		ScopeCanon:     a.Scope.Canonical(),
+		CreatedAt:      a.CreatedAt,
+		UpdatedAt:      a.UpdatedAt,
+	}
+}
+
+func a2aPendingAskFromModel(m *a2aPendingAskModel) (*a2a.PendingAsk, error) {
+	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	if err != nil {
+		return nil, fmt.Errorf("a2a pending ask %s: %w", m.ReplyWith, err)
+	}
+	a := &a2a.PendingAsk{
+		Entity:     cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		Scope:      scope,
+		ReplyWith:  m.ReplyWith,
+		AskerAgent: m.AskerAgent,
+		ToolCallID: m.ToolCallID,
+		Expected:   a2a.Address{Agent: m.ExpectedAgent, Node: m.ExpectedNode},
+		Deadline:   m.Deadline,
+		ClaimedAt:  m.ClaimedAt,
+	}
+	if m.ConversationID != "" {
+		convID, convErr := id.ParseWithPrefix(m.ConversationID, id.PrefixConversation)
+		if convErr != nil {
+			return nil, fmt.Errorf("a2a pending ask %s: conversation id: %w", m.ReplyWith, convErr)
+		}
+		a.ConversationID = convID
+	}
+	if m.MessageID != "" {
+		msgID, msgErr := id.ParseWithPrefix(m.MessageID, id.PrefixMessage)
+		if msgErr != nil {
+			return nil, fmt.Errorf("a2a pending ask %s: message id: %w", m.ReplyWith, msgErr)
+		}
+		a.MessageID = msgID
+	}
+	if m.AskerRunID != "" {
+		runID, runErr := id.ParseWithPrefix(m.AskerRunID, id.PrefixAgentRun)
+		if runErr != nil {
+			return nil, fmt.Errorf("a2a pending ask %s: asker run id: %w", m.ReplyWith, runErr)
+		}
+		a.AskerRunID = runID
+	}
+	return a, nil
 }

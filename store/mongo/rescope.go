@@ -18,6 +18,10 @@ import (
 // (discoverScopedCollections), not assumed -- a partially migrated
 // database is exactly the state this pass is most likely to meet, since
 // later phases bring more collections under scope over time.
+//
+// The four cortex_a2a_* collections are deliberately absent. They were
+// born with their scope fields, so no document in them has ever been
+// unscoped and there is nothing here to backfill.
 var candidateCollections = []string{
 	colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
 	colSkills, colTraits, colBehaviors, colPersonas, colSessions,

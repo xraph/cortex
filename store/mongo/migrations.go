@@ -414,6 +414,35 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "created_at", Value: -1}}},
 			scopeIndex,
 		},
+		colA2AMessages: {
+			{Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: 1}}},
+			scopeIndex,
+		},
+		colA2AConversations: {
+			{Keys: bson.D{{Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			scopeIndex,
+		},
+		colA2ADeliveries: {
+			// The inbox read and the dispatcher's redrive read are the two
+			// queries this collection serves, and they are different
+			// shapes: one is per recipient inside a scope, the other is
+			// state-only across every scope.
+			{Keys: bson.D{{Key: "receiver_agent", Value: 1}, {Key: "state", Value: 1}, {Key: "read_at", Value: 1}}},
+			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "created_at", Value: 1}}},
+			{Keys: bson.D{{Key: "message_id", Value: 1}}},
+			scopeIndex,
+		},
+		colA2APendingAsks: {
+			// The reply-with token IS the _id, so the ledger's
+			// one-row-per-token guarantee comes from mongo's own primary
+			// key rather than an index declared here. What is left is the
+			// sweep's read.
+			{Keys: bson.D{{Key: "claimed_at", Value: 1}, {Key: "deadline", Value: 1}}},
+			{Keys: bson.D{{Key: "conversation_id", Value: 1}}},
+			scopeIndex,
+		},
 	}
 }
 
