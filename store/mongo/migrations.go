@@ -420,6 +420,7 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			scopeIndex,
 		},
 		colA2AConversations: {
+			{Keys: bson.D{{Key: "peer_node", Value: 1}, {Key: "peer_context", Value: 1}, {Key: "scope_canon", Value: 1}}},
 			{Keys: bson.D{{Key: "status", Value: 1}}},
 			{Keys: bson.D{{Key: "created_at", Value: -1}}},
 			scopeIndex,

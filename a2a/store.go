@@ -54,6 +54,11 @@ type Store interface {
 	CreateConversation(ctx context.Context, c *Conversation) error
 	GetConversation(ctx context.Context, convID id.ConversationID) (*Conversation, error)
 	UpdateConversation(ctx context.Context, c *Conversation) error
+	// GetConversationByPeerContext finds the conversation opened for a
+	// remote thread. The node is part of the key because two peers can
+	// use the same context id, and joining one peer's thread to
+	// another's would leak a conversation across a trust boundary.
+	GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*Conversation, error)
 	ListConversations(ctx context.Context, filter *ConversationListFilter) ([]*Conversation, error)
 
 	CreateDelivery(ctx context.Context, d *Delivery) error

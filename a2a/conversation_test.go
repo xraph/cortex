@@ -14,14 +14,18 @@ func testCtx() context.Context {
 	})
 }
 
-func TestMemStoreRoundTripsAConversation(t *testing.T) {
-	ctx, s := testCtx(), newMemStore()
-	c := &Conversation{
+func newTestConversation(initiator string) *Conversation {
+	return &Conversation{
 		ID:         id.NewConversationID(),
 		Status:     StatusOpen,
 		HopCeiling: 8,
-		Initiator:  Address{Agent: "planner"},
+		Initiator:  Address{Agent: initiator},
 	}
+}
+
+func TestMemStoreRoundTripsAConversation(t *testing.T) {
+	ctx, s := testCtx(), newMemStore()
+	c := newTestConversation("planner")
 	if err := s.CreateConversation(ctx, c); err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
@@ -131,5 +135,89 @@ func TestListQueuedDeliveriesIsWhatRedriveReadsFrom(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Receiver.Agent != "w1" {
 		t.Fatalf("redrive must see only queued rows, got %+v", got)
+	}
+}
+
+// A peer's contextId names a conversation in the peer's database, so the
+// pairing has to be recorded on this side or every inbound message starts
+// a new thread. That is worse than untidy: a fresh conversation is a
+// fresh hop budget, so a peer could talk forever by never reusing an id.
+func TestConversationsCanBeFoundByAPeersContext(t *testing.T) {
+	ctx, s := testCtx(), newMemStore()
+
+	conv := newTestConversation("planner")
+	conv.PeerNode = "peer.example"
+	conv.PeerContext = "their-context-1"
+	if err := s.CreateConversation(ctx, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	got, err := s.GetConversationByPeerContext(ctx, "peer.example", "their-context-1")
+	if err != nil {
+		t.Fatalf("GetConversationByPeerContext: %v", err)
+	}
+	if got.ID != conv.ID {
+		t.Fatalf("found %s, want %s", got.ID, conv.ID)
+	}
+}
+
+// Two peers can perfectly well use the same context id, and joining one
+// peer's thread to another's would leak a conversation across a trust
+// boundary.
+func TestAPeersContextIsNamespacedByItsNode(t *testing.T) {
+	ctx, s := testCtx(), newMemStore()
+
+	conv := newTestConversation("planner")
+	conv.PeerNode = "peer-a"
+	conv.PeerContext = "shared-id"
+	if err := s.CreateConversation(ctx, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	if _, err := s.GetConversationByPeerContext(ctx, "peer-b", "shared-id"); !errorsIs(err, ErrConversationNotFound) {
+		t.Fatalf("err = %v, want not found: one peer's id must not reach another's thread", err)
+	}
+}
+
+func TestAnUnknownPeerContextIsNotFound(t *testing.T) {
+	ctx, s := testCtx(), newMemStore()
+	if _, err := s.GetConversationByPeerContext(ctx, "peer.example", "never-seen"); !errorsIs(err, ErrConversationNotFound) {
+		t.Fatalf("err = %v, want ErrConversationNotFound", err)
+	}
+}
+
+// A message that names a peer context joins the conversation opened for
+// it, so the hop budget carries across turns rather than resetting.
+func TestSendJoinsAConversationByPeerContext(t *testing.T) {
+	b, st, _, _, _, _ := newTestBus(t)
+	ctx := testCtx()
+
+	first, err := b.Send(ctx, SendParams{
+		Sender: Address{Agent: "worker", Node: "peer.example"}, Receivers: []Address{{Agent: "planner"}},
+		Performative: Inform, Content: "one",
+		PeerNode: "peer.example", PeerContext: "their-context-1",
+	})
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+
+	second, err := b.Send(ctx, SendParams{
+		Sender: Address{Agent: "worker", Node: "peer.example"}, Receivers: []Address{{Agent: "planner"}},
+		Performative: Inform, Content: "two",
+		PeerNode: "peer.example", PeerContext: "their-context-1",
+	})
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if second.ConversationID != first.ConversationID {
+		t.Fatal("the second message opened a new thread rather than continuing the peer's")
+	}
+
+	msg, err := st.GetMessage(ctx, second.MessageID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if msg.Hops != 2 {
+		t.Fatalf("Hops = %d, want 2: a peer must not get a fresh budget by continuing a thread", msg.Hops)
 	}
 }

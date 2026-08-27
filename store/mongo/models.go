@@ -1332,6 +1332,8 @@ type a2aConversationModel struct {
 	HopCeiling      int               `grove:"hop_ceiling"      bson:"hop_ceiling"`
 	HopsUsed        int               `grove:"hops_used"        bson:"hops_used"`
 	Deadline        *time.Time        `grove:"deadline"         bson:"deadline,omitempty"`
+	PeerNode        string            `grove:"peer_node"        bson:"peer_node"`
+	PeerContext     string            `grove:"peer_context"     bson:"peer_context"`
 	ScopeL0         string            `grove:"scope_l0"         bson:"scope_l0"`
 	ScopeL1         string            `grove:"scope_l1"         bson:"scope_l1"`
 	ScopeL2         string            `grove:"scope_l2"         bson:"scope_l2"`
@@ -1353,6 +1355,8 @@ func a2aConversationToModel(c *a2a.Conversation) *a2aConversationModel {
 		HopCeiling:     c.HopCeiling,
 		HopsUsed:       c.HopsUsed,
 		Deadline:       c.Deadline,
+		PeerNode:       c.PeerNode,
+		PeerContext:    c.PeerContext,
 		ScopeL0:        l0,
 		ScopeL1:        l1,
 		ScopeL2:        l2,
@@ -1383,6 +1387,8 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 		HopCeiling:   m.HopCeiling,
 		HopsUsed:     m.HopsUsed,
 		Deadline:     m.Deadline,
+		PeerNode:     m.PeerNode,
+		PeerContext:  m.PeerContext,
 	}, nil
 }
 

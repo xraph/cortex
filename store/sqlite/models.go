@@ -1465,6 +1465,8 @@ type a2aConversationModel struct {
 	HopCeiling      int        `grove:"hop_ceiling,notnull"`
 	HopsUsed        int        `grove:"hops_used,notnull"`
 	Deadline        *time.Time `grove:"deadline"`
+	PeerNode        string     `grove:"peer_node,notnull"`
+	PeerContext     string     `grove:"peer_context,notnull"`
 	ScopeL0         string     `grove:"scope_l0,notnull"`
 	ScopeL1         string     `grove:"scope_l1,notnull"`
 	ScopeL2         string     `grove:"scope_l2,notnull"`
@@ -1486,6 +1488,8 @@ func a2aConversationToModel(c *a2a.Conversation) *a2aConversationModel {
 		HopCeiling:     c.HopCeiling,
 		HopsUsed:       c.HopsUsed,
 		Deadline:       c.Deadline,
+		PeerNode:       c.PeerNode,
+		PeerContext:    c.PeerContext,
 		ScopeL0:        l0,
 		ScopeL1:        l1,
 		ScopeL2:        l2,
@@ -1506,15 +1510,17 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 		return nil, fmt.Errorf("a2a conversation %s: %w", convID, err)
 	}
 	c := &a2a.Conversation{
-		Entity:     cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:         convID,
-		Scope:      scope,
-		Protocol:   m.Protocol,
-		Initiator:  a2a.Address{Agent: m.InitiatorAgent, Node: m.InitiatorNode},
-		Status:     m.Status,
-		HopCeiling: m.HopCeiling,
-		HopsUsed:   m.HopsUsed,
-		Deadline:   m.Deadline,
+		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:          convID,
+		Scope:       scope,
+		Protocol:    m.Protocol,
+		Initiator:   a2a.Address{Agent: m.InitiatorAgent, Node: m.InitiatorNode},
+		Status:      m.Status,
+		HopCeiling:  m.HopCeiling,
+		HopsUsed:    m.HopsUsed,
+		Deadline:    m.Deadline,
+		PeerNode:    m.PeerNode,
+		PeerContext: m.PeerContext,
 	}
 	if err := unmarshalField("participants", m.Participants, &c.Participants); err != nil {
 		return nil, err

@@ -1285,6 +1285,8 @@ CREATE TABLE IF NOT EXISTS cortex_a2a_conversations (
     hop_ceiling      INTEGER NOT NULL DEFAULT 0,
     hops_used        INTEGER NOT NULL DEFAULT 0,
     deadline         TIMESTAMPTZ,
+    peer_node        TEXT NOT NULL DEFAULT '',
+    peer_context     TEXT NOT NULL DEFAULT '',
     scope_l0         TEXT NOT NULL DEFAULT '',
     scope_l1         TEXT NOT NULL DEFAULT '',
     scope_l2         TEXT NOT NULL DEFAULT '',
@@ -1295,6 +1297,7 @@ CREATE TABLE IF NOT EXISTS cortex_a2a_conversations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cortex_a2a_conversations_scope_status ON cortex_a2a_conversations (scope_canon, status);
+CREATE INDEX IF NOT EXISTS idx_cortex_a2a_conversations_peer ON cortex_a2a_conversations (scope_canon, peer_node, peer_context);
 
 CREATE TABLE IF NOT EXISTS cortex_a2a_deliveries (
     id             TEXT PRIMARY KEY,

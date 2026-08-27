@@ -145,6 +145,35 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 // fields are deliberately absent from the $set: a conversation's scope is
 // fixed at creation, and an update issued from a broader context would
 // otherwise widen it.
+// GetConversationByPeerContext finds the conversation opened for a
+// remote thread. The node is half the key: two peers can use the same
+// context id, and joining one peer's thread to another's would leak a
+// conversation across a trust boundary.
+func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if node == "" || peerContext == "" {
+		// An empty pairing would match every locally started
+		// conversation, which is the opposite of what the caller meant.
+		return nil, a2a.ErrConversationNotFound
+	}
+
+	var m a2aConversationModel
+	filter := bson.M{"peer_node": node, "peer_context": peerContext}
+	for k, v := range scopeFilter(scope, false) {
+		filter[k] = v
+	}
+	if err := s.mdb.NewFind(&m).Filter(filter).Scan(ctx); err != nil {
+		if isNoDocuments(err) {
+			return nil, a2a.ErrConversationNotFound
+		}
+		return nil, fmt.Errorf("cortex/mongo: get a2a conversation by peer context: %w", err)
+	}
+	return a2aConversationFromModel(&m)
+}
+
 func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {
@@ -159,6 +188,8 @@ func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) err
 	}
 	set := bson.M{
 		"protocol":     m.Protocol,
+		"peer_node":    m.PeerNode,
+		"peer_context": m.PeerContext,
 		"participants": m.Participants,
 		"status":       m.Status,
 		"hop_ceiling":  m.HopCeiling,

@@ -20,6 +20,8 @@ import (
 // the row's stored scope.
 var mutableA2AConversationColumns = []string{
 	"protocol",
+	"peer_node",
+	"peer_context",
 	"participants",
 	"status",
 	"hop_ceiling",
@@ -159,6 +161,37 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 			return nil, a2a.ErrConversationNotFound
 		}
 		return nil, fmt.Errorf("cortex: get a2a conversation: %w", err)
+	}
+	return a2aConversationFromModel(m)
+}
+
+// GetConversationByPeerContext finds the conversation opened for a
+// remote thread. The node is half the key: two peers can use the same
+// context id, and joining one peer's thread to another's would leak a
+// conversation across a trust boundary.
+func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	if node == "" || peerContext == "" {
+		// An empty pairing would match every locally started
+		// conversation, which is the opposite of what the caller meant.
+		return nil, a2a.ErrConversationNotFound
+	}
+
+	m := new(a2aConversationModel)
+	q := s.pgdb.NewSelect(m).
+		Where("peer_node = ?", node).
+		Where("peer_context = ?", peerContext)
+	for _, p := range scopePredicates(scope, false) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	if err := q.Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, a2a.ErrConversationNotFound
+		}
+		return nil, fmt.Errorf("cortex: get a2a conversation by peer context: %w", err)
 	}
 	return a2aConversationFromModel(m)
 }

@@ -99,12 +99,19 @@ func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMes
 		// The peer quoted a context id from its own world.
 		//
 		// A contextId names a conversation in whichever engine issued
-		// it, and a peer continuing a thread on its side has no idea
+		// it, so a peer continuing a thread on its side has no idea
 		// whether that id means anything here. Rather than refuse a
-		// perfectly good message, the exchange starts a conversation on
-		// this side and the peer's id is kept as metadata, so a reader
-		// can still line the two up later.
+		// perfectly good message, the send is retried against the
+		// conversation this engine keeps for that remote thread, opening
+		// one if this is the first message of it.
+		//
+		// The pairing is what makes the thread continue rather than
+		// fragment, and fragmenting would matter for more than tidiness:
+		// a new conversation is a new hop budget, so a peer that never
+		// reused an id could talk forever.
 		params.ConversationID = id.ConversationID{}
+		params.PeerNode = peer.Node
+		params.PeerContext = req.Message.ContextID
 		params.Metadata = withPeerContext(params.Metadata, req.Message.ContextID)
 		sent, err = s.gw.SendMessage(ctx, params)
 	}

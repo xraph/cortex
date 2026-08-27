@@ -138,6 +138,14 @@ type SendParams struct {
 	ReplyBy        *time.Time
 	OriginRunID    id.AgentRunID
 	Metadata       map[string]any
+
+	// PeerNode and PeerContext name a remote thread this message
+	// belongs to, for a message arriving from another engine. When they
+	// are set and no conversation id is, the send joins the conversation
+	// opened for that remote thread, or opens one and records the
+	// pairing.
+	PeerNode    string
+	PeerContext string
 }
 
 // DeliveryOutcome is one receiver's result from a send. A broadcast reports
@@ -234,14 +242,30 @@ func (b *Bus) resolveConversation(ctx context.Context, p SendParams, scope corte
 	if !p.ConversationID.IsNil() {
 		return b.store.GetConversation(ctx, p.ConversationID)
 	}
+
+	// A message from a peer continues that peer's thread when we already
+	// opened one for it. Starting fresh instead would hand the peer a
+	// new hop budget every turn.
+	if p.PeerNode != "" && p.PeerContext != "" {
+		existing, err := b.store.GetConversationByPeerContext(ctx, p.PeerNode, p.PeerContext)
+		switch {
+		case err == nil:
+			return existing, nil
+		case !errors.Is(err, ErrConversationNotFound):
+			return nil, err
+		}
+	}
+
 	conv := &Conversation{
-		Entity:     cortex.NewEntity(),
-		ID:         id.NewConversationID(),
-		Scope:      scope,
-		Protocol:   p.Protocol,
-		Initiator:  p.Sender,
-		Status:     StatusOpen,
-		HopCeiling: b.opts.HopCeiling,
+		Entity:      cortex.NewEntity(),
+		ID:          id.NewConversationID(),
+		Scope:       scope,
+		Protocol:    p.Protocol,
+		Initiator:   p.Sender,
+		Status:      StatusOpen,
+		HopCeiling:  b.opts.HopCeiling,
+		PeerNode:    p.PeerNode,
+		PeerContext: p.PeerContext,
 	}
 	if err := b.store.CreateConversation(ctx, conv); err != nil {
 		return nil, err

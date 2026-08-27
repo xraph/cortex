@@ -31,6 +31,18 @@ type Conversation struct {
 	HopCeiling   int               `json:"hop_ceiling"`
 	HopsUsed     int               `json:"hops_used"`
 	Deadline     *time.Time        `json:"deadline,omitempty"`
+
+	// PeerNode and PeerContext record the remote conversation this one
+	// stands in for.
+	//
+	// A contextId from a peer names a conversation in the peer's own
+	// database and means nothing here, so an inbound thread gets a
+	// conversation of ours and the pairing is written down. Without it
+	// every inbound message would open a new thread, and a new thread is
+	// a new hop budget: a peer could talk forever simply by never
+	// reusing an id.
+	PeerNode    string `json:"peer_node,omitempty"`
+	PeerContext string `json:"peer_context,omitempty"`
 }
 
 // IsOpen reports whether the conversation still accepts messages.

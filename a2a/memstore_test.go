@@ -134,6 +134,19 @@ func (s *memStore) GetConversation(_ context.Context, convID id.ConversationID) 
 	return &cp, nil
 }
 
+func (s *memStore) GetConversationByPeerContext(_ context.Context, node, peerContext string) (*Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range s.convIDs {
+		c := s.convs[key]
+		if c.PeerNode == node && c.PeerContext == peerContext && node != "" && peerContext != "" {
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, ErrConversationNotFound
+}
+
 func (s *memStore) UpdateConversation(_ context.Context, c *Conversation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

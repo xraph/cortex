@@ -99,6 +99,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("A2AExpiredAsks", func(t *testing.T) { testA2AExpiredAsks(t, newStore) })
 	t.Run("A2AScopeIsolation", func(t *testing.T) { testA2AScopeIsolation(t, newStore) })
 	t.Run("A2AReclaimStaleDeliveries", func(t *testing.T) { testA2AReclaimStaleDeliveries(t, newStore) })
+	t.Run("A2APeerContext", func(t *testing.T) { testA2APeerContext(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -4105,6 +4106,9 @@ func newA2AEnvelope(convID id.ConversationID, sender, receiver string) *a2a.Enve
 	}
 }
 
+// parameter is what stops the next one having to change the helper.
+//
+//nolint:unparam // every current case initiates as planner; the
 func newA2AConversation(initiator string) *a2a.Conversation {
 	return &a2a.Conversation{
 		Entity:     cortex.NewEntity(),
@@ -4493,5 +4497,46 @@ func testA2AReclaimStaleDeliveries(t *testing.T, newStore func(t *testing.T) sto
 	// It is claimable again, which is the whole point.
 	if _, err := s.ClaimDelivery(ctx, d.ID); err != nil {
 		t.Fatalf("a reclaimed delivery must be claimable: %v", err)
+	}
+}
+
+// testA2APeerContext proves an inbound thread can be found again. A
+// peer's context id names a conversation in the peer's database, so the
+// pairing is kept on this side; without it every inbound message would
+// open a new conversation, and a new conversation is a new hop budget.
+func testA2APeerContext(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	conv := newA2AConversation("planner")
+	conv.PeerNode = "peer.example"
+	conv.PeerContext = "their-context-1"
+	if err := s.CreateConversation(ctx, conv); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	got, err := s.GetConversationByPeerContext(ctx, "peer.example", "their-context-1")
+	if err != nil {
+		t.Fatalf("GetConversationByPeerContext: %v", err)
+	}
+	if got.ID != conv.ID {
+		t.Fatalf("found %s, want %s", got.ID, conv.ID)
+	}
+
+	// Two peers can use the same id, and joining one peer's thread to
+	// another's would leak a conversation across a trust boundary.
+	if _, err := s.GetConversationByPeerContext(ctx, "other-peer", "their-context-1"); !errors.Is(err, a2a.ErrConversationNotFound) {
+		t.Errorf("cross-peer lookup: err = %v, want not found", err)
+	}
+
+	// And it stays inside the scope it was written in.
+	if _, err := s.GetConversationByPeerContext(ctxWithScope("other"), "peer.example", "their-context-1"); !errors.Is(err, a2a.ErrConversationNotFound) {
+		t.Errorf("cross-scope lookup: err = %v, want not found", err)
+	}
+
+	// An empty pairing must match nothing, or it would find every
+	// conversation this engine started on its own.
+	if _, err := s.GetConversationByPeerContext(ctx, "", ""); !errors.Is(err, a2a.ErrConversationNotFound) {
+		t.Errorf("empty pairing: err = %v, want not found", err)
 	}
 }
