@@ -28,9 +28,10 @@ func TestAttachRefusesAMissingResolver(t *testing.T) {
 	}
 }
 
+// The adapter is what keeps the core module from ever importing this
+// one, so the compile-time proof that it fits is worth keeping.
 func TestEngineGatewaySatisfiesTheSeam(t *testing.T) {
-	var gw Gateway = EngineGateway(nil)
-	if gw == nil {
+	if EngineGateway(nil) == nil {
 		t.Fatal("the adapter must satisfy Gateway")
 	}
 	_ = context.Background()

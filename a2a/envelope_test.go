@@ -99,3 +99,37 @@ func TestAddressString(t *testing.T) {
 		t.Fatalf("String() = %q, want %q", got, "x@n")
 	}
 }
+
+// Agents write addresses as text, and "worker@peer.example" has to mean
+// the remote worker rather than a local agent whose name contains an @.
+func TestParseAddress(t *testing.T) {
+	cases := map[string]Address{
+		"worker":              {Agent: "worker"},
+		"worker@peer.example": {Agent: "worker", Node: "peer.example"},
+		"  worker  ":          {Agent: "worker"},
+		"worker@":             {Agent: "worker"},
+		"":                    {},
+	}
+	for in, want := range cases {
+		if got := ParseAddress(in); got != want {
+			t.Errorf("ParseAddress(%q) = %+v, want %+v", in, got, want)
+		}
+	}
+}
+
+// A node containing an @ would be ambiguous, so the split is on the
+// LAST one: an agent name cannot contain an @, but a node might.
+func TestParseAddressSplitsOnTheLastAt(t *testing.T) {
+	got := ParseAddress("worker@a@b.example")
+	if got.Agent != "worker@a" || got.Node != "b.example" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAddressStringRoundTrips(t *testing.T) {
+	for _, in := range []string{"worker", "worker@peer.example"} {
+		if got := ParseAddress(in).String(); got != in {
+			t.Errorf("round trip of %q gave %q", in, got)
+		}
+	}
+}

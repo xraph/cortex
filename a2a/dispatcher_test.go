@@ -3,6 +3,7 @@ package a2a
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestDrainDeliversEverythingQueued(t *testing.T) {
@@ -148,4 +149,51 @@ func TestWorkersDeliverWithoutADrainCall(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	<-done
+}
+
+// A store that is momentarily busy must not strand a delivery until the
+// next sweep. On sqlite a concurrent write is answered with SQLITE_BUSY,
+// which is ordinary rather than exceptional, and a worker that waited a
+// full interval on it would make every colliding message arrive half a
+// minute late.
+func TestATransientStoreErrorIsRetriedPromptly(t *testing.T) {
+	st, runner := newMemStore(), newFakeRunner()
+	delivered := make(chan struct{})
+	var once sync.Once
+	runner.respond = func(string, string) string {
+		once.Do(func() { close(delivered) })
+		return "answered"
+	}
+
+	b, err := NewBus(BusConfig{
+		Store: st, Runner: runner,
+		// A sweep interval far longer than the test's patience, so the
+		// only way this passes is the retry.
+		Options: Options{Workers: 1, SweepInterval: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("NewBus: %v", err)
+	}
+	ctx := testCtx()
+	if err := b.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer b.Stop()
+
+	// The first claim fails, which consumes the wake nudge that the send
+	// below produces.
+	st.failNextClaims(1)
+
+	if _, err := b.Send(ctx, SendParams{
+		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}},
+		Performative: Request, Content: "retry me",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case <-delivered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a delivery stranded by one busy claim was never retried")
+	}
 }

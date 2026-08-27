@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/xraph/cortex"
@@ -48,6 +49,25 @@ func (a Address) String() string {
 		return a.Agent
 	}
 	return a.Agent + "@" + a.Node
+}
+
+// ParseAddress reads the textual form agents use: "worker" for a local
+// agent, "worker@peer.example" for one at a remote node.
+//
+// It splits on the LAST @, because an agent name cannot contain one but
+// a node conceivably can. Without this, an agent naming a remote peer
+// would be looked up as a local agent whose name happens to contain an
+// @, which fails as "agent not found" and says nothing about why.
+func ParseAddress(s string) Address {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return Address{}
+	}
+	at := strings.LastIndex(s, "@")
+	if at < 0 {
+		return Address{Agent: s}
+	}
+	return Address{Agent: s[:at], Node: s[at+1:]}
 }
 
 // Envelope is one FIPA-ACL message. The first block is the ACL parameter

@@ -25,6 +25,14 @@ type Options struct {
 	// Exposed lists the agents whose cards are served. A card is public,
 	// so exposure is opt-in: an empty list serves no cards at all.
 	Exposed []string
+	// Scope is where the exposed agents are read from.
+	//
+	// It has to be said explicitly because a card is fetched without
+	// credentials: there is no caller to borrow a scope from, and every
+	// store read in cortex needs one. Only agents named in Exposed are
+	// ever read under it, so it grants no more reach than exposure
+	// already did.
+	Scope cortex.Scope
 	// DefaultAgent also gets its card served at the root well-known
 	// path, so plain discovery finds something.
 	DefaultAgent string
@@ -79,6 +87,19 @@ func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMes
 	}
 
 	sent, err := s.gw.SendMessage(ctx, params)
+	if errors.Is(err, a2a.ErrConversationNotFound) {
+		// The peer quoted a context id from its own world.
+		//
+		// A contextId names a conversation in whichever engine issued
+		// it, and a peer continuing a thread on its side has no idea
+		// whether that id means anything here. Rather than refuse a
+		// perfectly good message, the exchange starts a conversation on
+		// this side and the peer's id is kept as metadata, so a reader
+		// can still line the two up later.
+		params.ConversationID = id.ConversationID{}
+		params.Metadata = withPeerContext(params.Metadata, req.Message.ContextID)
+		sent, err = s.gw.SendMessage(ctx, params)
+	}
 	if err != nil {
 		return nil, mapBusError(err)
 	}
@@ -263,6 +284,21 @@ func deliveryRunState(d *a2a.Delivery) run.State {
 		// Delivering, or delivered to an inbox with no run behind it.
 		return run.StateRunning
 	}
+}
+
+// peerContextKey is where a peer's own conversation id is recorded when
+// it does not name a conversation of ours.
+const peerContextKey = "a2a.peer_context_id"
+
+func withPeerContext(meta map[string]any, contextID string) map[string]any {
+	if contextID == "" {
+		return meta
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta[peerContextKey] = contextID
+	return meta
 }
 
 // deliveryIDOf picks the handle a send produced. A directive addressed

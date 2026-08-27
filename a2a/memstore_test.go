@@ -44,6 +44,16 @@ type memStore struct {
 	deliveryIDs []string
 	asks        map[string]*PendingAsk
 	askKeys     []string
+
+	// claimErrs are returned by the next N ClaimDelivery calls, standing
+	// in for a store that is momentarily busy.
+	claimErrs int
+}
+
+func (s *memStore) failNextClaims(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claimErrs = n
 }
 
 func newMemStore() *memStore {
@@ -170,6 +180,10 @@ func (s *memStore) UpdateDelivery(_ context.Context, d *Delivery) error {
 func (s *memStore) ClaimDelivery(_ context.Context, deliveryID id.DeliveryID) (*Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.claimErrs > 0 {
+		s.claimErrs--
+		return nil, errors.New("database is locked")
+	}
 	d, ok := s.deliveries[deliveryID.String()]
 	if !ok {
 		return nil, ErrDeliveryNotFound

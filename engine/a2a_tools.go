@@ -218,7 +218,7 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 	params := a2a.AskParams{
 		SendParams: a2a.SendParams{
 			Sender:       sender,
-			Receivers:    []a2a.Address{{Agent: args.To}},
+			Receivers:    []a2a.Address{a2a.ParseAddress(args.To)},
 			Performative: performativeOr(args.Performative, a2a.Request),
 			Content:      args.Content,
 			Ontology:     args.Ontology,
@@ -286,10 +286,13 @@ func (e *Engine) a2aSelf(ctx context.Context, inv cortex.Invocation) (a2a.Addres
 	return a2a.Address{Agent: ag.Name}, nil
 }
 
+// addressesOf parses what the model wrote. Agents address peers as text,
+// and "worker@peer.example" has to reach the remote worker rather than a
+// local agent whose name contains an @.
 func addressesOf(names []string) []a2a.Address {
 	out := make([]a2a.Address, 0, len(names))
 	for _, n := range names {
-		out = append(out, a2a.Address{Agent: n})
+		out = append(out, a2a.ParseAddress(n))
 	}
 	return out
 }

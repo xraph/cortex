@@ -92,15 +92,43 @@ func (b *Bus) Stop() {
 	<-done
 }
 
+// retryDelay is how long a worker waits after a failed drain before
+// trying again. It doubles up to the sweep interval.
+//
+// It exists because a failed drain has already consumed the wake nudge
+// that queued the work. Without a short retry, a delivery whose claim
+// lost a race with another writer would sit until the next sweep, which
+// on the default interval is thirty seconds of delay for something that
+// was busy for a millisecond. On sqlite, where a concurrent write is
+// answered with SQLITE_BUSY, that race is ordinary rather than
+// exceptional.
+const retryDelay = 25 * time.Millisecond
+
 func (d *dispatcher) work(ctx context.Context) {
 	ticker := time.NewTicker(d.bus.opts.SweepInterval)
 	defer ticker.Stop()
+
+	backoff := retryDelay
 	for {
 		// A drain error is per batch and the loop keeps going: one bad row
 		// must not stop delivery for everyone else. A cancelled context is
 		// the exception, because that is the worker being shut down.
-		if _, err := d.bus.Drain(ctx); errors.Is(err, context.Canceled) {
+		_, err := d.bus.Drain(ctx)
+		if errors.Is(err, context.Canceled) {
 			return
+		}
+
+		// retry stays nil on success, so a healthy worker waits for real
+		// work rather than spinning.
+		var retry <-chan time.Time
+		if err != nil {
+			retry = time.After(backoff)
+			backoff *= 2
+			if backoff > d.bus.opts.SweepInterval {
+				backoff = d.bus.opts.SweepInterval
+			}
+		} else {
+			backoff = retryDelay
 		}
 
 		select {
@@ -108,6 +136,7 @@ func (d *dispatcher) work(ctx context.Context) {
 			return
 		case <-d.wake:
 		case <-ticker.C:
+		case <-retry:
 		}
 	}
 }

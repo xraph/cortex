@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/skill"
 )
@@ -225,17 +226,22 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 		http.NotFound(w, r)
 		return
 	}
-	// A card is read without credentials, so it is built under no scope.
-	// That is why the agent lookup below cannot be scoped, and why
-	// exposure is the only gate on it.
-	a, err := s.gw.GetAgentByName(r.Context(), name)
+	// A card is read without credentials, so there is no caller scope to
+	// borrow. The host names the scope its exposed agents live in, and
+	// only agents it exposed are ever read under it.
+	ctx := r.Context()
+	if !s.opts.Scope.IsZero() {
+		ctx = cortex.WithScope(ctx, s.opts.Scope)
+	}
+
+	a, err := s.gw.GetAgentByName(ctx, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
 	opts := s.opts.Card
-	card := BuildCard(a, s.skillsOf(r.Context(), a), opts)
+	card := BuildCard(a, s.skillsOf(ctx, a), opts)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(card); err != nil {
