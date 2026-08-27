@@ -156,6 +156,21 @@ func (s *memStore) UpdateDelivery(_ context.Context, d *Delivery) error {
 	return nil
 }
 
+func (s *memStore) ClaimDelivery(_ context.Context, deliveryID id.DeliveryID) (*Delivery, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.deliveries[deliveryID.String()]
+	if !ok {
+		return nil, ErrDeliveryNotFound
+	}
+	if d.State != DeliveryQueued {
+		return nil, ErrDeliveryAlreadyClaimed
+	}
+	d.State = DeliveryDelivering
+	cp := *d
+	return &cp, nil
+}
+
 func (s *memStore) ListInbox(_ context.Context, agentName string, f InboxFilter) ([]*Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -47,6 +47,11 @@ type Store interface {
 
 	CreateDelivery(ctx context.Context, d *Delivery) error
 	UpdateDelivery(ctx context.Context, d *Delivery) error
+	// ClaimDelivery takes ownership of a queued delivery and marks it
+	// delivering. It returns ErrDeliveryAlreadyClaimed when the row is in
+	// any other state, which is what stops two workers running one
+	// directive twice.
+	ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*Delivery, error)
 	ListInbox(ctx context.Context, agentName string, filter InboxFilter) ([]*Delivery, error)
 	ListQueuedDeliveries(ctx context.Context, limit int) ([]*Delivery, error)
 	MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error
