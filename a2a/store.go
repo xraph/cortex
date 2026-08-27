@@ -70,6 +70,14 @@ type Store interface {
 	ListInbox(ctx context.Context, agentName string, filter InboxFilter) ([]*Delivery, error)
 	ListQueuedDeliveries(ctx context.Context, limit int) ([]*Delivery, error)
 	MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error
+	// ReclaimStaleDeliveries puts abandoned deliveries back in the queue
+	// and reports how many it moved.
+	//
+	// A delivery is abandoned when it was claimed before olderThan and
+	// never finished, which is what a process dying mid-delivery leaves
+	// behind. Like the queued read, it deliberately crosses scopes: the
+	// dispatcher runs per process rather than per tenant.
+	ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error)
 
 	CreatePendingAsk(ctx context.Context, a *PendingAsk) error
 	// ClaimPendingAsk takes ownership of the ask carrying replyWith. It

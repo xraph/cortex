@@ -266,6 +266,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	set := bson.M{
 		"state":        m.State,
 		"error":        m.Error,
+		"claimed_at":   m.ClaimedAt,
 		"delivered_at": m.DeliveredAt,
 		"read_at":      m.ReadAt,
 		"run_id":       m.RunID,
@@ -391,6 +392,49 @@ func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Del
 		return nil, fmt.Errorf("cortex/mongo: list queued a2a deliveries: %w", err)
 	}
 	return a2aDeliveriesFromModels(models)
+}
+
+// ReclaimStaleDeliveries puts abandoned deliveries back in the queue.
+//
+// Like the queued read it crosses scopes deliberately: the dispatcher
+// runs per process rather than per tenant, and a document stranded by a
+// dead worker belongs to whoever is alive now. The claimed_at filter is
+// what keeps a delivery somebody is still carrying out of it, which is
+// the difference between recovering a message and delivering it twice.
+func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) {
+	filter := bson.M{
+		"state":      a2a.DeliveryDelivering,
+		"claimed_at": bson.M{"$ne": nil, "$lt": olderThan.UTC()},
+	}
+
+	// UpdateMany has no limit, so the batch is bounded by reading the ids
+	// first. The state filter stays on the update, so a worker that comes
+	// back to life still wins its own document.
+	var models []a2aDeliveryModel
+	q := s.mdb.NewFind(&models).Filter(filter).Sort(bson.D{{Key: "claimed_at", Value: 1}})
+	if limit > 0 {
+		q = q.Limit(int64(limit))
+	}
+	if err := q.Scan(ctx); err != nil {
+		return 0, fmt.Errorf("cortex/mongo: list stale a2a deliveries: %w", err)
+	}
+
+	var n int
+	for i := range models {
+		res, err := s.mdb.NewUpdate((*a2aDeliveryModel)(nil)).
+			Filter(bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering}).
+			SetUpdate(bson.M{"$set": bson.M{
+				"state":      a2a.DeliveryQueued,
+				"claimed_at": nil,
+				"updated_at": now(),
+			}}).
+			Exec(ctx)
+		if err != nil {
+			return n, fmt.Errorf("cortex/mongo: reclaim a2a delivery: %w", err)
+		}
+		n += int(res.ModifiedCount())
+	}
+	return n, nil
 }
 
 func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error {

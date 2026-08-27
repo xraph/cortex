@@ -34,12 +34,16 @@ var ErrDeliveryNotFound = errors.New("cortex: a2a: delivery not found")
 // B" an answerable question.
 type Delivery struct {
 	cortex.Entity
-	ID          id.DeliveryID `json:"id"`
-	Scope       cortex.Scope  `json:"scope"`
-	MessageID   id.MessageID  `json:"message_id"`
-	Receiver    Address       `json:"receiver"`
-	State       string        `json:"state"`
-	Error       string        `json:"error,omitempty"`
+	ID        id.DeliveryID `json:"id"`
+	Scope     cortex.Scope  `json:"scope"`
+	MessageID id.MessageID  `json:"message_id"`
+	Receiver  Address       `json:"receiver"`
+	State     string        `json:"state"`
+	Error     string        `json:"error,omitempty"`
+	// ClaimedAt is when a worker took the row. It is what tells a
+	// reclaim the difference between a delivery in flight and one a dead
+	// process was carrying.
+	ClaimedAt   *time.Time    `json:"claimed_at,omitempty"`
 	DeliveredAt *time.Time    `json:"delivered_at,omitempty"`
 	ReadAt      *time.Time    `json:"read_at,omitempty"`
 	RunID       id.AgentRunID `json:"run_id,omitempty"` // the run a directive started

@@ -198,6 +198,23 @@ the output with `final` set.
   backoff. On sqlite, where a concurrent write is answered with
   SQLITE_BUSY, that race is ordinary rather than exceptional.
 
+### Fixed: abandoned deliveries are reclaimed
+
+A delivery claimed by a process that then died used to stay marked
+`delivering` forever. Nothing wedged, because an ask resolves on its
+deadline either way, but an `inform` caught in that window was lost.
+
+The dispatcher now puts those rows back in the queue, at startup and on
+its sweep. `DeliveryClaimTTL` is how long a claim may sit before it is
+assumed abandoned, and it defaults to fifteen minutes: a remote delivery
+legitimately holds its claim while the peer is polled, and reclaiming
+one somebody is still carrying would deliver the message twice.
+
+Reclaiming queues a row rather than delivering it, so a recovered
+message takes the ordinary path with the ordinary claim, and a worker
+that turns out to be alive after all loses the race instead of
+duplicating the work.
+
 ### Known gaps
 
 - **Sqlite needs a busy timeout** once messaging is on. The dispatcher
@@ -207,11 +224,6 @@ the output with `final` set.
 - Conversations are not stitched across engines. A peer quoting a
   `contextId` from its own database gets a fresh conversation on this
   side, with its id kept as metadata.
-- A delivery claimed by a process that then dies stays marked
-  `delivering` and is not redriven. Nothing wedges, because an ask
-  resolves on its deadline either way, but an informative message caught
-  in that window is lost. The delivery row already carries `claimed_at`
-  for the reclaim to key on.
 - Mongo was written against the conformance suite but never executed:
   the environment this landed in could not start a mongo container, and
   could not before this branch either. Sqlite and postgres both run the

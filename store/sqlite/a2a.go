@@ -32,6 +32,7 @@ var mutableA2AConversationColumns = []string{
 var mutableA2ADeliveryColumns = []string{
 	"state",
 	"error",
+	"claimed_at",
 	"delivered_at",
 	"read_at",
 	"run_id",
@@ -393,6 +394,54 @@ func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Del
 		out[i] = d
 	}
 	return out, nil
+}
+
+// ReclaimStaleDeliveries puts abandoned deliveries back in the queue.
+//
+// Like ListQueuedDeliveries it crosses scopes deliberately: the
+// dispatcher runs per process rather than per tenant, and a row stranded
+// by a dead worker belongs to whoever is alive now. The claimed_at
+// predicate is what keeps a delivery somebody is still carrying out of
+// it, which is the difference between recovering a message and
+// delivering it twice.
+func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) {
+	// Sqlite has no UPDATE ... LIMIT in the default build, so the rows
+	// are selected first and updated by id. The claim predicate is on the
+	// update either way, so a worker that comes back to life still wins
+	// its own row.
+	var models []a2aDeliveryModel
+	q := s.sdb.NewSelect(&models).
+		Where("state = ?", a2a.DeliveryDelivering).
+		Where("claimed_at IS NOT NULL").
+		Where("claimed_at < ?", olderThan.UTC()).
+		OrderExpr("claimed_at ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return 0, fmt.Errorf("cortex/sqlite: list stale a2a deliveries: %w", err)
+	}
+
+	var n int
+	now := time.Now().UTC()
+	for i := range models {
+		res, err := s.sdb.NewUpdate((*a2aDeliveryModel)(nil)).
+			Set("state = ?", a2a.DeliveryQueued).
+			Set("claimed_at = ?", nil).
+			Set("updated_at = ?", now).
+			Where("id = ?", models[i].ID).
+			Where("state = ?", a2a.DeliveryDelivering).
+			Exec(ctx)
+		if err != nil {
+			return n, fmt.Errorf("cortex/sqlite: reclaim a2a delivery: %w", err)
+		}
+		affected, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			return n, fmt.Errorf("cortex/sqlite: reclaim a2a delivery rows affected: %w", rowsErr)
+		}
+		n += int(affected)
+	}
+	return n, nil
 }
 
 func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error {

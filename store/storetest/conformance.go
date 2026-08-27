@@ -98,6 +98,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("A2AClaimDeliveryConcurrency", func(t *testing.T) { testA2AClaimDeliveryConcurrency(t, newStore) })
 	t.Run("A2AExpiredAsks", func(t *testing.T) { testA2AExpiredAsks(t, newStore) })
 	t.Run("A2AScopeIsolation", func(t *testing.T) { testA2AScopeIsolation(t, newStore) })
+	t.Run("A2AReclaimStaleDeliveries", func(t *testing.T) { testA2AReclaimStaleDeliveries(t, newStore) })
 }
 
 // ──────────────────────────────────────────────────
@@ -4427,5 +4428,70 @@ func testA2AScopeIsolation(t *testing.T, newStore func(t *testing.T) store.Store
 	}
 	if len(msgs) != 0 {
 		t.Errorf("another scope lists %d messages, want 0", len(msgs))
+	}
+}
+
+// testA2AReclaimStaleDeliveries proves a process dying mid-delivery does
+// not lose the message. The claim age is the only thing separating a
+// delivery in flight from one nobody is coming back for, so both sides of
+// that line are asserted.
+func testA2AReclaimStaleDeliveries(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	ctx := ctxWithScope("acme")
+
+	d := &a2a.Delivery{
+		Entity: cortex.NewEntity(), ID: id.NewDeliveryID(), MessageID: id.NewMessageID(),
+		Receiver: a2a.Address{Agent: "worker"}, State: a2a.DeliveryQueued,
+	}
+	if err := s.CreateDelivery(ctx, d); err != nil {
+		t.Fatalf("CreateDelivery: %v", err)
+	}
+	if _, err := s.ClaimDelivery(ctx, d.ID); err != nil {
+		t.Fatalf("ClaimDelivery: %v", err)
+	}
+
+	// A delivery claimed a moment ago is in flight, and taking it away
+	// from the worker carrying it would deliver the message twice.
+	n, err := s.ReclaimStaleDeliveries(ctx, time.Now().UTC().Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ReclaimStaleDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("reclaimed %d rows that were still in flight", n)
+	}
+
+	// Past the cutoff, nobody is coming back for it.
+	//
+	// The count is a floor rather than an equality: a reclaim is
+	// deliberately process-wide, so it sweeps up whatever else a
+	// neighbouring test abandoned in the same database. What this test
+	// owns is its own row, which is asserted directly below.
+	n, err = s.ReclaimStaleDeliveries(ctx, time.Now().UTC().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ReclaimStaleDeliveries: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("reclaimed %d, want at least the abandoned row", n)
+	}
+
+	// Reclaiming queues it rather than delivering it, so it takes the
+	// ordinary path with the ordinary claim.
+	queued, err := s.ListQueuedDeliveries(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListQueuedDeliveries: %v", err)
+	}
+	var found bool
+	for _, q := range queued {
+		if q.ID == d.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the reclaimed delivery is not back in the queue: %+v", queued)
+	}
+
+	// It is claimable again, which is the whole point.
+	if _, err := s.ClaimDelivery(ctx, d.ID); err != nil {
+		t.Fatalf("a reclaimed delivery must be claimable: %v", err)
 	}
 }

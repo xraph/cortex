@@ -19,10 +19,13 @@ func TestOptionsDefaults(t *testing.T) {
 	if got.SweepInterval != DefaultSweepInterval {
 		t.Errorf("SweepInterval = %s, want %s", got.SweepInterval, DefaultSweepInterval)
 	}
+	if got.DeliveryClaimTTL != DefaultDeliveryClaimTTL {
+		t.Errorf("DeliveryClaimTTL = %s, want %s", got.DeliveryClaimTTL, DefaultDeliveryClaimTTL)
+	}
 }
 
 func TestOptionsKeepExplicitValues(t *testing.T) {
-	in := Options{HopCeiling: 2, Workers: 1, DefaultReplyBy: time.Second, SweepInterval: time.Minute}
+	in := Options{HopCeiling: 2, Workers: 1, DefaultReplyBy: time.Second, SweepInterval: time.Minute, DeliveryClaimTTL: time.Hour}
 	if got := in.withDefaults(); got != in {
 		t.Fatalf("withDefaults changed explicit values: %+v", got)
 	}

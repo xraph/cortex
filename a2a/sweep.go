@@ -8,6 +8,18 @@ import (
 // sweepBatch caps one pass so a large backlog cannot hold a worker forever.
 const sweepBatch = 100
 
+// ReclaimStaleDeliveries puts back any delivery a dead process was
+// carrying, and reports how many it moved.
+//
+// It puts them back in the queue rather than delivering them here, so a
+// reclaimed message takes the ordinary path with the ordinary claim, and
+// a worker that turns out to still be alive loses the race rather than
+// duplicating the delivery.
+func (b *Bus) ReclaimStaleDeliveries(ctx context.Context) (int, error) {
+	cutoff := b.clock.Now().Add(-b.opts.DeliveryClaimTTL)
+	return b.store.ReclaimStaleDeliveries(ctx, cutoff, sweepBatch)
+}
+
 // SweepExpiredAsks resolves every ask whose deadline has passed into a
 // timeout failure and resumes the run waiting on it, returning how many it
 // resolved.

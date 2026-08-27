@@ -1416,6 +1416,7 @@ func a2aDeliveryToModel(d *a2a.Delivery) *a2aDeliveryModel {
 		ReceiverNode:  d.Receiver.Node,
 		State:         d.State,
 		Error:         d.Error,
+		ClaimedAt:     d.ClaimedAt,
 		DeliveredAt:   d.DeliveredAt,
 		ReadAt:        d.ReadAt,
 		RunID:         d.RunID.String(),
@@ -1450,6 +1451,7 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 		Receiver:    a2a.Address{Agent: m.ReceiverAgent, Node: m.ReceiverNode},
 		State:       m.State,
 		Error:       m.Error,
+		ClaimedAt:   m.ClaimedAt,
 		DeliveredAt: m.DeliveredAt,
 		ReadAt:      m.ReadAt,
 	}

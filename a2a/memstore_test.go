@@ -48,6 +48,20 @@ type memStore struct {
 	// claimErrs are returned by the next N ClaimDelivery calls, standing
 	// in for a store that is momentarily busy.
 	claimErrs int
+
+	// now is the store's own clock. A real backend stamps a claim from
+	// the database's time, so the double needs its own source too, and a
+	// reclaim test has to be able to move it.
+	now func() time.Time
+}
+
+func (s *memStore) useClock(c *fakeClock) { s.now = c.Now }
+
+func (s *memStore) stamp() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now().UTC()
 }
 
 func (s *memStore) failNextClaims(n int) {
@@ -192,6 +206,8 @@ func (s *memStore) ClaimDelivery(_ context.Context, deliveryID id.DeliveryID) (*
 		return nil, ErrDeliveryAlreadyClaimed
 	}
 	d.State = DeliveryDelivering
+	now := s.stamp()
+	d.ClaimedAt = &now
 	cp := *d
 	return &cp, nil
 }
@@ -239,6 +255,25 @@ func (s *memStore) ListQueuedDeliveries(_ context.Context, limit int) ([]*Delive
 		}
 	}
 	return out, nil
+}
+
+func (s *memStore) ReclaimStaleDeliveries(_ context.Context, olderThan time.Time, limit int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	for _, key := range s.deliveryIDs {
+		d := s.deliveries[key]
+		if d.State != DeliveryDelivering || d.ClaimedAt == nil || !d.ClaimedAt.Before(olderThan) {
+			continue
+		}
+		d.State = DeliveryQueued
+		d.ClaimedAt = nil
+		n++
+		if limit > 0 && n >= limit {
+			break
+		}
+	}
+	return n, nil
 }
 
 func (s *memStore) MarkDeliveryRead(_ context.Context, deliveryID id.DeliveryID) error {

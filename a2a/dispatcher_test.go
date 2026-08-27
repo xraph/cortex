@@ -197,3 +197,107 @@ func TestATransientStoreErrorIsRetriedPromptly(t *testing.T) {
 		t.Fatal("a delivery stranded by one busy claim was never retried")
 	}
 }
+
+// A process that dies mid-delivery leaves its claim behind. Nothing
+// wedges, because an ask resolves on its deadline either way, but an
+// informative caught in that window is simply lost unless somebody
+// reclaims the row.
+func TestStaleClaimsAreReclaimed(t *testing.T) {
+	st, runner := newMemStore(), newFakeRunner()
+	clk := &fakeClock{now: testNow}
+	st.useClock(clk)
+	b, err := NewBus(BusConfig{
+		Store: st, Runner: runner, Clock: clk, Synchronous: true,
+		Options: Options{Workers: 1, DeliveryClaimTTL: 10 * time.Minute},
+	})
+	if err != nil {
+		t.Fatalf("NewBus: %v", err)
+	}
+	ctx := testCtx()
+
+	if _, sendErr := b.Send(ctx, SendParams{
+		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}},
+		Performative: Inform, Content: "do not lose me",
+	}); sendErr != nil {
+		t.Fatalf("Send: %v", sendErr)
+	}
+
+	// A worker claims the row and the process dies before delivering it.
+	queued, _ := st.ListQueuedDeliveries(ctx, 10)
+	if _, claimErr := st.ClaimDelivery(ctx, queued[0].ID); claimErr != nil {
+		t.Fatalf("ClaimDelivery: %v", claimErr)
+	}
+	if left, _ := st.ListQueuedDeliveries(ctx, 10); len(left) != 0 {
+		t.Fatal("the claim should have taken the row out of the queue")
+	}
+
+	// Too soon: a delivery legitimately in flight must not be taken away
+	// from the worker carrying it.
+	clk.advance(time.Minute)
+	n, err := b.ReclaimStaleDeliveries(ctx)
+	if err != nil {
+		t.Fatalf("ReclaimStaleDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("reclaimed %d rows that were still in flight", n)
+	}
+
+	// Past the TTL, nobody is coming back for it.
+	clk.advance(11 * time.Minute)
+	n, err = b.ReclaimStaleDeliveries(ctx)
+	if err != nil {
+		t.Fatalf("ReclaimStaleDeliveries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reclaimed %d, want the abandoned row", n)
+	}
+
+	// Reclaiming puts it back in the queue rather than delivering it
+	// directly, so it takes the ordinary path with its ordinary claim.
+	again, _ := st.ListQueuedDeliveries(ctx, 10)
+	if len(again) != 1 {
+		t.Fatalf("%d rows queued after a reclaim, want 1", len(again))
+	}
+	if _, drainErr := b.Drain(ctx); drainErr != nil {
+		t.Fatalf("Drain: %v", drainErr)
+	}
+	inbox, _ := st.ListInbox(ctx, "w1", InboxFilter{UnreadOnly: true})
+	if len(inbox) != 1 {
+		t.Fatalf("the reclaimed message never arrived: %+v", inbox)
+	}
+}
+
+// A delivered row is finished, and reclaiming it would deliver the same
+// message twice.
+func TestReclaimLeavesFinishedRowsAlone(t *testing.T) {
+	st, runner := newMemStore(), newFakeRunner()
+	clk := &fakeClock{now: testNow}
+	st.useClock(clk)
+	b, err := NewBus(BusConfig{
+		Store: st, Runner: runner, Clock: clk, Synchronous: true,
+		Options: Options{Workers: 1, DeliveryClaimTTL: time.Minute},
+	})
+	if err != nil {
+		t.Fatalf("NewBus: %v", err)
+	}
+	ctx := testCtx()
+
+	if _, sendErr := b.Send(ctx, SendParams{
+		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}},
+		Performative: Inform, Content: "already arrived",
+	}); sendErr != nil {
+		t.Fatalf("Send: %v", sendErr)
+	}
+	if _, drainErr := b.Drain(ctx); drainErr != nil {
+		t.Fatalf("Drain: %v", drainErr)
+	}
+
+	clk.advance(time.Hour)
+	n, err := b.ReclaimStaleDeliveries(ctx)
+	if err != nil {
+		t.Fatalf("ReclaimStaleDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("reclaimed %d finished rows, which would deliver them twice", n)
+	}
+}

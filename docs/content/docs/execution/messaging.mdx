@@ -154,6 +154,19 @@ suspension sweep fails a run nobody answered in time, which is the wrong verb
 here. A peer that went quiet is something the asking agent can react to, and
 killing the run throws that away.
 
+## When a process dies
+
+Whatever was in flight is picked up by the next one. A run waiting on a
+peer is a row rather than a goroutine, so it resumes where it stopped. A
+message that was queued but never carried is redriven at startup. And a
+message a dead worker had claimed is put back in the queue once its claim
+goes stale, which `DeliveryClaimTTL` sets and which defaults to fifteen
+minutes.
+
+That default is generous on purpose. A remote delivery holds its claim
+while the peer is polled, and reclaiming one somebody is still carrying
+would deliver the same message twice.
+
 ## When things go wrong
 
 A peer's problem reaches the asker as something it can read, never as a crash.
