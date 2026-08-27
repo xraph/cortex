@@ -389,3 +389,47 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 	}
 	return true, nil
 }
+
+// InboxItem is one delivered message as an agent sees it.
+type InboxItem struct {
+	DeliveryID     string `json:"delivery_id"`
+	MessageID      string `json:"message_id"`
+	ConversationID string `json:"conversation_id"`
+	Sender         string `json:"sender"`
+	Performative   string `json:"performative"`
+	Content        string `json:"content"`
+	ReceivedAt     string `json:"received_at,omitempty"`
+}
+
+// Inbox returns delivered messages for an agent and marks what it returns
+// as read. Reading is the acknowledgement: an agent that already saw a
+// message in a tool result must not be handed it again next turn.
+func (b *Bus) Inbox(ctx context.Context, agentName string, f InboxFilter) ([]InboxItem, error) {
+	rows, err := b.store.ListInbox(ctx, agentName, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]InboxItem, 0, len(rows))
+	for _, d := range rows {
+		e, err := b.store.GetMessage(ctx, d.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		item := InboxItem{
+			DeliveryID:     d.ID.String(),
+			MessageID:      e.ID.String(),
+			ConversationID: e.ConversationID.String(),
+			Sender:         e.Sender.String(),
+			Performative:   string(e.Performative),
+			Content:        e.Content,
+		}
+		if d.DeliveredAt != nil {
+			item.ReceivedAt = d.DeliveredAt.Format(time.RFC3339)
+		}
+		items = append(items, item)
+		if err := b.store.MarkDeliveryRead(ctx, d.ID); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
