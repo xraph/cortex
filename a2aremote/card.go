@@ -96,9 +96,18 @@ type CardOptions struct {
 	Version          string
 	Provider         AgentProvider
 	DocumentationURL string
-	// Bindings limits which bindings the card advertises. Empty means
-	// JSON-RPC only, which is what this module serves today.
+	// Bindings names which bindings the card advertises. Empty means
+	// JSON-RPC only, which is what this module serves on its own.
+	//
+	// Advertise a binding only when you actually serve it. A card is a
+	// promise, and a client that picks GRPC because the card offered it
+	// has no way to recover when nothing answers.
 	Bindings []string
+	// URLs gives a binding its own address, for the ones that do not
+	// share the HTTP endpoint. gRPC in particular is a host:port rather
+	// than a URL path, so BaseURL cannot describe it. A binding with no
+	// entry here uses BaseURL.
+	URLs map[string]string
 }
 
 // BuildCard renders one cortex agent as an A2A agent card.
@@ -114,10 +123,17 @@ func BuildCard(a *agent.Config, skills []*skill.Skill, opts CardOptions) AgentCa
 
 	interfaces := make([]AgentInterface, 0, len(bindings))
 	for _, b := range bindings {
+		url := opts.BaseURL
+		if explicit, ok := opts.URLs[b]; ok {
+			url = explicit
+		}
 		interfaces = append(interfaces, AgentInterface{
-			URL:             opts.BaseURL,
+			URL:             url,
 			ProtocolBinding: b,
-			Tenant:          a.Name,
+			// The tenant is the agent's name, which is how one endpoint
+			// serves many agents. It is the protocol's own mechanism
+			// rather than a cortex convention.
+			Tenant: a.Name,
 		})
 	}
 

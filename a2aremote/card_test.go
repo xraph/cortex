@@ -163,3 +163,41 @@ func TestFetchCardRejectsANonCard(t *testing.T) {
 		t.Fatal("a document with no name and no interfaces is not a card")
 	}
 }
+
+// A host that serves all three bindings says so, and gRPC gets its own
+// address because a host:port is not a URL path.
+func TestCardAdvertisesEveryBindingItServes(t *testing.T) {
+	card := BuildCard(&agent.Config{Name: "worker"}, nil, CardOptions{
+		BaseURL:  "https://cortex.example/a2a",
+		Bindings: []string{BindingJSONRPC, BindingREST, BindingGRPC},
+		URLs:     map[string]string{BindingGRPC: "grpc.cortex.example:443"},
+	})
+
+	if len(card.SupportedInterfaces) != 3 {
+		t.Fatalf("card offers %d interfaces, want 3", len(card.SupportedInterfaces))
+	}
+	byBinding := map[string]AgentInterface{}
+	for _, i := range card.SupportedInterfaces {
+		byBinding[i.ProtocolBinding] = i
+	}
+	if byBinding[BindingGRPC].URL != "grpc.cortex.example:443" {
+		t.Errorf("gRPC url = %q, want its own address", byBinding[BindingGRPC].URL)
+	}
+	if byBinding[BindingREST].URL != "https://cortex.example/a2a" {
+		t.Errorf("REST url = %q, want the shared base", byBinding[BindingREST].URL)
+	}
+	for binding, iface := range byBinding {
+		if iface.Tenant != "worker" {
+			t.Errorf("%s: tenant = %q, want the agent name", binding, iface.Tenant)
+		}
+	}
+}
+
+// A card that offers a binding nobody serves is a promise the server
+// cannot keep, so the default stays at the one this module serves alone.
+func TestCardDefaultsToJSONRPCOnly(t *testing.T) {
+	card := BuildCard(&agent.Config{Name: "worker"}, nil, CardOptions{BaseURL: "https://x/a2a"})
+	if len(card.SupportedInterfaces) != 1 || card.SupportedInterfaces[0].ProtocolBinding != BindingJSONRPC {
+		t.Fatalf("interfaces = %+v", card.SupportedInterfaces)
+	}
+}
