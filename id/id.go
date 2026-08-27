@@ -40,6 +40,9 @@ const (
 	PrefixSession             Prefix = "ses"
 	PrefixSuspension          Prefix = "sus"
 	PrefixOverlay             Prefix = "ovl"
+	PrefixMessage             Prefix = "msg"
+	PrefixConversation        Prefix = "conv"
+	PrefixDelivery            Prefix = "dlv"
 )
 
 // ID is the primary identifier type for all Cortex entities.
@@ -168,6 +171,15 @@ type SuspensionID = ID
 // OverlayID is a type-safe identifier for prompt overlays (prefix: "ovl").
 type OverlayID = ID
 
+// MessageID is a type-safe identifier for a2a envelopes (prefix: "msg").
+type MessageID = ID
+
+// ConversationID is a type-safe identifier for a2a conversations (prefix: "conv").
+type ConversationID = ID
+
+// DeliveryID is a type-safe identifier for a2a deliveries (prefix: "dlv").
+type DeliveryID = ID
+
 // AnyID is a type alias that accepts any valid prefix.
 type AnyID = ID
 
@@ -195,6 +207,15 @@ func NewMemoryID() ID { return New(PrefixMemory) }
 
 // NewCheckpointID generates a new unique checkpoint ID.
 func NewCheckpointID() ID { return New(PrefixCheckpoint) }
+
+// NewMessageID generates a new unique a2a message ID.
+func NewMessageID() ID { return New(PrefixMessage) }
+
+// NewConversationID generates a new unique a2a conversation ID.
+func NewConversationID() ID { return New(PrefixConversation) }
+
+// NewDeliveryID generates a new unique a2a delivery ID.
+func NewDeliveryID() ID { return New(PrefixDelivery) }
 
 // NewOrchestrationID generates a new unique orchestration ID.
 func NewOrchestrationID() ID { return New(PrefixOrchestration) }
