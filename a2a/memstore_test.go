@@ -145,6 +145,17 @@ func (s *memStore) CreateDelivery(_ context.Context, d *Delivery) error {
 	return nil
 }
 
+func (s *memStore) GetDelivery(_ context.Context, deliveryID id.DeliveryID) (*Delivery, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.deliveries[deliveryID.String()]
+	if !ok {
+		return nil, ErrDeliveryNotFound
+	}
+	cp := *d
+	return &cp, nil
+}
+
 func (s *memStore) UpdateDelivery(_ context.Context, d *Delivery) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

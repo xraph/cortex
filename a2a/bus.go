@@ -147,6 +147,13 @@ type DeliveryOutcome struct {
 	Receiver Address `json:"receiver"`
 	Status   string  `json:"status"`
 	Error    string  `json:"error,omitempty"`
+	// DeliveryID is the row this delivery became.
+	//
+	// It exists because a caller often needs a handle to the work before
+	// the work exists: at send time nothing has been delivered, so there
+	// is no run to name yet, and the delivery is the only durable thing
+	// to point at. The remote transport hands it to a peer as a task id.
+	DeliveryID id.DeliveryID `json:"delivery_id,omitempty"`
 }
 
 // SendResult is what a send produced.
@@ -286,7 +293,7 @@ func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*Sen
 			res.Deliveries = append(res.Deliveries, DeliveryOutcome{Receiver: r, Status: DeliveryFailed, Error: err.Error()})
 			continue
 		}
-		res.Deliveries = append(res.Deliveries, DeliveryOutcome{Receiver: r, Status: DeliveryQueued})
+		res.Deliveries = append(res.Deliveries, DeliveryOutcome{Receiver: r, Status: DeliveryQueued, DeliveryID: d.ID})
 		b.dispatch.enqueue(d.ID)
 	}
 

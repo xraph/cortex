@@ -242,6 +242,15 @@ func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	return nil
 }
 
+// GetDelivery reads one delivery document within the caller's scope.
+func (s *Store) GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
+	scope := cortex.ScopeFromContext(ctx)
+	if scope.IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	return s.getDelivery(ctx, scope, deliveryID)
+}
+
 func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	scope := cortex.ScopeFromContext(ctx)
 	if scope.IsZero() {

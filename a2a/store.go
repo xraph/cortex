@@ -57,6 +57,10 @@ type Store interface {
 	ListConversations(ctx context.Context, filter *ConversationListFilter) ([]*Conversation, error)
 
 	CreateDelivery(ctx context.Context, d *Delivery) error
+	// GetDelivery reads one delivery row. A caller that was handed a
+	// delivery id at send time uses it to find out what became of the
+	// message, including the run it eventually started.
+	GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*Delivery, error)
 	UpdateDelivery(ctx context.Context, d *Delivery) error
 	// ClaimDelivery takes ownership of a queued delivery and marks it
 	// delivering. It returns ErrDeliveryAlreadyClaimed when the row is in
