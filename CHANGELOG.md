@@ -104,8 +104,59 @@ when cross-process messaging lands.
   completed one, which is what lets `agent_ask` suspend a step. This is
   internal to the engine; a host-registered tool's contract is unchanged.
 
+### Added later in this release: remote agents
+
+Messaging crossed the process boundary. A new module,
+`github.com/xraph/cortex/a2aremote`, serves your agents to remote A2A
+clients and lets your agents call agents that were never built with
+cortex. It is a separate module because gRPC's dependency graph should
+not land on a host that only ever wanted in-process messaging.
+
+The protocol is A2A 1.0.0, the Linux Foundation release, and checking
+that rather than assuming it changed the work: method names are
+PascalCase now, and agent cards moved to `/.well-known/agent-card.json`.
+A server still answering `message/send` at `/.well-known/agent.json` is
+invisible to every current client. Cortex serves the JSON-RPC binding
+and says so in its card, so a peer that needs gRPC learns that by
+reading rather than by failing.
+
+Your FIPA-ACL semantics survive the hop as a declared, optional A2A
+extension. A peer that has never heard of FIPA gets a valid A2A message
+and reads the text; one that has gets `cfp`, `refuse` and `agree`
+intact.
+
+Inbound requests are authenticated by a `PeerResolver` you implement,
+and its answer is the only thing that decides which scope a request acts
+in. Nothing in a message body or a header can influence that. Outbound
+peers are configuration rather than data, so an agent's own output
+cannot introduce a host to call.
+
+### Fixed
+
+- **Remote receivers were never carried by their transport.** The first
+  round shipped a `Transport` seam that the delivery path did not
+  consult, so an envelope addressed to `worker@peer.example` would have
+  been answered by a local agent that happened to be called `worker`.
+  Delivery now asks whether a receiver is local before it asks what the
+  performative wants.
+- **`agent@node` was not parsed.** The messaging tools took the whole
+  string as an agent name, so addressing a remote peer failed as "agent
+  not found" and said nothing about why.
+- **A delivery whose claim lost a race waited a full sweep.** A failed
+  drain consumes the wake that queued the work, so a momentarily busy
+  store meant a thirty second delay. Workers now retry on a short
+  backoff. On sqlite, where a concurrent write is answered with
+  SQLITE_BUSY, that race is ordinary rather than exceptional.
+
 ### Known gaps
 
+- **Sqlite needs a busy timeout** once messaging is on. The dispatcher
+  writes while your runs write, and sqlite refuses a concurrent writer
+  rather than waiting unless told to. Open with
+  `cortex.db?_pragma=busy_timeout(5000)`.
+- Conversations are not stitched across engines. A peer quoting a
+  `contextId` from its own database gets a fresh conversation on this
+  side, with its id kept as metadata.
 - A delivery claimed by a process that then dies stays marked
   `delivering` and is not redriven. Nothing wedges, because an ask
   resolves on its deadline either way, but an informative message caught

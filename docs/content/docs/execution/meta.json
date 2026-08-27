@@ -4,6 +4,7 @@
     "runs",
     "orchestration",
     "messaging",
+    "remote-messaging",
     "memory",
     "checkpoints"
   ]
