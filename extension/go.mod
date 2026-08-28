@@ -12,7 +12,7 @@ require (
 	github.com/xraph/cortex v1.6.1
 	github.com/xraph/cortex/dashboard v1.6.1
 	github.com/xraph/cortex/sentinel v1.6.1
-	github.com/xraph/forge v1.9.13
+	github.com/xraph/forge v1.9.14
 	github.com/xraph/grove v1.6.2
 	github.com/xraph/nexus v1.6.3
 	github.com/xraph/shield v1.6.0
