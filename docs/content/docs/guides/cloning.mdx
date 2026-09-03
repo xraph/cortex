@@ -1,0 +1,82 @@
+---
+title: Cloning Agents & Personas
+description: Duplicate an agent or persona into an independent copy — what gets copied, how names are chosen, and the HTTP and Go APIs.
+---
+
+Cloning duplicates an existing agent or persona into a **new, independent entity**
+in the same app. Use it to spin up a variant of a working agent without
+re-declaring all of its configuration — "give me another support agent like this
+one, but I'll tweak the model."
+
+## What is copied
+
+The clone is a deep copy of the source's configuration with a fresh identity:
+
+| Carried over | Reset / excluded |
+|--------------|------------------|
+| All config fields (system prompt, model, tools, guardrails, metadata) | A new `id` |
+| Persona fields (`persona_ref`, inline skills/traits/behaviors) | The name you provide (or an auto-generated one) |
+| `app_id` (clones stay in the same app) | Fresh `created_at` / `updated_at` |
+| `enabled` flag | Runtime history — runs, memory, and conversation are **not** copied |
+
+Runtime history is keyed by the source's ID, so a clone starts with a clean
+slate by construction. For agents, the clone keeps the **same** `persona_ref` —
+the persona is shared, not itself cloned. (Clone the persona separately if you
+want an independent one.)
+
+The deep copy is a JSON round-trip, so nested slices and maps (tools, guardrails,
+trait dimension values, cognitive phases, …) are fully independent of the source.
+
+## Naming
+
+You may supply `new_name`. If you omit it, Cortex generates a unique name:
+`<source>-copy`, then `<source>-copy-2`, `<source>-copy-3`, … until a free name
+is found.
+
+- `new_name` provided and free → used as-is.
+- `new_name` provided but already taken → `409 Conflict`.
+- `new_name` omitted → auto-generated as above.
+
+## Over HTTP
+
+```bash
+# Clone an agent with an explicit name
+curl -X POST /cortex/v1/agents/support-agent/clone \
+  -H 'Content-Type: application/json' \
+  -d '{"new_name": "support-agent-v2"}'
+
+# Clone a persona, letting Cortex name it ("helpful-agent-copy")
+curl -X POST /cortex/v1/personas/helpful-agent/clone \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Both return `201 Created` with the new entity. A missing source returns `404`;
+a taken `new_name` returns `409`.
+
+## In Go
+
+```go
+// Clone an agent (auto-named if newName is "").
+clone, err := eng.CloneAgent(ctx, "my-app", "support-agent", "support-agent-v2")
+
+// Clone a persona.
+pClone, err := eng.ClonePersona(ctx, "my-app", "helpful-agent", "")
+```
+
+The pure deep-copy functions are also exported if you need them without the
+store round-trip:
+
+```go
+newAgent, _ := agent.CloneConfig(src, id.NewAgentID(), "support-agent-v2")
+newPersona, _ := persona.ClonePersona(src, id.NewPersonaID(), "helpful-agent-v2")
+```
+
+## Notes
+
+- Cloning is **same-app only** — a clone always inherits the source's `app_id`,
+  and the source is looked up within the caller's app scope, so cross-app
+  cloning is not possible.
+- Concurrent clones of the same source with auto-naming can briefly race on the
+  generated name; the unique `(app_id, name)` index keeps integrity (one insert
+  wins).

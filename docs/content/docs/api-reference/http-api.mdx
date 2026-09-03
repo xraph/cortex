@@ -1,13 +1,13 @@
 ---
 title: HTTP API Reference
-description: Complete reference for all 36 Cortex REST endpoints — agents, runs, skills, traits, behaviors, personas, checkpoints, memory, and tools.
+description: Reference for the Cortex REST endpoints: agents, runs, skills, traits, behaviors, personas, checkpoints, memory, sessions, tools, orchestrations, and configuration.
 ---
 
-All endpoints are under `/cortex` and return JSON. Authentication and tenant resolution depend on your middleware configuration. Set `X-Tenant-ID` and `X-App-ID` headers for multi-tenant deployments.
+All endpoints live under `<basePath>/v1` and return JSON. `basePath` is the extension mount prefix (`extension.WithBasePath`, default `/cortex`) and `/v1` is the API version group, so the default full path is `/cortex/v1/...`. Authentication and tenant resolution depend on your middleware configuration. Set `X-Tenant-ID` and `X-App-ID` headers for multi-tenant deployments.
 
-## Agents (7 routes)
+## Agents (8 routes)
 
-### `POST /cortex/agents`
+### `POST /cortex/v1/agents`
 
 Create an agent configuration.
 
@@ -37,7 +37,7 @@ Create an agent configuration.
 
 ---
 
-### `GET /cortex/agents`
+### `GET /cortex/v1/agents`
 
 List all agents for the current tenant/app.
 
@@ -52,7 +52,7 @@ List all agents for the current tenant/app.
 
 ---
 
-### `GET /cortex/agents/:name`
+### `GET /cortex/v1/agents/:name`
 
 Get an agent by name.
 
@@ -62,7 +62,7 @@ Get an agent by name.
 
 ---
 
-### `PUT /cortex/agents/:name`
+### `PUT /cortex/v1/agents/:name`
 
 Update an agent configuration. Only provided fields are updated.
 
@@ -72,7 +72,7 @@ Update an agent configuration. Only provided fields are updated.
 
 ---
 
-### `DELETE /cortex/agents/:name`
+### `DELETE /cortex/v1/agents/:name`
 
 Delete an agent configuration.
 
@@ -80,7 +80,7 @@ Delete an agent configuration.
 
 ---
 
-### `POST /cortex/agents/:name/run`
+### `POST /cortex/v1/agents/:name/run`
 
 Execute an agent synchronously. Returns when the run completes.
 
@@ -106,7 +106,7 @@ Execute an agent synchronously. Returns when the run completes.
 
 ---
 
-### `POST /cortex/agents/:name/stream`
+### `POST /cortex/v1/agents/:name/stream`
 
 Execute an agent with Server-Sent Events (SSE) streaming.
 
@@ -116,9 +116,29 @@ Execute an agent with Server-Sent Events (SSE) streaming.
 
 ---
 
+### `POST /cortex/v1/agents/:name/clone`
+
+Clone an agent into a new, independent copy in the same app. All configuration is copied; the clone gets a fresh `id`, fresh timestamps, and no runtime history (runs/memory/conversation stay with the source). The clone keeps the same `persona_ref` (the persona is shared, not copied).
+
+**Request**
+
+```json
+{
+  "new_name": "support-agent-v2"
+}
+```
+
+`new_name` is optional. If omitted, a unique name is generated: `<source>-copy`, then `<source>-copy-2`, `<source>-copy-3`, … until one is free.
+
+**Response** `201 Created` — the new Agent object.
+
+**Errors** — `404 Not Found` if the source agent does not exist; `409 Conflict` if `new_name` is already taken.
+
+---
+
 ## Runs (3 routes)
 
-### `GET /cortex/agents/:name/runs`
+### `GET /cortex/v1/agents/:name/runs`
 
 List runs for a specific agent.
 
@@ -133,7 +153,7 @@ List runs for a specific agent.
 
 ---
 
-### `GET /cortex/runs/:id`
+### `GET /cortex/v1/runs/:id`
 
 Get a specific run by ID.
 
@@ -168,7 +188,7 @@ host-defined ordered hierarchy, instead of a single tenant string. See
 
 ---
 
-### `POST /cortex/runs/:id/cancel`
+### `POST /cortex/v1/runs/:id/cancel`
 
 Cancel a run that is still running or paused. Sets state to `cancelled`.
 
@@ -184,7 +204,7 @@ resolves whatever checkpoint the pause opened. A run that already finished is
 
 ## Skills (5 routes)
 
-### `POST /cortex/skills`
+### `POST /cortex/v1/skills`
 
 Create a skill.
 
@@ -212,7 +232,7 @@ Create a skill.
 
 ---
 
-### `GET /cortex/skills`
+### `GET /cortex/v1/skills`
 
 List all skills.
 
@@ -222,7 +242,7 @@ List all skills.
 
 ---
 
-### `GET /cortex/skills/:name`
+### `GET /cortex/v1/skills/:name`
 
 Get a skill by name.
 
@@ -230,7 +250,7 @@ Get a skill by name.
 
 ---
 
-### `PUT /cortex/skills/:name`
+### `PUT /cortex/v1/skills/:name`
 
 Update a skill.
 
@@ -238,7 +258,7 @@ Update a skill.
 
 ---
 
-### `DELETE /cortex/skills/:name`
+### `DELETE /cortex/v1/skills/:name`
 
 Delete a skill.
 
@@ -248,7 +268,7 @@ Delete a skill.
 
 ## Traits (5 routes)
 
-### `POST /cortex/traits`
+### `POST /cortex/v1/traits`
 
 Create a trait.
 
@@ -273,7 +293,7 @@ Create a trait.
 
 ---
 
-### `GET /cortex/traits`
+### `GET /cortex/v1/traits`
 
 List all traits.
 
@@ -283,7 +303,7 @@ List all traits.
 
 ---
 
-### `GET /cortex/traits/:name`
+### `GET /cortex/v1/traits/:name`
 
 Get a trait by name.
 
@@ -291,7 +311,7 @@ Get a trait by name.
 
 ---
 
-### `PUT /cortex/traits/:name`
+### `PUT /cortex/v1/traits/:name`
 
 Update a trait.
 
@@ -299,7 +319,7 @@ Update a trait.
 
 ---
 
-### `DELETE /cortex/traits/:name`
+### `DELETE /cortex/v1/traits/:name`
 
 Delete a trait.
 
@@ -309,7 +329,7 @@ Delete a trait.
 
 ## Behaviors (5 routes)
 
-### `POST /cortex/behaviors`
+### `POST /cortex/v1/behaviors`
 
 Create a behavior.
 
@@ -338,7 +358,7 @@ Create a behavior.
 
 ---
 
-### `GET /cortex/behaviors`
+### `GET /cortex/v1/behaviors`
 
 List all behaviors.
 
@@ -348,7 +368,7 @@ List all behaviors.
 
 ---
 
-### `GET /cortex/behaviors/:name`
+### `GET /cortex/v1/behaviors/:name`
 
 Get a behavior by name.
 
@@ -356,7 +376,7 @@ Get a behavior by name.
 
 ---
 
-### `PUT /cortex/behaviors/:name`
+### `PUT /cortex/v1/behaviors/:name`
 
 Update a behavior.
 
@@ -364,7 +384,7 @@ Update a behavior.
 
 ---
 
-### `DELETE /cortex/behaviors/:name`
+### `DELETE /cortex/v1/behaviors/:name`
 
 Delete a behavior.
 
@@ -372,9 +392,9 @@ Delete a behavior.
 
 ---
 
-## Personas (5 routes)
+## Personas (6 routes)
 
-### `POST /cortex/personas`
+### `POST /cortex/v1/personas`
 
 Create a persona.
 
@@ -403,7 +423,7 @@ Create a persona.
 
 ---
 
-### `GET /cortex/personas`
+### `GET /cortex/v1/personas`
 
 List all personas.
 
@@ -413,7 +433,7 @@ List all personas.
 
 ---
 
-### `GET /cortex/personas/:name`
+### `GET /cortex/v1/personas/:name`
 
 Get a persona by name.
 
@@ -421,7 +441,7 @@ Get a persona by name.
 
 ---
 
-### `PUT /cortex/personas/:name`
+### `PUT /cortex/v1/personas/:name`
 
 Update a persona.
 
@@ -429,7 +449,7 @@ Update a persona.
 
 ---
 
-### `DELETE /cortex/personas/:name`
+### `DELETE /cortex/v1/personas/:name`
 
 Delete a persona.
 
@@ -437,9 +457,29 @@ Delete a persona.
 
 ---
 
+### `POST /cortex/v1/personas/:name/clone`
+
+Clone a persona into a new, independent copy in the same app. The full composition (skills, traits, behaviors, cognitive/communication style, perception, metadata) is deep-copied; the clone gets a fresh `id` and timestamps.
+
+**Request**
+
+```json
+{
+  "new_name": "helpful-agent-v2"
+}
+```
+
+`new_name` is optional (same auto-naming as agent clone: `<source>-copy`, `<source>-copy-2`, …).
+
+**Response** `201 Created` — the new Persona object.
+
+**Errors** — `404 Not Found` if the source persona does not exist; `409 Conflict` if `new_name` is already taken.
+
+---
+
 ## Checkpoints (2 routes)
 
-### `GET /cortex/checkpoints`
+### `GET /cortex/v1/checkpoints`
 
 List pending checkpoints (runs paused for human approval).
 
@@ -449,7 +489,7 @@ List pending checkpoints (runs paused for human approval).
 
 ---
 
-### `POST /cortex/checkpoints/:id/resolve`
+### `POST /cortex/v1/checkpoints/:id/resolve`
 
 Resolve a checkpoint.
 
@@ -474,7 +514,7 @@ rest of the run takes.
 
 ## Memory (2 routes)
 
-### `GET /cortex/agents/:name/conversation`
+### `GET /cortex/v1/agents/:name/conversation`
 
 Get conversation history for an agent.
 
@@ -488,7 +528,7 @@ Get conversation history for an agent.
 
 ---
 
-### `DELETE /cortex/agents/:name/conversation`
+### `DELETE /cortex/v1/agents/:name/conversation`
 
 Clear conversation history for an agent.
 
@@ -496,9 +536,53 @@ Clear conversation history for an agent.
 
 ---
 
+## Sessions (6 routes)
+
+A session is one conversation thread for an agent. Runs join a session, and
+memory is read and written per session.
+
+### `POST /cortex/v1/agents/:name/sessions`
+
+Create a session for an agent.
+
+### `GET /cortex/v1/agents/:name/sessions`
+
+List an agent's sessions, most recent first.
+
+### `GET /cortex/v1/agents/:name/sessions/count`
+
+Count an agent's sessions.
+
+### `GET /cortex/v1/agents/:name/sessions/:id`
+
+Read one session.
+
+### `PUT /cortex/v1/agents/:name/sessions/:id`
+
+Update a session's title or metadata.
+
+### `DELETE /cortex/v1/agents/:name/sessions/:id`
+
+Delete a session and the messages in it.
+
+## Configuration (3 routes)
+
+### `GET /cortex/v1/config`
+
+Read the engine's effective configuration.
+
+### `PUT /cortex/v1/config`
+
+Update the engine's configuration.
+
+### `POST /cortex/v1/agents/:name/preview-prompt`
+
+Assemble an agent's system prompt without running it, which is how you see
+what a persona, its skills and any prompt overlays actually produce.
+
 ## Tools (2 routes)
 
-### `GET /cortex/tools`
+### `GET /cortex/v1/tools`
 
 List all registered tools.
 
@@ -506,11 +590,124 @@ List all registered tools.
 
 ---
 
-### `GET /cortex/tools/:name/schema`
+### `GET /cortex/v1/tools/:name/schema`
 
 Get the JSON Schema for a specific tool.
 
 **Response** `200 OK` — JSON Schema object.
+
+---
+
+## Orchestrations (8 routes)
+
+Multi-agent orchestration. A stored orchestration config names a **strategy** and its **participant agents**; running it coordinates those agents over a shared blackboard. See the [Orchestration guide](/docs/execution/orchestration) for concepts.
+
+### `POST /cortex/v1/orchestrations`
+
+Create an orchestration config.
+
+**Request**
+
+```json
+{
+  "name": "should-we-ship",
+  "description": "Ship-decision debate",
+  "strategy": "debate",
+  "participants": [
+    {"agent_name": "optimist", "role": "debater"},
+    {"agent_name": "skeptic", "role": "debater"},
+    {"agent_name": "referee", "role": "judge"}
+  ],
+  "settings": {"rounds": 2, "judge": "referee"},
+  "metadata": {}
+}
+```
+
+`strategy` is one of `sequential`, `parallel`, `router`, `hierarchical`, `debate`. `settings` fields are strategy-specific (`max_concurrency`, `rounds`, `manager`, `judge`, `aggregator`, `router_agent`, `router_rules`, `model`) — each strategy reads only what it needs.
+
+**Response** `201 Created` — Orchestration object with generated `id` (e.g. `orchcfg_01h455...`).
+
+**Errors** — `400 Bad Request` if `strategy` is unknown or `participants` is empty.
+
+---
+
+### `GET /cortex/v1/orchestrations`
+
+List orchestration configs.
+
+**Query parameters** — `limit`, `offset`.
+
+**Response** `200 OK` — Array of Orchestration objects.
+
+---
+
+### `GET /cortex/v1/orchestrations/:name`
+
+Get an orchestration config by name.
+
+**Response** `200 OK` — Orchestration object. `404 Not Found` if it does not exist.
+
+---
+
+### `PUT /cortex/v1/orchestrations/:name`
+
+Update an orchestration config. Only provided fields are updated.
+
+**Response** `200 OK` — Updated Orchestration object.
+
+---
+
+### `DELETE /cortex/v1/orchestrations/:name`
+
+Delete an orchestration config.
+
+**Response** `204 No Content`
+
+---
+
+### `POST /cortex/v1/orchestrations/:name/run`
+
+Run a stored orchestration. Executes the strategy across its participant agents and persists an orchestration run.
+
+**Request**
+
+```json
+{
+  "input": "Should we ship the feature this week?"
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "run_id": "orch_01h455...",
+  "status": "completed",
+  "strategy": "debate",
+  "output": "...the judge's verdict...",
+  "duration_ms": 4213
+}
+```
+
+A run that executes but whose strategy fails still returns `200 OK` with `"status": "failed"` (it is not an HTTP error). `404 Not Found` is returned only when the orchestration config does not exist.
+
+---
+
+### `GET /cortex/v1/orchestration-runs`
+
+List orchestration run records.
+
+**Query parameters** — `limit`, `offset`, `status` (filter: `running` | `completed` | `failed`).
+
+**Response** `200 OK` — Array of orchestration run objects.
+
+---
+
+### `GET /cortex/v1/orchestration-runs/:id`
+
+Get an orchestration run by ID.
+
+**Response** `200 OK` — orchestration run object. `404 Not Found` if it does not exist.
 
 ---
 
@@ -536,13 +733,16 @@ All error responses use a consistent JSON envelope:
 
 | Resource | Routes | Methods |
 |----------|--------|---------|
-| Agents | 7 | POST, GET, GET, PUT, DELETE, POST (run), POST (stream) |
+| Agents | 8 | POST, GET, GET, PUT, DELETE, POST (run), POST (stream), POST (clone) |
 | Runs | 3 | GET (list), GET (by ID), POST (cancel) |
 | Skills | 5 | POST, GET, GET, PUT, DELETE |
 | Traits | 5 | POST, GET, GET, PUT, DELETE |
 | Behaviors | 5 | POST, GET, GET, PUT, DELETE |
-| Personas | 5 | POST, GET, GET, PUT, DELETE |
+| Personas | 6 | POST, GET, GET, PUT, DELETE, POST (clone) |
 | Checkpoints | 2 | GET (list), POST (resolve) |
 | Memory | 2 | GET, DELETE |
 | Tools | 2 | GET (list), GET (schema) |
-| **Total** | **36** | |
+| Sessions | 6 | POST, GET (list), GET (count), GET, PUT, DELETE |
+| Configuration | 3 | GET, PUT, POST (preview prompt) |
+| Orchestrations | 8 | POST, GET, GET, PUT, DELETE, POST (run), GET (runs), GET (run by ID) |
+| **Total** | **55** | |
