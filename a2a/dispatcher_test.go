@@ -148,7 +148,15 @@ func TestWorkersDeliverWithoutADrainCall(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	<-done
+
+	// Bounded, because an unbounded wait turns a broken dispatcher into a
+	// ten minute hang that reports nothing.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		queued, _ := st.ListQueuedDeliveries(ctx, 10)
+		t.Fatalf("the workers never carried the message; %d rows still queued", len(queued))
+	}
 }
 
 // A store that is momentarily busy must not strand a delivery until the

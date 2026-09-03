@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
@@ -231,5 +232,17 @@ func TestEngineStartCarriesMessagesWithoutADrain(t *testing.T) {
 
 	// The workers pick the delivery up on their own. Waiting on the
 	// model's own signal keeps this deterministic: no sleep, no polling.
-	<-model.resumed
+	//
+	// The wait is bounded because an unbounded one turns a failure into a
+	// hang: the suite sits until its own timeout and reports nothing
+	// about which step never happened.
+	select {
+	case <-model.resumed:
+	case <-time.After(30 * time.Second):
+		final, err := st.GetRun(ctx, paused.ID)
+		if err != nil {
+			t.Fatalf("the planner never resumed, and its run could not be read: %v", err)
+		}
+		t.Fatalf("the planner never resumed; its run is %s (error: %q)", final.State, final.Error)
+	}
 }
