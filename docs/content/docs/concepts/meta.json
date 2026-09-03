@@ -1,4 +1,14 @@
 {
   "title": "Core Concepts",
-  "pages": ["identity", "entities", "sessions", "configuration", "errors", "multi-tenancy", "authorization", "suspension", "prompt-composition"]
+  "pages": [
+    "identity",
+    "entities",
+    "sessions",
+    "configuration",
+    "errors",
+    "multi-tenancy",
+    "authorization",
+    "suspension",
+    "prompt-composition"
+  ]
 }

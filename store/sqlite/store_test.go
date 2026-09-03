@@ -21,7 +21,22 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
-	dsn := filepath.Join(t.TempDir(), "cortex_test.db")
+	// WAL and a busy timeout are what let the conformance suite's
+	// concurrency cases assert what they mean to assert.
+	//
+	// Sqlite's default is one writer at a time and fail immediately, so a
+	// second writer gets SQLITE_BUSY. The claim races (ClaimSuspension,
+	// ClaimPendingAsk, ClaimDelivery) then see a lock error where they
+	// expected a clean loss, and report "unexpected error" rather than
+	// telling you whether the claim is atomic. WAL plus a timeout makes
+	// the loser wait and then lose properly, which is the property under
+	// test.
+	//
+	// It is not test-only sugar. The docs tell anyone deploying cortex on
+	// sqlite to set the same busy timeout, because the messaging
+	// dispatcher writes while runs write.
+	dsn := filepath.Join(t.TempDir(), "cortex_test.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	drv := sqlitedriver.New()
 	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlite driver: %v", err)

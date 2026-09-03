@@ -1473,23 +1473,29 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 
 type a2aPendingAskModel struct {
 	grove.BaseModel `grove:"table:cortex_a2a_pending_asks"`
-	ReplyWith       string            `grove:"reply_with,pk"   bson:"_id"`
-	ConversationID  string            `grove:"conversation_id" bson:"conversation_id"`
-	MessageID       string            `grove:"message_id"      bson:"message_id"`
-	AskerRunID      string            `grove:"asker_run_id"    bson:"asker_run_id"`
-	AskerAgent      string            `grove:"asker_agent"     bson:"asker_agent"`
-	ToolCallID      string            `grove:"tool_call_id"    bson:"tool_call_id"`
-	ExpectedAgent   string            `grove:"expected_agent"  bson:"expected_agent"`
-	ExpectedNode    string            `grove:"expected_node"   bson:"expected_node"`
-	Deadline        *time.Time        `grove:"deadline"        bson:"deadline,omitempty"`
-	ClaimedAt       *time.Time        `grove:"claimed_at"      bson:"claimed_at,omitempty"`
-	ScopeL0         string            `grove:"scope_l0"        bson:"scope_l0"`
-	ScopeL1         string            `grove:"scope_l1"        bson:"scope_l1"`
-	ScopeL2         string            `grove:"scope_l2"        bson:"scope_l2"`
-	ScopeExtra      map[string]string `grove:"scope_extra"     bson:"scope_extra,omitempty"`
-	ScopeCanon      string            `grove:"scope_canon"     bson:"scope_canon"`
-	CreatedAt       time.Time         `grove:"created_at"      bson:"created_at"`
-	UpdatedAt       time.Time         `grove:"updated_at"      bson:"updated_at"`
+	// The reply-with token IS the document id.
+	//
+	// The grove column is named id rather than reply_with because grove
+	// keys a document off its own column name: with any other name the
+	// token never reaches _id, mongo assigns an ObjectID of its own, and
+	// every lookup by token silently finds nothing.
+	ReplyWith      string            `grove:"id,pk"           bson:"_id"`
+	ConversationID string            `grove:"conversation_id" bson:"conversation_id"`
+	MessageID      string            `grove:"message_id"      bson:"message_id"`
+	AskerRunID     string            `grove:"asker_run_id"    bson:"asker_run_id"`
+	AskerAgent     string            `grove:"asker_agent"     bson:"asker_agent"`
+	ToolCallID     string            `grove:"tool_call_id"    bson:"tool_call_id"`
+	ExpectedAgent  string            `grove:"expected_agent"  bson:"expected_agent"`
+	ExpectedNode   string            `grove:"expected_node"   bson:"expected_node"`
+	Deadline       *time.Time        `grove:"deadline"        bson:"deadline,omitempty"`
+	ClaimedAt      *time.Time        `grove:"claimed_at"      bson:"claimed_at,omitempty"`
+	ScopeL0        string            `grove:"scope_l0"        bson:"scope_l0"`
+	ScopeL1        string            `grove:"scope_l1"        bson:"scope_l1"`
+	ScopeL2        string            `grove:"scope_l2"        bson:"scope_l2"`
+	ScopeExtra     map[string]string `grove:"scope_extra"     bson:"scope_extra,omitempty"`
+	ScopeCanon     string            `grove:"scope_canon"     bson:"scope_canon"`
+	CreatedAt      time.Time         `grove:"created_at"      bson:"created_at"`
+	UpdatedAt      time.Time         `grove:"updated_at"      bson:"updated_at"`
 }
 
 func a2aPendingAskToModel(a *a2a.PendingAsk) *a2aPendingAskModel {

@@ -32,7 +32,8 @@ func newApprovalStore(ctx context.Context, t *testing.T) *sqlitestore.Store {
 	// a run writes on the caller's, and sqlite refuses a concurrent
 	// writer rather than waiting unless it is told to. The docs say the
 	// same thing to anyone deploying on sqlite.
-	dsn := filepath.Join(t.TempDir(), "cortex_approval.db") + "?_pragma=busy_timeout(5000)"
+	dsn := filepath.Join(t.TempDir(), "cortex_approval.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	drv := sqlitedriver.New()
 	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlite driver: %v", err)

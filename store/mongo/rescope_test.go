@@ -74,7 +74,7 @@ func TestRescope(t *testing.T) {
 	// default. TestConformance in this package needs the same option now,
 	// for the same reason: SaveConversation/ClearConversation also write
 	// inside a transaction.
-	mongoContainer, err := tcmongodb.Run(ctx, mongoConformanceImage, tcmongodb.WithReplicaSet("rs0"))
+	mongoContainer, err := tcmongodb.Run(ctx, mongoImage(), tcmongodb.WithReplicaSet("rs0"))
 	if err != nil {
 		t.Fatalf("start mongodb container: %v", err)
 	}

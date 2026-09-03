@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -25,6 +26,25 @@ import (
 // with the OS suffix Docker Hub actually requires.
 const mongoConformanceImage = "mongodb/mongodb-community-server:8.3.2-ubi9-slim"
 
+// mongoImage returns the image to run, letting CORTEX_TEST_MONGO_IMAGE
+// override the pin.
+//
+// The override exists because the pinned image refuses to start on a
+// Linux kernel of 6.19 or newer, which is what current Docker Desktop
+// ships: it guards against an allocator incompatibility and exits 1
+// before mongod runs. The effect is that these tests cannot run at all
+// on an up-to-date desktop, while CI's older runner kernel is fine, so
+// the backend goes untested exactly where it is being changed.
+//
+// `CORTEX_TEST_MONGO_IMAGE=mongo:7 go test ./store/mongo/` runs the
+// suite on such a machine. CI keeps the pin.
+func mongoImage() string {
+	if img := os.Getenv("CORTEX_TEST_MONGO_IMAGE"); img != "" {
+		return img
+	}
+	return mongoConformanceImage
+}
+
 // TestConformance runs the backend-agnostic scope-isolation contract
 // (store/storetest) against a real MongoDB instance via testcontainers-go.
 //
@@ -44,7 +64,7 @@ func TestConformance(t *testing.T) {
 	// only by TestRescope in this package; the conformance suite's own
 	// Conversation and SessionMessageCounters subtests now exercise the
 	// same requirement.
-	mongoContainer, err := tcmongodb.Run(ctx, mongoConformanceImage, tcmongodb.WithReplicaSet("rs0"))
+	mongoContainer, err := tcmongodb.Run(ctx, mongoImage(), tcmongodb.WithReplicaSet("rs0"))
 	if err != nil {
 		t.Fatalf("start mongodb container: %v", err)
 	}

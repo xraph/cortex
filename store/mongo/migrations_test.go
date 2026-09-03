@@ -44,7 +44,7 @@ func TestMigrate_backfillDefaultSessions(t *testing.T) {
 	// SaveConversation and this backfill both write inside a
 	// multi-document transaction, which mongo only supports on a replica
 	// set (or sharded cluster).
-	mongoContainer, err := tcmongodb.Run(ctx, mongoConformanceImage, tcmongodb.WithReplicaSet("rs0"))
+	mongoContainer, err := tcmongodb.Run(ctx, mongoImage(), tcmongodb.WithReplicaSet("rs0"))
 	if err != nil {
 		t.Fatalf("start mongodb container: %v", err)
 	}
