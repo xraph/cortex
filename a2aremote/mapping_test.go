@@ -190,3 +190,55 @@ func TestRunningRunHasNoArtifactsYet(t *testing.T) {
 		t.Fatalf("task = %+v", task)
 	}
 }
+
+// A peer's message id is the peer's business. Ours are TypeIDs; a
+// perfectly conformant A2A implementation might use UUIDs, or a
+// sequence, or anything else, and a message that quotes one of those in
+// inReplyTo is still a valid message.
+//
+// So an unrecognised token drops the correlation rather than the
+// message. The bus already treats an in-reply-to that matches no
+// pending ask as ordinary mail, which is the same outcome by a different
+// route, and refusing the whole request instead would make cortex
+// unable to talk to any peer whose ids are not shaped like ours.
+func TestAnUnrecognisedInReplyToDropsTheCorrelationNotTheMessage(t *testing.T) {
+	m := Message{
+		MessageID: "not-a-typeid-either", Role: RoleUser, Parts: []Part{{Text: "answering you"}},
+		Metadata: map[string]any{FIPAExtensionURI: map[string]any{
+			"performative": "inform",
+			"inReplyTo":    "9f8b2c1e-4a7d-11ef-9c3d-0242ac120002",
+		}},
+	}
+
+	params, err := EnvelopeParamsFromMessage(m, a2a.Address{Agent: "them", Node: "peer.example"}, a2a.Address{Agent: "worker"})
+	if err != nil {
+		t.Fatalf("a valid A2A message was refused over a token shape: %v", err)
+	}
+	if params.Content != "answering you" {
+		t.Fatalf("content = %q", params.Content)
+	}
+	if params.InReplyTo != "" {
+		t.Fatalf("InReplyTo = %q, want it dropped: it can never match a token we minted", params.InReplyTo)
+	}
+}
+
+// A token we minted correlates, which is the case that matters: it is
+// the only shape a reply to one of our own asks can carry.
+func TestOurOwnInReplyToSurvives(t *testing.T) {
+	ours := id.NewMessageID().String()
+	m := Message{
+		MessageID: "m1", Role: RoleUser, Parts: []Part{{Text: "answering you"}},
+		Metadata: map[string]any{FIPAExtensionURI: map[string]any{
+			"performative": "inform",
+			"inReplyTo":    ours,
+		}},
+	}
+
+	params, err := EnvelopeParamsFromMessage(m, a2a.Address{Agent: "them", Node: "peer.example"}, a2a.Address{Agent: "worker"})
+	if err != nil {
+		t.Fatalf("EnvelopeParamsFromMessage: %v", err)
+	}
+	if params.InReplyTo != ours {
+		t.Fatalf("InReplyTo = %q, want %q", params.InReplyTo, ours)
+	}
+}
