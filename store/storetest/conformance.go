@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1066,8 +1067,15 @@ func testCrossScopeTwoRow(t *testing.T, newStore func(t *testing.T) store.Store)
 		for i, msg := range rows {
 			want := fmt.Sprintf("msg-%03d", wantFirst+i)
 			if msg.Content != want {
-				t.Fatalf("row %d = %q, want %q (LoadConversation must return the NEWEST %d messages in chronological order, not the oldest %d)",
+				t.Errorf("row %d = %q, want %q (LoadConversation must return the NEWEST %d messages in chronological order, not the oldest %d)",
 					i, msg.Content, want, limit, limit)
+				// One shifted row does not say WHY it shifted, and this
+				// case has failed on CI while passing everywhere it could
+				// be run by hand. The window is dumped so the next
+				// failure identifies its own cause: duplicates point at a
+				// write that ran twice, a gap points at ordering, and a
+				// short window points at the limit.
+				t.Fatalf("window returned: %s", describeConversationWindow(rows))
 			}
 		}
 	})
@@ -4539,4 +4547,63 @@ func testA2APeerContext(t *testing.T, newStore func(t *testing.T) store.Store) {
 	if _, err := s.GetConversationByPeerContext(ctx, "", ""); !errors.Is(err, a2a.ErrConversationNotFound) {
 		t.Errorf("empty pairing: err = %v, want not found", err)
 	}
+}
+
+// describeConversationWindow summarises what LoadConversation handed
+// back, so a failure in this case is diagnosable from the log alone
+// rather than needing a machine that reproduces it.
+func describeConversationWindow(rows []memory.Message) string {
+	seen := make(map[string]int, len(rows))
+	order := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if seen[r.Content] == 0 {
+			order = append(order, r.Content)
+		}
+		seen[r.Content]++
+	}
+
+	var dupes []string
+	for _, c := range order {
+		if seen[c] > 1 {
+			dupes = append(dupes, fmt.Sprintf("%s x%d", c, seen[c]))
+		}
+	}
+
+	var gaps []string
+	for i := 1; i < len(rows); i++ {
+		var prev, cur int
+		if _, err := fmt.Sscanf(rows[i-1].Content, "msg-%03d", &prev); err != nil {
+			continue
+		}
+		if _, err := fmt.Sscanf(rows[i].Content, "msg-%03d", &cur); err != nil {
+			continue
+		}
+		if cur != prev+1 {
+			gaps = append(gaps, fmt.Sprintf("%s->%s", rows[i-1].Content, rows[i].Content))
+		}
+	}
+
+	desc := fmt.Sprintf("%d rows, %d distinct, first=%q last=%q",
+		len(rows), len(order), first(rows), last(rows))
+	if len(dupes) > 0 {
+		desc += fmt.Sprintf(", duplicates=[%s]", strings.Join(dupes, " "))
+	}
+	if len(gaps) > 0 {
+		desc += fmt.Sprintf(", breaks=[%s]", strings.Join(gaps, " "))
+	}
+	return desc
+}
+
+func first(rows []memory.Message) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0].Content
+}
+
+func last(rows []memory.Message) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[len(rows)-1].Content
 }
