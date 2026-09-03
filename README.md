@@ -10,9 +10,10 @@ Cortex is a Go framework for building AI agents with human-like traits. Instead 
 - **Execution Tracking** — Runs, Steps, and Tool Calls with full observability
 - **Memory** — Conversation history, working memory, and summaries per agent, scoped to the host's own hierarchy
 - **Checkpoints** — Human-in-the-loop approval gates that pause runs for review
-- **Plugin System** — 16 lifecycle hooks with type-cached dispatch (zero-cost for unimplemented hooks)
+- **Agent Messaging**: FIPA-ACL messages between agents, with fire-and-forget sends, a durable ask that suspends the caller until a peer answers and survives a restart, and a mailbox for everything else
+- **Plugin System** — 19 lifecycle hooks with type-cached dispatch (zero-cost for unimplemented hooks)
 - **Host-Defined Scope** — Context-based scope and app isolation across all operations; the host declares its own levels (workspace, org, tenant, whatever it needs) and cortex enforces them structurally
-- **55 REST Endpoints** — Full CRUD for all entities, agent execution, streaming, sessions, orchestration, and tools
+- **59 REST Endpoints** — Full CRUD for all entities, agent execution, streaming, sessions, orchestration, messaging, and tools
 - **Forge Integration** — First-class extension for the Forge application framework
 - **TypeID Identifiers** — 12 type-prefixed, UUIDv7-based, K-sortable IDs
 
@@ -97,10 +98,11 @@ cortex (root)           — Config, context helpers, errors, Entity base type
 ├── cognitive           — Cognitive processing styles, phases, strategies
 ├── communication       — Communication styles (tone, formality, verbosity)
 ├── perception          — Attention filters, context windows
+├── a2a                 Agent-to-agent messaging: ACL envelopes, conversations, mailboxes, durable ask
 ├── run                 — Run/Step/ToolCall tracking, state machine
 ├── memory              — Conversation, working memory, summaries
 ├── checkpoint          — Human-in-the-loop approval gates
-├── id                  — 12 TypeID types (agt_, skl_, trt_, bhv_, prs_, arun_, ...)
+├── id                  — 15 TypeID types (agt_, skl_, trt_, bhv_, prs_, arun_, msg_, conv_, dlv_, ...)
 ├── store               — Composite store interface (13 sub-interfaces, 89 methods)
 │   ├── postgres        — Production PostgreSQL store
 │   ├── sqlite          — SQLite store

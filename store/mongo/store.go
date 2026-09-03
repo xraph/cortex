@@ -32,6 +32,10 @@ const (
 	colOverlays             = "cortex_overlays"
 	colOrchestrationConfigs = "cortex_orchestration_configs"
 	colOrchestrationRuns    = "cortex_orchestration_runs"
+	colA2AMessages          = "cortex_a2a_messages"
+	colA2AConversations     = "cortex_a2a_conversations"
+	colA2ADeliveries        = "cortex_a2a_deliveries"
+	colA2APendingAsks       = "cortex_a2a_pending_asks"
 )
 
 // Compile-time interface check.
@@ -231,3 +235,7 @@ func isNoDocuments(err error) bool {
 func isUniqueViolation(err error) bool {
 	return mongo.IsDuplicateKeyError(err)
 }
+
+// isNotFound reports whether err is the given not-found sentinel. It reads
+// better at the call sites in a2a.go than errors.Is inline.
+func isNotFound(err, sentinel error) bool { return errors.Is(err, sentinel) }

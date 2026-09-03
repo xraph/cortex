@@ -4,6 +4,243 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.13.0] - Unreleased
+
+Agents can address each other now. Not through a blackboard inside an
+orchestration somebody started, which is what v1.11.0 gave you, but
+directly: an agent names a peer, says what kind of thing it is saying,
+and either carries on or waits for the answer.
+
+The vocabulary is FIPA-ACL, all 22 performatives, because it is the one
+agent-communication standard with thirty years of use behind it and
+because the task-allocation protocols worth building next are defined in
+its terms. Cortex routes on the speech act. A `request` or a `cfp` starts
+a run for the recipient and its output becomes the reply. An `inform` or
+a `refuse` lands in a mailbox, because nobody should spend an LLM call
+being told something. A `cancel` closes the conversation and un-pauses
+everyone waiting on it.
+
+Three tools show up in your agents' tool lists, and only if you asked for
+them with `engine.WithA2A`. `agent_send` posts and returns. `agent_inbox`
+drains what arrived while the agent was busy. `agent_ask` is the
+interesting one: it suspends the asking run until a peer answers, and the
+answer comes back as that tool call's result.
+
+That wait is a row in your database, not a goroutine. The orchestration
+spec parked message-bus comms in June because true agent-to-agent
+messaging needed interruptible agents; durable suspend and resume landed
+in v1.10.0, so the blocker was already gone. An asking agent can wait
+minutes for a peer that is itself waiting on a third agent, the process
+can die in the middle, and the next one picks it all up.
+
+**Containment is not optional.** Every conversation carries a hop budget,
+default 8, and delivery past the ceiling is refused with a `failure` back
+to the sender. Asks carry a deadline, and an overdue one resolves into a
+timeout failure that lets the asking run continue. That last part is a
+deliberate departure from the engine's own suspension sweep, which fails
+a run nobody answered in time: for a peer that went quiet, killing the
+run throws away something the agent could have acted on.
+
+Who may talk to whom is your decision, not cortex's. The three tools are
+ordinary tool calls, so your `ToolAuthorizer` sees them like any other,
+and `cortex.ErrRequiresApproval` gives you messaging that pauses for a
+person. What cortex enforces structurally is the scope boundary and the
+existence of the recipient: an address that names no agent you can reach
+comes back as an error the model can read, rather than a run suspended
+against somebody who will never answer.
+
+Four endpoints come with it: `GET /v1/a2a/conversations`,
+`GET /v1/a2a/conversations/:id`, `GET /v1/agents/:name/inbox`, and
+`POST /v1/agents/:name/messages`. That last one is how a person answers
+an agent. Post a message carrying `in_reply_to` set to the waiting ask's
+reply-with token and the run behind it resumes, exactly as it would have
+on a peer's reply. It is also where a remote transport will terminate
+when cross-process messaging lands.
+
+### Breaking changes
+
+- **`store.Store` now embeds `a2a.Store`**, sixteen additional methods on
+  top of everything the composite already required. A custom
+  `store.Store` implementation (see
+  `docs/content/docs/guides/custom-store.mdx`) no longer satisfies the
+  interface until it implements them. The three bundled backends already
+  do, and `store/storetest` has conformance cases that will tell you
+  whether yours is right, including a raced claim.
+
+- **`suspension.SuspendReason` gained a third value**, `agent_reply`. A
+  host that switches on the reason and assumed two cases now has a third
+  to handle. It is not resumable through the public `Resume`: only the
+  message bus can answer it, and a caller that tries gets
+  `engine.ErrNotAgentReplyResumable`. That is the same shape approval
+  pauses already had, and for the same reason, since a caller answering
+  one would be forging a message the peer never sent.
+
+### Added
+
+- `a2a` package: the ACL envelope, conversations, deliveries, the pending
+  ask ledger, the bus, and a dispatcher that can be drained synchronously
+  in tests and runs workers in production. It is a leaf package, and a
+  test enforces that: it may import `cortex` and `id` and nothing else in
+  this module.
+- Four new tables per backend (`cortex_a2a_messages`,
+  `cortex_a2a_conversations`, `cortex_a2a_deliveries`,
+  `cortex_a2a_pending_asks`) across sqlite, postgres and mongo.
+- `engine.WithA2A`, `Engine.A2A`, `Engine.SendMessage`,
+  `Engine.AgentInbox`, `Engine.ListConversations`,
+  `Engine.GetConversation`, `Engine.ListMessages`.
+- Three plugin hooks: `MessageSent`, `MessageDelivered`,
+  `MessageRefused`. `AgentHandoff` is untouched and still means what it
+  always did, because an orchestration handoff and an agent addressing a
+  peer are different events.
+- Three TypeID prefixes: `msg`, `conv`, `dlv`.
+
+### Changed
+
+- `RunOpts`, `AgentResult` and `AgentRunner` moved from `orchestration`
+  to the root `cortex` package, where `a2a` can reach them too. The
+  orchestration names are aliases, so every existing caller and the
+  engine's own adapter compile unchanged.
+- Builtin tools can now report a pending call rather than only a
+  completed one, which is what lets `agent_ask` suspend a step. This is
+  internal to the engine; a host-registered tool's contract is unchanged.
+
+### Added later in this release: remote agents
+
+Messaging crossed the process boundary. A new module,
+`github.com/xraph/cortex/a2aremote`, serves your agents to remote A2A
+clients and lets your agents call agents that were never built with
+cortex. It is a separate module because gRPC's dependency graph should
+not land on a host that only ever wanted in-process messaging.
+
+The protocol is A2A 1.0.0, the Linux Foundation release, and checking
+that rather than assuming it changed the work: method names are
+PascalCase now, and agent cards moved to `/.well-known/agent-card.json`.
+A server still answering `message/send` at `/.well-known/agent.json` is
+invisible to every current client. Cortex serves the JSON-RPC binding
+and says so in its card, so a peer that needs gRPC learns that by
+reading rather than by failing.
+
+Your FIPA-ACL semantics survive the hop as a declared, optional A2A
+extension. A peer that has never heard of FIPA gets a valid A2A message
+and reads the text; one that has gets `cfp`, `refuse` and `agree`
+intact.
+
+Inbound requests are authenticated by a `PeerResolver` you implement,
+and its answer is the only thing that decides which scope a request acts
+in. Nothing in a message body or a header can influence that. Outbound
+peers are configuration rather than data, so an agent's own output
+cannot introduce a host to call.
+
+### Added later in this release: contract net
+
+An agent can put work out to tender now. Ask several agents at once with
+a `cfp` and your run waits for the whole field, then resumes with every
+proposal and every refusal together, and the agent picks.
+
+Almost none of that was new. The four Contract Net performatives were
+already carried and routed, and a tender is a conversation like any
+other. What was missing was an ask addressed to more than one agent, so
+that is what landed: an ask to one agent still resumes on that agent's
+answer, and an ask to several waits for everyone or for the deadline.
+
+Cortex does not choose the winner and will not. Awarding is
+`accept-proposal`, which is an ordinary directive, so awarding with
+`agent_ask` rather than `agent_send` gets you the work back instead of an
+acknowledgement.
+
+`a2a.ContractNet` and `a2a.CollectTender` are there for hosts driving a
+tender from Go.
+
+**Breaking:** the `agent_ask` tool result changed shape. It was one
+reply; it is now `{"replies": [...], "complete": bool}`, with one entry
+for a single-recipient ask. Shipping two shapes, one per recipient count,
+would have cost every prompt forever; a list costs one sentence.
+
+### Added later in this release: the other two bindings, and streaming
+
+Cortex now serves all three A2A bindings over one service. HTTP+JSON is
+`svc.RESTHandler()` at the protocol's own colon-verb paths. gRPC is its
+own module, `a2aremote/grpcbind`, so a host serving JSON-RPC does not
+inherit grpc-go and protobuf; its types are generated from the normative
+a2a.proto, vendored with the script that regenerates them.
+
+Whatever a rule says about scope or sender namespacing holds on all
+three, because the rule lives in the service and the bindings only
+translate. A test asserts the bindings agree on identical input, since
+that is the property the shared service exists to provide.
+
+Streaming is there too, off unless you ask for it:
+`SendStreamingMessage` and `SubscribeToTask`, over server-sent events on
+the HTTP bindings and native server streaming on gRPC. It is task-level
+streaming rather than tokens, which is what A2A's streaming is: the
+subscriber gets the task, then each transition, and the last one carries
+the output with `final` set.
+
+### Fixed
+
+- **A refusal ended a round it should not have.** `refuse` and
+  `reject-proposal` used to resolve a waiting ask outright. With several
+  recipients that is wrong: one participant declining a tender must not
+  un-pause an initiator that is still waiting on the others. They now
+  count as answers.
+- **Remote receivers were never carried by their transport.** The first
+  round shipped a `Transport` seam that the delivery path did not
+  consult, so an envelope addressed to `worker@peer.example` would have
+  been answered by a local agent that happened to be called `worker`.
+  Delivery now asks whether a receiver is local before it asks what the
+  performative wants.
+- **`agent@node` was not parsed.** The messaging tools took the whole
+  string as an agent name, so addressing a remote peer failed as "agent
+  not found" and said nothing about why.
+- **A delivery whose claim lost a race waited a full sweep.** A failed
+  drain consumes the wake that queued the work, so a momentarily busy
+  store meant a thirty second delay. Workers now retry on a short
+  backoff. On sqlite, where a concurrent write is answered with
+  SQLITE_BUSY, that race is ordinary rather than exceptional.
+
+### Fixed: abandoned deliveries are reclaimed
+
+A delivery claimed by a process that then died used to stay marked
+`delivering` forever. Nothing wedged, because an ask resolves on its
+deadline either way, but an `inform` caught in that window was lost.
+
+The dispatcher now puts those rows back in the queue, at startup and on
+its sweep. `DeliveryClaimTTL` is how long a claim may sit before it is
+assumed abandoned, and it defaults to fifteen minutes: a remote delivery
+legitimately holds its claim while the peer is polled, and reclaiming
+one somebody is still carrying would deliver the message twice.
+
+Reclaiming queues a row rather than delivering it, so a recovered
+message takes the ordinary path with the ordinary claim, and a worker
+that turns out to be alive after all loses the race instead of
+duplicating the work.
+
+### Fixed: a peer's thread stays together
+
+An inbound `contextId` names a conversation in the peer's own database,
+and cortex used to open a new conversation for every inbound message
+because of it. That was worse than untidy: a new conversation is a new
+hop budget, so a peer that never reused an id could keep talking past a
+ceiling it should have hit.
+
+A conversation now records which remote thread it stands in for, keyed
+by node as well as context id. Two peers can use the same id, and
+joining one peer's thread to another's would leak a conversation across
+a trust boundary.
+
+### Known gaps
+
+- **Sqlite needs a busy timeout** once messaging is on. The dispatcher
+  writes while your runs write, and sqlite refuses a concurrent writer
+  rather than waiting unless told to. Open with
+  `cortex.db?_pragma=busy_timeout(5000)`.
+- Mongo was written against the conformance suite but never executed:
+  the environment this landed in could not start a mongo container, and
+  could not before this branch either. Sqlite and postgres both run the
+  full suite, including the raced claim on each. Run
+  `go test ./store/mongo/` with a working mongo container before
+  trusting that backend.
+
 ## [1.12.0] - Unreleased
 
 A system prompt stops being one opaque string. It's an ordered set of

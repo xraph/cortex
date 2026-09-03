@@ -139,7 +139,7 @@ FROM information_schema.columns
 WHERE table_schema = current_schema()
   AND table_name LIKE 'cortex\_%' ESCAPE '\'
   AND column_name = ANY($1)`,
-		[]string{"scope_canon", "name", "app_id", "tenant_id", "run_id", "agent_id", "kind", "key"})
+		[]string{"scope_canon", "id", "name", "app_id", "tenant_id", "run_id", "agent_id", "kind", "key"})
 	if err != nil {
 		return nil, fmt.Errorf("list cortex table columns: %w", err)
 	}
@@ -163,6 +163,15 @@ WHERE table_schema = current_schema()
 	shapes := make(map[string]tableShape)
 	for table, c := range cols {
 		if !c["scope_canon"] {
+			continue
+		}
+		// A scoped table with no id column is one this pass cannot key a
+		// row by, and also one that never needs to: the tables predating
+		// scope all carry a TypeID id, while a table keyed by something
+		// else (cortex_a2a_pending_asks, keyed by its reply-with token)
+		// was born with its scope columns and has no legacy rows to
+		// backfill. Skipping it is therefore not a gap.
+		if !c["id"] {
 			continue
 		}
 		shapes[table] = tableShape{

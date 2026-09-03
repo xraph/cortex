@@ -150,6 +150,16 @@ func (s *Store) discoverScopedTables(ctx context.Context) (map[string]tableShape
 		if !cols["scope_canon"] {
 			continue
 		}
+		// A scoped table with no id column is one this pass cannot key a
+		// row by, and it is also one that never needs to: the tables that
+		// predate scope all carry a TypeID id, while a table keyed by
+		// something else (cortex_a2a_pending_asks, keyed by its reply-with
+		// token) was born with its scope columns and has no legacy rows to
+		// backfill. Skipping is therefore not a gap, and scanning it would
+		// only produce "no such column: id".
+		if !cols["id"] {
+			continue
+		}
 		shapes[table] = tableShape{
 			hasName:     cols["name"],
 			hasAppID:    cols["app_id"],

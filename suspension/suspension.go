@@ -23,6 +23,16 @@ const (
 	// ReasonExternalTool means the caller, not the engine, executes the
 	// pending tool call and reports the result back.
 	ReasonExternalTool SuspendReason = "external_tool"
+	// ReasonAgentReply means the run is waiting on another agent's answer.
+	//
+	// It is not ReasonExternalTool even though both wait on something
+	// outside the loop, because the two say different things about who
+	// acts next. External says the CALLER executes the call and reports
+	// back. Agent-reply says cortex itself is waiting on a peer, and a
+	// caller answering it would be forging a message that peer never
+	// sent. The messaging bus resumes these, off its own correlation
+	// ledger; nobody else may.
+	ReasonAgentReply SuspendReason = "agent_reply"
 )
 
 // PendingCall is one tool call awaiting a result from outside the engine.

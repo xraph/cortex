@@ -106,3 +106,8 @@ func isUniqueViolation(err error) bool {
 	// Fallback in case the typed error is not surfaced by the driver.
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
+
+// isNotFound reports whether err is the given not-found sentinel. It reads
+// better at the call sites in a2a.go than errors.Is inline, and it keeps
+// the import out of a file that otherwise has no use for it.
+func isNotFound(err, sentinel error) bool { return errors.Is(err, sentinel) }

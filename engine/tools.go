@@ -34,18 +34,31 @@ func (e *Engine) builtinTools() []llm.Tool {
 		})
 	}
 
+	tools = append(tools, e.a2aTools()...)
+
 	return tools
 }
 
-// executeBuiltinTool attempts to execute a built-in tool. Returns (result, true) if handled.
-// It takes the same Invocation shape as a host-registered ToolHandler — builtins are not a
-// separate dispatch contract, just tools the engine happens to implement itself.
-func (e *Engine) executeBuiltinTool(ctx context.Context, inv cortex.Invocation) (string, bool) {
+// executeBuiltinTool attempts to execute a built-in tool. The last return
+// says whether this call was handled here at all; the outcome says how it
+// ended.
+//
+// The outcome exists because of agent_ask, which does not complete: it
+// sends a question and reports the call pending, and the loop suspends the
+// step around it. Every other builtin completes, so they all return
+// outcomeCompleted and nothing about them changed.
+//
+// It takes the same Invocation shape as a host-registered ToolHandler —
+// builtins are not a separate dispatch contract, just tools the engine
+// happens to implement itself.
+func (e *Engine) executeBuiltinTool(ctx context.Context, inv cortex.Invocation) (string, toolOutcome, bool) {
 	switch inv.Call.Name {
 	case "knowledge_search":
-		return e.executeKnowledgeSearch(ctx, inv), true
+		return e.executeKnowledgeSearch(ctx, inv), outcomeCompleted, true
+	case toolAgentSend, toolAgentAsk, toolAgentInbox:
+		return e.executeA2ATool(ctx, inv)
 	default:
-		return "", false
+		return "", outcomeCompleted, false
 	}
 }
 

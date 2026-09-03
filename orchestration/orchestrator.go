@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
 
@@ -38,29 +39,15 @@ type Handoff struct {
 	Payload string `json:"payload,omitempty"`
 }
 
-// RunOpts is the subset of engine run overrides an orchestrator needs when
-// invoking an agent. It is mapped to engine.RunOverrides by the host adapter.
-type RunOpts struct {
-	Model        string
-	Temperature  *float64
-	MaxSteps     int
-	SystemPrompt string
-}
-
-// AgentResult is the strategy-facing view of one completed agent run.
-type AgentResult struct {
-	AgentName string        `json:"agent_name"`
-	RunID     id.AgentRunID `json:"run_id,omitempty"`
-	Output    string        `json:"output"`
-	Err       error         `json:"-"`
-}
-
-// AgentRunner is the single host capability an orchestrator depends on: the
-// ability to run one named agent and get its result. The engine satisfies it
-// via a thin adapter, avoiding an engine⇄orchestration import cycle.
-type AgentRunner interface {
-	RunAgent(ctx context.Context, agentName, input string, opts *RunOpts) (*AgentResult, error)
-}
+// RunOpts, AgentResult and AgentRunner moved to the root cortex package
+// when a2a came to need the same seam. They are aliased here so every
+// existing caller, every stored strategy and the engine's adapter keep
+// compiling unchanged.
+type (
+	RunOpts     = cortex.RunOpts
+	AgentResult = cortex.AgentResult
+	AgentRunner = cortex.AgentRunner
+)
 
 // Settings carries every strategy's tunables in one struct. Fields a given
 // strategy does not use are ignored.

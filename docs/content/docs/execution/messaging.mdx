@@ -1,0 +1,200 @@
+---
+title: Agent Messaging
+description: Agents addressing each other directly with FIPA-ACL messages, a durable ask that survives a restart, and a mailbox for everything else.
+---
+
+Orchestration coordinates agents through shared state: a blackboard every
+participant reads and writes, inside one run somebody started. Messaging is the
+other half. An agent addresses a peer by name, says what kind of thing it is
+saying, and either carries on or waits for the answer. No orchestration has to
+exist for any of it.
+
+Turn it on with `engine.WithA2A`. Nothing appears without it: no tools in any
+agent's list, no rows in any messaging table, no behaviour you did not ask for.
+
+```go
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithA2A(a2a.Options{
+        HopCeiling:     8,
+        Workers:        4,
+        DefaultReplyBy: 5 * time.Minute,
+        SweepInterval:  30 * time.Second,
+    }),
+)
+```
+
+## Three tools
+
+Your agents get three new tools, and the whole feature is what they do.
+
+`agent_send` posts a message and returns immediately. Use it to tell somebody
+something, confirm, refuse, or hand work along. Nothing waits.
+
+`agent_ask` asks one or more peers a question and suspends the asking run until
+the answers come back. They arrive as that tool call's result, so from the
+model's side it reads like any other tool that took a while. The wait is a row
+in your database rather than a goroutine, so it survives a restart. Asking
+several agents at once is how you run a tender, which is its own section below.
+
+`agent_inbox` drains the messages that arrived while the agent was busy.
+Reading marks them read, so each message comes back once.
+
+## Speech acts
+
+Every message carries a FIPA-ACL performative, and cortex routes on it. There
+are 22 of them, and they fall into three groups.
+
+**Directives start a run.** `request`, `request-when`, `request-whenever`,
+`query-if`, `query-ref`, `cfp`, `propose` and `accept-proposal` all demand an
+answer, so the recipient runs and its output becomes the reply.
+`accept-proposal` is in this group rather than with the informatives because in
+Contract Net it is the message that makes the contractor do the work.
+
+**Informatives land in the inbox.** `inform`, `inform-if`, `inform-ref`,
+`confirm`, `disconfirm`, `agree`, `refuse`, `failure`, `not-understood`,
+`reject-proposal`, `subscribe`, `proxy` and `propagate` queue for the recipient
+to read on its own time. Nobody spawns a run to be told something.
+
+Two of those are worth knowing about. `agree` means "I took the job and I am
+still working", so it does not un-pause a waiting ask. `refuse` and `failure`
+do. And `proxy` and `propagate` are carried and delivered, but cortex will not
+forward them on an agent's behalf: forwarding is a policy decision with an
+obvious abuse shape, so build it over the inbox if you want it.
+
+**`cancel` is control.** It closes the conversation and un-pauses everyone
+waiting on it with a failure they can read, rather than leaving them to sit
+until their deadline.
+
+## Putting work out to tender
+
+When you do not know who is best placed to do something, ask everyone and
+let them tell you. That is Contract Net, the oldest task-allocation
+protocol in multi-agent systems, and cortex speaks it with the tools you
+already have.
+
+Ask several agents at once and your run waits for the whole field:
+
+```
+agent_ask(
+  to: ["fast-reviewer", "slow-reviewer", "busy-reviewer"],
+  performative: "cfp",
+  protocol: "fipa-contract-net",
+  content: "who can review the migration today?"
+)
+```
+
+The run resumes when everyone has answered, or when the deadline passes
+with whoever did. Every proposal and every refusal comes back together:
+
+```json
+{
+  "complete": true,
+  "replies": [
+    {"sender": "fast-reviewer", "performative": "propose", "content": "I can, by 3pm"},
+    {"sender": "slow-reviewer", "performative": "propose", "content": "I can, by 9pm"},
+    {"sender": "busy-reviewer", "performative": "refuse",  "content": "not today"}
+  ]
+}
+```
+
+Then the agent picks, and awards:
+
+```
+agent_send(to: ["fast-reviewer"], performative: "accept-proposal", content: "yours, by 3pm")
+agent_send(to: ["slow-reviewer"], performative: "reject-proposal", content: "thanks anyway")
+```
+
+**Cortex never picks the winner.** Choosing a contractor is a judgement, and
+an agent is what makes it. If you want the work back rather than just an
+acknowledgement, award with `agent_ask` instead: `accept-proposal` is a
+directive, so the winner runs and its result comes back as your answer.
+
+Two behaviours are worth knowing. A refusal counts as an answer, so one
+agent declining does not end a round the others are still thinking about.
+And a participant that never answers at all is ordinary rather than
+exceptional: the deadline resolves your ask with `complete: false` and
+whoever did reply, and you carry on with what you got.
+
+Hosts driving a tender from Go rather than through an agent's own
+reasoning have `a2a.ContractNet` and `a2a.CollectTender`.
+
+## Who can talk to whom
+
+An address is an agent name inside the sender's scope. Cortex enforces the
+scope boundary structurally, the same way it does everywhere else, and it
+refuses an address that names no agent you can reach.
+
+Whether two agents that share a scope may talk is your policy, and it goes
+through the seam you already have. `agent_send`, `agent_ask` and `agent_inbox`
+are ordinary tool calls, so your `ToolAuthorizer` sees them like any other:
+
+```go
+func (p policy) Authorize(ctx context.Context, s cortex.Subject, call llm.ToolCall) error {
+    if call.Name == "agent_ask" && !p.mayAsk(s.AgentID, call) {
+        return errors.New("this agent may not ask others for work")
+    }
+    return nil
+}
+```
+
+Returning `cortex.ErrRequiresApproval` works here too, which gives you
+agent-to-agent messaging that pauses for a person to approve.
+
+## What stops a runaway
+
+Two agents can message each other forever, so every conversation carries a hop
+budget. Each derived message increments the count, and delivery past the
+ceiling is refused with a `failure` back to the sender. `HopCeiling` defaults
+to 8.
+
+Asks also carry a deadline. If nobody answers in time, the ask resolves into a
+timeout failure and the asking run continues. That is deliberate: cortex's own
+suspension sweep fails a run nobody answered in time, which is the wrong verb
+here. A peer that went quiet is something the asking agent can react to, and
+killing the run throws that away.
+
+## When a process dies
+
+Whatever was in flight is picked up by the next one. A run waiting on a
+peer is a row rather than a goroutine, so it resumes where it stopped. A
+message that was queued but never carried is redriven at startup. And a
+message a dead worker had claimed is put back in the queue once its claim
+goes stale, which `DeliveryClaimTTL` sets and which defaults to fifteen
+minutes.
+
+That default is generous on purpose. A remote delivery holds its claim
+while the peer is polled, and reclaiming one somebody is still carrying
+would deliver the same message twice.
+
+## When things go wrong
+
+A peer's problem reaches the asker as something it can read, never as a crash.
+The recipient's run failed, the hop budget ran out, the deadline passed, the
+conversation was cancelled: each of those un-pauses the asker with a `failure`
+carrying the reason.
+
+Anything cortex can refuse, it refuses before suspending: an unknown recipient,
+an agent addressing itself, a closed conversation, a store write that did not
+land. Those come back as a tool error and the run carries on. A run suspended
+on a message that was never sent would be a run nothing could ever resume.
+
+## Reading it back
+
+```
+GET  /v1/a2a/conversations              every conversation in scope
+GET  /v1/a2a/conversations/:id          one conversation with its transcript
+GET  /v1/agents/:name/inbox             what is waiting for an agent
+POST /v1/agents/:name/messages          send an agent a message
+```
+
+That last one is how a person answers an agent. Post a message carrying
+`in_reply_to` set to the waiting ask's reply-with token and the run behind it
+resumes, exactly as it would have on a peer's reply.
+
+## Hooks
+
+Three plugin hooks fire alongside the ones you already have: `MessageSent`,
+`MessageDelivered` and `MessageRefused`. `AgentHandoff` is untouched and still
+means what it always did, because an orchestration handoff and an agent
+addressing a peer are different events.

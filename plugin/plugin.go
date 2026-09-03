@@ -135,6 +135,34 @@ type AgentHandoff interface {
 }
 
 // ──────────────────────────────────────────────────
+// Messaging hooks
+// ──────────────────────────────────────────────────
+//
+// These are separate from AgentHandoff on purpose. A handoff is one
+// orchestration strategy passing work along inside a run it controls; a
+// message is an agent addressing a peer of its own accord, possibly with
+// no orchestration anywhere. Collapsing them would tell every existing
+// AgentHandoff subscriber that orchestrations it never started are
+// running.
+
+// MessageSent is called when an envelope is accepted and queued.
+type MessageSent interface {
+	OnMessageSent(ctx context.Context, msgID id.MessageID, from, to, performative string) error
+}
+
+// MessageDelivered is called when an envelope reaches a receiver: an
+// inbox row for an informative, a started run for a directive.
+type MessageDelivered interface {
+	OnMessageDelivered(ctx context.Context, msgID id.MessageID, to string) error
+}
+
+// MessageRefused is called when delivery is refused or fails: an
+// exhausted hop budget, an unroutable address, a recipient that broke.
+type MessageRefused interface {
+	OnMessageRefused(ctx context.Context, msgID id.MessageID, to, reason string) error
+}
+
+// ──────────────────────────────────────────────────
 // Shutdown hook
 // ──────────────────────────────────────────────────
 

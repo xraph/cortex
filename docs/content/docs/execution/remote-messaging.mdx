@@ -1,0 +1,210 @@
+---
+title: Remote Agents (A2A)
+description: Talking to agents that are not cortex agents, over the Agent2Agent protocol, in both directions.
+---
+
+Messaging gets your agents talking to each other inside one engine. This gets
+them talking to agents built by somebody else, over
+[Agent2Agent](https://a2a-protocol.org), and lets those agents talk to yours.
+
+It lives in its own module, `github.com/xraph/cortex/a2aremote`, so a host that
+only ever wanted in-process messaging does not inherit its dependencies.
+
+```bash
+go get github.com/xraph/cortex/a2aremote
+```
+
+## What version of A2A
+
+1.0.0, the Linux Foundation release. That matters more than it sounds, because
+the protocol moved and the differences are not cosmetic:
+
+- Method names are PascalCase (`SendMessage`, `GetTask`), not the 0.x
+  `message/send` style. Cortex does not answer the old spellings, because
+  answering them would tell a client it speaks a version it does not.
+- Agent cards live at `/.well-known/agent-card.json`. The 0.x path was
+  `/.well-known/agent.json`, and a 1.0 client never looks there.
+- A2A defines three bindings. Cortex serves JSON-RPC 2.0 today, and the card
+  says so, so a client that needs gRPC finds that out by reading rather than by
+  failing.
+
+## Serving your agents
+
+```go
+svc, err := a2aremote.Attach(eng, a2aremote.AttachOptions{
+    Resolver: a2aremote.ResolverFunc(func(ctx context.Context, cred a2aremote.Credentials) (a2aremote.Peer, error) {
+        tenant, ok := myAuth.TenantFor(cred.Header("Authorization"))
+        if !ok {
+            return a2aremote.Peer{}, errors.New("unknown caller")
+        }
+        return a2aremote.Peer{
+            Node:  tenant.PeerName,
+            Scope: cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: tenant.ID}}},
+        }, nil
+    }),
+    Service: a2aremote.Options{
+        Card:         a2aremote.CardOptions{BaseURL: "https://agents.example.com/a2a"},
+        Exposed:      []string{"support-triage", "db-expert"},
+        DefaultAgent: "support-triage",
+        Scope:        cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "acme"}}},
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+http.Handle("/a2a/", http.StripPrefix("/a2a", svc.Handler()))
+```
+
+Three things in there decide your security posture, so they are worth reading
+slowly.
+
+**The resolver is the only thing that assigns a scope.** No header, no message
+field and no query parameter can influence which cortex scope an inbound
+request acts in. Cortex ships the seam and no implementation of it: you already
+have an identity system, and a second weaker one living inside cortex would be
+a liability.
+
+**`Exposed` is opt-in.** An agent card is public to anyone who can reach the
+endpoint, and it carries the agent's name, description and skills. An agent you
+do not list is a 404, not a 403, because the fact that it exists here is itself
+disclosure.
+
+**`Scope` says where exposed agents are read from.** A card is fetched without
+credentials, so there is no caller to borrow a scope from. Only the agents you
+exposed are ever read under it.
+
+## Calling other people's agents
+
+Register the peers you trust, and your agents address them as
+`agent@node`:
+
+```go
+_, err := a2aremote.Attach(eng, a2aremote.AttachOptions{
+    Resolver: myResolver,
+    Peers: []a2aremote.PeerConfig{{
+        Node:    "partner",
+        BaseURL: "https://partner.example.com/a2a",
+        Header:  http.Header{"Authorization": {"Bearer " + partnerToken}},
+    }},
+})
+```
+
+Now an agent can call `agent_ask` with `to: "research@partner"` and the answer
+comes back the same way a local peer's would: the run suspends, the question
+travels as an A2A message, and the reply resumes the run through the same
+correlation ledger. A resumed agent cannot tell where its peer was running.
+
+Peers are configuration rather than data on purpose. An agent's own output
+cannot introduce one, so a prompt-injected agent can at worst misuse a peer you
+already trusted. An address whose node is not registered is unroutable, and the
+model gets told so.
+
+## What travels
+
+Your FIPA-ACL semantics survive the hop as a declared A2A extension. The card
+advertises it under `capabilities.extensions`, each message names it in
+`extensions`, and the ACL parameters ride in `metadata` under the extension's
+URI. It is declared optional, which is the point: a peer that has never heard of
+FIPA still receives a valid A2A message and reads the text, while one that has
+gets `cfp`, `refuse`, `agree` and the rest intact.
+
+Ids line up with the protocol's own fields. A conversation is a `contextId`, and
+a task is the delivery cortex queued. Task state is projected from the run, so
+the two can never disagree: `WORKING` is a running run, `INPUT_REQUIRED` is a
+suspended one, and a peer learns that your agent is waiting without learning
+what it is waiting on.
+
+## Running on sqlite
+
+Set a busy timeout:
+
+```go
+drv.Open(ctx, "cortex.db?_pragma=busy_timeout(5000)")
+```
+
+The dispatcher writes on its own goroutines while your runs write on theirs, and
+sqlite answers a concurrent writer with `SQLITE_BUSY` unless told to wait.
+Without the timeout you will see run writes fail under load for no reason you
+can see. Postgres needs nothing here.
+
+## All three bindings
+
+A2A defines three, all equivalent, and cortex serves all three over one
+service. Whatever a rule says about scope or sender namespacing holds on every
+binding, because the rule lives in the service and the bindings only translate
+formats.
+
+**JSON-RPC 2.0** is the default and needs nothing beyond `svc.Handler()`.
+
+**HTTP+JSON** is `svc.RESTHandler()`, at the protocol's own paths:
+`POST /{tenant}/message:send`, `GET /{tenant}/tasks/{id}`,
+`POST /{tenant}/tasks/{id}:cancel`. Errors say the same thing twice, as an HTTP
+status and as the protocol's numeric code, so a client that reads only one of
+them still knows what happened.
+
+**gRPC** lives in its own module, because grpc-go and protobuf are a large
+dependency graph and a host serving JSON-RPC should not inherit it:
+
+```bash
+go get github.com/xraph/cortex/a2aremote/grpcbind
+```
+
+```go
+srv := grpc.NewServer()
+grpcbind.Register(srv, svc)
+```
+
+Its types are generated from the normative `a2a.proto`, vendored verbatim, so
+the wire format is the specification's rather than an approximation.
+
+Advertise only what you actually serve. A card is a promise, and a client that
+picks `GRPC` because the card offered it has nowhere to go when nothing answers:
+
+```go
+Card: a2aremote.CardOptions{
+    BaseURL:  "https://agents.example.com/a2a",
+    Bindings: []string{a2aremote.BindingJSONRPC, a2aremote.BindingREST, a2aremote.BindingGRPC},
+    URLs:     map[string]string{a2aremote.BindingGRPC: "grpc.example.com:443"},
+},
+```
+
+## Streaming
+
+Off by default, on with one option:
+
+```go
+Service: a2aremote.Options{
+    Streaming:  true,
+    StreamPoll: 500 * time.Millisecond,
+},
+```
+
+`SendStreamingMessage` and `SubscribeToTask` then work on every binding, over
+server-sent events for the two HTTP ones and native server streaming for gRPC.
+A subscriber gets the task immediately, then each status transition, and the
+last one carries the output with `final` set so a client knows to stop reading.
+
+This is task-level streaming, which is what A2A's streaming is: the events are
+`TaskStatusUpdateEvent` and `TaskArtifactUpdateEvent`, not tokens. Cortex learns
+of a transition by re-reading the task on `StreamPoll`, so that interval bounds
+how stale an update can be and nothing else. A client that disconnects ends its
+own subscription; the task carries on without it.
+
+## What is still not implemented
+
+Declared in the card rather than discovered by failing:
+
+- **Push notifications.** The config methods return
+  `PushNotificationNotSupportedError`, and `capabilities.pushNotifications` is
+  false.
+- **The extended agent card.** `GetExtendedAgentCard` returns
+  `ExtendedAgentCardNotConfiguredError`.
+- **Agent card signatures.** Cards are unsigned, which matters for a public
+  registry and not for peers you configured by hand.
+
+One behaviour worth knowing about rather than discovering: a peer's `contextId`
+names a conversation in the peer's own database, so cortex keeps a conversation
+of its own for each remote thread and remembers which is which. A peer
+continuing a thread continues the same conversation here, which is what keeps
+the hop budget accumulating across turns rather than resetting every message.

@@ -9,6 +9,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -54,6 +55,14 @@ type Engine struct {
 	sweepInterval time.Duration
 	sweepLimit    int
 	sweep         sweeper
+
+	// a2a is the agent-to-agent message bus, nil unless a host asked for
+	// messaging with WithA2A. Its nil-ness is what gates the three
+	// messaging tools out of the list a model ever sees.
+	a2a            *a2a.Bus
+	a2aCfg         *a2aConfig
+	a2aSweepCancel context.CancelFunc
+	a2aSweepDone   chan struct{}
 }
 
 // LLM returns the configured LLM client, or nil if none is set.
@@ -106,6 +115,13 @@ func New(opts ...Option) (*Engine, error) {
 	}
 	e.pendingExts = nil
 
+	// The bus is built after every option has run, not inside WithA2A:
+	// it needs the store and the registry, and an option cannot know
+	// whether WithStore comes before or after it in the caller's list.
+	if err := e.buildA2A(); err != nil {
+		return nil, err
+	}
+
 	return e, nil
 }
 
@@ -123,8 +139,9 @@ func (e *Engine) Health(ctx context.Context) error {
 // every other lifecycle hook in the ecosystem, but a caller's start
 // context is not the engine's lifetime: the expiry sweeper it launches
 // here runs on a handle of its own and is stopped by Stop.
-func (e *Engine) Start(_ context.Context) error {
+func (e *Engine) Start(ctx context.Context) error {
 	e.startSweeper()
+	e.startA2A(ctx)
 	e.logger.Info("cortex engine started")
 	return nil
 }
@@ -136,6 +153,7 @@ func (e *Engine) Start(_ context.Context) error {
 // while a sweep is still failing runs has been told something untrue.
 func (e *Engine) Stop(ctx context.Context) error {
 	e.stopSweeper()
+	e.stopA2A()
 	e.extensions.EmitShutdown(ctx)
 	e.logger.Info("cortex engine stopped")
 	return nil
@@ -649,7 +667,7 @@ func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) 
 	// resume rather than Resume: this is the one caller allowed to say a
 	// checkpoint approved these calls, and it says so having just read a
 	// pending checkpoint for this run.
-	if _, err := e.resume(ctx, cp.RunID, in, true); err != nil {
+	if _, err := e.resume(ctx, cp.RunID, in, resumeSourceApproval); err != nil {
 		return fmt.Errorf("resume approved run %s: %w", cp.RunID, err)
 	}
 	return nil

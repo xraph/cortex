@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -34,6 +35,7 @@ type Store interface {
 	suspension.Store
 	orchestration.ConfigStore
 	orchestration.RunStore
+	a2a.Store
 
 	Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
 	Ping(ctx context.Context) error
