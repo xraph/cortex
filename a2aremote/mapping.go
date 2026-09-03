@@ -96,12 +96,22 @@ func EnvelopeParamsFromMessage(m Message, sender, receiver a2a.Address) (a2a.Sen
 		Encoding:     meta.Encoding,
 		ReplyWith:    meta.ReplyWith,
 	}
+	// The correlation token is validated before it is carried any
+	// further, and an unrecognised one is DROPPED rather than refused.
+	//
+	// Both halves matter. Validating bounds what reaches the pending-ask
+	// lookup to a shape we minted, which is worth doing even though that
+	// lookup is a parameterised query and not injectable. Dropping
+	// rather than refusing keeps cortex able to talk to peers whose
+	// message ids are not TypeIDs: a UUID in inReplyTo is perfectly
+	// conformant A2A, it simply cannot match a token we issued, and the
+	// bus already treats an in-reply-to matching no pending ask as
+	// ordinary mail. Refusing the request instead would turn a message
+	// we can read into an error the peer cannot act on.
 	if meta.InReplyTo != "" {
-		inReplyTo, inReplyToErr := id.ParseWithPrefix(meta.InReplyTo, id.PrefixMessage)
-		if inReplyToErr != nil {
-			return a2a.SendParams{}, ErrInvalidParams("inReplyTo is not a message id: " + inReplyToErr.Error())
+		if inReplyTo, parseErr := id.ParseWithPrefix(meta.InReplyTo, id.PrefixMessage); parseErr == nil {
+			params.InReplyTo = inReplyTo.String()
 		}
-		params.InReplyTo = inReplyTo.String()
 	}
 	if m.ContextID != "" {
 		convID, convErr := id.ParseWithPrefix(m.ContextID, id.PrefixConversation)
