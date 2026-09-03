@@ -1,6 +1,6 @@
 ---
 title: HTTP API Reference
-description: Reference for the Cortex REST endpoints: agents, runs, skills, traits, behaviors, personas, checkpoints, memory, sessions, tools, orchestrations, and configuration.
+description: Reference for the Cortex REST endpoints, covering agents, runs, skills, traits, behaviors, personas, checkpoints, memory, sessions, tools, orchestrations, and configuration.
 ---
 
 All endpoints live under `<basePath>/v1` and return JSON. `basePath` is the extension mount prefix (`extension.WithBasePath`, default `/cortex`) and `/v1` is the API version group, so the default full path is `/cortex/v1/...`. Authentication and tenant resolution depend on your middleware configuration. Set `X-Tenant-ID` and `X-App-ID` headers for multi-tenant deployments.
