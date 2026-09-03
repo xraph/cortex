@@ -95,7 +95,13 @@ func EnvelopeParamsFromMessage(m Message, sender, receiver a2a.Address) (a2a.Sen
 		Language:     meta.Language,
 		Encoding:     meta.Encoding,
 		ReplyWith:    meta.ReplyWith,
-		InReplyTo:    meta.InReplyTo,
+	}
+	if meta.InReplyTo != "" {
+		inReplyTo, inReplyToErr := id.ParseWithPrefix(meta.InReplyTo, id.PrefixMessage)
+		if inReplyToErr != nil {
+			return a2a.SendParams{}, ErrInvalidParams("inReplyTo is not a message id: " + inReplyToErr.Error())
+		}
+		params.InReplyTo = inReplyTo.String()
 	}
 	if m.ContextID != "" {
 		convID, convErr := id.ParseWithPrefix(m.ContextID, id.PrefixConversation)
