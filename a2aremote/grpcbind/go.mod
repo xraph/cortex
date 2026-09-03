@@ -17,11 +17,11 @@ require (
 require (
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/xraph/go-utils v1.1.8 // indirect
+	github.com/xraph/go-utils v1.2.2 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f // indirect

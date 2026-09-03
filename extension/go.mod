@@ -12,10 +12,10 @@ require (
 	github.com/xraph/cortex v1.6.1
 	github.com/xraph/cortex/dashboard v1.6.1
 	github.com/xraph/cortex/sentinel v1.6.1
-	github.com/xraph/forge v1.9.14
-	github.com/xraph/grove v1.6.2
+	github.com/xraph/forge v1.10.0
+	github.com/xraph/grove v1.6.3
 	github.com/xraph/nexus v1.6.3
-	github.com/xraph/shield v1.6.0
+	github.com/xraph/shield v1.6.3
 	github.com/xraph/vessel v1.0.4
 	github.com/xraph/weave v1.6.0
 )
@@ -104,10 +104,10 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xraph/confy v1.0.2 // indirect
 	github.com/xraph/forgeui v1.4.1 // indirect
-	github.com/xraph/go-utils v1.1.8 // indirect
-	github.com/xraph/grove/drivers/mongodriver v1.6.2 // indirect
-	github.com/xraph/grove/drivers/pgdriver v1.6.2 // indirect
-	github.com/xraph/grove/drivers/sqlitedriver v1.6.2 // indirect
+	github.com/xraph/go-utils v1.2.2 // indirect
+	github.com/xraph/grove/drivers/mongodriver v1.6.3 // indirect
+	github.com/xraph/grove/drivers/pgdriver v1.6.3 // indirect
+	github.com/xraph/grove/drivers/sqlitedriver v1.6.3 // indirect
 	github.com/xraph/sentinel v1.6.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
@@ -128,16 +128,16 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
-	google.golang.org/grpc v1.82.1 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
