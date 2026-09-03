@@ -1,6 +1,6 @@
 //go:build integration
 
-package fabriqbrain
+package inttest_test
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
+
+	fabriqbrain "github.com/xraph/cortex/integrations/fabriq"
 )
 
 // hashEmbedder is a deterministic 768-dim embedder: equal text → equal vector,
@@ -47,7 +49,7 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 
 	// Registry with the memory entity.
 	reg := registry.New()
-	reg.MustRegister(MemorySpec(entity))
+	reg.MustRegister(fabriqbrain.MemorySpec(entity))
 	if err := reg.Validate(); err != nil {
 		t.Fatalf("registry validate: %v", err)
 	}
@@ -97,12 +99,12 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	// Build a write-enabled toolkit and the learning-loop plugin over the real fabric.
 	tk, err := agent.NewToolkit(f, f.Registry(), emb, agent.Config{
 		VectorDims: 768,
-		Write:      MemoryWritePolicy(entity),
+		Write:      fabriqbrain.MemoryWritePolicy(entity),
 	})
 	if err != nil {
 		t.Fatalf("NewToolkit: %v", err)
 	}
-	plugin := NewPlugin(tk, WithMemoryEntity(entity))
+	plugin := fabriqbrain.NewPlugin(tk, fabriqbrain.WithMemoryEntity(entity))
 
 	// Simulate an agent run: started → completed. The plugin writes the memory row.
 	runID := id.NewAgentRunID()
@@ -129,7 +131,7 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 
 	// Recall through the knowledge provider. The query text equals the stored
 	// content so the hash vectors match: the memory must surface.
-	provider := NewProvider(tk, WithEntities(entity))
+	provider := fabriqbrain.NewProvider(tk, fabriqbrain.WithEntities(entity))
 	chunks, err := provider.Retrieve(tctx,
 		"the coolant pump failed at station seven\nreplace the pump seal and restart",
 		&knowledge.RetrieveParams{TopK: 5})

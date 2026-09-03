@@ -9,15 +9,12 @@ import (
 	log "github.com/xraph/go-utils/log"
 )
 
-// stubFabric satisfies fabricFacade. Its embedded query.Fabric is nil: none of
-// its methods are exercised because buildToolkit's dims check returns before the
-// fabric is touched. Registry is non-nil so NewToolkit's nil-registry guard passes.
+// stubFabric satisfies query.Fabric with a nil embedded value: none of its
+// methods are exercised because buildToolkit's dims check returns before the
+// fabric is touched.
 type stubFabric struct {
 	query.Fabric
-	reg *registry.Registry
 }
-
-func (s stubFabric) Registry() *registry.Registry { return s.reg }
 
 // dimsEmbedder reports a fixed dimensionality; Embed is never called in these tests.
 type dimsEmbedder struct{ dims int }
@@ -37,7 +34,10 @@ type captureLogger struct {
 
 func (c *captureLogger) Error(msg string, _ ...log.Field) { c.errors = append(c.errors, msg) }
 
-func newStubFabric() stubFabric { return stubFabric{reg: registry.New()} }
+func newStubFabric() stubFabric { return stubFabric{} }
+
+// newStubRegistry supplies the non-nil registry NewToolkit's guard requires.
+func newStubRegistry() *registry.Registry { return registry.New() }
 
 // A configured vector-dims value is threaded into the toolkit: a 1536-dim
 // embedder is accepted only because WithVectorDims(1536) overrides the 768 default.
@@ -46,7 +46,7 @@ func TestBuildToolkit_ThreadsVectorDims(t *testing.T) {
 		WithEmbedder(dimsEmbedder{dims: 1536}),
 		WithVectorDims(1536),
 	})
-	if _, err := buildToolkit(newStubFabric(), c); err != nil {
+	if _, err := buildToolkit(newStubFabric(), newStubRegistry(), c); err != nil {
 		t.Fatalf("buildToolkit with matching WithVectorDims = %v, want nil", err)
 	}
 }
@@ -55,7 +55,7 @@ func TestBuildToolkit_ThreadsVectorDims(t *testing.T) {
 // is a mismatch and buildToolkit must report it.
 func TestBuildToolkit_RejectsDimMismatchAgainstDefault(t *testing.T) {
 	c := applyOptions([]Option{WithEmbedder(dimsEmbedder{dims: 1536})})
-	if _, err := buildToolkit(newStubFabric(), c); err == nil {
+	if _, err := buildToolkit(newStubFabric(), newStubRegistry(), c); err == nil {
 		t.Fatal("buildToolkit with 1536-dim embedder vs 768 default = nil, want dims-mismatch error")
 	}
 }
@@ -68,7 +68,7 @@ func TestResolveToolkit_LogsDimsMismatch(t *testing.T) {
 		WithEmbedder(dimsEmbedder{dims: 1536}),
 		WithLogger(cl),
 	})
-	tk := resolveToolkit(newStubFabric(), c)
+	tk := resolveToolkit(newStubFabric(), newStubRegistry(), c)
 	if tk != nil {
 		t.Fatalf("resolveToolkit on dims mismatch = %v, want nil", tk)
 	}
