@@ -32,4 +32,9 @@ cp "$work"/github.com/xraph/cortex/a2aremote/grpcbind/a2apb/*.pb.go .
 # which is not the directory it lands in. Renaming it is the one edit
 # these generated files get.
 sed -i '' 's/^package v1$/package a2apb/' *.pb.go
+# protoc-gen-go's import grouping is not what gofmt produces in this Go
+# version, so the generated files fail a format check straight out of the
+# generator. Formatting here keeps regeneration from reintroducing it.
+gofmt -w ./*.pb.go
+
 echo "regenerated $(ls *.pb.go | tr '\n' ' ')"

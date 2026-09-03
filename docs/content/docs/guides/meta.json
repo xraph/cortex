@@ -1,4 +1,11 @@
 {
   "title": "Guides",
-  "pages": ["full-example", "cloning", "forge-extension", "custom-store", "custom-plugin", "v1.8-rescope"]
+  "pages": [
+    "full-example",
+    "cloning",
+    "forge-extension",
+    "custom-store",
+    "custom-plugin",
+    "v1.8-rescope"
+  ]
 }
