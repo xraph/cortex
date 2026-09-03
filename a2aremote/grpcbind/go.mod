@@ -15,7 +15,7 @@ require (
 )
 
 require (
-	github.com/gofrs/uuid/v5 v5.3.2 // indirect
+	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/xraph/go-utils v1.2.2 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect

@@ -11,7 +11,7 @@ require (
 	github.com/xraph/cortex v1.6.1
 	github.com/xraph/cortex/dashboard v1.6.1
 	github.com/xraph/forgeui v1.4.1
-	github.com/xraph/sentinel v1.6.2
+	github.com/xraph/sentinel v1.6.3
 	github.com/xraph/vessel v1.0.4
 )
 
@@ -50,7 +50,7 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	github.com/gofrs/uuid/v5 v5.3.2 // indirect
+	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/consul/api v1.34.4 // indirect
@@ -85,16 +85,16 @@ require (
 	github.com/xraph/confy v1.0.2 // indirect
 	github.com/xraph/forge v1.10.0 // indirect
 	github.com/xraph/go-utils v1.2.2 // indirect
-	github.com/xraph/nexus v1.6.3 // indirect
+	github.com/xraph/nexus v1.6.4 // indirect
 	github.com/xraph/shield v1.6.3 // indirect
-	github.com/xraph/weave v1.6.0 // indirect
+	github.com/xraph/weave v1.6.3 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
