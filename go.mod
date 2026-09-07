@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/testcontainers/testcontainers-go v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/mongodb v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/mongodb v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/xraph/go-utils v1.2.2
 	github.com/xraph/grove v1.6.3
 	github.com/xraph/grove/drivers/mongodriver v1.6.3
