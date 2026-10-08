@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/cortex/engine"
+	cortexcontract "github.com/xraph/cortex/extension/contract"
 	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
 	shieldsafety "github.com/xraph/cortex/safety/shield"
@@ -45,12 +46,13 @@ var _ forge.Extension = (*Extension)(nil)
 type Extension struct {
 	*forge.BaseExtension
 
-	config      Config
-	eng         *engine.Engine
-	routes      RouteSet
-	buildRoutes func(*engine.Engine, forge.Router) RouteSet
-	engineOpts  []engine.Option
-	useGrove    bool
+	config        Config
+	eng           *engine.Engine
+	routes        RouteSet
+	buildRoutes   func(*engine.Engine, forge.Router) RouteSet
+	engineOpts    []engine.Option
+	useGrove      bool
+	dashboardDeps cortexcontract.Deps
 }
 
 // New creates a Cortex Forge extension with the given options.

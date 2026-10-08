@@ -90,6 +90,13 @@ Every source below is retained. Items begin as pending and need the evidence led
 | Baseline core/engine | Passed | `GOWORK=off go test -mod=readonly ./...`, engine and core packages pass |
 | Baseline SQLite/PostgreSQL | Passed | Same full invocation, both store suites pass |
 | Baseline MongoDB | Blocked | MongoDB 8.3.2 container exits: allocator compatibility with Linux kernel 7.0.14, requires opt-in for 6.19+ |
-| React/contract/demo | Pending | Implementation not verified yet |
+| Contract configuration foundation | Passed | Extension `go test -race -mod=readonly ./...`: scoped reads/writes, absent/malformed claims, foreign IDs, omitted versus cleared fields, nested SQLite values, restart identity, delete references and audit refusal |
+| React/demo | Pending | Implementation not verified yet |
 | Browser workflows/restart/live refresh | Pending | No live review yet |
 | Legacy retirement | Blocked | Required migration and live evidence outstanding |
+
+## Current implementation
+
+`extension/contract` registers Cortex configuration intents for agents, personas, skills, traits, behaviors and orchestrations. The extension discovers the contributor without a templ dependency. You must supply authenticated `cortex.read`/`cortex.manage` scopes and a durable audit recorder for commands. Names are immutable, IDs and scope are server-owned, and typed pointer patches preserve omissions. Audit records attempts before mutation and outcomes afterwards; an outcome recording failure reports that the command may have run. Audit and domain storage are not one transaction.
+
+Composition references are limited to the exact stored scope. Existing name lookups use descendant matching, so ambiguous parent/child names require special care on execution. External writers are outside the contract mutex and must coordinate reference changes with deletes; store interfaces do not provide name foreign-key constraints.
