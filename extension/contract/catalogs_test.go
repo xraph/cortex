@@ -10,6 +10,8 @@ import (
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+	"github.com/xraph/nexus"
+	"github.com/xraph/nexus/provider"
 	shieldengine "github.com/xraph/shield/engine"
 	shieldid "github.com/xraph/shield/id"
 	"github.com/xraph/shield/profile"
@@ -33,6 +35,36 @@ func catalogDB(t *testing.T) *grove.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+type catalogProvider struct {
+	provider.Provider
+	err error
+}
+
+func (catalogProvider) Name() string                        { return "test-provider" }
+func (catalogProvider) Capabilities() provider.Capabilities { return provider.Capabilities{} }
+func (p catalogProvider) Models(context.Context) ([]provider.Model, error) {
+	return []provider.Model{{ID: "test-model", Name: "Test model", Provider: "test-provider", Pricing: provider.Pricing{InputPerMillion: 0.125, OutputPerMillion: 0.25}}}, p.err
+}
+func TestNexusCatalogKeepsDecimalPriceStringsAndProviderFailures(t *testing.T) {
+	access := func(context.Context, string) (CatalogScope, error) {
+		return CatalogScope{AppID: "app", TenantID: "tenant"}, nil
+	}
+	catalogs := NexusCatalogs(nexus.New(nexus.WithProvider(catalogProvider{})), access)
+	value, err := catalogs["models.list"](context.Background(), map[string]any{"provider": "test-provider"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := value.(map[string]any)["items"].([]map[string]any)[0]
+	pricing := row["pricing"].(map[string]any)
+	if pricing["input_per_million"] != "0.125" || pricing["output_per_million"] != "0.25" {
+		t.Fatalf("prices: %+v", pricing)
+	}
+	catalogs = NexusCatalogs(nexus.New(nexus.WithProvider(catalogProvider{err: errors.New("provider unavailable")})), access)
+	if _, err := catalogs["models.list"](context.Background(), nil); err == nil {
+		t.Fatal("provider failure hidden")
+	}
 }
 
 func TestCatalogsRequireExplicitHostScope(t *testing.T) {
@@ -80,6 +112,9 @@ func TestWeaveCatalogWalksAllPagesAndChecksDetailBeforeStats(t *testing.T) {
 	out := value.(map[string]any)
 	if out["total"] != 124 || len(out["items"].([]map[string]any)) != 24 || out["complete"] != true {
 		t.Fatalf("page: %+v", out)
+	}
+	if summary := out["summary"].(map[string]int64); summary["collections"] != 124 {
+		t.Fatalf("summary must count all authorized collections: %+v", summary)
 	}
 	if _, err := catalogs["knowledge.detail"](ctx, map[string]any{"id": foreign.String()}); !errors.Is(err, dc.ErrNotFound) {
 		t.Fatalf("foreign detail: %v", err)

@@ -175,14 +175,19 @@ func WeaveCatalogs(eng *weaveengine.Engine, access CatalogAccess) map[string]Cat
 			}
 		}
 		rows := []map[string]any{}
+		summary := map[string]int64{"collections": int64(len(cols)), "documents": 0, "chunks": 0}
 		for _, col := range cols {
 			stats, err := eng.CollectionStats(ctx, col.ID)
 			if err != nil {
 				return nil, err
 			}
 			rows = append(rows, map[string]any{"id": col.ID.String(), "name": col.Name, "description": col.Description, "document_count": stats.DocumentCount, "chunk_count": stats.ChunkCount, "embedding_model": stats.EmbeddingModel, "chunk_strategy": stats.ChunkStrategy})
+			summary["documents"] += stats.DocumentCount
+			summary["chunks"] += stats.ChunkCount
 		}
-		return catalogPage(rows, in), nil
+		out := catalogPage(rows, in)
+		out["summary"] = summary
+		return out, nil
 	}
 	return map[string]CatalogQuery{"knowledge.list": query, "knowledge.detail": query}
 }
