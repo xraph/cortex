@@ -232,3 +232,69 @@ func TestAuditFailureAfterMutationReportsAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type cancelLLM struct {
+	testLLM
+	entered chan struct{}
+}
+
+func (c cancelLLM) CompleteStream(context.Context, *llm.Request) (llm.Stream, error) {
+	return &cancelProviderStream{entered: c.entered}, nil
+}
+
+type cancelProviderStream struct{ entered chan struct{} }
+
+func (s *cancelProviderStream) Next(ctx context.Context) (*llm.Chunk, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (*cancelProviderStream) Close() error      { return nil }
+func (*cancelProviderStream) Usage() *llm.Usage { return &llm.Usage{} }
+func TestLiveCancelInsideProviderRetainsCancelledState(t *testing.T) {
+	entered := make(chan struct{})
+	d, s, _ := testService(t, engine.WithLLM(cancelLLM{entered: entered}))
+	p := principal("a")
+	ctx, _ := s.context(context.Background(), p, "manage")
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "cancel-test", Enabled: true}
+	if err := s.deps.Engine.CreateAgent(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := dispatch(t, d, p, "runs.start", ExecuteInput{ID: ag.ID.String(), Input: "wait"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := decode[IDInput](t, raw)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider never entered Next")
+	}
+	if _, err := dispatch(t, d, p, "runs.cancel", started); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	done := false
+	for time.Now().Before(deadline) {
+		raw, err = dispatch(t, d, p, "runs.events", StreamInput{ID: started.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decode[StreamOutput](t, raw).Done {
+			done = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !done {
+		t.Fatal("cancelled stream did not close")
+	}
+	raw, err = dispatch(t, d, p, "runs.detail", started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := decode[RunDetail](t, raw).Run
+	if result.State != run.StateCancelled || result.CompletedAt == nil || result.Error != "" {
+		t.Fatalf("cancel overwritten: %+v", result)
+	}
+}

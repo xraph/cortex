@@ -779,6 +779,8 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	}
 
 	r.State = run.StateCancelled
+	completedAt := time.Now().UTC()
+	r.CompletedAt = &completedAt
 	if err := e.store.UpdateRun(ctx, r); err != nil {
 		return fmt.Errorf("cancel run %s: %w", runID, err)
 	}

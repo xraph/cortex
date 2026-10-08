@@ -780,6 +780,15 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 // did fail is not.
 func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
 	completedAt := time.Now().UTC()
+	// A dashboard cancellation persists before it stops the provider stream.
+	// Next can then return an error, but that error must not replace the
+	// operator's terminal cancellation or emit a misleading failure hook.
+	if saved, err := e.store.GetRun(context.WithoutCancel(ctx), r.ID); err == nil && saved.State == run.StateCancelled {
+		r.State = run.StateCancelled
+		r.Error = saved.Error
+		r.CompletedAt = &completedAt
+		return e.store.UpdateRun(context.WithoutCancel(ctx), r)
+	}
 	r.State = run.StateFailed
 	r.Error = runErr.Error()
 	r.CompletedAt = &completedAt
