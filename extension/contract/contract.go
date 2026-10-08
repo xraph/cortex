@@ -71,7 +71,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return err
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindAdvanced} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage} {
 		if err = bind(d); err != nil {
 			return err
 		}

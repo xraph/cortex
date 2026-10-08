@@ -7,34 +7,34 @@ contributor:
 intents:
   - {name: agents.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: agents.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: agents.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: agents.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: agents.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: agents.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: agents.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: agents.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: personas.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: personas.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: personas.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: personas.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: personas.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: personas.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: personas.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: personas.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, personas.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: skills.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: skills.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: skills.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: skills.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: skills.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: skills.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: skills.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: skills.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [skills.list, skills.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: traits.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: traits.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: traits.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: traits.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: traits.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: traits.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: traits.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: traits.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [traits.list, traits.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: behaviors.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: behaviors.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: behaviors.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: behaviors.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: behaviors.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: behaviors.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: behaviors.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: behaviors.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [behaviors.list, behaviors.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: orchestrations.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: orchestrations.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: orchestrations.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: orchestrations.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list]}
-  - {name: orchestrations.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list]}
+  - {name: orchestrations.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: orchestrations.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: orchestrations.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [orchestrations.list, orchestrations.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: overview.stats, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: runs.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: runs.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
@@ -44,10 +44,10 @@ intents:
   - {name: sessions.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: memory.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: tools.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: runs.cancel, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, checkpoints.list, overview.stats]}
-  - {name: runs.execute, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, sessions.list, memory.detail, overview.stats]}
+  - {name: runs.cancel, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, checkpoints.list, overview.stats]}
+  - {name: runs.execute, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, sessions.list, memory.detail, overview.stats]}
   - {name: agents.clone, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, overview.stats]}
-  - {name: checkpoints.resolve, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.approve]}, invalidates: [checkpoints.list, checkpoints.detail, runs.list, runs.detail, overview.stats]}
+  - {name: checkpoints.resolve, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.approve]}, invalidates: [checkpoints.list, checkpoints.detail, runs.list, runs.detail, agents.stats, tools.usage, overview.stats]}
   - {name: sessions.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [sessions.list]}
   - {name: sessions.update, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [sessions.list, memory.detail]}
   - {name: sessions.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [sessions.list, memory.detail]}
@@ -67,12 +67,18 @@ intents:
   - {name: personas.clone, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [personas.list, overview.stats]}
   - {name: orchestrations.execute, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [orchestrationRuns.list, runs.list, sessions.list, overview.stats]}
 
-  - {name: runs.start, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, sessions.list, memory.detail, overview.stats]}
+  - {name: runs.start, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, sessions.list, memory.detail, overview.stats]}
   - {name: runs.events, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
 
-  - {name: runs.resume, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, sessions.list, memory.detail, checkpoints.list, overview.stats]}
+  - {name: runs.resume, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, sessions.list, memory.detail, checkpoints.list, overview.stats]}
   - {name: overlays.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
-  - {name: overlays.save, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.overlay]}, invalidates: [overlays.list, prompt.preview, tools.list]}
-  - {name: overlays.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.overlay]}, invalidates: [overlays.list, prompt.preview, tools.list]}
+  - {name: overlays.save, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.overlay]}, invalidates: [overlays.list, prompt.preview, tools.list, tools.usage, references.list]}
+  - {name: overlays.delete, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.overlay]}, invalidates: [overlays.list, prompt.preview, tools.list, tools.usage, references.list]}
   - {name: messages.send, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [conversations.list, conversations.detail, runs.list, overview.stats]}
   - {name: messages.inbox, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [conversations.list, conversations.detail]}
+
+  - {name: references.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+
+  - {name: agents.stats, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+
+  - {name: tools.usage, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}

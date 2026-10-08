@@ -32,7 +32,12 @@ func (s *service) bindRuntime(d *dispatcher.Dispatcher) error {
 				if s.deps.Engine.LLM() == nil {
 					label = "No LLM client installed"
 				}
-				return map[string]any{"scope": cortex.ScopeFromContext(ctx), "llm": s.deps.Engine.LLM() != nil, "execution_label": label, "safety": s.deps.Engine.Safety() != nil, "knowledge": s.deps.Engine.Knowledge() != nil, "tool_authorizer": s.deps.Engine.HasToolAuthorizer(), "audit": s.deps.Audit != nil, "a2a": s.deps.Engine.A2A() != nil, "plugins": plugins, "limitations": []string{"ReAct is the implemented reasoning loop.", "Persona identity, inline skill prompt fragments and inline trait prompt injections are applied. Persona assignments, cognitive phases, communication preferences, perception and behavior rules are stored configuration without runtime application on this path.", "Sentinel automatic evaluation is not implemented.", "Runtime defaults are read-only here because their update service is in-memory and unsynchronized."}}, nil
+				p := cortex.PrincipalFromContext(ctx).(dc.Principal)
+				permissions := map[string]bool{}
+				for _, permission := range []string{"read", "manage", "run", "approve", "overlay"} {
+					permissions[permission] = p.User.HasScope("cortex." + permission)
+				}
+				return map[string]any{"permissions": permissions, "scope": cortex.ScopeFromContext(ctx), "llm": s.deps.Engine.LLM() != nil, "execution_label": label, "safety": s.deps.Engine.Safety() != nil, "knowledge": s.deps.Engine.Knowledge() != nil, "tool_authorizer": s.deps.Engine.HasToolAuthorizer(), "audit": s.deps.Audit != nil, "a2a": s.deps.Engine.A2A() != nil, "plugins": plugins, "limitations": []string{"ReAct is the implemented reasoning loop.", "Persona identity, inline skill prompt fragments and inline trait prompt injections are applied. Persona assignments, cognitive phases, communication preferences, perception and behavior rules are stored configuration without runtime application on this path.", "Sentinel automatic evaluation is not implemented.", "Runtime defaults are read-only here because their update service is in-memory and unsynchronized."}}, nil
 			})
 		},
 		func() error {
