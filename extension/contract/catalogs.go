@@ -40,7 +40,8 @@ func catalogInput(raw map[string]any) (CatalogInput, error) {
 	if err = json.Unmarshal(b, &in); err != nil {
 		return in, bad("Invalid catalog parameters")
 	}
-	return in, in.normalize()
+	err = in.normalize()
+	return in, err
 }
 func catalogScope(ctx context.Context, system string, access CatalogAccess) (CatalogScope, error) {
 	if access == nil {
@@ -103,8 +104,8 @@ func NexusCatalogs(gw *nexus.Gateway, access CatalogAccess) map[string]CatalogQu
 				var row map[string]any
 				dec := json.NewDecoder(strings.NewReader(string(b)))
 				dec.UseNumber()
-				if err = dec.Decode(&row); err != nil {
-					return nil, err
+				if checkErr := dec.Decode(&row); checkErr != nil {
+					return nil, checkErr
 				}
 				if pricing, ok := row["pricing"].(map[string]any); ok {
 					for k, v := range pricing {
@@ -116,7 +117,11 @@ func NexusCatalogs(gw *nexus.Gateway, access CatalogAccess) map[string]CatalogQu
 				rows = append(rows, row)
 			}
 		}
-		sort.Slice(rows, func(i, j int) bool { return rows[i]["id"].(string) < rows[j]["id"].(string) })
+		sort.Slice(rows, func(i, j int) bool {
+			left, leftOK := rows[i]["id"].(string)
+			right, rightOK := rows[j]["id"].(string)
+			return leftOK && (!rightOK || left < right)
+		})
 		if in.ID != "" && len(rows) == 0 {
 			return nil, &dc.Error{Code: dc.CodeNotFound, Message: "Model was not found"}
 		}
@@ -169,8 +174,8 @@ func WeaveCatalogs(eng *weaveengine.Engine, access CatalogAccess) map[string]Cat
 				if len(batch) < 100 {
 					break
 				}
-				if err = ctx.Err(); err != nil {
-					return nil, err
+				if checkErr := ctx.Err(); checkErr != nil {
+					return nil, checkErr
 				}
 			}
 		}
@@ -225,8 +230,8 @@ func ShieldCatalogs(eng *shieldengine.Engine, access CatalogAccess) map[string]C
 			if len(batch) < 100 {
 				break
 			}
-			if err = ctx.Err(); err != nil {
-				return nil, err
+			if checkErr := ctx.Err(); checkErr != nil {
+				return nil, checkErr
 			}
 		}
 		return catalogPage(rows, in), nil
@@ -254,7 +259,10 @@ func ShieldCatalogs(eng *shieldengine.Engine, access CatalogAccess) map[string]C
 				if row.AppID != scope.AppID || row.TenantID != scope.TenantID {
 					continue
 				}
-				rid, _ := row.Metadata["run_id"].(string)
+				rid, ok := row.Metadata["run_id"].(string)
+				if !ok {
+					rid = ""
+				}
 				if in.RunID != "" && rid != in.RunID {
 					continue
 				}
@@ -273,8 +281,8 @@ func ShieldCatalogs(eng *shieldengine.Engine, access CatalogAccess) map[string]C
 			if len(batch) < 100 {
 				break
 			}
-			if err = ctx.Err(); err != nil {
-				return nil, err
+			if checkErr := ctx.Err(); checkErr != nil {
+				return nil, checkErr
 			}
 		}
 		out := catalogPage(rows, in)

@@ -200,7 +200,7 @@ func TestStreamingIsOffUnlessAskedFor(t *testing.T) {
 	svc := NewService(gw, okResolver(), Options{Card: CardOptions{BaseURL: "https://x/a2a"}, Exposed: []string{"worker"}})
 
 	rec := httptest.NewRecorder()
-	svc.JSONRPCHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(
+	svc.JSONRPCHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", bytes.NewBufferString(
 		`{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"tenant":"worker"}}`)))
 
 	var resp map[string]any

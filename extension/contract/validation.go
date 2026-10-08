@@ -3,6 +3,14 @@ package contract
 import (
 	"context"
 	"fmt"
+	"math"
+	"reflect"
+	"regexp"
+	"slices"
+	"strings"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
@@ -10,12 +18,6 @@ import (
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"math"
-	"reflect"
-	"regexp"
-	"slices"
-	"strings"
 )
 
 var validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)

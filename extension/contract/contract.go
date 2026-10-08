@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xraph/cortex"
-	"github.com/xraph/cortex/a2a"
-	"github.com/xraph/cortex/engine"
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/forge/extensions/dashboard/contract/loader"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
+	"github.com/xraph/cortex/engine"
 )
 
 const ContributorName = "cortex"
@@ -64,16 +65,16 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 	if err != nil {
 		return err
 	}
-	if err = loader.Validate(m, wreg); err != nil {
-		return err
+	if checkErr := loader.Validate(m, wreg); checkErr != nil {
+		return checkErr
 	}
-	if err = reg.Register(m); err != nil {
-		return err
+	if checkErr := reg.Register(m); checkErr != nil {
+		return checkErr
 	}
 	s := &service{deps: deps}
 	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage} {
-		if err = bind(d); err != nil {
-			return err
+		if checkErr := bind(d); checkErr != nil {
+			return checkErr
 		}
 	}
 	return nil
@@ -110,8 +111,8 @@ func (s *service) context(ctx context.Context, p dc.Principal, permission string
 	if err != nil {
 		return ctx, err
 	}
-	if err = validateScope(scope); err != nil {
-		return ctx, err
+	if checkErr := validateScope(scope); checkErr != nil {
+		return ctx, checkErr
 	}
 	return cortex.WithPrincipal(cortex.WithScope(ctx, scope), p), nil
 }
@@ -129,8 +130,8 @@ func scopeFromClaims(p dc.Principal, fallback cortex.Scope) (cortex.Scope, error
 		if err = dec.Decode(&scope); err != nil {
 			return scope, denied("Invalid cortex_scope claim")
 		}
-		if err = validateScope(scope); err != nil {
-			return scope, err
+		if checkErr := validateScope(scope); checkErr != nil {
+			return scope, checkErr
 		}
 		for _, l := range scope.Levels {
 			if v, exists := p.Claims[l.Key+"_id"]; exists && v != l.Value {

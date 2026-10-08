@@ -19,7 +19,7 @@ func restCall(t *testing.T, h http.Handler, method, path, body string) (int, map
 	} else {
 		reader = bytes.NewBufferString(body)
 	}
-	req := httptest.NewRequest(method, path, reader)
+	req := httptest.NewRequestWithContext(t.Context(), method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

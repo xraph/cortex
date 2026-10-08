@@ -3,12 +3,14 @@ package contract
 import (
 	"context"
 	"errors"
+	"testing"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/persona"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"testing"
 )
 
 func TestReferenceChoicesUseStoredOwnerScope(t *testing.T) {
@@ -22,13 +24,13 @@ func TestReferenceChoicesUseStoredOwnerScope(t *testing.T) {
 	childScope.Levels = append(childScope.Levels, cortex.Level{Key: "project", Value: "child"})
 	child := cortex.WithScope(ctx, childScope)
 	for _, scoped := range []context.Context{ctx, child} {
-		if err := s.deps.Engine.CreatePersona(scoped, &persona.Persona{ID: id.NewPersonaID(), Name: "operator"}); err != nil {
-			t.Fatal(err)
+		if createErr := s.deps.Engine.CreatePersona(scoped, &persona.Persona{ID: id.NewPersonaID(), Name: "operator"}); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	ag := &agent.Config{ID: id.NewAgentID(), Name: "runner"}
-	if err := s.deps.Engine.CreateAgent(child, ag); err != nil {
-		t.Fatal(err)
+	if createErr := s.deps.Engine.CreateAgent(child, ag); createErr != nil {
+		t.Fatal(createErr)
 	}
 	raw, err := dispatch(t, d, p, "references.list", ReferenceInput{Kind: "personas", OwnerKind: "agents", OwnerID: ag.ID.String()})
 	if err != nil {
@@ -38,8 +40,8 @@ func TestReferenceChoicesUseStoredOwnerScope(t *testing.T) {
 	if out.Total != 1 || len(out.Items) != 1 || out.Items[0].Scope.Canonical() != childScope.Canonical() {
 		t.Fatalf("choices: %+v", out)
 	}
-	if _, err := dispatch(t, d, principal("b"), "references.list", ReferenceInput{Kind: "personas", OwnerKind: "agents", OwnerID: ag.ID.String()}); !errors.Is(err, dc.ErrNotFound) {
-		t.Fatalf("foreign owner: %v", err)
+	if _, foreignErr := dispatch(t, d, principal("b"), "references.list", ReferenceInput{Kind: "personas", OwnerKind: "agents", OwnerID: ag.ID.String()}); !errors.Is(foreignErr, dc.ErrNotFound) {
+		t.Fatalf("foreign owner: %v", foreignErr)
 	}
 	raw, err = dispatch(t, d, p, "agents.stats", IDInput{ag.ID.String()})
 	if err != nil {

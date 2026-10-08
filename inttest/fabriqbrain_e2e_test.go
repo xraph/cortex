@@ -59,8 +59,8 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenOrchestrator: %v", err)
 	}
-	if _, err := orch.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
+	if _, checkErr := orch.Migrate(ctx); checkErr != nil {
+		t.Fatalf("migrate: %v", checkErr)
 	}
 	_ = closeFn()
 
@@ -74,8 +74,8 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	if !ok {
 		t.Fatalf("entity %q not registered", entity)
 	}
-	if err := owner.EnsureDynamic(ctx, ent); err != nil {
-		t.Fatalf("EnsureDynamic: %v", err)
+	if checkErr := owner.EnsureDynamic(ctx, ent); checkErr != nil {
+		t.Fatalf("EnsureDynamic: %v", checkErr)
 	}
 	_ = owner.Close()
 
@@ -109,11 +109,11 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	// Simulate an agent run: started → completed. The plugin writes the memory row.
 	runID := id.NewAgentRunID()
 	agentID := id.NewAgentID()
-	if err := plugin.OnRunStarted(tctx, agentID, runID, "the coolant pump failed at station seven"); err != nil {
-		t.Fatalf("OnRunStarted: %v", err)
+	if checkErr := plugin.OnRunStarted(tctx, agentID, runID, "the coolant pump failed at station seven"); checkErr != nil {
+		t.Fatalf("OnRunStarted: %v", checkErr)
 	}
-	if err := plugin.OnRunCompleted(tctx, agentID, runID, "replace the pump seal and restart", 2*time.Second); err != nil {
-		t.Fatalf("OnRunCompleted: %v", err)
+	if checkErr := plugin.OnRunCompleted(tctx, agentID, runID, "replace the pump seal and restart", 2*time.Second); checkErr != nil {
+		t.Fatalf("OnRunCompleted: %v", checkErr)
 	}
 
 	// Vectorize the written row(s) directly (no Redis embed worker needed).

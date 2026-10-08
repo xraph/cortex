@@ -4,6 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"testing"
+
+	dashauth "github.com/xraph/forge/extensions/dashboard/auth"
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/drivers/sqlitedriver"
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
@@ -11,14 +21,6 @@ import (
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
-	dashauth "github.com/xraph/forge/extensions/dashboard/auth"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"github.com/xraph/grove"
-	"github.com/xraph/grove/drivers/sqlitedriver"
-	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
-	"path/filepath"
-	"testing"
 )
 
 func openStore(t *testing.T, path string) *sqlitestore.Store {

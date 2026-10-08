@@ -2,6 +2,10 @@ package contract
 
 import (
 	"context"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
@@ -10,8 +14,6 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 )
 
 func (s *service) bindOperations(d *dispatcher.Dispatcher) error {

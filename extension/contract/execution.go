@@ -4,6 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"time"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/checkpoint"
@@ -14,10 +20,6 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/suspension"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"strings"
-	"time"
 )
 
 func query[I, O any](d *dispatcher.Dispatcher, s *service, name string, fn func(context.Context, I) (O, error)) error {
@@ -41,8 +43,13 @@ func command[I, O any](d *dispatcher.Dispatcher, s *service, name, permission st
 		var resource struct {
 			ID string `json:"id"`
 		}
-		raw, _ := json.Marshal(in)
-		_ = json.Unmarshal(raw, &resource)
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return out, bad("Invalid command parameters")
+		}
+		if decodeErr := json.Unmarshal(raw, &resource); decodeErr != nil {
+			return out, bad("Invalid command parameters")
+		}
 		err = s.write(ctx, p, name, resource.ID, func() error { var callErr error; out, callErr = fn(ctx, in); return callErr })
 		return out, err
 	})
@@ -162,18 +169,18 @@ func (s *service) prepareExecution(ctx context.Context, in ExecuteInput) (contex
 	if in.Overrides.Temperature != nil && (*in.Overrides.Temperature < 0 || *in.Overrides.Temperature > 2) {
 		return ctx, nil, nil, bad("Temperature must be between 0 and 2")
 	}
-	copy := *ag
+	effective := *ag
 	if in.Overrides.PersonaRef != "" {
-		copy.PersonaRef = in.Overrides.PersonaRef
+		effective.PersonaRef = in.Overrides.PersonaRef
 	}
 	if len(in.Overrides.InlineSkills) > 0 {
-		copy.InlineSkills = in.Overrides.InlineSkills
+		effective.InlineSkills = in.Overrides.InlineSkills
 	}
 	if len(in.Overrides.InlineTraits) > 0 {
-		copy.InlineTraits = in.Overrides.InlineTraits
+		effective.InlineTraits = in.Overrides.InlineTraits
 	}
-	if err = s.validate(ctx, &copy); err != nil {
-		return ctx, nil, nil, err
+	if checkErr := s.validate(ctx, &effective); checkErr != nil {
+		return ctx, nil, nil, checkErr
 	}
 	return ctx, ag, in.Overrides.engine(sid), nil
 }

@@ -130,14 +130,10 @@ func (e *Extension) init(fapp forge.App) error {
 		)
 	}
 
-	// Optional: auto-discover Nexus LLM and Shield safety scanner from DI (no-op if not available).
+	// Optional: discover installed LLM, safety, knowledge and evaluation services from DI.
 	e.engineOpts = append(e.engineOpts,
 		nexusllm.EngineOption(fapp.Container()),
 		shieldsafety.EngineOption(fapp.Container()),
-	)
-
-	// Optional: auto-discover Weave knowledge and Sentinel evaluation from DI (no-op if not available).
-	e.engineOpts = append(e.engineOpts,
 		weaveknowledge.EngineOption(fapp.Container()),
 		sentineladapter.EngineOption(fapp.Container()),
 	)

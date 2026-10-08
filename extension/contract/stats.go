@@ -2,10 +2,12 @@ package contract
 
 import (
 	"context"
+
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 )
 
 func (s *service) bindStats(d *dispatcher.Dispatcher) error {

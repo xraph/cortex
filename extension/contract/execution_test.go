@@ -4,6 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"testing"
+	"time"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/checkpoint"
@@ -12,10 +18,6 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"io"
-	"testing"
-	"time"
 )
 
 type testLLM struct{}
@@ -270,8 +272,8 @@ func TestLiveCancelInsideProviderRetainsCancelledState(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("provider never entered Next")
 	}
-	if _, err := dispatch(t, d, p, "runs.cancel", started); err != nil {
-		t.Fatal(err)
+	if _, cancelErr := dispatch(t, d, p, "runs.cancel", started); cancelErr != nil {
+		t.Fatal(cancelErr)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	done := false

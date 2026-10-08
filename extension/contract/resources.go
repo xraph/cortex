@@ -2,7 +2,11 @@ package contract
 
 import (
 	"context"
-	"fmt"
+	"reflect"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
@@ -15,9 +19,6 @@ import (
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"reflect"
 )
 
 type AgentPatch struct {
@@ -315,8 +316,8 @@ func bindResource[T, P any](d *dispatcher.Dispatcher, s *service, name string, o
 		if err != nil {
 			return out, err
 		}
-		if err = in.normalize(); err != nil {
-			return out, err
+		if checkErr := in.normalize(); checkErr != nil {
+			return out, checkErr
 		}
 		rows, total, err := ops.list(ctx, in)
 		if rows == nil {
@@ -347,7 +348,11 @@ func bindResource[T, P any](d *dispatcher.Dispatcher, s *service, name string, o
 		if err = s.validate(ctx, &in.Data); err != nil {
 			return nil, mapError(err)
 		}
-		err = s.write(ctx, p, name+".create", resourceID(&in.Data), func() error { return ops.create(ctx, &in.Data) })
+		resource, resourceErr := resourceID(&in.Data)
+		if resourceErr != nil {
+			return nil, resourceErr
+		}
+		err = s.write(ctx, p, name+".create", resource, func() error { return ops.create(ctx, &in.Data) })
 		return &in.Data, err
 	}); err != nil {
 		return err
@@ -384,15 +389,30 @@ func bindResource[T, P any](d *dispatcher.Dispatcher, s *service, name string, o
 		if err != nil {
 			return struct{}{}, mapError(err)
 		}
-		if err = s.checkReferences(cortex.WithScope(ctx, ops.scope(v)), name, ops.name(v)); err != nil {
-			return struct{}{}, err
+		if checkErr := s.checkReferences(cortex.WithScope(ctx, ops.scope(v)), name, ops.name(v)); checkErr != nil {
+			return struct{}{}, checkErr
 		}
 		return struct{}{}, s.write(ctx, p, name+".delete", in.ID, func() error { return ops.remove(ctx, v) })
 	})
 }
 
-func resourceID(v any) string {
-	return reflect.ValueOf(v).Elem().FieldByName("ID").Interface().(fmt.Stringer).String()
+func resourceID(v any) (string, error) {
+	switch x := v.(type) {
+	case *agent.Config:
+		return x.ID.String(), nil
+	case *persona.Persona:
+		return x.ID.String(), nil
+	case *skill.Skill:
+		return x.ID.String(), nil
+	case *trait.Trait:
+		return x.ID.String(), nil
+	case *behavior.Behavior:
+		return x.ID.String(), nil
+	case *orchestration.Config:
+		return x.ID.String(), nil
+	default:
+		return "", bad("Unsupported resource type")
+	}
 }
 func prepareResource(ctx context.Context, v any) {
 	switch x := v.(type) {

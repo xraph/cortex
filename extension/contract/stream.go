@@ -6,10 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xraph/cortex/engine"
-	"github.com/xraph/cortex/id"
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
+	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/id"
 )
 
 // Stream events are a bounded, short-lived view of a live engine execution.
@@ -88,20 +89,17 @@ func (s *service) bindStream(d *dispatcher.Dispatcher) error {
 		if !ok || first.Type != engine.EventRunStarted {
 			cancel()
 			s.streamMu.Unlock()
-			go func() {
-				for range events {
-				}
-			}()
+			go drainStream(events)
 			return nil, &dc.Error{Code: dc.CodeUnavailable, Message: "The engine did not start a run"}
 		}
-		raw, _ := first.Data["run_id"].(string)
+		raw, ok := first.Data["run_id"].(string)
+		if !ok {
+			raw = ""
+		}
 		if _, err = id.ParseAgentRunID(raw); err != nil {
 			cancel()
 			s.streamMu.Unlock()
-			go func() {
-				for range events {
-				}
-			}()
+			go drainStream(events)
 			return nil, bad("The engine returned an invalid run identity")
 		}
 		r.append(first)
@@ -162,5 +160,14 @@ func (s *service) cancelStream(raw string) {
 	s.streamMu.Unlock()
 	if r != nil {
 		r.cancel()
+	}
+}
+
+// drainStream lets a cancelled producer finish sending and close its channel.
+func drainStream(events <-chan engine.StreamEvent) {
+	for {
+		if _, open := <-events; !open {
+			return
+		}
 	}
 }

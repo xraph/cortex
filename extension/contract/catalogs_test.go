@@ -97,8 +97,8 @@ func TestWeaveCatalogWalksAllPagesAndChecksDetailBeforeStats(t *testing.T) {
 			row.ID = foreign
 			row.TenantID = "foreign"
 		}
-		if err := st.CreateCollection(ctx, row); err != nil {
-			t.Fatal(err)
+		if createErr := st.CreateCollection(ctx, row); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	access := func(context.Context, string) (CatalogScope, error) {
@@ -145,13 +145,13 @@ func TestShieldCatalogCountsAllScopedScansBeforeRunFilter(t *testing.T) {
 		if i == 1 {
 			row.Metadata["run_id"] = "run-b"
 		}
-		if err := st.CreateScan(ctx, row); err != nil {
-			t.Fatal(err)
+		if createErr := st.CreateScan(ctx, row); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	for _, tenant := range []string{"tenant", "foreign"} {
-		if err := st.CreateProfile(ctx, &profile.SafetyProfile{ID: shieldid.NewSafetyProfileID(), Name: tenant, AppID: "app", TenantID: tenant, Enabled: true}); err != nil {
-			t.Fatal(err)
+		if createErr := st.CreateProfile(ctx, &profile.SafetyProfile{ID: shieldid.NewSafetyProfileID(), Name: tenant, AppID: "app", TenantID: tenant, Enabled: true}); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	catalogs := ShieldCatalogs(eng, func(context.Context, string) (CatalogScope, error) {

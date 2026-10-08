@@ -2,14 +2,16 @@ package contract
 
 import (
 	"context"
+	"strings"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"strings"
 )
 
 // CatalogQuery must enforce its own external system's authorized scope. The
@@ -21,8 +23,9 @@ func (s *service) bindRuntime(d *dispatcher.Dispatcher) error {
 	binds := []func() error{
 		func() error {
 			return query(d, s, "runtime.detail", func(ctx context.Context, _ struct{}) (map[string]any, error) {
-				plugins := []string{}
-				for _, p := range s.deps.Engine.Extensions().Extensions() {
+				extensions := s.deps.Engine.Extensions().Extensions()
+				plugins := make([]string, 0, len(extensions))
+				for _, p := range extensions {
 					plugins = append(plugins, p.Name())
 				}
 				label := s.deps.ExecutionLabel
@@ -32,7 +35,10 @@ func (s *service) bindRuntime(d *dispatcher.Dispatcher) error {
 				if s.deps.Engine.LLM() == nil {
 					label = "No LLM client installed"
 				}
-				p := cortex.PrincipalFromContext(ctx).(dc.Principal)
+				p, ok := cortex.PrincipalFromContext(ctx).(dc.Principal)
+				if !ok || p.User == nil {
+					return nil, denied("An authenticated dashboard principal is required")
+				}
 				permissions := map[string]bool{}
 				for _, permission := range []string{"read", "manage", "run", "approve", "overlay"} {
 					permissions[permission] = p.User.HasScope("cortex." + permission)
@@ -114,8 +120,8 @@ func (s *service) bindRuntime(d *dispatcher.Dispatcher) error {
 					return nil, err
 				}
 				ctx = cortex.WithScope(ctx, c.Scope)
-				if err = s.validate(ctx, c); err != nil {
-					return nil, err
+				if checkErr := s.validate(ctx, c); checkErr != nil {
+					return nil, checkErr
 				}
 				resolved, err := s.deps.Engine.GetOrchestrationByName(ctx, c.Name)
 				if err != nil {

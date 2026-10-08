@@ -8,6 +8,7 @@ BINARY_NAME=cortex
 CMD_DIR=./cmd/cortex
 BUILD_DIR=./bin
 GO=go
+GO_MODULES := $(sort $(shell find . -type d \( -name .git -o -name node_modules -o -name vendor \) -prune -o -name go.mod -print | sed 's@/go.mod$$@@'))
 GOFLAGS=-v
 LDFLAGS=-ldflags "-s -w"
 
@@ -102,24 +103,32 @@ clean c:
 	@echo "$(GREEN)✓ Clean complete$(NC)"
 
 ## fmt (f): Format code
-fmt f:
+fmt:
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@gofmt -s -w .
 	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/cortex . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
 	@echo "$(GREEN)✓ Formatting complete$(NC)"
 
 ## lint (l): Run linter
-lint l:
+lint:
 	@echo "$(BLUE)Running linter...$(NC)"
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
-	golangci-lint run ./...
+	@status=0; for module in $(GO_MODULES); do \
+		echo "$(BLUE)Linting $$module...$(NC)"; \
+		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; \
+		(cd "$$module" && GOWORK=off golangci-lint run --allow-serial-runners --build-tags "$$tags" --max-same-issues 0 ./...) || status=1; \
+	done; exit $$status
 	@echo "$(GREEN)✓ Linting complete$(NC)"
 
 ## lint-fix (lf): Run linter with auto-fix
-lint-fix lf:
+lint-fix:
 	@echo "$(BLUE)Running linter with auto-fix...$(NC)"
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
-	golangci-lint run --fix ./...
+	@status=0; for module in $(GO_MODULES); do \
+		echo "$(BLUE)Fixing lint in $$module...$(NC)"; \
+		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; \
+		(cd "$$module" && GOWORK=off golangci-lint run --allow-serial-runners --build-tags "$$tags" --max-same-issues 0 --fix ./...) || status=1; \
+	done; exit $$status
 	@echo "$(GREEN)✓ Linting with fixes complete$(NC)"
 
 ## vet (v): Run go vet

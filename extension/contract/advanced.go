@@ -2,15 +2,17 @@ package contract
 
 import (
 	"context"
+	"strings"
+
+	dc "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
-	dc "github.com/xraph/forge/extensions/dashboard/contract"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"strings"
 )
 
 type ResumeInput struct {
@@ -166,7 +168,10 @@ func (s *service) bindAdvanced(d *dispatcher.Dispatcher) error {
 						return nil, denied("Conversation and recipient must have the same scope")
 					}
 				}
-				p := cortex.PrincipalFromContext(ctx).(dc.Principal)
+				p, ok := cortex.PrincipalFromContext(ctx).(dc.Principal)
+				if !ok || p.User == nil {
+					return nil, denied("An authenticated dashboard principal is required")
+				}
 				return s.deps.Engine.SendMessage(ctx, a2a.SendParams{Sender: a2a.Address{Agent: "operator:" + p.User.Subject}, Receivers: []a2a.Address{{Agent: ag.Name}}, Content: in.Content, Performative: a2a.Inform, ConversationID: conv, InReplyTo: in.InReplyTo})
 			})
 		},

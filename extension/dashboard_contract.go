@@ -2,9 +2,11 @@ package extension
 
 import (
 	"fmt"
-	cortexcontract "github.com/xraph/cortex/extension/contract"
+
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
+	cortexcontract "github.com/xraph/cortex/extension/contract"
 )
 
 // WithDashboard supplies the authenticated scope mapping and durable audit sink.

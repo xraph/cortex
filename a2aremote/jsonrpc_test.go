@@ -15,7 +15,7 @@ import (
 
 func post(t *testing.T, h http.Handler, body string) map[string]any {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -142,7 +142,7 @@ func TestJSONRPCNotificationGetsNoBody(t *testing.T) {
 	gw := newFakeGateway()
 	h := testService(t, gw, okResolver()).JSONRPCHandler()
 
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", bytes.NewBufferString(
 		`{"jsonrpc":"2.0","method":"SendMessage","params":{"tenant":"worker","message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hi"}]}}}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -161,7 +161,7 @@ func TestJSONRPCNotificationGetsNoBody(t *testing.T) {
 func TestJSONRPCRejectsGET(t *testing.T) {
 	h := testService(t, newFakeGateway(), okResolver()).JSONRPCHandler()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
@@ -170,7 +170,7 @@ func TestJSONRPCRejectsGET(t *testing.T) {
 func TestJSONRPCRejectsAnUnknownProtocolVersion(t *testing.T) {
 	h := testService(t, newFakeGateway(), okResolver()).JSONRPCHandler()
 
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", bytes.NewBufferString(
 		`{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{"tenant":"worker"}}`))
 	req.Header.Set("A2A-Version", "0.1.0")
 	rec := httptest.NewRecorder()
@@ -194,7 +194,7 @@ func TestJSONRPCPassesCredentialsToTheResolver(t *testing.T) {
 	})
 	h := testService(t, newFakeGateway(), res).JSONRPCHandler()
 
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", bytes.NewBufferString(
 		`{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{"tenant":"worker"}}`))
 	req.Header.Set("Authorization", "Bearer sekrit")
 	rec := httptest.NewRecorder()
@@ -219,7 +219,7 @@ func TestCardHandlerServesExposedAgentsOnly(t *testing.T) {
 	h := svc.CardHandler()
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/worker"+WellKnownCardPath, http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/agents/worker"+WellKnownCardPath, http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("exposed agent: status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -227,7 +227,7 @@ func TestCardHandlerServesExposedAgentsOnly(t *testing.T) {
 	// A card is public, so exposure is opt-in. An agent nobody exposed is
 	// not merely undocumented, it is not there.
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/secret"+WellKnownCardPath, http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/agents/secret"+WellKnownCardPath, http.NoBody))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unexposed agent: status = %d, want 404", rec.Code)
 	}
@@ -235,7 +235,7 @@ func TestCardHandlerServesExposedAgentsOnly(t *testing.T) {
 	// The default agent is also reachable at the root path, so plain
 	// discovery finds something.
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, WellKnownCardPath, http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, WellKnownCardPath, http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("root card: status = %d", rec.Code)
 	}

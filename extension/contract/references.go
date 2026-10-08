@@ -2,6 +2,9 @@ package contract
 
 import (
 	"context"
+
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
@@ -9,7 +12,6 @@ import (
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/trait"
-	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 )
 
 type ReferenceInput struct {
