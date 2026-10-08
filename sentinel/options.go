@@ -1,6 +1,5 @@
-// Package sentinel integrates Sentinel evaluation into Cortex as a plugin,
-// contributing dashboard sections and lifecycle hooks for automatic
-// evaluation of Cortex agent runs.
+// Package sentinel connects the Sentinel engine to Cortex lifecycle hooks.
+// Automatic run evaluation is not implemented.
 package sentinel
 
 // pluginOptions configures the Sentinel Cortex plugin.

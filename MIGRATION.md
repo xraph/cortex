@@ -1,19 +1,19 @@
 # Cortex dashboard migration
 
-You can use this file to track the React replacement against the live Go services and the legacy dashboard. Keep the legacy package until every required row below has implementation and live review evidence.
+You can use this file to track the React dashboard against the live Go services and the recorded legacy inventory. Cortex now exposes dashboard data through `extension/contract`; the Go-rendered dashboard has been removed.
 
-Status: React contracts, plugin and persistent demo implemented and locally reviewed. Legacy retirement remains gated. This is not rollout qualification.
+Status: React contracts, plugin and persistent demo implemented and locally reviewed. Legacy dashboard source retired on 2026-10-08. External production integration access remains unverified.
 
-## Checkout audit, 2026-10-08
+## Initial checkout audit, 2026-10-08
 
 - Primary Cortex checkout: `main` at `06ea111`, two unpublished commits above fetched `origin/main` at `a5218f4`. No other worktrees.
 - `core-module-split`, `feat/a2a-messaging`, `fix/a2a-inreplyto-interop` and `fix/ci-module-versions-and-docs-format` have no patches missing from main (`git cherry`), and their fetched remote tips are ancestors of main. No replay or consolidation is needed.
-- Existing local commits disconnected templ auto-discovery before this migration. The source remains available as the parity reference.
-- Dashboard checkout is on main with concurrent edits. Cortex owns its new plugin and narrowly additive integration patches. No push.
+- Existing local commits disconnected templ auto-discovery before this migration. The source remained available then as the parity reference.
+- At the initial audit, the dashboard checkout was on main with concurrent edits. Cortex owned its new plugin and narrowly additive integration patches. Migration commits were subsequently pushed to main.
 
 ## Legacy surface inventory
 
-Every source below is retained. The status column records the replacement and its review level; the evidence ledger records checks that still block retirement. Route dispatch lives in `dashboard/contributor.go`; nav, widgets and settings begin in `dashboard/forge.contributor.yaml`.
+The source paths below are a historical inventory of the retired dashboard. The status column records each replacement and its review level. Legacy route dispatch lived in `dashboard/contributor.go`; nav, widgets and settings lived in `dashboard/forge.contributor.yaml`. Git history retains the complete source.
 
 | Source | Columns and form fields | Actions, empty states and other text | Status |
 | --- | --- | --- | --- |
@@ -82,7 +82,7 @@ Every source below is retained. The status column records the replacement and it
 - `engine/a2a_*.go`: opt-in message bus, conversations/messages/inbox and sends. Availability depends on a constructed bus, not configuration text.
 - `audit_hook/extension.go`: real lifecycle hooks require a recorder supplied by the host. Extension initialization does not construct one. Contract command audit also needs a durable sink for production.
 
-## Evidence ledger
+## Initial migration evidence
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ Every source below is retained. The status column records the replacement and it
 | Full workspace tests | Failed outside Cortex | `pnpm -r --no-bail test`: host setup 8 failures remain; 24 projects pass, including Cortex and Shield. Log `/tmp/cortex-dashboard-workspace-final-tests.log` |
 | Sentinel module | Compiles | `GOWORK=off go test -mod=readonly ./...`, both packages have no tests |
 | External live catalogs | Unverified | No production Nexus, Weave or Shield credentials/grants configured in this demo; adapter tests do not establish remote access |
-| Legacy retirement | Blocked | Keep templ source and dependencies until full migration checks and external live qualification close; no legacy files removed |
+| Legacy retirement | Source removed | Removed `dashboard/`, orphaned `sentinel/pages`, local dashboard dependencies, templ Make targets and dashboard CI/release entries. Post-removal verification is recorded below |
 
 ## Current implementation
 
@@ -125,4 +125,36 @@ Screenshots are saved in `/Users/rexraphael/.codex/visualizations/2026/10/08/01a
 
 Cortex commits: `64463bd` configuration contracts, `40a7ecc` execution contracts, `68435a5` scoped catalogs and diagnostics, `dd9b4b3` cancellation fix, `1c0f8ac` complete catalog summaries. Dashboard commits: `e6885d9` React workspace, `061be99` review actions/summaries and `25d5e13` persistent demo, `468e670` compact comparison and `319bdf1` contextual icons/tooltips.
 
-The required retirement step is still open. After the shared build/test failures and external live checks pass, remove `dashboard/`, the old Sentinel pages and templ dependencies/Makefile targets in a dedicated commit, then test every nested module and rebuild the real demo. Do not infer that this step has happened from the disconnected legacy auto-discovery.
+## Legacy retirement, 2026-10-08
+
+The dedicated retirement change removes 130 files (48,116 lines): the entire `dashboard/` module and the eight orphaned Sentinel page/generated files. The extension and Sentinel module no longer require or replace `github.com/xraph/cortex/dashboard`. Module tidying removes Sentinel's direct templ/ForgeUI dependencies and unused transitive dependencies. The extension still receives templ and ForgeUI indirectly through the published Forge auth package; no Cortex source imports either UI library. CI, release tagging, release installation instructions and `scripts/pin-submodules.sh` no longer name the deleted module. `make all` no longer generates templ, and developer setup no longer installs or checks the templ CLI.
+
+The Cortex source and sibling Forge/Forgery checkouts have no remaining Go imports of the removed packages. The React dashboard and its `extension/contract` APIs remain the supported path. Removing old source does not establish production Nexus, Weave or Shield access; those credentials and grants remain deployment qualification work.
+
+The Sentinel UI hook implementation was disconnected in `06ea111`. Its remaining templates had no callers or working evaluation command. They are deliberately retired, with the following historical inventory retained. Sentinel lifecycle hooks remain available, and automatic evaluation remains explicitly unimplemented.
+
+| Retired Sentinel source | Historical surface | Disposition |
+| --- | --- | --- |
+| `sentinel/pages/eval_summary.templ` | Agent suite, pass rate, average score, run count, dimension scores and evaluation links; no-evaluation explanation | Dropped orphaned UI; no registered data contributor supplied these values |
+| `sentinel/pages/eval_widget.templ` | Total evaluations, average pass rate, recent failures and suite count | Dropped orphaned widget; no registered data contributor supplied these counts |
+| `sentinel/pages/run_eval.templ` | Run pass rate, average score, passed/failed/total cases, case name/status/score and evaluation link; Run Evaluation button | Dropped orphaned UI and unwired action; no evaluation command was implemented |
+| `sentinel/pages/playground_panel.templ` | Suite selector, Run Evaluation button and result totals | Dropped orphaned UI and unwired action; no evaluation command was implemented |
+
+### Post-removal verification
+
+| Check | Result |
+| --- | --- |
+| `make f`, followed by `make l` | Passed; zero lint issues across all eight remaining Go modules, including integration-tagged tests |
+| Root `go build ./...` and `CORTEX_TEST_MONGO_IMAGE=mongo:7 go test -count=1 ./...` | Passed; MongoDB 7 replica-set, PostgreSQL and SQLite suites executed. The pinned MongoDB 8.3.2 image remains incompatible with this Docker Desktop kernel |
+| Build and full tests in A2A remote, gRPC binding, API, extension, Fabriq integration and Sentinel modules | Passed; Sentinel has no test files |
+| `inttest`: `go test -tags=integration -count=1 -timeout 10m ./...` | Passed; live PostgreSQL Fabriq learning-loop test executed |
+| Persistent dashboard demo build and full tests | Passed against the post-removal Cortex checkout |
+| Live HTTP workflow script | Passed against a freshly compiled demo on port 8107 with a separate SQLite database: configuration CRUD/nested patches, references, streams, failure, approval/rejection, cancellation, memory, overlays, orchestration and messaging |
+| Cortex React plugin lint, typecheck and tests | Passed; seven tests |
+| Shell production build | Passed, including TypeScript; the shared main chunk remains above Vite's 500 kB warning threshold |
+| Full dashboard workspace tests | Passed; 5,893 tests across 26 packages/apps. The earlier shared setup-test failures are resolved |
+| Browser review | Existing React chat and agent navigation render; agent list reviewed at desktop and 390px, with document width remaining 390px |
+| Release wiring | Shell syntax check and isolated release-pin probe passed across all four published submodules; no deleted module references remain |
+| Source retirement audit | No `dashboard/`, `sentinel/pages`, `.templ`, generated `_templ.go` files or imports/requires of `github.com/xraph/cortex/dashboard` remain |
+
+Earlier ledger rows describe the original migration review and retain their original limits. External production credentials/grants and Sentinel automatic evaluation remain outside the verified local cutover.

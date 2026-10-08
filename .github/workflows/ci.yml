@@ -57,7 +57,7 @@ jobs:
   # ─── Sub-modules ────────────────────────────────────────────────────
   # The root module is the agent engine on its own. Everything that drags
   # in a heavy dependency lives in its own module so a consumer can take
-  # the engine without forge, templ or fabriq. Each one still has to build
+  # the engine without forge or fabriq. Each one still has to build
   # and test, and its go.mod has to already be tidy.
   submodules:
     name: Sub-module (${{ matrix.module }})
@@ -68,7 +68,6 @@ jobs:
       matrix:
         module:
           - api
-          - dashboard
           - sentinel
           - extension
           - integrations/fabriq

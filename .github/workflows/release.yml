@@ -57,7 +57,7 @@ jobs:
 
       - name: Verify sub-modules
         run: |
-          for mod in api dashboard sentinel extension integrations/fabriq; do
+          for mod in api sentinel extension integrations/fabriq; do
             echo "::group::Verifying $mod"
             pushd "$mod" > /dev/null
             go mod download
@@ -86,10 +86,10 @@ jobs:
           # the sub-module tags alone, so main keeps pointing sub-modules at
           # the last release and stays buildable against the working tree.
           scripts/pin-submodules.sh "$TAG"
-          git add api/go.mod dashboard/go.mod sentinel/go.mod extension/go.mod integrations/fabriq/go.mod
+          git add api/go.mod sentinel/go.mod extension/go.mod integrations/fabriq/go.mod
           git commit -m "chore: pin sub-modules to $TAG"
 
-          for mod in api dashboard sentinel extension integrations/fabriq; do
+          for mod in api sentinel extension integrations/fabriq; do
             MOD_TAG="$mod/$TAG"
             if git rev-parse -q --verify "refs/tags/$MOD_TAG" > /dev/null; then
               echo "$MOD_TAG already exists, skipping"
@@ -111,7 +111,7 @@ jobs:
           PROBE=$(mktemp -d)
           cd "$PROBE"
           go mod init example.com/probe
-          for mod in api dashboard sentinel extension integrations/fabriq; do
+          for mod in api sentinel extension integrations/fabriq; do
             echo "::group::go get github.com/xraph/cortex/$mod@$TAG"
             GOFLAGS=-mod=mod GOPROXY=proxy.golang.org go get "github.com/xraph/cortex/$mod@$TAG"
             echo "::endgroup::"
@@ -154,7 +154,6 @@ jobs:
 
             ```bash
             go get github.com/xraph/cortex/api@${{ steps.set-tag.outputs.tag }}
-            go get github.com/xraph/cortex/dashboard@${{ steps.set-tag.outputs.tag }}
             go get github.com/xraph/cortex/sentinel@${{ steps.set-tag.outputs.tag }}
             go get github.com/xraph/cortex/extension@${{ steps.set-tag.outputs.tag }}
             go get github.com/xraph/cortex/integrations/fabriq@${{ steps.set-tag.outputs.tag }}
