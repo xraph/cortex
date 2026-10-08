@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/engine"
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
@@ -28,10 +29,12 @@ var manifest []byte
 // DefaultScope is only for an explicitly single-scope dashboard deployment.
 // A present but invalid claim never falls back to it.
 type Deps struct {
-	Engine       *engine.Engine
-	DefaultScope cortex.Scope
-	ResolveScope func(context.Context, dc.Principal) (cortex.Scope, error)
-	Audit        func(context.Context, AuditEvent) error
+	Engine         *engine.Engine
+	DefaultScope   cortex.Scope
+	ResolveScope   func(context.Context, dc.Principal) (cortex.Scope, error)
+	Audit          func(context.Context, AuditEvent) error
+	ExecutionLabel string
+	Catalogs       map[string]CatalogQuery
 }
 type AuditEvent struct {
 	At         time.Time    `json:"at"`
@@ -42,8 +45,10 @@ type AuditEvent struct {
 	Outcome    string       `json:"outcome"`
 }
 type service struct {
-	deps Deps
-	mu   sync.Mutex
+	deps     Deps
+	mu       sync.Mutex
+	streamMu sync.Mutex
+	streams  map[string]*liveRun
 }
 
 func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry, deps Deps) error {
@@ -66,7 +71,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return err
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindAdvanced} {
 		if err = bind(d); err != nil {
 			return err
 		}
@@ -165,13 +170,16 @@ func mapError(err error) error {
 	if errors.As(err, &ce) {
 		return ce
 	}
-	for _, e := range []error{cortex.ErrAgentNotFound, cortex.ErrPersonaNotFound, cortex.ErrSkillNotFound, cortex.ErrTraitNotFound, cortex.ErrBehaviorNotFound, cortex.ErrRunNotFound, cortex.ErrCheckpointNotFound, cortex.ErrSessionNotFound, cortex.ErrOrchestrationNotFound, cortex.ErrOverlayNotFound} {
+	for _, e := range []error{cortex.ErrAgentNotFound, cortex.ErrPersonaNotFound, cortex.ErrSkillNotFound, cortex.ErrTraitNotFound, cortex.ErrBehaviorNotFound, cortex.ErrRunNotFound, cortex.ErrCheckpointNotFound, cortex.ErrSessionNotFound, cortex.ErrOrchestrationNotFound, cortex.ErrOverlayNotFound, cortex.ErrOrchestrationRunNotFound, a2a.ErrConversationNotFound, a2a.ErrMessageNotFound} {
 		if errors.Is(err, e) {
 			return &dc.Error{Code: dc.CodeNotFound, Message: "Cortex resource was not found in your scope"}
 		}
 	}
-	if errors.Is(err, cortex.ErrAlreadyExists) || errors.Is(err, cortex.ErrInvalidState) || errors.Is(err, cortex.ErrNotSuspended) {
+	if errors.Is(err, cortex.ErrAlreadyExists) || errors.Is(err, cortex.ErrInvalidState) || errors.Is(err, cortex.ErrNotSuspended) || errors.Is(err, cortex.ErrRequiresApproval) || errors.Is(err, engine.ErrNotAgentReplyResumable) {
 		return &dc.Error{Code: dc.CodeConflict, Message: err.Error()}
+	}
+	if errors.Is(err, cortex.ErrResultsMismatch) {
+		return bad(err.Error())
 	}
 	if errors.Is(err, cortex.ErrNoScope) {
 		return denied("Cortex scope could not be resolved")

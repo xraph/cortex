@@ -41,10 +41,10 @@ func openStore(t *testing.T, path string) *sqlitestore.Store {
 func principal(tenant string) dc.Principal {
 	return dc.Principal{User: &dashauth.UserInfo{Subject: "operator", Scopes: []string{"cortex.read", "cortex.manage", "cortex.run", "cortex.approve"}}, Claims: map[string]any{"tenant_id": tenant, "app_id": "app-a"}}
 }
-func testService(t *testing.T) (*dispatcher.Dispatcher, *service, *sqlitestore.Store) {
+func testService(t *testing.T, opts ...engine.Option) (*dispatcher.Dispatcher, *service, *sqlitestore.Store) {
 	t.Helper()
 	st := openStore(t, filepath.Join(t.TempDir(), "cortex.db"))
-	e, err := engine.New(engine.WithStore(st))
+	e, err := engine.New(append([]engine.Option{engine.WithStore(st)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

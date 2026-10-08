@@ -91,6 +91,7 @@ Every source below is retained. Items begin as pending and need the evidence led
 | Baseline SQLite/PostgreSQL | Passed | Same full invocation, both store suites pass |
 | Baseline MongoDB | Blocked | MongoDB 8.3.2 container exits: allocator compatibility with Linux kernel 7.0.14, requires opt-in for 6.19+ |
 | Contract configuration foundation | Passed | Extension `go test -race -mod=readonly ./...`: scoped reads/writes, absent/malformed claims, foreign IDs, omitted versus cleared fields, nested SQLite values, restart identity, delete references and audit refusal |
+| Contract runtime operations | Passed | Extension race suite: live engine tokens, session ownership/history/clear, foreign IDs, host overlay permission, checkpoint principal/repeat decision, audit outcome failure and no-LLM refusal |
 | React/demo | Pending | Implementation not verified yet |
 | Browser workflows/restart/live refresh | Pending | No live review yet |
 | Legacy retirement | Blocked | Required migration and live evidence outstanding |
@@ -100,3 +101,5 @@ Every source below is retained. Items begin as pending and need the evidence led
 `extension/contract` registers Cortex configuration intents for agents, personas, skills, traits, behaviors and orchestrations. The extension discovers the contributor without a templ dependency. You must supply authenticated `cortex.read`/`cortex.manage` scopes and a durable audit recorder for commands. Names are immutable, IDs and scope are server-owned, and typed pointer patches preserve omissions. Audit records attempts before mutation and outcomes afterwards; an outcome recording failure reports that the command may have run. Audit and domain storage are not one transaction.
 
 Composition references are limited to the exact stored scope. Existing name lookups use descendant matching, so ambiguous parent/child names require special care on execution. External writers are outside the contract mutex and must coordinate reference changes with deletes; store interfaces do not provide name foreign-key constraints.
+
+Runtime contracts now expose scoped run review, cancellation, checkpoint decisions, sessions and memory, clones, orchestration execution/history, A2A inspection/send/inbox and host-only overlays. Chat execution uses a bounded live cursor feed from `Engine.StreamAgent`; the feed holds up to 1024 events per run for ten minutes after completion, with a maximum of 64 retained runs and a five-minute execution timeout. A missing or truncated feed is reported explicitly; persisted run, step and message records remain the durable review surface. External catalog adapters remain unavailable until the host supplies an authorized provider.
