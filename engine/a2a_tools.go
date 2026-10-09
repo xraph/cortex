@@ -270,10 +270,21 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 		params.ConversationID = convID
 	}
 
-	if _, err := e.a2a.Ask(ctx, params); err != nil {
+	// Inside a step the question is held, and the step's suspend sends it
+	// once the run is paused. Sent from here, a quick peer could answer
+	// while the rest of the step is still running, and its reply would
+	// find no paused run to resume.
+	step := stepPendingCalls(ctx, inv.RunID)
+	params.Hold = step != nil
+
+	res, err := e.a2a.Ask(ctx, params)
+	if err != nil {
 		// A refused ask goes back to the model as an ordinary tool error.
 		// It can pick another agent, or answer without one.
 		return jsonResult("error", err.Error()), outcomeFailed, true
+	}
+	if step != nil {
+		step.asks = append(step.asks, res)
 	}
 	return "", outcomePending, true
 }

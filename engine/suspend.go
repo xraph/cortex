@@ -10,6 +10,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
@@ -58,6 +59,14 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 type pendingCalls struct {
 	calls   []suspension.PendingCall
 	reasons []suspension.SuspendReason
+
+	// asks are the questions this step sent and has not routed yet. They
+	// go out from suspend, after the run is paused: a peer that answered
+	// before then would find no paused run to resume.
+	asks []*a2a.AskResult
+	// run is the run this step belongs to, and the only one whose asks
+	// it collects.
+	run id.AgentRunID
 }
 
 func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason) {
@@ -66,6 +75,32 @@ func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason) {
 }
 
 func (p *pendingCalls) any() bool { return len(p.calls) > 0 }
+
+// pendingCallsKey carries a step's pendingCalls through its tool calls.
+type pendingCallsKey struct{}
+
+// collecting returns ctx carrying p for run runID, so an ask that run
+// sends during this step can be left with the step rather than routed
+// there and then.
+func (p *pendingCalls) collecting(ctx context.Context, runID id.AgentRunID) context.Context {
+	p.run = runID
+	return context.WithValue(ctx, pendingCallsKey{}, p)
+}
+
+// stepPendingCalls is the pendingCalls of runID's step running on ctx, or
+// nil when there is none. Dispatch and an approved call on resume have no
+// step to suspend, so their asks are routed as they are sent.
+//
+// The run is matched because a host tool receives the step's ctx and may
+// pass it on: an ask made through Dispatch, or by another run resumed on
+// that ctx, is not this step's to hold, and this step would never send it.
+func stepPendingCalls(ctx context.Context, runID id.AgentRunID) *pendingCalls {
+	p, ok := ctx.Value(pendingCallsKey{}).(*pendingCalls)
+	if !ok || p.run.IsNil() || p.run != runID {
+		return nil
+	}
+	return p
+}
 
 // reason is the one reason this step's suspension carries, or the error
 // that says why these calls cannot share one.
@@ -185,6 +220,19 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, con
 	// waiting on it.
 	if cp != nil {
 		e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
+	}
+
+	// The step's questions go out after the flip for the same reason. A
+	// peer can answer as fast as it likes, and its reply resumes the run
+	// only if the run is already paused with a suspension to claim.
+	// A failed release is logged rather than returned: the run is paused
+	// correctly either way, and the ask's deadline turns a question that
+	// never went out into a failure the agent can read.
+	for _, ask := range pend.asks {
+		if err := e.a2a.Release(ctx, ask); err != nil {
+			e.logger.Error("release agent ask after suspending",
+				log.String("run_id", r.ID.String()), log.String("reply_with", ask.ReplyWith), log.Error(err))
+		}
 	}
 	return reason, nil
 }

@@ -273,12 +273,22 @@ func (b *Bus) resolveConversation(ctx context.Context, p SendParams, scope corte
 	return conv, nil
 }
 
-// submit writes the envelope, bumps the conversation, queues one delivery
-// per receiver and fires MessageSent. Ordering matters: the envelope lands
-// first, so a delivery can never point at a message that is not there.
+// submit records the envelope and routes it. Ordering matters: the
+// envelope lands first, so a delivery can never point at a message that is
+// not there.
 func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*SendResult, error) {
-	if err := b.store.CreateMessage(ctx, e); err != nil {
+	if err := b.record(ctx, e, conv); err != nil {
 		return nil, err
+	}
+	return b.route(ctx, e)
+}
+
+// record writes the envelope and bumps the conversation. Nothing it does
+// can wake anybody: a recorded message that was never routed is a line in
+// the transcript and nothing more.
+func (b *Bus) record(ctx context.Context, e *Envelope, conv *Conversation) error {
+	if err := b.store.CreateMessage(ctx, e); err != nil {
+		return err
 	}
 
 	conv.HopsUsed = e.Hops
@@ -286,10 +296,14 @@ func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*Sen
 	for _, r := range e.Receivers {
 		conv.AddParticipant(r)
 	}
-	if err := b.store.UpdateConversation(ctx, conv); err != nil {
-		return nil, err
-	}
+	return b.store.UpdateConversation(ctx, conv)
+}
 
+// route makes a recorded envelope act: it answers the ask it replies to,
+// or queues one delivery per receiver, and fires MessageSent. This is the
+// step that can set another run going, so it is the one Ask holds back
+// until the asker is ready to hear the answer.
+func (b *Bus) route(ctx context.Context, e *Envelope) (*SendResult, error) {
 	res := &SendResult{MessageID: e.ID, ConversationID: e.ConversationID}
 
 	// A reply that answers a waiting ask reaches its asker through the
@@ -362,6 +376,17 @@ type AskParams struct {
 	SendParams
 	AskerRunID id.AgentRunID
 	ToolCallID string
+
+	// Hold writes the message and the pending ask but routes nothing.
+	// The question is not queued, and no ask it answers is resumed, until
+	// Release is called with the result.
+	//
+	// A caller that suspends its run after Ask returns needs this. Routed
+	// at once, the question can be carried, answered and replied to
+	// before the asker has paused, and a reply that finds no paused run
+	// has nothing to resume: the asker then waits on an answer that has
+	// already come and gone.
+	Hold bool
 }
 
 // AskResult identifies the message and the token a reply must carry.
@@ -369,14 +394,23 @@ type AskResult struct {
 	MessageID      id.MessageID      `json:"message_id"`
 	ConversationID id.ConversationID `json:"conversation_id"`
 	ReplyWith      string            `json:"reply_with"`
+
+	// held is the envelope Release routes. It is nil for an ask that was
+	// routed when it was sent, and for one that has been released.
+	held *Envelope
 }
 
 // Ask sends a directive and records the sender's run as waiting on the
 // answer. The caller suspends its run once this returns.
 //
-// The ledger row is written AFTER the message, and the whole thing is
-// refused before either write when the send could not go out. A pending
-// ask with no message behind it is a run nothing could ever resume.
+// The writes go message, then pending ask, then routing, and both halves
+// of that order are load-bearing. A pending ask with no message behind it
+// is a run nothing could ever resume. A question routed before its pending
+// ask exists can be answered before there is anything for the answer to
+// claim, and the reply then queues as an ordinary message while the asker
+// waits out its deadline.
+//
+// Everything that can refuse the send happens before the first write.
 func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 	if p.Performative == "" {
 		p.Performative = Request
@@ -399,8 +433,7 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	sent, err := b.submit(ctx, e, conv)
-	if err != nil {
+	if err := b.record(ctx, e, conv); err != nil {
 		return nil, err
 	}
 
@@ -419,7 +452,39 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 	if err := b.store.CreatePendingAsk(ctx, ask); err != nil {
 		return nil, err
 	}
-	return &AskResult{MessageID: sent.MessageID, ConversationID: sent.ConversationID, ReplyWith: e.ReplyWith}, nil
+
+	res := &AskResult{MessageID: e.ID, ConversationID: e.ConversationID, ReplyWith: e.ReplyWith}
+	if p.Hold {
+		res.held = e
+		return res, nil
+	}
+	if _, err := b.route(ctx, e); err != nil {
+		// The caller hears the ask was refused and will not suspend, so
+		// the ask must not be left waiting. Claimed, it is out of the
+		// deadline sweep's reach, and nothing tries to resume a run that
+		// never paused. Best effort: the error the caller needs is the
+		// one that stopped the send.
+		_, _ = b.store.ClaimPendingAsk(ctx, e.ReplyWith) //nolint:errcheck // best-effort retirement of a refused ask
+		return nil, err
+	}
+	return res, nil
+}
+
+// Release routes an ask that was sent with Hold. Calling it on an ask that
+// was routed when it was sent, or calling it twice, does nothing: queueing
+// the deliveries again would carry the question twice.
+//
+// The caller releases once the asker has paused. A release that fails
+// leaves the ask waiting with nothing carrying the question, and the
+// deadline sweep resolves it into a failure the asking agent can read.
+func (b *Bus) Release(ctx context.Context, res *AskResult) error {
+	if res == nil || res.held == nil {
+		return nil
+	}
+	e := res.held
+	res.held = nil
+	_, err := b.route(ctx, e)
+	return err
 }
 
 // AskReply is what a resumed agent_ask tool call returns to the model.

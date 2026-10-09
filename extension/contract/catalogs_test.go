@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 	"github.com/xraph/nexus"
+	"github.com/xraph/nexus/money"
 	"github.com/xraph/nexus/provider"
 	shieldengine "github.com/xraph/shield/engine"
 	shieldid "github.com/xraph/shield/id"
@@ -45,7 +46,7 @@ type catalogProvider struct {
 func (catalogProvider) Name() string                        { return "test-provider" }
 func (catalogProvider) Capabilities() provider.Capabilities { return provider.Capabilities{} }
 func (p catalogProvider) Models(context.Context) ([]provider.Model, error) {
-	return []provider.Model{{ID: "test-model", Name: "Test model", Provider: "test-provider", Pricing: provider.Pricing{InputPerMillion: 0.125, OutputPerMillion: 0.25}}}, p.err
+	return []provider.Model{{ID: "test-model", Name: "Test model", Provider: "test-provider", Pricing: provider.Pricing{InputPerMillion: money.MustParse("0.125"), OutputPerMillion: money.MustParse("0.25")}}}, p.err
 }
 func TestNexusCatalogKeepsDecimalPriceStringsAndProviderFailures(t *testing.T) {
 	access := func(context.Context, string) (CatalogScope, error) {

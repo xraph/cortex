@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 )
 
 // routingLLM answers as whichever agent is calling, which is what lets
@@ -27,6 +29,10 @@ type routingLLM struct {
 	prompts  []string
 	resumed  chan struct{}
 	closeOne sync.Once
+
+	// workerAsked, when set, is closed the first time the worker is run.
+	workerAsked chan struct{}
+	workerOnce  sync.Once
 }
 
 func (l *routingLLM) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
@@ -45,6 +51,9 @@ func (l *routingLLM) Complete(_ context.Context, req *llm.Request) (*llm.Respons
 	l.prompts = append(l.prompts, system)
 
 	if strings.Contains(system, "worker") {
+		if l.workerAsked != nil {
+			l.workerOnce.Do(func() { close(l.workerAsked) })
+		}
 		return &llm.Response{Content: "all clear, nothing burning"}, nil
 	}
 	if !l.asked {
@@ -190,12 +199,78 @@ func assertConversationTranscript(ctx context.Context, t *testing.T, st store.St
 // with the engine started, the dispatcher does the carrying itself and
 // nothing in the caller's code has to know delivery exists.
 func TestEngineStartCarriesMessagesWithoutADrain(t *testing.T) {
-	ctx := cortex.WithScope(context.Background(), cortex.Scope{
-		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
-	})
+	ctx := a2aTestCtx()
 	st := newApprovalStore(ctx, t)
 	model := &routingLLM{resumed: make(chan struct{})}
+	e := startedA2AEngine(ctx, t, st, model)
 
+	paused, err := e.RunAgent(ctx, "planner", "ask the worker", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if paused.State != run.StatePaused {
+		t.Fatalf("State = %s, want paused", paused.State)
+	}
+
+	// The workers pick the delivery up on their own. Waiting on the
+	// model's own signal keeps this deterministic: no sleep, no polling.
+	awaitResume(ctx, t, st, model, paused.ID)
+}
+
+// suspensionGate holds the asker's suspension write open, so a peer that
+// was asked too early has every chance to answer before the asker pauses.
+// It records whether that happened.
+type suspensionGate struct {
+	store.Store
+	peerAsked <-chan struct{}
+	early     atomic.Bool
+}
+
+func (g *suspensionGate) CreateSuspension(ctx context.Context, s *suspension.Suspension) error {
+	select {
+	case <-g.peerAsked:
+		g.early.Store(true)
+	case <-time.After(250 * time.Millisecond):
+	}
+	return g.Store.CreateSuspension(ctx, s)
+}
+
+// TestAPeerIsNotAskedBeforeTheAskerPauses pins the order behind the test
+// above. The asker's run pauses at the end of its step, and its question
+// used to be queued in the middle of it. A worker quick enough to answer
+// inside that gap found no paused run to resume, and the planner sat
+// paused on an answer that had already arrived. On a loaded CI runner
+// the gap was wide enough to hit.
+func TestAPeerIsNotAskedBeforeTheAskerPauses(t *testing.T) {
+	ctx := a2aTestCtx()
+	st := newApprovalStore(ctx, t)
+	model := &routingLLM{resumed: make(chan struct{}), workerAsked: make(chan struct{})}
+	gate := &suspensionGate{Store: st, peerAsked: model.workerAsked}
+	e := startedA2AEngine(ctx, t, gate, model)
+
+	paused, err := e.RunAgent(ctx, "planner", "ask the worker", nil)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if gate.early.Load() {
+		t.Fatal("the worker was asked before the planner had paused; its answer had no paused run to resume")
+	}
+	if paused.State != run.StatePaused {
+		t.Fatalf("State = %s, want paused", paused.State)
+	}
+	awaitResume(ctx, t, st, model, paused.ID)
+}
+
+func a2aTestCtx() context.Context {
+	return cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+}
+
+// startedA2AEngine is an engine with messaging on, a planner and a worker,
+// and the dispatcher running. It is stopped when the test ends.
+func startedA2AEngine(ctx context.Context, t *testing.T, st store.Store, model *routingLLM) *Engine {
+	t.Helper()
 	e, err := New(
 		WithStore(st),
 		WithLLM(model),
@@ -216,30 +291,25 @@ func TestEngineStartCarriesMessagesWithoutADrain(t *testing.T) {
 	if startErr := e.Start(ctx); startErr != nil {
 		t.Fatalf("Start: %v", startErr)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if stopErr := e.Stop(ctx); stopErr != nil {
-			t.Fatalf("Stop: %v", stopErr)
+			t.Errorf("Stop: %v", stopErr)
 		}
-	}()
+	})
+	return e
+}
 
-	paused, err := e.RunAgent(ctx, "planner", "ask the worker", nil)
-	if err != nil {
-		t.Fatalf("RunAgent: %v", err)
-	}
-	if paused.State != run.StatePaused {
-		t.Fatalf("State = %s, want paused", paused.State)
-	}
-
-	// The workers pick the delivery up on their own. Waiting on the
-	// model's own signal keeps this deterministic: no sleep, no polling.
-	//
-	// The wait is bounded because an unbounded one turns a failure into a
-	// hang: the suite sits until its own timeout and reports nothing
-	// about which step never happened.
+// awaitResume waits for the planner's second turn.
+//
+// The wait is bounded because an unbounded one turns a failure into a
+// hang: the suite sits until its own timeout and reports nothing about
+// which step never happened.
+func awaitResume(ctx context.Context, t *testing.T, st store.Store, model *routingLLM, runID id.AgentRunID) {
+	t.Helper()
 	select {
 	case <-model.resumed:
 	case <-time.After(30 * time.Second):
-		final, err := st.GetRun(ctx, paused.ID)
+		final, err := st.GetRun(ctx, runID)
 		if err != nil {
 			t.Fatalf("the planner never resumed, and its run could not be read: %v", err)
 		}

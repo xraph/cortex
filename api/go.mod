@@ -6,7 +6,7 @@ replace github.com/xraph/cortex => ../
 
 require (
 	github.com/xraph/cortex v1.6.1
-	github.com/xraph/forge v1.9.13
+	github.com/xraph/forge v1.12.3
 )
 
 require (
@@ -75,13 +75,11 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xraph/confy v1.0.2 // indirect
+	github.com/xraph/confy v1.0.3 // indirect
 	github.com/xraph/go-utils v1.3.0 // indirect
 	github.com/xraph/vessel v1.0.4 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.56.0 // indirect

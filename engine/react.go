@@ -261,11 +261,12 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			// its own. A step whose calls disagree is refused at
 			// suspend rather than folded into one of them.
 			var pending pendingCalls
+			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
+				result, outcome, pendingReason := e.executeTool(stepCtx, subject, tc)
 				if outcome == outcomePending {
 					// No tool call row: nothing ran, and a row with a
 					// completion timestamp on it would be a lie the
@@ -606,6 +607,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			// than naming one of its own, and a step whose calls
 			// disagree never gets that far.
 			var pending pendingCalls
+			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range toolCalls {
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
@@ -616,7 +618,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					"tool_id":   tc.ID,
 				}}
 
-				result, outcome, pendingReason := e.executeTool(ctx, subject, tc)
+				result, outcome, pendingReason := e.executeTool(stepCtx, subject, tc)
 				if outcome == outcomePending {
 					pending.add(tc, pendingReason)
 					continue
