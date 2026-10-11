@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/xraph/cortex => ../
 
 require (
-	github.com/xraph/cortex v1.7.0
+	github.com/xraph/cortex v1.7.1
 	github.com/xraph/sentinel v1.7.1
 	github.com/xraph/vessel v1.0.4
 )
