@@ -40,8 +40,12 @@ for mod in "${SUBMODULES[@]}"; do
 done
 
 # A require the proxy cannot resolve is the whole failure this guards
-# against, so fail loudly rather than tagging something broken.
-if grep -rn "github.com/xraph/cortex\S* v0\.0\.0" --include=go.mod .; then
-	echo "error: a sub-module still requires v0.0.0" >&2
-	exit 1
-fi
+# against, so fail loudly rather than tagging something broken. Only the
+# modules above get tagged. inttest is never published, and its pseudo-version
+# require sits behind a local replace, so it is left out of the check.
+for mod in "${SUBMODULES[@]}"; do
+	if grep -n "github.com/xraph/cortex\S* v0\.0\.0" "$mod/go.mod"; then
+		echo "error: $mod still requires v0.0.0" >&2
+		exit 1
+	fi
+done
