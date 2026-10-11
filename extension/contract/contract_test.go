@@ -1,15 +1,18 @@
 package contract
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	dashauth "github.com/xraph/forge/extensions/dashboard/auth"
 	dc "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+	"github.com/xraph/forge/extensions/dashboard/contract/loader"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
@@ -57,13 +60,37 @@ func testService(t *testing.T, opts ...engine.Option) (*dispatcher.Dispatcher, *
 	}
 	return d, &service{deps: deps}, st
 }
+
+// manifestKinds maps every intent in the embedded manifest to its kind.
+// Forge rejects a request whose kind doesn't match the handler it reaches,
+// so dispatch has to send a query as a query.
+var manifestKinds = sync.OnceValues(func() (map[string]dc.Kind, error) {
+	m, err := loader.Load(bytes.NewReader(manifest), "cortex/extension/contract/manifest.yaml")
+	if err != nil {
+		return nil, err
+	}
+	kinds := make(map[string]dc.Kind, len(m.Intents))
+	for _, in := range m.Intents {
+		kinds[in.Name] = dc.Kind(in.Kind)
+	}
+	return kinds, nil
+})
+
 func dispatch(t *testing.T, d *dispatcher.Dispatcher, p dc.Principal, intent string, body any) (json.RawMessage, error) {
 	t.Helper()
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _, err := d.Dispatch(context.Background(), dc.Request{Contributor: ContributorName, Intent: intent, IntentVersion: 1, Kind: dc.KindCommand, Payload: b}, p)
+	kinds, err := manifestKinds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, ok := kinds[intent]
+	if !ok {
+		t.Fatalf("intent %q is not in the manifest", intent)
+	}
+	data, _, err := d.Dispatch(context.Background(), dc.Request{Contributor: ContributorName, Intent: intent, IntentVersion: 1, Kind: kind, Payload: b}, p)
 	return data, err
 }
 func TestClaimsNeverFallBackWhenPresentAndInvalid(t *testing.T) {
