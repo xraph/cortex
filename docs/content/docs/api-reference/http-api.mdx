@@ -3,9 +3,36 @@ title: HTTP API Reference
 description: Reference for the Cortex REST endpoints, covering agents, runs, skills, traits, behaviors, personas, checkpoints, memory, sessions, tools, orchestrations, and configuration.
 ---
 
-All endpoints live under `<basePath>/v1` and return JSON. `basePath` is the extension mount prefix (`extension.WithBasePath`, default `/cortex`) and `/v1` is the API version group, so the default full path is `/cortex/v1/...`. Authentication and tenant resolution depend on your middleware configuration. Set `X-Tenant-ID` and `X-App-ID` headers for multi-tenant deployments.
+The REST handlers live in their own module, `github.com/xraph/cortex/api`, and the Forge extension mounts none of them unless you ask it to:
 
-## Agents (8 routes)
+```go
+import (
+    "github.com/xraph/forge"
+
+    "github.com/xraph/cortex/api"
+    "github.com/xraph/cortex/engine"
+    cortexext "github.com/xraph/cortex/extension"
+)
+
+cortexExt := cortexext.New(
+    cortexext.WithRoutes(func(eng *engine.Engine, r forge.Router) cortexext.RouteSet {
+        return api.New(eng, r)
+    }),
+)
+```
+
+That gives you the 59 routes on this page. They live under `<basePath>/v1` and return JSON. `basePath` is the extension's mount prefix (`extension.WithBasePath` or `base_path`, default `/cortex`) and `/v1` is the version group every handler registers in, so the default full path is `/cortex/v1/...`. If you serve `api.New(eng, router)` on a router of your own instead, the paths start at `/v1`.
+
+Cortex doesn't authenticate requests or work out who's calling. Your middleware has to put a `cortex.Scope` on each request's context with `cortex.WithScope` (and optionally a principal with `cortex.WithPrincipal`) before it reaches these handlers. Without a scope every route fails. The `X-Tenant-ID` headers in the examples on other pages are whatever your own middleware reads; Cortex doesn't look at any header. See [Forge Extension](/docs/guides/forge-extension#scope-middleware).
+
+A few things to know before you call them:
+
+- List routes currently need `limit` and `offset` in the query string. They're meant to be optional (50 by default, capped at 1000), but the request binding rejects a request without them. The same goes for `limit` and `session_id` on the memory routes.
+- Successful responses can carry the JSON body twice, because the handlers write the response and also return it to Forge. A strict JSON client may choke on that.
+- Create, update and list handlers don't translate store errors, so a duplicate name on create comes back as `500` rather than `409`. See [Error format](#error-format).
+
+
+## Agents (9 routes)
 
 ### `POST /cortex/v1/agents`
 
@@ -33,22 +60,22 @@ Create an agent configuration.
 }
 ```
 
-**Response** `201 Created` — Agent object with generated `id` (e.g. `agt_01h455...`).
+**Response** `201 Created` with the agent object and its generated `id` (for example `agt_01h455...`). `name` is required.
 
 ---
 
 ### `GET /cortex/v1/agents`
 
-List all agents for the current tenant/app.
+List the agents in the caller's scope (and the scopes beneath it).
 
 **Query parameters**
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `limit` | int | 50 | Max results |
+| `limit` | int | 50 | Max results, capped at 1000 |
 | `offset` | int | 0 | Pagination offset |
 
-**Response** `200 OK` — Array of Agent objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of agent objects.
 
 ---
 
@@ -56,7 +83,7 @@ List all agents for the current tenant/app.
 
 Get an agent by name.
 
-**Response** `200 OK` — Agent object.
+**Response** `200 OK` with the agent object.
 
 **Error** `404 Not Found` if agent does not exist.
 
@@ -66,9 +93,9 @@ Get an agent by name.
 
 Update an agent configuration. Only provided fields are updated.
 
-**Request** — Same shape as create, all fields optional except `name` (path).
+**Request**: the same shape as create, with every field optional and the name taken from the path. Empty fields are left alone.
 
-**Response** `200 OK` — Updated Agent object.
+**Response** `200 OK` with the updated agent object.
 
 ---
 
@@ -88,9 +115,16 @@ Execute an agent synchronously. Returns when the run completes.
 
 ```json
 {
-  "input": "I want to return order #12345"
+  "input": "I want to return order #12345",
+  "overrides": {
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "max_steps": 5
+  }
 }
 ```
+
+`input` is required. `overrides` is optional and takes `model`, `temperature`, `max_steps`, `max_tokens`, `reasoning_loop`, `system_prompt`, `persona_ref`, `inline_skills`, `inline_traits`, `inline_behaviors` and `tools` for this run only. There's no session field, so a run over HTTP always lands in the agent's default session for the caller's scope. To run in another session, call `eng.RunAgent` with `RunOverrides.SessionID`.
 
 **Response** `200 OK`
 
@@ -100,9 +134,12 @@ Execute an agent synchronously. Returns when the run completes.
   "state": "completed",
   "output": "I'd be happy to help with your return...",
   "step_count": 3,
-  "tokens_used": 1240
+  "tokens_used": 1240,
+  "duration_ms": 2310
 }
 ```
+
+A run that pauses for an approval or an external tool comes back with `state` set to `paused`.
 
 ---
 
@@ -110,15 +147,33 @@ Execute an agent synchronously. Returns when the run completes.
 
 Execute an agent with Server-Sent Events (SSE) streaming.
 
-**Request** — Same as `/run`.
+**Request**: the same as `/run`.
 
-**Response** `200 OK` with `Content-Type: text/event-stream`.
+**Response** `200 OK` with `Content-Type: text/event-stream`. Each engine event is one SSE message, with the event type as the `event:` line and its data as JSON:
+
+```
+event: run_started
+data: {"agent_id":"agt_01h455...","run_id":"arun_01h455..."}
+
+event: token
+data: {"content":"I","index":0}
+```
+
+Event types are `run_started`, `step`, `tool_call`, `token`, `checkpoint`, `safety_block`, `suspended`, `done` and `error`.
+
+---
+
+### `POST /cortex/v1/agents/:name/preview-prompt`
+
+Assemble an agent's system prompt without running it, so you can see what its persona identity, skills, traits and the prompt overlays for the caller's scope actually produce.
+
+**Response** `200 OK` with `{"prompt": "..."}`.
 
 ---
 
 ### `POST /cortex/v1/agents/:name/clone`
 
-Clone an agent into a new, independent copy in the same app. All configuration is copied; the clone gets a fresh `id`, fresh timestamps, and no runtime history (runs/memory/conversation stay with the source). The clone keeps the same `persona_ref` (the persona is shared, not copied).
+Clone an agent into a new, independent copy in the caller's scope. All configuration is copied. The clone gets a fresh `id`, fresh timestamps and no runtime history (runs, sessions and memory stay with the source). It keeps the same `persona_ref`, so the persona is shared, not copied.
 
 **Request**
 
@@ -128,28 +183,28 @@ Clone an agent into a new, independent copy in the same app. All configuration i
 }
 ```
 
-`new_name` is optional. If omitted, a unique name is generated: `<source>-copy`, then `<source>-copy-2`, `<source>-copy-3`, … until one is free.
+`new_name` is optional. If you leave it out, a unique name is generated: `<source>-copy`, then `<source>-copy-2`, `<source>-copy-3` and so on, until one is free.
 
-**Response** `201 Created` — the new Agent object.
+**Response** `201 Created` with the new agent object.
 
-**Errors** — `404 Not Found` if the source agent does not exist; `409 Conflict` if `new_name` is already taken.
+**Errors**: `404 Not Found` if the source agent doesn't exist, `409 Conflict` if `new_name` is already taken.
 
 ---
 
 ## Runs (3 routes)
 
-### `GET /cortex/v1/agents/:name/runs`
+### `GET /cortex/v1/runs`
 
-List runs for a specific agent.
+List the runs in the caller's scope. There's no filter by agent here; use `eng.ListRuns` with `AgentID` for that.
 
 **Query parameters**
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `limit` | int | 50 | Max results |
+| `limit` | int | 50 | Max results, capped at 1000 |
 | `offset` | int | 0 | Pagination offset |
 
-**Response** `200 OK` — Array of Run objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of run objects.
 
 ---
 
@@ -163,6 +218,7 @@ Get a specific run by ID.
 {
   "id": "arun_01h455...",
   "agent_id": "agt_01h455...",
+  "session_id": "ses_01h455...",
   "scope": {
     "levels": [
       { "key": "workspace", "value": "acme-corp" },
@@ -182,7 +238,7 @@ Get a specific run by ID.
 }
 ```
 
-`tenant_id` no longer serializes — as of v1.7.0 a run carries `scope`, a
+`tenant_id` no longer serializes. As of v1.7.0 a run carries `scope`, a
 host-defined ordered hierarchy, instead of a single tenant string. See
 [Multi-tenancy](/docs/concepts/multi-tenancy).
 
@@ -219,7 +275,7 @@ Create a skill.
     {"tool_name": "create_ticket", "mastery": "proficient"}
   ],
   "knowledge": [
-    {"source": "policies://return-policy", "inject_mode": "always", "priority": 1}
+    {"source": "return-policy", "inject_mode": "always", "priority": 1}
   ],
   "system_prompt_fragment": "You are an expert support agent.",
   "dependencies": [],
@@ -228,7 +284,7 @@ Create a skill.
 }
 ```
 
-**Response** `201 Created` — Skill object with generated `id` (e.g. `skl_01h455...`).
+**Response** `201 Created` with the skill object and its generated `id` (for example `skl_01h455...`).
 
 ---
 
@@ -236,9 +292,9 @@ Create a skill.
 
 List all skills.
 
-**Query parameters** — `limit`, `offset`.
+**Query parameters**: `limit`, `offset`.
 
-**Response** `200 OK` — Array of Skill objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of skill objects.
 
 ---
 
@@ -246,7 +302,7 @@ List all skills.
 
 Get a skill by name.
 
-**Response** `200 OK` — Skill object.
+**Response** `200 OK` with the skill object.
 
 ---
 
@@ -254,7 +310,7 @@ Get a skill by name.
 
 Update a skill.
 
-**Response** `200 OK` — Updated Skill object.
+**Response** `200 OK` with the updated skill object.
 
 ---
 
@@ -278,18 +334,20 @@ Create a trait.
 {
   "name": "empathy",
   "description": "Emotional awareness and patience",
-  "category": "emotional",
+  "category": "personality",
   "dimensions": [
     {"name": "emotional-awareness", "low_label": "detached", "high_label": "empathetic", "value": 0.85}
   ],
   "influences": [
-    {"target": "tone", "value": "warm", "weight": 0.8}
+    {"target": "prompt_injection", "value": "Acknowledge how the customer feels first."}
   ],
   "metadata": {}
 }
 ```
 
-**Response** `201 Created` — Trait object with generated `id` (e.g. `trt_01h455...`).
+**Response** `201 Created` with the trait object and its generated `id` (for example `trt_01h455...`).
+
+`category` is one of `personality`, `workstyle`, `communication` or `risk`. Only `prompt_injection` influences reach a run today; see [Traits](/docs/human-model/traits).
 
 ---
 
@@ -297,9 +355,9 @@ Create a trait.
 
 List all traits.
 
-**Query parameters** — `limit`, `offset`, `category` (filter by trait category).
+**Query parameters**: `limit`, `offset`, `category` (filter by trait category).
 
-**Response** `200 OK` — Array of Trait objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of trait objects.
 
 ---
 
@@ -307,7 +365,7 @@ List all traits.
 
 Get a trait by name.
 
-**Response** `200 OK` — Trait object.
+**Response** `200 OK` with the trait object.
 
 ---
 
@@ -315,7 +373,7 @@ Get a trait by name.
 
 Update a trait.
 
-**Response** `200 OK` — Updated Trait object.
+**Response** `200 OK` with the updated trait object.
 
 ---
 
@@ -341,12 +399,11 @@ Create a behavior.
   "description": "Escalate on negative sentiment",
   "priority": 10,
   "triggers": [
-    {"type": "sentiment_below", "pattern": "0.3"},
-    {"type": "keyword_match", "pattern": "speak to manager"}
+    {"type": "on_input", "pattern": "speak to manager"}
   ],
   "actions": [
-    {"type": "modify_tone", "target": "tone", "value": "extra empathetic"},
-    {"type": "inject_prompt", "value": "Acknowledge frustration first."}
+    {"type": "inject_prompt", "value": "Acknowledge frustration first."},
+    {"type": "require_tool", "target": "create_ticket"}
   ],
   "requires_skill": "",
   "requires_trait": "",
@@ -354,7 +411,9 @@ Create a behavior.
 }
 ```
 
-**Response** `201 Created` — Behavior object with generated `id` (e.g. `bhv_01h455...`).
+**Response** `201 Created` with the behavior object and its generated `id` (for example `bhv_01h455...`).
+
+Behaviors are stored and served but the engine doesn't evaluate them yet; see [Behaviors](/docs/human-model/behaviors).
 
 ---
 
@@ -362,9 +421,9 @@ Create a behavior.
 
 List all behaviors.
 
-**Query parameters** — `limit`, `offset`.
+**Query parameters**: `limit`, `offset`.
 
-**Response** `200 OK` — Array of Behavior objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of behavior objects.
 
 ---
 
@@ -372,7 +431,7 @@ List all behaviors.
 
 Get a behavior by name.
 
-**Response** `200 OK` — Behavior object.
+**Response** `200 OK` with the behavior object.
 
 ---
 
@@ -380,7 +439,7 @@ Get a behavior by name.
 
 Update a behavior.
 
-**Response** `200 OK` — Updated Behavior object.
+**Response** `200 OK` with the updated behavior object.
 
 ---
 
@@ -419,7 +478,7 @@ Create a persona.
 }
 ```
 
-**Response** `201 Created` — Persona object with generated `id` (e.g. `prs_01h455...`).
+**Response** `201 Created` with the persona object and its generated `id` (for example `prs_01h455...`).
 
 ---
 
@@ -427,9 +486,9 @@ Create a persona.
 
 List all personas.
 
-**Query parameters** — `limit`, `offset`.
+**Query parameters**: `limit`, `offset`.
 
-**Response** `200 OK` — Array of Persona objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of persona objects.
 
 ---
 
@@ -437,7 +496,7 @@ List all personas.
 
 Get a persona by name.
 
-**Response** `200 OK` — Persona object.
+**Response** `200 OK` with the persona object.
 
 ---
 
@@ -445,7 +504,7 @@ Get a persona by name.
 
 Update a persona.
 
-**Response** `200 OK` — Updated Persona object.
+**Response** `200 OK` with the updated persona object.
 
 ---
 
@@ -459,7 +518,7 @@ Delete a persona.
 
 ### `POST /cortex/v1/personas/:name/clone`
 
-Clone a persona into a new, independent copy in the same app. The full composition (skills, traits, behaviors, cognitive/communication style, perception, metadata) is deep-copied; the clone gets a fresh `id` and timestamps.
+Clone a persona into a new, independent copy in the caller's scope. The full composition (skills, traits, behaviors, cognitive/communication style, perception, metadata) is deep-copied; the clone gets a fresh `id` and timestamps.
 
 **Request**
 
@@ -469,11 +528,11 @@ Clone a persona into a new, independent copy in the same app. The full compositi
 }
 ```
 
-`new_name` is optional (same auto-naming as agent clone: `<source>-copy`, `<source>-copy-2`, …).
+`new_name` is optional (same auto-naming as agent clone: `<source>-copy`, `<source>-copy-2` and so on).
 
-**Response** `201 Created` — the new Persona object.
+**Response** `201 Created` with the new persona object.
 
-**Errors** — `404 Not Found` if the source persona does not exist; `409 Conflict` if `new_name` is already taken.
+**Errors**: `404 Not Found` if the source persona doesn't exist, `409 Conflict` if `new_name` is already taken.
 
 ---
 
@@ -483,9 +542,9 @@ Clone a persona into a new, independent copy in the same app. The full compositi
 
 List pending checkpoints (runs paused for human approval).
 
-**Query parameters** — `limit`, `offset`.
+**Query parameters**: `limit`, `offset`.
 
-**Response** `200 OK` — Array of Checkpoint objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of checkpoint objects.
 
 ---
 
@@ -508,29 +567,34 @@ whoever finds the failed run later reads why a person stopped it. An approval
 resumes the run synchronously, so this request stays open for as long as the
 rest of the run takes.
 
-**Response** `200 OK`
+`decision` is `approved` or `rejected`; anything else is a `400`.
+
+**Response** `204 No Content`
 
 ---
 
 ## Memory (2 routes)
 
-### `GET /cortex/v1/agents/:name/conversation`
+### `GET /cortex/v1/agents/:name/memory`
 
-Get conversation history for an agent.
+Get one session's conversation history for an agent.
 
 **Query parameters**
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
+| `session_id` | string | the agent's default session | Which session to read |
 | `limit` | int | 50 | Max messages to return |
 
-**Response** `200 OK` — Array of Message objects.
+Both parameters are currently required by the request binding, despite the defaults the handler is written with.
+
+**Response** `200 OK` with `{"messages": [...]}`. An agent that has never run has no default session, and gets an empty list.
 
 ---
 
-### `DELETE /cortex/v1/agents/:name/conversation`
+### `DELETE /cortex/v1/agents/:name/memory`
 
-Clear conversation history for an agent.
+Clear one session's conversation. Takes `session_id` in the query string, like the `GET`.
 
 **Response** `204 No Content`
 
@@ -543,15 +607,15 @@ memory is read and written per session.
 
 ### `POST /cortex/v1/agents/:name/sessions`
 
-Create a session for an agent.
+Create a session for an agent. The body takes an optional `title` and `metadata`.
 
 ### `GET /cortex/v1/agents/:name/sessions`
 
-List an agent's sessions, most recent first.
+List an agent's sessions, most recent first. Takes `limit` and `offset`, and answers `{"items": [...]}`.
 
 ### `GET /cortex/v1/agents/:name/sessions/count`
 
-Count an agent's sessions.
+Count an agent's sessions. Answers `{"count": 3}`.
 
 ### `GET /cortex/v1/agents/:name/sessions/:id`
 
@@ -559,48 +623,55 @@ Read one session.
 
 ### `PUT /cortex/v1/agents/:name/sessions/:id`
 
-Update a session's title or metadata.
+Update a session's `title` or `metadata`.
 
 ### `DELETE /cortex/v1/agents/:name/sessions/:id`
 
 Delete a session and the messages in it.
 
-## Configuration (3 routes)
+## Configuration (2 routes)
 
 ### `GET /cortex/v1/config`
 
-Read the engine's effective configuration.
+Read the engine's current defaults. `cortex.Config` has no JSON tags, so the fields come back with their Go names, and `ShutdownTimeout` is in nanoseconds:
+
+```json
+{
+  "DefaultModel": "smart",
+  "DefaultMaxSteps": 25,
+  "DefaultMaxTokens": 4096,
+  "DefaultTemperature": 0.7,
+  "DefaultReasoningLoop": "react",
+  "ShutdownTimeout": 30000000000,
+  "RunConcurrency": 4
+}
+```
 
 ### `PUT /cortex/v1/config`
 
-Update the engine's configuration.
+Change the engine's defaults at runtime. The body takes `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature` and `default_reasoning_loop`, and zero values are ignored. The change is in memory only and is lost on restart.
 
-### `POST /cortex/v1/agents/:name/preview-prompt`
+**Response** `200 OK` with the updated configuration, in the same shape as `GET`.
 
-Assemble an agent's system prompt without running it, which is how you see
-what a persona, its skills and any prompt overlays actually produce.
+## Tools (2 routes, not implemented)
 
-## Tools (2 routes)
+Both routes are placeholders today.
 
 ### `GET /cortex/v1/tools`
 
-List all registered tools.
-
-**Response** `200 OK` — Array of tool descriptors.
+Meant to list the registered tools. It always answers `200 OK` with `{"items": []}`, whatever you registered with `engine.WithTool`. Use `eng.VisibleTools(ctx, agentID)` in Go instead.
 
 ---
 
 ### `GET /cortex/v1/tools/:name/schema`
 
-Get the JSON Schema for a specific tool.
-
-**Response** `200 OK` — JSON Schema object.
+Meant to return a tool's JSON Schema. It always answers `404 Not Found` ("tool schema not yet implemented").
 
 ---
 
 ## Orchestrations (8 routes)
 
-Multi-agent orchestration. A stored orchestration config names a **strategy** and its **participant agents**; running it coordinates those agents over a shared blackboard. See the [Orchestration guide](/docs/execution/orchestration) for concepts.
+Multi-agent orchestration. A stored orchestration config names a strategy and its participant agents, and running it coordinates those agents over a shared blackboard. See the [Orchestration guide](/docs/execution/orchestration) for concepts.
 
 ### `POST /cortex/v1/orchestrations`
 
@@ -623,11 +694,11 @@ Create an orchestration config.
 }
 ```
 
-`strategy` is one of `sequential`, `parallel`, `router`, `hierarchical`, `debate`. `settings` fields are strategy-specific (`max_concurrency`, `rounds`, `manager`, `judge`, `aggregator`, `router_agent`, `router_rules`, `model`) — each strategy reads only what it needs.
+`strategy` is one of `sequential`, `parallel`, `router`, `hierarchical`, `debate`. `settings` fields are strategy-specific (`max_concurrency`, `rounds`, `manager`, `judge`, `aggregator`, `router_agent`, `router_rules`, `model`), and each strategy reads only what it needs.
 
-**Response** `201 Created` — Orchestration object with generated `id` (e.g. `orchcfg_01h455...`).
+**Response** `201 Created` with the orchestration object and its generated `id` (for example `orchcfg_01h455...`).
 
-**Errors** — `400 Bad Request` if `strategy` is unknown or `participants` is empty.
+**Errors**: `400 Bad Request` if `name` is missing, `strategy` is unknown or `participants` is empty.
 
 ---
 
@@ -635,9 +706,9 @@ Create an orchestration config.
 
 List orchestration configs.
 
-**Query parameters** — `limit`, `offset`.
+**Query parameters**: `limit`, `offset`.
 
-**Response** `200 OK` — Array of Orchestration objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of orchestration objects.
 
 ---
 
@@ -645,7 +716,7 @@ List orchestration configs.
 
 Get an orchestration config by name.
 
-**Response** `200 OK` — Orchestration object. `404 Not Found` if it does not exist.
+**Response** `200 OK` with the orchestration object. `404 Not Found` if it doesn't exist.
 
 ---
 
@@ -653,7 +724,7 @@ Get an orchestration config by name.
 
 Update an orchestration config. Only provided fields are updated.
 
-**Response** `200 OK` — Updated Orchestration object.
+**Response** `200 OK` with the updated orchestration object.
 
 ---
 
@@ -697,9 +768,9 @@ A run that executes but whose strategy fails still returns `200 OK` with `"statu
 
 List orchestration run records.
 
-**Query parameters** — `limit`, `offset`, `status` (filter: `running` | `completed` | `failed`).
+**Query parameters**: `limit`, `offset`, `status` (filter: `running` | `completed` | `failed`).
 
-**Response** `200 OK` — Array of orchestration run objects.
+**Response** `200 OK` with `{"items": [...]}`, a list of orchestration run objects.
 
 ---
 
@@ -707,33 +778,98 @@ List orchestration run records.
 
 Get an orchestration run by ID.
 
-**Response** `200 OK` — orchestration run object. `404 Not Found` if it does not exist.
+**Response** `200 OK` with the orchestration run object. `404 Not Found` if it doesn't exist.
+
+---
+
+## Messaging (4 routes)
+
+These read and write agent-to-agent messages. They only do something when the engine has messaging turned on with `engine.WithA2A`. See [Agent Messaging](/docs/execution/messaging).
+
+### `GET /cortex/v1/a2a/conversations`
+
+List the conversations in the caller's scope.
+
+**Query parameters**: `limit`, `offset`, `status` (`open`, `closed` or `expired`).
+
+**Response** `200 OK` with `{"items": [...]}`.
+
+---
+
+### `GET /cortex/v1/a2a/conversations/:id`
+
+One conversation with its transcript.
+
+**Response** `200 OK` with `{"conversation": {...}, "messages": [...]}`.
+
+---
+
+### `GET /cortex/v1/agents/:name/inbox`
+
+What's waiting for an agent.
+
+**Query parameters**: `conversation_id`, `include_read` (unread only by default), `limit`.
+
+**Response** `200 OK` with `{"items": [...]}`.
+
+---
+
+### `POST /cortex/v1/agents/:name/messages`
+
+Send an agent a message. This is how a person answers an agent that asked something: set `in_reply_to` to the waiting ask's reply-with token and the run behind it resumes.
+
+**Request**
+
+```json
+{
+  "from": "ops-oncall",
+  "content": "Yes, roll it back.",
+  "performative": "inform",
+  "conversation_id": "conv_01h455...",
+  "in_reply_to": "<reply-with token from the ask>",
+  "ontology": ""
+}
+```
+
+`from` and `content` are required, and `performative` defaults to `inform`.
+
+**Response** `201 Created` with the send result.
 
 ---
 
 ## Error format
 
-All error responses use a consistent JSON envelope:
+Errors come back as JSON, but the shape depends on where the error came from. A `404`, `409`, `412` or handler-level `400` looks like this:
 
 ```json
 {
-  "error": "human-readable message",
-  "code": "ERROR_CODE"
+  "code": 404,
+  "error": "cortex: agent not found"
 }
 ```
 
-| HTTP status | `code` | Cause |
-|-------------|--------|-------|
-| `400` | `BAD_REQUEST` | Missing required field, invalid input |
-| `404` | `NOT_FOUND` | Entity not found for tenant |
-| `409` | `ALREADY_EXISTS` | Entity with that name already exists |
-| `500` | `INTERNAL_ERROR` | Store or engine failure |
+A request that fails binding (a missing required query parameter, say) is a `400` in the same shape, with an `"invalid request: ..."` message. An error the handler doesn't translate reaches Forge's default handling and comes back as a `500`:
+
+```json
+{
+  "code": "INTERNAL_SERVER_ERROR",
+  "message": "create agent: cortex/sqlite: create agent: cortex: resource already exists"
+}
+```
+
+| HTTP status | Cause |
+|-------------|-------|
+| `400` | Missing or invalid input: a required field, an unparseable ID, an unknown strategy or checkpoint decision, a missing query parameter |
+| `404` | The entity doesn't exist in the caller's scope (a row in another scope looks the same) |
+| `409` | A name that's already taken, on clone; a run someone else is already resuming, on cancel |
+| `412` | The request has no scope, on routes that map store errors |
+| `500` | Anything else, including a duplicate name on create and a missing scope on create, update and list routes |
 
 ## Route summary
 
 | Resource | Routes | Methods |
 |----------|--------|---------|
-| Agents | 8 | POST, GET, GET, PUT, DELETE, POST (run), POST (stream), POST (clone) |
+| Agents | 9 | POST, GET, GET, PUT, DELETE, POST (run), POST (stream), POST (preview prompt), POST (clone) |
 | Runs | 3 | GET (list), GET (by ID), POST (cancel) |
 | Skills | 5 | POST, GET, GET, PUT, DELETE |
 | Traits | 5 | POST, GET, GET, PUT, DELETE |
@@ -741,8 +877,9 @@ All error responses use a consistent JSON envelope:
 | Personas | 6 | POST, GET, GET, PUT, DELETE, POST (clone) |
 | Checkpoints | 2 | GET (list), POST (resolve) |
 | Memory | 2 | GET, DELETE |
-| Tools | 2 | GET (list), GET (schema) |
 | Sessions | 6 | POST, GET (list), GET (count), GET, PUT, DELETE |
-| Configuration | 3 | GET, PUT, POST (preview prompt) |
+| Configuration | 2 | GET, PUT |
+| Tools | 2 | GET (list), GET (schema), both placeholders |
 | Orchestrations | 8 | POST, GET, GET, PUT, DELETE, POST (run), GET (runs), GET (run by ID) |
-| **Total** | **55** | |
+| Messaging | 4 | GET (conversations), GET (conversation), GET (inbox), POST (message) |
+| Total | 59 | |

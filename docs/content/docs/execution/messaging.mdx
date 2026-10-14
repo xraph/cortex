@@ -45,13 +45,13 @@ Reading marks them read, so each message comes back once.
 Every message carries a FIPA-ACL performative, and cortex routes on it. There
 are 22 of them, and they fall into three groups.
 
-**Directives start a run.** `request`, `request-when`, `request-whenever`,
+Directives start a run. `request`, `request-when`, `request-whenever`,
 `query-if`, `query-ref`, `cfp`, `propose` and `accept-proposal` all demand an
 answer, so the recipient runs and its output becomes the reply.
 `accept-proposal` is in this group rather than with the informatives because in
 Contract Net it is the message that makes the contractor do the work.
 
-**Informatives land in the inbox.** `inform`, `inform-if`, `inform-ref`,
+Informatives land in the inbox. `inform`, `inform-if`, `inform-ref`,
 `confirm`, `disconfirm`, `agree`, `refuse`, `failure`, `not-understood`,
 `reject-proposal`, `subscribe`, `proxy` and `propagate` queue for the recipient
 to read on its own time. Nobody spawns a run to be told something.
@@ -62,7 +62,7 @@ do. And `proxy` and `propagate` are carried and delivered, but cortex will not
 forward them on an agent's behalf: forwarding is a policy decision with an
 obvious abuse shape, so build it over the inbox if you want it.
 
-**`cancel` is control.** It closes the conversation and un-pauses everyone
+`cancel` is control. It closes the conversation and un-pauses everyone
 waiting on it with a failure they can read, rather than leaving them to sit
 until their deadline.
 
@@ -105,7 +105,7 @@ agent_send(to: ["fast-reviewer"], performative: "accept-proposal", content: "you
 agent_send(to: ["slow-reviewer"], performative: "reject-proposal", content: "thanks anyway")
 ```
 
-**Cortex never picks the winner.** Choosing a contractor is a judgement, and
+Cortex never picks the winner. Choosing a contractor is a judgement, and
 an agent is what makes it. If you want the work back rather than just an
 acknowledgement, award with `agent_ask` instead: `accept-proposal` is a
 directive, so the winner runs and its result comes back as your answer.
@@ -181,11 +181,13 @@ on a message that was never sent would be a run nothing could ever resume.
 
 ## Reading it back
 
+In Go, `eng.ListConversations`, `eng.GetConversation`, `eng.ListMessages`, `eng.AgentInbox` and `eng.SendMessage` cover it. When you mount the `api` module through `extension.WithRoutes`, the same is available over HTTP under the base path (default `/cortex`):
+
 ```
-GET  /v1/a2a/conversations              every conversation in scope
-GET  /v1/a2a/conversations/:id          one conversation with its transcript
-GET  /v1/agents/:name/inbox             what is waiting for an agent
-POST /v1/agents/:name/messages          send an agent a message
+GET  /cortex/v1/a2a/conversations         every conversation in scope
+GET  /cortex/v1/a2a/conversations/:id     one conversation with its transcript
+GET  /cortex/v1/agents/:name/inbox        what is waiting for an agent
+POST /cortex/v1/agents/:name/messages     send an agent a message
 ```
 
 That last one is how a person answers an agent. Post a message carrying

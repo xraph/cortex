@@ -34,12 +34,14 @@ import (
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate" // registers the SQLite migration executor
 	"github.com/xraph/nexus"
 	"github.com/xraph/nexus/providers/openai"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
@@ -93,6 +95,7 @@ func main() {
 	}
 
 	err = eng.CreateAgent(ctx, &agent.Config{
+		ID:           id.NewAgentID(),
 		Name:         "assistant",
 		SystemPrompt: "You are a concise assistant. Use your tools when they help.",
 		Model:        "gpt-4o-mini",
@@ -207,11 +210,13 @@ Participants share a blackboard with the roster and earlier work. For agents tha
 
 | Backend | Package | Notes |
 | --- | --- | --- |
-| PostgreSQL | `store/postgres`, `postgres.New(db *grove.DB)` | The first three scope levels get indexed columns, deeper ones go in JSONB |
+| PostgreSQL | `store/postgres`, `postgres.New(db *grove.DB)` | The first three scope levels get indexed columns |
 | SQLite | `store/sqlite`, `sqlite.New(db *grove.DB)` | Good for one process and for tests |
 | MongoDB | `store/mongo`, `mongo.New(db *grove.DB)` | Needs a replica set or sharded cluster |
 
-Call `Migrate(ctx)` once before you use a store, or let the Forge extension do it for you on start. On MongoDB, saving or clearing a conversation writes the messages and the session's counters in one multi-document transaction, and a standalone `mongod` can't run transactions, so every conversation write fails against one.
+Every store filters reads by the first three scope levels only. Levels past the third are saved with the row, in `scope_extra` and in the canonical scope string, but no query matches on them, so two scopes that differ only below the third level read each other's rows. Keep your scopes to three levels.
+
+Call `Migrate(ctx)` once before you use a store, or let the Forge extension do it for you on start. SQLite migrations need the executor from `github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate`, so import it for its side effect, as the quick start does. On MongoDB, saving or clearing a conversation writes the messages and the session's counters in one multi-document transaction, and a standalone `mongod` can't run transactions, so every conversation write fails against one.
 
 ## Use it with Forge
 

@@ -1,9 +1,11 @@
 ---
 title: Cognitive Style
-description: Define how an agent thinks — phase-based reasoning strategies.
+description: Define how an agent thinks, as phase-based reasoning strategies.
 ---
 
-**Cognitive Style** replaces rigid reasoning loop selection with a phase-based thinking strategy chain. Instead of picking a single strategy ("react" or "chain-of-thought"), you define multiple phases that transition based on conditions.
+A cognitive style describes thinking as a chain of phases. Instead of picking a single strategy, you define several phases that hand over to each other when a condition is met.
+
+The style is a value object on a persona. It's stored and returned with the persona, but the engine doesn't apply it yet: every run uses the ReAct loop, no phase transitions happen, and the `OnCognitivePhaseChanged` plugin hook never fires. The tables below describe what each value is meant for.
 
 ## Structure
 

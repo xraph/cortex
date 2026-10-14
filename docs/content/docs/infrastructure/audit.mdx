@@ -56,7 +56,7 @@ type AuditEvent struct {
 
 ## Actions
 
-18 audit actions are defined:
+18 action constants are defined, but the extension implements only ten hooks, so only eight of these are recorded today: run started, completed and failed, tool called, completed and failed, and checkpoint created and resolved. `cortex.persona.resolved` and `cortex.behavior.triggered` have handlers but the engine never fires those hooks. The rest (steps, skills, cognitive phases, traits, orchestration, handoffs) are constants with no handler behind them. Tool denials and agent messages aren't audited.
 
 | Action | Description |
 |--------|-------------|
@@ -124,4 +124,6 @@ auditExt := audithook.New(myRecorder,
 )
 ```
 
-Only the specified actions will be recorded; all others are silently dropped.
+Only the specified actions are recorded, and all others are silently dropped.
+
+`audithook.WithLogger(l)` sets the go-utils logger the extension uses to report a `Recorder` error. A recorder error never fails the run.

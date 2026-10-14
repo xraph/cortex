@@ -1,9 +1,11 @@
 ---
 title: Communication Style
-description: Define how an agent talks — tone, formality, and output preferences.
+description: Define how an agent talks, with tone, formality and output preferences.
 ---
 
-**Communication Style** defines how an agent communicates with users. It controls tone, verbosity, technical level, and output format preferences.
+A communication style describes how an agent talks to users: tone, verbosity, technical level and output format.
+
+It's a value object on a persona, stored and returned with it. The engine doesn't turn it into prompt text or model settings yet, so to change how an agent talks today, say it in the agent's system prompt, a skill fragment or a trait's `prompt_injection` influence.
 
 ## Structure
 
@@ -23,13 +25,13 @@ type Style struct {
 
 | Field | Type | Range | Description |
 |-------|------|-------|-------------|
-| `Tone` | `string` | — | Descriptive tone label |
-| `Formality` | `float64` | 0.0–1.0 | Casual to formal spectrum |
-| `Verbosity` | `float64` | 0.0–1.0 | Terse to verbose spectrum |
-| `TechnicalLevel` | `float64` | 0.0–1.0 | Layperson to expert spectrum |
-| `EmojiUsage` | `bool` | — | Include emojis in responses |
-| `PreferredFormat` | `string` | — | Output format preference |
-| `AdaptToUser` | `bool` | — | Dynamically adjust to user's style |
+| `Tone` | `string` |  | Descriptive tone label |
+| `Formality` | `float64` | 0.0 to 1.0 | Casual to formal spectrum |
+| `Verbosity` | `float64` | 0.0 to 1.0 | Terse to verbose spectrum |
+| `TechnicalLevel` | `float64` | 0.0 to 1.0 | Layperson to expert spectrum |
+| `EmojiUsage` | `bool` |  | Include emojis in responses |
+| `PreferredFormat` | `string` |  | Output format preference |
+| `AdaptToUser` | `bool` |  | Dynamically adjust to user's style |
 
 ## Example personas
 

@@ -1,9 +1,11 @@
 ---
 title: Behaviors
-description: Define what an agent does — condition-triggered action patterns.
+description: Define what an agent does habitually, as trigger and action patterns.
 ---
 
-A **Behavior** is a condition-triggered action pattern — the "habits" and "reflexes" that compose skills and traits into contextual responses. When a trigger condition is met, the behavior fires its actions.
+A behavior is a trigger and action pattern, the habits and reflexes that turn skills and traits into contextual responses. The idea is that when a trigger condition is met, the behavior fires its actions.
+
+That part isn't implemented yet. The engine stores behaviors, scopes them, and serves them through its CRUD methods and the REST API, and you can attach them to personas and agents. But no run evaluates a trigger or performs an action, whether the behavior sits in a persona's `Behaviors` or an agent's `InlineBehaviors`, and the `OnBehaviorTriggered` plugin hook never fires. The tables below describe what each type is meant for.
 
 ## Structure
 
@@ -13,6 +15,7 @@ type Behavior struct {
     ID            id.BehaviorID
     Name          string
     Description   string
+    Scope         cortex.Scope // set from the context on create
     Triggers      []Trigger
     Actions       []Action
     Priority      int
@@ -24,7 +27,7 @@ type Behavior struct {
 
 ## Triggers
 
-Triggers define when a behavior activates:
+Triggers say when a behavior should activate:
 
 ```go
 type Trigger struct {
@@ -46,7 +49,7 @@ type Trigger struct {
 
 ## Actions
 
-Actions define what happens when a behavior triggers:
+Actions say what should happen when a behavior triggers:
 
 ```go
 type Action struct {
@@ -69,17 +72,17 @@ type Action struct {
 
 ## Priority
 
-When multiple behaviors trigger simultaneously, they execute in priority order (lower number = higher priority):
+`Priority` is an integer meant to order behaviors that trigger at the same time. Nothing reads it yet, so the code doesn't define which direction wins.
 
 ```go
 behavior := &behavior.Behavior{
-    Priority: 10, // fires before priority 20
+    Priority: 10,
 }
 ```
 
 ## Skill and trait requirements
 
-A behavior can require that a specific skill or trait is active:
+A behavior can name a skill or trait that has to be active for it to apply (stored, not checked yet):
 
 ```go
 behavior := &behavior.Behavior{
@@ -105,15 +108,18 @@ type Store interface {
     UpdateBehavior(ctx context.Context, behavior *Behavior) error
     DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error
     ListBehaviors(ctx context.Context, filter *ListFilter) ([]*Behavior, error)
+    CountBehaviors(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
 
 ## API routes
 
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/cortex/behaviors` | Create a behavior |
-| `GET` | `/cortex/behaviors` | List behaviors |
-| `GET` | `/cortex/behaviors/{name}` | Get a behavior by name |
-| `PUT` | `/cortex/behaviors/{name}` | Update a behavior |
-| `DELETE` | `/cortex/behaviors/{id}` | Delete a behavior |
+| `POST` | `/cortex/v1/behaviors` | Create a behavior |
+| `GET` | `/cortex/v1/behaviors` | List behaviors |
+| `GET` | `/cortex/v1/behaviors/:name` | Get a behavior by name |
+| `PUT` | `/cortex/v1/behaviors/:name` | Update a behavior |
+| `DELETE` | `/cortex/v1/behaviors/:name` | Delete a behavior |

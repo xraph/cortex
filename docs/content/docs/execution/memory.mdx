@@ -1,23 +1,30 @@
 ---
 title: Memory
-description: Conversation history, working memory, and summaries for agent context.
+description: Conversation history per session, plus working memory and summaries in the store.
 ---
 
-Cortex provides three types of memory for maintaining context across interactions:
+The memory store has three kinds of memory. Only the first is used by the engine today.
 
 ## Memory types
 
 ### Conversation memory
 
-Stores the full message history between a user and an agent. Scoped by agent ID and tenant ID.
+The message history between a user and an agent, kept per session. A run loads its session's history before it calls the model and saves the new messages when it finishes, so the next run in the same session carries on the conversation. A run that names no session uses the agent's default session for the caller's scope. See [Sessions](/docs/concepts/sessions).
+
+You read and clear it through the engine:
+
+```go
+msgs, err := eng.LoadConversation(ctx, agentID, sessionID, 50)
+err = eng.ClearConversation(ctx, agentID, sessionID)
+```
 
 ### Working memory
 
-Temporary key-value storage for a single run. Used for intermediate reasoning state. Cleared when the run completes.
+Key-value storage for a single run, meant for intermediate reasoning state. The store implements it (`SaveWorking`, `LoadWorking`, `ClearWorking`, with `cortex.ErrWorkingMemoryNotFound` for a missing key), but the engine never reads or writes it and nothing clears it when a run ends. Use it through `eng.Store()` if you want it.
 
 ### Summary memory
 
-Compressed summaries of past conversations. Used to provide context when the full conversation history is too long.
+Summaries of past conversations, meant for when the full history is too long. Like working memory it exists only in the store: nothing in the engine writes or reads summaries.
 
 ## Message
 
@@ -36,9 +43,9 @@ type Message struct {
 ```go
 type Store interface {
     // Conversation memory
-    SaveConversation(ctx context.Context, agentID id.AgentID, tenantID string, messages []Message) error
-    LoadConversation(ctx context.Context, agentID id.AgentID, tenantID string, limit int) ([]Message, error)
-    ClearConversation(ctx context.Context, agentID id.AgentID, tenantID string) error
+    SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []Message) error
+    LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]Message, error)
+    ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error
 
     // Working memory
     SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error
@@ -46,16 +53,20 @@ type Store interface {
     ClearWorking(ctx context.Context, runID id.AgentRunID) error
 
     // Summary memory
-    SaveSummary(ctx context.Context, agentID id.AgentID, tenantID string, summary string) error
-    LoadSummaries(ctx context.Context, agentID id.AgentID, tenantID string) ([]string, error)
+    SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error
+    LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error)
 }
 ```
 
-The memory store has 8 methods across three memory types. All conversation and summary operations are scoped by agent ID and tenant ID.
+The memory store has 8 methods across three memory types. Like every store method, they read the scope from the context and refuse to run without one.
 
 ## API routes
 
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/cortex/agents/{name}/memory` | Load conversation history |
-| `DELETE` | `/cortex/agents/{name}/memory` | Clear conversation history |
+| `GET` | `/cortex/v1/agents/:name/memory` | Load a session's conversation (`session_id`, `limit`) |
+| `DELETE` | `/cortex/v1/agents/:name/memory` | Clear a session's conversation (`session_id`) |
+
+The `session_id` query parameter is documented as optional, falling back to the default session, but the current request binding rejects a request without it (and the `GET` also wants `limit`). Pass both.

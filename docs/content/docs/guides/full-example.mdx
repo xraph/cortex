@@ -1,9 +1,9 @@
 ---
 title: Full Example
-description: Build a customer-support agent end-to-end — skills, traits, behaviors, persona, agent config, engine wiring, and API usage.
+description: Build a customer-support agent end to end, from skills, traits, behaviors and a persona to the agent, the engine and the REST API.
 ---
 
-This guide builds a complete Cortex agent from scratch — a customer-support bot with a persona, skills, traits, and behaviors — using PostgreSQL for persistence.
+This guide builds a complete Cortex agent from scratch: a customer-support bot with a persona, skills, traits and behaviors, using PostgreSQL for persistence. The Go code on this page is one program, split into steps.
 
 ## 1. Set up the engine
 
@@ -18,16 +18,26 @@ import (
 
     "github.com/xraph/grove"
     "github.com/xraph/grove/drivers/pgdriver"
+    _ "github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 
     "github.com/xraph/cortex"
+    "github.com/xraph/cortex/agent"
+    "github.com/xraph/cortex/behavior"
+    "github.com/xraph/cortex/cognitive"
+    "github.com/xraph/cortex/communication"
     "github.com/xraph/cortex/engine"
+    "github.com/xraph/cortex/id"
+    "github.com/xraph/cortex/perception"
+    "github.com/xraph/cortex/persona"
+    "github.com/xraph/cortex/skill"
     pgstore "github.com/xraph/cortex/store/postgres"
+    "github.com/xraph/cortex/trait"
 )
 
 func main() {
     ctx := context.Background()
 
-    // Connect to PostgreSQL via grove
+    // Connect to PostgreSQL through Grove.
     drv := pgdriver.New()
     if err := drv.Open(ctx, os.Getenv("DATABASE_URL")); err != nil {
         log.Fatal(err)
@@ -37,10 +47,13 @@ func main() {
         log.Fatal(err)
     }
 
-    // Create the composite store
+    // Create the composite store and its tables.
     st := pgstore.New(db)
+    if err := st.Migrate(ctx); err != nil {
+        log.Fatal("migrate: ", err)
+    }
 
-    // Build the engine
+    // Build the engine.
     eng, err := engine.New(
         engine.WithStore(st),
         engine.WithConfig(cortex.Config{
@@ -55,14 +68,8 @@ func main() {
         log.Fatal(err)
     }
 
-    // Run migrations
-    if err := st.Migrate(ctx); err != nil {
-        log.Fatal("migrate:", err)
-    }
-
-    // Attach the host's own scope hierarchy. Cortex has no built-in
-    // notion of tenant or app. A host that wants an app dimension
-    // declares it as a level, the same as tenant:
+    // Attach your own scope hierarchy. Cortex has no built-in
+    // notion of tenant or app. An app dimension is just another level:
     ctx = cortex.WithScope(ctx, cortex.Scope{
         Levels: []cortex.Level{
             {Key: "tenant", Value: "acme-corp"},
@@ -74,15 +81,15 @@ func main() {
 }
 ```
 
+The blank `pgmigrate` import registers Grove's PostgreSQL migration executor, which `Migrate` needs. Leave out `engine.WithLLM` and the run at the end echoes its input, which is fine for checking the wiring. Add `engine.WithLLM(nexusllm.New(gw))` for a real model, as in [Getting started](/docs/getting-started#step-7-run-the-agent).
+
 ## 2. Create a skill
 
-Skills define what an agent can do — the tools it can use and the knowledge it can reference.
+Skills describe what an agent can do: a prompt fragment, the tools that go with it and the knowledge it can draw on.
 
 ```go
-import "github.com/xraph/cortex/skill"
-
 func buildAgent(ctx context.Context, eng *engine.Engine) {
-    // Create a "customer-support" skill with two tool bindings
+    // A "customer-support" skill with two tool bindings.
     supportSkill := &skill.Skill{
         ID:          id.NewSkillID(),
         Name:        "customer-support",
@@ -100,26 +107,25 @@ func buildAgent(ctx context.Context, eng *engine.Engine) {
             },
         },
         Knowledge: []skill.KnowledgeRef{
-            {Source: "policies://return-policy", InjectMode: "always", Priority: 1},
-            {Source: "policies://warranty",      InjectMode: "on_demand", Priority: 2},
+            {Source: "return-policy"},
+            {Source: "warranty"},
         },
         SystemPromptFragment: "You are an expert support agent. Always be empathetic.",
         DefaultProficiency:   skill.ProficiencyProficient,
     }
     if err := eng.CreateSkill(ctx, supportSkill); err != nil {
-        log.Fatal("create skill:", err)
+        log.Fatal("create skill: ", err)
     }
     fmt.Println("created skill:", supportSkill.ID)
 ```
 
+When an agent lists this skill, the engine adds the fragment to the system prompt and, if you configured a knowledge provider, retrieves each `Knowledge` source into the prompt. `Source` is the collection name the provider looks up. The tool bindings and the `InjectMode` and `Priority` fields of a knowledge reference are stored but not used by the engine yet.
+
 ## 3. Create a trait
 
-Traits define personality dimensions — bipolar axes that shape agent behavior.
+Traits describe personality dimensions, bipolar axes with a value between the two labels, plus influences that change the agent.
 
 ```go
-    import "github.com/xraph/cortex/trait"
-
-    // Create an "empathy" trait
     empathyTrait := &trait.Trait{
         ID:          id.NewTraitID(),
         Name:        "empathy",
@@ -140,22 +146,22 @@ Traits define personality dimensions — bipolar axes that shape agent behavior.
             },
         },
         Influences: []trait.Influence{
-            {Target: trait.TargetResponseStyle, Value: "warm and understanding", Weight: 0.8},
+            {Target: trait.TargetPromptInjection, Value: "Acknowledge how the customer feels before you solve the problem."},
         },
     }
     if err := eng.CreateTrait(ctx, empathyTrait); err != nil {
-        log.Fatal("create trait:", err)
+        log.Fatal("create trait: ", err)
     }
     fmt.Println("created trait:", empathyTrait.ID)
 ```
 
+Only `prompt_injection` influences reach a run today. The trait adds its text to the system prompt of every agent that lists it in `InlineTraits`.
+
 ## 4. Create a behavior
 
-Behaviors define automatic reactions to triggers — like habits an agent follows.
+Behaviors describe habits as triggers and actions.
 
 ```go
-    import "github.com/xraph/cortex/behavior"
-
     escalationBehavior := &behavior.Behavior{
         ID:          id.NewBehaviorID(),
         Name:        "auto-escalate",
@@ -170,28 +176,23 @@ Behaviors define automatic reactions to triggers — like habits an agent follow
         },
     }
     if err := eng.CreateBehavior(ctx, escalationBehavior); err != nil {
-        log.Fatal("create behavior:", err)
+        log.Fatal("create behavior: ", err)
     }
     fmt.Println("created behavior:", escalationBehavior.ID)
 ```
 
+The engine stores behaviors and serves them through the API, but doesn't evaluate triggers or run actions yet, so this one documents intent rather than changing a run.
+
 ## 5. Create a persona
 
-A persona composes skills, traits, and behaviors into a coherent identity.
+A persona groups an identity, skills, traits, behaviors and styles under one name.
 
 ```go
-    import (
-        "github.com/xraph/cortex/cognitive"
-        "github.com/xraph/cortex/communication"
-        "github.com/xraph/cortex/perception"
-        "github.com/xraph/cortex/persona"
-    )
-
     supportPersona := &persona.Persona{
         ID:          id.NewPersonaID(),
         Name:        "helpful-agent",
         Description: "A warm, knowledgeable customer support agent",
-        Identity:    "I am a customer support specialist who genuinely cares about solving problems.",
+        Identity:    "You are a customer support specialist who genuinely cares about solving problems.",
 
         Skills: []persona.SkillAssignment{
             {SkillName: "customer-support", Proficiency: skill.ProficiencyExpert},
@@ -207,7 +208,7 @@ A persona composes skills, traits, and behaviors into a coherent identity.
         CognitiveStyle: cognitive.Style{
             Phases: []cognitive.Phase{
                 {Strategy: cognitive.StrategyAnalytical, MaxSteps: 5, Transition: cognitive.TransitionAfterSteps},
-                {Strategy: cognitive.StrategyCreative,   MaxSteps: 5, Transition: cognitive.TransitionOnStuck},
+                {Strategy: cognitive.StrategyCreative, MaxSteps: 5, Transition: cognitive.TransitionOnStuck},
                 {Strategy: cognitive.StrategyMethodical, MaxSteps: 5, Transition: cognitive.TransitionOnPlanComplete},
             },
         },
@@ -229,18 +230,18 @@ A persona composes skills, traits, and behaviors into a coherent identity.
         },
     }
     if err := eng.CreatePersona(ctx, supportPersona); err != nil {
-        log.Fatal("create persona:", err)
+        log.Fatal("create persona: ", err)
     }
     fmt.Println("created persona:", supportPersona.ID)
 ```
 
-## 6. Create an agent
+At run time the engine uses the persona's `Identity`. The skill and trait assignments, behaviors and the three styles are stored with the persona, but a run doesn't read them yet, which is why the agent below lists its skills and traits itself.
 
-The agent config ties everything together — specifying the model, persona, and execution parameters.
+## 6. Create and run the agent
+
+The agent config ties everything together: the model, the persona, the skills and traits it uses, and its limits.
 
 ```go
-    import "github.com/xraph/cortex/agent"
-
     agentCfg := &agent.Config{
         ID:           id.NewAgentID(),
         Name:         "support-agent",
@@ -248,64 +249,83 @@ The agent config ties everything together — specifying the model, persona, and
         SystemPrompt: "You are a helpful customer support agent for Acme Corp.",
         Model:        "gpt-4o",
         PersonaRef:   "helpful-agent",
+        InlineSkills: []string{"customer-support"},
+        InlineTraits: []string{"empathy"},
         MaxSteps:     15,
         MaxTokens:    4096,
         Temperature:  0.7,
     }
     if err := eng.CreateAgent(ctx, agentCfg); err != nil {
-        log.Fatal("create agent:", err)
+        log.Fatal("create agent: ", err)
     }
     fmt.Println("created agent:", agentCfg.ID)
+
+    r, err := eng.RunAgent(ctx, "support-agent", "I want to return order #12345, the product arrived damaged", nil)
+    if err != nil {
+        log.Fatal("run: ", err)
+    }
+    fmt.Println(r.State, r.Output)
 }
 ```
 
-## 7. Run via API
+The system prompt for that run is the agent's own prompt, then the persona's identity, the `customer-support` fragment and the `empathy` influence. `eng.BuildSystemPrompt(ctx, agentCfg, nil)` returns it if you want to look.
 
-Once the engine is wired up with the HTTP API, you can interact through REST. `X-Tenant-ID` below stands in for whatever headers your own scope middleware reads to build the request's `cortex.Scope`; see the [multi-tenancy guide](/docs/concepts/multi-tenancy) for a worked middleware example.
+## 7. Run via the API
+
+When you mount the REST handlers in a Forge app (step 8), the same operations are available over HTTP under `/cortex/v1`. `X-Tenant-ID` below stands in for whatever headers your own scope middleware reads to build the request's `cortex.Scope`. See the [Forge extension guide](/docs/guides/forge-extension#scope-middleware) for a worked middleware example.
 
 ```bash
-# List agents
-curl http://localhost:8080/cortex/agents \
+# List agents (list routes currently need limit and offset)
+curl "http://localhost:8080/cortex/v1/agents?limit=50&offset=0" \
   -H "X-Tenant-ID: acme-corp"
 
 # Run the agent
-curl -X POST http://localhost:8080/cortex/agents/support-agent/run \
+curl -X POST http://localhost:8080/cortex/v1/agents/support-agent/run \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: acme-corp" \
   -d '{"input": "I want to return order #12345, the product arrived damaged"}'
 
-# Check run status
-curl http://localhost:8080/cortex/runs/{run_id} \
+# Check a run
+curl http://localhost:8080/cortex/v1/runs/{run_id} \
   -H "X-Tenant-ID: acme-corp"
 
-# Stream a run
-curl -N -X POST http://localhost:8080/cortex/agents/support-agent/stream \
+# Stream a run as server-sent events
+curl -N -X POST http://localhost:8080/cortex/v1/agents/support-agent/stream \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: acme-corp" \
   -d '{"input": "What is your return policy?"}'
 
-# View conversation history
-curl "http://localhost:8080/cortex/agents/support-agent/conversation?limit=20" \
+# Find the agent's sessions, then read one session's conversation
+curl "http://localhost:8080/cortex/v1/agents/support-agent/sessions?limit=50&offset=0" \
+  -H "X-Tenant-ID: acme-corp"
+curl "http://localhost:8080/cortex/v1/agents/support-agent/memory?session_id={session_id}&limit=20" \
   -H "X-Tenant-ID: acme-corp"
 ```
 
+The run route answers with `run_id`, `output`, `state`, `step_count`, `tokens_used` and `duration_ms`. The stream sends `run_started`, `step`, `token` and the other stream events as SSE `event:` lines. The [HTTP API reference](/docs/api-reference/http-api) lists every route.
+
 ## 8. Wiring with Forge
 
-For production, use the Forge extension to get automatic lifecycle management:
+For a server, let the Forge extension build the engine and mount the routes:
 
 ```go
 import (
+    "context"
+    "log"
+    "os"
+
     "github.com/xraph/forge"
     "github.com/xraph/grove"
     "github.com/xraph/grove/drivers/pgdriver"
+    _ "github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 
-    "github.com/xraph/cortex/extension"
+    "github.com/xraph/cortex/api"
+    "github.com/xraph/cortex/engine"
+    cortexext "github.com/xraph/cortex/extension"
     pgstore "github.com/xraph/cortex/store/postgres"
 )
 
 func main() {
-    app := forge.New()
-
     ctx := context.Background()
     drv := pgdriver.New()
     if err := drv.Open(ctx, os.Getenv("DATABASE_URL")); err != nil {
@@ -316,13 +336,24 @@ func main() {
         log.Fatal(err)
     }
 
-    cortexExt := extension.New(
-        extension.WithStore(pgstore.New(db)),
+    cortexExt := cortexext.New(
+        cortexext.WithStore(pgstore.New(db)),
+        cortexext.WithRoutes(func(eng *engine.Engine, r forge.Router) cortexext.RouteSet {
+            return api.New(eng, r)
+        }),
     )
 
-    app.RegisterExtension(cortexExt)
-    app.Run()
+    app := forge.NewApp(forge.AppConfig{
+        Name:        "support",
+        HTTPAddress: ":8080",
+        Extensions:  []forge.Extension{cortexExt},
+    })
+    app.Router().Use(forge.PureMiddleware(scopeMiddleware).ToMiddleware())
+
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
-The Forge extension handles migrations, route registration, health checks, and graceful shutdown automatically. See the [Forge Extension guide](/docs/guides/forge-extension) for details.
+The extension runs migrations on start, mounts the routes from `WithRoutes`, reports health through the store and shuts the engine down with the app. `scopeMiddleware` is the one from the [Forge Extension guide](/docs/guides/forge-extension#scope-middleware), which covers the rest of the options.

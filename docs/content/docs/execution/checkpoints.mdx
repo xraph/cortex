@@ -1,9 +1,9 @@
 ---
 title: Checkpoints
-description: Human-in-the-loop control — pause runs for approval before proceeding.
+description: Human-in-the-loop control that pauses a run for approval before a tool call goes ahead.
 ---
 
-**Checkpoints** provide human-in-the-loop control by pausing a run at critical decision points and waiting for approval before proceeding.
+Checkpoints give you human-in-the-loop control: a run pauses before a tool call and waits for someone to approve it.
 
 ## Structure
 
@@ -66,8 +66,11 @@ type Store interface {
     GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*Checkpoint, error)
     Resolve(ctx context.Context, cpID id.CheckpointID, decision Decision) error
     ListPending(ctx context.Context, filter *ListFilter) ([]*Checkpoint, error)
+    CountPending(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
+
+On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint` and `eng.ResolveCheckpoint(ctx, cpID, decision)`. Resolve through the engine, not the store: the engine is what resumes or fails the run.
 
 ### List filter
 
@@ -83,7 +86,9 @@ As with runs, scope arrives on the context rather than the filter.
 
 ## API routes
 
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/cortex/checkpoints` | List pending checkpoints |
-| `POST` | `/cortex/checkpoints/{id}/resolve` | Resolve a checkpoint |
+| `GET` | `/cortex/v1/checkpoints` | List pending checkpoints |
+| `POST` | `/cortex/v1/checkpoints/:id/resolve` | Resolve a checkpoint |

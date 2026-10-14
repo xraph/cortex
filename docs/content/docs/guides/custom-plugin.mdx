@@ -1,16 +1,16 @@
 ---
 title: Custom Plugin
-description: Write custom Cortex plugins that react to lifecycle events — runs, steps, tool calls, persona resolution, checkpoints, and more.
+description: Write custom Cortex plugins that react to lifecycle events such as runs, steps, tool calls, checkpoints and messages.
 ---
 
-The Cortex plugin system lets you react to lifecycle events without modifying core code. Plugins implement opt-in hook interfaces — the registry dispatches only to plugins that care about each event.
+The Cortex plugin system lets you react to lifecycle events without modifying core code. Plugins implement opt-in hook interfaces, and the registry dispatches only to plugins that care about each event.
 
 ## How plugins work
 
-1. Define a struct that implements `plugin.Extension` (the base interface — just `Name() string`)
+1. Define a struct that implements `plugin.Extension` (the base interface, just `Name() string`)
 2. Implement any hook interfaces you need (e.g. `plugin.RunCompleted`, `plugin.ToolFailed`)
 3. Register the plugin with the engine via `engine.WithExtension()`
-4. The registry type-caches your plugin at registration time — emit calls are zero-cost for hooks you don't implement
+4. The registry sorts your plugin by hook at registration time, so emit calls cost nothing for hooks you don't implement
 
 ## Base interface
 
@@ -24,7 +24,7 @@ type Extension interface {
 }
 ```
 
-## Available hooks (16 total)
+## Available hooks (21 total)
 
 ### Agent lifecycle (3 hooks)
 
@@ -41,17 +41,20 @@ type Extension interface {
 | `StepStarted` | `OnStepStarted(ctx, runID, stepIndex)` | Reasoning step begins |
 | `StepCompleted` | `OnStepCompleted(ctx, runID, stepIndex, elapsed)` | Reasoning step finishes |
 
-### Tool lifecycle (3 hooks)
+### Tool lifecycle (4 hooks)
 
 | Interface | Method | When |
 |-----------|--------|------|
 | `ToolCalled` | `OnToolCalled(ctx, runID, toolName, args)` | Tool invocation begins |
 | `ToolCompleted` | `OnToolCompleted(ctx, runID, toolName, result, elapsed)` | Tool finishes successfully |
 | `ToolFailed` | `OnToolFailed(ctx, runID, toolName, err)` | Tool invocation fails |
+| `ToolDenied` | `OnToolDenied(ctx, runID, toolName, reason)` | Your `ToolAuthorizer` denied the call |
 
-### Persona lifecycle (3 hooks)
+### Persona lifecycle (3 hooks, never fired yet)
 
-| Interface | Method | When |
+The engine doesn't call these three yet. Behaviors and cognitive phases aren't evaluated, and resolving a persona emits nothing, so a plugin that implements them compiles and registers but never hears from them.
+
+| Interface | Method | Intended for |
 |-----------|--------|------|
 | `PersonaResolved` | `OnPersonaResolved(ctx, agentID, personaName)` | Persona loaded for a run |
 | `BehaviorTriggered` | `OnBehaviorTriggered(ctx, runID, behaviorName)` | Behavior fires during a run |
@@ -70,6 +73,17 @@ type Extension interface {
 |-----------|--------|------|
 | `OrchestrationStarted` | `OnOrchestrationStarted(ctx, orchID, strategy)` | Multi-agent orchestration begins |
 | `OrchestrationCompleted` | `OnOrchestrationCompleted(ctx, orchID, elapsed)` | Orchestration finishes |
+| `AgentHandoff` | `OnAgentHandoff(ctx, orchID, fromAgent, toAgent, payload)` | One participant hands work to another |
+
+### Messaging lifecycle (3 hooks)
+
+These fire when agent messaging is on (`engine.WithA2A`).
+
+| Interface | Method | When |
+|-----------|--------|------|
+| `MessageSent` | `OnMessageSent(ctx, msgID, from, to, performative)` | A message was accepted for delivery |
+| `MessageDelivered` | `OnMessageDelivered(ctx, msgID, to)` | A message reached its recipient |
+| `MessageRefused` | `OnMessageRefused(ctx, msgID, to, reason)` | Delivery was refused |
 
 ### Shutdown (1 hook)
 
@@ -166,17 +180,17 @@ eng, err := engine.New(
 Or with the Forge extension:
 
 ```go
-import "github.com/xraph/cortex/extension"
+import cortexext "github.com/xraph/cortex/extension"
 
-cortexExt := extension.New(
-    extension.WithStore(store),
-    extension.WithExtension(slacknotifier.New(webhookURL, channel)),
+cortexExt := cortexext.New(
+    cortexext.WithStore(store),
+    cortexext.WithExtension(slacknotifier.New(webhookURL, channel)),
 )
 ```
 
 ## Error handling
 
-Hook errors are **never propagated** — they must not block the agent pipeline. The registry logs errors as warnings:
+Hook errors are never propagated, so a failing plugin can't break a run. The registry logs them as warnings on the engine's logger (set one with `engine.WithLogger`, or you won't see them):
 
 ```
 WARN extension hook error hook=OnRunFailed extension=slack-notifier error="webhook timeout"
@@ -192,11 +206,11 @@ Plugins are notified in registration order. If plugin A is registered before plu
 
 | Plugin | Package | Hooks implemented |
 |--------|---------|-------------------|
-| Metrics | `observability` | 11 hooks (run, step, tool, persona, checkpoint, orchestration, shutdown) |
-| Audit | `audit_hook` | Configurable — records structured audit events |
+| Metrics | `observability` | 11 hooks: run started, completed and failed; tool called, completed and failed; persona, behavior and cognitive; checkpoint created and resolved |
+| Audit | `audit_hook` | 10 hooks, recorded as structured audit events and filterable with `WithActions` |
 
 ## Tips
 
-- **Keep hooks fast** — hooks run synchronously in the engine's hot path. Offload heavy work to goroutines or channels.
-- **Use compile-time checks** — `var _ plugin.RunFailed = (*MyPlugin)(nil)` catches interface drift at compile time.
-- **Implement only what you need** — the registry only dispatches to hooks you implement. An empty `Extension` has zero overhead.
+- Keep hooks fast. They run synchronously in the engine's hot path, so offload heavy work to goroutines or channels.
+- Use compile-time checks. `var _ plugin.RunFailed = (*MyPlugin)(nil)` catches interface drift at compile time.
+- Implement only what you need. The registry only dispatches to hooks you implement, and an empty `Extension` costs nothing.

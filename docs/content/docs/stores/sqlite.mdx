@@ -11,17 +11,30 @@ The SQLite store (`store/sqlite`) provides a lightweight, embedded backend using
 import (
     "github.com/xraph/grove"
     "github.com/xraph/grove/drivers/sqlitedriver"
+    _ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
+
     "github.com/xraph/cortex/store/sqlite"
 )
 
-// Open a SQLite connection via Grove's sqlitedriver.
-db := grove.Open(sqlitedriver.New("cortex.db"))
+// Open a SQLite database through Grove's sqlitedriver.
+drv := sqlitedriver.New()
+if err := drv.Open(ctx, "cortex.db"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
+if err != nil {
+    log.Fatal(err)
+}
 
 s := sqlite.New(db)
 if err := s.Migrate(ctx); err != nil {
     log.Fatal(err)
 }
 ```
+
+The blank `sqlitemigrate` import registers Grove's migration executor for SQLite. Without it `Migrate` fails with "no executor registered for driver".
+
+If you turn on agent messaging (`engine.WithA2A`), set a busy timeout in the DSN, for example `cortex.db?_pragma=busy_timeout(5000)`. The message dispatcher writes from its own goroutines, and SQLite answers a concurrent writer with `SQLITE_BUSY` unless it's told to wait.
 
 ## Internals
 
@@ -50,24 +63,30 @@ The SQLite store creates the same tables as the PostgreSQL store:
 | `cortex_sessions` | Sessions |
 | `cortex_orchestration_configs` | Orchestration configs |
 | `cortex_orchestration_runs` | Orchestration runs |
+| `cortex_overlays` | Prompt overlays |
+| `cortex_suspensions` | Suspended runs |
+| `cortex_a2a_conversations`, `cortex_a2a_messages`, `cortex_a2a_deliveries`, `cortex_a2a_pending_asks` | Agent-to-agent messaging |
 
 ## Composite store interface
 
-The SQLite store implements all 11 sub-interfaces:
+The SQLite store implements all 14 sub-interfaces:
 
 ```go
 type Store interface {
-    agent.Store
-    skill.Store
-    trait.Store
-    behavior.Store
-    persona.Store
-    run.Store
-    memory.Store
-    checkpoint.Store
-    session.Store
-    orchestration.ConfigStore
-    orchestration.RunStore
+    agent.Store               // 7 methods
+    run.Store                 // 9 methods
+    memory.Store              // 8 methods
+    checkpoint.Store          // 5 methods
+    skill.Store               // 7 methods
+    trait.Store               // 7 methods
+    behavior.Store            // 7 methods
+    persona.Store             // 7 methods
+    prompt.Store              // 7 methods
+    session.Store             // 6 methods
+    suspension.Store          // 7 methods
+    orchestration.ConfigStore // 7 methods
+    orchestration.RunStore    // 5 methods
+    a2a.Store                 // 20 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -85,7 +104,7 @@ eng, err := engine.New(
 
 ## When to use
 
-- **Local development** -- single-file database, no server process required.
-- **Testing** -- fast, isolated store with no external dependencies.
-- **Embedded / single-process** -- CLI tools, desktop apps, or edge deployments.
-- **CI pipelines** -- deterministic tests without a database container.
+- Local development: a single-file database, no server process required.
+- Testing: a fast, isolated store with no external dependencies.
+- Embedded or single-process apps: CLI tools, desktop apps or edge deployments.
+- CI pipelines: deterministic tests without a database container.

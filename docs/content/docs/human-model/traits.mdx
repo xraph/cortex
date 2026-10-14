@@ -1,9 +1,11 @@
 ---
 title: Traits
-description: Define who an agent is — personality dimensions that influence behavior.
+description: Define who an agent is, with personality dimensions and influences.
 ---
 
-A **Trait** defines a personality dimension that influences HOW an agent works. Traits are declarative — you don't tell the agent what to do, you tell it who it is. The system assembles runtime parameters from trait declarations.
+A trait defines a personality dimension that influences how an agent works. Traits are declarative: you don't tell the agent what to do, you tell it who it is.
+
+An agent uses a trait when it names it in `InlineTraits`. Today the engine applies a trait's `prompt_injection` influences and nothing else, as the table below shows.
 
 ## Structure
 
@@ -13,23 +15,24 @@ type Trait struct {
     ID          id.TraitID
     Name        string
     Description string
+    Scope       cortex.Scope // set from the context on create
     Dimensions  []Dimension
     Influences  []Influence
-    Category    TraitCategory
+    Category    Category
     Metadata    map[string]any
 }
 ```
 
 ## Dimensions
 
-Each trait has one or more bipolar dimensions — axes with labeled extremes and a value from 0.0 to 1.0:
+Each trait has one or more bipolar dimensions, axes with labeled extremes and a value from 0.0 to 1.0:
 
 ```go
 type Dimension struct {
     Name      string  // dimension name
     LowLabel  string  // label for 0.0 end
     HighLabel string  // label for 1.0 end
-    Value     float64 // position on the axis (0.0–1.0)
+    Value     float64 // position on the axis (0.0 to 1.0)
 }
 ```
 
@@ -46,26 +49,35 @@ Dimension{
 
 ## Influences
 
-Influences define how a trait modifies agent behavior at runtime:
+Influences say how a trait should change the agent:
 
 ```go
 type Influence struct {
     Target    InfluenceTarget // what to modify
     Value     any             // the modification value
     Condition string          // optional condition
-    Weight    float64         // influence strength (0.0–1.0)
+    Weight    float64         // influence strength (0.0 to 1.0)
 }
 ```
 
 ### Influence targets
 
-| Target | Effect |
-|--------|--------|
-| `prompt_injection` | Injects text into the system prompt |
-| `temperature` | Modifies the LLM sampling temperature |
-| `max_steps` | Adjusts the maximum reasoning steps |
-| `tool_selection` | Influences which tools are preferred |
-| `response_style` | Modifies output formatting |
+| Target | Constant | Effect today |
+|--------|----------|--------------|
+| `prompt_injection` | `trait.TargetPromptInjection` | A string `Value` becomes a system prompt section |
+| `temperature` | `trait.TargetTemperature` | Stored, not applied |
+| `max_steps` | `trait.TargetMaxSteps` | Stored, not applied |
+| `tool_selection` | `trait.TargetToolSelection` | Stored, not applied |
+| `response_style` | `trait.TargetResponseStyle` | Stored, not applied |
+
+A `prompt_injection` influence becomes a section with the id `trait:<name>` and the body `## Trait: <name>` followed by the value. A second injection in the same trait gets `trait:<name>:2`, and so on. `Condition` and `Weight` aren't evaluated, so every injection applies, and a persona's `TraitAssignment.DimensionValues` and the dimensions themselves don't change a run.
+
+```go
+trait.Influence{
+    Target: trait.TargetPromptInjection,
+    Value:  "Check every changed line. Never approve on a skim.",
+}
+```
 
 ## Categories
 
@@ -88,15 +100,20 @@ type Store interface {
     UpdateTrait(ctx context.Context, trait *Trait) error
     DeleteTrait(ctx context.Context, traitID id.TraitID) error
     ListTraits(ctx context.Context, filter *ListFilter) ([]*Trait, error)
+    CountTraits(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
 
+`ListFilter` can narrow by `Category` and a `Search` string.
+
 ## API routes
+
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/cortex/traits` | Create a trait |
-| `GET` | `/cortex/traits` | List traits |
-| `GET` | `/cortex/traits/{name}` | Get a trait by name |
-| `PUT` | `/cortex/traits/{name}` | Update a trait |
-| `DELETE` | `/cortex/traits/{id}` | Delete a trait |
+| `POST` | `/cortex/v1/traits` | Create a trait |
+| `GET` | `/cortex/v1/traits` | List traits |
+| `GET` | `/cortex/v1/traits/:name` | Get a trait by name |
+| `PUT` | `/cortex/v1/traits/:name` | Update a trait |
+| `DELETE` | `/cortex/v1/traits/:name` | Delete a trait |

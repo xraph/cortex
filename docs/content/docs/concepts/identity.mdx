@@ -15,7 +15,7 @@ The `agt` prefix identifies this as an agent. The suffix is a base32-encoded UUI
 
 ## The `id` package
 
-The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) (v2) with a single `ID` struct. All entity types share the same struct -- the prefix distinguishes them.
+The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) (v2) with a single `ID` struct. All entity types share the same struct, and the prefix tells them apart. The per-entity names (`id.AgentID`, `id.SkillID`, `id.SessionID` and so on) are type aliases for `id.ID`.
 
 ### Creating IDs
 
@@ -34,9 +34,12 @@ skillID         := id.New(id.PrefixSkill)          // skl_01h455vb...
 traitID         := id.New(id.PrefixTrait)          // trt_01h455vb...
 behaviorID      := id.New(id.PrefixBehavior)       // bhv_01h455vb...
 personaID       := id.New(id.PrefixPersona)        // prs_01h455vb...
+sessionID       := id.New(id.PrefixSession)        // ses_01h455vb...
 ```
 
-Convenience constructors: `id.NewAgentID()`, `id.NewAgentRunID()`, `id.NewToolID()`, `id.NewToolCallID()`, `id.NewStepID()`, `id.NewMemoryID()`, `id.NewCheckpointID()`, `id.NewOrchestrationID()`, `id.NewSkillID()`, `id.NewTraitID()`, `id.NewBehaviorID()`, `id.NewPersonaID()`.
+Every prefix has a convenience constructor: `id.NewAgentID()`, `id.NewAgentRunID()`, `id.NewToolID()`, `id.NewToolCallID()`, `id.NewStepID()`, `id.NewMemoryID()`, `id.NewCheckpointID()`, `id.NewOrchestrationID()`, `id.NewOrchestrationConfigID()`, `id.NewSkillID()`, `id.NewTraitID()`, `id.NewBehaviorID()`, `id.NewPersonaID()`, `id.NewSessionID()`, `id.NewSuspensionID()`, `id.NewOverlayID()`, `id.NewMessageID()`, `id.NewConversationID()` and `id.NewDeliveryID()`.
+
+The stores don't assign IDs on create, so set the `ID` field with one of these before you call `CreateAgent`, `CreateSkill` and the rest.
 
 ### Parsing IDs
 
@@ -44,7 +47,10 @@ Convenience constructors: `id.NewAgentID()`, `id.NewAgentRunID()`, `id.NewToolID
 parsed, err := id.Parse("agt_01h455vb4pex5vsknk084sn02q")
 parsed, err := id.ParseWithPrefix("agt_01h455vb...", id.PrefixAgent)  // validates prefix
 parsed, err := id.ParseAgentID("agt_01h455vb...")                     // convenience
+parsed := id.MustParse("agt_01h455vb4pex5vsknk084sn02q")               // panics on error
 ```
+
+There are `Parse...ID` helpers for every prefix except messages, conversations and deliveries, plus `id.MustParseWithPrefix` and `id.ParseOptionalSessionID`, which accepts an empty string.
 
 ### Nil ID
 
@@ -57,7 +63,7 @@ id.Nil.IsNil() // true
 
 ### Database storage
 
-`id.ID` implements `Scanner` and `driver.Valuer`. Stores as a string, returns `NULL` for nil IDs.
+`id.ID` implements `sql.Scanner` and `driver.Valuer`. It's stored as a string, and a nil ID is stored as `NULL`. It also implements BSON value marshalling for the MongoDB store.
 
 ### JSON serialization
 
@@ -74,8 +80,15 @@ id.Nil.IsNil() // true
 | `id.PrefixStep` | `astp` | Step |
 | `id.PrefixMemory` | `mem` | Memory |
 | `id.PrefixCheckpoint` | `acp` | Checkpoint |
-| `id.PrefixOrchestration` | `orch` | Orchestration |
+| `id.PrefixOrchestration` | `orch` | Orchestration run |
+| `id.PrefixOrchestrationConfig` | `orchcfg` | Orchestration config |
 | `id.PrefixSkill` | `skl` | Skill |
 | `id.PrefixTrait` | `trt` | Trait |
 | `id.PrefixBehavior` | `bhv` | Behavior |
 | `id.PrefixPersona` | `prs` | Persona |
+| `id.PrefixSession` | `ses` | Session |
+| `id.PrefixSuspension` | `sus` | Suspension |
+| `id.PrefixOverlay` | `ovl` | Prompt overlay |
+| `id.PrefixMessage` | `msg` | Agent-to-agent message |
+| `id.PrefixConversation` | `conv` | Agent-to-agent conversation |
+| `id.PrefixDelivery` | `dlv` | Message delivery |

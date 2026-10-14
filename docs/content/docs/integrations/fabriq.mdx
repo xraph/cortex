@@ -1,6 +1,6 @@
 ---
 title: Fabriq Brain
-description: Plug fabriq in as a living brain for cortex agents — recall, rich tools, and a learning loop.
+description: Plug fabriq in as a living brain for cortex agents, with recall, rich tools and a learning loop.
 ---
 
 ## Overview
@@ -9,12 +9,19 @@ description: Plug fabriq in as a living brain for cortex agents — recall, rich
 [fabriq](https://github.com/xraph/fabriq) data fabric to cortex as a
 plug-n-play brain. With one wiring call your agents gain fabriq-backed:
 
-- **Recall** — multi-channel retrieval (vector + full-text + graph, RRF-fused,
-  distillation-aware) via the engine's `knowledge_search` tool.
-- **Rich tools** — `graph_traverse`, guarded `remember`, and the distillation
-  tools `map`/`digest`/`resolve`, registered as native cortex tools.
-- **Learning loop** — a plugin that writes each run back into the fabric, where
-  fabriq's embed + distillation workers turn it into future recall material.
+- recall: multi-channel retrieval (vector, full-text and graph, RRF-fused,
+  distillation-aware) through the engine's `knowledge_search` tool
+- rich tools: `graph_traverse`, a guarded `remember`, and the distillation
+  tools `map`, `digest` and `resolve`, registered as native cortex tools
+- a learning loop: a plugin that writes each completed or failed run back into
+  the fabric, where fabriq's embed and distillation workers turn it into future
+  recall material
+
+It's a separate module, so add it on its own:
+
+```bash
+go get github.com/xraph/cortex/integrations/fabriq@latest
+```
 
 ## Wiring
 
@@ -38,10 +45,16 @@ eng, err := engine.New(append(
 )...)
 ```
 
-`EngineOptions` auto-discovers the `*fabriq.Fabriq` facade from the DI
-container (provided by fabriq's Forge extension). If no facade is present it
-returns `nil`, so the call is always safe to include. Use `EngineOption`
-(singular) to wire only the knowledge provider, mirroring the weave adapter.
+`EngineOptions` discovers fabriq's `query.Fabric` and its entity registry from
+the DI container (fabriq's Forge extension provides both). If either is missing,
+or the toolkit can't be built, it returns `nil`, so the call is always safe to
+include. Use `EngineOption` (singular) to wire only the knowledge provider, the
+same way the Weave adapter does.
+
+In a Forge app, pass the options through the Cortex extension with
+`extension.WithEngineOption`, one per option, from code that runs after fabriq has
+registered. A failure to build the toolkit (a vector dimension mismatch, say) is
+only logged, so set `WithLogger` while you wire it up.
 
 ## Options
 
@@ -54,6 +67,8 @@ returns `nil`, so the call is always safe to include. Use `EngineOption`
 | `WithWritePolicy(agent.WritePolicy)` | Allowlist for the `remember` tool and learning-loop writes (deny-by-default). |
 | `WithTenantMapper(func(ctx) ctx)` | Translate cortex request context to fabriq scope (default identity). |
 | `WithRenderer(func(agent.ContextItem) string)` | Override how a recalled row becomes chunk text. |
+| `WithVectorDims(int)` | Embedding dimensions the toolkit expects. Must match the embedder (for example 1536); 0 leaves fabriq's default of 768. |
+| `WithLogger(log.Logger)` | go-utils logger for toolkit build failures and swallowed memory writes (default no-op). |
 
 ## Learning loop setup
 
@@ -65,10 +80,10 @@ import fabriqbrain "github.com/xraph/cortex/integrations/fabriq"
 // 1. Register the memory entity (dynamic, content vector-indexed).
 reg.MustRegister(fabriqbrain.MemorySpec("agent_memory"))
 
-// 2. Provision its table once (migration, or postgres.Adapter.EnsureDynamic
-//    in setup) — fabriq.Open does not auto-create dynamic tables.
+// 2. Provision its table once (a migration, or postgres.Adapter.EnsureDynamic
+//    in setup). fabriq.Open does not auto-create dynamic tables.
 
-// 3. Allow writes to it. Pass WithMemoryEntity explicitly — it must match the
+// 3. Allow writes to it. Pass WithMemoryEntity explicitly: it must match the
 //    name used in MemorySpec above. Hosts using a non-default entity name MUST
 //    pass WithMemoryEntity; the default is "agent_memory".
 opts := fabriqbrain.EngineOptions(container,
@@ -79,7 +94,7 @@ opts := fabriqbrain.EngineOptions(container,
 )
 ```
 
-The plugin writes `{content, meta}` rows to the registered entity; fabriq's
+The plugin writes `{content, meta}` rows to the registered entity, and fabriq's
 `proj:embed` worker vectorizes `content`, and distillation rolls them up so
 future recall surfaces them. As the memory corpus grows, distillation keeps
 recall within budget by summarizing historical context.

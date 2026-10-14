@@ -3,7 +3,7 @@ title: MongoDB Store
 description: Document store using Grove ORM with mongodriver for MongoDB.
 ---
 
-The MongoDB store (`store/mongo`) provides a document-oriented backend using the [Grove ORM](https://github.com/xraph/grove) with `mongodriver`. It stores Cortex entities in 13 MongoDB collections with compound indexes for efficient queries scoped by `cortex.Scope`.
+The MongoDB store (`store/mongo`) provides a document-oriented backend using the [Grove ORM](https://github.com/xraph/grove) with `mongodriver`. It stores Cortex entities in 19 MongoDB collections, with compound indexes for queries scoped by `cortex.Scope`.
 
 ## Setup
 
@@ -11,14 +11,20 @@ The MongoDB store (`store/mongo`) provides a document-oriented backend using the
 import (
     "github.com/xraph/grove"
     "github.com/xraph/grove/drivers/mongodriver"
+
     "github.com/xraph/cortex/store/mongo"
 )
 
-// Open a MongoDB connection via Grove's mongodriver.
-db := grove.Open(mongodriver.New(
-    mongodriver.WithURI("mongodb://localhost:27017"),
-    mongodriver.WithDatabase("cortex"),
-))
+// Open a MongoDB connection through Grove's mongodriver. The database
+// name comes from the URI path.
+drv := mongodriver.New()
+if err := drv.Open(ctx, "mongodb://localhost:27017/cortex?replicaSet=rs0"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
+if err != nil {
+    log.Fatal(err)
+}
 
 s := mongo.New(db)
 if err := s.Migrate(ctx); err != nil {
@@ -26,13 +32,15 @@ if err := s.Migrate(ctx); err != nil {
 }
 ```
 
+Use a replica set or a sharded cluster. Saving or clearing a conversation writes the messages and the session's counters in one multi-document transaction, and a standalone `mongod` can't run transactions, so every conversation write fails against one.
+
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
 | Driver | Grove ORM with `mongodriver` (MongoDB) |
-| Migrations | Grove migrations with JSON Schema validation + indexes |
-| Transactions | Individual operations are atomic; multi-document transactions require explicit sessions |
+| Migrations | `Migrate` creates the indexes (idempotently) and runs the rescope and session backfill. There's no schema validation |
+| Transactions | Single-document writes are atomic. Conversation writes use a multi-document transaction |
 
 ## Collections
 
@@ -51,24 +59,30 @@ if err := s.Migrate(ctx); err != nil {
 | `cortex_sessions` | Sessions |
 | `cortex_orchestration_configs` | Orchestration configs |
 | `cortex_orchestration_runs` | Orchestration runs |
+| `cortex_overlays` | Prompt overlays |
+| `cortex_suspensions` | Suspended runs |
+| `cortex_a2a_conversations`, `cortex_a2a_messages`, `cortex_a2a_deliveries`, `cortex_a2a_pending_asks` | Agent-to-agent messaging |
 
 ## Composite store interface
 
-The MongoDB store implements all 11 sub-interfaces:
+The MongoDB store implements all 14 sub-interfaces:
 
 ```go
 type Store interface {
-    agent.Store
-    skill.Store
-    trait.Store
-    behavior.Store
-    persona.Store
-    run.Store
-    memory.Store
-    checkpoint.Store
-    session.Store
-    orchestration.ConfigStore
-    orchestration.RunStore
+    agent.Store               // 7 methods
+    run.Store                 // 9 methods
+    memory.Store              // 8 methods
+    checkpoint.Store          // 5 methods
+    skill.Store               // 7 methods
+    trait.Store               // 7 methods
+    behavior.Store            // 7 methods
+    persona.Store             // 7 methods
+    prompt.Store              // 7 methods
+    session.Store             // 6 methods
+    suspension.Store          // 7 methods
+    orchestration.ConfigStore // 7 methods
+    orchestration.RunStore    // 5 methods
+    a2a.Store                 // 20 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -84,20 +98,13 @@ eng, err := engine.New(
 )
 ```
 
-## Grove Migrations
+## Migrations
 
-The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
-
-```go
-import mongostore "github.com/xraph/cortex/store/mongo"
-
-// mongostore.Migrations is a migrate.Group for the cortex mongo store.
-// Register it with the grove migration orchestrator for coordinated migrations.
-```
+MongoDB has no DDL to version, so unlike the PostgreSQL and SQLite stores this one exports no Grove `Migrations` group. `Migrate` creates every collection's indexes with an idempotent `CreateMany` on each call, then runs the same rescope pass and default-session backfill the other backends do. Call it on startup, or let the Forge extension call it for you.
 
 ## When to use
 
-- **Document-oriented workloads** -- flexible schemas that evolve with your application.
-- **Horizontal scaling** -- MongoDB sharding for large-scale deployments.
-- **Cloud-native** -- MongoDB Atlas for fully managed deployments.
-- **Teams familiar with MongoDB** -- leverage existing document database expertise.
+- Document-oriented workloads: flexible schemas that evolve with your application.
+- Horizontal scaling: MongoDB sharding for large deployments.
+- Managed hosting: MongoDB Atlas.
+- Teams already running MongoDB.

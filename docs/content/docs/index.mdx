@@ -3,9 +3,9 @@ title: Introduction
 description: Human-emulating AI agent orchestration for Go.
 ---
 
-Cortex is a Go library for building AI agents that think and behave like humans. Instead of hand-crafting system prompts, you declare an agent's **skills**, **traits**, **behaviors**, and **persona** — the same building blocks that make people unique — and Cortex assembles them into a coherent identity at runtime.
+Cortex is a Go library for building AI agents. You define an agent from a system prompt and tools, and when you want more structure you describe it with **skills**, **traits**, **behaviors** and a **persona**, the same building blocks that make people unique. Cortex runs the agent through a ReAct loop with tool calling, conversation memory, human-in-the-loop checkpoints and runs that suspend and resume.
 
-Cortex is a **library** — not a service. You bring your own LLM provider, database, and HTTP server. Cortex provides the agent orchestration plumbing.
+Cortex is a library, not a service. You bring your own LLM provider, database and HTTP server, and Cortex provides the agent orchestration plumbing.
 
 ## The Human Model
 
@@ -13,40 +13,43 @@ Cortex models AI agents the way you would describe a person:
 
 | Aspect | What it represents | Go type |
 |--------|-------------------|---------|
-| **Skill** | What the agent can do (capabilities + tools) | `skill.Skill` |
-| **Trait** | Who the agent is (personality dimensions) | `trait.Trait` |
-| **Behavior** | What the agent does habitually (trigger → action) | `behavior.Behavior` |
-| **Cognitive Style** | How the agent thinks (phase-based reasoning) | `cognitive.Style` |
-| **Communication Style** | How the agent talks (tone, formality, verbosity) | `communication.Style` |
-| **Perception** | How the agent sees (attention filters) | `perception.Model` |
-| **Persona** | The whole person (composes all of the above) | `persona.Persona` |
+| Skill | What the agent can do (prompt fragment, tools, knowledge) | `skill.Skill` |
+| Trait | Who the agent is (personality dimensions) | `trait.Trait` |
+| Behavior | What the agent does habitually (trigger and action) | `behavior.Behavior` |
+| Cognitive Style | How the agent thinks (phase-based reasoning) | `cognitive.Style` |
+| Communication Style | How the agent talks (tone, formality, verbosity) | `communication.Style` |
+| Perception | How the agent sees (attention filters) | `perception.Model` |
+| Persona | The whole person (composes all of the above) | `persona.Persona` |
+
+All seven are stored, scoped and served by the engine and the REST API. At run time the engine applies the persona's identity, the prompt fragments and knowledge of the skills an agent lists, and the prompt influences of the traits it lists. Behaviors and the three styles are stored but not applied to runs yet. [The Human Model](/docs/human-model/overview) has the details.
 
 ## What it does
 
-- **Declarative personality** — Define agents via composable Skills, Traits, and Behaviors instead of imperative prompt engineering.
-- **Persona composition** — Bundle skills, traits, behaviors, cognitive style, communication style, and perception into a reusable Persona. Assign it to any agent with one field.
-- **Multi-agent orchestration** — Coordinate several agents with five strategies (sequential, parallel, router, hierarchical, debate). Agents share a blackboard, see a roster of collaborators, and hand work off to one another.
-- **Cloning** — Duplicate any agent or persona into an independent copy with one call (`POST .../clone`), with smart auto-naming and no runtime history carried over.
-- **Execution tracking** — Every agent run is recorded as a Run with Steps and ToolCalls, providing full observability into reasoning chains.
-- **Human-in-the-loop** — Checkpoints pause a run for human approval before proceeding with sensitive actions.
-- **Multi-tenant isolation**: every entity is scoped via context to a hierarchy the host defines (tenant, workspace, app, whatever it needs); cross-scope access is structurally impossible.
-- **Plugin system** — 16 lifecycle hooks for metrics, audit trails, tracing, and custom processing. Extensions opt in to only the events they care about.
-- **Memory management** — Conversation history, working memory, and summary memory per agent per tenant.
-- **PostgreSQL store** — Production-ready persistence with embedded migrations and JSONB columns for flexible metadata.
-- **Forge integration** — Drop-in `forge.Extension` with DI-injected Engine and auto-registered HTTP routes.
-- **REST API** — 46 endpoints for managing agents, personas, skills, traits, behaviors, runs, checkpoints, memory, and orchestrations (plus agent/persona cloning).
+- Declarative personality: define agents from composable skills, traits and behaviors instead of one long hand-written prompt.
+- Persona composition: bundle an identity, skills, traits, behaviors and styles into a reusable persona, and point an agent at it with one field.
+- Multi-agent orchestration: coordinate several agents with five strategies (sequential, parallel, router, hierarchical, debate). Agents share a blackboard, see a roster of collaborators, and hand work off to one another.
+- Agent messaging: agents send each other FIPA-ACL style messages, and an ask suspends the asking run until a peer replies.
+- Cloning: copy an agent or persona under a new name with `CloneAgent` or `ClonePersona`. Leave the name empty and Cortex picks one.
+- Execution tracking: every run is stored as a Run with Steps and ToolCalls, so you can see the whole reasoning chain afterwards.
+- Human in the loop: your `ToolAuthorizer` can hide tools, deny calls, or pause a run at a checkpoint until someone approves.
+- Suspend and resume: a run that waits for an external tool result or an approval is a stored row, not a blocked goroutine.
+- Host-defined scope: every entity belongs to a scope you define (tenant, workspace, app, whatever you need), and every store call checks it.
+- Plugin system: 21 lifecycle hook interfaces for metrics, audit trails and custom processing. An extension implements only the ones it cares about.
+- Conversation memory: sessions keep conversation history per agent.
+- Three stores: PostgreSQL, SQLite and MongoDB, all on Grove, with migrations registered in Go.
+- Forge integration: a `forge.Extension` that builds the engine, provides it through DI and runs migrations on start. The REST API (59 routes) lives in the separate `api` module, and you mount it with `extension.WithRoutes` when you want it.
 
 ## Design philosophy
 
-**Library, not service.** Cortex is a set of Go packages you import. You control `main`, the database connection, and the process lifecycle.
+**Library, not service.** Cortex is a set of Go packages you import. You control `main`, the database connection and the process lifecycle.
 
-**Declarative over imperative.** You don't tell agents what to do — you tell them who they are. Skills define capabilities, Traits shape personality, Behaviors encode habits. Cortex assembles the system prompt and runtime parameters from these declarations.
+**Declarative over imperative.** You describe who an agent is. Skills define capabilities, traits shape personality, behaviors encode habits, and Cortex assembles the system prompt from the parts it applies today.
 
-**Interfaces over implementations.** Every subsystem defines a Go interface. Swap any storage backend with a single type change.
+**Interfaces over implementations.** Every subsystem defines a Go interface, so you can swap a storage backend, LLM client, safety scanner or knowledge provider.
 
-**Scoped by design.** `cortex.WithScope` injects context that is enforced at every layer. Cortex never interprets what a scope level means: the host defines its own hierarchy (workspace, org, tenant, app, whatever it needs) and Cortex just matches on it.
+**Scoped by design.** `cortex.WithScope` puts a scope on the context and every store call enforces it. Cortex never interprets what a scope level means: you define your own hierarchy (workspace, org, tenant, app) and Cortex just matches on it.
 
-**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`agt_`, `skl_`, `trt_`, `bhv_`, `prs_`, `arun_`, etc.).
+**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`agt_`, `skl_`, `trt_`, `bhv_`, `prs_`, `arun_` and so on).
 
 ## Quick look
 
@@ -57,17 +60,20 @@ import (
     "context"
     "log"
 
+    "github.com/xraph/forge"
+    "github.com/xraph/grove"
+
     "github.com/xraph/cortex/engine"
-    "github.com/xraph/cortex/extension"
+    cortexext "github.com/xraph/cortex/extension"
     "github.com/xraph/cortex/store/postgres"
 )
 
-func main() {
-    ctx := context.Background()
-
+func setup(ctx context.Context, db *grove.DB) {
     // Create the store.
-    db := connectDB() // your *bun.DB
     pgStore := postgres.New(db)
+    if err := pgStore.Migrate(ctx); err != nil {
+        log.Fatal(err)
+    }
 
     // Build the Cortex engine.
     eng, err := engine.New(
@@ -76,16 +82,20 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-
-    // Or use as a Forge extension:
-    ext := extension.New(
-        extension.WithStore(pgStore),
-    )
-    _ = ext // register with your Forge app
     _ = eng
-    _ = ctx
+
+    // Or let a Forge app build it for you:
+    app := forge.NewApp(forge.AppConfig{
+        Name: "agents",
+        Extensions: []forge.Extension{
+            cortexext.New(cortexext.WithStore(pgStore)),
+        },
+    })
+    _ = app
 }
 ```
+
+`db` is a `*grove.DB` opened with Grove's `pgdriver`. [Getting started](/docs/getting-started) walks through a complete program.
 
 ## Where to go next
 
@@ -94,5 +104,5 @@ func main() {
   <Card title="Architecture" href="/docs/architecture" description="Understand how the packages fit together." />
   <Card title="The Human Model" href="/docs/human-model/overview" description="Learn how Skills, Traits, and Personas compose an agent." />
   <Card title="Orchestration" href="/docs/execution/orchestration" description="Run multiple agents together with five coordination strategies." />
-  <Card title="HTTP API reference" href="/docs/api-reference/http-api" description="Full HTTP API documentation for all 46 endpoints." />
+  <Card title="HTTP API reference" href="/docs/api-reference/http-api" description="The 59 REST routes in the api module." />
 </Cards>

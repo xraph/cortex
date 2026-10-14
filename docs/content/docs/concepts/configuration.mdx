@@ -5,7 +5,7 @@ description: Options and defaults for the Cortex engine and Forge extension.
 
 ## Engine configuration
 
-`cortex.Config` holds global defaults that apply to all agents unless overridden at the agent level:
+`cortex.Config` holds the defaults the engine falls back to when an agent leaves a field empty:
 
 ```go
 type Config struct {
@@ -14,10 +14,14 @@ type Config struct {
     DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
     DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
     DefaultReasoningLoop string        // reasoning strategy (default: "react")
-    ShutdownTimeout      time.Duration // graceful shutdown timeout (default: 30s)
-    RunConcurrency       int           // max concurrent runs (default: 4)
+    ShutdownTimeout      time.Duration // default: 30s, not used by the engine
+    RunConcurrency       int           // default: 4, not used by the engine
 }
 ```
+
+`ShutdownTimeout` and `RunConcurrency` are carried in the struct but nothing reads them yet: runs aren't throttled and `Stop` doesn't time out. `DefaultReasoningLoop` is recorded on each run, but ReAct is the only loop there is.
+
+`DefaultModel` is `smart`, which only means something if your model gateway has an alias with that name. Set a real model here or on each agent.
 
 ### Defaults
 
@@ -34,33 +38,51 @@ cortex.DefaultConfig() // returns:
 // }
 ```
 
+`engine.New` starts from these.
+
 ### Overriding defaults
 
-Pass a custom config via engine options:
+Pass a config through the engine options. `WithConfig` replaces the whole struct, so set every field you care about:
 
 ```go
 eng, err := engine.New(
     engine.WithConfig(cortex.Config{
-        DefaultModel:    "gpt-4o",
-        DefaultMaxSteps: 50,
-        RunConcurrency:  8,
+        DefaultModel:         "gpt-4o",
+        DefaultMaxSteps:      50,
+        DefaultMaxTokens:     4096,
+        DefaultTemperature:   0.7,
+        DefaultReasoningLoop: "react",
     }),
     engine.WithStore(pgStore),
 )
 ```
 
+A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel` then only works for agents that set their own.
+
+`eng.UpdateConfig(cortex.Config{...})` changes the model, steps, tokens, temperature and reasoning loop on a running engine, skipping zero fields, and `eng.Config()` reads the current values. The change lives in memory only. The REST API exposes both as `GET` and `PUT /cortex/v1/config` when you mount it.
+
 ## Engine options
 
 | Option | Description |
 |--------|-------------|
-| `engine.WithStore(s)` | Sets the composite store (required) |
-| `engine.WithConfig(cfg)` | Sets the engine configuration |
+| `engine.WithStore(s)` | Sets the composite store. Without one, CRUD calls return `cortex.ErrNoStore` |
+| `engine.WithConfig(cfg)` | Sets the engine defaults |
+| `engine.WithLLM(client)` | Sets the `llm.Client`. Without one, runs echo their input |
+| `engine.WithTool(def, handler)` | Registers a tool the engine runs when the model calls it |
+| `engine.WithExternalTool(def)` | Registers a tool the caller runs; the run suspends until `Resume` |
+| `engine.WithToolAuthorizer(a)` | Installs your `cortex.ToolAuthorizer` |
+| `engine.WithSafety(scanner)` | Scans input and output through a `safety.Scanner` |
+| `engine.WithKnowledge(provider)` | Sets the `knowledge.Provider` for skill knowledge and the `knowledge_search` tool |
+| `engine.WithA2A(opts)` | Turns on agent-to-agent messaging |
+| `engine.WithSuspensionTTL(d)` | How long a suspended run waits before it's failed. Zero turns expiry off |
+| `engine.WithSuspensionSweepInterval(d)` | How often the expiry sweeper runs |
+| `engine.WithSuspensionSweepLimit(n)` | How many expired suspensions one sweep handles |
 | `engine.WithExtension(ext)` | Registers a plugin extension |
-| `engine.WithLogger(l)` | Sets the structured logger |
+| `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger |
 
 ## Agent-level overrides
 
-Each `agent.Config` can override engine-level defaults:
+Each `agent.Config` can override the engine defaults:
 
 ```go
 agentCfg := &agent.Config{
@@ -71,45 +93,52 @@ agentCfg := &agent.Config{
 }
 ```
 
-If an agent field is zero-valued, the engine default applies.
+If an agent field is zero, the engine default applies. That means an agent can't ask for a temperature of exactly 0. `RunOverrides` on a single run, and prompt overlays for a scope, can change these values again; see [Prompt Composition](/docs/concepts/prompt-composition).
 
 ## Extension configuration
 
-The Forge extension wrapper has its own `Config` that can be set programmatically or via YAML:
+The Forge extension has its own `Config`, set in code or in YAML:
 
 ```go
 type Config struct {
-    DisableRoutes        bool          // prevents HTTP route registration
-    DisableMigrate       bool          // prevents auto-migration on start
-    BasePath             string        // URL prefix for all cortex routes
-    DefaultModel         string        // LLM model (default: "smart")
-    DefaultMaxSteps      int           // max reasoning steps per run (default: 25)
-    DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
-    DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
-    DefaultReasoningLoop string        // reasoning loop strategy (default: "react")
-    ShutdownTimeout      time.Duration // graceful shutdown timeout (default: 30s)
-    RunConcurrency       int           // max concurrent runs (default: 4)
+    DisableRoutes        bool          // don't mount the route set from WithRoutes
+    DisableMigrate       bool          // don't migrate on start
+    BasePath             string        // URL prefix for the routes (empty means "/cortex")
+    DefaultModel         string        // default: "smart"
+    DefaultMaxSteps      int           // default: 25
+    DefaultMaxTokens     int           // default: 4096
+    DefaultTemperature   float64       // default: 0.7
+    DefaultReasoningLoop string        // default: "react"
+    ShutdownTimeout      time.Duration // default: 30s
+    RunConcurrency       int           // default: 4
     GroveDatabase        string        // grove.DB name for DI resolution
+    RequireConfig        bool          // fail Register when no config is found; not read from YAML
 }
 ```
+
+The extension doesn't hand `DefaultModel`, `DefaultMaxSteps`, `DefaultMaxTokens`, `DefaultTemperature`, `DefaultReasoningLoop`, `ShutdownTimeout` or `RunConcurrency` to the engine, so in a Forge app they have no effect yet. Pass engine defaults with `extension.WithEngineOption(engine.WithConfig(...))` instead.
 
 ### Extension options
 
 | Option | Description |
 |--------|-------------|
-| `extension.WithStore(s)` | Sets the composite store |
+| `extension.WithStore(s)` | Sets the composite store (a Grove database in the container takes precedence) |
+| `extension.WithGroveDatabase(name)` | Sets the grove.DB to resolve from DI |
+| `extension.WithRoutes(build)` | Mounts a route set, normally `api.New` from the `api` module |
+| `extension.WithBasePath(path)` | Sets the URL prefix |
+| `extension.WithDisableRoutes()` | Skips mounting the route set |
+| `extension.WithDisableMigrate()` | Disables auto-migration |
 | `extension.WithExtension(x)` | Registers a Cortex plugin extension |
 | `extension.WithEngineOption(opt)` | Passes an engine option directly |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
-| `extension.WithDisableRoutes()` | Disables HTTP route registration |
-| `extension.WithDisableMigrate()` | Disables auto-migration |
-| `extension.WithBasePath(path)` | Sets the URL prefix |
-| `extension.WithGroveDatabase(name)` | Sets the grove.DB to resolve from DI |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
+| `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
+
+The extension mounts no routes unless you pass `WithRoutes`. See [Forge Extension](/docs/guides/forge-extension).
 
 ## YAML configuration
 
-Cortex supports YAML-based configuration under the `extensions.cortex` or `cortex` key in your Forge config file:
+The extension reads `extensions.cortex` in your Forge config file, and falls back to a top-level `cortex` key:
 
 ```yaml
 # config.yaml
@@ -118,6 +147,8 @@ extensions:
     disable_routes: false
     disable_migrate: false
     base_path: "/cortex"
+    grove_database: "cortex"
+    # Accepted, but not passed to the engine yet:
     default_model: "gpt-4o"
     default_max_steps: 50
     default_max_tokens: 8192
@@ -125,12 +156,11 @@ extensions:
     default_reasoning_loop: "react"
     shutdown_timeout: "30s"
     run_concurrency: 8
-    grove_database: "cortex"
 ```
 
 ### Merge behaviour
 
-YAML values take precedence for most fields. Programmatic options fill in any gaps. Remaining zero-valued fields are filled with `DefaultConfig()` defaults.
+YAML values take precedence for most fields. Programmatic options fill in any gaps, and remaining zero fields get the `extension.DefaultConfig()` defaults. `WithDisableRoutes` and `WithDisableMigrate` always win when you set them in code.
 
 | Source | Priority |
 |--------|----------|

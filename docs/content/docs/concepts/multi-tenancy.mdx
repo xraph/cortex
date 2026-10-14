@@ -6,8 +6,8 @@ description: How Cortex scopes agents, runs, and every other entity using a hier
 Cortex has no built-in notion of tenant, workspace, or organization. Every entity it
 manages, agents, skills, traits, behaviors, personas, orchestration configs and
 orchestration runs, agent runs, checkpoints, conversations, working memory, steps,
-and tool calls, is scoped by a `cortex.Scope` that **the host declares and attaches
-to the context**.
+and tool calls, is scoped by a `cortex.Scope` that the host declares and attaches
+to the context.
 Cortex never interprets what a scope level means; it only matches on the `Key` you
 give it. This is enforced at the store layer for every entity in that list: a
 zero-scope context is rejected outright with `cortex.ErrNoScope`, and cross-scope
@@ -48,15 +48,20 @@ type Scope struct {
 }
 ```
 
-A `Scope` is an ordered hierarchy. TwinOS, for example, uses workspace then project;
-another host might use org, team, then environment. Order is significant — it
+A `Scope` is an ordered hierarchy of at most three levels. TwinOS, for example, uses
+workspace then project; another host might use org, team, then environment.
+
+`cortex.WithScope` won't attach a scope with more than three levels, or one with an
+empty `Key` or `Value` on any level. It returns the context unchanged instead, so
+every store call that follows fails with `cortex.ErrNoScope`. A request header that
+turns out to be empty therefore fails loudly rather than landing in a shared bucket. Order is significant: it
 determines which indexed column each level lands in, so a host must keep its ordering
 stable across releases.
 
 ## Attaching a scope
 
-The host is responsible for calling `cortex.WithScope` — typically from middleware —
-**before** any call into the engine or the store. There is no default and no fallback:
+The host is responsible for calling `cortex.WithScope`, typically from middleware,
+before any call into the engine or the store. There is no default and no fallback:
 
 ```go
 import "github.com/xraph/cortex"
@@ -94,14 +99,14 @@ ctx = cortex.WithScope(ctx, cortex.Scope{
 ```go
 scope := cortex.ScopeFromContext(ctx)
 if scope.IsZero() {
-    // no scope was attached — every scope-guarded store call will fail
+    // no scope was attached, so every scope-guarded store call will fail
 }
 
 tenant, ok := scope.Get("tenant") // "org-123", true
-canon := scope.Canonical()        // "tenant=org-123"
+canon := scope.Canonical()        // "tenant=org-123" (levels joined with "/")
 ```
 
-`ScopeFromContext` returns the zero `Scope` if nothing was attached — callers must
+`ScopeFromContext` returns the zero `Scope` if nothing was attached. Callers must
 treat that as an error condition, not as "match everything."
 
 ## One scoping model, not two
@@ -117,17 +122,17 @@ instead. `cortex.WithApp` and `cortex.AppFromContext` no longer exist.
 
 Every store implementation enforces scope on every query:
 
-- **Agent, Skill, Trait, Behavior, Persona, Orchestration Config**: `GetByName` and
-  `List`/`Count` queries filter by the caller's scope, read from the context, the same
-  as every other entity
-- **Run, Orchestration Run, Memory, Checkpoint, Step, Tool Call**: every query
-  filters by the caller's scope, read from the context
-- **No scope, no query**: a zero scope is rejected with `cortex.ErrNoScope` before
-  the store touches the database, rather than silently matching every row
-- **Cross-scope access**: returns `ErrNotFound` even if the entity exists under a
-  different scope
-- **Scope is immutable after creation**: an entity's stored scope is set once and
-  never rewritten by a later update
+- Agents, skills, traits, behaviors, personas and orchestration configs: `GetByName`
+  and `List`/`Count` queries filter by the caller's scope, read from the context, the
+  same as every other entity.
+- Runs, orchestration runs, memory, checkpoints, steps and tool calls: every query
+  filters by the caller's scope, read from the context.
+- No scope, no query: a zero scope is rejected with `cortex.ErrNoScope` before the
+  store touches the database, rather than silently matching every row.
+- Cross-scope access returns the entity's not-found error (`ErrAgentNotFound`,
+  `ErrSkillNotFound` and so on) even if the entity exists under a different scope.
+- Scope is immutable after creation: an entity's stored scope is set once and never
+  rewritten by a later update.
 
 ### `GetByName` prefix-matches, and ties are nondeterministic
 
@@ -144,7 +149,7 @@ in, not a deterministic pick.
 This is a real behavior change from before v1.8.0's scope conversion: the old
 `UNIQUE (app_id, name)` index made the equivalent lookup unambiguous, because
 nothing could collide under one `app_id`. It is not a defect, and it will not
-be fixed by adding an `ORDER BY` — it's the same prefix-then-first-match
+be fixed by adding an `ORDER BY`. It's the same prefix-then-first-match
 semantics that runs, memories, and checkpoints have used since v1.7.0, now
 applied consistently to named entities too. If your host needs a
 deterministic `GetByName` under a shared parent scope, add a level that
@@ -153,7 +158,7 @@ scope your read to it, rather than relying on lookup order.
 
 ## Upgrading: rows from before v1.7.0/v1.8.0 carry no scope
 
-The migrations that added `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` do **not**
+The migrations that added `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` do not
 backfill them for existing rows. An earlier draft tried synthesizing a scope from the
 old `tenant_id`/`app_id` columns (`scope_l0 = 'tenant=' || tenant_id`), but that
 invents a key vocabulary ("tenant=", "app=") distinct from whatever keys your own
@@ -162,7 +167,7 @@ scope actually uses (e.g. "workspace="), and every row predating scope had
 would have silently orphaned all of that history into a bucket nothing could ever
 reach again.
 
-So instead: **rows created before scope existed are left with empty scope columns.**
+So instead, rows created before scope existed are left with empty scope columns.
 Since every scoped query requires a non-zero `cortex.Scope` on the context and
 filters by it, a row with `scope_canon = ''` simply never matches. It is invisible to
 every scoped read, not deleted, and not silently misattributed to whichever scope
@@ -180,20 +185,24 @@ possible even if you skip it at upgrade time.
 
 ## API integration
 
-The REST API does **not** manufacture a scope on the caller's behalf. Cortex ships no
-scope middleware of its own for `api.API` — every guarded endpoint returns
-`412 Precondition Failed` (not a raw 500) until a host installs one. Installing it is
-not optional in a real deployment; without it, none of `api.API`'s run, conversation,
-or checkpoint endpoints work.
+The REST API doesn't manufacture a scope on the caller's behalf, and Cortex ships no
+scope middleware of its own for `api.API`. Until you install one, the guarded
+endpoints fail: lookups by name or ID answer `412 Precondition Failed`, while the
+create, update and list handlers, which don't map store errors, answer 500. Installing
+it isn't optional in a real deployment. Without it, none of `api.API`'s run,
+conversation or checkpoint endpoints work.
 
 `forge.Router.Use` itself takes forge's own `Middleware` type
 (`func(next forge.Handler) forge.Handler`, built on forge's `Context`, not
 `net/http`). You do not have to write against that type directly: forge also
 exports `PureMiddleware` (`func(http.Handler) http.Handler`, the ordinary Go HTTP
 shape) with a `.ToMiddleware()` method that adapts it, so the middleware body below
-is nothing Cortex- or forge-specific, just what it does with the request. Register
-it on the router **before** calling `api.New(...).RegisterRoutes(router)`, so it
-runs ahead of every Cortex handler:
+is nothing specific to Cortex or Forge, just what it does with the request. Forge
+applies a router's middleware when a route is registered, so call `Use` before
+`api.New(...).RegisterRoutes(router)` and it runs ahead of every Cortex handler. This
+example serves the API on its own router without the Forge extension, so the routes
+have no `/cortex` prefix (`/v1/agents` and so on). Inside a Forge app, see
+[Forge Extension](/docs/guides/forge-extension#scope-middleware).
 
 ```go
 package main
@@ -251,10 +260,9 @@ func main() {
 ```
 
 A request missing `X-Workspace-ID` never reaches a Cortex handler at all in this
-example — it's rejected by the middleware itself. A request that clears the
-middleware but still ends up with a zero scope (a bug in the middleware, not a
-missing header) is instead caught one layer in, at the store guard, and surfaces as
-the `412` described above.
+example: the middleware rejects it. A request that clears the middleware but still
+ends up with a zero scope (a bug in the middleware, not a missing header) is caught
+one layer in, at the store guard, and surfaces as the `412` or 500 described above.
 
 ## Example: two tenants under one host-defined hierarchy
 
@@ -277,7 +285,7 @@ ctx2 := cortex.WithScope(context.Background(), cortex.Scope{
 })
 eng.CreateAgent(ctx2, agent2Config)
 
-// Caller 1's context scopes every read to tenant-1 — tenant-2's runs are
+// Caller 1's context scopes every read to tenant-1. Tenant-2's runs are
 // invisible, not merely filtered out by a parameter caller 1 could omit.
 runs, _ := eng.ListRuns(ctx1, &run.ListFilter{})
 // runs contains only tenant-1's runs

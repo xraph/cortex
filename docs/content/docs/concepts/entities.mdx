@@ -1,6 +1,6 @@
 ---
 title: Entities
-description: The core data types in Cortex — Agents, Skills, Traits, Behaviors, Personas, Runs, and more.
+description: The core data types in Cortex, from agents, skills, traits, behaviors and personas to runs and sessions.
 ---
 
 All Cortex entities embed the `cortex.Entity` base type and carry a TypeID identifier. This page provides an overview of every entity and how they relate.
@@ -20,7 +20,7 @@ Every entity struct embeds `cortex.Entity` to get automatic timestamp tracking.
 
 ### Agent Config
 
-The top-level entity. An agent can operate in **flat mode** (system prompt + tools list) or **persona mode** (referencing a Persona for its identity).
+The top-level entity. An agent can work in flat mode (a system prompt and a tools list) or persona mode (a `PersonaRef` for its identity, plus the skills and traits it lists inline). You can mix the two: the system prompt is always included.
 
 ```go
 type Config struct {
@@ -34,25 +34,29 @@ type Config struct {
     MaxSteps        int
     MaxTokens       int
     Temperature     float64
+    ReasoningLoop   string         // recorded on the run; ReAct is the only loop
+    Guardrails      map[string]any // "shield_profile" picks the Shield profile
+    Metadata        map[string]any
+    Enabled         bool           // stored; the engine doesn't check it
     PersonaRef      string         // persona mode
-    InlineSkills    []string       // persona mode (inline)
-    InlineTraits    []string
-    InlineBehaviors []string
-    Enabled         bool
+    InlineSkills    []string       // skills whose prompt fragments and knowledge are applied
+    InlineTraits    []string       // traits whose prompt_injection influences are applied
+    InlineBehaviors []string       // stored; behaviors aren't evaluated yet
+    Sections        []prompt.Section
 }
 ```
 
 ### Skill
 
-Defines what an agent **can do**. Bundles tools, knowledge sources, and system prompt fragments. See [Skills](/docs/human-model/skills).
+Defines what an agent can do. Bundles tools, knowledge sources and a system prompt fragment. See [Skills](/docs/human-model/skills).
 
 ### Trait
 
-Defines who an agent **is**. Personality dimensions on bipolar axes that influence runtime parameters. See [Traits](/docs/human-model/traits).
+Defines who an agent is: personality dimensions on bipolar axes, plus influences. Only `prompt_injection` influences reach a run today. See [Traits](/docs/human-model/traits).
 
 ### Behavior
 
-Defines what an agent **does habitually**. Condition-triggered action patterns. See [Behaviors](/docs/human-model/behaviors).
+Defines what an agent does habitually, as trigger and action patterns. Behaviors are stored but the engine doesn't evaluate them yet. See [Behaviors](/docs/human-model/behaviors).
 
 ### Persona
 
@@ -62,9 +66,9 @@ The composition entity that brings everything together. See [Personas](/docs/hum
 
 Execution entities that record an agent's reasoning process:
 
-- **Run** — A single execution of an agent with 6 lifecycle states
-- **Step** — One reasoning step within a run
-- **ToolCall** — A tool invocation within a step
+- Run: a single execution of an agent, with 6 lifecycle states
+- Step: one reasoning step within a run
+- ToolCall: a tool invocation within a step
 
 See [Runs](/docs/execution/runs).
 
@@ -125,7 +129,7 @@ Agent Config
 ## Store interfaces
 
 Each entity type defines its own store interface, and `store.Store` embeds all
-thirteen of them. There is no partial implementation: a backend satisfies the whole
+fourteen of them. There is no partial implementation: a backend satisfies the whole
 composite or none of it.
 
 ```go
@@ -143,6 +147,7 @@ type Store interface {
     suspension.Store          // CreateSuspension, ClaimSuspension, ListExpired, ...
     orchestration.ConfigStore // CreateOrchestration, GetOrchestration, ...
     orchestration.RunStore    // CreateOrchestrationRun, GetOrchestrationRun, ...
+    a2a.Store                 // CreateMessage, ListMessages, CreateConversation, ...
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -150,7 +155,7 @@ type Store interface {
 }
 ```
 
-That comes to 89 methods across the thirteen sub-interfaces, plus the three
+That comes to 109 methods across the fourteen sub-interfaces, plus the three
 lifecycle methods. `Migrate` takes options rather than nothing because a host
 upgrading a database written before v1.8.0 has to hand it a `cortex.Rescoper` to
 give the old rows a scope; see the [rescope guide](/docs/guides/v1.8-rescope).

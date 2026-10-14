@@ -3,7 +3,9 @@ title: Personas
 description: Compose skills, traits, behaviors, and styles into a complete agent identity.
 ---
 
-A **Persona** is the composition entity that brings everything together. It defines an agent's complete identity by composing skills, traits, behaviors, cognitive style, communication style, and perception into a reusable template.
+A persona is the composition entity that brings everything together. It defines an agent's identity by composing skills, traits, behaviors, cognitive style, communication style and perception into a reusable template.
+
+When an agent points at a persona with `PersonaRef`, a run uses the persona's `Identity`. The rest of the persona (skill and trait assignments, behaviors, the three styles) is stored and served with it, but a run doesn't read it yet. To get a skill's fragment or a trait's prompt influence into a run, list it in the agent's `InlineSkills` or `InlineTraits`. If `PersonaRef` names a persona that doesn't exist in the caller's scope, the run fails rather than running without an identity.
 
 ## Structure
 
@@ -13,6 +15,7 @@ type Persona struct {
     ID                 id.PersonaID
     Name               string
     Description        string
+    Scope              cortex.Scope         // set from the context on create
     Identity           string               // core identity statement
     Skills             []SkillAssignment
     Traits             []TraitAssignment
@@ -26,7 +29,7 @@ type Persona struct {
 
 ## Identity
 
-The `Identity` field is a natural language description of the persona's core identity. It forms the foundation of the assembled system prompt:
+The `Identity` field is a natural language description of the persona's core identity. It becomes the `persona:identity` section of the system prompt, with the heading `## Identity`, right after the agent's own instructions:
 
 ```go
 persona := &persona.Persona{
@@ -36,7 +39,7 @@ persona := &persona.Persona{
 
 ## Skill assignments
 
-Skills are assigned with optional proficiency overrides:
+Skills are assigned with an optional proficiency. Assignments are stored only, so they don't load the skill into a run:
 
 ```go
 type SkillAssignment struct {
@@ -56,7 +59,7 @@ persona := &persona.Persona{
 
 ## Trait assignments
 
-Traits are assigned with optional dimension value overrides:
+Traits are assigned with optional dimension values. These are stored only, too:
 
 ```go
 type TraitAssignment struct {
@@ -80,7 +83,7 @@ persona := &persona.Persona{
 
 ## Flat mode vs persona mode
 
-Agents support two configuration modes:
+Agents support two configuration modes, and you can combine them:
 
 ### Flat mode
 
@@ -103,7 +106,7 @@ agent := &agent.Config{
 }
 ```
 
-Or uses inline assignments without creating a named persona:
+Or lists skills, traits and behaviors inline, with or without a persona. This is the part that reaches a run: the inline skills' fragments and knowledge and the inline traits' prompt injections. Inline behaviors are stored but not evaluated:
 
 ```go
 agent := &agent.Config{
@@ -113,7 +116,7 @@ agent := &agent.Config{
 }
 ```
 
-Use `agent.HasPersona()` to check which mode is active.
+`ag.HasPersona()` reports whether the agent sets `PersonaRef` or any inline list.
 
 ## Full example: Senior Engineer persona
 
@@ -160,15 +163,21 @@ type Store interface {
     UpdatePersona(ctx context.Context, persona *Persona) error
     DeletePersona(ctx context.Context, personaID id.PersonaID) error
     ListPersonas(ctx context.Context, filter *ListFilter) ([]*Persona, error)
+    CountPersonas(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
 
+`eng.ClonePersona(ctx, sourceName, newName)` copies a persona under a new name. See [Cloning](/docs/guides/cloning).
+
 ## API routes
+
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/cortex/personas` | Create a persona |
-| `GET` | `/cortex/personas` | List personas |
-| `GET` | `/cortex/personas/{name}` | Get a persona by name |
-| `PUT` | `/cortex/personas/{name}` | Update a persona |
-| `DELETE` | `/cortex/personas/{id}` | Delete a persona |
+| `POST` | `/cortex/v1/personas` | Create a persona |
+| `GET` | `/cortex/v1/personas` | List personas |
+| `GET` | `/cortex/v1/personas/:name` | Get a persona by name |
+| `PUT` | `/cortex/v1/personas/:name` | Update a persona |
+| `DELETE` | `/cortex/v1/personas/:name` | Delete a persona |
+| `POST` | `/cortex/v1/personas/:name/clone` | Clone a persona |

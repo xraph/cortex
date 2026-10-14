@@ -1,9 +1,11 @@
 ---
 title: Skills
-description: Define what an agent can do — capabilities, tools, and knowledge sources.
+description: Define what an agent can do, with a prompt fragment, tools and knowledge sources.
 ---
 
-A **Skill** represents a coherent capability an agent can have. Think of it as professional training — it bundles related tools, knowledge sources, and behavioral guidance into a named, reusable entity.
+A skill represents a coherent capability an agent can have. Think of it as professional training: it bundles related tools, knowledge sources and prompt guidance into a named, reusable entity.
+
+An agent uses a skill when it names it in `InlineSkills`. A skill that's only assigned to the agent's persona isn't loaded into a run.
 
 ## Structure
 
@@ -13,6 +15,7 @@ type Skill struct {
     ID                   id.SkillID
     Name                 string
     Description          string
+    Scope                cortex.Scope // set from the context on create
     Tools                []ToolBinding
     Knowledge            []KnowledgeRef
     SystemPromptFragment string
@@ -24,7 +27,7 @@ type Skill struct {
 
 ## Tool bindings
 
-Each tool binding associates a tool with mastery level and contextual guidance:
+Each tool binding associates a tool with a mastery level and contextual guidance:
 
 ```go
 type ToolBinding struct {
@@ -35,17 +38,21 @@ type ToolBinding struct {
 }
 ```
 
+Tool bindings are stored with the skill but the engine doesn't read them yet. They don't register a tool, grant one, or add the guidance to the prompt. The tools a model can call come from `engine.WithTool` registrations, filtered by the agent's `Tools` list and your `ToolAuthorizer`.
+
 ## Knowledge references
 
-Knowledge references inject context when a skill is active:
+Knowledge references pull context into the prompt when an agent uses the skill:
 
 ```go
 type KnowledgeRef struct {
-    Source     string // knowledge source identifier
-    InjectMode string // how to inject (e.g., "system", "context")
-    Priority   int    // injection priority
+    Source     string // the collection the knowledge provider retrieves from
+    InjectMode string // stored, not used yet
+    Priority   int    // stored, not used yet
 }
 ```
+
+When the engine has a knowledge provider (`engine.WithKnowledge`, or Weave discovered by the Forge extension), each `Source` is retrieved and added as a `knowledge:<source>` section. A failed or empty retrieval is skipped rather than failing the run. Without a provider, knowledge references do nothing.
 
 ## Proficiency levels
 
@@ -59,7 +66,7 @@ Skills use a five-level proficiency system that maps to numeric weights:
 | `proficient` | 0.8 | Deep understanding, handles edge cases |
 | `expert` | 1.0 | Mastery, can teach others |
 
-Proficiency weights influence how strongly a skill affects the agent's system prompt and tool selection.
+`Proficiency.Weight()` returns these numbers, and an unknown level weighs 0.6. The engine doesn't use proficiency yet, so a skill's level, a tool binding's `Mastery` and a persona's `SkillAssignment.Proficiency` don't change a run.
 
 ## System prompt fragments
 
@@ -72,7 +79,7 @@ skill := &skill.Skill{
 }
 ```
 
-When a persona includes multiple skills, their fragments are concatenated into the final system prompt.
+The fragment becomes a section with the id `skill:<name>` and the body `## Skill: <name>` followed by the fragment. When an agent lists several skills in `InlineSkills`, each one gets its own section, in list order. A skill without a fragment adds nothing.
 
 ## Dependencies
 
@@ -85,6 +92,8 @@ skill := &skill.Skill{
 }
 ```
 
+Dependencies are stored only. Listing `security-audit` doesn't pull `code-review` into a run, so list both in `InlineSkills`.
+
 ## Store interface
 
 ```go
@@ -95,15 +104,18 @@ type Store interface {
     UpdateSkill(ctx context.Context, skill *Skill) error
     DeleteSkill(ctx context.Context, skillID id.SkillID) error
     ListSkills(ctx context.Context, filter *ListFilter) ([]*Skill, error)
+    CountSkills(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```
 
 ## API routes
 
+These exist when you mount the `api` module through `extension.WithRoutes` (paths shown with the default `/cortex` base path):
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/cortex/skills` | Create a skill |
-| `GET` | `/cortex/skills` | List skills |
-| `GET` | `/cortex/skills/{name}` | Get a skill by name |
-| `PUT` | `/cortex/skills/{name}` | Update a skill |
-| `DELETE` | `/cortex/skills/{id}` | Delete a skill |
+| `POST` | `/cortex/v1/skills` | Create a skill |
+| `GET` | `/cortex/v1/skills` | List skills |
+| `GET` | `/cortex/v1/skills/:name` | Get a skill by name |
+| `PUT` | `/cortex/v1/skills/:name` | Update a skill |
+| `DELETE` | `/cortex/v1/skills/:name` | Delete a skill |

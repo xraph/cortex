@@ -12,87 +12,87 @@ Cortex is organized as a set of focused Go packages. The `engine` package is the
 │                        engine.Engine                              │
 │  CreateAgent / GetAgent / UpdateAgent / DeleteAgent / ListAgents  │
 │  CreateSkill / CreateTrait / CreateBehavior / CreatePersona       │
-│  GetRun / ListRuns / LoadConversation / ResolveCheckpoint         │
+│  RunAgent / StreamAgent / Resume / ResolveCheckpoint              │
+│  CreateOrchestration / RunOrchestration / SendMessage             │
 ├──────────────────────────────────────────────────────────────────┤
-│                     Agent resolution flow                         │
-│  1. Load agent config (flat or persona mode)                      │
-│  2. If persona mode: resolve persona → load skills + traits       │
-│  3. Assemble prompt sections, then apply scope overlays           │
-│     broadest to narrowest                                         │
-│  4. Apply cognitive style (phase-based reasoning strategy)        │
-│  5. Execute reasoning loop (Run → Steps → ToolCalls)              │
-│  6. Record results, emit plugin hooks                             │
+│                     Agent run flow                                │
+│  1. Load the agent config by name                                 │
+│  2. Collect prompt sections: agent, persona identity,             │
+│     inline skills, knowledge, inline traits                       │
+│  3. Apply scope overlays, broadest to narrowest                   │
+│  4. Run the ReAct loop (Run → Steps → ToolCalls)                  │
+│  5. Record results, emit plugin hooks                             │
 ├──────────────────────┬───────────────────────────────────────────┤
-│  plugin.Registry      │  api.API (Forge HTTP handlers)            │
-│  OnRunStarted         │  55 REST endpoints:                       │
-│  OnRunCompleted       │  - Agents (8, incl. clone)                │
-│  OnRunFailed          │  - Personas (6, incl. clone)              │
-│  OnToolCalled         │  - Skills, Traits, Behaviors (5 each)     │
-│  OnOrchestration*     │  - Orchestrations (8)                     │
-│  OnAgentHandoff       │  - Runs (3), Checkpoints (2),             │
-│  (16 total hooks)     │    Memory (2), Tools (2)                  │
+│  plugin.Registry      │  api module (Forge HTTP handlers)         │
+│  OnRunStarted         │  59 routes under <base_path>/v1,          │
+│  OnRunCompleted       │  mounted only through                     │
+│  OnToolCalled         │  extension.WithRoutes                     │
+│  OnOrchestration*     │                                           │
+│  OnMessageSent        │                                           │
+│  (21 hook interfaces) │                                           │
 ├──────────────────────┴───────────────────────────────────────────┤
-│                  orchestration (multi-agent)                      │
+│        orchestration (multi-agent)  ·  a2a (agent messaging)      │
 │  sequential │ parallel │ router │ hierarchical │ debate           │
 │  Blackboard (shared state) · Roster (awareness) · Handoffs        │
-├──────────────────────┬───────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────────┤
 │                        store.Store                                │
-│  (composite: agent + skill + trait + behavior + persona +         │
-│   run + memory + checkpoint + orchestration.ConfigStore +         │
-│   orchestration.RunStore + Migrate/Ping/Close)                    │
+│  (composite: agent, run, memory, checkpoint, skill, trait,        │
+│   behavior, persona, prompt overlays, session, suspension,        │
+│   orchestration configs and runs, a2a, plus Migrate/Ping/Close)   │
 ├──────────────────────────────────────────────────────────────────┤
 │              store/sqlite · store/postgres · store/mongo          │
-│  (grove ORM backends with programmatic migrations)                │
+│  (Grove backends with migrations registered in Go)                │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Engine construction
 
-`engine.New` accepts option functions:
+`engine.New` takes option functions and returns `(*engine.Engine, error)`:
 
 ```go
 eng, err := engine.New(
-    engine.WithStore(pgStore),           // required: composite Store
-    engine.WithConfig(cortex.Config{     // optional: override defaults
+    engine.WithStore(pgStore),           // composite store.Store
+    engine.WithLLM(llmClient),           // without it, runs echo their input
+    engine.WithConfig(cortex.Config{     // override the defaults
         DefaultModel:    "gpt-4o",
         DefaultMaxSteps: 30,
     }),
-    engine.WithExtension(metricsExt),    // optional: lifecycle hooks
-    engine.WithLogger(slog.Default()),   // optional: structured logger
+    engine.WithExtension(metricsExt),    // lifecycle hooks
+    engine.WithLogger(logger),           // a go-utils log.Logger; defaults to a no-op logger
 )
 ```
 
-All components are interfaces — swap any with your own implementation.
+The other options are `WithSafety`, `WithKnowledge`, `WithTool`, `WithExternalTool`, `WithToolAuthorizer`, `WithA2A`, `WithSuspensionTTL`, `WithSuspensionSweepInterval` and `WithSuspensionSweepLimit`. The store, LLM client, safety scanner and knowledge provider are all interfaces, so you can swap any of them for your own implementation.
 
-## Agent resolution flow
+## Agent run flow
 
-When an agent run begins, the engine resolves the agent's full configuration:
+When you call `RunAgent` (or `StreamAgent`), the engine:
 
-1. **Load agent config** — Read the `agent.Config` from the store. Check if it uses flat mode (inline `SystemPrompt` + `Tools`) or persona mode (`PersonaRef` or inline skill/trait/behavior names).
+1. Loads the `agent.Config` by name from the store.
 
-2. **Resolve persona** — If `PersonaRef` is set, load the `persona.Persona` from the store. The persona contains `SkillAssignment`s, `TraitAssignment`s, behavior names, cognitive style, communication style, and perception.
+2. Builds the system prompt from `prompt.Section` values: one for the agent's own instructions (`SystemPrompt` or its `Sections`), one for the persona's `Identity` when `PersonaRef` is set, one per `SystemPromptFragment` of the skills in `InlineSkills`, one per knowledge source those skills reference (when a knowledge provider is configured), and one per `prompt_injection` influence of the traits in `InlineTraits`.
 
-3. **Assemble system prompt** from `prompt.Section` values: one for the agent's own instructions, one for the persona's `Identity`, one per skill `SystemPromptFragment`, one per retrieved knowledge source, and one per trait influence targeting `prompt_injection`. Then walk the run scope's ancestry, apply the `prompt.Overlay` found at each rung broadest first, and assemble the result in order. See [Prompt Composition](/docs/concepts/prompt-composition).
+3. Walks the run scope's ancestry, applies the `prompt.Overlay` found at each rung broadest first, and assembles the result in order. Overlays can also change the model, temperature, max tokens and tool list. See [Prompt Composition](/docs/concepts/prompt-composition).
 
-4. **Apply runtime parameters** — Trait influences modify runtime parameters like `Temperature`, `MaxSteps`, and tool selection preferences. Cognitive style determines the reasoning loop strategy.
+4. Runs the ReAct loop, creating a `run.Step` for each reasoning step and a `run.ToolCall` for each tool invocation. A tool call can be denied or held for approval by your `ToolAuthorizer`, and a call to an external tool suspends the run until you `Resume` it.
 
-5. **Execute reasoning loop** — The agent runs through its reasoning loop, creating `run.Step` records for each reasoning step and `run.ToolCall` records for each tool invocation.
+5. Updates the `run.Run` with the final state, output, token usage and timing, saves the conversation to the session, and fires plugin hooks along the way (`OnRunStarted`, `OnStepStarted`, `OnToolCalled` and so on).
 
-6. **Record and notify** — The `run.Run` is updated with the final state, output, token usage, and timing. Plugin hooks fire at each stage (`OnRunStarted`, `OnStepStarted`, `OnToolCalled`, etc.).
+The persona's skill and trait assignments, behaviors, cognitive style, communication style and perception are stored, but a run doesn't read them yet. Trait influences other than `prompt_injection` aren't applied either, and `ReasoningLoop` is recorded on the run without changing the loop: ReAct is the only one.
 
 ## Scope isolation
 
-`cortex.WithScope(ctx, scope)` injects a scope into the context. Cortex never interprets what a scope level means: the host declares its own ordered hierarchy (workspace, org, tenant, app, whatever it needs) as a `cortex.Scope`, and Cortex only matches on it. This is extracted at every layer:
+`cortex.WithScope(ctx, scope)` puts a scope on the context. Cortex never interprets what a scope level means: you declare your own ordered hierarchy (workspace, org, tenant, app, whatever you need) as a `cortex.Scope`, and Cortex only matches on it.
 
-- **Store** — every scope-guarded query filters by the caller's scope, and rejects a zero scope with `cortex.ErrNoScope` instead of matching everything
-- **Engine** — scope is read from the context and applied before any store operation
-- **API** — the host's own middleware is responsible for calling `cortex.WithScope` on the request context before it reaches Cortex; the REST layer does not manufacture one
+- Store: every scope-guarded query filters by the caller's scope, and rejects a zero scope with `cortex.ErrNoScope` instead of matching everything.
+- Engine: passes the context's scope through to every store call.
+- API: your own middleware calls `cortex.WithScope` on the request context before it reaches Cortex. The REST layer doesn't make one up.
 
-Cross-scope access is structurally impossible: even if a caller passes an agent ID from outside their scope, the store layer returns `ErrAgentNotFound`.
+A caller who passes an agent ID from outside their scope gets `ErrAgentNotFound` back from the store, the same as for an ID that doesn't exist.
 
 ## Plugin system
 
-Extensions implement the `plugin.Extension` base interface (just `Name() string`) and then opt in to specific lifecycle hooks by implementing additional interfaces:
+Extensions implement the `plugin.Extension` base interface (just `Name() string`) and then opt in to specific lifecycle hooks by implementing more interfaces:
 
 ```go
 type Extension interface {
@@ -105,41 +105,52 @@ type RunStarted interface {
 }
 type RunCompleted interface { /* ... */ }
 type ToolCalled interface { /* ... */ }
-type PersonaResolved interface { /* ... */ }
-// ... 16 hooks total
+type MessageSent interface { /* ... */ }
+// ... 21 hook interfaces in total
 ```
 
-The `plugin.Registry` type-caches extensions at registration time, so emit calls iterate only over extensions that implement the relevant hook. Errors from hooks are logged but never propagated.
+The `plugin.Registry` sorts extensions by hook at registration time, so an emit only walks the extensions that implement that hook. Errors from hooks are logged and never propagated. Three hooks, `PersonaResolved`, `BehaviorTriggered` and `CognitivePhaseChanged`, are defined but the engine never fires them.
 
 Built-in extensions:
-- `observability.MetricsExtension` — 11 counters for all lifecycle events
-- `audithook.Extension` — bridges lifecycle events to an audit trail backend
+
+- `observability.MetricsExtension`: 11 counters for run, tool, persona, behavior, cognitive and checkpoint events
+- `audithook.Extension`: turns lifecycle events into an audit trail
+- the `sentinel` module: evaluation through Sentinel
 
 ## Package index
 
 | Package | Import path | Purpose |
 |---------|-------------|---------|
-| `cortex` | `github.com/xraph/cortex` | Root package — Entity, Config, scope helpers, errors |
-| `id` | `.../id` | TypeID-based entity identifiers (12 prefixes) |
-| `engine` | `.../engine` | Central coordinator — all CRUD passthroughs |
+| `cortex` | `github.com/xraph/cortex` | Root package: Entity, Config, scope helpers, ToolAuthorizer, errors |
+| `id` | `.../id` | TypeID-based entity identifiers |
+| `engine` | `.../engine` | Central coordinator: CRUD, runs, resume, orchestration, messaging |
 | `agent` | `.../agent` | Agent config entity and store interface |
-| `skill` | `.../skill` | Skill entity — capabilities and tools |
-| `trait` | `.../trait` | Trait entity — personality dimensions |
-| `behavior` | `.../behavior` | Behavior entity — trigger/action patterns |
-| `persona` | `.../persona` | Persona entity — composes all aspects |
-| `cognitive` | `.../cognitive` | CognitiveStyle value object — thinking phases |
-| `communication` | `.../communication` | CommunicationStyle value object — tone and format |
-| `perception` | `.../perception` | Perception value object — attention filters |
+| `skill` | `.../skill` | Skill entity: prompt fragment, tools and knowledge |
+| `trait` | `.../trait` | Trait entity: personality dimensions |
+| `behavior` | `.../behavior` | Behavior entity: trigger/action patterns |
+| `persona` | `.../persona` | Persona entity: composes all aspects |
+| `cognitive` | `.../cognitive` | Cognitive style value object: thinking phases |
+| `communication` | `.../communication` | Communication style value object: tone and format |
+| `perception` | `.../perception` | Perception value object: attention filters |
+| `prompt` | `.../prompt` | Prompt sections and scope overlays |
 | `run` | `.../run` | Run, Step, ToolCall entities and store |
-| `memory` | `.../memory` | Message entity and memory store |
+| `session` | `.../session` | Session entity and store |
+| `memory` | `.../memory` | Conversation messages and memory store |
 | `checkpoint` | `.../checkpoint` | Checkpoint entity for human-in-the-loop |
+| `suspension` | `.../suspension` | A paused run and what it's waiting for |
 | `orchestration` | `.../orchestration` | Multi-agent strategies, Blackboard, Config/Run entities |
+| `a2a` | `.../a2a` | In-process agent-to-agent bus, conversations, contract net |
+| `llm` | `.../llm` | LLM client interface; `llm/nexus` adapts a Nexus gateway |
+| `safety` | `.../safety` | Safety scanner interface; `safety/shield` adapts Shield |
+| `knowledge` | `.../knowledge` | Knowledge provider interface; `knowledge/weave` adapts Weave |
 | `store` | `.../store` | Composite store interface |
-| `store/sqlite` | `.../store/sqlite` | SQLite backend (grove ORM) |
-| `store/postgres` | `.../store/postgres` | PostgreSQL backend (grove ORM) |
-| `store/mongo` | `.../store/mongo` | MongoDB backend (grove ORM) |
+| `store/sqlite` | `.../store/sqlite` | SQLite backend (Grove) |
+| `store/postgres` | `.../store/postgres` | PostgreSQL backend (Grove) |
+| `store/mongo` | `.../store/mongo` | MongoDB backend (Grove) |
 | `plugin` | `.../plugin` | Extension interfaces and Registry |
 | `observability` | `.../observability` | Metrics extension (11 counters) |
 | `audit_hook` | `.../audit_hook` | Audit trail extension |
-| `api` | `.../api` | Forge-native HTTP handlers (46 routes) |
-| `extension` | `.../extension` | Forge framework extension adapter |
+| `api` | `.../api` (own module) | Forge HTTP handlers (59 routes) |
+| `extension` | `.../extension` (own module) | Forge extension and dashboard contract |
+| `sentinel` | `.../sentinel` (own module) | Sentinel evaluation hooks |
+| `fabriqbrain` | `.../integrations/fabriq` (own module) | Fabriq as a knowledge provider, with tools and a learning-loop plugin |

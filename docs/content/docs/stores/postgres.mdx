@@ -11,13 +11,20 @@ The `store/postgres` package provides a production-ready implementation of the c
 import (
     "github.com/xraph/grove"
     "github.com/xraph/grove/drivers/pgdriver"
+    _ "github.com/xraph/grove/drivers/pgdriver/pgmigrate"
+
     "github.com/xraph/cortex/store/postgres"
 )
 
-// Open a PostgreSQL connection via Grove's pgdriver.
-db := grove.Open(pgdriver.New(
-    pgdriver.WithDSN("postgres://user:pass@localhost:5432/cortex?sslmode=disable"),
-))
+// Open a PostgreSQL connection through Grove's pgdriver.
+drv := pgdriver.New()
+if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/cortex?sslmode=disable"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
+if err != nil {
+    log.Fatal(err)
+}
 
 s := postgres.New(db)
 if err := s.Migrate(ctx); err != nil {
@@ -25,13 +32,16 @@ if err := s.Migrate(ctx); err != nil {
 }
 ```
 
+The blank `pgmigrate` import registers Grove's migration executor for PostgreSQL. Without it `Migrate` fails with "no executor registered for driver". If you run Cortex as a Forge extension, the extension can build this store for you from a `*grove.DB` in the container and migrates it on start.
+
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
 | Driver | Grove ORM with `pgdriver` (PostgreSQL) |
-| Migrations | Embedded programmatic migrations |
+| Migrations | Registered in Go in `migrations.go`, run by `Migrate` |
 | Transactions | Database-level ACID transactions |
+| Scope | Up to three levels, in indexed `scope_l0`/`scope_l1`/`scope_l2` columns plus a `scope_canon` string. A `scope_extra` JSONB column exists for deeper levels, but `cortex.WithScope` refuses a scope deeper than three, so nothing reaches it today |
 
 ## Tables
 
@@ -50,14 +60,17 @@ if err := s.Migrate(ctx); err != nil {
 | `cortex_sessions` | Sessions | `id`, `agent_id`, `title`, `message_count`, `last_message`, `is_default`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_orchestration_configs` | Orchestration configs | `id`, `app_id`, `name`, `strategy`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
 | `cortex_orchestration_runs` | Orchestration runs | `id`, `config_id`, `app_id`, `status`, `scope_l0`/`scope_l1`/`scope_l2`/`scope_canon` |
+| `cortex_overlays` | Prompt overlays | `id`, `agent_id`, scope columns |
+| `cortex_suspensions` | Suspended runs | `run_id`, scope columns |
+| `cortex_a2a_conversations`, `cortex_a2a_messages`, `cortex_a2a_deliveries`, `cortex_a2a_pending_asks` | Agent-to-agent messaging | scope columns |
 
-Every table above carries `app_id` (and `cortex_runs`, `cortex_memories`,
+Every one of the first thirteen tables carries `app_id` (and `cortex_runs`, `cortex_memories`,
 `cortex_checkpoints` and `cortex_orchestration_runs` also carry
 `tenant_id`) as a read-only holdover from before `Scope` (see
 [Multi-tenancy](/docs/concepts/multi-tenancy) for why they aren't dropped
 yet). Nothing in the normal read/write path touches either column
-anymore — `scope_l0`/`scope_l1`/`scope_l2` plus the `scope_canon` string
-are what every scoped query actually filters on — but the v1.8.0
+anymore (`scope_l0`/`scope_l1`/`scope_l2` plus the `scope_canon` string
+are what every scoped query actually filters on), but the v1.8.0
 migration itself does still read `app_id`/`tenant_id` off unscoped rows,
 feeding them to your `cortex.Rescoper` so it can reconstruct a `Scope`
 for data written before v1.8.0. See the
@@ -71,29 +84,32 @@ left out of the conversion.
 
 Complex nested structures are stored as JSONB columns:
 
-- Skill tools and knowledge -- `tools JSONB`, `knowledge JSONB`
-- Trait dimensions and influences -- `dimensions JSONB`, `influences JSONB`
-- Behavior triggers and actions -- `triggers JSONB`, `actions JSONB`
-- Persona styles -- `cognitive_style JSONB`, `communication_style JSONB`, `perception JSONB`
-- All entities -- `metadata JSONB`
+- Skill tools and knowledge: `tools JSONB`, `knowledge JSONB`
+- Trait dimensions and influences: `dimensions JSONB`, `influences JSONB`
+- Behavior triggers and actions: `triggers JSONB`, `actions JSONB`
+- Persona styles: `cognitive_style JSONB`, `communication_style JSONB`, `perception JSONB`
+- All entities: `metadata JSONB`
 
 ## Composite store interface
 
-The PostgreSQL store implements all 11 sub-interfaces:
+The PostgreSQL store implements all 14 sub-interfaces:
 
 ```go
 type Store interface {
-    agent.Store               // 6 methods
-    skill.Store               // 6 methods
-    trait.Store               // 6 methods
-    behavior.Store            // 6 methods
-    persona.Store             // 6 methods
-    run.Store                 // 8 methods
+    agent.Store               // 7 methods
+    run.Store                 // 9 methods
     memory.Store              // 8 methods
-    checkpoint.Store          // 4 methods
+    checkpoint.Store          // 5 methods
+    skill.Store               // 7 methods
+    trait.Store               // 7 methods
+    behavior.Store            // 7 methods
+    persona.Store             // 7 methods
+    prompt.Store              // 7 methods
     session.Store             // 6 methods
+    suspension.Store          // 7 methods
     orchestration.ConfigStore // 7 methods
     orchestration.RunStore    // 5 methods
+    a2a.Store                 // 20 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -101,9 +117,9 @@ type Store interface {
 }
 ```
 
-## Embedded migrations
+## Migrations
 
-Migrations are embedded in the binary and run automatically when `Migrate()` is called. There is no need for external migration tools.
+Migrations are written in Go in `store/postgres/migrations.go`, compiled into your binary, and applied when you call `Migrate()`. You don't need an external migration tool. The `.sql` files under `store/postgres/migrations/` aren't loaded by anything, so editing them changes nothing.
 
 ## Usage with engine
 
@@ -115,6 +131,6 @@ eng, err := engine.New(
 
 ## When to use
 
-- **Production deployments** -- durable, ACID-compliant storage with connection pooling.
-- **Multi-instance deployments** -- all application instances share the same database.
-- **Teams already using PostgreSQL** -- leverage existing infrastructure and expertise.
+- Production deployments: durable, ACID-compliant storage with connection pooling.
+- Multi-instance deployments: all application instances share the same database.
+- Teams already using PostgreSQL: you reuse the infrastructure you have.

@@ -7,7 +7,7 @@ Every Cortex persistence operation goes through the composite `store.Store` inte
 
 ## The composite interface
 
-`store.Store` embeds thirteen domain-specific sub-interfaces plus three lifecycle methods:
+`store.Store` embeds fourteen domain-specific sub-interfaces plus three lifecycle methods:
 
 ```go
 import "github.com/xraph/cortex/store"
@@ -26,6 +26,7 @@ type Store interface {
     suspension.Store          // 7 methods
     orchestration.ConfigStore // 7 methods
     orchestration.RunStore    // 5 methods
+    a2a.Store                 // 20 methods
 
     Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
     Ping(ctx context.Context) error
@@ -33,11 +34,11 @@ type Store interface {
 }
 ```
 
-**Total: 89 methods** across the thirteen sub-interfaces, plus the three lifecycle
+That's 109 methods across the fourteen sub-interfaces, plus the three lifecycle
 methods.
 
-That number grows. `session.Store` arrived in v1.9.0 and `suspension.Store` in
-v1.11.0, and each time a backend that satisfied the interface last release stopped
+That number grows. `session.Store` arrived in v1.9.0, `suspension.Store` in
+v1.11.0 and `a2a.Store` with agent messaging, and each time a backend that satisfied the interface last release stopped
 satisfying it until it implemented the new methods. Check this page against the
 version you are on, and run `store/storetest`'s conformance suite against your
 backend rather than trusting a compile.
@@ -242,8 +243,37 @@ type RunStore interface {
 }
 ```
 
+### a2a.Store (20 methods)
+
+Agent-to-agent messages, conversations, deliveries and the asks waiting on a reply. The engine only calls these when you turn messaging on with `engine.WithA2A`, but the composite interface requires them either way. `ListQueuedDeliveries`, `ReclaimStaleDeliveries` and `ListExpiredAsks` are the background workers' calls and work across scopes.
+
+```go
+type Store interface {
+    CreateMessage(ctx context.Context, e *a2a.Envelope) error
+    GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelope, error)
+    ListMessages(ctx context.Context, filter *a2a.MessageListFilter) ([]*a2a.Envelope, error)
+    CreateConversation(ctx context.Context, c *a2a.Conversation) error
+    GetConversation(ctx context.Context, convID id.ConversationID) (*a2a.Conversation, error)
+    UpdateConversation(ctx context.Context, c *a2a.Conversation) error
+    GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error)
+    ListConversations(ctx context.Context, filter *a2a.ConversationListFilter) ([]*a2a.Conversation, error)
+    CreateDelivery(ctx context.Context, d *a2a.Delivery) error
+    GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error)
+    UpdateDelivery(ctx context.Context, d *a2a.Delivery) error
+    ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error)
+    ListInbox(ctx context.Context, agentName string, filter a2a.InboxFilter) ([]*a2a.Delivery, error)
+    ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error)
+    MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error
+    ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error)
+    CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error
+    ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.PendingAsk, error)
+    ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*a2a.PendingAsk, error)
+    ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*a2a.PendingAsk, error)
+}
+```
+
 Scope never appears in a signature. It arrives on the context and you read it with
-`cortex.ScopeFromContext`, on every method above without exception.
+`cortex.ScopeFromContext`, on every method above except the few cross-scope sweeper calls (`ListExpiredAcrossScopes` and `ClaimExpiredSuspension` on `suspension.Store`, and the three `a2a.Store` worker calls).
 
 ## Skeleton implementation
 
@@ -255,6 +285,7 @@ import (
     "time"
 
     "github.com/xraph/cortex"
+    "github.com/xraph/cortex/a2a"
     "github.com/xraph/cortex/agent"
     "github.com/xraph/cortex/behavior"
     "github.com/xraph/cortex/checkpoint"
@@ -405,6 +436,28 @@ func (s *MyStore) GetOrchestrationRun(ctx context.Context, runID id.Orchestratio
 func (s *MyStore) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error { /* ... */ }
 func (s *MyStore) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) { /* ... */ }
 func (s *MyStore) CountOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) (int64, error) { /* ... */ }
+
+// a2a.Store
+func (s *MyStore) CreateMessage(ctx context.Context, e *a2a.Envelope) error { /* ... */ }
+func (s *MyStore) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelope, error) { /* ... */ }
+func (s *MyStore) ListMessages(ctx context.Context, filter *a2a.MessageListFilter) ([]*a2a.Envelope, error) { /* ... */ }
+func (s *MyStore) CreateConversation(ctx context.Context, c *a2a.Conversation) error { /* ... */ }
+func (s *MyStore) GetConversation(ctx context.Context, convID id.ConversationID) (*a2a.Conversation, error) { /* ... */ }
+func (s *MyStore) UpdateConversation(ctx context.Context, c *a2a.Conversation) error { /* ... */ }
+func (s *MyStore) GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error) { /* ... */ }
+func (s *MyStore) ListConversations(ctx context.Context, filter *a2a.ConversationListFilter) ([]*a2a.Conversation, error) { /* ... */ }
+func (s *MyStore) CreateDelivery(ctx context.Context, d *a2a.Delivery) error { /* ... */ }
+func (s *MyStore) GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) { /* ... */ }
+func (s *MyStore) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error { /* ... */ }
+func (s *MyStore) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) { /* ... */ }
+func (s *MyStore) ListInbox(ctx context.Context, agentName string, filter a2a.InboxFilter) ([]*a2a.Delivery, error) { /* ... */ }
+func (s *MyStore) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) { /* ... */ }
+func (s *MyStore) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error { /* ... */ }
+func (s *MyStore) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) { /* ... */ }
+func (s *MyStore) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error { /* ... */ }
+func (s *MyStore) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.PendingAsk, error) { /* ... */ }
+func (s *MyStore) ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*a2a.PendingAsk, error) { /* ... */ }
+func (s *MyStore) ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*a2a.PendingAsk, error) { /* ... */ }
 ```
 
 ## Register with the engine
@@ -421,7 +474,7 @@ eng, err := engine.New(
 
 2. **A cross-scope read is a not-found.** Do not return an empty result and do not return a permission error. A caller who can tell that a row exists in a scope they cannot read has already learned something they should not know.
 
-3. **ID generation.** Use `id.NewAgentID()`, `id.NewSkillID()`, etc. to generate TypeID-based identifiers in your `Create` methods.
+3. **ID generation.** The bundled stores don't generate IDs. Callers set them with `id.NewAgentID()`, `id.NewSkillID()` and the rest before they call `Create`, and the engine does the same for the rows it creates. Store the ID you're given.
 
 4. **JSONB columns.** Complex nested structures (tools, dimensions, triggers, etc.) should be serialized as JSON. The bundled stores use grove models and annotate those columns `grove:"name,type:jsonb"`.
 
@@ -435,6 +488,6 @@ eng, err := engine.New(
 
 | Package | Backend | Notes |
 |---------|---------|-------|
-| `store/postgres` | PostgreSQL | Production-ready, embedded migrations |
-| `store/sqlite` | SQLite | Embedded migrations |
-| `store/mongo` | MongoDB | Embedded migrations, needs a replica set for conversation writes |
+| `store/postgres` | PostgreSQL | Production-ready, migrations registered in Go |
+| `store/sqlite` | SQLite | Migrations registered in Go |
+| `store/mongo` | MongoDB | Indexes created by `Migrate`, needs a replica set for conversation writes |

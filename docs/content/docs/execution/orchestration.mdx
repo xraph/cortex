@@ -1,12 +1,12 @@
 ---
 title: Orchestration
-description: Run multiple agents together — sequential, parallel, router, hierarchical, and debate strategies with a shared blackboard and handoffs.
+description: Run multiple agents together with sequential, parallel, router, hierarchical and debate strategies, a shared blackboard and handoffs.
 ---
 
-Cortex orchestration coordinates **multiple agents working together**. An
-orchestration is a stored config — a strategy plus the participant agents and
-their settings — that you run by name. During a run, agents share a **blackboard**
-(roster + prior contributions) and pass work through recorded **handoffs**.
+Cortex orchestration coordinates several agents working together. An
+orchestration is a stored config (a strategy plus the participant agents and
+their settings) that you run by name. During a run, agents share a blackboard
+(the roster and prior contributions) and pass work through recorded handoffs.
 
 ## Strategies
 
@@ -20,7 +20,7 @@ their settings — that you run by name. During a run, agents share a **blackboa
 
 ## Awareness and communication
 
-Every participant sees a **roster** of the others (name + role) and the running
+Every participant sees a roster of the others (name and role) and the running
 log of contributions via the blackboard snapshot prepended to its input. When one
 agent hands off to another, an `AgentHandoff` plugin hook fires (and is recorded
 on the run), so audit and metrics extensions observe the collaboration.
@@ -44,9 +44,11 @@ Each strategy reads only the settings it needs; the rest are ignored.
 
 ## Create and run over HTTP
 
+These routes exist when you mount the `api` module through `extension.WithRoutes`. The paths use the default `/cortex` base path, and your scope middleware has to run first.
+
 ```bash
 # Create a debate orchestration
-curl -X POST /cortex/v1/orchestrations -H 'Content-Type: application/json' -d '{
+curl -X POST http://localhost:8080/cortex/v1/orchestrations -H 'Content-Type: application/json' -d '{
   "name": "should-we-ship",
   "strategy": "debate",
   "participants": [
@@ -58,7 +60,7 @@ curl -X POST /cortex/v1/orchestrations -H 'Content-Type: application/json' -d '{
 }'
 
 # Run it
-curl -X POST /cortex/v1/orchestrations/should-we-ship/run \
+curl -X POST http://localhost:8080/cortex/v1/orchestrations/should-we-ship/run \
   -H 'Content-Type: application/json' \
   -d '{"input": "Should we ship the feature this week?"}'
 ```
@@ -75,7 +77,7 @@ The run returns a summary:
 }
 ```
 
-Run history is available at `GET /cortex/v1/orchestration-runs` and
+Run history is available at `GET /cortex/v1/orchestration-runs` (with `limit` and `offset`) and
 `GET /cortex/v1/orchestration-runs/:id`.
 
 ## In Go
@@ -91,8 +93,12 @@ cfg := &orchestration.Config{
         {AgentName: "writer", Role: "worker"},
     },
 }
-_ = eng.CreateOrchestration(ctx, cfg)
+if err := eng.CreateOrchestration(ctx, cfg); err != nil {
+    return err
+}
 
-// ...then run it by name.
-run, err := eng.RunOrchestration(ctx, "my-app", "research-team", "Summarize CRDTs")
+// ...then run it by name. The scope comes from ctx.
+orun, err := eng.RunOrchestration(ctx, "research-team", "Summarize CRDTs")
 ```
+
+`RunOrchestration` returns an `*orchestration.Run` with the result. `eng.ListOrchestrationRuns` and `eng.GetOrchestrationRun` read the history.

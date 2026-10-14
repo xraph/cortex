@@ -3,17 +3,17 @@ title: Observability
 description: Built-in metrics extension with 11 lifecycle counters.
 ---
 
-The `observability` package provides a `MetricsExtension` that records counters for all agent lifecycle events using the `go-utils` MetricFactory.
+The `observability` package provides a `MetricsExtension` that records counters for agent lifecycle events through a `go-utils` `MetricFactory`.
 
 ## Setup
 
 ```go
 import "github.com/xraph/cortex/observability"
 
-// Using default metrics collector
+// Using a collector of its own, named "cortex/observability"
 metricsExt := observability.NewMetricsExtension()
 
-// Or with a custom factory
+// Or with your own factory (github.com/xraph/go-utils/metrics)
 factory := metrics.NewMetricsCollector("my-app")
 metricsExt := observability.NewMetricsExtensionWithFactory(factory)
 
@@ -22,6 +22,8 @@ eng, err := engine.New(
     engine.WithExtension(metricsExt),
 )
 ```
+
+`NewMetricsExtension` records into a collector nothing else reads, so the counters only leave the process if you export that collector yourself. In a Forge app, pass the app's metrics instead: `observability.NewMetricsExtensionWithFactory(app.Metrics())`, registered with `extension.WithExtension`.
 
 ## Counters
 
@@ -40,6 +42,8 @@ The extension records 11 counters:
 | `cortex.cognitive.phase_changed` | `OnCognitivePhaseChanged` | Cognitive phase transitions |
 | `cortex.checkpoint.created` | `OnCheckpointCreated` | Checkpoints created |
 | `cortex.checkpoint.resolved` | `OnCheckpointResolved` | Checkpoints resolved |
+
+The persona, behavior and cognitive counters stay at zero, because the engine never fires those three hooks. Steps, tool denials, orchestration and messaging have hooks but no counters here.
 
 ## Interface compliance
 

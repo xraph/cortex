@@ -3,7 +3,7 @@ title: Sessions
 description: Sessions group an agent's conversation into threads, and how a run picks one.
 ---
 
-Before this release, an agent had exactly one conversation per scope — every run
+Before v1.9.0, an agent had exactly one conversation per scope: every run
 appended to the same history, with no way to start a second, independent thread. A
 `session.Session` is what splits that history into threads: a session groups the
 conversation messages that belong together, and an agent can hold many of them in
@@ -28,7 +28,7 @@ type Session struct {
 }
 ```
 
-`Title` and `Metadata` belong to the host — cortex stores them and never interprets
+`Title` and `Metadata` belong to the host. Cortex stores them and never interprets
 them. `MessageCount` and `LastMessage` belong to cortex: they are maintained on
 write, inside the same transaction as the messages they describe, so a reader can
 trust them without recomputing anything from the message rows.
@@ -44,7 +44,7 @@ own metadata can never collide with or erase it.
 
 Exactly one of an agent's sessions per scope is marked `IsDefault`: the thread a run
 lands in when its caller names none. It is not an empty-string identifier standing
-in for "the shared history" — that shape is what leaked conversation across tenants
+in for "the shared history". That shape is what leaked conversation across tenants
 before scope existed at all (see [Host-Defined Scope](/docs/concepts/multi-tenancy)).
 It is an ordinary `session.Session` row, created lazily the first time an agent runs
 without an explicit session, and reused on every run after that:
@@ -56,7 +56,7 @@ r, err := eng.RunAgent(ctx, "support-bot", "hello", nil)
 // is set to it.
 ```
 
-A partial unique index — `(agent_id, scope_canon)` `WHERE is_default` — enforces one
+A partial unique index, `(agent_id, scope_canon)` `WHERE is_default`, enforces one
 default session per agent per scope at the database level, across all three
 backends. If two runs race to create the first default session for an agent, the
 loser's insert fails the unique constraint and it re-reads the winner's row instead
@@ -118,63 +118,65 @@ scope depth instead of everything beneath it. `AgentID` narrows to one agent,
 
 Deleting a session cascades: it also deletes every conversation message the session
 owns, on all three backends. This is an explicit application-level delete rather
-than a database foreign key — `cortex_memories`/the mongo memories collection is
+than a database foreign key. `cortex_memories` (or the Mongo memories collection) is
 shared by every memory kind, and working and summary rows never carry a session at
 all, so a real foreign key would reject their writes outright.
 
 ## Conversation calls are keyed on a session
 
 `memory.Store`'s `SaveConversation`, `LoadConversation`, and `ClearConversation` all
-take a `sessionID id.SessionID` alongside the agent ID scope already provided from
-context — as does `engine.Engine.LoadConversation`/`ClearConversation`. There is no
+take a `sessionID id.SessionID` alongside the agent ID, with the scope coming from
+the context, and so do `engine.Engine.LoadConversation` and `ClearConversation`. There is no
 implicit "the" conversation anymore; every call names the thread it reads or writes.
 
 ## REST API
 
-Six endpoints under `/v1/agents/:name/sessions`:
+When you mount the `api` module through `extension.WithRoutes`, you get six endpoints under `/cortex/v1/agents/:name/sessions` (with the default `/cortex` base path):
 
 | Method | Path | Operation |
 |--------|------|-----------|
-| `POST` | `/v1/agents/:name/sessions` | Create a session |
-| `GET` | `/v1/agents/:name/sessions` | List an agent's sessions |
-| `GET` | `/v1/agents/:name/sessions/count` | Count an agent's sessions |
-| `GET` | `/v1/agents/:name/sessions/:id` | Get a session |
-| `PUT` | `/v1/agents/:name/sessions/:id` | Update a session's title/metadata |
-| `DELETE` | `/v1/agents/:name/sessions/:id` | Delete a session and its messages |
+| `POST` | `/cortex/v1/agents/:name/sessions` | Create a session |
+| `GET` | `/cortex/v1/agents/:name/sessions` | List an agent's sessions (`limit`, `offset`) |
+| `GET` | `/cortex/v1/agents/:name/sessions/count` | Count an agent's sessions |
+| `GET` | `/cortex/v1/agents/:name/sessions/:id` | Get a session |
+| `PUT` | `/cortex/v1/agents/:name/sessions/:id` | Update a session's title and metadata |
+| `DELETE` | `/cortex/v1/agents/:name/sessions/:id` | Delete a session and its messages |
 
 A session ID in the path is always checked against the agent named in the same
 path. A caller who names agent A but supplies agent B's session ID gets the same
-`404` a genuinely missing session returns — never a distinct "forbidden" response,
+`404` a genuinely missing session returns, never a distinct "forbidden" response,
 which would confirm that the session ID belongs to *some* real session and leak its
 existence.
 
-The `GET`/`DELETE` conversation endpoints under `/v1/agents/:name/memory` accept an
-optional `?session_id=` query parameter, resolved and ownership-checked the same
-way; with none supplied, they operate on the agent's default session for the
-caller's scope (or report an empty conversation if that agent has never run).
+The `GET` and `DELETE` conversation endpoints under `/cortex/v1/agents/:name/memory`
+take a `?session_id=` query parameter, resolved and ownership-checked the same way.
+The handlers are written to fall back to the agent's default session for the
+caller's scope when it's missing (or report an empty conversation if that agent has
+never run), but the current request binding rejects a request without
+`session_id`, so pass it.
 
 ## Upgrading: message_count on a legacy session
 
 Every pre-existing conversation is backfilled into a new default session for its
 agent and scope, run directly from `Migrate()` after the rescope pass rather than
 as a one-shot migration (see `CHANGELOG.md` for the full reasoning). That backfill
-computes the new session's `MessageCount` as a **`DISTINCT` count of `(role,
-content)` pairs**, not a raw row count.
+computes the new session's `MessageCount` as a `DISTINCT` count of `(role,
+content)` pairs, not a raw row count.
 
 The reason is a bug this release also fixes: until then, the reasoning loop
 re-saved a run's entire reloaded conversation history as new rows on every turn, so
-a real N-turn conversation could hold far more physical rows than logical messages
-— a three-turn conversation could reach 14 rows where it should hold 6. Backfilling
+a real N-turn conversation could hold far more physical rows than logical messages.
+A three-turn conversation could reach 14 rows where it should hold 6. Backfilling
 `MessageCount` as a raw row count would report a number already known to be wrong
 on the first read of every upgraded deployment. Counting distinct `(role, content)`
 pairs instead has two consequences worth knowing about on a legacy session
 specifically:
 
-- **`MessageCount` may read lower than the session's physical row count.**
-  `LoadConversation` still returns every row, duplicates included; only the
+- `MessageCount` may read lower than the session's physical row count.
+  `LoadConversation` still returns every row, duplicates included. Only the
   counter is deduplicated.
-- **A user who genuinely sent the same message twice in a legacy conversation is
-  counted once**, indistinguishable from a duplicate the old bug created.
+- A user who genuinely sent the same message twice in a legacy conversation is
+  counted once, indistinguishable from a duplicate the old bug created.
 
-Conversations created after this release count normally — the duplication this
+Conversations created after this release count normally. The duplication this
 works around no longer happens, so `MessageCount` there is an exact row count.

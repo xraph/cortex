@@ -201,9 +201,11 @@ if errors.Is(err, cortex.ErrOverlayNotFound) {
 }
 ```
 
-There is no HTTP endpoint and no dashboard screen for overlays in this release.
-You write them through the composite store, which you reach with
-`eng.Store()`.
+The REST API in the `api` module has no overlay routes. You write overlays
+through the composite store, which you reach with `eng.Store()`. If you run the
+Forge extension with the dashboard, its contract also has `overlays.list`,
+`overlays.save` and `overlays.delete` operations, gated by the `cortex.overlay`
+capability.
 
 ### Patch modes
 
@@ -252,7 +254,8 @@ A declined patch does not fail the run. The section stays as the host wrote it,
 assembly carries on, and the run goes out under a prompt that quietly ignored
 part of its own overlay.
 
-That silence is the risk, so the engine logs it for you. Look for a Warn line
+That silence is the risk, so the engine logs it for you, as long as you gave it a
+logger with `engine.WithLogger` (the default logger discards everything). Look for a Warn line
 reading `prompt overlay patches declined`, carrying `overlay_id`, `agent_id`,
 `scope` and a comma-separated `sections` field naming exactly which of your
 patches were dropped. When a tenant swears their overlay
@@ -402,7 +405,8 @@ assembled, err := eng.BuildSystemPrompt(ctx, ag, nil)
 
 That runs the whole pipeline: collect the sections, walk the scope, apply what
 it finds, assemble in order. `POST /agents/:name/preview-prompt` does the same
-thing over HTTP and hands back the assembled string.
+thing over HTTP (as `/cortex/v1/agents/:name/preview-prompt` under the default base
+path, when you mount the `api` module) and hands back the assembled string.
 
 The walk keys off `cortex.ScopeFromContext`, so a preview shows you the prompt
 for the scope you asked from. Call it with no scope on the context and you skip

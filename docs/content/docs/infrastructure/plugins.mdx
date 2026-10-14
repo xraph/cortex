@@ -3,7 +3,7 @@ title: Plugin System
 description: Lifecycle hooks for metrics, audit trails, tracing, and custom processing.
 ---
 
-Cortex uses an opt-in plugin system where extensions subscribe to lifecycle events by implementing specific interfaces. The base interface requires only a `Name()` method — all hooks are optional.
+Cortex uses an opt-in plugin system where extensions subscribe to lifecycle events by implementing specific interfaces. The base interface requires only a `Name()` method, and every hook is optional.
 
 ## Base interface
 
@@ -15,7 +15,7 @@ type Extension interface {
 
 ## Lifecycle hooks
 
-There are 16 hook interfaces organized by category. Extensions implement only the hooks they need.
+There are 21 hook interfaces, grouped by category below. Extensions implement only the hooks they need.
 
 ### Agent lifecycle
 
@@ -39,14 +39,19 @@ There are 16 hook interfaces organized by category. Extensions implement only th
 | `ToolCalled` | `OnToolCalled(ctx, runID, toolName, args)` | Tool invocation begins |
 | `ToolCompleted` | `OnToolCompleted(ctx, runID, toolName, result, elapsed)` | Tool succeeds |
 | `ToolFailed` | `OnToolFailed(ctx, runID, toolName, err)` | Tool fails |
+| `ToolDenied` | `OnToolDenied(ctx, runID, toolName, reason)` | Your `ToolAuthorizer` denied the call |
+
+Every dispatched call ends in exactly one of `ToolCompleted`, `ToolFailed` or `ToolDenied`. A call that suspends the run fires its terminal hook when the run resumes.
 
 ### Persona lifecycle
 
-| Interface | Method | When it fires |
-|-----------|--------|---------------|
+| Interface | Method | Intended to fire |
+|-----------|--------|------------------|
 | `PersonaResolved` | `OnPersonaResolved(ctx, agentID, personaName)` | Persona loaded for run |
 | `BehaviorTriggered` | `OnBehaviorTriggered(ctx, runID, behaviorName)` | Behavior fires |
 | `CognitivePhaseChanged` | `OnCognitivePhaseChanged(ctx, runID, from, to)` | Phase transition |
+
+These three are defined, and the registry has emit methods for them, but the engine never calls those methods. Behaviors and cognitive phases aren't evaluated yet, and resolving a persona doesn't emit anything. An extension can implement them without harm; they just won't be called.
 
 ### Checkpoint lifecycle
 
@@ -63,6 +68,16 @@ There are 16 hook interfaces organized by category. Extensions implement only th
 | `OrchestrationCompleted` | `OnOrchestrationCompleted(ctx, orchID, elapsed)` | Orchestration finishes |
 | `AgentHandoff` | `OnAgentHandoff(ctx, orchID, from, to, payload)` | Agent-to-agent handoff |
 
+### Messaging lifecycle
+
+These fire when agent messaging is on (`engine.WithA2A`):
+
+| Interface | Method | When it fires |
+|-----------|--------|---------------|
+| `MessageSent` | `OnMessageSent(ctx, msgID, from, to, performative)` | A message was accepted for delivery |
+| `MessageDelivered` | `OnMessageDelivered(ctx, msgID, to)` | A message reached its recipient |
+| `MessageRefused` | `OnMessageRefused(ctx, msgID, to, reason)` | Delivery was refused |
+
 ### Shutdown
 
 | Interface | Method | When it fires |
@@ -71,7 +86,7 @@ There are 16 hook interfaces organized by category. Extensions implement only th
 
 ## Registry
 
-The `plugin.Registry` type-caches extensions at registration time:
+The engine builds a `plugin.Registry` from the extensions you pass with `engine.WithExtension`, and `eng.Extensions()` returns it. The registry sorts extensions by hook at registration time:
 
 ```go
 registry := plugin.NewRegistry(logger)
@@ -88,19 +103,20 @@ registry.EmitRunStarted(ctx, agentID, runID, input)
 
 ## Error handling
 
-Hook errors are logged but **never propagated**. Hooks must not block the agent pipeline:
+Hook errors are logged and never propagated. Hooks run synchronously on the run's goroutine, so a slow hook slows the run:
 
 ```go
 // Inside registry.EmitRunStarted:
-if err := hook.OnRunStarted(ctx, agentID, runID, input); err != nil {
-    r.logger.Warn("extension hook error", "hook", "OnRunStarted", "error", err)
+if err := e.hook.OnRunStarted(ctx, agentID, runID, input); err != nil {
+    r.logHookError("OnRunStarted", e.name, err) // a Warn with hook, extension and error fields
 }
 ```
 
 ## Built-in extensions
 
-- **`observability.MetricsExtension`** — Counters for all lifecycle events
-- **`audithook.Extension`** — Bridges events to an audit trail backend
+- `observability.MetricsExtension`: 11 counters for run, tool, persona, behavior, cognitive and checkpoint events
+- `audithook.Extension`: turns lifecycle events into an audit trail
+- the `sentinel` module: evaluation through Sentinel
 
 ## Writing a custom extension
 

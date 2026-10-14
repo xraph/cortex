@@ -1,49 +1,52 @@
 ---
 title: Go Packages
-description: Quick reference for all Cortex Go packages and their public APIs.
+description: Quick reference for the Cortex Go packages and their public APIs.
 ---
 
-All Cortex packages are importable from `github.com/xraph/cortex`.
+Most packages live in the root module, `github.com/xraph/cortex`. The REST handlers (`api`), the Forge extension (`extension`), the Sentinel adapter (`sentinel`), the Fabriq integration (`integrations/fabriq`) and the remote A2A support (`a2aremote`) are separate modules you add on their own. This page lists the main exports; [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex) has everything.
 
 ## Core packages
 
 ### `github.com/xraph/cortex`
 
-Root package. Exports context helpers, error constants, configuration, and shared types.
+Root package. Context helpers, sentinel errors, configuration and shared types.
 
 | Export | Description |
 |--------|-------------|
-| `WithScope(ctx, scope)` | Attach a host-defined `Scope` to context |
-| `ScopeFromContext(ctx)` | Read the `Scope` from context (zero value if absent) |
-| `Scope`, `Level` | Host-defined scope hierarchy; Cortex only matches on `Level.Key`, never interprets it |
-| `Config` | Engine configuration struct |
-| `DefaultConfig()` | Returns default Config values |
-| `Entity` | Base entity with common fields |
-| `ErrNoStore`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNoScope`, `ErrNoRescoper`, ... | 20+ sentinel errors |
-| `Rescoper`, `MigrateOption`, `WithRescoper(r)`, `ApplyMigrateOptions(...)`, `ValidateRescopedScope(s)` | Legacy-row migration; see the [rescope guide](/docs/guides/v1.8-rescope) |
+| `WithScope(ctx, scope)` | Attach a host-defined `Scope` to the context (at most three levels, no empty keys or values) |
+| `ScopeFromContext(ctx)` | Read the `Scope` back (zero value if absent) |
+| `Scope`, `Level` | Host-defined scope hierarchy, with `IsZero`, `Covers`, `Get` and `Canonical`; `ParseCanonical` reverses `Canonical` |
+| `WithPrincipal(ctx, p)`, `PrincipalFromContext(ctx)` | Carry your caller identity through to the `ToolAuthorizer` |
+| `ToolAuthorizer`, `Subject`, `Invocation`, `ErrRequiresApproval` | Tool visibility and dispatch decisions; see [Tool Authorization](/docs/concepts/authorization) |
+| `Config`, `DefaultConfig()` | Engine defaults |
+| `Entity`, `NewEntity()` | Base entity with `CreatedAt` and `UpdatedAt` |
+| `ErrNoStore`, `ErrNoScope`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNotSuspended`, ... | Sentinel errors; see [Error Handling](/docs/concepts/errors) |
+| `Rescoper`, `MigrateOption`, `WithRescoper(r)`, `ApplyMigrateOptions(...)`, `ValidateRescopedScope(s)`, `ErrNoRescoper` | Legacy-row migration; see the [rescope guide](/docs/guides/v1.8-rescope) |
 
 ### `github.com/xraph/cortex/engine`
 
-The central Engine coordinator and all CRUD passthroughs.
+The central coordinator.
 
 | Export | Description |
 |--------|-------------|
 | `New(...Option) (*Engine, error)` | Create an engine |
-| `Engine.Start(ctx)` | Initialize the engine |
-| `Engine.Stop(ctx)` | Graceful shutdown (emits `OnShutdown`) |
-| `Engine.Store()` | Access the composite store |
-| `Engine.Extensions()` | Access the plugin registry |
-| `Engine.Config()` | Access the configuration |
-| `Engine.CreateAgent`, `GetAgent`, `ListAgents`, ... | Agent CRUD (6 methods) |
-| `Engine.CreateSkill`, `GetSkillByName`, `ListSkills`, ... | Skill CRUD (5 methods) |
-| `Engine.CreateTrait`, `GetTraitByName`, `ListTraits`, ... | Trait CRUD (5 methods) |
-| `Engine.CreateBehavior`, `GetBehaviorByName`, ... | Behavior CRUD (5 methods) |
-| `Engine.CreatePersona`, `GetPersonaByName`, ... | Persona CRUD (5 methods) |
-| `Engine.GetRun`, `ListRuns` | Run reads (2 methods) |
-| `Engine.LoadConversation`, `ClearConversation` | Memory (2 methods) |
-| `Engine.ListPendingCheckpoints`, `ResolveCheckpoint` | Checkpoint (2 methods) |
-| `Engine.Resume`, `ResumeStream` | Continue a suspended run (2 methods) |
-| `Option`, `WithStore`, `WithExtension`, `WithLogger`, `WithConfig` | Engine options |
+| `Engine.Start(ctx)`, `Engine.Stop(ctx)` | Start and stop the suspension sweeper and the message bus; `Stop` emits `OnShutdown` |
+| `Engine.Health(ctx)` | Ping the store |
+| `Engine.Store()`, `Extensions()`, `Config()`, `UpdateConfig(cfg)`, `LLM()`, `Safety()`, `Knowledge()`, `A2A()` | Accessors |
+| `Engine.RunAgent(ctx, name, input, overrides)` | Run an agent and wait for the `*run.Run` |
+| `Engine.StreamAgent(ctx, name, input, overrides, events)` | Run an agent and send `StreamEvent`s on a channel, which it closes |
+| `Engine.Resume`, `ResumeStream`, `CancelRun` | Continue or cancel a suspended run |
+| `Engine.BuildSystemPrompt(ctx, ag, overrides)` | The assembled system prompt for an agent |
+| `Engine.CreateAgent`, `GetAgent`, `GetAgentByName`, `UpdateAgent`, `DeleteAgent`, `ListAgents`, `CountAgents`, `CloneAgent` | Agents |
+| `Engine.CreateSkill`, `GetSkillByName`, `ListSkills`, ... (and the same for traits, behaviors and personas, plus `ClonePersona`) | Human model CRUD |
+| `Engine.GetRun`, `ListRuns`, `CountRuns`, `ListSteps`, `ListToolCalls` | Run history |
+| `Engine.LoadConversation`, `ClearConversation` | Conversation memory, per session |
+| `Engine.ListPendingCheckpoints`, `CountPendingCheckpoints`, `GetCheckpoint`, `ResolveCheckpoint` | Checkpoints |
+| `Engine.CreateOrchestration`, `RunOrchestration(ctx, name, input)`, `ListOrchestrationRuns`, ... | Orchestration |
+| `Engine.SendMessage`, `AgentInbox`, `ListConversations`, `GetConversation`, `ListMessages` | Agent messaging |
+| `Engine.VisibleTools(ctx, agentID)` | The tools an agent would see |
+| `RunOverrides`, `ResumeInput`, `ToolResult`, `StreamEvent`, `ToolHandler` | Run inputs and outputs |
+| `WithStore`, `WithLLM`, `WithConfig`, `WithTool`, `WithExternalTool`, `WithToolAuthorizer`, `WithSafety`, `WithKnowledge`, `WithA2A`, `WithExtension`, `WithLogger`, `WithSuspensionTTL`, `WithSuspensionSweepInterval`, `WithSuspensionSweepLimit` | Engine options; see [Configuration](/docs/concepts/configuration) |
 
 ## Domain packages
 
@@ -54,53 +57,57 @@ Agent configuration and store interface.
 ```go
 type Config struct {
     cortex.Entity
-    ID, Name, Description, SystemPrompt, Model string
-    Scope cortex.Scope
-    Tools []string                    // flat mode
-    PersonaRef string                 // persona mode
-    MaxSteps, MaxTokens int
-    Temperature float64
-    ReasoningLoop string
+    ID                                         id.AgentID
+    Name, Description, SystemPrompt, Model     string
+    Scope                                      cortex.Scope
+    Tools                                      []string // restricts the tools the model sees
+    MaxSteps, MaxTokens                        int
+    Temperature                                float64
+    ReasoningLoop                              string
+    Guardrails, Metadata                       map[string]any
+    Enabled                                    bool
+    PersonaRef                                 string
     InlineSkills, InlineTraits, InlineBehaviors []string
-    Sections []prompt.Section         // addressable prompt, wins over SystemPrompt
-    Guardrails, Metadata map[string]any
+    Sections                                   []prompt.Section // wins over SystemPrompt
 }
 
 func (c *Config) PromptSections() []prompt.Section
 func (c *Config) SyncSystemPrompt()
+func (c *Config) HasPersona() bool
+func CloneConfig(src *Config, newID id.AgentID, newName string) (*Config, error)
 
 const RoleSectionID = "role"
 
-type Store interface {  // 6 methods
-    Create, Get, GetByName(ctx, name), Update, Delete, List
+type Store interface { // 7 methods
+    Create, Get, GetByName, Update, Delete, List, CountAgents
 }
 ```
 
-`Sections` and `SystemPrompt` have a stated precedence: a non-empty `Sections`
-derives `SystemPrompt` and overwrites it, and an empty `Sections` with a
-non-empty `SystemPrompt` lowers into one section with id `role`. See
-[Prompt Composition](/docs/concepts/prompt-composition).
+A non-empty `Sections` derives `SystemPrompt` and overwrites it, and an empty `Sections` with a non-empty `SystemPrompt` lowers into one section with id `role`. See [Prompt Composition](/docs/concepts/prompt-composition).
 
 ### `github.com/xraph/cortex/skill`
 
-Skills, tool bindings, knowledge references, and proficiency levels.
+Skills, tool bindings, knowledge references and proficiency levels.
 
 ```go
 type Skill struct {
     cortex.Entity
-    ID, Name, Description string
-    Scope cortex.Scope
-    Tools []ToolBinding
-    Knowledge []KnowledgeRef
-    SystemPromptFragment, DefaultProficiency string
-    Dependencies []string
+    ID                   id.SkillID
+    Name, Description    string
+    Scope                cortex.Scope
+    Tools                []ToolBinding
+    Knowledge            []KnowledgeRef
+    SystemPromptFragment string
+    Dependencies         []string
+    DefaultProficiency   Proficiency
+    Metadata             map[string]any
 }
 
-// Proficiency levels: Novice (0.2), Beginner (0.4),
-// Competent (0.6), Proficient (0.8), Expert (1.0)
+// Proficiency: novice (0.2), apprentice (0.4), competent (0.6),
+// proficient (0.8), expert (1.0). Proficiency.Weight() returns the number.
 
-type Store interface {  // 6 methods
-    CreateSkill, GetSkill, GetSkillByName(ctx, name), UpdateSkill, DeleteSkill, ListSkills
+type Store interface { // 7 methods
+    CreateSkill, GetSkill, GetSkillByName, UpdateSkill, DeleteSkill, ListSkills, CountSkills
 }
 ```
 
@@ -111,57 +118,67 @@ Personality traits with bipolar dimensions and influences.
 ```go
 type Trait struct {
     cortex.Entity
-    ID, Name, Description string
-    Scope cortex.Scope
-    Dimensions []Dimension    // bipolar axes (e.g. detached - empathetic)
-    Influences []Influence    // targets: prompt_injection, max_steps, tool_selection, response_style
-    Category Category         // personality, workstyle, communication, risk
+    ID                id.TraitID
+    Name, Description string
+    Scope             cortex.Scope
+    Dimensions        []Dimension // bipolar axes, e.g. detached to empathetic
+    Influences        []Influence // prompt_injection, temperature, max_steps, tool_selection, response_style
+    Category          Category    // personality, workstyle, communication, risk
+    Metadata          map[string]any
 }
 
-type Store interface {  // 6 methods
-    CreateTrait, GetTrait, GetTraitByName(ctx, name), UpdateTrait, DeleteTrait, ListTraits
+type Store interface { // 7 methods
+    CreateTrait, GetTrait, GetTraitByName, UpdateTrait, DeleteTrait, ListTraits, CountTraits
 }
 ```
 
+Only `prompt_injection` influences are applied to runs today.
+
 ### `github.com/xraph/cortex/behavior`
 
-Reactive behaviors with triggers and actions.
+Behaviors as triggers and actions. Stored, not evaluated yet.
 
 ```go
 type Behavior struct {
     cortex.Entity
-    ID, Name, Description string
-    Scope cortex.Scope
-    Triggers []Trigger      // 6 types: keyword_match, sentiment_below, etc.
-    Actions  []Action       // 6 types: inject_prompt, modify_tone, etc.
-    Priority int
+    ID                           id.BehaviorID
+    Name, Description            string
+    Scope                        cortex.Scope
+    Triggers                     []Trigger // on_input, on_tool_result, on_error, on_step_count, on_context, always
+    Actions                      []Action  // inject_prompt, prefer_skill, require_tool, modify_param, switch_cognitive, add_guardrail
+    Priority                     int
     RequiresSkill, RequiresTrait string
+    Metadata                     map[string]any
 }
 
-type Store interface {  // 6 methods
-    CreateBehavior, GetBehavior, GetBehaviorByName(ctx, name), UpdateBehavior, DeleteBehavior, ListBehaviors
+type Store interface { // 7 methods
+    CreateBehavior, GetBehavior, GetBehaviorByName, UpdateBehavior, DeleteBehavior, ListBehaviors, CountBehaviors
 }
 ```
 
 ### `github.com/xraph/cortex/persona`
 
-Persona composition — skills, traits, behaviors, and styles.
+Persona composition: an identity plus skills, traits, behaviors and styles. Runs use the `Identity`; the rest is stored.
 
 ```go
 type Persona struct {
     cortex.Entity
-    ID, Name, Description, Identity string
-    Scope cortex.Scope
-    Skills []SkillAssignment
-    Traits []TraitAssignment
-    Behaviors []string
-    CognitiveStyle cognitive.Style
-    CommunicationStyle communication.Style
-    Perception perception.Model
+    ID                          id.PersonaID
+    Name, Description, Identity string
+    Scope                       cortex.Scope
+    Skills                      []SkillAssignment
+    Traits                      []TraitAssignment
+    Behaviors                   []string
+    CognitiveStyle              cognitive.Style
+    CommunicationStyle          communication.Style
+    Perception                  perception.Model
+    Metadata                    map[string]any
 }
 
-type Store interface {  // 6 methods
-    CreatePersona, GetPersona, GetPersonaByName(ctx, name), UpdatePersona, DeletePersona, ListPersonas
+func ClonePersona(src *Persona, newID id.PersonaID, newName string) (*Persona, error)
+
+type Store interface { // 7 methods
+    CreatePersona, GetPersona, GetPersonaByName, UpdatePersona, DeletePersona, ListPersonas, CountPersonas
 }
 ```
 
@@ -190,68 +207,56 @@ const OrderRole, OrderPersona, OrderSkill, OrderKnowledge, OrderTrait = 1000, 20
 
 type Overlay struct {
     cortex.Entity
-    ID      id.OverlayID
-    AgentID id.AgentID
-    Scope   cortex.Scope
-    Patches []Patch
+    ID                       id.OverlayID
+    AgentID                  id.AgentID
+    Scope                    cortex.Scope
+    Patches                  []Patch
     ToolsAdded, ToolsRemoved []string
-    Model       string
-    Temperature *float64
-    MaxTokens   *int
+    Model                    string
+    Temperature              *float64
+    MaxTokens                *int
 }
 
-type Store interface {  // 7 methods
+type Store interface { // 7 methods
     CreateOverlay, GetOverlay, GetOverlayForAgent, GetOverlayForAgentAt,
     UpdateOverlay, DeleteOverlay, ListOverlays
 }
 ```
 
-`ApplyOverlay` returns the patches it declined as its second value. A `Locked`
-section takes an append and nothing else, so a replace is declined and so is any
-`Mode` outside the two constants. See
-[Prompt Composition](/docs/concepts/prompt-composition).
+`ApplyOverlay` returns the patches it declined as its second value. A `Locked` section takes an append and nothing else, so a replace is declined and so is any `Mode` outside the two constants. See [Prompt Composition](/docs/concepts/prompt-composition).
 
-### `github.com/xraph/cortex/cognitive`
+### `github.com/xraph/cortex/cognitive`, `communication`, `perception`
 
-Cognitive processing styles.
+Value objects embedded in a persona. They're stored and returned, but the engine doesn't apply them yet.
 
 ```go
+// cognitive
 type Style struct {
-    Phases []Phase
+    Phases                                                []Phase
     DepthPreference, FocusPreference, ReflectionFrequency float64
 }
 type Phase struct {
-    Strategy   Strategy             // analytical, creative, methodical, reactive, reflective, collaborative
+    Strategy   Strategy            // analytical, creative, methodical, reactive, reflective, collaborative
     MaxSteps   int
     Transition TransitionCondition // after_steps, on_stuck, on_plan_complete, on_error
 }
-```
 
-### `github.com/xraph/cortex/communication`
-
-Communication style configuration.
-
-```go
+// communication
 type Style struct {
-    Tone, PreferredFormat string
+    Tone, PreferredFormat                string
     Formality, Verbosity, TechnicalLevel float64
-    EmojiUsage, AdaptToUser bool
+    EmojiUsage, AdaptToUser              bool
 }
-```
 
-### `github.com/xraph/cortex/perception`
-
-Perception and attention models.
-
-```go
+// perception
 type Model struct {
-    AttentionFilters []AttentionFilter
+    AttentionFilters                 []AttentionFilter
     ContextWindow, DetailOrientation float64
 }
 type AttentionFilter struct {
-    Name string
+    Name               string
     Keywords, Patterns []string
-    Prompt string
+    Prompt             string
 }
 ```
 
@@ -259,43 +264,70 @@ type AttentionFilter struct {
 
 ### `github.com/xraph/cortex/run`
 
-Run tracking — runs, steps, and tool calls.
+Runs, steps and tool calls.
 
 ```go
 type Run struct {
-    ID id.AgentRunID
-    AgentID id.AgentID
-    Scope cortex.Scope
-    State, Input, Output, Error string
-    StepCount, TokensUsed int
+    cortex.Entity
+    ID                     id.AgentRunID
+    AgentID                id.AgentID
+    SessionID              id.SessionID
+    Scope                  cortex.Scope
+    State                  State // created, running, completed, failed, cancelled, paused
+    Input, Output, Error   string
+    StepCount, TokensUsed  int
     StartedAt, CompletedAt *time.Time
+    PersonaRef             string
+    Metadata               map[string]any
 }
-// RunStates: created, running, completed, failed, cancelled, paused
 
-type Step struct { ID, RunID, Index, Type, Input, Output, TokensUsed, ... }
-type ToolCall struct { ID, StepID, RunID, ToolName, Arguments, Result, Error, ... }
+type Step struct { ID, RunID, Scope, Index, Type, Input, Output, TokensUsed, ... }
+type ToolCall struct { ID, StepID, RunID, Scope, ToolName, Arguments, Result, Error, ... }
 
-type Store interface {  // 8 methods
-    CreateRun, GetRun, UpdateRun, ListRuns,
+type Store interface { // 9 methods
+    CreateRun, GetRun, UpdateRun, ListRuns, CountRuns,
     CreateStep, ListSteps,
     CreateToolCall, ListToolCalls
 }
 ```
 
+### `github.com/xraph/cortex/session`
+
+Conversation threads. One default session per agent per scope.
+
+```go
+type Session struct {
+    cortex.Entity
+    ID           id.SessionID
+    AgentID      id.AgentID
+    Scope        cortex.Scope
+    Title        string
+    Metadata     map[string]any
+    MessageCount int
+    LastMessage  string
+    IsDefault    bool
+    BackfilledBy string
+}
+
+type Store interface { // 6 methods
+    CreateSession, GetSession, UpdateSession, DeleteSession, ListSessions, CountSessions
+}
+```
+
 ### `github.com/xraph/cortex/memory`
 
-Conversation, working memory, and summaries.
+Conversation memory per session, plus working memory and summaries that only the store implements.
 
 ```go
 type Message struct {
     Role, Content string
-    ToolCalls []ToolCallRef
-    Metadata map[string]any
-    Timestamp time.Time
+    ToolCalls     []any
+    Metadata      map[string]any
+    Timestamp     time.Time
 }
 
-type Store interface {  // 8 methods
-    SaveConversation, LoadConversation, ClearConversation,
+type Store interface { // 8 methods
+    SaveConversation, LoadConversation, ClearConversation, // take an agent ID and a session ID
     SaveWorking, LoadWorking, ClearWorking,
     SaveSummary, LoadSummaries
 }
@@ -307,178 +339,276 @@ Human-in-the-loop checkpoints.
 
 ```go
 type Checkpoint struct {
-    ID id.CheckpointID
-    RunID id.AgentRunID
-    AgentID id.AgentID
-    Scope cortex.Scope
-    Reason, State string
-    Decision *Decision
+    cortex.Entity
+    ID            id.CheckpointID
+    RunID         id.AgentRunID
+    AgentID       id.AgentID
+    Scope         cortex.Scope
+    Reason, State string // state is "pending" or "resolved"
+    StepIndex     int
+    Decision      *Decision
+    Metadata      map[string]any
 }
 type Decision struct {
-    Approved bool
+    Approved          bool
     DecidedBy, Reason string
-    DecidedAt time.Time
+    DecidedAt         time.Time
 }
 
-type Store interface {  // 4 methods
-    CreateCheckpoint, GetCheckpoint, Resolve, ListPending
+type Store interface { // 5 methods
+    CreateCheckpoint, GetCheckpoint, Resolve, ListPending, CountPending
 }
 ```
+
+### `github.com/xraph/cortex/suspension`
+
+A paused run and what it needs to continue.
+
+```go
+type Suspension struct {
+    ID        id.SuspensionID
+    RunID     id.AgentRunID
+    Scope     cortex.Scope
+    Reason    SuspendReason // approval, external_tool, agent_reply
+    Pending   []PendingCall
+    Cont      Continuation
+    ExpiresAt *time.Time
+    // ...
+}
+
+type Store interface { // 7 methods
+    CreateSuspension, GetSuspension, ClaimSuspension, DeleteSuspension,
+    ListExpired, ListExpiredAcrossScopes, ClaimExpiredSuspension
+}
+```
+
+See [Suspension](/docs/concepts/suspension).
+
+### `github.com/xraph/cortex/orchestration`
+
+Multi-agent strategies, the blackboard, and stored configs and runs.
+
+```go
+type Config struct {
+    cortex.Entity
+    ID                id.OrchestrationConfigID
+    Name, Description string
+    Scope             cortex.Scope
+    Strategy          string // StrategySequential, StrategyParallel, StrategyRouter, StrategyHierarchical, StrategyDebate
+    Participants      []Participant // AgentName, Role, Skills
+    Settings          Settings      // MaxConcurrency, Rounds, Manager, Judge, Aggregator, RouterAgent, RouterRules, Model
+    Metadata          map[string]any
+}
+
+type ConfigStore interface { // 7 methods
+    CreateOrchestration, GetOrchestration, GetOrchestrationByName,
+    UpdateOrchestration, DeleteOrchestration, ListOrchestrations, CountOrchestrations
+}
+type RunStore interface { // 5 methods
+    CreateOrchestrationRun, GetOrchestrationRun, UpdateOrchestrationRun,
+    ListOrchestrationRuns, CountOrchestrationRuns
+}
+```
+
+### `github.com/xraph/cortex/a2a`
+
+The in-process agent-to-agent bus: FIPA-ACL envelopes, conversations, deliveries, pending asks, and Contract Net helpers (`ContractNet`, `CollectTender`). Turn it on with `engine.WithA2A(a2a.Options{...})`. Its `Store` has 20 methods. See [Agent Messaging](/docs/execution/messaging).
+
+## Adapters
+
+| Package | What it is |
+|---------|------------|
+| `llm` | `Client` interface (`Complete`, `CompleteStream`), with `Request`, `Response`, `Tool`, `ToolCall` and `Message` |
+| `llm/nexus` | `New(*nexus.Gateway)` adapts a Nexus gateway; `EngineOption(container)` finds one in a vessel container |
+| `safety` | `Scanner` interface (`ScanInput`, `ScanOutput`) |
+| `safety/shield` | `New(*shield engine)` adapts Shield; `EngineOption(container)` |
+| `knowledge` | `Provider` interface (`Retrieve`, `ListCollections`) |
+| `knowledge/weave` | `New(*weave engine)` adapts Weave; `EngineOption(container)` |
+
+Each `EngineOption(container)` returns a no-op option when its service isn't in the container, which is how the Forge extension wires them all unconditionally.
 
 ## Identity package
 
 ### `github.com/xraph/cortex/id`
 
-TypeID-based identifiers (UUIDv7, K-sortable).
+TypeID-based identifiers (UUIDv7, K-sortable). Every entity ID type is an alias of one struct.
 
 ```go
-// 12 type aliases
-type AgentID, SkillID, TraitID, BehaviorID, PersonaID string
-type AgentRunID, StepID, ToolCallID, CheckpointID string
-type MemoryID, OrchestrationID, HandoffID string
+type ID struct { /* wraps a TypeID */ }
 
-// Constructors: NewAgentID(), NewSkillID(), ...
-// Parsers: ParseAgentID(s), ParseSkillID(s), ...
+// Aliases: AgentID, AgentRunID, ToolID, ToolCallID, StepID, MemoryID,
+// CheckpointID, OrchestrationID, OrchestrationConfigID, SkillID, TraitID,
+// BehaviorID, PersonaID, SessionID, SuspensionID, OverlayID, MessageID,
+// ConversationID, DeliveryID, AnyID = ID
 
-// Prefixes: agt_, skl_, trt_, bhv_, prs_, arun_, astp_, tcall_, cp_, mem_, orch_, hoff_
+// Constructors: New(prefix), NewAgentID(), NewSkillID(), ...
+// Parsers: Parse(s), ParseWithPrefix(s, prefix), ParseAgentID(s), MustParse(s), ...
+
+// Prefixes: agt, arun, tool, tcall, astp, mem, acp, orch, orchcfg, skl, trt,
+// bhv, prs, ses, sus, ovl, msg, conv, dlv
 ```
+
+See [Identity](/docs/concepts/identity).
 
 ## Infrastructure packages
 
 ### `github.com/xraph/cortex/store`
 
-Composite store interface embedding all 8 domain stores.
+The composite store interface, embedding fourteen sub-interfaces.
 
 ```go
 type Store interface {
-    agent.Store      // 6 methods
-    skill.Store      // 6 methods
-    trait.Store      // 6 methods
-    behavior.Store   // 6 methods
-    persona.Store    // 6 methods
-    run.Store        // 8 methods
-    memory.Store     // 8 methods
-    checkpoint.Store // 4 methods
-    Migrate(ctx, ...opts) error
-    Ping(ctx) error
+    agent.Store               // 7 methods
+    run.Store                 // 9 methods
+    memory.Store              // 8 methods
+    checkpoint.Store          // 5 methods
+    skill.Store               // 7 methods
+    trait.Store               // 7 methods
+    behavior.Store            // 7 methods
+    persona.Store             // 7 methods
+    prompt.Store              // 7 methods
+    session.Store             // 6 methods
+    suspension.Store          // 7 methods
+    orchestration.ConfigStore // 7 methods
+    orchestration.RunStore    // 5 methods
+    a2a.Store                 // 20 methods
+
+    Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
+    Ping(ctx context.Context) error
     Close() error
 }
 ```
 
-### `github.com/xraph/cortex/store/postgres`
+`store/storetest` holds the conformance suite every backend runs. See [Custom Store](/docs/guides/custom-store).
 
-Production PostgreSQL store with embedded migrations.
+### `github.com/xraph/cortex/store/postgres`, `store/sqlite`, `store/mongo`
 
-```go
-func New(db *grove.DB) *Store
-func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
-```
-
-### `github.com/xraph/cortex/store/sqlite`
-
-SQLite store with embedded migrations.
+The three backends, all on Grove.
 
 ```go
 func New(db *grove.DB) *Store
 func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
+func (s *Store) Ping(ctx context.Context) error
+func (s *Store) Close() error
 ```
 
-### `github.com/xraph/cortex/store/mongo`
-
-MongoDB store with embedded migrations.
-
-```go
-func New(db *grove.DB) *Store
-func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error
-```
+PostgreSQL and SQLite register their migrations in Go and need Grove's `pgmigrate` or `sqlitemigrate` executor imported; MongoDB only creates indexes.
 
 ### `github.com/xraph/cortex/plugin`
 
-Plugin system — base interface, 16 lifecycle hook interfaces, and the Registry.
+The plugin system: the base interface, 21 lifecycle hook interfaces, and the Registry.
 
 ```go
 type Extension interface { Name() string }
 
-// 16 hook interfaces: RunStarted, RunCompleted, RunFailed,
-// StepStarted, StepCompleted, ToolCalled, ToolCompleted, ToolFailed,
-// PersonaResolved, BehaviorTriggered, CognitivePhaseChanged,
+// 21 hook interfaces: RunStarted, RunCompleted, RunFailed,
+// StepStarted, StepCompleted, ToolCalled, ToolCompleted, ToolFailed, ToolDenied,
+// PersonaResolved, BehaviorTriggered, CognitivePhaseChanged (never emitted yet),
 // CheckpointCreated, CheckpointResolved,
 // OrchestrationStarted, OrchestrationCompleted, AgentHandoff,
+// MessageSent, MessageDelivered, MessageRefused,
 // Shutdown
 
 type Registry struct { ... }
-func NewRegistry(logger) *Registry
-func (r *Registry) Register(Extension)
+func NewRegistry(logger log.Logger) *Registry
+func (r *Registry) Register(e Extension)
 func (r *Registry) Extensions() []Extension
-// 16 Emit methods: EmitRunStarted, EmitRunCompleted, ...
+// One Emit method per hook: EmitRunStarted, EmitRunCompleted, ...
 ```
 
 ### `github.com/xraph/cortex/observability`
 
-Prometheus-compatible metrics plugin (11 counters).
+Metrics plugin with 11 counters, recorded through a go-utils `MetricFactory`.
 
 ```go
-func NewMetricsExtension() *MetricsExtension
+func NewMetricsExtension() *MetricsExtension // its own collector
 func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension
 ```
 
 ### `github.com/xraph/cortex/audit_hook`
 
-Structured audit trail plugin.
+Audit trail plugin (package `audithook`).
 
 ```go
-func New(recorder Recorder, opts ...Option) *Extension
-type Recorder interface { Record(ctx, AuditEvent) error }
-type RecorderFunc func(ctx, AuditEvent) error   // adapter
-// Options: WithActions(...), WithLogger(...)
-// 18 action constants, 8 resource constants
+func New(r Recorder, opts ...Option) *Extension
+type Recorder interface { Record(ctx context.Context, event *AuditEvent) error }
+type RecorderFunc func(ctx context.Context, event *AuditEvent) error // adapter
+// Options: WithActions(...string), WithLogger(log.Logger)
+// 18 action constants, 8 resource constants, 5 category constants
 ```
+
+## Separate modules
 
 ### `github.com/xraph/cortex/api`
 
-HTTP API handlers for all 36 routes.
+The REST handlers, 59 routes. See the [HTTP API reference](/docs/api-reference/http-api).
 
 ```go
 func New(eng *engine.Engine, router forge.Router) *API
 func (a *API) Handler() http.Handler
-func (a *API) RegisterRoutes(router forge.Router)
+func (a *API) RegisterRoutes(router forge.Router) error
 ```
 
 ### `github.com/xraph/cortex/extension`
 
-Forge integration extension.
+The Forge extension and its dashboard contract. See [Forge Extension](/docs/guides/forge-extension).
 
 ```go
 func New(opts ...ExtOption) *Extension
 func (e *Extension) Engine() *engine.Engine
-func (e *Extension) API() *api.API
-// Implements forge.Extension: Name, Description, Version, Dependencies,
-// Register, Start, Stop, Health, RegisterRoutes, Handler
-// Options: WithStore, WithExtension, WithEngineOption, WithConfig,
-// WithDisableRoutes, WithDisableMigrate, WithBasePath, WithLogger
+func (e *Extension) Routes() RouteSet // nil unless WithRoutes was used
+func (e *Extension) Handler() http.Handler
+func (e *Extension) RegisterRoutes(router forge.Router) error
+// Implements forge.Extension: Register, Start, Stop, Health (Name, Version
+// and the rest come from the embedded forge.BaseExtension).
+
+type RouteSet interface {
+    Handler() http.Handler
+    RegisterRoutes(router forge.Router) error
+}
+
+// Options: WithStore, WithGroveDatabase, WithRoutes, WithBasePath,
+// WithDisableRoutes, WithDisableMigrate, WithExtension, WithEngineOption,
+// WithConfig, WithRequireConfig, WithDashboard
 ```
+
+### `github.com/xraph/cortex/sentinel`
+
+Evaluation through [Sentinel](https://github.com/xraph/sentinel): `EngineOption(container, ...Option)`, `New(*sentinel engine, ...Option)` for the plugin, and `NewAgentClient(eng)`.
+
+### `github.com/xraph/cortex/integrations/fabriq`
+
+Package `fabriqbrain`: Fabriq as a knowledge provider, extra tools and a learning-loop plugin. See [Fabriq Brain](/docs/integrations/fabriq).
+
+### `github.com/xraph/cortex/a2aremote`
+
+Agent2Agent over JSON-RPC, REST and SSE, with gRPC in `a2aremote/grpcbind`. Not tagged yet. See [Remote Agents](/docs/execution/remote-messaging).
 
 ## Package index
 
 | Package | Type | Description |
 |---------|------|-------------|
-| `cortex` | Core | Root — context helpers, errors, config |
+| `cortex` | Core | Root: context helpers, errors, config, authorization |
 | `engine` | Core | Central coordinator |
 | `agent` | Domain | Agent configuration |
 | `skill` | Domain | Skills and tool bindings |
 | `trait` | Domain | Personality traits |
-| `behavior` | Domain | Reactive behaviors |
+| `behavior` | Domain | Behaviors |
 | `persona` | Domain | Persona composition |
 | `prompt` | Domain | Prompt sections and scope overlays |
 | `cognitive` | Domain | Cognitive styles |
 | `communication` | Domain | Communication styles |
 | `perception` | Domain | Perception models |
 | `run` | Execution | Run tracking |
-| `memory` | Execution | Conversation memory |
 | `session` | Execution | Conversation threads |
+| `memory` | Execution | Conversation memory |
 | `checkpoint` | Execution | Human-in-the-loop |
 | `suspension` | Execution | Paused runs and their continuations |
 | `orchestration` | Execution | Multi-agent strategies, blackboard, Config/Run |
+| `a2a` | Execution | Agent-to-agent messaging |
+| `llm`, `llm/nexus` | Adapter | LLM client interface and Nexus adapter |
+| `safety`, `safety/shield` | Adapter | Safety scanner interface and Shield adapter |
+| `knowledge`, `knowledge/weave` | Adapter | Knowledge provider interface and Weave adapter |
 | `id` | Identity | TypeID identifiers |
 | `store` | Infrastructure | Composite store interface |
 | `store/postgres` | Infrastructure | PostgreSQL implementation |
@@ -487,5 +617,8 @@ func (e *Extension) API() *api.API
 | `plugin` | Infrastructure | Plugin system |
 | `observability` | Infrastructure | Metrics plugin |
 | `audit_hook` | Infrastructure | Audit plugin |
-| `api` | API | HTTP handlers |
-| `extension` | Integration | Forge extension |
+| `api` | Module | HTTP handlers |
+| `extension` | Module | Forge extension |
+| `sentinel` | Module | Sentinel evaluation |
+| `integrations/fabriq` | Module | Fabriq brain |
+| `a2aremote` | Module | Remote Agent2Agent (untagged) |

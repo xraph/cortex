@@ -1,9 +1,11 @@
 ---
 title: Perception
-description: Define how an agent sees — attention filters and contextual focus.
+description: Define how an agent sees, with attention filters and contextual focus.
 ---
 
-**Perception** defines how an agent perceives and filters information. It controls what the agent pays attention to and how much detail it processes.
+Perception describes how an agent filters information: what it pays attention to and how much detail it takes in.
+
+It's a value object on a persona, stored and returned with it. The engine doesn't apply it yet. Filters aren't matched against input, their `Prompt` isn't added to the system prompt, and `ContextWindow` and `DetailOrientation` don't change a run.
 
 ## Structure
 
@@ -53,9 +55,9 @@ perception.Model{
 
 | Field | Type | Range | Description |
 |-------|------|-------|-------------|
-| `AttentionFilters` | `[]AttentionFilter` | — | Keyword and pattern-based focus directives |
-| `ContextWindow` | `float64` | 0.0–1.0 | How much surrounding context to consider |
-| `DetailOrientation` | `float64` | 0.0–1.0 | High-level overview vs fine-grained analysis |
+| `AttentionFilters` | `[]AttentionFilter` |  | Keyword and pattern-based focus directives |
+| `ContextWindow` | `float64` | 0.0 to 1.0 | How much surrounding context to consider |
+| `DetailOrientation` | `float64` | 0.0 to 1.0 | High-level overview vs fine-grained analysis |
 
 ## Embedding in a persona
 

@@ -1,22 +1,27 @@
 ---
 title: Getting Started
-description: Install Cortex and create your first agent in under five minutes.
+description: Install Cortex, create your first agent and run it.
 ---
 
 ## Prerequisites
 
-- Go 1.24 or later
+- Go 1.26 or later
 - A Go module (`go mod init`)
+
+You don't need a model API key to follow along. An engine without an LLM client runs agents in an echo mode, which is enough to see the whole flow work. The last step plugs in a real model.
 
 ## Install
 
 ```bash
-go get github.com/xraph/cortex
+go get github.com/xraph/cortex@latest
+go get github.com/xraph/grove/drivers/sqlitedriver@latest
 ```
 
-## Step 1: Create the engine
+This guide uses SQLite so there's nothing to start. PostgreSQL and MongoDB work the same way with their own store package (see [Stores](/docs/stores/postgres)).
 
-The Cortex engine is the central coordinator. It needs a store for persistence:
+## Step 1: Create the store and the engine
+
+The engine is the central coordinator. It needs a store for persistence, and the store needs its tables:
 
 ```go
 package main
@@ -26,32 +31,33 @@ import (
     "log"
 
     "github.com/xraph/grove"
-    "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    _ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 
     "github.com/xraph/cortex/engine"
-    "github.com/xraph/cortex/store/postgres"
+    sqlitestore "github.com/xraph/cortex/store/sqlite"
 )
 
 func main() {
     ctx := context.Background()
 
-    drv := pgdriver.New()
-    if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/cortex?sslmode=disable"); err != nil {
+    drv := sqlitedriver.New()
+    if err := drv.Open(ctx, "cortex.db"); err != nil {
         log.Fatal(err)
     }
     db, err := grove.Open(drv)
     if err != nil {
         log.Fatal(err)
     }
-    pgStore := postgres.New(db)
+    st := sqlitestore.New(db)
 
-    // Run migrations.
-    if err := pgStore.Migrate(ctx); err != nil {
+    // Create the tables.
+    if err := st.Migrate(ctx); err != nil {
         log.Fatal(err)
     }
 
     eng, err := engine.New(
-        engine.WithStore(pgStore),
+        engine.WithStore(st),
     )
     if err != nil {
         log.Fatal(err)
@@ -59,15 +65,15 @@ func main() {
     if err := eng.Start(ctx); err != nil {
         log.Fatal(err)
     }
-    _ = eng
+    defer eng.Stop(ctx)
 }
 ```
 
+The blank `sqlitemigrate` import registers Grove's migration executor for SQLite. Leave it out and `Migrate` fails with "no executor registered for driver". For PostgreSQL the import is `github.com/xraph/grove/drivers/pgdriver/pgmigrate`. The MongoDB store only creates indexes and needs no executor.
+
 ## Step 2: Set up a scoped context
 
-Cortex has no built-in notion of tenant, workspace, or app. The host defines its own
-scope hierarchy and attaches it to the context. A host that wants an app dimension
-declares it as a level, the same as any other:
+Cortex has no built-in notion of tenant, workspace or app. You define your own scope levels and attach them to the context. An app dimension is just another level:
 
 ```go
 import "github.com/xraph/cortex"
@@ -80,14 +86,11 @@ ctx = cortex.WithScope(ctx, cortex.Scope{
 })
 ```
 
-`WithScope` is required before calling into the engine or the store: every scope-guarded
-operation rejects a zero scope with `cortex.ErrNoScope` rather than silently matching
-everything. All operations are automatically scoped to the levels you attach — cross-scope
-access is structurally impossible.
+Every store call needs a scope. A zero scope fails with `cortex.ErrNoScope` instead of silently matching everything, and everything you create below is stored under these levels. See [Multi-Tenancy](/docs/concepts/multi-tenancy) for how lists match by prefix.
 
 ## Step 3: Create a skill
 
-A skill defines what an agent can do. It bundles tools with contextual guidance:
+A skill bundles a prompt fragment with the tools and knowledge that go with it:
 
 ```go
 import (
@@ -111,9 +114,13 @@ if err := eng.CreateSkill(ctx, codeReview); err != nil {
 }
 ```
 
+Set the ID yourself with the `id` package. The stores don't generate one for you.
+
+When an agent lists this skill, the engine adds the `SystemPromptFragment` to its system prompt and pulls in any `Knowledge` references through the knowledge provider. The tool bindings are stored with the skill, but the engine doesn't use them to pick tools yet. An agent's `Tools` list decides which tools the model sees.
+
 ## Step 4: Create a trait
 
-A trait defines who an agent is — a personality dimension with bipolar axes:
+A trait is a personality dimension. Its influences say how it changes the agent:
 
 ```go
 import "github.com/xraph/cortex/trait"
@@ -126,7 +133,7 @@ thoroughness := &trait.Trait{
         {Name: "depth", LowLabel: "surface-level", HighLabel: "exhaustive", Value: 0.85},
     },
     Influences: []trait.Influence{
-        {Target: trait.TargetMaxSteps, Value: 30, Weight: 0.8},
+        {Target: trait.TargetPromptInjection, Value: "Check every changed line. Never approve on a skim."},
     },
 }
 if err := eng.CreateTrait(ctx, thoroughness); err != nil {
@@ -134,14 +141,16 @@ if err := eng.CreateTrait(ctx, thoroughness); err != nil {
 }
 ```
 
+Only `prompt_injection` influences with a string value reach the prompt today. The other targets (`temperature`, `max_steps`, `tool_selection`, `response_style`) are stored but not applied.
+
 ## Step 5: Create a persona
 
-A persona composes skills, traits, behaviors, and styles into a complete identity:
+A persona gives the agent an identity and groups skills, traits, behaviors and styles under one name:
 
 ```go
 import (
-    "github.com/xraph/cortex/persona"
     "github.com/xraph/cortex/communication"
+    "github.com/xraph/cortex/persona"
 )
 
 seniorEng := &persona.Persona{
@@ -166,44 +175,93 @@ if err := eng.CreatePersona(ctx, seniorEng); err != nil {
 }
 ```
 
+At run time the engine uses the persona's `Identity`. Its skill and trait assignments, behaviors and styles are stored and served by the API, but a run doesn't read them, so list the skills and traits you want on the agent itself (next step).
+
 ## Step 6: Create an agent
 
-An agent references a persona (or defines skills/traits inline):
+An agent points at a persona and lists the skills and traits it uses:
 
 ```go
 import "github.com/xraph/cortex/agent"
 
 agentCfg := &agent.Config{
-    ID:         id.NewAgentID(),
-    Name:       "reviewer-bot",
-    PersonaRef: "senior-engineer",
-    Model:      "gpt-4o",
-    MaxSteps:   25,
-    Enabled:    true,
+    ID:           id.NewAgentID(),
+    Name:         "reviewer-bot",
+    SystemPrompt: "You review pull requests and reply with a short list of findings.",
+    PersonaRef:   "senior-engineer",
+    InlineSkills: []string{"code-review"},
+    InlineTraits: []string{"thoroughness"},
+    Model:        "gpt-4o",
+    MaxSteps:     25,
 }
 if err := eng.CreateAgent(ctx, agentCfg); err != nil {
     log.Fatal(err)
 }
 ```
 
-## Step 7: Run the agent via API
-
-If you are using the Forge extension, you get 36 REST endpoints automatically. You can also invoke the engine directly:
+You can see what the model will get before you run anything:
 
 ```go
-// List agents (scope comes from ctx, the same scope attached in Step 2)
-agents, _ := eng.ListAgents(ctx, &agent.ListFilter{})
-
-// Get a specific agent
-a, _ := eng.GetAgentByName(ctx, "reviewer-bot")
-
-// List runs for an agent
-runs, _ := eng.ListRuns(ctx, &run.ListFilter{AgentID: a.ID.String()})
+prompt, err := eng.BuildSystemPrompt(ctx, agentCfg, nil)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(prompt)
 ```
+
+That prints the system prompt, then `## Identity`, `## Skill: code-review` and `## Trait: thoroughness` sections built from the records above.
+
+## Step 7: Run the agent
+
+```go
+import "github.com/xraph/cortex/run"
+
+r, err := eng.RunAgent(ctx, "reviewer-bot", "Review this diff: ...", nil)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(r.State, r.Output) // completed Echo: Review this diff: ...
+
+// Every run is stored with its steps and tool calls.
+steps, _ := eng.ListSteps(ctx, r.ID)
+runs, _ := eng.ListRuns(ctx, &run.ListFilter{AgentID: agentCfg.ID.String()})
+```
+
+Without an LLM client the engine echoes the input back. To run against a real model, give the engine an `llm.Client`. The bundled adapter wraps a [Nexus](https://github.com/xraph/nexus) gateway:
+
+```bash
+go get github.com/xraph/nexus@latest github.com/xraph/nexus/providers/openai@latest
+```
+
+```go
+import (
+    "os"
+
+    "github.com/xraph/nexus"
+    "github.com/xraph/nexus/providers/openai"
+
+    nexusllm "github.com/xraph/cortex/llm/nexus"
+)
+
+gw := nexus.New(nexus.WithProvider(openai.New(os.Getenv("OPENAI_API_KEY"))))
+if err := gw.Initialize(ctx); err != nil {
+    log.Fatal(err)
+}
+defer gw.Shutdown(ctx)
+
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithLLM(nexusllm.New(gw)),
+)
+```
+
+Tools the model can call are registered with `engine.WithTool(def, handler)`. The [README quick start](https://github.com/xraph/cortex#quick-start) shows one end to end.
+
+If you run Cortex inside a Forge app, the REST handlers in the `api` module expose the same operations over HTTP once you mount them. See [Forge Extension](/docs/guides/forge-extension).
 
 ## Next steps
 
-- [Architecture](/docs/architecture) — Understand how the packages fit together
-- [The Human Model](/docs/human-model/overview) — Deep dive into Skills, Traits, and Personas
-- [Forge Extension](/docs/guides/forge-extension) — Wire Cortex into a Forge application
-- [PostgreSQL Store](/docs/infrastructure/postgres) — Production persistence setup
+- [Architecture](/docs/architecture): how the packages fit together
+- [The Human Model](/docs/human-model/overview): skills, traits and personas in depth
+- [Forge Extension](/docs/guides/forge-extension): wire Cortex into a Forge application
+- [PostgreSQL Store](/docs/stores/postgres): production persistence setup
