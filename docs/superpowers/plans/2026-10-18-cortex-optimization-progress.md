@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`; accounting checks pass | Complete resource invariants, allocations, terminal reconciliation and activation |
+| 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`, accounting `f02dec9`; allocation checks pass | Complete resource invariants, terminal reconciliation and activation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -82,3 +82,11 @@ The runtime owner subsequently completed S1.5 with all-module lint passing, clea
 Accounting now reserves token and money bounds atomically. Concurrent requests cannot spend the same remaining budget; receipts settle once, and their history survives reconciliation. Expiry, a timeout or an estimate keeps the unresolved debit. Known token usage can settle while money remains unknown, and an observed overrun stays in the ledger and blocks further reservations. Each accounting event links its attempt, call key and debit amounts. Scope, lease and attempt checks reject foreign settlements; transaction rollback removes both the settlement and its event.
 
 Current-checkout and published-v1.8.0 race suites and the module build pass after coordinated `make f`. Final `make l` passed all nine modules with zero issues. This slice still requires a live experiment lease for settlement. Reconciliation after cancellation or the experiment deadline needs its own fenced path during worker recovery work; these tests do not establish that behavior or durable backend readiness.
+
+Holdout allocations now bind cases from the stored specification to a frozen baseline, finalist and controller roster. Concurrent claims have one winner. Renaming a case or harness, or changing surrounding input whitespace, cannot make exposed inputs fresh again. You can release an allocation before exposure; an exposed allocation stays consumed. Reads are detached, and a failed transaction rolls back exposure and its audit event together.
+
+A controller comparison can reserve one parent allocation for two named child experiments. Both children must use the same frozen validation cases, evaluator, objective and repetition count. Unrelated children, changed finalists and replacement rosters are refused. Worker integration must still mark exposure before every external validation dispatch and withhold paired results until both arms finish; the store tests alone do not establish those flows.
+
+Allocation checks pass in both current-runtime and published-v1.8.0 race suites. The module builds, and the runtime owner's coordinated final `make f` and all-nine-module `make l` passed with these changes present.
+
+CI for `f02dec9` (`39148570147`) passed the optimization job but failed two existing Fabriq tool-dispatch fixtures because they omitted scope. The adapter fixture fix uses an explicit scope, checks that an unscoped call cannot reach the handler, and passes the full adapter race suite and build. Runtime scope enforcement stays intact.

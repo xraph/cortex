@@ -16,6 +16,7 @@ type Repository interface {
 	ListEvents(context.Context, id.ID, int64, int) (Page[Event], error)
 	GetVersion(context.Context, id.ID) (HarnessVersion, error)
 	GetReservation(context.Context, id.ID, string) (Reservation, error)
+	GetValidationAllocation(context.Context, id.ID) (ValidationAllocation, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -30,6 +31,26 @@ type Transaction interface {
 	RenewLease(WorkLease) error
 	Reserve(UsageReservation) (Reservation, error)
 	Settle(UsageSettlement) error
+	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
+	ExposeValidation(ValidationAccess) error
+	ReleaseValidation(ValidationAccess) error
+}
+
+// ValidationAllocationRequest freezes one experiment or a parent's paired child
+// roster. Cases are taken from the stored specification, never caller hashes.
+type ValidationAllocationRequest struct {
+	ID           id.ID           `json:"id"`
+	ExperimentID id.ID           `json:"experiment_id"`
+	PairedRoster []ValidationArm `json:"paired_roster"`
+	Lease        WorkLease       `json:"lease"`
+}
+
+// ValidationAccess identifies the current worker consuming or releasing holdout.
+// Only the owner can release an allocation; an exposure must name a frozen arm.
+type ValidationAccess struct {
+	AllocationID id.ID     `json:"allocation_id"`
+	ExperimentID id.ID     `json:"experiment_id"`
+	Lease        WorkLease `json:"lease"`
 }
 
 // ClaimRequest names one queued or expired experiment and the claiming worker.

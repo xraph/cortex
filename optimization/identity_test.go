@@ -31,7 +31,7 @@ func TestScopeKeyRejectsAmbiguousAndUnindexedScopes(t *testing.T) {
 }
 
 func TestOptimizationIDsKeepTheirEntityKind(t *testing.T) {
-	for _, prefix := range []id.Prefix{PrefixHarness, PrefixVersion, PrefixExperiment, PrefixCandidate, PrefixTrial, PrefixDecision, PrefixLesson, PrefixEvent, PrefixActivation, PrefixAttempt} {
+	for _, prefix := range []id.Prefix{PrefixHarness, PrefixVersion, PrefixExperiment, PrefixCandidate, PrefixTrial, PrefixDecision, PrefixLesson, PrefixEvent, PrefixActivation, PrefixAttempt, PrefixValidation} {
 		original := id.New(prefix)
 		parsed, err := ParseID(original.String(), prefix)
 		if err != nil || parsed != original {

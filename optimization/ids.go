@@ -18,6 +18,7 @@ const (
 	PrefixEvent      id.Prefix = "oevt"
 	PrefixActivation id.Prefix = "oact"
 	PrefixAttempt    id.Prefix = "oatt"
+	PrefixValidation id.Prefix = "oval"
 )
 
 // ParseID validates both TypeID syntax and the expected entity kind.
