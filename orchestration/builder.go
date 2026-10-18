@@ -19,6 +19,9 @@ func Build(strategy string, runner AgentRunner, parts []Participant, settings Se
 	case StrategyRouter:
 		return newRouter(runner, parts, settings), nil
 	case StrategyHierarchical:
+		if settings.PlanRepairAttempts < 0 || settings.PlanRepairAttempts > 1 {
+			return nil, invalidPlan("repair attempts must be zero or one")
+		}
 		return newHierarchical(runner, parts, settings), nil
 	case StrategyDebate:
 		return newDebate(runner, parts, settings), nil

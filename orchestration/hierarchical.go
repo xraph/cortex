@@ -3,8 +3,12 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/xraph/cortex"
 )
 
 type hierarchical struct {
@@ -14,7 +18,7 @@ type hierarchical struct {
 }
 
 func newHierarchical(runner AgentRunner, parts []Participant, settings Settings) *hierarchical {
-	return &hierarchical{runner: runner, parts: parts, settings: settings}
+	return &hierarchical{runner: runner, parts: append([]Participant(nil), parts...), settings: settings}
 }
 
 func (o *hierarchical) Strategy() string { return StrategyHierarchical }
@@ -26,65 +30,128 @@ type delegation struct {
 
 func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*Result, error) {
 	res := &Result{OrchestrationID: bb.OrchestrationID(), Strategy: StrategyHierarchical}
-	opts := runOptsFromSettings(o.settings)
-
-	manager := o.resolveManager()
-	if manager == "" {
-		return res, nil
-	}
-	workers := nonManagerParticipants(o.parts, manager)
-
-	// 1. Manager produces a delegation plan.
-	planOut, err := o.runner.RunAgent(ctx, manager, buildPlanPrompt(workers, input), opts)
-	if err != nil {
+	fail := func(err error) (*Result, error) {
 		res.Err = err
+		res.Handoffs = bb.Handoffs()
 		return res, err
 	}
-	res.AgentResults = append(res.AgentResults, *planOut)
-	bb.Append(manager, planOut.Output)
-
-	tasks := parsePlan(planOut.Output, workers, input)
-
-	// 2. Workers execute their tasks (bounded concurrency).
+	manager := o.resolveManager()
+	workers := nonManagerParticipants(o.parts, manager)
+	if err := o.validateRoster(manager, workers); err != nil {
+		return fail(err)
+	}
+	prompt := buildPlanPrompt(workers, input)
+	var tasks []delegation
+	for attempt := 0; ; attempt++ {
+		planOut, err := o.invoke(ctx, manager, prompt)
+		res.AgentResults = append(res.AgentResults, planOut)
+		if err != nil {
+			return fail(err)
+		}
+		tasks, err = parseDelegations(planOut.Output, workers)
+		if err == nil {
+			bb.Append(manager, planOut.Output)
+			break
+		}
+		if attempt >= o.settings.PlanRepairAttempts {
+			return fail(err)
+		}
+		// Only bounded validation diagnostics enter the repair prompt. The rejected
+		// candidate is retained in its run record, never copied into worker context.
+		repair, repairErr := json.Marshal(map[string]string{"validation_error": err.Error()})
+		if repairErr != nil {
+			return fail(repairErr)
+		}
+		prompt = buildPlanPrompt(workers, input) + "\nThe previous plan was rejected. Correct it using this validation data: " + string(repair)
+	}
 	workerResults := make([]AgentResult, len(tasks))
-	sem := make(chan struct{}, boundedConcurrency(o.settings.MaxConcurrency))
+	sem := make(chan struct{}, min(boundedConcurrency(o.settings.MaxConcurrency), len(tasks)))
+	snapshot := bb.Snapshot()
 	var wg sync.WaitGroup
 	for i, d := range tasks {
 		wg.Add(1)
 		go func(i int, d delegation) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			ar, werr := o.runner.RunAgent(ctx, d.Agent, composeInput(d.Task, bb.Snapshot()), opts)
-			if werr != nil {
-				workerResults[i] = AgentResult{AgentName: d.Agent, Err: werr}
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				workerResults[i] = AgentResult{AgentName: d.Agent, Err: ctx.Err()}
 				return
 			}
-			workerResults[i] = *ar
+			if err := ctx.Err(); err != nil {
+				workerResults[i] = AgentResult{AgentName: d.Agent, Err: err}
+				return
+			}
+			bb.Handoff(ctx, manager, d.Agent, d.Task)
+			workerResult, workerErr := o.invoke(ctx, d.Agent, composeInput(d.Task, snapshot))
+			if workerErr != nil {
+				workerResult.Err = workerErr
+			}
+			workerResults[i] = workerResult
 		}(i, d)
 	}
 	wg.Wait()
-
-	for i, r := range workerResults {
+	var workerErrors []error
+	for _, r := range workerResults {
 		res.AgentResults = append(res.AgentResults, r)
 		if r.Err != nil {
-			continue
+			workerErrors = append(workerErrors, r.Err)
+		} else {
+			bb.Append(r.AgentName, r.Output)
 		}
-		bb.Append(r.AgentName, r.Output)
-		bb.Handoff(ctx, manager, tasks[i].Agent, tasks[i].Task)
 	}
-
-	// 3. Manager synthesizes the final answer from the workers' contributions.
-	synth, err := o.runner.RunAgent(ctx, manager, buildSynthesisPrompt(input, bb.Snapshot()), opts)
+	if err := errors.Join(workerErrors...); err != nil {
+		return fail(err)
+	}
+	synth, err := o.invoke(ctx, manager, buildSynthesisPrompt(input, bb.Snapshot()))
+	res.AgentResults = append(res.AgentResults, synth)
 	if err != nil {
-		res.Err = err
-		res.Handoffs = bb.Handoffs()
-		return res, err
+		return fail(err)
 	}
-	res.AgentResults = append(res.AgentResults, *synth)
 	res.Output = synth.Output
 	res.Handoffs = bb.Handoffs()
 	return res, nil
+}
+
+func (o *hierarchical) validateRoster(manager string, workers []Participant) error {
+	if o.settings.PlanRepairAttempts < 0 || o.settings.PlanRepairAttempts > 1 {
+		return invalidPlan("repair attempts must be zero or one")
+	}
+	if manager == "" || !findParticipant(o.parts, manager) || len(workers) == 0 || len(workers) > maxDelegationWorkers {
+		return invalidPlan("invalid manager or worker count")
+	}
+	seen := make(map[string]bool, len(o.parts))
+	for _, p := range o.parts {
+		if strings.TrimSpace(p.AgentName) == "" || seen[p.AgentName] {
+			return invalidPlan("invalid participant roster")
+		}
+		seen[p.AgentName] = true
+	}
+	return nil
+}
+
+// invoke preserves failed run identities and treats missing or contradictory
+// results as failures. Each invocation gets its own options and normal budget.
+func (o *hierarchical) invoke(ctx context.Context, name, input string) (AgentResult, error) {
+	out := AgentResult{AgentName: name}
+	if err := ctx.Err(); err != nil {
+		out.Err = err
+		return out, err
+	}
+	ar, err := o.runner.RunAgent(ctx, name, input, runOptsFromSettings(o.settings))
+	if ar != nil {
+		out = *ar
+		err = errors.Join(err, ar.Err)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && (ar == nil || ar.AgentName != name || strings.TrimSpace(ar.Output) == "") {
+		err = fmt.Errorf("%w: missing or inconsistent agent result", cortex.ErrRunIncomplete)
+	}
+	out.Err = err
+	return out, err
 }
 
 func (o *hierarchical) resolveManager() string {
@@ -102,40 +169,9 @@ func (o *hierarchical) resolveManager() string {
 	return ""
 }
 
-// parsePlan extracts a delegation list from the manager output, keeping only
-// tasks addressed to known workers. Falls back to assigning the original input
-// to every worker when the plan is missing or unparseable.
-func parsePlan(output string, workers []Participant, input string) []delegation {
-	var plan []delegation
-	if start := strings.Index(output, "["); start >= 0 {
-		if end := strings.LastIndex(output, "]"); end > start {
-			if jsonErr := json.Unmarshal([]byte(output[start:end+1]), &plan); jsonErr != nil {
-				plan = nil
-			}
-		}
-	}
-	var valid []delegation
-	for _, d := range plan {
-		if d.Agent == "" || d.Task == "" {
-			continue
-		}
-		if findParticipant(workers, d.Agent) {
-			valid = append(valid, d)
-		}
-	}
-	if len(valid) > 0 {
-		return valid
-	}
-	fallback := make([]delegation, len(workers))
-	for i, w := range workers {
-		fallback[i] = delegation{Agent: w.AgentName, Task: input}
-	}
-	return fallback
-}
-
 func buildPlanPrompt(workers []Participant, input string) string {
 	var sb strings.Builder
-	sb.WriteString("You are a manager. Break the task into subtasks for your team.\n")
+	sb.WriteString("You are a manager. Break the task into subtasks for your team. Assign every listed worker exactly once; all workers are required.\n")
 	sb.WriteString(`Respond ONLY with a JSON array like [{"agent":"name","task":"..."}].` + "\n\nTeam:\n")
 	for _, w := range workers {
 		if w.Role != "" {

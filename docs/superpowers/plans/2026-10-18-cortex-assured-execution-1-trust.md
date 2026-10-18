@@ -91,11 +91,11 @@ Files: create `orchestration/delegation_plan.go`, `orchestration/delegation_plan
 
 Interfaces: produces `parseDelegations(output string, workers []Participant) ([]delegation, error)` and a typed invalid-plan error. One schema-valid response or at most one configured repair attempt is allowed by default. This is a compatibility fix; Stage 3 replaces the task representation with `planning.Plan` through an adapter.
 
-- [ ] Write `TestMalformedPlanDispatchesNoWorkers`, `TestUnknownWorkerRejected`, `TestPartialPlanDoesNotDropRequiredAssignment`, `TestPlanRepairConsumesBudget`, and `TestWorkerFailureCannotYieldUnqualifiedSuccess`. Assert malformed plans never broadcast the original request to all workers.
-- [ ] Run `GOWORK=off go test ./orchestration -run 'Test(MalformedPlan|UnknownWorker|PartialPlan|PlanRepair|WorkerFailure)' -count=1` and confirm failure.
-- [ ] Replace permissive extraction/fallback with strict structured validation, bounded size/task counts and known worker identity. Repair receives validation errors as data. No side effects run before the complete plan validates.
-- [ ] Propagate worker failures and missing outputs into the orchestration result. A synthesis may explain partial work but cannot conceal unresolved required workers.
-- [ ] Run all orchestration strategy tests and cancellation/race cases. Apply common checks and commit `fix(orchestration): reject invalid delegation plans before dispatch`.
+- [x] Write `TestMalformedPlanDispatchesNoWorkers`, `TestUnknownWorkerRejected`, `TestPartialPlanDoesNotDropRequiredAssignment`, `TestPlanRepairConsumesBudget`, and `TestWorkerFailureCannotYieldUnqualifiedSuccess`. Assert malformed plans never broadcast the original request to all workers.
+- [x] Run `GOWORK=off go test ./orchestration -run 'Test(MalformedPlan|UnknownWorker|PartialPlan|PlanRepair|WorkerFailure)' -count=1` and confirm failure.
+- [x] Replace permissive extraction/fallback with strict structured validation, bounded size/task counts and known worker identity. Repair receives validation errors as data. No side effects run before the complete plan validates.
+- [x] Propagate worker failures and missing outputs into the orchestration result. A synthesis may explain partial work but cannot conceal unresolved required workers.
+- [x] Run all orchestration strategy tests and cancellation/race cases. Apply common checks and commit `fix(orchestration): reject invalid delegation plans before dispatch`.
 
 ## S1.6: Integrate status, compatibility and the first release gate
 

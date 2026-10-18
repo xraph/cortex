@@ -41,6 +41,9 @@ var (
 	ErrMaxStepsReached  = errors.New("cortex: maximum steps reached")
 	ErrMaxTokensReached = errors.New("cortex: maximum tokens reached")
 
+	// ErrInvalidDelegationPlan rejects a manager plan before worker dispatch.
+	ErrInvalidDelegationPlan = errors.New("cortex: invalid delegation plan")
+
 	// Suspension errors.
 	//
 	// ErrNotSuspended is returned by ClaimSuspension to the losing side of

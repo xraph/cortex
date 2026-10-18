@@ -16,20 +16,27 @@ type agentRunnerAdapter struct{ eng *Engine }
 
 func (a agentRunnerAdapter) RunAgent(ctx context.Context, agentName, input string, opts *orchestration.RunOpts) (*orchestration.AgentResult, error) {
 	r, err := a.eng.RunAgent(ctx, agentName, input, mapRunOpts(opts))
-	if err != nil {
+	if r == nil {
+		if err == nil {
+			err = cortex.ErrRunIncomplete
+		}
 		return nil, err
 	}
-	if r.State == run.StateIncomplete {
-		return nil, fmt.Errorf("cortex: worker %s stopped with %s: %w", agentName, r.StopReason, cortex.ErrRunIncomplete)
-	}
-	if r.State == run.StateCancelled {
-		return nil, cortex.ErrRunCancelled
+	if err == nil {
+		switch r.State {
+		case run.StateCompleted:
+		case run.StateCancelled:
+			err = cortex.ErrRunCancelled
+		default:
+			err = fmt.Errorf("cortex: worker %s stopped with %s: %w", agentName, r.StopReason, cortex.ErrRunIncomplete)
+		}
 	}
 	return &orchestration.AgentResult{
 		AgentName: agentName,
 		RunID:     r.ID,
 		Output:    r.Output,
-	}, nil
+		Err:       err,
+	}, err
 }
 
 func mapRunOpts(o *orchestration.RunOpts) *RunOverrides {

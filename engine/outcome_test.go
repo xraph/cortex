@@ -358,4 +358,7 @@ func TestOrchestrationAdapterRejectsIncompleteWorker(t *testing.T) {
 	if !errors.Is(err, cortex.ErrRunIncomplete) {
 		t.Fatalf("incomplete worker = %+v, %v; want ErrRunIncomplete", result, err)
 	}
+	if result == nil || result.RunID.IsNil() || !errors.Is(result.Err, cortex.ErrRunIncomplete) {
+		t.Fatalf("incomplete worker lost its execution receipt: %+v", result)
+	}
 }

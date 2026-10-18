@@ -52,14 +52,15 @@ type (
 // Settings carries every strategy's tunables in one struct. Fields a given
 // strategy does not use are ignored.
 type Settings struct {
-	MaxConcurrency int               `json:"max_concurrency,omitempty"` // parallel / hierarchical worker fan-out cap
-	Rounds         int               `json:"rounds,omitempty"`          // debate rounds
-	Manager        string            `json:"manager,omitempty"`         // hierarchical: manager agent name
-	Judge          string            `json:"judge,omitempty"`           // debate: judge agent name
-	Aggregator     string            `json:"aggregator,omitempty"`      // parallel: optional aggregator agent name
-	RouterAgent    string            `json:"router_agent,omitempty"`    // router: agent that decides (optional)
-	RouterRules    map[string]string `json:"router_rules,omitempty"`    // router: keyword→agent static rules
-	Model          string            `json:"model,omitempty"`           // model for meta-decisions (router/judge/manager)
+	PlanRepairAttempts int               `json:"plan_repair_attempts,omitempty"` // hierarchical: 0 or 1 additional manager call
+	MaxConcurrency     int               `json:"max_concurrency,omitempty"`      // parallel / hierarchical worker fan-out cap
+	Rounds             int               `json:"rounds,omitempty"`               // debate rounds
+	Manager            string            `json:"manager,omitempty"`              // hierarchical: manager agent name
+	Judge              string            `json:"judge,omitempty"`                // debate: judge agent name
+	Aggregator         string            `json:"aggregator,omitempty"`           // parallel: optional aggregator agent name
+	RouterAgent        string            `json:"router_agent,omitempty"`         // router: agent that decides (optional)
+	RouterRules        map[string]string `json:"router_rules,omitempty"`         // router: keyword→agent static rules
+	Model              string            `json:"model,omitempty"`                // model for meta-decisions (router/judge/manager)
 }
 
 // Result is the outcome of an orchestration run.
