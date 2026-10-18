@@ -23,6 +23,7 @@ type Factory func(*testing.T) store.Store
 // Run checks store semantics with populated records and exact identity assertions.
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	lifecycle(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t)
 		a, b := Fixture(t, "a"), Fixture(t, "b")

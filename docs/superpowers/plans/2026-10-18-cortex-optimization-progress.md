@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Initial scope, rollback, immutable version and clock tests pass | Add events, leases, transitions, allocations, accounting and activation |
+| 3: atomic memory storage | Draft storage `c80e580` pushed; events, revision transitions and cursor tests pass | Add fenced leases, phase progression, allocations, accounting and activation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -67,4 +67,8 @@ The initial memory backend stores drafts and their frozen versions in one transa
 
 These checks pass with the current runtime and with published Cortex v1.8.0. Scoped lint and builds pass after coordinated formatting. The required full lint run reported eight findings in the runtime owner's ongoing scope-hardening files; those findings were sent to that owner. All other modules, including optimization, passed that run.
 
-Task 3 remains incomplete. Audit events, work leases, transitions, budget accounting, holdout allocations, activation, publication and remaining readers still need implementation. The memory backend provides no durable recovery guarantee. Constructor wiring follows the storage ports so the optimizer does not import a package that already imports its domain types.
+Task 3 remains incomplete. Work leases, phase progression, budget accounting, holdout allocations, activation, publication and remaining readers still need implementation. The memory backend provides no durable recovery guarantee. Constructor wiring follows the storage ports so the optimizer does not import a package that already imports its domain types.
+
+The next store slice adds atomic draft and state-change events, payload-bound start idempotency and revision checks. Duplicate starts produce one transition and one audit event; changed payloads and stale revisions fail. A cancelled experiment cannot be requeued through this path. Cursor tests check exact result identities across bounded pages. Worker-controlled phases remain unavailable until lease fencing is implemented.
+
+CI passed every job for both experiment contracts `cd89669` (run `39145664574`) and initial draft storage `c80e580` (run `39146320084`). The pending event/transition slice passes scoped lint, build and current/published-root race suites after final coordinated formatting.
