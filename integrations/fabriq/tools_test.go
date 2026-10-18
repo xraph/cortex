@@ -3,10 +3,12 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/xraph/fabriq/core/agent"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
 )
 
@@ -21,6 +23,10 @@ func newEngineWith(t *testing.T, opts ...engine.Option) *engine.Engine {
 		t.Fatalf("engine.New: %v", err)
 	}
 	return e
+}
+
+func toolContext() context.Context {
+	return cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "fabriq-test"}}})
 }
 
 func TestToolOptions_SkipsRecallAndAdaptsHandlers(t *testing.T) {
@@ -42,7 +48,10 @@ func TestToolOptions_SkipsRecallAndAdaptsHandlers(t *testing.T) {
 
 	// Apply to a real engine and dispatch the registered tool.
 	eng := newEngineWith(t, opts...)
-	got := eng.Dispatch(context.Background(), "graph_traverse", `{"from":"n1"}`)
+	if denied := eng.Dispatch(context.Background(), "graph_traverse", `{"from":"n1"}`); !strings.Contains(denied, cortex.ErrNoScope.Error()) || called != "" {
+		t.Fatalf("unscoped dispatch reached handler: result=%q args=%q", denied, called)
+	}
+	got := eng.Dispatch(toolContext(), "graph_traverse", `{"from":"n1"}`)
 	if called != `{"from":"n1"}` {
 		t.Fatalf("handler got args %q", called)
 	}

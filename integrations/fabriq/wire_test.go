@@ -60,10 +60,10 @@ func TestEngineOptions_PopulatedBundleWiresEverything(t *testing.T) {
 	if e.Knowledge() == nil {
 		t.Fatalf("knowledge provider not wired")
 	}
-	if got := e.Dispatch(context.Background(), "graph_traverse", "{}"); got != `{"ok":true}` {
+	if got := e.Dispatch(toolContext(), "graph_traverse", "{}"); got != `{"ok":true}` {
 		t.Fatalf("graph_traverse dispatch = %q", got)
 	}
-	if got := e.Dispatch(context.Background(), "recall", "{}"); !strings.Contains(got, "unknown tool") {
+	if got := e.Dispatch(toolContext(), "recall", "{}"); !strings.Contains(got, "unknown tool") {
 		t.Fatalf("recall should be skipped, got %q", got)
 	}
 	found := false
