@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/safety"
 )
 
 // statusCoder mirrors forge/errs.HTTPError's StatusCode() method without
@@ -49,6 +50,15 @@ func TestMapStoreError_InvalidScopeIsDenied(t *testing.T) {
 		status, ok := mapped.(statusCoder)
 		if !ok || status.StatusCode() != http.StatusForbidden {
 			t.Fatalf("invalid scope mapping: %v", mapped)
+		}
+	}
+}
+
+func TestPublicationErrorsHaveSafeHTTPStatus(t *testing.T) {
+	for cause, want := range map[error]int{safety.ErrUnavailable: 503, safety.ErrBlocked: 403, safety.ErrLimit: 413} {
+		mapped, ok := mapStoreError(cause).(statusCoder)
+		if !ok || mapped.StatusCode() != want {
+			t.Fatalf("%v mapped to %v", cause, mapped)
 		}
 	}
 }

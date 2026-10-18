@@ -7,10 +7,21 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/run"
 )
 
 // Named entry types pair a hook implementation with the extension name
 // captured at registration time.
+type publicationRejectedEntry struct {
+	name string
+	hook PublicationRejected
+}
+
+type runTerminatedEntry struct {
+	name string
+	hook RunTerminated
+}
+
 type runStartedEntry struct {
 	name string
 	hook RunStarted
@@ -123,6 +134,8 @@ type Registry struct {
 	extensions []Extension
 	logger     log.Logger
 
+	publicationRejected    []publicationRejectedEntry
+	runTerminated          []runTerminatedEntry
 	runStarted             []runStartedEntry
 	runCompleted           []runCompletedEntry
 	runFailed              []runFailedEntry
@@ -157,6 +170,12 @@ func (r *Registry) Register(e Extension) {
 	r.extensions = append(r.extensions, e)
 	name := e.Name()
 
+	if h, ok := e.(PublicationRejected); ok {
+		r.publicationRejected = append(r.publicationRejected, publicationRejectedEntry{name, h})
+	}
+	if h, ok := e.(RunTerminated); ok {
+		r.runTerminated = append(r.runTerminated, runTerminatedEntry{name, h})
+	}
 	if h, ok := e.(RunStarted); ok {
 		r.runStarted = append(r.runStarted, runStartedEntry{name, h})
 	}
@@ -436,4 +455,22 @@ func (r *Registry) logHookError(hook, extName string, err error) {
 		log.String("extension", extName),
 		log.String("error", err.Error()),
 	)
+}
+
+// EmitRunTerminated notifies observers only after the caller persists the outcome.
+func (r *Registry) EmitRunTerminated(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, summary run.TerminalSummary) {
+	for _, entry := range r.runTerminated {
+		if err := entry.hook.OnRunTerminated(ctx, agentID, runID, summary); err != nil {
+			r.logHookError("OnRunTerminated", entry.name, err)
+		}
+	}
+}
+
+// EmitPublicationRejected emits bounded policy diagnostics, without content.
+func (r *Registry) EmitPublicationRejected(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, reason run.StopReason) {
+	for _, entry := range r.publicationRejected {
+		if err := entry.hook.OnPublicationRejected(ctx, agentID, runID, reason); err != nil {
+			r.logHookError("OnPublicationRejected", entry.name, err)
+		}
+	}
 }

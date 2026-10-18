@@ -7,12 +7,21 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/safety"
 )
 
 // mapStoreError maps domain errors to Forge HTTP errors.
 func mapStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	switch {
+	case errors.Is(err, safety.ErrUnavailable):
+		return forge.NewHTTPError(http.StatusServiceUnavailable, safety.ErrUnavailable.Error())
+	case errors.Is(err, safety.ErrBlocked):
+		return forge.NewHTTPError(http.StatusForbidden, safety.ErrBlocked.Error())
+	case errors.Is(err, safety.ErrLimit):
+		return forge.NewHTTPError(http.StatusRequestEntityTooLarge, safety.ErrLimit.Error())
 	}
 	if isNotFound(err) {
 		return forge.NotFound(err.Error())

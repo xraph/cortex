@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/plugin"
+	"github.com/xraph/cortex/run"
 )
 
 // Compile-time interface checks.
@@ -192,4 +193,20 @@ func (e *Extension) record(
 		)
 	}
 	return nil
+}
+
+// OnRunTerminated records execution and verification independently, without raw content.
+func (e *Extension) OnRunTerminated(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, summary run.TerminalSummary) error {
+	outcome, severity := OutcomeFailure, SeverityWarning
+	if summary.State == run.StateCompleted {
+		outcome, severity = OutcomeSuccess, SeverityInfo
+	}
+	return e.record(ctx, ActionRunTerminated, severity, outcome, ResourceRun, runID.String(), CategoryAgent, nil,
+		"agent_id", agentID.String(), "state", string(summary.State), "stop_reason", string(summary.StopReason),
+		"verification_status", string(summary.VerificationStatus.Normalized()), "publication_status", string(summary.PublicationStatus))
+}
+
+// OnPublicationRejected records a bounded rejection reason without raw content.
+func (e *Extension) OnPublicationRejected(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, reason run.StopReason) error {
+	return e.record(ctx, ActionPublicationRejected, SeverityWarning, OutcomeFailure, ResourceRun, runID.String(), CategoryAgent, nil, "agent_id", agentID.String(), "stop_reason", string(reason))
 }

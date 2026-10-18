@@ -18,6 +18,12 @@ their settings) that you run by name. During a run, agents share a blackboard
 | `hierarchical` | A manager agent delegates subtasks to workers (JSON plan), then synthesizes the result. |
 | `debate` | Debater agents argue over N rounds, then a judge agent renders a verdict. |
 
+## Hierarchical plan validation
+
+The manager must return one JSON array assigning every non-manager participant exactly one nonempty task. Unknown or duplicate workers, extra fields, malformed JSON and partial plans fail before workers start. There is no broadcast fallback. Plans are limited to 256 KiB, each task to 64 KiB and the worker roster to 64 agents.
+
+`plan_repair_attempts` accepts zero or one. A repair is an additional manager run with ordinary runner budgets and a retained run ID. It receives validation diagnostics as JSON data. This setting does not create a shared token budget across agents. Worker errors or missing outputs fail the orchestration and prevent synthesis from concealing partial work.
+
 ## Awareness and communication
 
 Every participant sees a roster of the others (name and role) and the running
@@ -30,6 +36,7 @@ on the run), so audit and metrics extensions observe the collaboration.
 ```json
 {
   "max_concurrency": 4,
+  "plan_repair_attempts": 0,
   "rounds": 2,
   "manager": "lead",
   "judge": "referee",

@@ -1,6 +1,7 @@
 package a2aremote
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -241,5 +242,21 @@ func TestOurOwnInReplyToSurvives(t *testing.T) {
 	}
 	if params.InReplyTo != ours {
 		t.Fatalf("InReplyTo = %q, want %q", params.InReplyTo, ours)
+	}
+}
+
+func TestTaskAssuranceMetadata(t *testing.T) {
+	r := &run.Run{ID: id.NewAgentRunID(), State: run.StateIncomplete, StopReason: run.StopTokenLimit}
+	task := TaskFromRun(r, "")
+	raw, err := json.Marshal(task.Metadata["cortex.assurance"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary run.TerminalSummary
+	if err = json.Unmarshal(raw, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if task.Status.State != TaskStateFailed || summary.State != run.StateIncomplete || summary.StopReason != run.StopTokenLimit || summary.VerificationStatus != "unchecked" {
+		t.Fatalf("incorrect assurance: %+v", task)
 	}
 }

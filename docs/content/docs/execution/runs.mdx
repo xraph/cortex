@@ -31,13 +31,14 @@ type Run struct {
 
 ### Run states
 
-Runs follow a state machine with 6 states:
+Runs follow a state machine with 7 states:
 
 | State | Description |
 |-------|-------------|
 | `created` | Run has been created but not started |
 | `running` | Run is actively processing |
-| `completed` | Run finished successfully |
+| `completed` | Execution reached a final answer; verification may still be unchecked |
+| `incomplete` | Execution stopped at a limit or without a valid final answer |
 | `failed` | Run terminated with an error |
 | `cancelled` | Run was cancelled through `CancelRun` |
 | `paused` | Run is suspended, waiting for an approval or an external tool result |
@@ -46,6 +47,7 @@ Runs follow a state machine with 6 states:
 
 ```
 running → completed
+        → incomplete
         → failed
         → cancelled
         → paused → running (after Resume or an approved checkpoint)
@@ -54,6 +56,8 @@ running → completed
 ```
 
 The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` only accepts a running or paused run, and answers `cortex.ErrInvalidState` for anything else.
+
+See [Execution outcomes and safety](/docs/execution/assurance) for verification, publication and compatibility semantics.
 
 ## Step
 

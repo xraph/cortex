@@ -182,6 +182,7 @@ func TaskFromRun(r *run.Run, contextID string) Task {
 	task := Task{
 		ID:        r.ID.String(),
 		ContextID: contextID,
+		Metadata:  map[string]any{"cortex.assurance": r.TerminalSummary()},
 		Status:    TaskStatus{State: state, Timestamp: timestamp(time.Now())},
 	}
 

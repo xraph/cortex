@@ -16,6 +16,8 @@ const (
 
 // Action constants.
 const (
+	ActionPublicationRejected    = "cortex.publication.rejected"
+	ActionRunTerminated          = "cortex.agent.run.terminated"
 	ActionRunStarted             = "cortex.agent.run.started"
 	ActionRunCompleted           = "cortex.agent.run.completed"
 	ActionRunFailed              = "cortex.agent.run.failed"

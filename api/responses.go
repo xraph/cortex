@@ -74,12 +74,16 @@ type GetConversationResponse struct {
 
 // RunAgentResponse wraps the result of a synchronous agent run.
 type RunAgentResponse struct {
-	RunID      string `json:"run_id"`
-	Output     string `json:"output"`
-	State      string `json:"state"`
-	StepCount  int    `json:"step_count"`
-	TokensUsed int    `json:"tokens_used"`
-	DurationMs int64  `json:"duration_ms"`
+	StopReason         string `json:"stop_reason,omitempty"`
+	VerificationStatus string `json:"verification_status"`
+	PublicationStatus  string `json:"publication_status"`
+	ResultRef          string `json:"result_ref,omitempty"`
+	RunID              string `json:"run_id"`
+	Output             string `json:"output"`
+	State              string `json:"state"`
+	StepCount          int    `json:"step_count"`
+	TokensUsed         int    `json:"tokens_used"`
+	DurationMs         int64  `json:"duration_ms"`
 }
 
 // PreviewPromptResponse wraps the computed system prompt preview.

@@ -1,0 +1,22 @@
+package engine
+
+import "github.com/xraph/cortex/safety"
+
+// RuntimeCapabilities reports installed mechanisms, not a provider qualification
+// or a guarantee that a particular execution will pass its checks.
+type RuntimeCapabilities struct {
+	PreparedExecution        bool        `json:"prepared_execution"`
+	AtomicSourceSnapshot     bool        `json:"atomic_source_snapshot"`
+	ContextualVerification   bool        `json:"contextual_verification"`
+	PublicationGateInstalled bool        `json:"publication_gate_installed"`
+	PublicationMode          safety.Mode `json:"publication_mode"`
+	PublicationRequired      bool        `json:"publication_required"`
+	IncrementalGateInstalled bool        `json:"incremental_gate_installed"`
+}
+
+// RuntimeCapabilities returns immutable process capabilities. Scanner health
+// and effectiveness are evaluated by the configured provider for each request.
+func (e *Engine) RuntimeCapabilities() RuntimeCapabilities {
+	_, incremental := e.publicationGate.(safety.IncrementalGate)
+	return RuntimeCapabilities{PreparedExecution: true, PublicationGateInstalled: e.publicationGate != nil, PublicationMode: e.publicationPolicy.Mode, PublicationRequired: e.publicationPolicy.Required, IncrementalGateInstalled: incremental}
+}

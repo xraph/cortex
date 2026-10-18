@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/plugin"
+	"github.com/xraph/cortex/run"
 )
 
 // Compile-time interface checks.
@@ -30,6 +31,10 @@ var (
 
 // MetricsExtension records lifecycle metrics via go-utils MetricFactory.
 type MetricsExtension struct {
+	PublicationRejectedCount   gu.Counter
+	RunIncompleteCount         gu.Counter
+	RunCancelledCount          gu.Counter
+	RunPolicyFailureCount      gu.Counter
 	RunStartedCount            gu.Counter
 	RunCompletedCount          gu.Counter
 	RunFailedCount             gu.Counter
@@ -51,6 +56,10 @@ func NewMetricsExtension() *MetricsExtension {
 // NewMetricsExtensionWithFactory creates a MetricsExtension with the provided MetricFactory.
 func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension {
 	return &MetricsExtension{
+		PublicationRejectedCount:   factory.Counter("cortex.publication.rejected"),
+		RunIncompleteCount:         factory.Counter("cortex.agent.run.incomplete"),
+		RunCancelledCount:          factory.Counter("cortex.agent.run.cancelled"),
+		RunPolicyFailureCount:      factory.Counter("cortex.agent.run.policy_failure"),
 		RunStartedCount:            factory.Counter("cortex.agent.run.started"),
 		RunCompletedCount:          factory.Counter("cortex.agent.run.completed"),
 		RunFailedCount:             factory.Counter("cortex.agent.run.failed"),
@@ -120,5 +129,27 @@ func (m *MetricsExtension) OnCheckpointCreated(_ context.Context, _ id.Checkpoin
 
 func (m *MetricsExtension) OnCheckpointResolved(_ context.Context, _ id.CheckpointID, _ string) error {
 	m.CheckpointResolvedCount.Inc()
+	return nil
+}
+
+// OnRunTerminated counts bounded outcome categories. Identifiers, model text and
+// arbitrary stop reasons never become metric labels.
+func (m *MetricsExtension) OnRunTerminated(_ context.Context, _ id.AgentID, _ id.AgentRunID, summary run.TerminalSummary) error {
+	switch summary.State {
+	case run.StateIncomplete:
+		m.RunIncompleteCount.Inc()
+	case run.StateCancelled:
+		m.RunCancelledCount.Inc()
+	}
+	switch summary.StopReason {
+	case run.StopPolicyUnavailable, run.StopSafetyBlock:
+		m.RunPolicyFailureCount.Inc()
+	}
+	return nil
+}
+
+// OnPublicationRejected counts rejected checks, including those before a run exists.
+func (m *MetricsExtension) OnPublicationRejected(context.Context, id.AgentID, id.AgentRunID, run.StopReason) error {
+	m.PublicationRejectedCount.Inc()
 	return nil
 }

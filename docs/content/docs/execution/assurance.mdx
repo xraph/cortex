@@ -1,0 +1,44 @@
+---
+title: Execution outcomes and safety
+description: Read execution state, verification and content screening separately, and inspect the mechanisms installed in your host.
+---
+
+A completed run means the engine reached a final answer. It does not establish that the answer is correct. Read three fields together:
+
+| Field | What it tells you |
+| --- | --- |
+| `state` and `stop_reason` | Whether execution completed, stopped at a limit, failed or was cancelled |
+| `verification_status` | Whether explicit result checks have passed; historical runs default to `unchecked` |
+| `provenance.publication_status` | Whether published content was screened, redacted, flagged or left unscanned |
+
+Synchronous REST execution returns `stop_reason`, `verification_status`, `publication_status` and an optional `result_ref` alongside its existing fields. Saved run responses retain publication status inside `provenance`. Terminal stream events carry the same outcome categories. A closed, expired or disconnected feed does not prove completion; load the saved run when events are missing.
+
+A2A projects incomplete runs as the protocol's existing failed task state. Its task and status-update metadata includes `cortex.assurance` with the execution state, stop reason, verification status and publication status. This metadata also survives the gRPC binding.
+
+## Publication policy
+
+Configure the boundary with `engine.WithPublicationPolicy` and install a checker with `engine.WithPublicationGate`, or use the existing `WithSafety` scanner adapter. Buffered publication is the default. The engine holds candidate content until the configured checker accepts it. A required but unavailable checker, checker error, invalid decision or exceeded byte limit prevents publication.
+
+Checked-segment streaming requires an explicit `safety.IncrementalGate`. An accepted prefix cannot be retracted, so use buffered mode when a rule needs the complete response. Explicitly disabled scanning reports `unscanned`; it does not remove byte limits.
+
+Content screening covers input, output, retrieved content, tool results and public error text. If screening would rewrite tool arguments, execution stops instead of issuing a changed command. A scanner decision describes content screening only. It cannot certify the answer's factual accuracy.
+
+## Installed capabilities
+
+`Engine.RuntimeCapabilities()` and the dashboard's `runtime.detail.assurance` describe process configuration. They report prepared-execution support, publication mode, whether a gate is installed and whether that gate advertises incremental checking. Presence does not certify provider health or effectiveness.
+
+The current runtime reports contextual verification and atomic source snapshots as unavailable. Prepared execution freezes collected inputs and checks its source read set for observed changes, but those independent reads are not one transaction. Keep reproducibility-required evaluation disabled until a qualified atomic source provider supplies that guarantee.
+
+## Observe failures
+
+`plugin.RunTerminated` receives a content-free summary after the terminal store update succeeds. It includes incomplete and cancelled runs. `plugin.PublicationRejected` reports a bounded policy reason, including rejection before a run exists. Its run ID is then empty.
+
+The audit extension records these events. Metrics count incomplete runs, cancellations, terminal policy failures and rejected checks without using prompts, evidence IDs or arbitrary provider values as labels. Hooks remain best effort. They do not provide durable exactly-once delivery or replace a required audit transaction.
+
+## Rollout checks
+
+Prepared snapshots and continuations use schema 2. Drain or cancel older schema-1 pauses on compatible workers. Re-prepare stored schema-1 harnesses as new versions and evaluate them again; changing a schema number cannot recreate the missing policy or preserve prior acceptance.
+
+Scopes support at most three ordered, unique levels. Listing can use an ancestor prefix, while mutation and execution require the exact resource scope. Invalid or inconsistent historical rows fail closed. Use the administrative `store.ScopeInspector` inventory before an operator-approved migration; the engine never truncates or repairs stored identity automatically.
+
+Qualify your installed provider, scanner, authorization and storage paths before rollout. Passing fixture tests or the deterministic local demo does not establish live-model quality, effective scanning or sandbox isolation.

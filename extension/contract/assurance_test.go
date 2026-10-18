@@ -1,0 +1,54 @@
+package contract
+
+import (
+	"context"
+	"testing"
+
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/run"
+)
+
+func TestAssuranceCapabilitiesAndLegacyRunProjection(t *testing.T) {
+	d, s, st := testService(t)
+	p := principal("assurance")
+	raw, err := dispatch(t, d, p, "runtime.detail", struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := decode[struct {
+		Assurance engine.RuntimeCapabilities `json:"assurance"`
+	}](t, raw)
+	if !runtime.Assurance.PreparedExecution || runtime.Assurance.ContextualVerification || runtime.Assurance.AtomicSourceSnapshot {
+		t.Fatalf("inaccurate capabilities: %+v", runtime.Assurance)
+	}
+	ctx, err := s.context(context.Background(), p, "manage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "legacy", Enabled: true}
+	if err = s.deps.Engine.CreateAgent(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []run.State{run.StateCompleted, run.StateIncomplete} {
+		r := &run.Run{ID: id.NewAgentRunID(), AgentID: ag.ID, State: state}
+		if state == run.StateIncomplete {
+			r.StopReason = run.StopStepLimit
+		}
+		if err = st.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		raw, err = dispatch(t, d, p, "runs.detail", IDInput{ID: r.ID.String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := decode[RunDetail](t, raw)
+		if out.Run.VerificationStatus != "unchecked" || out.Run.State != state || out.Run.StopReason != r.StopReason {
+			t.Fatalf("incorrect outcome: %+v", out.Run)
+		}
+		if _, err = dispatch(t, d, principal("foreign"), "runs.detail", IDInput{ID: r.ID.String()}); err == nil {
+			t.Fatal("foreign principal read outcome")
+		}
+	}
+}

@@ -247,12 +247,16 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 	}
 
 	resp := &RunAgentResponse{
-		RunID:      r.ID.String(),
-		Output:     r.Output,
-		State:      string(r.State),
-		StepCount:  r.StepCount,
-		TokensUsed: r.TokensUsed,
-		DurationMs: durationMs,
+		StopReason:         string(r.StopReason),
+		VerificationStatus: string(r.VerificationStatus.Normalized()),
+		PublicationStatus:  string(r.Provenance.PublicationStatus),
+		ResultRef:          r.ResultRef,
+		RunID:              r.ID.String(),
+		Output:             r.Output,
+		State:              string(r.State),
+		StepCount:          r.StepCount,
+		TokensUsed:         r.TokensUsed,
+		DurationMs:         durationMs,
 	}
 	return resp, ctx.JSON(http.StatusOK, resp)
 }

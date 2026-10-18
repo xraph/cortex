@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/run"
 )
 
 // ──────────────────────────────────────────────────
@@ -169,4 +170,16 @@ type MessageRefused interface {
 // Shutdown is called during graceful shutdown.
 type Shutdown interface {
 	OnShutdown(ctx context.Context) error
+}
+
+// RunTerminated observes a persisted terminal state, including incomplete and
+// cancelled runs. It does not imply verification or durable hook delivery.
+type RunTerminated interface {
+	OnRunTerminated(context.Context, id.AgentID, id.AgentRunID, run.TerminalSummary) error
+}
+
+// PublicationRejected observes a failed content check. runID is empty when the
+// check precedes run creation. The reason never contains candidate content.
+type PublicationRejected interface {
+	OnPublicationRejected(context.Context, id.AgentID, id.AgentRunID, run.StopReason) error
 }

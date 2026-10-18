@@ -14,6 +14,7 @@ package grpcbind
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"google.golang.org/grpc"
@@ -21,6 +22,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/xraph/cortex/a2aremote"
@@ -210,6 +213,7 @@ func taskToProto(t *a2aremote.Task) *a2apb.Task {
 	}
 	out := &a2apb.Task{
 		Id:        t.ID,
+		Metadata:  metadataToProto(t.Metadata),
 		ContextId: t.ContextID,
 		Status: &a2apb.TaskStatus{
 			State:     taskStateToProto(t.Status.State),
@@ -306,6 +310,7 @@ func streamResponseOf(ev a2aremote.StreamEvent) *a2apb.StreamResponse {
 		return &a2apb.StreamResponse{Payload: &a2apb.StreamResponse_StatusUpdate{
 			StatusUpdate: &a2apb.TaskStatusUpdateEvent{
 				TaskId:    ev.StatusUpdate.TaskID,
+				Metadata:  metadataToProto(ev.StatusUpdate.Metadata),
 				ContextId: ev.StatusUpdate.ContextID,
 				Status: &a2apb.TaskStatus{
 					State:     taskStateToProto(ev.StatusUpdate.Status.State),
@@ -332,4 +337,21 @@ func streamResponseOf(ev a2aremote.StreamEvent) *a2apb.StreamResponse {
 	default:
 		return &a2apb.StreamResponse{}
 	}
+}
+
+// metadataToProto uses the JSON contract so typed domain metadata projects the
+// same way over gRPC and JSON. Non-JSON host metadata remains unavailable.
+func metadataToProto(values map[string]any) *structpb.Struct {
+	if len(values) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return nil
+	}
+	out := &structpb.Struct{}
+	if err = protojson.Unmarshal(encoded, out); err != nil {
+		return nil
+	}
+	return out
 }

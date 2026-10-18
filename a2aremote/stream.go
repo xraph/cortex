@@ -22,9 +22,10 @@ type StreamEvent struct {
 
 // TaskStatusUpdateEvent says a task moved.
 type TaskStatusUpdateEvent struct {
-	TaskID    string     `json:"taskId"`
-	ContextID string     `json:"contextId,omitempty"`
-	Status    TaskStatus `json:"status"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	TaskID    string         `json:"taskId"`
+	ContextID string         `json:"contextId,omitempty"`
+	Status    TaskStatus     `json:"status"`
 	// Final says no more events follow, which is what tells a client to
 	// stop reading rather than to keep a dead connection open.
 	Final bool `json:"final"`
@@ -120,6 +121,7 @@ func (s *Service) follow(ctx context.Context, cred Credentials, tenant, taskID s
 		final := task.Status.State.Terminal()
 		if err := emit(StreamEvent{StatusUpdate: &TaskStatusUpdateEvent{
 			TaskID:    task.ID,
+			Metadata:  task.Metadata,
 			ContextID: task.ContextID,
 			Status:    task.Status,
 			Final:     final,

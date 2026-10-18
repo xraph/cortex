@@ -1,6 +1,11 @@
 package run
 
-import "time"
+import (
+	"time"
+
+	"github.com/xraph/cortex/safety"
+	"github.com/xraph/cortex/verification"
+)
 
 // StopReason records why execution ended. Empty means historical or unknown.
 type StopReason string
@@ -31,4 +36,18 @@ type Outcome struct {
 	StepCount    int
 	TokensUsed   int
 	CompletedAt  time.Time
+}
+
+// TerminalSummary contains bounded outcome metadata without model or tool text.
+// It describes a persisted execution, independently of factual verification.
+type TerminalSummary struct {
+	State              State                    `json:"state"`
+	StopReason         StopReason               `json:"stop_reason"`
+	VerificationStatus verification.Status      `json:"verification_status"`
+	PublicationStatus  safety.PublicationStatus `json:"publication_status"`
+}
+
+// TerminalSummary returns outcome metadata with legacy verification normalized.
+func (r *Run) TerminalSummary() TerminalSummary {
+	return TerminalSummary{State: r.State, StopReason: r.StopReason, VerificationStatus: r.VerificationStatus.Normalized(), PublicationStatus: r.Provenance.PublicationStatus}
 }

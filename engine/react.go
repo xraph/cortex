@@ -788,6 +788,7 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 	if writeErr != nil {
 		return fmt.Errorf("update run on failure: %w", writeErr)
 	}
+	e.emitTerminalOutcome(writeCtx, r)
 	if r.State == run.StateFailed {
 		e.extensions.EmitRunFailed(writeCtx, agentID, r.ID, runErr)
 	}

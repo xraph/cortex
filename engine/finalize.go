@@ -58,6 +58,7 @@ func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcom
 		return fmt.Errorf("cortex: persist terminal outcome: %w", err)
 	}
 	*r = next
+	e.emitTerminalOutcome(writeCtx, r)
 	if r.State == run.StateCompleted {
 		var duration time.Duration
 		if r.StartedAt != nil {
@@ -105,4 +106,8 @@ func outcomeEvent(r *run.Run, duration time.Duration) StreamEvent {
 		"state": string(r.State), "stop_reason": string(r.StopReason),
 		"verification_status": string(r.VerificationStatus.Normalized()), "duration_ms": duration.Milliseconds(),
 	}}
+}
+
+func (e *Engine) emitTerminalOutcome(ctx context.Context, r *run.Run) {
+	e.extensions.EmitRunTerminated(ctx, r.AgentID, r.ID, r.TerminalSummary())
 }

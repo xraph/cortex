@@ -796,6 +796,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	if err := e.store.UpdateRun(ctx, r); err != nil {
 		return fmt.Errorf("cancel run %s: %w", runID, err)
 	}
+	e.emitTerminalOutcome(context.WithoutCancel(ctx), r)
 	return nil
 }
 
@@ -827,6 +828,8 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 		// dropping the row now would throw that away for nothing.
 		return fmt.Errorf("cancel paused run %s: %w", r.ID, err)
 	}
+
+	e.emitTerminalOutcome(context.WithoutCancel(ctx), r)
 
 	// The run is cancelled and no claim will ever take it again, so the
 	// row is dead weight, and dropping it is what makes the cancel final.

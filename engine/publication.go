@@ -6,6 +6,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
@@ -63,7 +64,25 @@ func publicationRequest(ctx context.Context, ag *agent.Config, r *run.Run, text,
 	return req
 }
 
-func (e *Engine) checkPublication(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, text, source string, direction safety.Direction) (approvedText, error) {
+func (e *Engine) checkPublication(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, text, source string, direction safety.Direction) (approved approvedText, rejectionErr error) {
+	defer func() {
+		if rejectionErr == nil || ctx.Err() != nil {
+			return
+		}
+		if !errors.Is(rejectionErr, safety.ErrUnavailable) && !errors.Is(rejectionErr, safety.ErrBlocked) && !errors.Is(rejectionErr, safety.ErrLimit) {
+			return
+		}
+		reason := run.StopSafetyBlock
+		if errors.Is(rejectionErr, safety.ErrUnavailable) {
+			reason = run.StopPolicyUnavailable
+		}
+		var runID id.AgentRunID
+		if r != nil {
+			runID = r.ID
+		}
+		e.extensions.EmitPublicationRejected(ctx, ag.ID, runID, reason)
+	}()
+
 	p, err := p.Resolve()
 	if err != nil {
 		return "", err

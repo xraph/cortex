@@ -107,6 +107,9 @@ func TestStreamMessageReportsTransitionsAndEndsFinal(t *testing.T) {
 		t.Fatalf("no transitions were reported: %+v", events)
 	}
 	last := updates[len(updates)-1]
+	if last.Metadata["cortex.assurance"] == nil {
+		t.Fatal("terminal stream lost assurance metadata")
+	}
 	if !last.Final {
 		t.Error("the last transition must say it is final, or a client keeps a dead connection open")
 	}

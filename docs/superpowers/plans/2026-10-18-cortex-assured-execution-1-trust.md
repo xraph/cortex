@@ -105,9 +105,9 @@ Files: modify `api/run_handler.go`, `api/requests.go`, `extension/contract/execu
 
 Interfaces: expose stop reason, verification status and publication status without changing existing response keys. Map incomplete outcomes to supported remote protocol states with explanatory metadata; never invent a protocol enum. New capabilities describe scanner presence, preparation support and assurance availability truthfully.
 
-- [ ] Write API/contract fixtures for old and new runs, exhausted runs, scanner outage and permission denial. Add UI assertions that unchecked, incomplete and blocked outcomes cannot render as verified success.
-- [ ] Run focused tests to confirm the missing status fields and rendering fail, then implement mappings and compact summaries through the existing contract transport.
-- [ ] Add audit events for policy failures and incomplete termination with bounded metric labels. Raw prompt/tool content and evidence identifiers must not become metric labels.
+- [x] Write API/contract fixtures for old and new runs, exhausted runs, scanner outage and permission denial. Add UI assertions that unchecked, incomplete and blocked outcomes cannot render as verified success.
+- [x] Run focused tests to confirm the missing status fields and rendering fail, then implement mappings and compact summaries through the existing contract transport.
+- [x] Add audit events for policy failures and incomplete termination with bounded metric labels. Raw prompt/tool content and evidence identifiers must not become metric labels.
 - [ ] Run installed workflows: ordinary answer, tool answer, last-step exhaustion, truncated generation, approval/resume, scanner failure, stream disconnect, restart and revoked grant. Inspect durable state and public bytes, not just UI badges.
 - [ ] Check desktop and 390px layouts, keyboard use, shared ZeroState, loading/denied/error distinctions and retry. Do not add an unregistered walkthrough.
 - [ ] Run G1 matrix, update progress evidence and compatibility notes, then common checks and commit `feat(cortex): expose trustworthy execution outcomes`.
