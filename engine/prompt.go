@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/prompt"
@@ -32,7 +33,9 @@ type resolvedConfig struct {
 	// registered tool". An overlay that withdraws the last tool an agent
 	// had is the case this exists for: without it, a removal would read
 	// as a grant.
-	ToolsRestricted bool
+	ToolsRestricted    bool
+	AllToolsRestricted bool
+	Budget             execution.Budget
 }
 
 // effectiveConfig layers the run settings four deep: engine defaults,
@@ -117,13 +120,23 @@ func (e *Engine) effectiveConfig(ag *agent.Config, overrides *RunOverrides, over
 		// the restriction with it. An empty override is "no override"
 		// rather than "no tools", which is what it has always meant and
 		// is the one reading that cannot widen anything.
-		if len(overrides.Tools) > 0 {
+		if len(overrides.Tools) > 0 || overrides.ToolsRestricted {
 			cfg.Tools = overrides.Tools
+			cfg.AllToolsRestricted = overrides.ToolsRestricted
 			cfg.ToolsRestricted = true
 		}
 		if overrides.PersonaRef != "" {
 			cfg.PersonaRef = overrides.PersonaRef
 		}
+	}
+
+	cfg.Budget.MaxSteps = cfg.MaxSteps
+	if overrides != nil && overrides.Budget != nil {
+		cfg.Budget = *overrides.Budget
+		if cfg.Budget.MaxSteps == 0 || cfg.Budget.MaxSteps > cfg.MaxSteps {
+			cfg.Budget.MaxSteps = cfg.MaxSteps
+		}
+		cfg.MaxSteps = cfg.Budget.MaxSteps
 	}
 
 	return cfg
@@ -171,10 +184,15 @@ func (e *Engine) buildSystemPrompt(ctx context.Context, ag *agent.Config, overri
 // prompt has always had: the agent's own instructions, the persona, one
 // section per skill, retrieved knowledge, then one per trait injection.
 func (e *Engine) collectSections(ctx context.Context, ag *agent.Config, overrides *RunOverrides) ([]prompt.Section, error) {
+	sections, _, err := e.collectPreparedSections(ctx, ag, overrides)
+	return sections, err
+}
+
+func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, overrides *RunOverrides) ([]prompt.Section, []string, error) {
 	sections := agentSections(ag, overrides)
 
 	if e.store == nil {
-		return sections, nil
+		return sections, nil, nil
 	}
 
 	personaRef := ag.PersonaRef
@@ -197,14 +215,14 @@ func (e *Engine) collectSections(ctx context.Context, ag *agent.Config, override
 	if personaRef != "" {
 		p, err := e.store.GetPersonaByName(ctx, personaRef)
 		if err != nil {
-			return nil, fmt.Errorf("resolve persona %q: %w", personaRef, err)
+			return nil, nil, fmt.Errorf("resolve persona %q: %w", personaRef, err)
 		}
 		sections = append(sections, p.Sections(prompt.OrderPersona)...)
 	}
 
 	skills, err := e.resolveSkills(ctx, skillNames)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Each producer takes consecutive orders from its band so the
@@ -218,7 +236,8 @@ func (e *Engine) collectSections(ctx context.Context, ag *agent.Config, override
 		sections = append(sections, secs...)
 	}
 
-	sections = append(sections, e.knowledgeSections(ctx, skills)...)
+	knowledgeSections, diagnostics := e.knowledgeSections(ctx, skills)
+	sections = append(sections, knowledgeSections...)
 
 	order = prompt.OrderTrait
 	for _, name := range traitNames {
@@ -228,14 +247,14 @@ func (e *Engine) collectSections(ctx context.Context, ag *agent.Config, override
 		}
 		t, tErr := e.store.GetTraitByName(ctx, name)
 		if tErr != nil {
-			return nil, fmt.Errorf("resolve trait %q: %w", name, tErr)
+			return nil, nil, fmt.Errorf("resolve trait %q: %w", name, tErr)
 		}
 		secs := t.Sections(order)
 		order += len(secs)
 		sections = append(sections, secs...)
 	}
 
-	return sections, nil
+	return sections, diagnostics, nil
 }
 
 // agentSections returns the agent's own contribution.
@@ -285,12 +304,7 @@ func (e *Engine) resolveSkills(ctx context.Context, names []string) ([]*skill.Sk
 // enriches a prompt, it does not define the agent, so an outage in the
 // retrieval backend degrades the prompt instead of taking every agent
 // that references a collection offline.
-func (e *Engine) knowledgeSections(ctx context.Context, skills []*skill.Skill) []prompt.Section {
-	if e.knowledge == nil {
-		return nil
-	}
-
-	var out []prompt.Section
+func (e *Engine) knowledgeSections(ctx context.Context, skills []*skill.Skill) (out []prompt.Section, diagnostics []string) {
 	order := prompt.OrderKnowledge
 	seen := make(map[string]int)
 
@@ -299,8 +313,17 @@ func (e *Engine) knowledgeSections(ctx context.Context, skills []*skill.Skill) [
 			if ref.Source == "" {
 				continue
 			}
+			if e.knowledge == nil {
+				diagnostics = append(diagnostics, "knowledge provider unavailable: "+ref.Source)
+				continue
+			}
 			chunks, err := e.knowledge.Retrieve(ctx, ref.Source, &knowledge.RetrieveParams{TopK: knowledgeTopK})
-			if err != nil || len(chunks) == 0 {
+			if err != nil {
+				diagnostics = append(diagnostics, "knowledge retrieval failed: "+ref.Source)
+				continue
+			}
+			if len(chunks) == 0 {
+				diagnostics = append(diagnostics, "knowledge retrieval empty: "+ref.Source)
 				continue
 			}
 
@@ -320,7 +343,7 @@ func (e *Engine) knowledgeSections(ctx context.Context, skills []*skill.Skill) [
 		}
 	}
 
-	return out
+	return out, diagnostics
 }
 
 // knowledgeBody renders retrieved chunks as the bulleted block this has

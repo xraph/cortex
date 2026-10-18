@@ -317,8 +317,13 @@ func TestResolveSession_DoesNotMatchDescendantScope(t *testing.T) {
 // scopespy's in-memory fakes.
 func newSQLiteStoreForTest(t *testing.T) *sqlite.Store {
 	t.Helper()
-	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "cortex_test.db")
+	return openSQLiteStoreForTest(t, dsn)
+}
+
+func openSQLiteStoreForTest(t *testing.T, dsn string) *sqlite.Store {
+	t.Helper()
+	ctx := context.Background()
 	drv := sqlitedriver.New()
 	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlite driver: %v", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
@@ -34,16 +35,18 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
-	config      cortex.Config
-	logger      log.Logger
-	store       store.Store
-	llm         llm.Client
-	safety      safety.Scanner
-	knowledge   knowledge.Provider
-	authorizer  cortex.ToolAuthorizer
-	extensions  *plugin.Registry
-	pendingExts []plugin.Extension
-	tools       []registeredTool
+	config         cortex.Config
+	logger         log.Logger
+	store          store.Store
+	llm            llm.Client
+	safety         safety.Scanner
+	knowledge      knowledge.Provider
+	authorizer     cortex.ToolAuthorizer
+	extensions     *plugin.Registry
+	pendingExts    []plugin.Extension
+	tools          []registeredTool
+	toolRevisions  map[string]string
+	modelRevisions map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []llm.Tool
@@ -87,6 +90,8 @@ type RunOverrides struct {
 	InlineTraits    []string
 	InlineBehaviors []string
 	Tools           []string
+	ToolsRestricted bool
+	Budget          *execution.Budget
 	SessionID       id.SessionID
 }
 

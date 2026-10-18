@@ -11,6 +11,7 @@ const (
 	StopProviderUnknown    StopReason = "provider_unknown"
 	StopFinalAnswer        StopReason = "final_answer"
 	StopStepLimit          StopReason = "step_limit"
+	StopToolLimit          StopReason = "tool_limit"
 	StopTokenLimit         StopReason = "token_limit"
 	StopCostLimit          StopReason = "cost_limit"
 	StopDeadline           StopReason = "deadline"

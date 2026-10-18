@@ -709,11 +709,10 @@ func (c *countingEscalator) Authorize(_ context.Context, _ cortex.Subject, call 
 	return nil
 }
 
-// TestResolveCheckpoint_AnApprovedCallIsNotSentBackToTheAuthorizer pins
-// the one rule that makes an approval terminate. The authorizer already
-// answered and a human answered after it; asking again would escalate the
-// same call forever, and the run would pause on every resume.
-func TestResolveCheckpoint_AnApprovedCallIsNotSentBackToTheAuthorizer(t *testing.T) {
+// TestResolveCheckpoint_ApprovalSatisfiesFreshEscalation checks current policy
+// again while letting the claimed human approval satisfy another escalation.
+
+func TestResolveCheckpoint_ApprovalSatisfiesFreshEscalation(t *testing.T) {
 	def := gatedTool()
 	auth := &countingEscalator{tool: def.Name}
 	spy := scopespy.New()
@@ -741,8 +740,8 @@ func TestResolveCheckpoint_AnApprovedCallIsNotSentBackToTheAuthorizer(t *testing
 		t.Fatalf("ResolveCheckpoint: %v", resolveErr)
 	}
 
-	if got := atomic.LoadInt32(&auth.calls); got != 1 {
-		t.Errorf("Authorize ran %d times, want 1; an approved call re-asked would escalate forever", got)
+	if got := atomic.LoadInt32(&auth.calls); got != 3 {
+		t.Errorf("Authorize ran %d times, want 3; current policy must be checked without escalating again", got)
 	}
 	resumed, err := spy.GetRun(ctx, paused.ID)
 	if err != nil {

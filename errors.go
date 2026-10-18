@@ -30,6 +30,8 @@ var (
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")
 	ErrRunCancelled     = errors.New("cortex: run cancelled")
+	ErrInvalidPrepared  = errors.New("cortex: invalid prepared execution")
+	ErrNoLLM            = errors.New("cortex: no model provider configured")
 	ErrRunIncomplete    = errors.New("cortex: run incomplete")
 	ErrRunAlreadyDone   = errors.New("cortex: run already completed")
 	ErrBudgetExhausted  = errors.New("cortex: budget exhausted")

@@ -181,6 +181,9 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, con
 	}
 
 	r.State = run.StatePaused
+	r.Budget = cont.Config.Budget
+	r.Usage = cont.Usage
+	r.Provenance = cont.Provenance
 	r.StepCount = cont.StepIndex
 	r.TokensUsed = cont.TokensUsed
 	if err := e.store.UpdateRun(ctx, r); err != nil {

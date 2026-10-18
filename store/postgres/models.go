@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/store/internal/runstate"
 	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 	"github.com/xraph/cortex/verification"
@@ -610,15 +611,19 @@ type runModel struct {
 	FinishReason       string            `grove:"finish_reason"`
 	VerificationStatus string            `grove:"verification_status"`
 	ResultRef          string            `grove:"result_ref"`
+	Provenance         string            `grove:"provenance,type:jsonb"`
+	Budget             string            `grove:"budget,type:jsonb"`
+	Usage              string            `grove:"usage,type:jsonb"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
+		Provenance: mustJSON(r.Provenance), Usage: mustJSON(r.Usage), Budget: mustJSON(r.Budget),
 		ID:                 r.ID.String(),
 		AgentID:            r.AgentID.String(),
 		SessionID:          r.SessionID.String(),
-		State:              string(r.State),
+		State:              runstate.Encode(r),
 		StopReason:         string(r.StopReason),
 		FinishReason:       r.FinishReason,
 		VerificationStatus: string(r.VerificationStatus.Normalized()),
@@ -665,7 +670,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		AgentID:            agentID,
 		SessionID:          sessionID,
 		Scope:              scope,
-		State:              run.State(m.State),
+		State:              runstate.Decode(m.State),
 		StopReason:         run.StopReason(m.StopReason),
 		FinishReason:       m.FinishReason,
 		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),
@@ -682,6 +687,16 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
 		return nil, err
 	}
+	if err := unmarshalField("provenance", m.Provenance, &r.Provenance); err != nil {
+		return nil, err
+	}
+	if err := unmarshalField("budget", m.Budget, &r.Budget); err != nil {
+		return nil, err
+	}
+	if err := unmarshalField("usage", m.Usage, &r.Usage); err != nil {
+		return nil, err
+	}
+
 	return r, nil
 }
 

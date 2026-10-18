@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/internal/runstate"
 )
 
 // CreateRun persists a new run.
@@ -82,9 +83,10 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 
 	set := bson.M{
-		"agent_id":            m.AgentID,
-		"session_id":          m.SessionID,
-		"state":               m.State,
+		"agent_id":   m.AgentID,
+		"session_id": m.SessionID,
+		"state":      m.State,
+		"provenance": m.Provenance, "usage": m.Usage, "budget": m.Budget,
 		"stop_reason":         m.StopReason,
 		"finish_reason":       m.FinishReason,
 		"verification_status": m.VerificationStatus,
@@ -136,7 +138,11 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 		f["agent_id"] = filter.AgentID
 	}
 	if filter.State != "" {
-		f["state"] = string(filter.State)
+		if filter.State == run.StatePaused {
+			f["state"] = bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}
+		} else {
+			f["state"] = string(filter.State)
+		}
 	}
 
 	q := s.mdb.NewFind(&models).
@@ -185,7 +191,11 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 		f["agent_id"] = filter.AgentID
 	}
 	if filter.State != "" {
-		f["state"] = string(filter.State)
+		if filter.State == run.StatePaused {
+			f["state"] = bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}
+		} else {
+			f["state"] = string(filter.State)
+		}
 	}
 
 	count, err := s.mdb.NewFind((*runModel)(nil)).

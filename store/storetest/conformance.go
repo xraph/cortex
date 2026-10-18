@@ -39,6 +39,7 @@ import (
 // newStore must return a freshly migrated, empty store; Conformance calls
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("PreparedRoundTrip", func(t *testing.T) { testPreparedRoundTrip(t, newStore) })
 	t.Run("RunOutcomeRoundTrip", func(t *testing.T) {
 		s := newStore(t)
 		ctx := ctxWithScope("outcome")

@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/communication"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/perception"
@@ -22,6 +23,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/store/internal/runstate"
 	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 	"github.com/xraph/cortex/verification"
@@ -137,39 +139,43 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 
 type runModel struct {
 	grove.BaseModel    `grove:"table:cortex_runs"`
-	ID                 string            `grove:"id,pk"          bson:"_id"`
-	AgentID            string            `grove:"agent_id"       bson:"agent_id"`
-	SessionID          string            `grove:"session_id"     bson:"session_id"`
-	State              string            `grove:"state"          bson:"state"`
-	StopReason         string            `grove:"stop_reason" bson:"stop_reason,omitempty"`
-	Input              string            `grove:"input"          bson:"input"`
-	Output             string            `grove:"output"         bson:"output"`
-	Error              string            `grove:"error"          bson:"error"`
-	StepCount          int               `grove:"step_count"     bson:"step_count"`
-	TokensUsed         int               `grove:"tokens_used"    bson:"tokens_used"`
-	StartedAt          *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
-	CompletedAt        *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
-	PersonaRef         string            `grove:"persona_ref"    bson:"persona_ref"`
-	Metadata           map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
-	ScopeL0            string            `grove:"scope_l0"       bson:"scope_l0"`
-	ScopeL1            string            `grove:"scope_l1"       bson:"scope_l1"`
-	ScopeL2            string            `grove:"scope_l2"       bson:"scope_l2"`
-	ScopeExtra         map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
-	ScopeCanon         string            `grove:"scope_canon"    bson:"scope_canon"`
-	CreatedAt          time.Time         `grove:"created_at"     bson:"created_at"`
-	UpdatedAt          time.Time         `grove:"updated_at"     bson:"updated_at"`
-	FinishReason       string            `grove:"finish_reason" bson:"finish_reason"`
-	VerificationStatus string            `grove:"verification_status" bson:"verification_status"`
-	ResultRef          string            `grove:"result_ref" bson:"result_ref"`
+	ID                 string                  `grove:"id,pk"          bson:"_id"`
+	AgentID            string                  `grove:"agent_id"       bson:"agent_id"`
+	SessionID          string                  `grove:"session_id"     bson:"session_id"`
+	State              string                  `grove:"state"          bson:"state"`
+	StopReason         string                  `grove:"stop_reason" bson:"stop_reason,omitempty"`
+	Input              string                  `grove:"input"          bson:"input"`
+	Output             string                  `grove:"output"         bson:"output"`
+	Error              string                  `grove:"error"          bson:"error"`
+	StepCount          int                     `grove:"step_count"     bson:"step_count"`
+	TokensUsed         int                     `grove:"tokens_used"    bson:"tokens_used"`
+	StartedAt          *time.Time              `grove:"started_at"     bson:"started_at,omitempty"`
+	CompletedAt        *time.Time              `grove:"completed_at"   bson:"completed_at,omitempty"`
+	PersonaRef         string                  `grove:"persona_ref"    bson:"persona_ref"`
+	Metadata           map[string]any          `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0            string                  `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1            string                  `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2            string                  `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra         map[string]string       `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon         string                  `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt          time.Time               `grove:"created_at"     bson:"created_at"`
+	UpdatedAt          time.Time               `grove:"updated_at"     bson:"updated_at"`
+	FinishReason       string                  `grove:"finish_reason" bson:"finish_reason"`
+	VerificationStatus string                  `grove:"verification_status" bson:"verification_status"`
+	ResultRef          string                  `grove:"result_ref" bson:"result_ref"`
+	Provenance         run.ExecutionProvenance `grove:"provenance" bson:"provenance,omitempty"`
+	Budget             execution.Budget        `grove:"budget" bson:"budget,omitempty"`
+	Usage              execution.Usage         `grove:"usage" bson:"usage,omitempty"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
+		Provenance: r.Provenance, Usage: r.Usage, Budget: r.Budget,
 		ID:                 r.ID.String(),
 		AgentID:            r.AgentID.String(),
 		SessionID:          r.SessionID.String(),
-		State:              string(r.State),
+		State:              runstate.Encode(r),
 		StopReason:         string(r.StopReason),
 		FinishReason:       r.FinishReason,
 		VerificationStatus: string(r.VerificationStatus.Normalized()),
@@ -211,12 +217,13 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
 	return &run.Run{
+		Provenance: m.Provenance, Usage: m.Usage, Budget: m.Budget,
 		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                 runID,
 		AgentID:            agentID,
 		SessionID:          sessionID,
 		Scope:              scope,
-		State:              run.State(m.State),
+		State:              runstate.Decode(m.State),
 		StopReason:         run.StopReason(m.StopReason),
 		FinishReason:       m.FinishReason,
 		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),

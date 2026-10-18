@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/internal/runstate"
 	"github.com/xraph/cortex/suspension"
 )
 
@@ -97,7 +98,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		return nil, cortex.ErrSuspensionExpired
 	}
 
-	filter := bson.M{"_id": runID.String(), "state": string(run.StatePaused)}
+	filter := bson.M{"_id": runID.String(), "state": bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -152,7 +153,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 		return nil, cortex.ErrNotSuspended
 	}
 
-	filter := bson.M{"_id": runID.String(), "state": string(run.StatePaused)}
+	filter := bson.M{"_id": runID.String(), "state": bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}}
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}

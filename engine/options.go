@@ -179,3 +179,32 @@ func WithSuspensionSweepLimit(n int) Option {
 		return nil
 	}
 }
+
+// WithToolRevision records the host's immutable implementation revision. It is
+// checked on prepared execution and resume; definition hashes are stored too.
+func WithToolRevision(name, revision string) Option {
+	return func(e *Engine) error {
+		if name == "" || revision == "" {
+			return fmt.Errorf("cortex: tool revision requires name and revision")
+		}
+		if e.toolRevisions == nil {
+			e.toolRevisions = make(map[string]string)
+		}
+		e.toolRevisions[name] = revision
+		return nil
+	}
+}
+
+// WithModelRevision pins a host-resolved model version behind a model selector.
+func WithModelRevision(model, revision string) Option {
+	return func(e *Engine) error {
+		if model == "" || revision == "" {
+			return fmt.Errorf("cortex: model revision requires model and revision")
+		}
+		if e.modelRevisions == nil {
+			e.modelRevisions = make(map[string]string)
+		}
+		e.modelRevisions[model] = revision
+		return nil
+	}
+}

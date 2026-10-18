@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/run"
 )
 
 // SuspendReason says why a run stopped. Both reasons share one mechanism
@@ -67,13 +69,15 @@ type PendingCall struct {
 // executing, so an agent-config edit landing during the pause cannot
 // shift a conversation already in flight.
 type RunConfig struct {
-	Model         string   `json:"model,omitempty"`
-	Temperature   *float64 `json:"temperature,omitempty"`
-	MaxSteps      int      `json:"max_steps,omitempty"`
-	MaxTokens     int      `json:"max_tokens,omitempty"`
-	ReasoningLoop string   `json:"reasoning_loop,omitempty"`
-	Tools         []string `json:"tools,omitempty"`
-	PersonaRef    string   `json:"persona_ref,omitempty"`
+	Budget             execution.Budget `json:"budget,omitempty"`
+	AllToolsRestricted bool             `json:"all_tools_restricted,omitempty"`
+	Model              string           `json:"model,omitempty"`
+	Temperature        *float64         `json:"temperature,omitempty"`
+	MaxSteps           int              `json:"max_steps,omitempty"`
+	MaxTokens          int              `json:"max_tokens,omitempty"`
+	ReasoningLoop      string           `json:"reasoning_loop,omitempty"`
+	Tools              []string         `json:"tools,omitempty"`
+	PersonaRef         string           `json:"persona_ref,omitempty"`
 
 	// ToolsRestricted says Tools is an explicit allowlist even when it
 	// is empty, which is what an overlay that withdrew the agent's last
@@ -104,10 +108,14 @@ type RunConfig struct {
 // with. Consistency within one run beats picking up a mid-run change to
 // the agent's identity.
 type Continuation struct {
-	Messages     []llm.Message `json:"messages"`
-	SystemPrompt string        `json:"system_prompt"`
-	StepIndex    int           `json:"step_index"`
-	TokensUsed   int           `json:"tokens_used"`
+	SchemaVersion int                     `json:"schema_version,omitempty"`
+	Prepared      []byte                  `json:"prepared,omitempty"`
+	Provenance    run.ExecutionProvenance `json:"provenance,omitempty"`
+	Usage         execution.Usage         `json:"usage,omitempty"`
+	Messages      []llm.Message           `json:"messages"`
+	SystemPrompt  string                  `json:"system_prompt"`
+	StepIndex     int                     `json:"step_index"`
+	TokensUsed    int                     `json:"tokens_used"`
 
 	// NewMessagesFrom is the index in Messages where this run's own
 	// messages begin. Everything before it is conversation history the

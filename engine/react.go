@@ -11,6 +11,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
@@ -25,10 +26,14 @@ import (
 // plus the pending calls, and a resume rehydrates one of these rather
 // than reconstructing the loop's local variables by hand.
 type reactState struct {
-	messages     []llm.Message
-	systemPrompt string
-	stepIndex    int
-	tokensUsed   int
+	prepared         *PreparedAgent
+	preparedSnapshot *preparedSnapshot
+	provenance       run.ExecutionProvenance
+	usage            execution.Usage
+	messages         []llm.Message
+	systemPrompt     string
+	stepIndex        int
+	tokensUsed       int
 
 	// newMessagesFrom is where this run's own messages begin. Everything
 	// before it is history the run loaded at startup, and saving it again
@@ -47,7 +52,12 @@ type reactState struct {
 // run's own overrides live nowhere else, and rebuilding without them
 // widens the tool list and resets the step budget.
 func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
+	schema := 0
+	if s.prepared != nil {
+		schema = preparedSchemaVersion
+	}
 	return suspension.Continuation{
+		SchemaVersion: schema, Prepared: preparedBytes(s.prepared), Provenance: s.provenance, Usage: s.usage,
 		Messages:        s.messages,
 		SystemPrompt:    s.systemPrompt,
 		StepIndex:       s.stepIndex,
@@ -55,6 +65,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 		NewMessagesFrom: s.newMessagesFrom,
 		SessionID:       s.sessionID,
 		Config: suspension.RunConfig{
+			Budget: cfg.Budget, AllToolsRestricted: cfg.AllToolsRestricted,
 			Model:           cfg.Model,
 			Temperature:     cfg.Temperature,
 			MaxSteps:        cfg.MaxSteps,
@@ -71,6 +82,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 // run ever runs on.
 func configFromContinuation(c suspension.RunConfig) resolvedConfig {
 	return resolvedConfig{
+		Budget: c.Budget, AllToolsRestricted: c.AllToolsRestricted,
 		Model:           c.Model,
 		Temperature:     c.Temperature,
 		MaxSteps:        c.MaxSteps,
@@ -86,6 +98,7 @@ func configFromContinuation(c suspension.RunConfig) resolvedConfig {
 // resumed loop gets its state.
 func stateFromContinuation(cont suspension.Continuation) *reactState {
 	return &reactState{
+		provenance: cont.Provenance, usage: cont.Usage,
 		messages:        cont.Messages,
 		systemPrompt:    cont.SystemPrompt,
 		stepIndex:       cont.StepIndex,
@@ -97,68 +110,11 @@ func stateFromContinuation(cont suspension.Continuation) *reactState {
 
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-
-	// Resolved once here and threaded to every conversation call below,
-	// rather than re-resolved at each call site: resolveSession lazily
-	// creates the agent's default session under a create race, and
-	// calling it more than once per run risks two different calls
-	// landing on two different freshly created "default" sessions.
-	sessionID, err := e.resolveSession(ctx, ag.ID, overrideSessionID(overrides))
+	p, err := e.prepareAgent(ctx, ag, overrides)
 	if err != nil {
-		return nil, fmt.Errorf("resolve session: %w", err)
+		return nil, err
 	}
-
-	// One ancestor walk feeds both the prompt and the run config, so the
-	// two can never disagree about which overlays applied to this run.
-	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
-	if err != nil {
-		return nil, fmt.Errorf("load prompt overlays: %w", err)
-	}
-
-	cfg := e.effectiveConfig(ag, overrides, overlays)
-	systemPrompt, err := e.buildSystemPrompt(ctx, ag, overrides, overlays)
-	if err != nil {
-		return nil, fmt.Errorf("build system prompt: %w", err)
-	}
-
-	now := time.Now().UTC()
-	r := &run.Run{
-		Entity:     cortex.NewEntity(),
-		ID:         id.NewAgentRunID(),
-		AgentID:    ag.ID,
-		SessionID:  sessionID,
-		Scope:      scope,
-		State:      run.StateRunning,
-		Input:      input,
-		StartedAt:  &now,
-		PersonaRef: cfg.PersonaRef,
-	}
-	if err := e.store.CreateRun(ctx, r); err != nil {
-		return nil, fmt.Errorf("create run: %w", err)
-	}
-
-	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
-
-	// Load conversation history.
-	history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
-	messages := memoryToLLM(history)
-	st := &reactState{
-		messages:     messages,
-		systemPrompt: systemPrompt,
-		sessionID:    sessionID,
-		// Everything from here on is new to this run. SaveConversation
-		// persists only messages[newMessagesFrom:] -- saving the whole
-		// slice (history included) would re-insert the reloaded history
-		// as new rows on every run, and LoadConversation's LIMIT
-		// 100/no-offset read would then freeze on an ever-older prefix
-		// once duplication pushed the row count past the limit, silently
-		// blinding the agent to recent turns.
-		newMessagesFrom: len(messages),
-	}
-	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
-
-	return e.continueReAct(ctx, ag, cfg, r, st, input, now)
+	return e.RunPrepared(ctx, p, input, preparedOptions(overrides))
 }
 
 // continueReAct runs the ReAct loop over a run that already exists and a
@@ -171,6 +127,8 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 // resumed run reports its full wall-clock duration rather than only the
 // stretch after the pause.
 func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time) (*run.Run, error) {
+	ctx, cancelRun := runDeadline(ctx, cfg)
+	defer cancelRun()
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
@@ -179,6 +137,11 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		if limit := cfg.Budget.Check(st.usage, time.Now()); limit != "" {
+			stopReason = run.StopReason(limit)
+			break
+		}
+
 		stepStart := time.Now().UTC()
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
@@ -191,9 +154,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			Model:       cfg.Model,
 			System:      st.systemPrompt,
 			Messages:    st.messages,
-			MaxTokens:   cfg.MaxTokens,
+			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cfg.Temperature,
-			Tools:       e.resolveTools(ctx, subject, cfg.Tools, cfg.ToolsRestricted),
+			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
 		// Safety: scan input before LLM call.
@@ -217,15 +180,21 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		resp, err := e.llm.Complete(ctx, req)
 		if err != nil {
+			reported := 0
+			if resp != nil {
+				reported = resp.Usage.TotalTokens
+			}
+			st.failedAttempt(reported, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
 			return nil, fmt.Errorf("llm complete: %w", err)
 		}
 
 		if resp == nil {
+			st.failedAttempt(0, cfg, r)
 			return r, e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
 		}
 		lastFinishReason = resp.FinishReason
-		st.tokensUsed += resp.Usage.TotalTokens
+		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
 
 		// Record the step.
 		stepEnd := time.Now().UTC()
@@ -247,9 +216,19 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
 		st.stepIndex++
+		st.usage.Steps = st.stepIndex
+		r.Usage = st.usage
 
 		// Check for tool calls.
+		if cfg.Budget.MaxTokens > 0 && st.tokensUsed > cfg.Budget.MaxTokens {
+			stopReason = run.StopTokenLimit
+			break
+		}
 		if len(resp.ToolCalls) > 0 && responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls)) == run.StopFinalAnswer {
+			if limit := st.admitTools(len(resp.ToolCalls), cfg); limit != "" {
+				stopReason = run.StopReason(limit)
+				break
+			}
 			// Append assistant message with tool calls.
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
@@ -272,7 +251,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				result, outcome, pendingReason := e.executeTool(stepCtx, subject, tc)
+				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomePending {
 					// No tool call row: nothing ran, and a row with a
 					// completion timestamp on it would be a lie the
@@ -356,6 +335,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		break
 	}
 
+	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
 
 	// Complete the run.
@@ -368,84 +348,20 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 // streamReAct executes an agent using the ReAct reasoning loop with streaming.
 func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
-	scope := cortex.ScopeFromContext(ctx)
-
-	// Resolved once here and threaded to every conversation call below,
-	// same as runReAct: resolveSession lazily creates the agent's
-	// default session under a create race, and calling it more than
-	// once per run risks two different calls landing on two different
-	// freshly created "default" sessions.
-	sessionID, err := e.resolveSession(ctx, ag.ID, overrideSessionID(overrides))
+	p, err := e.prepareAgent(ctx, ag, overrides)
 	if err != nil {
 		close(events)
-		return fmt.Errorf("resolve session: %w", err)
+		return err
 	}
-
-	// Same single walk as runReAct, for the same reason.
-	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
-	if err != nil {
-		close(events)
-		return fmt.Errorf("load prompt overlays: %w", err)
-	}
-
-	cfg := e.effectiveConfig(ag, overrides, overlays)
-	systemPrompt, err := e.buildSystemPrompt(ctx, ag, overrides, overlays)
-	if err != nil {
-		close(events)
-		return fmt.Errorf("build system prompt: %w", err)
-	}
-
-	now := time.Now().UTC()
-	r := &run.Run{
-		Entity:     cortex.NewEntity(),
-		ID:         id.NewAgentRunID(),
-		AgentID:    ag.ID,
-		SessionID:  sessionID,
-		Scope:      scope,
-		State:      run.StateRunning,
-		Input:      input,
-		StartedAt:  &now,
-		PersonaRef: cfg.PersonaRef,
-	}
-	if err := e.store.CreateRun(ctx, r); err != nil {
-		close(events)
-		return fmt.Errorf("create run: %w", err)
-	}
-
-	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
-
-	go func() {
-		defer close(events)
-
-		events <- StreamEvent{Type: EventRunStarted, Data: map[string]any{
-			"run_id":   r.ID.String(),
-			"agent_id": ag.ID.String(),
-		}}
-
-		// Load conversation history.
-		history, _ := e.store.LoadConversation(ctx, ag.ID, sessionID, 100) //nolint:errcheck // best-effort history load
-		messages := memoryToLLM(history)
-		st := &reactState{
-			messages:     messages,
-			systemPrompt: systemPrompt,
-			sessionID:    sessionID,
-			// See runReAct's identical comment: only
-			// messages[newMessagesFrom:] get saved below, not the whole
-			// reloaded history.
-			newMessagesFrom: len(messages),
-		}
-		st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
-
-		e.continueStreamReAct(ctx, ag, cfg, r, st, input, now, events)
-	}()
-
-	return nil
+	return e.StreamPrepared(ctx, p, input, preparedOptions(overrides), events)
 }
 
 // continueStreamReAct is continueReAct's streaming twin: same contract,
 // same reason for existing, over the streaming loop instead. It does not
 // close events, because the goroutine that calls it owns the channel.
 func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time, events chan<- StreamEvent) {
+	ctx, cancelRun := runDeadline(ctx, cfg)
+	defer cancelRun()
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
@@ -454,6 +370,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		if limit := cfg.Budget.Check(st.usage, time.Now()); limit != "" {
+			stopReason = run.StopReason(limit)
+			break
+		}
+
 		stepStart := time.Now().UTC()
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
@@ -473,9 +394,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			Model:       cfg.Model,
 			System:      st.systemPrompt,
 			Messages:    st.messages,
-			MaxTokens:   cfg.MaxTokens,
+			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cfg.Temperature,
-			Tools:       e.resolveTools(ctx, subject, cfg.Tools, cfg.ToolsRestricted),
+			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
 		// Safety: scan input before LLM call.
@@ -504,6 +425,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		stream, err := e.llm.CompleteStream(ctx, req)
 		if err != nil {
+			st.failedAttempt(0, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
 			events <- StreamEvent{Type: EventError, Data: map[string]any{
 				"message": err.Error(),
@@ -512,6 +434,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 
 		if stream == nil {
+			st.failedAttempt(0, cfg, r)
 			if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
 				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
 			} else {
@@ -530,6 +453,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			select {
 			case <-ctx.Done():
 				_ = stream.Close()
+				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
 				message := ctx.Err().Error()
 				if terminalErr != nil {
@@ -547,6 +471,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 			if err != nil {
 				_ = stream.Close()
+				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				e.failRun(ctx, r, ag.ID, err, startedAt)
 				events <- StreamEvent{Type: EventError, Data: map[string]any{
 					"message": err.Error(),
@@ -588,7 +513,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		// Collect usage from stream.
 		if u := stream.Usage(); u != nil {
-			st.tokensUsed += u.TotalTokens
+			st.chargeTokens(u.TotalTokens, cfg, r)
+		} else {
+			st.chargeTokens(0, cfg, r)
 		}
 		_ = stream.Close()
 
@@ -614,9 +541,19 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
 		st.stepIndex++
+		st.usage.Steps = st.stepIndex
+		r.Usage = st.usage
 
 		// Check for tool calls.
+		if cfg.Budget.MaxTokens > 0 && st.tokensUsed > cfg.Budget.MaxTokens {
+			stopReason = run.StopTokenLimit
+			break
+		}
 		if len(toolCalls) > 0 && responseStopReason(finishReason, contentBuf, len(toolCalls)) == run.StopFinalAnswer {
+			if limit := st.admitTools(len(toolCalls), cfg); limit != "" {
+				stopReason = run.StopReason(limit)
+				break
+			}
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   contentBuf,
@@ -642,7 +579,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					"tool_id":   tc.ID,
 				}}
 
-				result, outcome, pendingReason := e.executeTool(stepCtx, subject, tc)
+				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomePending {
 					pending.add(tc, pendingReason)
 					continue
@@ -737,6 +674,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		break
 	}
 
+	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
 
 	// Complete the run.
@@ -870,6 +808,14 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 // without it a removal that emptied the list would read as a grant of
 // everything registered.
 func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []string, restricted bool) []llm.Tool {
+	tools := e.toolDefinitions(names, restricted)
+	if e.authorizer != nil {
+		tools = e.authorizer.Visible(ctx, s, tools)
+	}
+	return tools
+}
+
+func (e *Engine) toolDefinitions(names []string, restricted bool) []llm.Tool {
 	registered := make([]llm.Tool, 0, len(e.tools)+len(e.externalTools))
 	for _, rt := range e.tools {
 		registered = append(registered, rt.def)
@@ -879,11 +825,7 @@ func (e *Engine) resolveTools(ctx context.Context, s cortex.Subject, names []str
 		registered = filterByName(registered, names)
 	}
 
-	tools := append(e.builtinTools(), registered...)
-	if e.authorizer != nil {
-		tools = e.authorizer.Visible(ctx, s, tools)
-	}
-	return tools
+	return append(e.builtinTools(), registered...)
 }
 
 // registeredToolNames is every tool an agent could name, used to

@@ -45,8 +45,8 @@ type ToolResult struct {
 	//
 	// It exists so approval keeps the one-result-per-pending-call rule
 	// rather than bending it. Content and Error are ignored when it is
-	// set, and the authorizer is not consulted a second time: it already
-	// answered, and a human answered after it.
+	// set. Current authorization is checked again before dispatch; a fresh
+	// denial still overrides the earlier approval.
 	//
 	// Only a tool the engine can run can be executed this way. An
 	// external tool is answered by supplying its result, since the engine
@@ -172,6 +172,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// would fall off constantly. The authoritative check is the one
 	// below, against the suspension the claim actually returned.
 	if susp, err := e.store.GetSuspension(ctx, runID); err == nil {
+		if _, _, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
+			return nil, nil, decodeErr
+		}
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
 			return nil, nil, vErr
 		}
@@ -220,8 +223,43 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
 
+	prepared, snap, decodeErr := decodeContinuation(susp.Cont)
+	if decodeErr != nil {
+		return nil, nil, e.failResume(ctx, r, ag.ID, decodeErr)
+	}
+	if err := validateFrozenContinuation(susp.Cont, snap, r); err != nil {
+		return nil, nil, e.failResume(ctx, r, ag.ID, err)
+	}
+	if snap != nil {
+		if err := e.checkPreparedRevisions(snap); err != nil {
+			return nil, nil, e.failResume(ctx, r, ag.ID, err)
+		}
+		ag = &snap.Agent
+	}
 	st := stateFromContinuation(susp.Cont)
-	e.recordResumedCalls(ctx, r, susp, in.ToolResults, st)
+	st.prepared = prepared
+	st.preparedSnapshot = snap
+	if snap == nil {
+		st.usage.Steps = st.stepIndex
+		st.usage.Tokens = st.tokensUsed
+		st.usage.ReportedTokens = st.tokensUsed
+	}
+	ctx = withExecutionProvenance(ctx, st.provenance)
+	r.Provenance = st.provenance
+	r.Usage = st.usage
+	if err := e.authorizeResumedCalls(ctx, r, susp, in.ToolResults, st); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			if terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopDeadline, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); terminalErr != nil {
+				err = errors.Join(err, terminalErr)
+			}
+			return nil, nil, err
+		}
+		return nil, nil, e.failResume(ctx, r, ag.ID, err)
+	}
+
+	toolCtx, cancelTools := runDeadline(ctx, configFromContinuation(susp.Cont.Config))
+	e.recordResumedCalls(toolCtx, r, susp, in.ToolResults, st)
+	cancelTools()
 
 	// The suspension goes before the loop re-enters, not after the run
 	// finishes. One suspension per run is what makes ClaimSuspension a
@@ -351,7 +389,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 		// validateResults has already proven there is exactly one result
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
-		content, errText := e.resumedCallResult(ctx, subject, p, res)
+		content, errText := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
 		completedAt := time.Now().UTC()
 
 		if !stepID.IsNil() {
@@ -399,10 +437,10 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 // tool. Hence Execute, and hence the bijection rule surviving intact,
 // with one result per pending call whichever kind it is.
 //
-// The authorizer is deliberately not consulted again. It already
-// answered, a human answered after it, and re-asking would escalate the
-// same call forever.
-func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p suspension.PendingCall, res ToolResult) (content, errText string) {
+// Current authorization is checked for the whole pending batch before this
+// function runs. The claimed checkpoint satisfies another approval request,
+// while a revoked grant prevents every pending dispatch.
+func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p suspension.PendingCall, res ToolResult, approved bool) (content, errText string) {
 	if !res.Execute {
 		if res.Error != "" {
 			// The same payload shape an engine-side failure feeds back,
@@ -413,7 +451,15 @@ func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p susp
 		return res.Content, ""
 	}
 
-	out, outcome, err := e.dispatchTool(ctx, s, llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments})
+	if err := ctx.Err(); err != nil {
+		return jsonResult("error", err.Error()), err.Error()
+	}
+
+	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments}
+	if err := e.authorizeResumedTool(ctx, s, call, approved); err != nil {
+		return jsonResult("error", err.Error()), err.Error()
+	}
+	out, outcome, err := e.dispatchTool(ctx, s, call)
 	switch outcome {
 	case outcomeCompleted:
 		return out, ""

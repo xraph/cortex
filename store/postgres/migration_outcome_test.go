@@ -68,13 +68,13 @@ func TestRunOutcomeMigrationPreservesHistoricalCompletion(t *testing.T) {
 	if err := s.CreateRun(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"stop_reason", "finish_reason", "verification_status", "result_ref"} {
+	for _, column := range []string{"stop_reason", "finish_reason", "verification_status", "result_ref", "provenance", "usage", "budget"} {
 		if _, err := s.pgdb.Exec(ctx, "ALTER TABLE cortex_runs DROP COLUMN "+column); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for range 2 {
-		if _, err := s.pgdb.Exec(ctx, `DELETE FROM grove_migrations WHERE version = $1 AND "group" = 'cortex'`, "20261018000001"); err != nil {
+		if _, err := s.pgdb.Exec(ctx, `DELETE FROM grove_migrations WHERE version IN ($1, $2) AND "group" = 'cortex'`, "20261018000001", "20261018000002"); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Migrate(ctx); err != nil {
@@ -84,7 +84,7 @@ func TestRunOutcomeMigrationPreservesHistoricalCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.State != run.StateCompleted || got.Output != "old answer" || got.StopReason != "" || got.VerificationStatus != verification.StatusUnchecked {
+		if got.Provenance.PreparedDigest != "" || got.Budget.MaxTokens != 0 || got.Usage.Tokens != 0 || got.State != run.StateCompleted || got.Output != "old answer" || got.StopReason != "" || got.VerificationStatus != verification.StatusUnchecked {
 			t.Fatalf("migration fabricated assurance: %+v", got)
 		}
 	}

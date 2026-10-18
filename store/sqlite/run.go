@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/internal/runstate"
 )
 
 // mutableRunColumns is every cortex_runs column UpdateRun is allowed to
@@ -21,7 +22,7 @@ var mutableRunColumns = []string{
 	"agent_id",
 	"session_id",
 	"state",
-	"stop_reason", "finish_reason", "verification_status", "result_ref",
+	"provenance", "usage", "budget", "stop_reason", "finish_reason", "verification_status", "result_ref",
 	"input",
 	"output",
 	"error",
@@ -120,7 +121,11 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 		q = q.Where("agent_id = ?", filter.AgentID)
 	}
 	if filter.State != "" {
-		q = q.Where("state = ?", string(filter.State))
+		if filter.State == run.StatePaused {
+			q = q.Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
+		} else {
+			q = q.Where("state = ?", string(filter.State))
+		}
 	}
 	if filter.Limit > 0 {
 		q = q.Limit(filter.Limit)
@@ -159,7 +164,11 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 		q = q.Where("agent_id = ?", filter.AgentID)
 	}
 	if filter.State != "" {
-		q = q.Where("state = ?", string(filter.State))
+		if filter.State == run.StatePaused {
+			q = q.Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
+		} else {
+			q = q.Where("state = ?", string(filter.State))
+		}
 	}
 	count, err := q.Count(ctx)
 	if err != nil {

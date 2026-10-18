@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/verification"
 )
@@ -25,6 +26,9 @@ const (
 
 // Run represents a single execution of an agent.
 type Run struct {
+	Provenance ExecutionProvenance `json:"provenance,omitempty"`
+	Budget     execution.Budget    `json:"budget,omitempty"`
+	Usage      execution.Usage     `json:"usage,omitempty"`
 	cortex.Entity
 	ID                 id.AgentRunID       `json:"id"`
 	AgentID            id.AgentID          `json:"agent_id"`

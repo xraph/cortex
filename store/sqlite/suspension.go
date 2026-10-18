@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/internal/runstate"
 	"github.com/xraph/cortex/suspension"
 )
 
@@ -111,7 +112,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		Set("state = ?", string(run.StateRunning)).
 		Set("updated_at = ?", now).
 		Where("id = ?", runID.String()).
-		Where("state = ?", string(run.StatePaused))
+		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
 	q = q.Where(unexpiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, now)...)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
@@ -173,7 +174,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 		Set("state = ?", string(run.StateRunning)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", runID.String()).
-		Where("state = ?", string(run.StatePaused))
+		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
 	q = q.Where(expiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, at)...)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
