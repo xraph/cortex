@@ -16,8 +16,6 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/xraph/cortex v1.8.0 h1:zUBC1+CF0XSJ3pcYKRsEkCwqYPewtDF9eICHKuL/CGU=
-github.com/xraph/cortex v1.8.0/go.mod h1:qvhf5T9GAs8/necJSbcBEmKOI/nQRm9MueLlPpS3jy0=
 github.com/xraph/go-utils v1.3.0 h1:bMZxwH9Xi/6UqhHSotKHB3a+/FnqnlUnEKf+aHZaw5c=
 github.com/xraph/go-utils v1.3.0/go.mod h1:NfSn00r74ZjcIhVujIDPdKV25Ktghy2yz0DQmIKEARk=
 github.com/xraph/grove v1.7.3 h1:zGwoXhxPYfxyZMpp3MYyXyEo8QqIJeJvnDKJZMpFj3Q=

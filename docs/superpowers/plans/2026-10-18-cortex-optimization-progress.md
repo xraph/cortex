@@ -8,16 +8,21 @@ The user authorized direct coordination with **Improve Cortex agent execution**.
 
 The outcome foundation is on Cortex main in `8bebd82`: incomplete termination, stop and finish reasons, verification status and result references. The runtime owner verified engine/run/SQLite race tests, PostgreSQL/Mongo conformance and historical fixtures, all-module lint, root build and A2A compatibility.
 
-Prepared execution remains in progress with the runtime owner. The agreed surface is `PrepareAgent`, `RunPrepared`, `StreamPrepared`, `PreparedAgent.Digest() string`, detached `Inspect()` and immutable `Derive(PreparedEdits)`. Derivation keeps identity, scope, model, budgets, schemas and implementation pins fixed. It supports section bodies, tool guidance/subsets and finite sampling bounds. Optimization will enforce its narrower edit policy. Do not consume this API until its verified commit lands.
+Prepared execution was published as Cortex `v1.8.0` from `e798d45`. Root CI `39142591307` and release `39143145756` passed, and the real Go proxy resolves that commit. The API provides `PrepareAgent`, `RunPrepared`, `StreamPrepared`, detached `Inspect()` and immutable `Derive(PreparedEdits)`. Derivation preserves identity, scope, model, budgets, schemas and implementation pins. Optimization applies its narrower edit policy.
+
+Reproducibility still needs a stronger source snapshot guarantee. The runtime owner confirmed that v1.8.0 collects source values without a consistency check. Its follow-up detects changes to the collected read set, but does not promise an atomic multi-source snapshot. Reproducibility-required work stays unavailable until a qualified host provider or consistent store snapshot supplies that guarantee. Source changes are never resolved silently at trial time.
+
+Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-up `77ee8b9` adds read-set conflict detection with explicit atomic-snapshot-unavailable diagnostics. Schema 1 requires new preparation and evaluation before adoption. Optimization tests run against both the published v1.8.0 dependency and the current checkout; the temporary published-dependency modfile is not committed.
 
 ## Current state
 
 | Task                                                                         | State                                                         | Next gate                                                                     |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 1: prepared execution                                                        | Runtime owner implementing and verifying                      | Consume the verified commit, then publish a root version through the workflow |
-| 6: Sentinel foundation                                                       | Complete, published as Sentinel v1.9.0                        | Consume v1.9.0 in the adapter after optimization bootstrap                    |
-| 2-5: optimization module and persistence                                     | Pending foundation release                                    | Require a real published root version                                         |
-| 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending                                                       | Follow the plan's dependency gates                                            |
+| 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
+| 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
+| 2: optimization contracts | Harness contracts pushed as `8f3f91b`; experiment preflight and records in progress | Finish ports, constructor validation and CI coverage |
+| 3-5: persistence and recovery | Pending | Finish task 2 |
+| 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
 ## Sentinel evidence
 
@@ -51,4 +56,6 @@ Task 7 must bind frozen task context and environment references explicitly, pres
 
 Task 12's generic upstream checks can run before the optimizer adapter exists. Fabriq main was fast-forwarded to `79aa12d`, preserving the existing untracked server binary. New tests reproduced ignored recall filters for typed and dynamic rows. Hydration now combines the requested filter with discovered IDs through the existing relational query port. Filtered recall does not add digest entities automatically because their columns can differ.
 
-Focused regressions pass, including stale revoked/deleted hits, foreign tenant rows, OR filters and undiscovered rows. A real PostgreSQL test under the non-superuser app role also passes. Explicit-ID create with expected version zero already rejects duplicates and preserves the original row. The full root/core race suite and both module lint checks pass. Documentation type checks and production build pass; lint has one existing non-blocking image warning. Code commit `d503a78` is pushed. The upstream release remains pending exact main CI. This is a prerequisite slice, not completion of task 12.
+Focused regressions pass, including stale revoked/deleted hits, foreign tenant rows, OR filters and undiscovered rows. A real PostgreSQL test under the non-superuser app role also passes. Explicit-ID create with expected version zero already rejects duplicates and preserves the original row. The full root/core race suite and both module lint checks pass. Documentation type checks and production build pass; lint has one existing non-blocking image warning. Code commit `d503a78` and docs commit `c071e83` are pushed. CI `39142380696` passed every code, security and integration job. Its only failure was module tag skew left by the earlier partial v1.8.1 release.
+
+The repository's documented recovery procedure calls for the next patch. Rehearsal `39144695298` and corrective dispatch `39144754887` both passed. All five v1.8.2 module tags exist; core points to `c071e83`, while root and the other modules point to the workflow's require-bump commit `7d625d4`. The real Go proxy resolves core v1.8.2. The unchanged module-version checker now passes. Binary/image release `39144824724` passed all three jobs, including the Helm chart and Docker Hub mirror. This is a prerequisite slice, not completion of task 12.

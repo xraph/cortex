@@ -37,6 +37,7 @@ type HarnessVersion struct {
 	Controller     *ControllerSpec       `json:"controller,omitempty"`
 	RuntimeVersion string                `json:"runtime_version,omitempty"`
 	Policy         EditPolicy            `json:"policy"`
+	PolicyDigest   string                `json:"policy_digest"`
 	Sources        []run.Revision        `json:"sources"`
 	Digest         string                `json:"digest"`
 	Name           string                `json:"name,omitempty"`
@@ -130,6 +131,11 @@ func SealVersion(version HarnessVersion) (HarnessVersion, error) {
 	if err != nil {
 		return HarnessVersion{}, err
 	}
+	policyBytes, err := canonical.Marshal(version.Policy)
+	if err != nil {
+		return HarnessVersion{}, err
+	}
+	version.PolicyDigest = digestBytes(policyBytes)
 	raw, err := json.Marshal(version)
 	if err != nil {
 		return HarnessVersion{}, err

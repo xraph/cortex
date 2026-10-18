@@ -71,6 +71,18 @@ func TestVersionCanonicalDigest(t *testing.T) {
 	}
 }
 
+func TestProposalRejectsChangedPolicyDigest(t *testing.T) {
+	base := fixtureVersion(t)
+	if len(base.PolicyDigest) != 64 {
+		t.Fatal("version does not bind its edit policy")
+	}
+	base.PolicyDigest = "changed"
+	_, err := ValidateProposal(base, Proposal{Edits: []Edit{{Kind: EditSectionBody, Target: "role", Text: "Better instructions"}}}, base.Policy)
+	if !errors.Is(err, ErrStaleVersion) {
+		t.Fatalf("tampered policy digest accepted: %v", err)
+	}
+}
+
 func TestProposalCannotChangeHostPolicy(t *testing.T) {
 	base := fixtureVersion(t)
 	for _, raw := range []string{

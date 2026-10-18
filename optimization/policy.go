@@ -101,7 +101,7 @@ func ValidateProposal(base HarnessVersion, proposal Proposal, policy EditPolicy)
 	if err != nil {
 		return HarnessVersion{}, err
 	}
-	if base.Digest == "" || sealed.Digest != base.Digest {
+	if base.Digest == "" || sealed.Digest != base.Digest || sealed.PolicyDigest != base.PolicyDigest {
 		return HarnessVersion{}, fmt.Errorf("%w: baseline digest changed", ErrStaleVersion)
 	}
 	if validationErr := policy.validate(); validationErr != nil {
