@@ -19,7 +19,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | Task                                                                         | State                                                         | Next gate                                                                     |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
-| 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
+| 6: Sentinel foundation | Published as v1.9.0; comparison granularity gap found | Add authoritative comparison over persisted job sets |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`, accounting `f02dec9`; allocation checks pass | Complete resource invariants, terminal reconciliation and activation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
@@ -136,3 +136,12 @@ For paired controller comparisons, both child experiments and their parent wait 
 A completed execution needs its evaluation record before advancing. Explicit terminal failures can advance with their error evidence, so unavailable work can eventually produce an inconclusive decision. Unknown or running attempts remain unresolved. This gate establishes that evidence has been collected; selection policy still determines whether it supports a recommendation.
 
 Conformance fixtures now persist populated execution and evaluation records through the public store API. They use fixture outputs and scores, not live providers. The full optimizer suite and scoped lint pass. Coordinated formatting, post-format race tests and builds against the current checkout and published Cortex v1.8.0, and final all-nine-module lint passed. Decision persistence, activation, outbox work and the remaining phases are still open.
+
+ 
+## Comparison contract follow-up
+
+Decision integration exposed a mismatch in the published foundation. Cortex's `EvaluationRequest` carries one trial and the optimizer stores one external job ID per trial. Sentinel's `CompareRecorded` accepts one baseline job and one candidate job, with multiple cases inside each job. Passing one pair of trial jobs cannot produce the full validation comparison.
+
+Task 6 therefore needs a follow-up before Task 7 can use its comparison API. Add a generic comparison operation over explicit baseline and candidate job-ID sets. It must read the authoritative jobs, validate every plan/case/repetition identity and reject overlapping or substituted evidence. Reuse Sentinel's existing paired-case aggregation and bootstrap. The single-job API remains supported. The adapter must not create synthetic completed jobs or duplicate the statistical implementation in Cortex.
+
+The optimizer also needs to retain the evaluator's aggregate quality score separately from per-criterion scores. Sentinel compares `evalrun.Result.Score`; inferring that value from criterion scores could change its frozen weighting. Resolve this record shape before implementing final decision qualification.
