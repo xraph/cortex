@@ -160,8 +160,8 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if e.store == nil {
 		return nil, nil, cortex.ErrNoStore
 	}
-	if cortex.ScopeFromContext(ctx).IsZero() {
-		return nil, nil, cortex.ErrNoScope
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
+		return nil, nil, scopeErr
 	}
 
 	// The results are checked twice, and the first check is the one that
@@ -195,7 +195,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// running forever.
 	//
 	// The caller's scope is enough for this read. A claim matches on a
-	// scope prefix, so a caller who can claim this run can read it.
+	// exact scope, while this read may also serve an authorized ancestor.
 	snapshot, err := e.store.GetRun(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load run to resume: %w", err)
@@ -206,11 +206,8 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
 	}
 
-	// Continue under the scope the run STARTED with, not the caller's. A
-	// claim matches on a scope prefix, so a caller one level broader than
-	// the run reaches this line legitimately, and everything the
-	// continued run writes has to land where the run's own earlier writes
-	// did rather than wherever the resumer happened to be standing.
+	// The claim requires the run's exact scope. Retain its stored identity
+	// for every resumed write and authorization check.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
 	r := e.claimedRun(ctx, runID, snapshot)

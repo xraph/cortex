@@ -17,9 +17,9 @@ import (
 // per-scope name uniqueness; app_id survives on the row as a vestigial
 // column no longer read or filtered on.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	config.CreatedAt = now
@@ -37,9 +37,9 @@ func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 }
 
 func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(agentModel)
 	q := s.pgdb.NewSelect(m).Where("id = ?", agentID.String())
@@ -57,9 +57,9 @@ func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, err
 }
 
 func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(agentModel)
 	q := s.pgdb.NewSelect(m).Where("name = ?", name)
@@ -114,19 +114,19 @@ var mutableAgentColumns = []string{
 
 // Update modifies an existing agent config's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the agent's stored scope to touch it), and is never written back —
 // mutableAgentColumns excludes the five scope columns from what gets
 // written.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	config.UpdatedAt = time.Now().UTC()
 	m := agentToModel(config)
 	q := s.pgdb.NewUpdate(m).Column(mutableAgentColumns...).WherePK()
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -144,13 +144,13 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 }
 
 func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.pgdb.NewDelete((*agentModel)(nil)).
 		Where("id = ?", agentID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -168,9 +168,9 @@ func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
 }
 
 func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &agent.ListFilter{}
@@ -204,9 +204,9 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 }
 
 func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &agent.ListFilter{}

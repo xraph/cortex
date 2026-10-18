@@ -17,9 +17,9 @@ import (
 // is_default) is what actually enforces one default session per agent per
 // scope; a non-default session never touches that index.
 func (s *Store) CreateSession(ctx context.Context, sess *session.Session) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	sess.CreatedAt = t
@@ -40,9 +40,9 @@ func (s *Store) CreateSession(ctx context.Context, sess *session.Session) error 
 
 // GetSession returns a session by ID within the caller's scope.
 func (s *Store) GetSession(ctx context.Context, sessionID id.SessionID) (*session.Session, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m sessionModel
 
@@ -67,19 +67,19 @@ func (s *Store) GetSession(ctx context.Context, sessionID id.SessionID) (*sessio
 
 // UpdateSession modifies an existing session's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the session's stored scope to touch it), and is never written back —
 // scope_l0/l1/l2/extra/canon are deliberately absent from set below.
 func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sess.UpdatedAt = now()
 	m := sessionToModel(sess)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -116,13 +116,13 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 // all three backends observably identical: deleting a session leaves no
 // orphaned messages on any of them.
 func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sid := sessionID.String()
 	filter := bson.M{"_id": sid}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -144,7 +144,7 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 		}
 
 		msgFilter := bson.M{"session_id": sid, "kind": "conversation"}
-		for k, v := range scopeFilter(scope, false) {
+		for k, v := range scopeFilter(scope, true) {
 			msgFilter[k] = v
 		}
 		if _, msgErr := s.mdb.NewDelete((*memoryModel)(nil)).Many().Filter(msgFilter).Exec(sc); msgErr != nil {
@@ -171,9 +171,9 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 // ListSessions returns sessions within the caller's scope, optionally
 // filtered.
 func (s *Store) ListSessions(ctx context.Context, filter *session.ListFilter) ([]*session.Session, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &session.ListFilter{}
@@ -225,9 +225,9 @@ func (s *Store) ListSessions(ctx context.Context, filter *session.ListFilter) ([
 // CountSessions returns the total number of sessions matching the filter
 // within the caller's scope.
 func (s *Store) CountSessions(ctx context.Context, filter *session.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &session.ListFilter{}

@@ -48,9 +48,9 @@ var mutableA2ADeliveryColumns = []string{
 // CreateMessage persists an envelope, stamping the scope from the context.
 // Envelopes are immutable once written, so there is no update counterpart.
 func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	e.CreatedAt = now
@@ -66,9 +66,9 @@ func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
 }
 
 func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelope, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(a2aMessageModel)
 	q := s.sdb.NewSelect(m).Where("id = ?", msgID.String())
@@ -87,9 +87,9 @@ func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelo
 // ListMessages returns a conversation's messages oldest first, because a
 // conversation is read as a transcript.
 func (s *Store) ListMessages(ctx context.Context, filter *a2a.MessageListFilter) ([]*a2a.Envelope, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aMessageModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC, id ASC")
@@ -127,9 +127,9 @@ func (s *Store) ListMessages(ctx context.Context, filter *a2a.MessageListFilter)
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	c.CreatedAt = now
@@ -145,9 +145,9 @@ func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) err
 }
 
 func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(a2aConversationModel)
 	q := s.sdb.NewSelect(m).Where("id = ?", convID.String())
@@ -168,9 +168,9 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 // context id, and joining one peer's thread to another's would leak a
 // conversation across a trust boundary.
 func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if node == "" || peerContext == "" {
 		// An empty pairing would match every locally started
@@ -195,15 +195,15 @@ func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerCont
 }
 
 func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	c.UpdatedAt = time.Now().UTC()
 	q := s.sdb.NewUpdate(a2aConversationToModel(c)).
 		Column(mutableA2AConversationColumns...).
 		Where("id = ?", c.ID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -221,9 +221,9 @@ func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) err
 }
 
 func (s *Store) ListConversations(ctx context.Context, filter *a2a.ConversationListFilter) ([]*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aConversationModel
 	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
@@ -261,9 +261,9 @@ func (s *Store) ListConversations(ctx context.Context, filter *a2a.ConversationL
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	d.CreatedAt = now
@@ -280,23 +280,23 @@ func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
 
 // GetDelivery reads one delivery row within the caller's scope.
 func (s *Store) GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	return s.getDelivery(ctx, scope, deliveryID)
 }
 
 func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	d.UpdatedAt = time.Now().UTC()
 	q := s.sdb.NewUpdate(a2aDeliveryToModel(d)).
 		Column(mutableA2ADeliveryColumns...).
 		Where("id = ?", d.ID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -318,9 +318,9 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 // this UPDATE and exactly one of them changes a row, which is what stops
 // one directive starting two runs.
 func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	now := time.Now().UTC()
 	q := s.sdb.NewUpdate((*a2aDeliveryModel)(nil)).
@@ -329,7 +329,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		Set("updated_at = ?", now).
 		Where("id = ?", deliveryID.String()).
 		Where("state = ?", a2a.DeliveryQueued)
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -360,9 +360,9 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 // delivery is deliberately excluded: it has not reached anyone yet, and an
 // inbox that showed it would be showing mail that is still in transit.
 func (s *Store) ListInbox(ctx context.Context, agentName string, filter a2a.InboxFilter) ([]*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aDeliveryModel
 	q := s.sdb.NewSelect(&models).
@@ -478,9 +478,9 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 }
 
 func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	q := s.sdb.NewUpdate((*a2aDeliveryModel)(nil)).
@@ -488,7 +488,7 @@ func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) 
 		Set("updated_at = ?", now).
 		Where("id = ?", deliveryID.String()).
 		Where("read_at IS NULL")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -518,9 +518,9 @@ func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	a.CreatedAt = now
@@ -540,9 +540,9 @@ func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
 // reply, the deadline sweep and a cancel can all reach for one row, and
 // exactly one of them changes it and goes on to resume the waiting run.
 func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	now := time.Now().UTC()
 	q := s.sdb.NewUpdate((*a2aPendingAskModel)(nil)).
@@ -550,7 +550,7 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 		Set("updated_at = ?", now).
 		Where("reply_with = ?", replyWith).
 		Where("claimed_at IS NULL")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -577,9 +577,9 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 // ListExpiredAsks returns unclaimed asks past their deadline. Claimed rows
 // are excluded, which is what makes sweeping the same backlog twice safe.
 func (s *Store) ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aPendingAskModel
 	q := s.sdb.NewSelect(&models).
@@ -600,9 +600,9 @@ func (s *Store) ListExpiredAsks(ctx context.Context, now time.Time, limit int) (
 }
 
 func (s *Store) ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aPendingAskModel
 	q := s.sdb.NewSelect(&models).

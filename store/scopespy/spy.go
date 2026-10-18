@@ -235,7 +235,7 @@ func (s *Spy) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error
 	defer s.mu.Unlock()
 	value, ok := s.agents[agentID]
 	if !ok {
-		value = agent.Config{ID: agentID, Name: "assistant", MaxSteps: 2}
+		value = agent.Config{ID: agentID, Name: "assistant", MaxSteps: 2, Scope: cortex.ScopeFromContext(ctx)}
 	}
 	value.InlineSkills = append([]string(nil), value.InlineSkills...)
 	value.InlineTraits = append([]string(nil), value.InlineTraits...)
@@ -445,7 +445,7 @@ func (s *Spy) CreateSession(ctx context.Context, _ *session.Session) error {
 func (s *Spy) GetByName(ctx context.Context, name string) (*agent.Config, error) {
 	s.record(ctx, "GetByName")
 	agentID := s.stableID("agent:"+name, id.NewAgentID)
-	value := agent.Config{ID: agentID, Name: name, MaxSteps: 2,
+	value := agent.Config{ID: agentID, Name: name, MaxSteps: 2, Scope: cortex.ScopeFromContext(ctx),
 		PersonaRef: "spy-persona", InlineSkills: []string{"spy-skill"}, InlineTraits: []string{"spy-trait"}}
 	s.mu.Lock()
 	s.agents[agentID] = value

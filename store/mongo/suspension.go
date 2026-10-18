@@ -19,9 +19,9 @@ import (
 // on run_id (WHERE scope_canon $gt "") is what enforces one suspension
 // per run, which is what makes ClaimSuspension a meaningful primitive.
 func (s *Store) CreateSuspension(ctx context.Context, susp *suspension.Suspension) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	susp.CreatedAt = t
@@ -42,15 +42,15 @@ func (s *Store) CreateSuspension(ctx context.Context, susp *suspension.Suspensio
 // without changing anything. Callers that intend to resume must use
 // ClaimSuspension instead.
 func (s *Store) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m, err := s.findSuspension(ctx, scope, runID)
 	if err != nil {
 		return nil, err
 	}
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // ClaimSuspension is the concurrency primitive for resume: it performs
@@ -81,9 +81,9 @@ func (s *Store) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspen
 // write buys the property that actually matters: an expired resume never
 // moves the run.
 func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	// Read first so a run with no suspension at all, or one past its
@@ -99,7 +99,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	}
 
 	filter := bson.M{"_id": runID.String(), "state": bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	update := bson.M{"$set": bson.M{
@@ -115,7 +115,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		return nil, fmt.Errorf("cortex/mongo: claim suspension: %w", err)
 	}
 
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // ClaimExpiredSuspension is ClaimSuspension with the deadline test
@@ -137,9 +137,9 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 // same thing to the only caller: somebody else owns this run, leave it
 // alone.
 func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, at time.Time) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	m, err := s.findSuspension(ctx, scope, runID)
@@ -154,7 +154,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 	}
 
 	filter := bson.M{"_id": runID.String(), "state": bson.M{"$in": []string{string(run.StatePaused), runstate.PausedPrepared}}}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	update := bson.M{"$set": bson.M{
@@ -170,17 +170,17 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 		return nil, fmt.Errorf("cortex/mongo: claim expired suspension: %w", err)
 	}
 
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // DeleteSuspension removes a run's suspension within the caller's scope.
 func (s *Store) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"run_id": runID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -197,9 +197,9 @@ func (s *Store) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error
 // ListExpired returns suspensions whose deadline has passed, oldest
 // first, within the caller's scope.
 func (s *Store) ListExpired(ctx context.Context, at time.Time, limit int) ([]*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	return s.expiredSuspensions(ctx, scopeFilter(scope, false), at, limit)
 }
@@ -251,11 +251,11 @@ func (s *Store) expiredSuspensions(ctx context.Context, scoped bson.M, at time.T
 // exists so GetSuspension and ClaimSuspension apply identical filters: a
 // claim that read more broadly than a get would be a cross-scope hole
 // nobody would spot from either call site alone.
-func (s *Store) findSuspension(ctx context.Context, scope cortex.Scope, runID id.AgentRunID) (*suspensionModel, error) {
+func (s *Store) findSuspension(ctx context.Context, scope cortex.Scope, runID id.AgentRunID) (*suspension.Suspension, error) {
 	var m suspensionModel
 
 	filter := bson.M{"run_id": runID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -265,5 +265,5 @@ func (s *Store) findSuspension(ctx context.Context, scope cortex.Scope, runID id
 		}
 		return nil, fmt.Errorf("cortex/mongo: get suspension: %w", err)
 	}
-	return &m, nil
+	return suspensionFromModel(&m)
 }

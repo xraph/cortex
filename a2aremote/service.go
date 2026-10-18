@@ -65,7 +65,7 @@ type Service struct {
 // every agent in the process, and defaulting to it would be the kind of
 // convenience that reads as a feature until it is a breach.
 func NewService(gw Gateway, resolver PeerResolver, opts Options) *Service {
-	if gw == nil || resolver == nil {
+	if gw == nil || resolver == nil || (!opts.Scope.IsZero() && cortex.ValidateScope(opts.Scope) != nil) {
 		return nil
 	}
 	return &Service{gw: gw, resolver: resolver, opts: opts}
@@ -216,7 +216,7 @@ func (s *Service) authenticate(ctx context.Context, cred Credentials) (context.C
 		// learns that it was refused and nothing else about what is here.
 		return ctx, Peer{}, ErrUnauthenticated()
 	}
-	if peer.Scope.IsZero() {
+	if cortex.ValidateScope(peer.Scope) != nil {
 		// A resolver that answered with no scope did not really answer.
 		// Letting it through would fail several layers down, at a store
 		// call, with an error that says nothing about the cause.

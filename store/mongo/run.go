@@ -14,9 +14,9 @@ import (
 
 // CreateRun persists a new run.
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	r.CreatedAt = t
@@ -34,9 +34,9 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 
 // GetRun returns a run by ID within the caller's scope.
 func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{"_id": runID.String()}
@@ -62,7 +62,7 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 
 // UpdateRun modifies an existing run's mutable fields within the caller's
 // scope. Scope is immutable after creation: the context scope is used
-// only as an authorization predicate (the caller must be at or above the
+// only as an authorization predicate (the caller must be at the exact scope of the
 // run's stored scope to touch it), and is never written back. grove's
 // NewUpdate(model).Exec builds $set from every field on the model by
 // default (confirmed by reading mongodriver's query_update.go), so this
@@ -70,15 +70,15 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // out scope_l0/l1/l2/extra/canon rather than relying on them happening to
 // already match.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	r.UpdatedAt = now()
 	m := runToModel(r)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -120,9 +120,9 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 
 // ListRuns returns runs within the caller's scope, optionally filtered.
 func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &run.ListFilter{}
@@ -175,9 +175,9 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 // CountRuns returns the total number of runs matching the filter within the
 // caller's scope.
 func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &run.ListFilter{}
@@ -210,9 +210,9 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 
 // CreateStep persists a new step.
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	step.CreatedAt = t
@@ -231,9 +231,9 @@ func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 // ListSteps returns all steps for a run, ordered by index ascending, within
 // the caller's scope.
 func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{"run_id": runID.String()}
@@ -265,9 +265,9 @@ func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step
 
 // CreateToolCall persists a new tool call.
 func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	tc.CreatedAt = t
@@ -286,9 +286,9 @@ func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 // ListToolCalls returns all tool calls for a step, ordered by creation
 // time, within the caller's scope.
 func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{"step_id": stepID.String()}

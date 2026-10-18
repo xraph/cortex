@@ -39,9 +39,9 @@ var mutableRunColumns = []string{
 }
 
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	r.CreatedAt = now
@@ -56,9 +56,9 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 }
 
 func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(runModel)
 	q := s.pgdb.NewSelect(m).Where("id = ?", runID.String())
@@ -77,18 +77,18 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 
 // UpdateRun updates a run's mutable fields. Scope is immutable after
 // creation: the context scope is used only as an authorization predicate
-// (the caller must be at or above the run's stored scope to touch it), and
+// (the caller must be at the exact scope of the run's stored scope to touch it), and
 // is never written back. r.Scope is left untouched — whatever runToModel
 // derives from it is excluded from the SET clause by mutableRunColumns.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	r.UpdatedAt = time.Now().UTC()
 	m := runToModel(r)
 	q := s.pgdb.NewUpdate(m).Column(mutableRunColumns...).WherePK()
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -106,9 +106,9 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 }
 
 func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &run.ListFilter{}
@@ -150,9 +150,9 @@ func (s *Store) ListRuns(ctx context.Context, filter *run.ListFilter) ([]*run.Ru
 }
 
 func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &run.ListFilter{}
@@ -180,9 +180,9 @@ func (s *Store) CountRuns(ctx context.Context, filter *run.ListFilter) (int64, e
 }
 
 func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	step.CreatedAt = now
@@ -197,9 +197,9 @@ func (s *Store) CreateStep(ctx context.Context, step *run.Step) error {
 }
 
 func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []stepModel
 	q := s.pgdb.NewSelect(&models).
@@ -223,9 +223,9 @@ func (s *Store) ListSteps(ctx context.Context, runID id.AgentRunID) ([]*run.Step
 }
 
 func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	tc.CreatedAt = now
@@ -240,9 +240,9 @@ func (s *Store) CreateToolCall(ctx context.Context, tc *run.ToolCall) error {
 }
 
 func (s *Store) ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []toolCallModel
 	q := s.pgdb.NewSelect(&models).

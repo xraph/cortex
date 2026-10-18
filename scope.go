@@ -107,64 +107,31 @@ func ParseCanonical(canon string) (Scope, error) {
 		}
 		levels = append(levels, Level{Key: key, Value: value})
 	}
-	return Scope{Levels: levels}, nil
+	scope := Scope{Levels: levels}
+	if err := ValidateScope(scope); err != nil {
+		return Scope{}, err
+	}
+	return scope, nil
 }
 
-// maxScopeLevels is how many levels a Scope may carry. It mirrors
-// indexedLevels in store/{postgres,sqlite,mongo}: levels beyond this land
-// in the scope_extra overflow and are never matched as a predicate, even
-// in exact mode, so a deeper scope would have its trailing levels
-// silently accepted and then ignored by every store.
-//
-// This is why store/storetest's ScopeExtraNeverNull test can only ever
-// exercise an empty overflow map: WithScope refuses anything deeper than
-// this before a Scope carrying real overflow could ever reach a store.
-// If this constant ever rises, postgres and sqlite's scopePredicates
-// still only match scope_l0/l1/l2 (extra is stored but never queried,
-// same as today), while mongo's scopeFilter ignores extra entirely on
-// both read and write today — raising this constant without also
-// teaching mongo's scopeFilter to match on extra would silently diverge
-// mongo's isolation guarantee from the other two backends for any level
-// beyond the third, with nothing here catching it.
+// maxScopeLevels matches the indexed identity supported by every backend.
+// Raising it requires a versioned codec and matching predicates in all stores.
 const maxScopeLevels = 3
 
-// WithScope attaches a scope to ctx. Two shapes are refused rather than
-// stored:
-//
-//   - A Level with an empty Key or empty Value. Either flattens to a
-//     "key=" predicate that matches every row sharing that partial key —
-//     a shared bucket, the exact cross-tenant hazard this phase exists to
-//     close.
-//   - A scope deeper than maxScopeLevels. Levels past the indexed columns
-//     are written to scope_extra but never read back as a predicate, so a
-//     value the caller supplied would be accepted and then silently
-//     ignored on every query.
-//
-// Both cases return ctx unchanged rather than panicking or erroring:
-// ScopeFromContext then yields the zero scope, and every store guard
-// already refuses that with ErrNoScope. This mirrors the deleted
-// scopeFromTenant bridge, which returned ctx unchanged for an absent
-// tenant instead of manufacturing a scope for it.
+// WithScope attaches a detached scope, including an invalid request. Invalid
+// requests mask any parent authority; RequireScope reports the validation error.
 func WithScope(ctx context.Context, s Scope) context.Context {
-	if len(s.Levels) > maxScopeLevels {
-		return ctx
-	}
-	for _, l := range s.Levels {
-		if l.Key == "" || l.Value == "" {
-			return ctx
-		}
-	}
-	return context.WithValue(ctx, scopeKey, s)
+	return context.WithValue(ctx, scopeKey, Scope{Levels: append([]Level(nil), s.Levels...)})
 }
 
-// ScopeFromContext extracts the scope. A missing scope returns the zero
-// value, which callers must treat as an error rather than as "match all".
+// ScopeFromContext returns detached valid identity, or zero for missing or
+// invalid scope. Use RequireScope at boundaries to preserve the typed error.
 func ScopeFromContext(ctx context.Context) Scope {
-	v, ok := ctx.Value(scopeKey).(Scope)
-	if !ok {
+	scope, err := RequireScope(ctx)
+	if err != nil {
 		return Scope{}
 	}
-	return v
+	return scope
 }
 
 // WithPrincipal attaches the host's caller identity to ctx. Cortex never

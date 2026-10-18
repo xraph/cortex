@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/run"
 )
 
@@ -85,4 +86,15 @@ func cloneTemperature(value *float64) *float64 {
 	}
 	copyValue := *value
 	return &copyValue
+}
+
+func requireAgentScope(ctx context.Context, ag *agent.Config) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	if ag == nil || cortex.ValidateScope(ag.Scope) != nil || scope.Canonical() != ag.Scope.Canonical() {
+		return cortex.ErrInvalidScope
+	}
+	return nil
 }

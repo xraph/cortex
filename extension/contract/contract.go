@@ -82,15 +82,8 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 func bad(message string) error    { return &dc.Error{Code: dc.CodeBadRequest, Message: message} }
 func denied(message string) error { return &dc.Error{Code: dc.CodePermissionDenied, Message: message} }
 func validateScope(scope cortex.Scope) error {
-	if len(scope.Levels) < 1 || len(scope.Levels) > 3 {
-		return denied("Cortex requires one to three scope levels")
-	}
-	seen := map[string]bool{}
-	for _, l := range scope.Levels {
-		if strings.TrimSpace(l.Key) == "" || strings.TrimSpace(l.Value) == "" || strings.ContainsAny(l.Key+l.Value, "/=") || seen[l.Key] {
-			return denied("Cortex scope contains an invalid level")
-		}
-		seen[l.Key] = true
+	if cortex.ValidateScope(scope) != nil {
+		return denied("Cortex scope is invalid or unsupported")
 	}
 	return nil
 }
@@ -182,7 +175,7 @@ func mapError(err error) error {
 	if errors.Is(err, cortex.ErrResultsMismatch) {
 		return bad(err.Error())
 	}
-	if errors.Is(err, cortex.ErrNoScope) {
+	if errors.Is(err, cortex.ErrNoScope) || errors.Is(err, cortex.ErrInvalidScope) || errors.Is(err, cortex.ErrUnsupportedScopeDepth) {
 		return denied("Cortex scope could not be resolved")
 	}
 	return &dc.Error{Code: dc.CodeUnavailable, Message: "Cortex could not complete the request", Retryable: true}

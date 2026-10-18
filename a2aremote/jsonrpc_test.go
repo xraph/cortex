@@ -215,6 +215,7 @@ func TestCardHandlerServesExposedAgentsOnly(t *testing.T) {
 		Card:         CardOptions{BaseURL: "https://cortex.example/a2a"},
 		Exposed:      []string{"worker"},
 		DefaultAgent: "worker",
+		Scope:        testScope(),
 	})
 	h := svc.CardHandler()
 

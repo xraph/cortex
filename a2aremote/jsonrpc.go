@@ -232,9 +232,11 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 	// borrow. The host names the scope its exposed agents live in, and
 	// only agents it exposed are ever read under it.
 	ctx := r.Context()
-	if !s.opts.Scope.IsZero() {
-		ctx = cortex.WithScope(ctx, s.opts.Scope)
+	if cortex.ValidateScope(s.opts.Scope) != nil {
+		http.NotFound(w, r)
+		return
 	}
+	ctx = cortex.WithScope(ctx, s.opts.Scope)
 
 	a, err := s.gw.GetAgentByName(ctx, name)
 	if err != nil {

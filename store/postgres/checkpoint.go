@@ -14,9 +14,9 @@ import (
 )
 
 func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	cp.CreatedAt = now
@@ -31,9 +31,9 @@ func (s *Store) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint)
 }
 
 func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*checkpoint.Checkpoint, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(checkpointModel)
 	q := s.pgdb.NewSelect(m).Where("id = ?", cpID.String())
@@ -51,9 +51,9 @@ func (s *Store) GetCheckpoint(ctx context.Context, cpID id.CheckpointID) (*check
 }
 
 func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	decisionJSON, err := json.Marshal(decision)
 	if err != nil {
@@ -64,7 +64,7 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 		Set("decision = ?", string(decisionJSON)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", cpID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -82,9 +82,9 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 }
 
 func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) ([]*checkpoint.Checkpoint, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []checkpointModel
 	q := s.pgdb.NewSelect(&models).
@@ -119,9 +119,9 @@ func (s *Store) ListPending(ctx context.Context, filter *checkpoint.ListFilter) 
 }
 
 func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	q := s.pgdb.NewSelect((*checkpointModel)(nil)).
 		Where("state = ?", "pending")

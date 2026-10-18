@@ -40,11 +40,12 @@ func TestAgentStore_UpdateDoesNotMutateScope(t *testing.T) {
 	}
 	loaded.Description = "mutated"
 
-	// A broader context (workspace only, no project) still authorizes the
-	// update via prefix matching, but must not collapse the row's own
-	// stored scope down to the broader one.
+	// Reject the broad context, then perform the exact-scope update.
 	updateCtx := cortex.WithScope(context.Background(), scopeOf("ws_x"))
-	if updateErr := s.Update(updateCtx, loaded); updateErr != nil {
+	if deniedErr := s.Update(updateCtx, loaded); deniedErr == nil {
+		t.Fatal("ancestor context authorized a mutation")
+	}
+	if updateErr := s.Update(createCtx, loaded); updateErr != nil {
 		t.Fatalf("update agent: %v", updateErr)
 	}
 

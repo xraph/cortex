@@ -16,9 +16,9 @@ import (
 // enforces per-scope name uniqueness; app_id survives on the document as
 // a vestigial field no longer read or filtered on.
 func (s *Store) CreateBehavior(ctx context.Context, b *behavior.Behavior) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	b.CreatedAt = t
@@ -39,9 +39,9 @@ func (s *Store) CreateBehavior(ctx context.Context, b *behavior.Behavior) error 
 
 // GetBehavior returns a behavior by ID within the caller's scope.
 func (s *Store) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*behavior.Behavior, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m behaviorModel
 
@@ -66,9 +66,9 @@ func (s *Store) GetBehavior(ctx context.Context, behaviorID id.BehaviorID) (*beh
 
 // GetBehaviorByName returns a behavior by name within the caller's scope.
 func (s *Store) GetBehaviorByName(ctx context.Context, name string) (*behavior.Behavior, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m behaviorModel
 
@@ -94,7 +94,7 @@ func (s *Store) GetBehaviorByName(ctx context.Context, name string) (*behavior.B
 // UpdateBehavior modifies an existing behavior's mutable fields within
 // the caller's scope. Scope is immutable after creation: the context
 // scope is used only as an authorization predicate (the caller must be
-// at or above the behavior's stored scope to touch it), and is never
+// at the exact scope of the behavior's stored scope to touch it), and is never
 // written back. grove's NewUpdate(model).Exec defaults to a full-field
 // $set built from the model struct when no explicit update document is
 // given, which would otherwise blank scope_l0/l1/l2/extra/canon on every
@@ -107,15 +107,15 @@ func (s *Store) GetBehaviorByName(ctx context.Context, name string) (*behavior.B
 // Update. The field itself is vestigial but intentionally left in place;
 // erasing its content belongs to whatever change finally drops the column.
 func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	b.UpdatedAt = now()
 	m := behaviorToModel(b)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -148,12 +148,12 @@ func (s *Store) UpdateBehavior(ctx context.Context, b *behavior.Behavior) error 
 
 // DeleteBehavior removes a behavior within the caller's scope.
 func (s *Store) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": behaviorID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -173,9 +173,9 @@ func (s *Store) DeleteBehavior(ctx context.Context, behaviorID id.BehaviorID) er
 
 // ListBehaviors returns behaviors within the caller's scope, optionally filtered.
 func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) ([]*behavior.Behavior, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &behavior.ListFilter{}
@@ -221,9 +221,9 @@ func (s *Store) ListBehaviors(ctx context.Context, filter *behavior.ListFilter) 
 // CountBehaviors returns the total number of behaviors matching the
 // filter within the caller's scope.
 func (s *Store) CountBehaviors(ctx context.Context, filter *behavior.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &behavior.ListFilter{}

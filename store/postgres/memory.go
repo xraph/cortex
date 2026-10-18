@@ -22,9 +22,9 @@ import (
 // session — the whole write rolls back rather than leaving orphaned
 // message rows a reader can never reach through GetSession/ListSessions.
 func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	if len(messages) == 0 {
 		return nil
@@ -117,9 +117,9 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 // batch that shares one created_at timestamp, so the reversal is a
 // stable chronological order rather than an arbitrary one.
 func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	var models []memoryModel
@@ -140,6 +140,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 
 	messages := make([]memory.Message, 0, len(models))
 	for i := len(models) - 1; i >= 0; i-- {
+		if _, scopeErr := cortex.DecodeStoredScope(models[i].ScopeCanon, [3]string{models[i].ScopeL0, models[i].ScopeL1, models[i].ScopeL2}, len(models[i].ScopeExtra) > 0); scopeErr != nil {
+			return nil, scopeErr
+		}
 		var msg memory.Message
 		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
 			messages = append(messages, msg)
@@ -152,9 +155,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 // counters in the same transaction, for the same drift reason as
 // SaveConversation.
 func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sid := sessionID.String()
 
@@ -168,7 +171,7 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 		Where("agent_id = ?", agentID.String()).
 		Where("session_id = ?", sid).
 		Where("kind = ?", "conversation")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if _, delErr := q.Exec(ctx); delErr != nil {
@@ -203,9 +206,9 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 // tenant's scratch state — so this is guarded the same as
 // SaveConversation.
 func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 
@@ -252,9 +255,9 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 }
 
 func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(memoryModel)
 	q := s.pgdb.NewSelect(m).
@@ -270,6 +273,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		}
 		return nil, fmt.Errorf("cortex: load working memory: %w", err)
 	}
+	if _, scopeErr := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0); scopeErr != nil {
+		return nil, scopeErr
+	}
 	var v any
 	if err := json.Unmarshal([]byte(m.Content), &v); err != nil {
 		return nil, fmt.Errorf("cortex: unmarshal working memory: %w", err)
@@ -278,14 +284,14 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 }
 
 func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.pgdb.NewDelete((*memoryModel)(nil)).
 		Where("agent_id = ?", runID.String()).
 		Where("kind = ?", "working")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if _, err := q.Exec(ctx); err != nil {
@@ -295,9 +301,9 @@ func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
 }
 
 func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 
@@ -322,9 +328,9 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary str
 }
 
 func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	var models []memoryModel
@@ -340,6 +346,9 @@ func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string
 	}
 	summaries := make([]string, len(models))
 	for i, m := range models {
+		if _, scopeErr := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0); scopeErr != nil {
+			return nil, scopeErr
+		}
 		summaries[i] = m.Content
 	}
 	return summaries, nil

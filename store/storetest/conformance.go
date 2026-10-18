@@ -39,6 +39,7 @@ import (
 // newStore must return a freshly migrated, empty store; Conformance calls
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("ScopeBoundary", func(t *testing.T) { testScopeBoundary(t, newStore) })
 	t.Run("PreparedRoundTrip", func(t *testing.T) { testPreparedRoundTrip(t, newStore) })
 	t.Run("RunOutcomeRoundTrip", func(t *testing.T) {
 		s := newStore(t)
@@ -2695,9 +2696,8 @@ func containsSessionID(sessions []*session.Session, want id.SessionID) bool {
 // Scope immutability
 // ──────────────────────────────────────────────────
 
-// testScopeImmutability updates a row from a broader-but-still-matching
-// scope and asserts the row's own narrower stored scope survives the
-// write untouched.
+// testScopeImmutability rejects ancestor mutations and checks that an
+// exact-scope update preserves stored identity.
 func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store) {
 	const want = "workspace=ws_x/project=p1"
 
@@ -2712,11 +2712,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Input = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateRun(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateRun(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateRun(createCtx, loaded); err != nil {
 			t.Fatalf("update run: %v", err)
 		}
 
@@ -2746,11 +2747,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Description = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.Update(updateCtx, loaded); err != nil {
+		if deniedErr := s.Update(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.Update(createCtx, loaded); err != nil {
 			t.Fatalf("update agent: %v", err)
 		}
 
@@ -2781,7 +2783,10 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		loaded.Description = "mutated"
 
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateSkill(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateSkill(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateSkill(createCtx, loaded); err != nil {
 			t.Fatalf("update skill: %v", err)
 		}
 
@@ -2812,7 +2817,10 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		loaded.Description = "mutated"
 
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateTrait(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateTrait(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateTrait(createCtx, loaded); err != nil {
 			t.Fatalf("update trait: %v", err)
 		}
 
@@ -2843,7 +2851,10 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		loaded.Description = "mutated"
 
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateBehavior(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateBehavior(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateBehavior(createCtx, loaded); err != nil {
 			t.Fatalf("update behavior: %v", err)
 		}
 
@@ -2873,11 +2884,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Description = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdatePersona(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdatePersona(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdatePersona(createCtx, loaded); err != nil {
 			t.Fatalf("update persona: %v", err)
 		}
 
@@ -2908,11 +2920,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Title = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateSession(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateSession(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateSession(createCtx, loaded); err != nil {
 			t.Fatalf("update session: %v", err)
 		}
 
@@ -2930,8 +2943,7 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 
 	// Suspension has no Update method, so the mutating call this group
 	// has to prove immutable against is ClaimSuspension: it writes, and
-	// it can be authorized by a context broader than the row's own stored
-	// scope. The claim must land on the RUN and leave the suspension's
+	// it requires the row's exact stored scope. The claim must land on the RUN and leave the suspension's
 	// stored scope exactly where CreateSuspension put it.
 	t.Run("Suspension", func(t *testing.T) {
 		s := newStore(t)
@@ -2946,13 +2958,14 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 			t.Fatalf("scope after create = %q, want %q", got, want)
 		}
 
-		// A broader context (workspace only, no project) still
-		// authorizes the claim via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		claimCtx := ctxWithScope("ws_x")
-		claimed, err := s.ClaimSuspension(claimCtx, r.ID)
+		if _, deniedErr := s.ClaimSuspension(claimCtx, r.ID); deniedErr == nil {
+			t.Fatal("ancestor context claimed a suspension")
+		}
+		claimed, err := s.ClaimSuspension(createCtx, r.ID)
 		if err != nil {
-			t.Fatalf("claim suspension from a broader scope: %v", err)
+			t.Fatalf("claim suspension from its exact scope: %v", err)
 		}
 		if claimed.ID != susp.ID {
 			t.Errorf("ClaimSuspension returned %s, want %s", claimed.ID, susp.ID)
@@ -2992,11 +3005,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Model = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateOverlay(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateOverlay(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateOverlay(createCtx, loaded); err != nil {
 			t.Fatalf("update overlay: %v", err)
 		}
 
@@ -3026,11 +3040,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Description = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateOrchestration(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateOrchestration(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateOrchestration(createCtx, loaded); err != nil {
 			t.Fatalf("update orchestration: %v", err)
 		}
 
@@ -3062,11 +3077,12 @@ func testScopeImmutability(t *testing.T, newStore func(t *testing.T) store.Store
 		}
 		loaded.Input = "mutated"
 
-		// A broader context (workspace only, no project) still
-		// authorizes the update via prefix matching, but must not
-		// collapse the row's own stored scope down to the broader one.
+		// Reject ancestor authority, then verify the exact-scope mutation.
 		updateCtx := ctxWithScope("ws_x")
-		if err = s.UpdateOrchestrationRun(updateCtx, loaded); err != nil {
+		if deniedErr := s.UpdateOrchestrationRun(updateCtx, loaded); deniedErr == nil {
+			t.Fatal("ancestor context authorized a mutation")
+		}
+		if err = s.UpdateOrchestrationRun(createCtx, loaded); err != nil {
 			t.Fatalf("update orchestration run: %v", err)
 		}
 

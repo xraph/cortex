@@ -16,9 +16,9 @@ import (
 // per-scope name uniqueness; app_id survives on the document as a
 // vestigial field no longer read or filtered on.
 func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	sk.CreatedAt = t
@@ -39,9 +39,9 @@ func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
 
 // GetSkill returns a skill by ID within the caller's scope.
 func (s *Store) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m skillModel
 
@@ -66,9 +66,9 @@ func (s *Store) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill,
 
 // GetSkillByName returns a skill by name within the caller's scope.
 func (s *Store) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m skillModel
 
@@ -106,15 +106,15 @@ func (s *Store) GetSkillByName(ctx context.Context, name string) (*skill.Skill, 
 // Update. The field itself is vestigial but intentionally left in place;
 // erasing its content belongs to whatever change finally drops the column.
 func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sk.UpdatedAt = now()
 	m := skillToModel(sk)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -147,12 +147,12 @@ func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
 
 // DeleteSkill removes a skill within the caller's scope.
 func (s *Store) DeleteSkill(ctx context.Context, skillID id.SkillID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": skillID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -172,9 +172,9 @@ func (s *Store) DeleteSkill(ctx context.Context, skillID id.SkillID) error {
 
 // ListSkills returns skills within the caller's scope, optionally filtered.
 func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &skill.ListFilter{}
@@ -220,9 +220,9 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 // CountSkills returns the total number of skills matching the filter
 // within the caller's scope.
 func (s *Store) CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &skill.ListFilter{}

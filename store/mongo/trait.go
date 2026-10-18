@@ -16,9 +16,9 @@ import (
 // per-scope name uniqueness; app_id survives on the document as a
 // vestigial field no longer read or filtered on.
 func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	ts := now()
 	t.CreatedAt = ts
@@ -39,9 +39,9 @@ func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
 
 // GetTrait returns a trait by ID within the caller's scope.
 func (s *Store) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m traitModel
 
@@ -66,9 +66,9 @@ func (s *Store) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait,
 
 // GetTraitByName returns a trait by name within the caller's scope.
 func (s *Store) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m traitModel
 
@@ -106,15 +106,15 @@ func (s *Store) GetTraitByName(ctx context.Context, name string) (*trait.Trait, 
 // Update. The field itself is vestigial but intentionally left in place;
 // erasing its content belongs to whatever change finally drops the column.
 func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t.UpdatedAt = now()
 	m := traitToModel(t)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -145,12 +145,12 @@ func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
 
 // DeleteTrait removes a trait within the caller's scope.
 func (s *Store) DeleteTrait(ctx context.Context, traitID id.TraitID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": traitID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -170,9 +170,9 @@ func (s *Store) DeleteTrait(ctx context.Context, traitID id.TraitID) error {
 
 // ListTraits returns traits within the caller's scope, optionally filtered.
 func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &trait.ListFilter{}
@@ -221,9 +221,9 @@ func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*tr
 // CountTraits returns the total number of traits matching the filter
 // within the caller's scope.
 func (s *Store) CountTraits(ctx context.Context, filter *trait.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &trait.ListFilter{}

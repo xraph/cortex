@@ -368,3 +368,18 @@ func TestTheTaskIDFromSendResolves(t *testing.T) {
 		t.Fatalf("the id handed back by SendMessage does not resolve: %v", err)
 	}
 }
+
+func TestInvalidPeerScopeCannotReachGateway(t *testing.T) {
+	for _, levels := range [][]cortex.Level{
+		{{Key: "workspace", Value: "a/project=b"}},
+		{{Key: "workspace", Value: "a"}, {Key: "workspace", Value: "b"}},
+		{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"}, {Key: "d", Value: "4"}},
+	} {
+		gw := newFakeGateway()
+		svc := testService(t, gw, staticResolver{peer: Peer{Node: "peer.example", Scope: cortex.Scope{Levels: levels}}})
+		parent := cortex.WithScope(context.Background(), testScope())
+		if _, err := svc.SendMessage(parent, Credentials{}, plainRequest("hi")); err == nil {
+			t.Error("invalid peer scope accepted")
+		}
+	}
+}

@@ -20,6 +20,9 @@ func mapStoreError(err error) error {
 	if isConflict(err) {
 		return forge.NewHTTPError(http.StatusConflict, err.Error())
 	}
+	if errors.Is(err, cortex.ErrInvalidScope) || errors.Is(err, cortex.ErrUnsupportedScopeDepth) {
+		return forge.NewHTTPError(http.StatusForbidden, "cortex: request scope is invalid or unsupported")
+	}
 	if errors.Is(err, cortex.ErrNoScope) {
 		// The host never attached a scope to the request context. That is
 		// a caller/configuration fault (a missing precondition on every

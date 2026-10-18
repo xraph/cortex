@@ -16,9 +16,9 @@ import (
 // enforces per-scope name uniqueness; app_id survives on the document as
 // a vestigial field no longer read or filtered on.
 func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	p.CreatedAt = t
@@ -39,9 +39,9 @@ func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
 
 // GetPersona returns a persona by ID within the caller's scope.
 func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m personaModel
 
@@ -66,9 +66,9 @@ func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*person
 
 // GetPersonaByName returns a persona by name within the caller's scope.
 func (s *Store) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m personaModel
 
@@ -106,15 +106,15 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (*persona.Per
 // Update. The field itself is vestigial but intentionally left in place;
 // erasing its content belongs to whatever change finally drops the column.
 func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	p.UpdatedAt = now()
 	m := personaToModel(p)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -149,12 +149,12 @@ func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
 
 // DeletePersona removes a persona within the caller's scope.
 func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": personaID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -174,9 +174,9 @@ func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error
 
 // ListPersonas returns personas within the caller's scope, optionally filtered.
 func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &persona.ListFilter{}
@@ -222,9 +222,9 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 // CountPersonas returns the total number of personas matching the
 // filter within the caller's scope.
 func (s *Store) CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &persona.ListFilter{}

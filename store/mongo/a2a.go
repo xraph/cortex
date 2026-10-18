@@ -19,9 +19,9 @@ import (
 // CreateMessage persists an envelope, stamping the scope from the context.
 // Envelopes are immutable once written, so there is no update counterpart.
 func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	e.CreatedAt = t
@@ -38,9 +38,9 @@ func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
 }
 
 func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelope, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m a2aMessageModel
 
@@ -60,9 +60,9 @@ func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelo
 // ListMessages returns a conversation's messages oldest first, because a
 // conversation is read as a transcript.
 func (s *Store) ListMessages(ctx context.Context, f *a2a.MessageListFilter) ([]*a2a.Envelope, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aMessageModel
 
@@ -103,9 +103,9 @@ func (s *Store) ListMessages(ctx context.Context, f *a2a.MessageListFilter) ([]*
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	c.CreatedAt = t
@@ -122,9 +122,9 @@ func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) err
 }
 
 func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m a2aConversationModel
 
@@ -150,9 +150,9 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 // context id, and joining one peer's thread to another's would leak a
 // conversation across a trust boundary.
 func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerContext string) (*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if node == "" || peerContext == "" {
 		// An empty pairing would match every locally started
@@ -175,15 +175,15 @@ func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerCont
 }
 
 func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	c.UpdatedAt = now()
 	m := a2aConversationToModel(c)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	set := bson.M{
@@ -212,9 +212,9 @@ func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) err
 }
 
 func (s *Store) ListConversations(ctx context.Context, f *a2a.ConversationListFilter) ([]*a2a.Conversation, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var models []a2aConversationModel
 
@@ -255,9 +255,9 @@ func (s *Store) ListConversations(ctx context.Context, f *a2a.ConversationListFi
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	d.CreatedAt = t
@@ -275,23 +275,23 @@ func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
 
 // GetDelivery reads one delivery document within the caller's scope.
 func (s *Store) GetDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	return s.getDelivery(ctx, scope, deliveryID)
 }
 
 func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	d.UpdatedAt = now()
 	m := a2aDeliveryToModel(d)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	set := bson.M{
@@ -324,13 +324,13 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 // it and exactly one of them matches a document. That is what stops one
 // directive starting two runs.
 func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	t := now()
 	filter := bson.M{"_id": deliveryID.String(), "state": a2a.DeliveryQueued}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	update := bson.M{"$set": bson.M{
@@ -363,9 +363,9 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 // delivery is deliberately excluded: it has not reached anyone yet, and an
 // inbox that showed it would be showing mail still in transit.
 func (s *Store) ListInbox(ctx context.Context, agentName string, f a2a.InboxFilter) ([]*a2a.Delivery, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	filter := bson.M{"receiver_agent": agentName, "state": a2a.DeliveryDelivered}
 	for k, v := range scopeFilter(scope, false) {
@@ -469,13 +469,13 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 }
 
 func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	filter := bson.M{"_id": deliveryID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -497,9 +497,9 @@ func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	a.CreatedAt = t
@@ -524,13 +524,13 @@ func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
 // the waiting run. The reply-with token is the document's _id, so there
 // can only ever be one of them to race for.
 func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	t := now()
 	filter := bson.M{"_id": replyWith, "claimed_at": nil}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	update := bson.M{"$set": bson.M{"claimed_at": t, "updated_at": t}}
@@ -556,9 +556,9 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 // documents are excluded, which is what makes sweeping the same backlog
 // twice safe.
 func (s *Store) ListExpiredAsks(ctx context.Context, at time.Time, limit int) ([]*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	filter := bson.M{
 		"claimed_at": nil,
@@ -580,9 +580,9 @@ func (s *Store) ListExpiredAsks(ctx context.Context, at time.Time, limit int) ([
 }
 
 func (s *Store) ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*a2a.PendingAsk, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	filter := bson.M{"conversation_id": convID.String(), "claimed_at": nil}
 	for k, v := range scopeFilter(scope, false) {

@@ -22,9 +22,9 @@ import (
 // suspension per run, which is what makes ClaimSuspension a meaningful
 // primitive.
 func (s *Store) CreateSuspension(ctx context.Context, susp *suspension.Suspension) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	susp.CreatedAt = now
@@ -44,15 +44,15 @@ func (s *Store) CreateSuspension(ctx context.Context, susp *suspension.Suspensio
 // without changing anything. Callers that intend to resume must use
 // ClaimSuspension instead.
 func (s *Store) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m, err := selectSuspensionRow(ctx, s.pgdb, scope, runID)
 	if err != nil {
 		return nil, err
 	}
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // suspensionSelector is the sliver of grove's query surface both a
@@ -89,9 +89,9 @@ type suspensionSelector interface {
 // the write on an unexpired suspension means an expired resume never
 // moves the run at all.
 func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
@@ -110,7 +110,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 		Where("id = ?", runID.String()).
 		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
 	q = q.Where(unexpiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, now)...)
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -136,7 +136,7 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cortex: commit claim suspension: %w", err)
 	}
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // ClaimExpiredSuspension is ClaimSuspension with the deadline predicate
@@ -154,9 +154,9 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 // no longer paused, the deadline moved) all mean the same thing to the
 // only caller: somebody else owns this run, leave it alone.
 func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	tx, err := s.pgdb.BeginTxQuery(ctx, nil)
@@ -172,7 +172,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 		Where("id = ?", runID.String()).
 		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
 	q = q.Where(expiredSuspensionExists(scope), suspensionDeadlineArgs(scope, runID, at)...)
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -195,7 +195,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cortex: commit claim expired suspension: %w", err)
 	}
-	return suspensionFromModel(m)
+	return m, nil
 }
 
 // unexpiredSuspensionExists is the claim's expiry predicate. It is a
@@ -206,7 +206,7 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 func unexpiredSuspensionExists(scope cortex.Scope) string {
 	q := "EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ?" +
 		" AND (cs.expires_at IS NULL OR cs.expires_at > ?)"
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q += " AND cs." + p.Column + " = ?"
 	}
 	return q + ")"
@@ -220,7 +220,7 @@ func unexpiredSuspensionExists(scope cortex.Scope) string {
 func expiredSuspensionExists(scope cortex.Scope) string {
 	q := "EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ?" +
 		" AND cs.expires_at IS NOT NULL AND cs.expires_at <= ?"
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q += " AND cs." + p.Column + " = ?"
 	}
 	return q + ")"
@@ -231,7 +231,7 @@ func expiredSuspensionExists(scope cortex.Scope) string {
 // it because they take the same three things in the same order, and a
 // second copy would be a second place to get the ordering wrong.
 func suspensionDeadlineArgs(scope cortex.Scope, runID id.AgentRunID, now time.Time) []any {
-	preds := scopePredicates(scope, false)
+	preds := scopePredicates(scope, true)
 	args := make([]any, 0, len(preds)+2)
 	args = append(args, runID.String(), now)
 	for _, p := range preds {
@@ -258,12 +258,12 @@ func classifyFailedClaim(ctx context.Context, q suspensionSelector, scope cortex
 
 // DeleteSuspension removes a run's suspension within the caller's scope.
 func (s *Store) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.pgdb.NewDelete((*suspensionModel)(nil)).Where("run_id = ?", runID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -283,9 +283,9 @@ func (s *Store) DeleteSuspension(ctx context.Context, runID id.AgentRunID) error
 // ListExpired returns suspensions whose deadline has passed, oldest
 // first, within the caller's scope.
 func (s *Store) ListExpired(ctx context.Context, now time.Time, limit int) ([]*suspension.Suspension, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	return s.expiredSuspensions(ctx, scopePredicates(scope, false), now, limit)
 }
@@ -334,10 +334,10 @@ func (s *Store) expiredSuspensions(ctx context.Context, preds []scopePredicate, 
 // exists so GetSuspension and ClaimSuspension apply identical
 // predicates: a claim that read more broadly than a get would be a
 // cross-scope hole nobody would spot from either call site alone.
-func selectSuspensionRow(ctx context.Context, q suspensionSelector, scope cortex.Scope, runID id.AgentRunID) (*suspensionModel, error) {
+func selectSuspensionRow(ctx context.Context, q suspensionSelector, scope cortex.Scope, runID id.AgentRunID) (*suspension.Suspension, error) {
 	m := new(suspensionModel)
 	sel := q.NewSelect(m).Where("run_id = ?", runID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		sel = sel.Where(p.Column+" = ?", p.Value)
 	}
 	if err := sel.Scan(ctx); err != nil {
@@ -346,5 +346,5 @@ func selectSuspensionRow(ctx context.Context, q suspensionSelector, scope cortex
 		}
 		return nil, fmt.Errorf("cortex: get suspension: %w", err)
 	}
-	return m, nil
+	return suspensionFromModel(m)
 }

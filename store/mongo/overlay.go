@@ -17,9 +17,9 @@ import (
 // same pair comes back as cortex.ErrAlreadyExists rather than quietly
 // shadowing the first.
 func (s *Store) CreateOverlay(ctx context.Context, o *prompt.Overlay) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	o.CreatedAt = t
@@ -38,9 +38,9 @@ func (s *Store) CreateOverlay(ctx context.Context, o *prompt.Overlay) error {
 
 // GetOverlay reads one overlay by id within the caller's scope.
 func (s *Store) GetOverlay(ctx context.Context, overlayID id.OverlayID) (*prompt.Overlay, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m overlayModel
 
@@ -62,9 +62,9 @@ func (s *Store) GetOverlay(ctx context.Context, overlayID id.OverlayID) (*prompt
 // exact scope. See prompt.Store for why this one read matches exactly
 // rather than by prefix.
 func (s *Store) GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*prompt.Overlay, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m overlayModel
 
@@ -87,9 +87,12 @@ func (s *Store) GetOverlayForAgent(ctx context.Context, agentID id.AgentID) (*pr
 // rather than a prefix match, and why the scope argument is bounded to
 // the caller's own ancestry.
 func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, scope cortex.Scope) (*prompt.Overlay, error) {
-	caller := cortex.ScopeFromContext(ctx)
-	if caller.IsZero() {
-		return nil, cortex.ErrNoScope
+	if err := cortex.ValidateScope(scope); err != nil {
+		return nil, err
+	}
+	caller, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	// A scope outside the caller's own ancestry is refused as absent
 	// rather than as an error: from where the caller stands, that
@@ -115,7 +118,7 @@ func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, sc
 
 // UpdateOverlay rewrites an overlay's mutable fields within the caller's
 // scope. Scope is immutable after creation: the context scope is used
-// only as an authorization predicate (the caller must be at or above the
+// only as an authorization predicate (the caller must be at the exact scope of the
 // overlay's stored scope to touch it), and is never written back. grove's
 // NewUpdate(model).Exec defaults to a full-field $set built from the
 // model struct when no explicit update document is given, which would
@@ -131,15 +134,15 @@ func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, sc
 // impossible to express, since the stored value would survive every
 // update that tried to remove it.
 func (s *Store) UpdateOverlay(ctx context.Context, o *prompt.Overlay) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	o.UpdatedAt = now()
 	m := overlayToModel(o)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -168,12 +171,12 @@ func (s *Store) UpdateOverlay(ctx context.Context, o *prompt.Overlay) error {
 
 // DeleteOverlay removes an overlay within the caller's scope.
 func (s *Store) DeleteOverlay(ctx context.Context, overlayID id.OverlayID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": overlayID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -189,9 +192,9 @@ func (s *Store) DeleteOverlay(ctx context.Context, overlayID id.OverlayID) error
 
 // ListOverlays returns overlays within the caller's scope, oldest first.
 func (s *Store) ListOverlays(ctx context.Context, filter *prompt.ListFilter) ([]*prompt.Overlay, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &prompt.ListFilter{}

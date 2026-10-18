@@ -60,9 +60,9 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	if err != nil {
 		return nil, nil, err
 	}
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, nil, scopeErr
 	}
 	if scope.Canonical() != snap.Scope.Canonical() {
 		return nil, nil, fmt.Errorf("cortex: prepared scope mismatch: %w", cortex.ErrInvalidPrepared)

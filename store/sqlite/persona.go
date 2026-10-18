@@ -15,9 +15,9 @@ import (
 // per-scope name uniqueness; app_id survives on the row as a vestigial
 // column no longer read or filtered on.
 func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	p.CreatedAt = now
@@ -35,9 +35,9 @@ func (s *Store) CreatePersona(ctx context.Context, p *persona.Persona) error {
 }
 
 func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(personaModel)
 	q := s.sdb.NewSelect(m).Where("id = ?", personaID.String())
@@ -55,9 +55,9 @@ func (s *Store) GetPersona(ctx context.Context, personaID id.PersonaID) (*person
 }
 
 func (s *Store) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(personaModel)
 	q := s.sdb.NewSelect(m).Where("name = ?", name)
@@ -105,19 +105,19 @@ var mutablePersonaColumns = []string{
 
 // UpdatePersona modifies an existing persona's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the persona's stored scope to touch it), and is never written back —
 // mutablePersonaColumns excludes the five scope columns from what gets
 // written.
 func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	p.UpdatedAt = time.Now().UTC()
 	m := personaToModel(p)
 	q := s.sdb.NewUpdate(m).Column(mutablePersonaColumns...).WherePK()
-	for _, pr := range scopePredicates(scope, false) {
+	for _, pr := range scopePredicates(scope, true) {
 		q = q.Where(pr.Column+" = ?", pr.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -135,13 +135,13 @@ func (s *Store) UpdatePersona(ctx context.Context, p *persona.Persona) error {
 }
 
 func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.sdb.NewDelete((*personaModel)(nil)).
 		Where("id = ?", personaID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -159,9 +159,9 @@ func (s *Store) DeletePersona(ctx context.Context, personaID id.PersonaID) error
 }
 
 func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([]*persona.Persona, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &persona.ListFilter{}
@@ -195,9 +195,9 @@ func (s *Store) ListPersonas(ctx context.Context, filter *persona.ListFilter) ([
 }
 
 func (s *Store) CountPersonas(ctx context.Context, filter *persona.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &persona.ListFilter{}

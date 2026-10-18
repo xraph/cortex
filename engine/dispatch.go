@@ -15,6 +15,9 @@ import (
 // scope and principal are on ctx — a direct Dispatch call has no agent or run
 // of its own, so an authorizer keyed on those will see them zero-valued.
 func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
+		return jsonResult("error", scopeErr.Error())
+	}
 	ag := &agent.Config{}
 	policy := e.frozenPublication()
 	if err := e.checkToolCalls(ctx, ag, nil, policy, []llm.ToolCall{{Name: name, Arguments: arguments}}); err != nil {

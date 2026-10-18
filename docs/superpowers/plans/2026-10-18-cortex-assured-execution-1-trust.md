@@ -76,12 +76,12 @@ Files: create `scope_validation.go`, `scope_validation_test.go`, `store/storetes
 
 Interfaces: produces `ValidateScope(s Scope) error`, `ErrInvalidScope`, `ErrUnsupportedScopeDepth`; uses existing `Scope.Covers`, `Canonical`, `ScopeFromContext`. Zero scope remains `ErrNoScope`. Supported depth is one through three; keys are unique, key/value nonempty, canonical separators `/` and `=` rejected until a separately versioned codec exists.
 
-- [ ] Write conformance cases `ScopeDepthFourRejected`, `ScopeDuplicateKeyRejected`, `ScopeSeparatorRejected`, `ExactMutationDoesNotUseAncestorGrant`, and `PrefixListStillWorksWithAuthorization`. Test direct store calls as well as engine/API/remote entry points.
-- [ ] Run `GOWORK=off go test ./... -run 'Test.*Scope' -count=1 -timeout 10m` or the targeted package list if Docker suites need their documented configuration. Record expected failures before enforcing checks.
-- [ ] Add one shared validation function and call it at storage and execution boundaries. Preserve ordered-prefix list semantics for valid supported scopes. Resource mutations must validate exact stored resource identity plus current authorization; an ancestor context alone is not an automatic grant.
-- [ ] Add a read-only inventory/report helper for existing unsupported/ambiguous scopes. Quarantine unsafe records from normal access. Document an operator-authorized migration with identity mapping, dry-run report and audit; never truncate a deep scope silently.
-- [ ] Run all backend conformance and rescope tests, plus two principals/two scopes through API, dashboard and A2A. Verify no fallback manufactures a missing scope.
-- [ ] Apply common checks and commit `fix(scope): reject unenforceable resource scopes`.
+- [x] Write conformance cases `ScopeDepthFourRejected`, `ScopeDuplicateKeyRejected`, `ScopeSeparatorRejected`, `ExactMutationDoesNotUseAncestorGrant`, and `PrefixListStillWorksWithAuthorization`. Test direct store calls as well as engine/API/remote entry points.
+- [x] Run `GOWORK=off go test ./... -run 'Test.*Scope' -count=1 -timeout 10m` or the targeted package list if Docker suites need their documented configuration. Record expected failures before enforcing checks.
+- [x] Add one shared validation function and call it at storage and execution boundaries. Preserve ordered-prefix list semantics for valid supported scopes. Resource mutations must validate exact stored resource identity plus current authorization; an ancestor context alone is not an automatic grant.
+- [x] Add a read-only inventory/report helper for existing unsupported/ambiguous scopes. Quarantine unsafe records from normal access. Document an operator-authorized migration with identity mapping, dry-run report and audit; never truncate a deep scope silently.
+- [ ] Complete installed two-principal/two-scope API and dashboard qualification in S1.6. Backend conformance/rescope, REST error mapping, dashboard contract fixtures and A2A scope tests pass; invalid context fallback is rejected.
+- [x] Apply common checks and commit `fix(scope): reject unenforceable resource scopes`.
 
 ## S1.5: Validate manager plans before dispatch
 

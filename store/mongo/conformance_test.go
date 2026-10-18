@@ -114,6 +114,12 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("ScopeInventory", func(t *testing.T) {
+		if err := clearConformanceCollections(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		testScopeInventory(t, s)
+	})
 }
 
 // clearConformanceCollections empties every collection store/storetest

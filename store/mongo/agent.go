@@ -16,9 +16,9 @@ import (
 // enforces per-scope name uniqueness; app_id survives on the document as
 // a vestigial field no longer read or filtered on.
 func (s *Store) Create(ctx context.Context, config *agent.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	config.CreatedAt = t
@@ -39,9 +39,9 @@ func (s *Store) Create(ctx context.Context, config *agent.Config) error {
 
 // Get returns an agent configuration by ID within the caller's scope.
 func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m agentModel
 
@@ -66,9 +66,9 @@ func (s *Store) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, err
 
 // GetByName returns an agent by name within the caller's scope.
 func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m agentModel
 
@@ -107,15 +107,15 @@ func (s *Store) GetByName(ctx context.Context, name string) (*agent.Config, erro
 // Update. The field itself is vestigial but intentionally left in place;
 // erasing its content belongs to whatever change finally drops the column.
 func (s *Store) Update(ctx context.Context, config *agent.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	config.UpdatedAt = now()
 	m := agentToModel(config)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -157,12 +157,12 @@ func (s *Store) Update(ctx context.Context, config *agent.Config) error {
 
 // Delete removes an agent configuration within the caller's scope.
 func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": agentID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -183,9 +183,9 @@ func (s *Store) Delete(ctx context.Context, agentID id.AgentID) error {
 // List returns agent configurations within the caller's scope, optionally
 // filtered.
 func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &agent.ListFilter{}
@@ -231,9 +231,9 @@ func (s *Store) List(ctx context.Context, filter *agent.ListFilter) ([]*agent.Co
 // CountAgents returns the total number of agents matching the filter
 // within the caller's scope.
 func (s *Store) CountAgents(ctx context.Context, filter *agent.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &agent.ListFilter{}

@@ -38,14 +38,7 @@ func scopeColumns(s cortex.Scope) (l0, l1, l2 string, extra map[string]string) {
 // caller actually supplied, and nothing for the levels they left off, so a
 // workspace-only filter matches every project inside it.
 //
-// This only ever matches on scope_l0/l1/l2 — it ignores the extra overflow
-// map entirely, on both read and write. That's harmless today only
-// because cortex.WithScope (scope.go's maxScopeLevels, currently 3)
-// refuses to construct a Scope deep enough to populate extra in the first
-// place. If maxScopeLevels ever rises, this needs to start matching on
-// extra too, or mongo's isolation guarantee silently diverges from
-// postgres/sqlite for any level past the third — see the comment on
-// maxScopeLevels for the other half of this.
+// Exact operations also bind canonical identity and refuse overflow fields.
 func scopeFilter(s cortex.Scope, exact bool) bson.M {
 	l0, l1, l2, _ := scopeColumns(s)
 	cols := []struct {
@@ -64,6 +57,10 @@ func scopeFilter(s cortex.Scope, exact bool) bson.M {
 		}
 		f[c.key] = c.val
 	}
+	if exact {
+		f["scope_canon"] = s.Canonical()
+		f["scope_extra"] = bson.M{"$in": []any{bson.M{}, nil}}
+	}
 	return f
 }
 
@@ -77,9 +74,9 @@ func scopeFilter(s cortex.Scope, exact bool) bson.M {
 // rolls back rather than leaving orphaned message rows a reader can
 // never reach through GetSession/ListSessions.
 func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, messages []memory.Message) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	if len(messages) == 0 {
 		return nil
@@ -183,9 +180,9 @@ func (s *Store) SaveConversation(ctx context.Context, agentID id.AgentID, sessio
 // created_at -- and DESCENDING on both keeps the reversal a stable
 // chronological order rather than an arbitrary one.
 func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID, limit int) ([]memory.Message, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{
@@ -213,6 +210,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 
 	messages := make([]memory.Message, 0, len(models))
 	for i := len(models) - 1; i >= 0; i-- {
+		if _, scopeErr := cortex.DecodeStoredScope(models[i].ScopeCanon, [3]string{models[i].ScopeL0, models[i].ScopeL1, models[i].ScopeL2}, len(models[i].ScopeExtra) > 0); scopeErr != nil {
+			return nil, scopeErr
+		}
 		var msg memory.Message
 		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
 			messages = append(messages, msg)
@@ -226,9 +226,9 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 // its counters in the same multi-document transaction, for the same
 // drift reason as SaveConversation.
 func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessionID id.SessionID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sid := sessionID.String()
 	canon := scope.Canonical()
@@ -238,7 +238,7 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 		"session_id": sid,
 		"kind":       "conversation",
 	}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -279,9 +279,9 @@ func (s *Store) ClearConversation(ctx context.Context, agentID id.AgentID, sessi
 // otherwise read or clobber another tenant's scratch state — so this is
 // guarded the same as SaveConversation.
 func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string, value any) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 	t := now()
@@ -340,9 +340,9 @@ func (s *Store) SaveWorking(ctx context.Context, runID id.AgentRunID, key string
 // LoadWorking returns a working memory value by key within the caller's
 // scope.
 func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string) (any, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{
@@ -366,6 +366,9 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 		return nil, fmt.Errorf("cortex/mongo: load working memory: %w", err)
 	}
 
+	if _, scopeErr := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0); scopeErr != nil {
+		return nil, scopeErr
+	}
 	var v any
 	if err := json.Unmarshal([]byte(m.Content), &v); err != nil {
 		return nil, fmt.Errorf("cortex/mongo: unmarshal working memory: %w", err)
@@ -377,16 +380,16 @@ func (s *Store) LoadWorking(ctx context.Context, runID id.AgentRunID, key string
 // ClearWorking removes all working memory for a run within the caller's
 // scope.
 func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 
 	filter := bson.M{
 		"agent_id": runID.String(),
 		"kind":     "working",
 	}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -403,9 +406,9 @@ func (s *Store) ClearWorking(ctx context.Context, runID id.AgentRunID) error {
 
 // SaveSummary appends a summary to the agent's memory.
 func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary string) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	l0, l1, l2, extra := scopeColumns(scope)
 
@@ -433,9 +436,9 @@ func (s *Store) SaveSummary(ctx context.Context, agentID id.AgentID, summary str
 
 // LoadSummaries returns all summaries for an agent within scope.
 func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	filter := bson.M{
@@ -458,6 +461,9 @@ func (s *Store) LoadSummaries(ctx context.Context, agentID id.AgentID) ([]string
 
 	summaries := make([]string, len(models))
 	for i, m := range models {
+		if _, scopeErr := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0); scopeErr != nil {
+			return nil, scopeErr
+		}
 		summaries[i] = m.Content
 	}
 

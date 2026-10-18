@@ -42,3 +42,13 @@ func TestMapStoreError_NilIsNil(t *testing.T) {
 		t.Fatalf("mapStoreError(nil) = %v, want nil", err)
 	}
 }
+
+func TestMapStoreError_InvalidScopeIsDenied(t *testing.T) {
+	for _, cause := range []error{cortex.ErrInvalidScope, cortex.ErrUnsupportedScopeDepth} {
+		mapped := mapStoreError(cause)
+		status, ok := mapped.(statusCoder)
+		if !ok || status.StatusCode() != http.StatusForbidden {
+			t.Fatalf("invalid scope mapping: %v", mapped)
+		}
+	}
+}

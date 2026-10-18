@@ -909,13 +909,17 @@ func (e *Engine) RunAgent(ctx context.Context, agentName, input string, override
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	if cortex.ScopeFromContext(ctx).IsZero() {
-		return nil, cortex.ErrNoScope
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	ag, err := e.store.GetByName(ctx, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("resolve agent: %w", err)
+	}
+
+	if scopeErr := requireAgentScope(ctx, ag); scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	// Use real execution if LLM client is available.
@@ -936,15 +940,20 @@ func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overr
 		close(events)
 		return cortex.ErrNoStore
 	}
-	if cortex.ScopeFromContext(ctx).IsZero() {
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
 		close(events)
-		return cortex.ErrNoScope
+		return scopeErr
 	}
 
 	ag, err := e.store.GetByName(ctx, agentName)
 	if err != nil {
 		close(events)
 		return fmt.Errorf("resolve agent: %w", err)
+	}
+
+	if scopeErr := requireAgentScope(ctx, ag); scopeErr != nil {
+		close(events)
+		return scopeErr
 	}
 
 	// Use real execution if LLM client is available.

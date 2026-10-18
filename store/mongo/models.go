@@ -105,7 +105,7 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("agent %s: %w", agentID, err)
 	}
@@ -212,7 +212,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
@@ -297,7 +297,7 @@ func stepFromModel(m *stepModel) (*run.Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("step %s: %w", stepID, err)
 	}
@@ -378,7 +378,7 @@ func toolCallFromModel(m *toolCallModel) (*run.ToolCall, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("tool call %s: %w", tcID, err)
 	}
@@ -476,7 +476,7 @@ func checkpointFromModel(m *checkpointModel) (*checkpoint.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("checkpoint %s: %w", cpID, err)
 	}
@@ -552,7 +552,7 @@ func skillFromModel(m *skillModel) (*skill.Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("skill %s: %w", skillID, err)
 	}
@@ -625,7 +625,7 @@ func traitFromModel(m *traitModel) (*trait.Trait, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("trait %s: %w", traitID, err)
 	}
@@ -700,7 +700,7 @@ func behaviorFromModel(m *behaviorModel) (*behavior.Behavior, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("behavior %s: %w", behaviorID, err)
 	}
@@ -781,7 +781,7 @@ func personaFromModel(m *personaModel) (*persona.Persona, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("persona %s: %w", personaID, err)
 	}
@@ -855,7 +855,7 @@ func sessionFromModel(m *sessionModel) (*session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("session %s: %w", sessionID, err)
 	}
@@ -929,7 +929,7 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("orchestration config %s: %w", cfgID, err)
 	}
@@ -1009,7 +1009,7 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("orchestration run %s: %w", runID, err)
 	}
@@ -1119,7 +1119,7 @@ func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("suspension %s: %w", suspensionID, err)
 	}
@@ -1209,7 +1209,7 @@ func overlayFromModel(m *overlayModel) (*prompt.Overlay, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("overlay %s: %w", overlayID, err)
 	}
@@ -1301,7 +1301,7 @@ func a2aMessageFromModel(m *a2aMessageModel) (*a2a.Envelope, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("a2a message %s: %w", msgID, err)
 	}
@@ -1392,7 +1392,7 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("a2a conversation %s: %w", convID, err)
 	}
@@ -1461,7 +1461,7 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 	if err != nil {
 		return nil, err
 	}
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("a2a delivery %s: %w", dlvID, err)
 	}
@@ -1542,7 +1542,7 @@ func a2aPendingAskToModel(a *a2a.PendingAsk) *a2aPendingAskModel {
 }
 
 func a2aPendingAskFromModel(m *a2aPendingAskModel) (*a2a.PendingAsk, error) {
-	scope, err := cortex.ParseCanonical(m.ScopeCanon)
+	scope, err := cortex.DecodeStoredScope(m.ScopeCanon, [3]string{m.ScopeL0, m.ScopeL1, m.ScopeL2}, len(m.ScopeExtra) > 0)
 	if err != nil {
 		return nil, fmt.Errorf("a2a pending ask %s: %w", m.ReplyWith, err)
 	}

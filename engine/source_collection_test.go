@@ -103,3 +103,30 @@ func TestPreparationRejectsSourcesChangedDuringCollection(t *testing.T) {
 		})
 	}
 }
+
+func TestExecutionRequiresExactAgentScope(t *testing.T) {
+	child := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "w"}, {Key: "project", Value: "p"}}})
+	parent := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "w"}}})
+	s := newSQLiteStoreForTest(t)
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "child"}
+	if err := s.Create(child, ag); err != nil {
+		t.Fatal(err)
+	}
+	e, err := engine.New(engine.WithStore(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.PrepareAgent(parent, ag.ID, nil); err == nil {
+		t.Error("prepared child under ancestor authority")
+	}
+	if _, err = e.RunAgent(parent, ag.Name, "work", nil); err == nil {
+		t.Error("ran child under ancestor authority")
+	}
+	events := make(chan engine.StreamEvent, 32)
+	if err = e.StreamAgent(parent, ag.Name, "work", nil, events); err == nil {
+		t.Error("streamed child under ancestor authority")
+	}
+	for event := range events {
+		t.Errorf("unexpected event: %s", event.Type)
+	}
+}

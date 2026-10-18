@@ -42,21 +42,10 @@ func ApplyMigrateOptions(opts ...MigrateOption) MigrateOptions {
 	return o
 }
 
-// ValidateRescopedScope applies the same rules WithScope applies, so a
-// buggy rescoper cannot write a scope the rest of the system would refuse
-// to construct. An empty Key or Value flattens to a "key=" predicate,
-// which is a shared bucket wearing a different name.
+// ValidateRescopedScope applies shared validation to an operator's legacy mapping.
 func ValidateRescopedScope(s Scope) error {
-	if s.IsZero() {
-		return fmt.Errorf("rescoped scope is empty")
-	}
-	if len(s.Levels) > maxScopeLevels {
-		return fmt.Errorf("rescoped scope has %d levels, maximum is %d", len(s.Levels), maxScopeLevels)
-	}
-	for i, l := range s.Levels {
-		if l.Key == "" || l.Value == "" {
-			return fmt.Errorf("rescoped scope level %d has an empty key or value", i)
-		}
+	if err := ValidateScope(s); err != nil {
+		return fmt.Errorf("cortex: invalid rescoped identity: %w", err)
 	}
 	return nil
 }

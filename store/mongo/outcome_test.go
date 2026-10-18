@@ -13,7 +13,7 @@ import (
 
 func TestHistoricalRunBSONDefaultsToUnchecked(t *testing.T) {
 	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "historical"}}}
-	data, err := bson.Marshal(bson.M{"_id": id.NewAgentRunID().String(), "agent_id": id.NewAgentID().String(), "state": "completed", "output": "legacy", "scope_canon": scope.Canonical()})
+	data, err := bson.Marshal(bson.M{"_id": id.NewAgentRunID().String(), "agent_id": id.NewAgentID().String(), "state": "completed", "output": "legacy", "scope_canon": scope.Canonical(), "scope_l0": "workspace=historical", "scope_l1": "", "scope_l2": ""})
 	if err != nil {
 		t.Fatal(err)
 	}

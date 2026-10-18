@@ -70,6 +70,12 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("ScopeInventory", func(t *testing.T) {
+		if err := truncateConformanceTables(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		testScopeInventory(t, s)
+	})
 }
 
 // truncateConformanceTables clears every table store/storetest touches so

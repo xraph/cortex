@@ -200,7 +200,7 @@ func TestDispatch_ExternalToolIsNotDispatchable(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got := e.Dispatch(context.Background(), def.Name, "{}")
+	got := e.Dispatch(cortex.WithScope(context.Background(), scopeA()), def.Name, "{}")
 	if got == "" {
 		t.Fatal("Dispatch returned an empty string for an external tool; that reads as a tool that ran and said nothing")
 	}

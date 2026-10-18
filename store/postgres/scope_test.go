@@ -70,6 +70,8 @@ func TestScopePredicates_ExactPinsUnsetLevels(t *testing.T) {
 		{Column: "scope_l0", Value: "workspace=ws_x"},
 		{Column: "scope_l1", Value: ""},
 		{Column: "scope_l2", Value: ""},
+		{Column: "scope_canon", Value: "workspace=ws_x"},
+		{Column: "scope_extra", Value: "{}"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("exact predicates = %v, want %v", got, want)
@@ -97,6 +99,8 @@ func TestScopePredicates_ZeroScopeExactPinsAllLevels(t *testing.T) {
 		{Column: "scope_l0", Value: ""},
 		{Column: "scope_l1", Value: ""},
 		{Column: "scope_l2", Value: ""},
+		{Column: "scope_canon", Value: ""},
+		{Column: "scope_extra", Value: "{}"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("exact predicates on a zero scope = %v, want %v", got, want)

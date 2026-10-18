@@ -78,7 +78,7 @@ func (p *PreparedAgent) UnmarshalJSON(data []byte) error {
 	if contentDigest(canonical) != wire.Digest {
 		return fmt.Errorf("cortex: prepared digest mismatch: %w", cortex.ErrInvalidPrepared)
 	}
-	if snap.Scope.IsZero() || snap.Agent.ID.IsNil() || snap.Config.MaxSteps <= 0 {
+	if cortex.ValidateScope(snap.Scope) != nil || cortex.ValidateScope(snap.Agent.Scope) != nil || snap.Scope.Canonical() != snap.Agent.Scope.Canonical() || snap.Agent.ID.IsNil() || snap.Config.MaxSteps <= 0 {
 		return fmt.Errorf("cortex: incomplete prepared snapshot: %w", cortex.ErrInvalidPrepared)
 	}
 	if err := snap.Config.Budget.Validate(); err != nil {
@@ -113,8 +113,8 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
-	if cortex.ScopeFromContext(ctx).IsZero() {
-		return nil, cortex.ErrNoScope
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
+		return nil, scopeErr
 	}
 	ag, err := e.store.Get(ctx, agentID)
 	if err != nil {
@@ -126,6 +126,9 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (*PreparedAgent, error) {
 	if ag == nil || e.store == nil {
 		return nil, cortex.ErrInvalidPrepared
+	}
+	if scopeErr := requireAgentScope(ctx, ag); scopeErr != nil {
+		return nil, scopeErr
 	}
 	readSet := &sourceReadSet{}
 	ctx = context.WithValue(ctx, sourceReadSetKey{}, readSet)

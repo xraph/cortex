@@ -61,5 +61,8 @@ func scopePredicates(s cortex.Scope, exact bool) []scopePredicate {
 		}
 		preds = append(preds, scopePredicate{Column: cols[i], Value: vals[i]})
 	}
+	if exact {
+		preds = append(preds, scopePredicate{Column: "scope_canon", Value: s.Canonical()}, scopePredicate{Column: "scope_extra", Value: "{}"})
+	}
 	return preds
 }

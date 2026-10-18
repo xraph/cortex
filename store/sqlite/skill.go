@@ -15,9 +15,9 @@ import (
 // uniqueness; app_id survives on the row as a vestigial column no longer
 // read or filtered on.
 func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	sk.CreatedAt = now
@@ -35,9 +35,9 @@ func (s *Store) CreateSkill(ctx context.Context, sk *skill.Skill) error {
 }
 
 func (s *Store) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(skillModel)
 	q := s.sdb.NewSelect(m).Where("id = ?", skillID.String())
@@ -55,9 +55,9 @@ func (s *Store) GetSkill(ctx context.Context, skillID id.SkillID) (*skill.Skill,
 }
 
 func (s *Store) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(skillModel)
 	q := s.sdb.NewSelect(m).Where("name = ?", name)
@@ -103,19 +103,19 @@ var mutableSkillColumns = []string{
 
 // UpdateSkill modifies an existing skill's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the skill's stored scope to touch it), and is never written back —
 // mutableSkillColumns excludes the five scope columns from what gets
 // written.
 func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sk.UpdatedAt = time.Now().UTC()
 	m := skillToModel(sk)
 	q := s.sdb.NewUpdate(m).Column(mutableSkillColumns...).WherePK()
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -133,13 +133,13 @@ func (s *Store) UpdateSkill(ctx context.Context, sk *skill.Skill) error {
 }
 
 func (s *Store) DeleteSkill(ctx context.Context, skillID id.SkillID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.sdb.NewDelete((*skillModel)(nil)).
 		Where("id = ?", skillID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -157,9 +157,9 @@ func (s *Store) DeleteSkill(ctx context.Context, skillID id.SkillID) error {
 }
 
 func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*skill.Skill, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &skill.ListFilter{}
@@ -193,9 +193,9 @@ func (s *Store) ListSkills(ctx context.Context, filter *skill.ListFilter) ([]*sk
 }
 
 func (s *Store) CountSkills(ctx context.Context, filter *skill.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &skill.ListFilter{}

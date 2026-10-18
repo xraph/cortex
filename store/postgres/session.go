@@ -17,9 +17,9 @@ import (
 // what actually enforces one default session per agent per scope; a
 // non-default session never touches that constraint.
 func (s *Store) CreateSession(ctx context.Context, sess *session.Session) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	sess.CreatedAt = now
@@ -37,9 +37,9 @@ func (s *Store) CreateSession(ctx context.Context, sess *session.Session) error 
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID id.SessionID) (*session.Session, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(sessionModel)
 	q := s.pgdb.NewSelect(m).Where("id = ?", sessionID.String())
@@ -76,19 +76,19 @@ var mutableSessionColumns = []string{
 
 // UpdateSession modifies an existing session's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the session's stored scope to touch it), and is never written back —
 // mutableSessionColumns excludes the five scope columns from what gets
 // written.
 func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sess.UpdatedAt = time.Now().UTC()
 	m := sessionToModel(sess)
 	q := s.pgdb.NewUpdate(m).Column(mutableSessionColumns...).WherePK()
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -123,9 +123,9 @@ func (s *Store) UpdateSession(ctx context.Context, sess *session.Session) error 
 // deleting a session leaves no orphaned messages on any of the three,
 // whichever mechanism gets it there.
 func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	sid := sessionID.String()
 
@@ -140,7 +140,7 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 
 	q := tx.NewDelete((*sessionModel)(nil)).
 		Where("id = ?", sid)
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -163,7 +163,7 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 	msgQ := tx.NewDelete((*memoryModel)(nil)).
 		Where("session_id = ?", sid).
 		Where("kind = ?", "conversation")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		msgQ = msgQ.Where(p.Column+" = ?", p.Value)
 	}
 	if _, err := msgQ.Exec(ctx); err != nil {
@@ -177,9 +177,9 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID id.SessionID) error
 }
 
 func (s *Store) ListSessions(ctx context.Context, filter *session.ListFilter) ([]*session.Session, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &session.ListFilter{}
@@ -219,9 +219,9 @@ func (s *Store) ListSessions(ctx context.Context, filter *session.ListFilter) ([
 }
 
 func (s *Store) CountSessions(ctx context.Context, filter *session.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &session.ListFilter{}

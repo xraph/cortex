@@ -149,12 +149,12 @@ func TestRunStore_UpdateDoesNotMutateScope(t *testing.T) {
 	}
 	loaded.Input = "mutated"
 
-	// Update from a broader context scoped only to workspace=ws_x — no
-	// project level. Prefix matching lets this authorize the update (it's
-	// a superset of the run's stored scope), but the write must not
-	// collapse the row's own scope down to that broader context's.
+	// Reject the broad context, then perform the exact-scope update.
 	updateCtx := cortex.WithScope(context.Background(), scopeOf("ws_x"))
-	if updateErr := s.UpdateRun(updateCtx, loaded); updateErr != nil {
+	if deniedErr := s.UpdateRun(updateCtx, loaded); deniedErr == nil {
+		t.Fatal("ancestor context authorized a mutation")
+	}
+	if updateErr := s.UpdateRun(createCtx, loaded); updateErr != nil {
 		t.Fatalf("update run: %v", updateErr)
 	}
 

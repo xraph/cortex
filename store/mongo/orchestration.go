@@ -14,9 +14,9 @@ import (
 // CreateOrchestration persists a new orchestration config, stamping the
 // scope from the context.
 func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	c.CreatedAt = t
@@ -36,9 +36,9 @@ func (s *Store) CreateOrchestration(ctx context.Context, c *orchestration.Config
 // GetOrchestration returns an orchestration config by ID within the
 // caller's scope.
 func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) (*orchestration.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m orchestrationConfigModel
 
@@ -69,9 +69,9 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 // disambiguate two documents — the same reasoning that dropped AppID
 // from agent and persona.
 func (s *Store) GetOrchestrationByName(ctx context.Context, name string) (*orchestration.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m orchestrationConfigModel
 
@@ -97,7 +97,7 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, name string) (*orche
 // UpdateOrchestration modifies an existing orchestration config's mutable
 // fields within the caller's scope. Scope is immutable after creation:
 // the context scope is used only as an authorization predicate (the
-// caller must be at or above the config's stored scope to touch it), and
+// caller must be at the exact scope of the config's stored scope to touch it), and
 // is never written back. grove's NewUpdate(model).Exec defaults to a
 // full-field $set built from the model struct when no explicit update
 // document is given, which would otherwise blank
@@ -109,15 +109,15 @@ func (s *Store) GetOrchestrationByName(ctx context.Context, name string) (*orche
 // mutableOrchestrationConfigColumns on postgres/sqlite — a Config built
 // fresh rather than reloaded before Update must not zero it here only.
 func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	c.UpdatedAt = now()
 	m := orchestrationConfigToModel(c)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -150,12 +150,12 @@ func (s *Store) UpdateOrchestration(ctx context.Context, c *orchestration.Config
 // DeleteOrchestration removes an orchestration config within the
 // caller's scope.
 func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.OrchestrationConfigID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	filter := bson.M{"_id": orchID.String()}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -176,9 +176,9 @@ func (s *Store) DeleteOrchestration(ctx context.Context, orchID id.Orchestration
 // ListOrchestrations returns orchestration configs within the caller's
 // scope, optionally filtered.
 func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) ([]*orchestration.Config, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &orchestration.ConfigListFilter{}
@@ -224,9 +224,9 @@ func (s *Store) ListOrchestrations(ctx context.Context, filter *orchestration.Co
 // CountOrchestrations returns the total number of orchestration configs
 // matching the filter within the caller's scope.
 func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.ConfigListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &orchestration.ConfigListFilter{}
@@ -252,9 +252,9 @@ func (s *Store) CountOrchestrations(ctx context.Context, filter *orchestration.C
 // CreateOrchestrationRun persists a new orchestration run, stamping the
 // scope from the context.
 func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t := now()
 	r.CreatedAt = t
@@ -271,9 +271,9 @@ func (s *Store) CreateOrchestrationRun(ctx context.Context, r *orchestration.Run
 // GetOrchestrationRun returns an orchestration run by ID within the
 // caller's scope.
 func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationID) (*orchestration.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	var m orchestrationRunModel
 
@@ -303,15 +303,15 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 // AppID field (fix round 1). created_at is included, matching
 // mutableOrchestrationRunColumns on postgres/sqlite.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	r.UpdatedAt = now()
 	m := orchestrationRunToModel(r)
 
 	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
@@ -347,9 +347,9 @@ func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run
 // ListOrchestrationRuns returns orchestration runs within the caller's
 // scope, optionally filtered.
 func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &orchestration.RunListFilter{}
@@ -395,9 +395,9 @@ func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration
 // CountOrchestrationRuns returns the total number of orchestration runs
 // matching the filter within the caller's scope.
 func (s *Store) CountOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &orchestration.RunListFilter{}

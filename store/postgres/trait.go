@@ -17,9 +17,9 @@ import (
 // uniqueness; app_id survives on the row as a vestigial column no longer
 // read or filtered on.
 func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	now := time.Now().UTC()
 	t.CreatedAt = now
@@ -37,9 +37,9 @@ func (s *Store) CreateTrait(ctx context.Context, t *trait.Trait) error {
 }
 
 func (s *Store) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(traitModel)
 	q := s.pgdb.NewSelect(m).Where("id = ?", traitID.String())
@@ -57,9 +57,9 @@ func (s *Store) GetTrait(ctx context.Context, traitID id.TraitID) (*trait.Trait,
 }
 
 func (s *Store) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	m := new(traitModel)
 	q := s.pgdb.NewSelect(m).Where("name = ?", name)
@@ -103,19 +103,19 @@ var mutableTraitColumns = []string{
 
 // UpdateTrait modifies an existing trait's mutable fields within the
 // caller's scope. Scope is immutable after creation: the context scope is
-// used only as an authorization predicate (the caller must be at or above
+// used only as an authorization predicate (the caller must be at the exact scope of
 // the trait's stored scope to touch it), and is never written back —
 // mutableTraitColumns excludes the five scope columns from what gets
 // written.
 func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	t.UpdatedAt = time.Now().UTC()
 	m := traitToModel(t)
 	q := s.pgdb.NewUpdate(m).Column(mutableTraitColumns...).WherePK()
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -133,13 +133,13 @@ func (s *Store) UpdateTrait(ctx context.Context, t *trait.Trait) error {
 }
 
 func (s *Store) DeleteTrait(ctx context.Context, traitID id.TraitID) error {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return scopeErr
 	}
 	q := s.pgdb.NewDelete((*traitModel)(nil)).
 		Where("id = ?", traitID.String())
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	res, err := q.Exec(ctx)
@@ -157,9 +157,9 @@ func (s *Store) DeleteTrait(ctx context.Context, traitID id.TraitID) error {
 }
 
 func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*trait.Trait, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return nil, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
 	}
 	if filter == nil {
 		filter = &trait.ListFilter{}
@@ -196,9 +196,9 @@ func (s *Store) ListTraits(ctx context.Context, filter *trait.ListFilter) ([]*tr
 }
 
 func (s *Store) CountTraits(ctx context.Context, filter *trait.ListFilter) (int64, error) {
-	scope := cortex.ScopeFromContext(ctx)
-	if scope.IsZero() {
-		return 0, cortex.ErrNoScope
+	scope, scopeErr := cortex.RequireScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
 	}
 	if filter == nil {
 		filter = &trait.ListFilter{}
