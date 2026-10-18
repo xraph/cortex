@@ -48,11 +48,14 @@ type UsageReservation struct {
 
 // Reservation records an upper-bound debit until authoritative settlement.
 type Reservation struct {
-	Request    UsageReservation `json:"request"`
-	State      ReservationState `json:"state"`
-	Revision   int64            `json:"revision"`
-	Settlement *UsageSettlement `json:"settlement,omitempty"`
-	CreatedAt  time.Time        `json:"created_at"`
+	Request          UsageReservation  `json:"request"`
+	State            ReservationState  `json:"state"`
+	Revision         int64             `json:"revision"`
+	Settlement       *UsageSettlement  `json:"settlement,omitempty"`
+	History          []UsageSettlement `json:"history"`
+	DebitedTokens    int64             `json:"debited_tokens"`
+	DebitedUSDMicros int64             `json:"debited_usd_micros"`
+	CreatedAt        time.Time         `json:"created_at"`
 }
 
 // UsageSettlement is idempotent by receipt and never hides observed overruns.

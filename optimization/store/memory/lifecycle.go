@@ -101,9 +101,10 @@ func nextPhase(current, next optimization.Phase) bool {
 	}
 }
 
-func (tx *transaction) appendEvent(experiment optimization.Experiment, eventType string, actor optimization.IdentityRef) {
+func (tx *transaction) appendEvent(experiment optimization.Experiment, eventType string, actor optimization.IdentityRef) *optimization.Event {
 	key := experiment.ID.String()
 	events := tx.data.Events[key]
 	event := optimization.Event{ID: id.New(optimization.PrefixEvent), ExperimentID: experiment.ID, Sequence: int64(len(events)) + 1, Type: eventType, Actor: actor, Resources: []id.ID{experiment.ID, experiment.Spec.Baseline.ID, experiment.Spec.Controller.ID}, Payload: json.RawMessage(`{}`), CreatedAt: tx.now}
 	tx.data.Events[key] = append(events, event)
+	return &tx.data.Events[key][len(events)]
 }

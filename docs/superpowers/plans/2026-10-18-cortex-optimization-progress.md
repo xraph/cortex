@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`; fenced lease tests pass | Complete resource invariants, allocations, accounting and activation |
+| 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`; accounting checks pass | Complete resource invariants, allocations, terminal reconciliation and activation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -76,3 +76,9 @@ CI passed every job for both experiment contracts `cd89669` (run `39145664574`) 
 Lease conformance uses a manual clock across backend factories. A live claim cannot be stolen; an expired claim can be replaced with a new generation. The previous worker cannot commit using its old generation, even if it knows the latest experiment revision. Renewals preserve phase revisions, expire within the experiment deadline and cannot revive an expired worker. Draft creation refuses injected lease or phase state. These tests pass against current and published Cortex.
 
 The lease slice passed post-format module lint, race tests and builds. Its required whole-tree lint run encountered the runtime owner's intentionally failing delegation tests for S1.5 (`parseDelegations`, `InvalidDelegationPlanError` and `ErrInvalidDelegationPlan` were not yet implemented at that check). Every other module passed. The previous S1.4 scope findings were resolved and its final coordinated all-module lint passed.
+
+The runtime owner subsequently completed S1.5 with all-module lint passing, clearing the transient delegation failure above.
+
+Accounting now reserves token and money bounds atomically. Concurrent requests cannot spend the same remaining budget; receipts settle once, and their history survives reconciliation. Expiry, a timeout or an estimate keeps the unresolved debit. Known token usage can settle while money remains unknown, and an observed overrun stays in the ledger and blocks further reservations. Each accounting event links its attempt, call key and debit amounts. Scope, lease and attempt checks reject foreign settlements; transaction rollback removes both the settlement and its event.
+
+Current-checkout and published-v1.8.0 race suites and the module build pass after coordinated `make f`. Final `make l` passed all nine modules with zero issues. This slice still requires a live experiment lease for settlement. Reconciliation after cancellation or the experiment deadline needs its own fenced path during worker recovery work; these tests do not establish that behavior or durable backend readiness.

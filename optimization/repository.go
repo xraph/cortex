@@ -15,6 +15,7 @@ type Repository interface {
 	ListExperiments(context.Context, ListQuery) (Page[Experiment], error)
 	ListEvents(context.Context, id.ID, int64, int) (Page[Event], error)
 	GetVersion(context.Context, id.ID) (HarnessVersion, error)
+	GetReservation(context.Context, id.ID, string) (Reservation, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -27,6 +28,8 @@ type Transaction interface {
 	CommitTransition(Transition) error
 	ClaimWork(ClaimRequest) (WorkLease, error)
 	RenewLease(WorkLease) error
+	Reserve(UsageReservation) (Reservation, error)
+	Settle(UsageSettlement) error
 }
 
 // ClaimRequest names one queued or expired experiment and the claiming worker.

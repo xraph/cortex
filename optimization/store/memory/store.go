@@ -26,10 +26,12 @@ type Store struct {
 }
 
 type scopeData struct {
-	Experiments map[string]optimization.Experiment     `json:"experiments"`
-	Versions    map[string]optimization.HarnessVersion `json:"versions"`
-	Events      map[string][]optimization.Event        `json:"events"`
-	Transitions map[string]map[string]string           `json:"transitions"`
+	Experiments  map[string]optimization.Experiment             `json:"experiments"`
+	Versions     map[string]optimization.HarnessVersion         `json:"versions"`
+	Events       map[string][]optimization.Event                `json:"events"`
+	Transitions  map[string]map[string]string                   `json:"transitions"`
+	Reservations map[string]map[string]optimization.Reservation `json:"reservations"`
+	Receipts     map[string]map[string]string                   `json:"receipts"`
 }
 
 var _ store.Store = (*Store)(nil)
@@ -63,7 +65,7 @@ func New(options ...Option) (*Store, error) {
 }
 
 func newScopeData() *scopeData {
-	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string)}
+	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string)}
 }
 
 func contextScope(ctx context.Context) (string, error) {
