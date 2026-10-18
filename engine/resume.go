@@ -116,7 +116,7 @@ func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 	if err != nil {
 		return nil, err
 	}
-	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.run.Input, rz.startedAt)
+	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
 }
 
 // ResumeStream is Resume over the streaming loop. The channel is closed
@@ -136,13 +136,13 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 		// will render anything. A brand-new event type would be silently
 		// dropped by all of them; the flag is there for the ones that
 		// draw a timeline and care about the difference.
-		events <- StreamEvent{Type: EventRunStarted, Data: map[string]any{
+		sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
 			"run_id":   rz.run.ID.String(),
 			"agent_id": rz.ag.ID.String(),
 			"resumed":  true,
-		}}
+		}})
 
-		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.run.Input, rz.startedAt, events)
+		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
 	}()
 	return nil
 }
@@ -172,8 +172,12 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// would fall off constantly. The authoritative check is the one
 	// below, against the suspension the claim actually returned.
 	if susp, err := e.store.GetSuspension(ctx, runID); err == nil {
-		if _, _, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
+		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
 			return nil, nil, decodeErr
+		} else if snap != nil {
+			if policyErr := e.requirePublication(snap.Config.Publication); policyErr != nil {
+				return nil, nil, policyErr
+			}
 		}
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
 			return nil, nil, vErr
@@ -247,19 +251,45 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	ctx = withExecutionProvenance(ctx, st.provenance)
 	r.Provenance = st.provenance
 	r.Usage = st.usage
+	if snap != nil {
+		sourceStatus, checkErr := e.validatePreparedPublication(ctx, snap)
+		if checkErr != nil {
+			return nil, nil, e.stopPublication(ctx, r, st, checkErr)
+		}
+		r.Provenance.PublicationStatus = mergePublicationStatus(r.Provenance.PublicationStatus, sourceStatus)
+	}
+	resumeConfig := configFromContinuation(susp.Cont.Config)
+	if resumeConfig.Publication.Mode == "" {
+		resumeConfig.Publication = e.frozenPublication()
+	}
+	ctx = withPublicationContext(ctx, ag, r, resumeConfig.Publication)
 	if err := e.authorizeResumedCalls(ctx, r, susp, in.ToolResults, st); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
+			err = context.DeadlineExceeded
 			if terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopDeadline, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); terminalErr != nil {
 				err = errors.Join(err, terminalErr)
 			}
 			return nil, nil, err
 		}
-		return nil, nil, e.failResume(ctx, r, ag.ID, err)
+		safeErr := e.checkedToolError(ctx, cortex.Subject{AgentID: ag.ID, RunID: r.ID}, err)
+		return nil, nil, e.failResume(ctx, r, ag.ID, safeErr)
 	}
 
-	toolCtx, cancelTools := runDeadline(ctx, configFromContinuation(susp.Cont.Config))
-	e.recordResumedCalls(toolCtx, r, susp, in.ToolResults, st)
+	if checkErr := e.checkMessages(ctx, ag, r, resumeConfig.Publication, st.messages); checkErr != nil {
+		return nil, nil, e.stopPublication(ctx, r, st, checkErr)
+	}
+	for _, pending := range susp.Pending {
+		if checkErr := e.checkToolCalls(ctx, ag, r, resumeConfig.Publication, []llm.ToolCall{{ID: pending.ID, Name: pending.Name, Arguments: pending.Arguments}}); checkErr != nil {
+			return nil, nil, e.stopPublication(ctx, r, st, checkErr)
+		}
+	}
+	toolCtx, cancelTools := runDeadline(ctx, resumeConfig)
+	resultErr := e.recordResumedCalls(toolCtx, ag, r, susp, in.ToolResults, st, resumeConfig)
 	cancelTools()
+	if resultErr != nil {
+		return nil, nil, e.stopPublication(ctx, r, st, resultErr)
+	}
+	st.provenance = r.Provenance
 
 	// The suspension goes before the loop re-enters, not after the run
 	// finishes. One suspension per run is what makes ClaimSuspension a
@@ -363,7 +393,7 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 // tool call that suspends and then completes must not vanish from an
 // audit trail, and one that suspends and then fails must not look like a
 // success.
-func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState) {
+func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState, cfg resolvedConfig) error {
 	byID := make(map[string]ToolResult, len(results))
 	for _, res := range results {
 		byID[res.ToolCallID] = res
@@ -390,6 +420,21 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
 		content, errText := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
+		approved, checkErr := e.checkToolResult(ctx, ag, r, cfg.Publication, content, "tool_result")
+		if checkErr != nil {
+			return checkErr
+		}
+		content = string(approved)
+		if errText != "" {
+			checkedError, scanErr := e.checkToolResult(ctx, ag, r, cfg.Publication, errText, "tool_error")
+			if scanErr != nil {
+				return scanErr
+			}
+			errText = string(checkedError)
+			if errText == "" {
+				errText = "tool execution failed"
+			}
+		}
 		completedAt := time.Now().UTC()
 
 		if !stepID.IsNil() {
@@ -425,6 +470,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, r *run.Run, susp *suspe
 			ToolCallID: p.ID,
 		})
 	}
+	return nil
 }
 
 // resumedCallResult turns one caller-supplied result into the pair the

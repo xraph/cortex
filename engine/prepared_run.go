@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/safety"
 )
 
 // PreparedRunOptions contains trusted per-execution identity. It cannot replace
@@ -27,7 +28,7 @@ func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string
 	if err != nil {
 		return nil, err
 	}
-	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, input, rz.startedAt)
+	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
 }
 
 // StreamPrepared streams the same prepared execution used by RunPrepared.
@@ -39,8 +40,11 @@ func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input str
 	}
 	go func() {
 		defer close(events)
-		events <- StreamEvent{Type: EventRunStarted, Data: map[string]any{"run_id": rz.run.ID.String(), "agent_id": rz.ag.ID.String(), "prepared_digest": rz.run.Provenance.PreparedDigest}}
-		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, input, rz.startedAt, events)
+		if !sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{"run_id": rz.run.ID.String(), "agent_id": rz.ag.ID.String(), "prepared_digest": rz.run.Provenance.PreparedDigest}}) {
+			e.cancelPublication(ctx, rz.run, 0, 0)
+			return
+		}
+		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
 	}()
 	return nil
 }
@@ -63,10 +67,15 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	if scope.Canonical() != snap.Scope.Canonical() {
 		return nil, nil, fmt.Errorf("cortex: prepared scope mismatch: %w", cortex.ErrInvalidPrepared)
 	}
+	sourceStatus, policyErr := e.validatePreparedPublication(ctx, snap)
+	if policyErr != nil {
+		return nil, nil, policyErr
+	}
 	if revisionErr := e.checkPreparedRevisions(snap); revisionErr != nil {
 		return nil, nil, revisionErr
 	}
 	provenance := snap.Provenance
+	provenance.PublicationStatus = mergePublicationStatus(provenance.PublicationStatus, sourceStatus)
 	provenance.PreparedDigest = p.Digest()
 	provenance.Purpose = opts.Purpose
 	if provenance.Purpose == "" {
@@ -87,6 +96,9 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	provenance.AcceptanceRef = opts.AcceptanceRef
 	ctx = withExecutionProvenance(ctx, provenance)
 	cfg := snap.Config
+	if policyErr := e.requirePublication(cfg.Publication); policyErr != nil {
+		return nil, nil, policyErr
+	}
 	if deadline, ok := ctx.Deadline(); ok && (cfg.Budget.Deadline.IsZero() || deadline.Before(cfg.Budget.Deadline)) {
 		cfg.Budget.Deadline = deadline
 	}
@@ -96,6 +108,12 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	}
 	now := time.Now().UTC()
 	r := &run.Run{Entity: cortex.NewEntity(), ID: id.NewAgentRunID(), AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget}
+	safeInput, scanErr := e.checkPublication(ctx, &snap.Agent, r, cfg.Publication, input, "user_input", safety.DirectionInput)
+	if scanErr != nil {
+		return nil, nil, scanErr
+	}
+	input = string(safeInput)
+	r.Input = input
 	if err = e.store.CreateRun(ctx, r); err != nil {
 		return nil, nil, fmt.Errorf("cortex: create prepared run: %w", err)
 	}
@@ -106,6 +124,9 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 		r.Provenance.Diagnostics = append(r.Provenance.Diagnostics, "conversation history unavailable")
 	}
 	messages := memoryToLLM(history)
+	if scanErr := e.checkMessages(ctx, &snap.Agent, r, cfg.Publication, messages); scanErr != nil {
+		return nil, nil, e.stopPublication(ctx, r, &reactState{}, scanErr)
+	}
 	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: sessionID, newMessagesFrom: len(messages), prepared: &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 	return ctx, &resumption{ag: &snap.Agent, cfg: cfg, run: r, state: st, startedAt: now}, nil

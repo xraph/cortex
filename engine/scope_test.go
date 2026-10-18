@@ -212,12 +212,12 @@ func TestStreamAgent_CancelPersistsWithUncancelledContext(t *testing.T) {
 
 	cancel()
 
-	var drained int
-	for range events {
-		drained++
-	}
-	if drained == 0 {
-		t.Fatal("no stream events received; StreamAgent may not have run")
+	// A cancelled consumer need not receive an event. Durable state, below,
+	// proves execution started and cancellation kept its scope.
+	for event := range events {
+		if event.Type == engine.EventDone {
+			t.Fatal("cancelled stream reported completion")
+		}
 	}
 
 	var sawUpdate bool

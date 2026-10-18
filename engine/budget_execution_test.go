@@ -77,7 +77,7 @@ func TestResumeRetainsPreparedDigestAndUsage(t *testing.T) {
 	e := mustResumeEngine(t, s)
 	r := suspendedFixture(t, s, e)
 	saved := s.Suspensions()[0]
-	if saved.Cont.SchemaVersion != 1 || saved.Cont.Provenance.PreparedDigest != r.Provenance.PreparedDigest || saved.Cont.Usage.Steps != r.StepCount || saved.Cont.Usage.ToolCalls != 1 {
+	if saved.Cont.SchemaVersion != preparedSchemaVersion || saved.Cont.Provenance.PreparedDigest != r.Provenance.PreparedDigest || saved.Cont.Usage.Steps != r.StepCount || saved.Cont.Usage.ToolCalls != 1 {
 		t.Fatalf("continuation schema=%d digest=%s usage=%+v", saved.Cont.SchemaVersion, saved.Cont.Provenance.PreparedDigest, saved.Cont.Usage)
 	}
 	resumed, err := e.Resume(resumeCtx(scopeA()), r.ID, oneResult(t, s, "yes"))

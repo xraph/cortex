@@ -208,3 +208,14 @@ func WithModelRevision(model, revision string) Option {
 		return nil
 	}
 }
+
+// WithPublicationPolicy configures the host's publication boundary.
+func WithPublicationPolicy(policy safety.Policy) Option {
+	return func(e *Engine) error { e.publicationPolicy = policy; return nil }
+}
+
+// WithPublicationGate installs a host checker. It takes precedence over the
+// scanner adapter, and must advertise IncrementalGate for checked segments.
+func WithPublicationGate(gate safety.PublicationGate) Option {
+	return func(e *Engine) error { e.publicationGate = gate; return nil }
+}

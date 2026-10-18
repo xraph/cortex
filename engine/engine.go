@@ -35,18 +35,20 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
-	config         cortex.Config
-	logger         log.Logger
-	store          store.Store
-	llm            llm.Client
-	safety         safety.Scanner
-	knowledge      knowledge.Provider
-	authorizer     cortex.ToolAuthorizer
-	extensions     *plugin.Registry
-	pendingExts    []plugin.Extension
-	tools          []registeredTool
-	toolRevisions  map[string]string
-	modelRevisions map[string]string
+	config            cortex.Config
+	logger            log.Logger
+	store             store.Store
+	llm               llm.Client
+	safety            safety.Scanner
+	publicationPolicy safety.Policy
+	publicationGate   safety.PublicationGate
+	knowledge         knowledge.Provider
+	authorizer        cortex.ToolAuthorizer
+	extensions        *plugin.Registry
+	pendingExts       []plugin.Extension
+	tools             []registeredTool
+	toolRevisions     map[string]string
+	modelRevisions    map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []llm.Tool
@@ -112,6 +114,10 @@ func New(opts ...Option) (*Engine, error) {
 		if err := opt(e); err != nil {
 			return nil, fmt.Errorf("cortex: apply engine option: %w", err)
 		}
+	}
+
+	if err := e.configurePublication(); err != nil {
+		return nil, err
 	}
 
 	e.extensions = plugin.NewRegistry(e.logger)
@@ -962,12 +968,22 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 		StartedAt:  &now,
 		PersonaRef: ag.PersonaRef,
 	}
+	safeInput, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), input, "user_input", safety.DirectionInput)
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	input = string(safeInput)
+	r.Input = input
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
 
+	checked, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), "Echo: "+input, "model_output", safety.DirectionOutput)
+	if scanErr != nil {
+		return r, e.stopPublication(ctx, r, &reactState{}, scanErr)
+	}
 	stepStart := time.Now().UTC()
 	step := &run.Step{
 		Entity:     cortex.NewEntity(),
@@ -976,7 +992,7 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 		Index:      0,
 		Type:       "generation",
 		Input:      input,
-		Output:     "Echo: " + input,
+		Output:     string(checked),
 		TokensUsed: len(input) + 6,
 		StartedAt:  &stepStart,
 	}
@@ -1005,6 +1021,13 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		StartedAt:  &now,
 		PersonaRef: ag.PersonaRef,
 	}
+	safeInput, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), input, "user_input", safety.DirectionInput)
+	if scanErr != nil {
+		close(events)
+		return scanErr
+	}
+	input = string(safeInput)
+	r.Input = input
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		close(events)
 		return fmt.Errorf("create run: %w", err)
@@ -1015,10 +1038,10 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 	go func() {
 		defer close(events)
 
-		events <- StreamEvent{Type: EventRunStarted, Data: map[string]any{
+		sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
 			"run_id":   r.ID.String(),
 			"agent_id": ag.ID.String(),
-		}}
+		}})
 
 		stepStart := time.Now().UTC()
 		step := &run.Step{
@@ -1031,13 +1054,19 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 			StartedAt: &stepStart,
 		}
 
-		events <- StreamEvent{Type: EventStep, Data: map[string]any{
+		sendEvent(ctx, events, StreamEvent{Type: EventStep, Data: map[string]any{
 			"step_id": step.ID.String(),
 			"index":   0,
 			"type":    "generation",
-		}}
+		}})
 
-		response := "Echo: " + input
+		checked, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), "Echo: "+input, "model_output", safety.DirectionOutput)
+		if scanErr != nil {
+			terminalErr := e.stopPublication(ctx, r, &reactState{}, scanErr)
+			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+			return
+		}
+		response := string(checked)
 		for i, ch := range response {
 			select {
 			case <-ctx.Done():
@@ -1046,16 +1075,16 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 				if terminalErr != nil {
 					message = terminalErr.Error()
 				}
-				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": message}}
+				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": message}})
 
 				return
 			default:
 			}
 
-			events <- StreamEvent{Type: EventToken, Data: map[string]any{
+			sendEvent(ctx, events, StreamEvent{Type: EventToken, Data: map[string]any{
 				"content": string(ch),
 				"index":   i,
-			}}
+			}})
 
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -1069,10 +1098,10 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		}
 
 		if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopFinalAnswer, Output: response, StepCount: 1, TokensUsed: step.TokensUsed}); err != nil {
-			events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+			sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}})
 			return
 		}
-		events <- outcomeEvent(r, time.Since(now))
+		sendEvent(ctx, events, outcomeEvent(r, time.Since(now)))
 	}()
 
 	return nil

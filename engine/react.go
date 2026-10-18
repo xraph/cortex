@@ -53,7 +53,9 @@ type reactState struct {
 // widens the tool list and resets the step budget.
 func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 	schema := 0
+	publication := safety.Policy{}
 	if s.prepared != nil {
+		publication = cfg.Publication
 		schema = preparedSchemaVersion
 	}
 	return suspension.Continuation{
@@ -65,7 +67,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 		NewMessagesFrom: s.newMessagesFrom,
 		SessionID:       s.sessionID,
 		Config: suspension.RunConfig{
-			Budget: cfg.Budget, AllToolsRestricted: cfg.AllToolsRestricted,
+			Publication: publication, Budget: cfg.Budget, AllToolsRestricted: cfg.AllToolsRestricted,
 			Model:           cfg.Model,
 			Temperature:     cfg.Temperature,
 			MaxSteps:        cfg.MaxSteps,
@@ -82,7 +84,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 // run ever runs on.
 func configFromContinuation(c suspension.RunConfig) resolvedConfig {
 	return resolvedConfig{
-		Budget: c.Budget, AllToolsRestricted: c.AllToolsRestricted,
+		Publication: c.Publication, Budget: c.Budget, AllToolsRestricted: c.AllToolsRestricted,
 		Model:           c.Model,
 		Temperature:     c.Temperature,
 		MaxSteps:        c.MaxSteps,
@@ -126,9 +128,13 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 // startedAt is when the RUN started, not when this pass did, so a
 // resumed run reports its full wall-clock duration rather than only the
 // stretch after the pause.
-func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time) (*run.Run, error) {
+func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, startedAt time.Time) (*run.Run, error) {
+	if cfg.Publication.Mode == "" {
+		cfg.Publication = e.frozenPublication()
+	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
@@ -137,6 +143,10 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		if ctx.Err() != nil {
+			stopReason = run.StopCancelled
+			break
+		}
 		if limit := cfg.Budget.Check(st.usage, time.Now()); limit != "" {
 			stopReason = run.StopReason(limit)
 			break
@@ -153,33 +163,15 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		req := &llm.Request{
 			Model:       cfg.Model,
 			System:      st.systemPrompt,
-			Messages:    st.messages,
+			Messages:    cloneExecutionMessages(st.messages),
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cfg.Temperature,
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
-		// Safety: scan input before LLM call.
-		if e.safety != nil {
-			scanReq := &safety.ScanRequest{
-				Content:     input,
-				Direction:   safety.DirectionInput,
-				AgentID:     ag.ID.String(),
-				RunID:       r.ID.String(),
-				ProfileName: extractSafetyProfile(ag),
-				AppID:       scanAppID(scope),
-				TenantID:    scope.Canonical(),
-			}
-			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
-				e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
-			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), startedAt)
-				return nil, fmt.Errorf("safety: input blocked by %s profile", scanResult.ProfileUsed)
-			}
-		}
-
 		resp, err := e.llm.Complete(ctx, req)
 		if err != nil {
+			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			reported := 0
 			if resp != nil {
 				reported = resp.Usage.TotalTokens
@@ -193,8 +185,24 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			st.failedAttempt(0, cfg, r)
 			return r, e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
 		}
-		lastFinishReason = resp.FinishReason
 		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
+		responseReason := responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls))
+		checked, checkErr := e.checkResponse(ctx, ag, r, cfg.Publication, resp.Content, resp.ToolCalls)
+		if checkErr == nil {
+			checkedFinish, finishErr := e.checkPublication(ctx, ag, r, cfg.Publication, resp.FinishReason, "provider_finish", safety.DirectionOutput)
+			lastFinishReason = string(checkedFinish)
+			checkErr = finishErr
+		}
+		if checkErr != nil {
+			st.stepIndex++
+			st.usage.Steps = st.stepIndex
+			return r, e.stopPublication(ctx, r, st, checkErr)
+		}
+		// The provider may retain its response; keep approved content separate.
+		responseCopy := *resp
+		responseCopy.Content = string(checked)
+		responseCopy.ToolCalls = append([]llm.ToolCall(nil), resp.ToolCalls...)
+		resp = &responseCopy
 
 		// Record the step.
 		stepEnd := time.Now().UTC()
@@ -224,7 +232,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			stopReason = run.StopTokenLimit
 			break
 		}
-		if len(resp.ToolCalls) > 0 && responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls)) == run.StopFinalAnswer {
+		if len(resp.ToolCalls) > 0 && responseReason == run.StopFinalAnswer {
 			if limit := st.admitTools(len(resp.ToolCalls), cfg); limit != "" {
 				stopReason = run.StopReason(limit)
 				break
@@ -264,6 +272,11 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					continue
 				}
 
+				approvedResult, resultErr := e.checkToolResult(ctx, ag, r, cfg.Publication, result, "tool_result")
+				if resultErr != nil {
+					return r, e.stopPublication(ctx, r, st, resultErr)
+				}
+				result = string(approvedResult)
 				tcEnd := time.Now().UTC()
 				toolCall := &run.ToolCall{
 					Entity:      cortex.NewEntity(),
@@ -296,6 +309,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			}
 
 			if pending.any() {
+				st.provenance = r.Provenance
 				cont := st.continuation(cfg)
 				if _, err := e.suspend(ctx, r, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
@@ -308,28 +322,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		// No tool calls — this is the final response.
 		finalOutput = resp.Content
-		stopReason = responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls))
-
-		// Safety: scan output before returning.
-		if e.safety != nil {
-			scanReq := &safety.ScanRequest{
-				Content:     finalOutput,
-				Direction:   safety.DirectionOutput,
-				AgentID:     ag.ID.String(),
-				RunID:       r.ID.String(),
-				ProfileName: extractSafetyProfile(ag),
-				AppID:       scanAppID(scope),
-				TenantID:    scope.Canonical(),
-			}
-			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
-				e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
-			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), startedAt)
-				return nil, fmt.Errorf("safety: output blocked by %s profile", scanResult.ProfileUsed)
-			} else if scanResult != nil && scanResult.Redacted != "" {
-				finalOutput = scanResult.Redacted
-			}
-		}
+		stopReason = responseReason
 
 		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
 		break
@@ -359,9 +352,13 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 // continueStreamReAct is continueReAct's streaming twin: same contract,
 // same reason for existing, over the streaming loop instead. It does not
 // close events, because the goroutine that calls it owns the channel.
-func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, input string, startedAt time.Time, events chan<- StreamEvent) {
+func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, startedAt time.Time, events chan<- StreamEvent) {
+	if cfg.Publication.Mode == "" {
+		cfg.Publication = e.frozenPublication()
+	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
@@ -370,6 +367,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		if ctx.Err() != nil {
+			stopReason = run.StopCancelled
+			break
+		}
 		if limit := cfg.Budget.Check(st.usage, time.Now()); limit != "" {
 			stopReason = run.StopReason(limit)
 			break
@@ -379,11 +380,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		stepID := id.NewStepID()
-		events <- StreamEvent{Type: EventStep, Data: map[string]any{
-			"step_id": stepID.String(),
-			"index":   st.stepIndex,
-			"type":    "generation",
-		}}
+		if !sendEvent(ctx, events, StreamEvent{Type: EventStep, Data: map[string]any{
+			"step_id": stepID.String(), "index": st.stepIndex, "type": "generation",
+		}}) {
+			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
+			return
+		}
 
 		// Built once per step and threaded to both authorizer calls
 		// below (Visible via resolveTools, Authorize via executeTool)
@@ -393,61 +395,46 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		req := &llm.Request{
 			Model:       cfg.Model,
 			System:      st.systemPrompt,
-			Messages:    st.messages,
+			Messages:    cloneExecutionMessages(st.messages),
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cfg.Temperature,
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
-		// Safety: scan input before LLM call.
-		if e.safety != nil {
-			scanReq := &safety.ScanRequest{
-				Content:     input,
-				Direction:   safety.DirectionInput,
-				AgentID:     ag.ID.String(),
-				RunID:       r.ID.String(),
-				ProfileName: extractSafetyProfile(ag),
-				AppID:       scanAppID(scope),
-				TenantID:    scope.Canonical(),
-			}
-			if scanResult, scanErr := e.safety.ScanInput(ctx, scanReq); scanErr != nil {
-				e.logger.Warn("safety scan input error", log.String("error", scanErr.Error()))
-			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: input blocked — %s", scanResult.Decision), startedAt)
-				events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
-					"direction": "input",
-					"decision":  string(scanResult.Decision),
-					"profile":   scanResult.ProfileUsed,
-				}}
-				return
-			}
-		}
-
 		stream, err := e.llm.CompleteStream(ctx, req)
 		if err != nil {
+			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			st.failedAttempt(0, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
-			events <- StreamEvent{Type: EventError, Data: map[string]any{
+			sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 				"message": err.Error(),
-			}}
+			}})
 			return
 		}
 
 		if stream == nil {
 			st.failedAttempt(0, cfg, r)
 			if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
-				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}})
 			} else {
-				events <- outcomeEvent(r, time.Since(startedAt))
+				sendEvent(ctx, events, outcomeEvent(r, time.Since(startedAt)))
 			}
 			return
 		}
 
+		segments, segmentErr := e.newSegmentPublication(ctx, ag, r, cfg.Publication)
+		if segmentErr != nil {
+			_ = stream.Close()
+			st.failedAttempt(streamReportedTokens(stream), cfg, r)
+			terminalErr := e.stopPublication(ctx, r, st, segmentErr)
+			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+			return
+		}
 		// Read all chunks from the stream.
 		var contentBuf string
 		var finishReason string
 		var toolCalls []llm.ToolCall
-		tokenIndex := 0
+		totalBytes := 0
 
 		for {
 			select {
@@ -459,7 +446,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				if terminalErr != nil {
 					message = terminalErr.Error()
 				}
-				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": message}}
+				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": message}})
 
 				return
 			default:
@@ -470,12 +457,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				break
 			}
 			if err != nil {
+				err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 				_ = stream.Close()
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				e.failRun(ctx, r, ag.ID, err, startedAt)
-				events <- StreamEvent{Type: EventError, Data: map[string]any{
+				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 					"message": err.Error(),
-				}}
+				}})
 				return
 			}
 
@@ -487,13 +475,29 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				finishReason = chunk.FinishReason
 			}
 
+			chunkBytes := len(chunk.Content) + len(chunk.FinishReason) + 1
+			for _, delta := range chunk.ToolCalls {
+				chunkBytes += len(delta.ID) + len(delta.Name) + len(delta.Arguments) + publicationToolOverhead
+			}
+			if chunkBytes > cfg.Publication.MaxOutputBytes-totalBytes {
+				_ = stream.Close()
+				st.failedAttempt(streamReportedTokens(stream), cfg, r)
+				terminalErr := e.stopPublication(ctx, r, st, safety.ErrLimit)
+				sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+				return
+			}
+			totalBytes += chunkBytes
 			if chunk.Content != "" {
 				contentBuf += chunk.Content
-				events <- StreamEvent{Type: EventToken, Data: map[string]any{
-					"content": chunk.Content,
-					"index":   tokenIndex,
-				}}
-				tokenIndex++
+				if segments != nil {
+					if checkErr := segments.add(ctx, r, cfg.Publication, chunk.Content, false, events); checkErr != nil {
+						_ = stream.Close()
+						st.failedAttempt(streamReportedTokens(stream), cfg, r)
+						terminalErr := e.stopPublication(ctx, r, st, checkErr)
+						sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+						return
+					}
+				}
 			}
 
 			if len(chunk.ToolCalls) > 0 {
@@ -501,7 +505,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 		}
 
-		lastFinishReason = finishReason
+		rawFinishReason := finishReason
 		if finishReason == "" {
 			// EOF ends transport, not the model's answer. Retain the raw
 			// missing marker while classifying the interrupted response.
@@ -518,6 +522,35 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			st.chargeTokens(0, cfg, r)
 		}
 		_ = stream.Close()
+		responseReason := responseStopReason(finishReason, contentBuf, len(toolCalls))
+		var checked approvedText
+		var checkErr error
+		if segments != nil {
+			checkErr = segments.add(ctx, r, cfg.Publication, "", true, events)
+			if checkErr == nil {
+				checkErr = e.checkToolCalls(ctx, ag, r, cfg.Publication, toolCalls)
+			}
+			checked = approvedText(segments.approved.String())
+		} else {
+			checked, checkErr = e.checkResponse(ctx, ag, r, cfg.Publication, contentBuf, toolCalls)
+		}
+		if checkErr == nil {
+			checkedFinish, finishErr := e.checkPublication(ctx, ag, r, cfg.Publication, rawFinishReason, "provider_finish", safety.DirectionOutput)
+			lastFinishReason = string(checkedFinish)
+			checkErr = finishErr
+		}
+		if checkErr != nil {
+			st.stepIndex++
+			st.usage.Steps = st.stepIndex
+			terminalErr := e.stopPublication(ctx, r, st, checkErr)
+			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+			return
+		}
+		contentBuf = string(checked)
+		if segments == nil && !publishToken(ctx, events, checked, 0) {
+			e.cancelPublication(ctx, r, st.stepIndex+1, st.tokensUsed)
+			return
+		}
 
 		// Record the step.
 		stepEnd := time.Now().UTC()
@@ -549,7 +582,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			stopReason = run.StopTokenLimit
 			break
 		}
-		if len(toolCalls) > 0 && responseStopReason(finishReason, contentBuf, len(toolCalls)) == run.StopFinalAnswer {
+		if len(toolCalls) > 0 && responseReason == run.StopFinalAnswer {
 			if limit := st.admitTools(len(toolCalls), cfg); limit != "" {
 				stopReason = run.StopReason(limit)
 				break
@@ -573,11 +606,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				tcStart := time.Now().UTC()
 				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				events <- StreamEvent{Type: EventToolCall, Data: map[string]any{
+				sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
 					"tool_name": tc.Name,
 					"arguments": tc.Arguments,
 					"tool_id":   tc.ID,
-				}}
+				}})
 
 				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomePending {
@@ -585,6 +618,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					continue
 				}
 
+				approvedResult, resultErr := e.checkToolResult(ctx, ag, r, cfg.Publication, result, "tool_result")
+				if resultErr != nil {
+					terminalErr := e.stopPublication(ctx, r, st, resultErr)
+					sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+					return
+				}
+				result = string(approvedResult)
 				tcEnd := time.Now().UTC()
 				toolCall := &run.ToolCall{
 					Entity:      cortex.NewEntity(),
@@ -616,13 +656,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 
 			if pending.any() {
+				st.provenance = r.Provenance
 				cont := st.continuation(cfg)
 				reason, err := e.suspend(ctx, r, pending, cont)
 				if err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
-					events <- StreamEvent{Type: EventError, Data: map[string]any{
+					sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 						"message": err.Error(),
-					}}
+					}})
 					return
 				}
 				// A streaming caller that never learns the run paused
@@ -630,11 +671,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				// event and read it as a run that just stopped. It
 				// needs the pending calls too: it is the one that has
 				// to execute them.
-				events <- StreamEvent{Type: EventSuspended, Data: map[string]any{
+				sendEvent(ctx, events, StreamEvent{Type: EventSuspended, Data: map[string]any{
 					"run_id":  r.ID.String(),
 					"reason":  string(reason),
 					"pending": pending.calls,
-				}}
+				}})
 				return
 			}
 			continue // Continue the ReAct loop.
@@ -642,33 +683,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		// No tool calls — this is the final response.
 		finalOutput = contentBuf
-		stopReason = responseStopReason(finishReason, contentBuf, len(toolCalls))
-
-		// Safety: scan output before returning.
-		if e.safety != nil {
-			scanReq := &safety.ScanRequest{
-				Content:     finalOutput,
-				Direction:   safety.DirectionOutput,
-				AgentID:     ag.ID.String(),
-				RunID:       r.ID.String(),
-				ProfileName: extractSafetyProfile(ag),
-				AppID:       scanAppID(scope),
-				TenantID:    scope.Canonical(),
-			}
-			if scanResult, scanErr := e.safety.ScanOutput(ctx, scanReq); scanErr != nil {
-				e.logger.Warn("safety scan output error", log.String("error", scanErr.Error()))
-			} else if scanResult != nil && scanResult.Blocked {
-				e.failRun(ctx, r, ag.ID, fmt.Errorf("safety: output blocked — %s", scanResult.Decision), startedAt)
-				events <- StreamEvent{Type: EventSafetyBlock, Data: map[string]any{
-					"direction": "output",
-					"decision":  string(scanResult.Decision),
-					"profile":   scanResult.ProfileUsed,
-				}}
-				return
-			} else if scanResult != nil && scanResult.Redacted != "" {
-				finalOutput = scanResult.Redacted
-			}
-		}
+		stopReason = responseReason
 
 		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
 		break
@@ -680,11 +695,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	// Complete the run.
 	completedAt := time.Now().UTC()
 	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
-		events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+		sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}})
 		return
 	}
 
-	events <- outcomeEvent(r, completedAt.Sub(startedAt))
+	sendEvent(ctx, events, outcomeEvent(r, completedAt.Sub(startedAt)))
 }
 
 // ──────────────────────────────────────────────────
@@ -909,14 +924,14 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 			if errors.Is(err, cortex.ErrRequiresApproval) {
 				return "", outcomePending, suspension.ReasonApproval
 			}
-			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, err.Error())
+			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, err).Error())
 			return jsonResult("error", err.Error()), outcomeDenied, ""
 		}
 	}
 
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
 	if outcome == outcomeFailed {
-		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, failErr)
+		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
 	if outcome == outcomePending {
 		return result, outcome, pendingReason(tc.Name)

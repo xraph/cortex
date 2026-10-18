@@ -16,7 +16,7 @@ import (
 	"github.com/xraph/cortex/run"
 )
 
-const preparedSchemaVersion = 1
+const preparedSchemaVersion = 2
 
 // PreparedAgent holds an immutable, versioned execution snapshot. MarshalJSON
 // returns a copy; no accessor exposes mutable prompt or tool data.
@@ -84,6 +84,10 @@ func (p *PreparedAgent) UnmarshalJSON(data []byte) error {
 	if err := snap.Config.Budget.Validate(); err != nil {
 		return err
 	}
+	policy, policyErr := snap.Config.Publication.Resolve()
+	if policyErr != nil || policy != snap.Config.Publication {
+		return cortex.ErrInvalidPrepared
+	}
 	p.payload = append([]byte(nil), canonical...)
 	p.digest = wire.Digest
 	return nil
@@ -125,6 +129,7 @@ func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *
 		return nil, fmt.Errorf("cortex: prepare overlays: %w", err)
 	}
 	cfg := e.effectiveConfig(ag, overrides, overlays)
+	cfg.Publication = e.frozenPublication()
 	if budgetErr := cfg.Budget.Validate(); budgetErr != nil {
 		return nil, budgetErr
 	}
@@ -160,6 +165,9 @@ func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *
 		provenance.Diagnostics = append(provenance.Diagnostics, "optional knowledge provider unavailable")
 	}
 	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
+	if err := e.checkPreparedSources(ctx, ag, &snap); err != nil {
+		return nil, err
+	}
 	return freezePrepared(&snap)
 }
 

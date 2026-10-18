@@ -4,16 +4,22 @@ import (
 	"context"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/suspension"
 )
 
-// Dispatch executes a registered or built-in tool by name and returns its raw
-// result string. It is the same path the ReAct loop uses (executeTool), exposed
+// Dispatch executes a registered or built-in tool by name and returns its
+// approved result string. It is the same path the ReAct loop uses (executeTool), exposed
 // for hosts and tests that drive tools directly. The subject carries whatever
 // scope and principal are on ctx — a direct Dispatch call has no agent or run
 // of its own, so an authorizer keyed on those will see them zero-valued.
 func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
+	ag := &agent.Config{}
+	policy := e.frozenPublication()
+	if err := e.checkToolCalls(ctx, ag, nil, policy, []llm.ToolCall{{Name: name, Arguments: arguments}}); err != nil {
+		return jsonResult("error", closedPublicationError(err).Error())
+	}
 	subject := cortex.Subject{Scope: cortex.ScopeFromContext(ctx), Principal: cortex.PrincipalFromContext(ctx)}
 	// The outcome is what tells the ReAct loop whether a ToolCompleted event
 	// is still owed. Dispatch has no run to attribute one to, so it drops it.
@@ -30,5 +36,9 @@ func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 		}
 		return jsonResult("error", "tool "+name+" is external: it is executed by the caller when a run suspends, not through Dispatch")
 	}
-	return result
+	checked, err := e.checkToolResult(ctx, ag, nil, policy, result, "tool_result")
+	if err != nil {
+		return jsonResult("error", closedPublicationError(err).Error())
+	}
+	return string(checked)
 }

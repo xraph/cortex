@@ -40,6 +40,15 @@ func EngineOption(c vessel.Vessel) engine.Option {
 
 // ScanInput scans input content via shield.
 func (a *Adapter) ScanInput(ctx context.Context, req *safety.ScanRequest) (*safety.ScanResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The pinned Shield API has no per-request profile selector. Ignoring a
+	// requested profile would silently apply a different host policy.
+	if a == nil || a.eng == nil || req == nil || req.ProfileName != "" {
+		return nil, safety.ErrUnavailable
+	}
+
 	ctx = shield.WithTenant(ctx, req.TenantID)
 	ctx = shield.WithApp(ctx, req.AppID)
 
@@ -57,11 +66,28 @@ func (a *Adapter) ScanInput(ctx context.Context, req *safety.ScanRequest) (*safe
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// v1.7.1 returns allow from placeholder layers without a policy receipt.
+	// Registration alone cannot qualify that result as effective screening.
+	if result == nil || result.ProfileUsed == "" {
+		return nil, safety.ErrUnavailable
+	}
 	return fromShieldResult(result), nil
 }
 
 // ScanOutput scans output content via shield.
 func (a *Adapter) ScanOutput(ctx context.Context, req *safety.ScanRequest) (*safety.ScanResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The pinned Shield API has no per-request profile selector. Ignoring a
+	// requested profile would silently apply a different host policy.
+	if a == nil || a.eng == nil || req == nil || req.ProfileName != "" {
+		return nil, safety.ErrUnavailable
+	}
+
 	ctx = shield.WithTenant(ctx, req.TenantID)
 	ctx = shield.WithApp(ctx, req.AppID)
 
@@ -79,13 +105,27 @@ func (a *Adapter) ScanOutput(ctx context.Context, req *safety.ScanRequest) (*saf
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// v1.7.1 returns allow from placeholder layers without a policy receipt.
+	// Registration alone cannot qualify that result as effective screening.
+	if result == nil || result.ProfileUsed == "" {
+		return nil, safety.ErrUnavailable
+	}
 	return fromShieldResult(result), nil
 }
 
 // fromShieldResult converts a shield scan.Result to a cortex safety.ScanResult.
 func fromShieldResult(r *scan.Result) *safety.ScanResult {
+	if r == nil {
+		return nil
+	}
 	findings := make([]safety.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
+		if f == nil {
+			continue
+		}
 		findings = append(findings, safety.Finding{
 			Layer:    f.Layer,
 			Source:   f.Source,

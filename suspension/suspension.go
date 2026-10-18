@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/safety"
 )
 
 // SuspendReason says why a run stopped. Both reasons share one mechanism
@@ -69,6 +70,7 @@ type PendingCall struct {
 // executing, so an agent-config edit landing during the pause cannot
 // shift a conversation already in flight.
 type RunConfig struct {
+	Publication        safety.Policy    `json:"publication"`
 	Budget             execution.Budget `json:"budget,omitempty"`
 	AllToolsRestricted bool             `json:"all_tools_restricted,omitempty"`
 	Model              string           `json:"model,omitempty"`

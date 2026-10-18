@@ -100,7 +100,8 @@ func outcomeEvent(r *run.Run, duration time.Duration) StreamEvent {
 		kind = EventDone
 	}
 	return StreamEvent{Type: kind, Data: map[string]any{
-		"run_id": r.ID.String(), "output": r.Output, "tokens_used": r.TokensUsed,
+		"publication_status": string(r.Provenance.PublicationStatus),
+		"run_id":             r.ID.String(), "output": r.Output, "tokens_used": r.TokensUsed,
 		"state": string(r.State), "stop_reason": string(r.StopReason),
 		"verification_status": string(r.VerificationStatus.Normalized()), "duration_ms": duration.Milliseconds(),
 	}}

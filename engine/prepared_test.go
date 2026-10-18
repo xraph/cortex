@@ -88,7 +88,7 @@ func TestPreparedRejectsTamperedAndFutureSchema(t *testing.T) {
 	}
 	for _, changed := range [][]byte{
 		bytes.Replace(raw, []byte("original"), []byte("tampered"), 1),
-		bytes.Replace(raw, []byte(`"schema_version":1`), []byte(`"schema_version":999`), 1),
+		bytes.Replace(raw, []byte(`"schema_version":2`), []byte(`"schema_version":999`), 1),
 	} {
 		var decoded engine.PreparedAgent
 		if err := json.Unmarshal(changed, &decoded); err == nil {

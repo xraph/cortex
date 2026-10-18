@@ -12,12 +12,13 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/suspension"
 )
 
 func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *preparedSnapshot, error) {
 	if cont.SchemaVersion == 0 {
-		if cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
+		if cont.Config.Publication != (safety.Policy{}) || cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
 			return nil, nil, fmt.Errorf("cortex: legacy continuation contains unsupported policy: %w", cortex.ErrInvalidContinuation)
 		}
 		return nil, nil, nil

@@ -14,12 +14,14 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/prompt"
+	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/skill"
 )
 
 // resolvedConfig holds the effective configuration after merging
 // agent config, engine defaults, and per-run overrides.
 type resolvedConfig struct {
+	Publication   safety.Policy
 	Model         string
 	Temperature   *float64
 	MaxSteps      int
