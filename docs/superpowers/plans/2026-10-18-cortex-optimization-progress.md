@@ -2,30 +2,47 @@
 
 Plan: [Optimization implementation](2026-10-18-cortex-optimization.md). Scope: all seven phases and 21 tasks, using DRY and TDD. No phase is complete yet.
 
-## Shared contract reconciliation
+## Shared contracts and ownership
 
-The user authorized direct coordination with the active **Improve Cortex agent execution** chat. That chat owns Cortex root runtime, run outcomes, prepared execution, continuation and root backend integration. This optimization chat owns Sentinel's generic frozen/recorded evaluation foundation and the optimizer, adapters and product integration. Consume the root foundation commits; do not create a second loop or competing prepared API.
+The user authorized direct coordination with **Improve Cortex agent execution**. That chat owns the root runtime, outcomes, prepared execution, continuation and root backend integration. This chat owns Sentinel's recorded evaluation foundation, optimization, adapters and product integration. We consume the shared runtime commits rather than maintaining two execution loops.
 
-- Root: `PrepareAgent`, `RunPrepared`, `StreamPrepared`, versioned immutable `PreparedAgent` with `Digest()`, explicit empty tool allowlists, current authorization on dispatch/resume, frozen source/model/tool revisions and durable provenance. Prepared and ordinary paths share initialization and finalization.
-- Outcomes: `run.StopReason`, `StateIncomplete`, provider finish reason and explicit unchecked verification status. Step exhaustion, truncated output and unknown termination cannot become successful validation evidence.
-- Provenance: use a root domain type that suspension can reference without importing `engine`; engine exposes context helpers. Persist the prepared snapshot/schema and provenance across suspension. Do not serialize credentials or permissions as durable authority.
-- Sentinel: `FreezeEvaluation`, `EvaluateRecorded`, `CompareRecorded`, `EnqueueRecorded`, `WorkRecorded`. Sentinel owns frozen plans, scorer revisions, recorded jobs and source cursors across all four backends. It never imports Cortex and recorded evaluation never calls a target.
-- Fabriq: the Cortex adapter owns the lesson envelope. Upstream Fabriq remains a generic guarded-write and recall provider. Implementation follows task 12.
+The outcome foundation is on Cortex main in `8bebd82`: incomplete termination, stop and finish reasons, verification status and result references. The runtime owner verified engine/run/SQLite race tests, PostgreSQL/Mongo conformance and historical fixtures, all-module lint, root build and A2A compatibility.
 
-The initial runtime outcome draft from this chat was handed to the runtime owner before commit. Its real SQLite regressions failed before the draft and passed afterward. The subsequent race run compiled the other chat's expanded tests and failed on unfinished verification metadata and incomplete stream events. This is partial foundation evidence, not phase completion. The runtime owner has the exact log and owns the final checks.
+Prepared execution remains in progress with the runtime owner. The agreed surface is `PrepareAgent`, `RunPrepared`, `StreamPrepared`, `PreparedAgent.Digest() string`, detached `Inspect()` and immutable `Derive(PreparedEdits)`. Derivation keeps identity, scope, model, budgets, schemas and implementation pins fixed. It supports section bodies, tool guidance/subsets and finite sampling bounds. Optimization will enforce its narrower edit policy. Do not consume this API until its verified commit lands.
 
 ## Current state
 
-| Task                   | State                                   | Evidence or next gate                                                               |
-| ---------------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
-| 1: prepared execution  | In progress in coordinated runtime chat | Consume and verify final shared foundation commits                                  |
-| 6: Sentinel foundation | In progress here                        | Frozen plans shipped in Sentinel `1540974`; recorded scoring/comparison/jobs remain |
-| 2-5, 7-21              | Pending                                 | Follow dependency and release gates in the plan                                     |
+| Task                                                                         | State                                                         | Next gate                                                                     |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 1: prepared execution                                                        | Runtime owner implementing and verifying                      | Consume the verified commit, then publish a root version through the workflow |
+| 6: Sentinel foundation                                                       | Implemented in verified slices; release qualification remains | Check exact main CI, then publish Sentinel through its workflow               |
+| 2-5: optimization module and persistence                                     | Pending foundation release                                    | Require a real published root version                                         |
+| 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending                                                       | Follow the plan's dependency gates                                            |
 
-Sentinel's tracked checkout was fast-forwarded to `1703a5c` (`v1.8.0`) before edits. Existing untracked `_project_files/` remains untouched. New plan storage requires an explicit app and matches tenant exactly. Legacy suite APIs retain their existing behavior.
+## Sentinel evidence
 
-The first lint invocation reused results referring to a deleted `/tmp/tier2/wt/sentinel` checkout. Verification uses a task-specific linter cache and serial-runner mode to avoid the global linter lock held by concurrent Cortex checks. Do not count a stale-cache result or a lock refusal as a passed check.
+All work is in the primary Sentinel checkout. Existing untracked `_project_files/` remains untouched.
 
-Sentinel `1540974` adds immutable plan storage, copied case/context data, scorer revision checks and four-backend conformance tests. The full race suite, build and vet passed. PostgreSQL and MongoDB containers ran without skips. Standard and integration-tagged lint each reported zero issues using serial-runner mode; `make l` itself encountered the shared linter lock. Two integration fixtures also received naming and shadowing fixes exposed by the tagged check.
+| Commit    | Change                                                                                                          |
+| --------- | --------------------------------------------------------------------------------------------------------------- |
+| `1540974` | Immutable plan storage, frozen cases/context and pinned scorer revisions                                        |
+| `bf62257` | Shared captured scoring with required criterion gates and scorer error handling                                 |
+| `0b6a382` | Exactly scoped recorded jobs, idempotent ingestion, fenced leases, bounded attempts and append-only checkpoints |
+| `c76234b` | Captured scoring, explicit workers, SQLite restart recovery, readiness and separate execution/judge accounting  |
+| `bf7c4f5` | Paired comparison with exact evidence identities and deterministic 2,000-resample bootstrap                     |
+| `c3aed04` | Durable source cursors that advance only after enqueue acknowledgment and tolerate overlapping scans            |
+| `cd67ab0` | Duplicate-case checks include frozen context so distinct environment variants remain valid                      |
 
-Captured scoring is the next slice. Ordinary and recorded evaluations will share one scoring function. Required criteria remain individual gates, and scorer errors remain distinct from failed outputs. Recorded requests and result checkpoints need durable storage independent of live suite rows, whose SQL foreign keys cascade on deletion.
+The full race suite and build pass locally. All four store conformance suites pass, with real PostgreSQL and MongoDB containers and no skips. Tagged store vet passes. Focused regressions cover zero target calls, frozen answers, completed retry reuse, unknown historical cost, separate scorer/execution failures, partial cancellation, concurrent ingestion/claims, stale revisions, immutable checkpoints and durable worker/cursor reopening.
+
+Comparisons pair exact case/repetition identities, average repetitions within each case, and bootstrap case means with a recorded seed. Required failures remain separate from score improvements. Unknown cost disables cost comparison. Duplicate input/context rows, missing trials and wrong returned job references are refused.
+
+Ordinary and recorded evaluation share scoring and result aggregation. Recorded jobs retain authoritative evidence independently of legacy suite-linked SQL rows, which cascade on suite deletion. Their report objects reuse the existing evaluation domain types and hooks. Readiness requires both persistent storage and a local worker for the exact app/tenant scope.
+
+## Verification and remaining integration work
+
+A task-specific linter cache avoids stale entries from a deleted checkout. `make l` has passed on coherent slices; several later invocations encountered the machine-wide lock. The equivalent full lint command with integration tags and `--allow-parallel-runners` passes using the dedicated cache. Only this chat's waiting lint process was stopped; other checks continued.
+
+CI passed the recorded worker commit `c76234b`. The first comparison commit exposed standalone `gosec` G404: its scanner does not honor the golangci-lint annotation for the seeded statistical RNG. The scanner-specific justification passes CI's pinned gosec v2.28.0 with zero findings, and comparison race tests and tagged lint pass. Do not release until CI passes on the final main commit.
+
+Task 7 must bind frozen task context and environment references explicitly, preserve original usage quality and validate every returned identity. Tasks 5 and 7 must also enforce judge reservations at the actual model-call boundary. Persisting aggregate judge usage alone does not enforce an optimization budget. Automatic evaluation stays unavailable without an explicit binding, persistent queue and running worker.
