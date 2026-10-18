@@ -62,7 +62,7 @@ func (s *Store) GetPersonaByName(ctx context.Context, name string) (*persona.Per
 		return nil, scopeErr
 	}
 	m := new(personaModel)
-	q := s.pgdb.NewSelect(m).Where("name = ?", name)
+	q := s.preparationQuery().NewSelect(m).Where("name = ?", name)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

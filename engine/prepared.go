@@ -116,6 +116,9 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
 		return nil, scopeErr
 	}
+	if e.atomicPreparation {
+		return e.prepareAtomicAgent(ctx, agentID, overrides)
+	}
 	ag, err := e.store.Get(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: prepare agent: %w", err)
@@ -123,7 +126,7 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 	return e.prepareAgent(ctx, ag, overrides)
 }
 
-func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (*PreparedAgent, error) {
+func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (*preparedSnapshot, error) {
 	if ag == nil || e.store == nil {
 		return nil, cortex.ErrInvalidPrepared
 	}
@@ -134,7 +137,7 @@ func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *
 	ctx = context.WithValue(ctx, sourceReadSetKey{}, readSet)
 	agentID := ag.ID
 	ag, err := recordPreparedSource(ctx, "agent:"+agentID.String(), ag, func(readCtx context.Context) (*agent.Config, error) {
-		return e.store.Get(readCtx, agentID)
+		return e.preparationSources(readCtx).Get(readCtx, agentID)
 	})
 	if err != nil {
 		return nil, err
@@ -180,16 +183,20 @@ func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *
 		provenance.Diagnostics = append(provenance.Diagnostics, "optional knowledge provider unavailable")
 	}
 	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
-	if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {
-		return nil, publicationErr
+	if !isAtomicPreparation(ctx) {
+		if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {
+			return nil, publicationErr
+		}
 	}
 	snap.Provenance.SourceReads, err = readSet.validate(ctx)
 	if err != nil {
 		return nil, err
 	}
-	snap.Provenance.SourceValidation = "read_set_checked"
-	snap.Provenance.Diagnostics = append(snap.Provenance.Diagnostics, "source read set checked; atomic source snapshot unavailable")
-	return freezePrepared(&snap)
+	if !isAtomicPreparation(ctx) {
+		snap.Provenance.SourceValidation = "read_set_checked"
+		snap.Provenance.Diagnostics = append(snap.Provenance.Diagnostics, "source read set checked; atomic source snapshot unavailable")
+	}
+	return &snap, nil
 }
 
 func freezePrepared(snap *preparedSnapshot) (*PreparedAgent, error) {

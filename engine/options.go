@@ -219,3 +219,10 @@ func WithPublicationPolicy(policy safety.Policy) Option {
 func WithPublicationGate(gate safety.PublicationGate) Option {
 	return func(e *Engine) error { e.publicationGate = gate; return nil }
 }
+
+// WithAtomicPreparation requires a consistent store snapshot for each new
+// preparation. Unsupported stores and external knowledge references fail closed.
+// Default preparation continues to use diagnostic read-set checks.
+func WithAtomicPreparation() Option {
+	return func(e *Engine) error { e.atomicPreparation = true; return nil }
+}

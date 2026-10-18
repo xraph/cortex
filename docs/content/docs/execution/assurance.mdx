@@ -27,7 +27,17 @@ Content screening covers input, output, retrieved content, tool results and publ
 
 `Engine.RuntimeCapabilities()` and the dashboard's `runtime.detail.assurance` describe process configuration. They report prepared-execution support, publication mode, whether a gate is installed and whether that gate advertises incremental checking. Presence does not certify provider health or effectiveness.
 
-The current runtime reports contextual verification and atomic source snapshots as unavailable. Prepared execution freezes collected inputs and checks its source read set for observed changes, but those independent reads are not one transaction. Keep reproducibility-required evaluation disabled until a qualified atomic source provider supplies that guarantee.
+Contextual verification remains unavailable. Default preparation freezes collected inputs and checks its source read set for observed changes. Those independent reads are not one transaction.
+
+## Atomic preparation
+
+Use `engine.WithAtomicPreparation()` when collection must read one consistent database snapshot. This requires the optional `store.PreparationSnapshotter` capability. The built-in PostgreSQL, SQLite and MongoDB stores implement it. PostgreSQL uses a read-only repeatable-read transaction, SQLite uses a read-only transaction request with serializable isolation, and MongoDB uses explicit snapshot read concern with majority commit concern. MongoDB needs transaction support, such as a replica set. Configure SQLite with WAL and a busy timeout when writers need to proceed during capture.
+
+The capture includes the agent, persona, inline skills, inline traits and ancestor overlays, including missing overlays. It returns a scope-bound `provenance.source_snapshot` receipt and `source_validation=atomic_store_snapshot` only after collection and transaction completion succeed. The receipt ID identifies the capture; it is not a reusable database revision. Captured readers expire when collection returns, and publication checks run after the transaction closes.
+
+Unsupported stores, failed transactions and any nonempty skill knowledge reference fail preparation. A database transaction cannot qualify live external retrieval, even when a knowledge provider is installed. There is no silent fallback to ordinary reads. Existing prepared artifacts retain their original provenance.
+
+An atomic store receipt covers source collection only. Model and tool revisions, contextual correctness, authorization, external state and evaluation isolation still need their own checks. Keep reproducibility-required evaluation disabled whenever any required guarantee is missing.
 
 ## Observe failures
 

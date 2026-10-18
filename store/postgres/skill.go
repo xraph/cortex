@@ -62,7 +62,7 @@ func (s *Store) GetSkillByName(ctx context.Context, name string) (*skill.Skill, 
 		return nil, scopeErr
 	}
 	m := new(skillModel)
-	q := s.pgdb.NewSelect(m).Where("name = ?", name)
+	q := s.preparationQuery().NewSelect(m).Where("name = ?", name)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

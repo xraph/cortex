@@ -19,11 +19,22 @@ type Revision struct {
 	Revision string `json:"revision,omitempty"`
 }
 
+// SourceSnapshot records a successful store capture. ID identifies this capture,
+// not a reusable database revision or a model/tool implementation pin.
+// External retrieval is not covered by a store transaction.
+type SourceSnapshot struct {
+	ID        string `json:"id"`
+	Provider  string `json:"provider"`
+	Isolation string `json:"isolation"`
+	Scope     string `json:"scope"`
+}
+
 // ExecutionProvenance identifies the inputs behind a run without copying prompt
 // or evidence bytes into metadata. Empty fields mean unavailable, not verified.
 type ExecutionProvenance struct {
-	// SourceValidation reports collection checks, not transactional consistency.
+	// SourceValidation distinguishes read-set checks from atomic store capture.
 	// read_set_checked detects observed changes but is not an atomic snapshot.
+	SourceSnapshot       SourceSnapshot           `json:"source_snapshot,omitzero"`
 	SourceValidation     string                   `json:"source_validation,omitempty"`
 	SourceReads          []Revision               `json:"source_reads,omitempty"`
 	PublicationStatus    safety.PublicationStatus `json:"publication_status,omitempty"`

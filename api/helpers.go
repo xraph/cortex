@@ -16,6 +16,8 @@ func mapStoreError(err error) error {
 		return nil
 	}
 	switch {
+	case errors.Is(err, cortex.ErrPreparationUnavailable):
+		return forge.NewHTTPError(http.StatusServiceUnavailable, cortex.ErrPreparationUnavailable.Error())
 	case errors.Is(err, safety.ErrUnavailable):
 		return forge.NewHTTPError(http.StatusServiceUnavailable, safety.ErrUnavailable.Error())
 	case errors.Is(err, safety.ErrBlocked):

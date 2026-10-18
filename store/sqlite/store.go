@@ -21,8 +21,9 @@ var _ store.Store = (*Store)(nil)
 
 // Store is a SQLite implementation of the composite Cortex store.
 type Store struct {
-	db  *grove.DB
-	sdb *sqlitedriver.SqliteDB
+	preparationReader preparationReader
+	db                *grove.DB
+	sdb               *sqlitedriver.SqliteDB
 }
 
 // New creates a new SQLite store.

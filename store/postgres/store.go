@@ -21,8 +21,9 @@ var _ store.Store = (*Store)(nil)
 
 // Store is a PostgreSQL implementation of the composite Cortex store.
 type Store struct {
-	db   *grove.DB
-	pgdb *pgdriver.PgDB
+	preparationReader preparationReader
+	db                *grove.DB
+	pgdb              *pgdriver.PgDB
 }
 
 // New creates a new PostgreSQL store.

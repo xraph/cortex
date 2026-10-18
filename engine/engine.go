@@ -38,6 +38,7 @@ type Engine struct {
 	config            cortex.Config
 	logger            log.Logger
 	store             store.Store
+	atomicPreparation bool
 	llm               llm.Client
 	safety            safety.Scanner
 	publicationPolicy safety.Policy

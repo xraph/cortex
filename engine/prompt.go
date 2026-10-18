@@ -218,7 +218,7 @@ func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, 
 	// optional lookup, so a failure aborts instead of omitting Identity.
 	if personaRef != "" {
 		p, err := readPreparedSource(ctx, "persona:"+personaRef, func(readCtx context.Context) (*persona.Persona, error) {
-			return e.store.GetPersonaByName(readCtx, personaRef)
+			return e.preparationSources(readCtx).GetPersonaByName(readCtx, personaRef)
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve persona %q: %w", personaRef, err)
@@ -229,6 +229,16 @@ func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, 
 	skills, err := e.resolveSkills(ctx, skillNames)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if isAtomicPreparation(ctx) {
+		for _, sk := range skills {
+			for _, ref := range sk.Knowledge {
+				if ref.Source != "" {
+					return nil, nil, cortex.ErrPreparationUnavailable
+				}
+			}
+		}
 	}
 
 	// Each producer takes consecutive orders from its band so the
@@ -252,7 +262,7 @@ func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, 
 			continue
 		}
 		t, tErr := readPreparedSource(ctx, "trait:"+name, func(readCtx context.Context) (*trait.Trait, error) {
-			return e.store.GetTraitByName(readCtx, name)
+			return e.preparationSources(readCtx).GetTraitByName(readCtx, name)
 		})
 		if tErr != nil {
 			return nil, nil, fmt.Errorf("resolve trait %q: %w", name, tErr)
@@ -296,7 +306,7 @@ func (e *Engine) resolveSkills(ctx context.Context, names []string) ([]*skill.Sk
 			continue
 		}
 		sk, err := readPreparedSource(ctx, "skill:"+name, func(readCtx context.Context) (*skill.Skill, error) {
-			return e.store.GetSkillByName(readCtx, name)
+			return e.preparationSources(readCtx).GetSkillByName(readCtx, name)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("resolve skill %q: %w", name, err)
@@ -423,7 +433,7 @@ func (e *Engine) loadScopeOverlays(ctx context.Context, agentID id.AgentID) ([]*
 		ancestor := cortex.Scope{Levels: scope.Levels[:depth]}
 
 		o, err := readPreparedSource(ctx, "overlay:"+ancestor.Canonical(), func(readCtx context.Context) (*prompt.Overlay, error) {
-			value, readErr := e.store.GetOverlayForAgentAt(readCtx, agentID, ancestor)
+			value, readErr := e.preparationSources(readCtx).GetOverlayForAgentAt(readCtx, agentID, ancestor)
 			if errors.Is(readErr, cortex.ErrOverlayNotFound) {
 				return nil, nil
 			}

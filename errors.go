@@ -26,8 +26,9 @@ var (
 
 	// Conflict errors.
 	ErrAlreadyExists = errors.New("cortex: resource already exists")
-	// ErrPreparationConflict requires a fresh preparation after a source changed
-	// or could not be revalidated during collection. No snapshot is returned.
+	// ErrPreparationUnavailable means the requested consistency guarantee cannot be provided.
+	ErrPreparationUnavailable = errors.New("cortex: atomic preparation unavailable")
+	// ErrPreparationConflict requires fresh preparation after an observed source change.
 	ErrPreparationConflict = errors.New("cortex: preparation source changed or unavailable")
 
 	// State errors.

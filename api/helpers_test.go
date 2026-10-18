@@ -55,7 +55,7 @@ func TestMapStoreError_InvalidScopeIsDenied(t *testing.T) {
 }
 
 func TestPublicationErrorsHaveSafeHTTPStatus(t *testing.T) {
-	for cause, want := range map[error]int{safety.ErrUnavailable: 503, safety.ErrBlocked: 403, safety.ErrLimit: 413} {
+	for cause, want := range map[error]int{cortex.ErrPreparationUnavailable: 503, safety.ErrUnavailable: 503, safety.ErrBlocked: 403, safety.ErrLimit: 413} {
 		mapped, ok := mapStoreError(cause).(statusCoder)
 		if !ok || mapped.StatusCode() != want {
 			t.Fatalf("%v mapped to %v", cause, mapped)

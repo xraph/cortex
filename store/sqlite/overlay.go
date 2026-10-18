@@ -95,7 +95,7 @@ func (s *Store) GetOverlayForAgentAt(ctx context.Context, agentID id.AgentID, sc
 		return nil, cortex.ErrOverlayNotFound
 	}
 	m := new(overlayModel)
-	q := s.sdb.NewSelect(m).Where("agent_id = ?", agentID.String())
+	q := s.preparationQuery().NewSelect(m).Where("agent_id = ?", agentID.String())
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

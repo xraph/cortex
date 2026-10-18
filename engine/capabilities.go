@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/xraph/cortex/safety"
+import (
+	"github.com/xraph/cortex/safety"
+	"github.com/xraph/cortex/store"
+)
 
 // RuntimeCapabilities reports installed mechanisms, not a provider qualification
 // or a guarantee that a particular execution will pass its checks.
@@ -18,5 +21,6 @@ type RuntimeCapabilities struct {
 // and effectiveness are evaluated by the configured provider for each request.
 func (e *Engine) RuntimeCapabilities() RuntimeCapabilities {
 	_, incremental := e.publicationGate.(safety.IncrementalGate)
-	return RuntimeCapabilities{PreparedExecution: true, PublicationGateInstalled: e.publicationGate != nil, PublicationMode: e.publicationPolicy.Mode, PublicationRequired: e.publicationPolicy.Required, IncrementalGateInstalled: incremental}
+	_, snapshots := e.store.(store.PreparationSnapshotter)
+	return RuntimeCapabilities{AtomicSourceSnapshot: e.atomicPreparation && snapshots, PreparedExecution: true, PublicationGateInstalled: e.publicationGate != nil, PublicationMode: e.publicationPolicy.Mode, PublicationRequired: e.publicationPolicy.Required, IncrementalGateInstalled: incremental}
 }
