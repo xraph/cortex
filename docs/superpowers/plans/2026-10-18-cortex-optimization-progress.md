@@ -137,7 +137,7 @@ A completed execution needs its evaluation record before advancing. Explicit ter
 
 Conformance fixtures now persist populated execution and evaluation records through the public store API. They use fixture outputs and scores, not live providers. The full optimizer suite and scoped lint pass. Coordinated formatting, post-format race tests and builds against the current checkout and published Cortex v1.8.0, and final all-nine-module lint passed. Decision persistence, activation, outbox work and the remaining phases are still open.
 
- 
+
 ## Comparison contract follow-up
 
 Decision integration exposed a mismatch in the published foundation. Cortex's `EvaluationRequest` carries one trial and the optimizer stores one external job ID per trial. Sentinel's `CompareRecorded` accepts one baseline job and one candidate job, with multiple cases inside each job. Passing one pair of trial jobs cannot produce the full validation comparison.
