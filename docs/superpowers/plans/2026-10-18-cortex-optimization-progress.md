@@ -90,3 +90,15 @@ A controller comparison can reserve one parent allocation for two named child ex
 Allocation checks pass in both current-runtime and published-v1.8.0 race suites. The module builds, and the runtime owner's coordinated final `make f` and all-nine-module `make l` passed with these changes present.
 
 CI for `f02dec9` (`39148570147`) passed the optimization job but failed two existing Fabriq tool-dispatch fixtures because they omitted scope. The adapter fixture fix uses an explicit scope, checks that an unscoped call cannot reach the handler, and passes the full adapter race suite and build. Runtime scope enforcement stays intact.
+
+Holdout allocation is committed as `6222838`; the Fabriq fixture repair is `97532a6`.
+
+Candidate phase writes now persist each proposal, its frozen version and the transition event atomically. The store derives the proposed edits again from the frozen baseline and compares the resulting digest, so a supplied version cannot substitute instructions or policy. Versions use the same identity checks as draft creation. Duplicate candidate content, foreign experiment IDs, unknown parents and unused version rows are refused. Rejected proposals retain their reason without an executable version. Every proposal, including a rejection or composition, counts toward the candidate cap.
+
+Candidate conformance covers rollback, duplicate acknowledgment, detached reads, exact scope, changed policy, version substitution and composed-parent provenance. Trial-backed proposal evidence remains unavailable until the trial store can verify its ownership and split. Full phase evidence requirements, durable backends, decisions and activation are still pending; these candidate records do not establish an optimizer result.
+
+A review regression reproduced a version identity gap: content digests exclude grouping metadata, so a request could present an existing version ID with another harness association. Shared version validation now refuses a changed harness or parent and preserves the stored record when an ID is reused. The regression passes alongside the existing creator-preservation test.
+
+After that fix, coordinated `make f`, all-nine-module `make l`, both current-runtime and published-v1.8.0 optimizer race suites, and the module build passed. The atomic source foundation's red runtime tests do not prevent lint or these scoped optimizer checks from passing.
+
+CI at `6222838` passed optimization and the repaired Fabriq adapter. It then failed the root stream-cancellation race and docs generation; the runtime owner is correcting both. Atomic source capture is also in progress there, with intentionally failing foundation tests until its store and engine implementations land. Those files remain outside this chat's changes.

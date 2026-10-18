@@ -17,6 +17,7 @@ type Repository interface {
 	GetVersion(context.Context, id.ID) (HarnessVersion, error)
 	GetReservation(context.Context, id.ID, string) (Reservation, error)
 	GetValidationAllocation(context.Context, id.ID) (ValidationAllocation, error)
+	GetCandidate(context.Context, id.ID) (Candidate, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -63,13 +64,15 @@ type ClaimRequest struct {
 // Transition binds a requested state change to its prior revision and actor.
 // Idempotency keys can be reused only with identical request content.
 type Transition struct {
-	ExperimentID     id.ID       `json:"experiment_id"`
-	ExpectedRevision int64       `json:"expected_revision"`
-	NextState        State       `json:"next_state"`
-	NextPhase        Phase       `json:"next_phase"`
-	Lease            WorkLease   `json:"lease"`
-	IdempotencyKey   string      `json:"idempotency_key"`
-	Actor            IdentityRef `json:"actor"`
+	ExperimentID     id.ID            `json:"experiment_id"`
+	ExpectedRevision int64            `json:"expected_revision"`
+	NextState        State            `json:"next_state"`
+	NextPhase        Phase            `json:"next_phase"`
+	Lease            WorkLease        `json:"lease"`
+	IdempotencyKey   string           `json:"idempotency_key"`
+	Actor            IdentityRef      `json:"actor"`
+	Candidates       []Candidate      `json:"candidates,omitempty"`
+	Versions         []HarnessVersion `json:"versions,omitempty"`
 }
 
 // ExperimentBundle atomically creates a draft and its frozen version content.

@@ -61,6 +61,10 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if !allowed {
 		return optimization.ErrConflict
 	}
+	resources, err := tx.prepareCandidates(experiment, change)
+	if err != nil {
+		return err
+	}
 	experiment.State = change.NextState
 	experiment.Phase = change.NextPhase
 	experiment.Revision++
@@ -69,6 +73,14 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
 	}
 	tx.data.Experiments[key] = experiment
+	for candidateID, candidate := range resources.candidates {
+		tx.data.Candidates[candidateID] = candidate
+	}
+	for versionID, version := range resources.versions {
+		if _, exists := tx.data.Versions[versionID]; !exists {
+			tx.data.Versions[versionID] = version
+		}
+	}
 	if prior == nil {
 		prior = make(map[string]string)
 		tx.data.Transitions[key] = prior
@@ -78,7 +90,13 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if change.NextPhase != "" {
 		eventType = string(change.NextPhase)
 	}
-	tx.appendEvent(experiment, eventType, change.Actor)
+	event := tx.appendEvent(experiment, eventType, change.Actor)
+	for _, candidate := range change.Candidates {
+		event.Resources = append(event.Resources, candidate.ID)
+		if candidate.Accepted {
+			event.Resources = append(event.Resources, candidate.Version.ID)
+		}
+	}
 	return nil
 }
 

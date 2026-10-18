@@ -33,6 +33,7 @@ type scopeData struct {
 	Reservations map[string]map[string]optimization.Reservation `json:"reservations"`
 	Receipts     map[string]map[string]string                   `json:"receipts"`
 	Allocations  map[string]optimization.ValidationAllocation   `json:"allocations"`
+	Candidates   map[string]optimization.Candidate              `json:"candidates"`
 }
 
 var _ store.Store = (*Store)(nil)
@@ -66,7 +67,7 @@ func New(options ...Option) (*Store, error) {
 }
 
 func newScopeData() *scopeData {
-	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation)}
+	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate)}
 }
 
 func contextScope(ctx context.Context) (string, error) {
@@ -230,35 +231,9 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
-	versions := make(map[string]optimization.HarnessVersion)
-	for _, version := range bundle.Versions {
-		if _, parseErr := optimization.ParseID(version.ID.String(), optimization.PrefixVersion); parseErr != nil {
-			return parseErr
-		}
-		if _, parseErr := optimization.ParseID(version.HarnessID.String(), optimization.PrefixHarness); parseErr != nil {
-			return parseErr
-		}
-		sealed, sealErr := optimization.SealVersion(version)
-		if sealErr != nil {
-			return sealErr
-		}
-		versionScope, scopeErr := optimization.ScopeKey(version.Scope)
-		if scopeErr != nil {
-			return scopeErr
-		}
-		if versionScope != tx.scope || version.AgentID != e.Spec.AgentID {
-			return optimization.ErrPolicyDenied
-		}
-		if sealed.Digest != version.Digest || sealed.PolicyDigest != version.PolicyDigest {
-			return optimization.ErrStaleVersion
-		}
-		if _, exists := versions[version.ID.String()]; exists {
-			return optimization.ErrConflict
-		}
-		if existing, exists := tx.data.Versions[version.ID.String()]; exists && existing.Digest != version.Digest {
-			return optimization.ErrConflict
-		}
-		versions[version.ID.String()] = sealed
+	versions, err := tx.validateVersions(e.Spec.AgentID, bundle.Versions)
+	if err != nil {
+		return err
 	}
 	for _, required := range []struct {
 		ref  optimization.VersionRef
@@ -295,4 +270,43 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	tx.data.Experiments[e.ID.String()] = detached
 	tx.appendEvent(e, "draft", e.Spec.Requester)
 	return nil
+}
+
+// validateVersions shares immutable identity checks across draft and phase writes.
+func (tx *transaction) validateVersions(agentID id.AgentID, input []optimization.HarnessVersion) (map[string]optimization.HarnessVersion, error) {
+	versions := make(map[string]optimization.HarnessVersion)
+	for _, version := range input {
+		if _, parseErr := optimization.ParseID(version.ID.String(), optimization.PrefixVersion); parseErr != nil {
+			return nil, parseErr
+		}
+		if _, parseErr := optimization.ParseID(version.HarnessID.String(), optimization.PrefixHarness); parseErr != nil {
+			return nil, parseErr
+		}
+		sealed, sealErr := optimization.SealVersion(version)
+		if sealErr != nil {
+			return nil, sealErr
+		}
+		versionScope, scopeErr := optimization.ScopeKey(version.Scope)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		if versionScope != tx.scope || version.AgentID != agentID {
+			return nil, optimization.ErrPolicyDenied
+		}
+		if sealed.Digest != version.Digest || sealed.PolicyDigest != version.PolicyDigest {
+			return nil, optimization.ErrStaleVersion
+		}
+		if _, exists := versions[version.ID.String()]; exists {
+			return nil, optimization.ErrConflict
+		}
+		if existing, exists := tx.data.Versions[version.ID.String()]; exists {
+			if existing.Digest != version.Digest || existing.HarnessID != version.HarnessID || existing.ParentID != version.ParentID {
+				return nil, optimization.ErrConflict
+			}
+			versions[version.ID.String()] = existing
+			continue
+		}
+		versions[version.ID.String()] = sealed
+	}
+	return versions, nil
 }

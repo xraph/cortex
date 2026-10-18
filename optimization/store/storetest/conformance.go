@@ -27,6 +27,7 @@ func Run(t *testing.T, factory Factory) {
 	leases(t, factory)
 	accounting(t, factory)
 	validation(t, factory)
+	candidates(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")
