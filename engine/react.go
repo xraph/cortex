@@ -165,7 +165,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			System:      st.systemPrompt,
 			Messages:    cloneExecutionMessages(st.messages),
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
-			Temperature: cfg.Temperature,
+			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
@@ -397,7 +397,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			System:      st.systemPrompt,
 			Messages:    cloneExecutionMessages(st.messages),
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
-			Temperature: cfg.Temperature,
+			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 

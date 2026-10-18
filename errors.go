@@ -26,6 +26,9 @@ var (
 
 	// Conflict errors.
 	ErrAlreadyExists = errors.New("cortex: resource already exists")
+	// ErrPreparationConflict requires a fresh preparation after a source changed
+	// or could not be revalidated during collection. No snapshot is returned.
+	ErrPreparationConflict = errors.New("cortex: preparation source changed or unavailable")
 
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")

@@ -551,8 +551,13 @@ func (publicationKnowledge) ListCollections(context.Context) ([]knowledge.Collec
 
 type publicationSourceStore struct{ *scopespy.Spy }
 
-func (s publicationSourceStore) GetSkillByName(_ context.Context, name string) (*skill.Skill, error) {
-	return &skill.Skill{ID: id.NewSkillID(), Name: name, Knowledge: []skill.KnowledgeRef{{Source: "docs"}}}, nil
+func (s publicationSourceStore) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
+	value, err := s.Spy.GetSkillByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	value.Knowledge = []skill.KnowledgeRef{{Source: "docs"}}
+	return value, nil
 }
 
 func TestRetrievalIsCheckedBeforeSnapshotAndDerivedExecution(t *testing.T) {

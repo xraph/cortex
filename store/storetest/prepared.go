@@ -16,7 +16,7 @@ func testPreparedRoundTrip(t *testing.T, newStore func(*testing.T) store.Store) 
 	s := newStore(t)
 	ctx := ctxWithScope("prepared")
 	r := mustCreateRun(t, s, ctx)
-	r.Provenance = run.ExecutionProvenance{PublicationStatus: safety.StatusRedacted, CandidateID: "candidate-1", EnvironmentReceiptID: "environment-1", SchemaVersion: 1, PreparedDigest: "digest", Purpose: run.PurposeEvaluation, ModelRevision: "model-v1", Tools: []run.Revision{{Name: "probe", Revision: "tool-v1"}}, Diagnostics: []string{"optional missing"}}
+	r.Provenance = run.ExecutionProvenance{SourceValidation: "read_set_checked", SourceReads: []run.Revision{{Name: "agent:worker", Digest: "source-digest"}}, PublicationStatus: safety.StatusRedacted, CandidateID: "candidate-1", EnvironmentReceiptID: "environment-1", SchemaVersion: 1, PreparedDigest: "digest", Purpose: run.PurposeEvaluation, ModelRevision: "model-v1", Tools: []run.Revision{{Name: "probe", Revision: "tool-v1"}}, Diagnostics: []string{"optional missing"}}
 	r.Budget = execution.Budget{MaxSteps: 5, MaxTokens: 20, MaxToolCalls: 2, Deadline: time.Now().UTC().Truncate(time.Millisecond).Add(time.Hour)}
 	r.Usage = execution.Usage{Steps: 2, Tokens: 15, ReportedTokens: 11, ToolCalls: 1, Estimated: true}
 	r.StepCount = 2

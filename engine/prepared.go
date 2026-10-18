@@ -124,6 +124,18 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 }
 
 func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (*PreparedAgent, error) {
+	if ag == nil || e.store == nil {
+		return nil, cortex.ErrInvalidPrepared
+	}
+	readSet := &sourceReadSet{}
+	ctx = context.WithValue(ctx, sourceReadSetKey{}, readSet)
+	agentID := ag.ID
+	ag, err := recordPreparedSource(ctx, "agent:"+agentID.String(), ag, func(readCtx context.Context) (*agent.Config, error) {
+		return e.store.Get(readCtx, agentID)
+	})
+	if err != nil {
+		return nil, err
+	}
 	overlays, err := e.loadScopeOverlays(ctx, ag.ID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: prepare overlays: %w", err)
@@ -165,9 +177,15 @@ func (e *Engine) prepareAgent(ctx context.Context, ag *agent.Config, overrides *
 		provenance.Diagnostics = append(provenance.Diagnostics, "optional knowledge provider unavailable")
 	}
 	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
-	if err := e.checkPreparedSources(ctx, ag, &snap); err != nil {
+	if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {
+		return nil, publicationErr
+	}
+	snap.Provenance.SourceReads, err = readSet.validate(ctx)
+	if err != nil {
 		return nil, err
 	}
+	snap.Provenance.SourceValidation = "read_set_checked"
+	snap.Provenance.Diagnostics = append(snap.Provenance.Diagnostics, "source read set checked; atomic source snapshot unavailable")
 	return freezePrepared(&snap)
 }
 

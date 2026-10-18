@@ -20,6 +20,7 @@ func ExecutionProvenanceFromContext(ctx context.Context) (run.ExecutionProvenanc
 		return run.ExecutionProvenance{}, false
 	}
 	provenance.Sources = append([]run.Revision(nil), provenance.Sources...)
+	provenance.SourceReads = append([]run.Revision(nil), provenance.SourceReads...)
 	provenance.Tools = append([]run.Revision(nil), provenance.Tools...)
 	provenance.Diagnostics = append([]string(nil), provenance.Diagnostics...)
 	return provenance, true

@@ -44,6 +44,8 @@ type Spy struct {
 
 	mu            sync.Mutex
 	calls         []Call
+	agents        map[id.AgentID]agent.Config
+	namedIDs      map[string]id.ID
 	suspensions   []*suspension.Suspension
 	suspendErr    error
 	claimed       map[id.AgentRunID]bool
@@ -127,8 +129,10 @@ func (s *Spy) Steps() []run.Step {
 
 func New() *Spy {
 	return &Spy{
-		claimed: make(map[id.AgentRunID]bool),
-		runs:    make(map[id.AgentRunID]run.Run),
+		claimed:  make(map[id.AgentRunID]bool),
+		agents:   make(map[id.AgentID]agent.Config),
+		namedIDs: make(map[string]id.ID),
+		runs:     make(map[id.AgentRunID]run.Run),
 	}
 }
 
@@ -224,16 +228,18 @@ func (s *Spy) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error)
 	return &r, nil
 }
 
-// Get returns an agent carrying the id it was asked for. GetByName mints
-// a fresh id per call, so a resume that looked the agent up by the run's
-// AgentID would otherwise get a stranger back.
+// Get returns the same synthetic record as GetByName, with detached slices.
 func (s *Spy) Get(ctx context.Context, agentID id.AgentID) (*agent.Config, error) {
 	s.record(ctx, "Get")
-	return &agent.Config{
-		ID:       agentID,
-		Name:     "assistant",
-		MaxSteps: 2,
-	}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.agents[agentID]
+	if !ok {
+		value = agent.Config{ID: agentID, Name: "assistant", MaxSteps: 2}
+	}
+	value.InlineSkills = append([]string(nil), value.InlineSkills...)
+	value.InlineTraits = append([]string(nil), value.InlineTraits...)
+	return &value, nil
 }
 
 // CreateSuspension records the suspension itself, not just that the call
@@ -438,28 +444,40 @@ func (s *Spy) CreateSession(ctx context.Context, _ *session.Session) error {
 // regardless of MaxSteps.
 func (s *Spy) GetByName(ctx context.Context, name string) (*agent.Config, error) {
 	s.record(ctx, "GetByName")
-	return &agent.Config{
-		ID:           id.NewAgentID(),
-		Name:         name,
-		MaxSteps:     2,
-		PersonaRef:   "spy-persona",
-		InlineSkills: []string{"spy-skill"},
-		InlineTraits: []string{"spy-trait"},
-	}, nil
+	agentID := s.stableID("agent:"+name, id.NewAgentID)
+	value := agent.Config{ID: agentID, Name: name, MaxSteps: 2,
+		PersonaRef: "spy-persona", InlineSkills: []string{"spy-skill"}, InlineTraits: []string{"spy-trait"}}
+	s.mu.Lock()
+	s.agents[agentID] = value
+	s.mu.Unlock()
+	value.InlineSkills = append([]string(nil), value.InlineSkills...)
+	value.InlineTraits = append([]string(nil), value.InlineTraits...)
+	return &value, nil
+}
+
+func (s *Spy) stableID(name string, create func() id.ID) id.ID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if value, ok := s.namedIDs[name]; ok {
+		return value
+	}
+	value := create()
+	s.namedIDs[name] = value
+	return value
 }
 
 // GetPersonaByName returns a usable persona so BuildSystemPrompt's
 // identity injection has something to record scope on.
 func (s *Spy) GetPersonaByName(ctx context.Context, name string) (*persona.Persona, error) {
 	s.record(ctx, "GetPersonaByName")
-	return &persona.Persona{ID: id.NewPersonaID(), Name: name, Identity: "spy identity"}, nil
+	return &persona.Persona{ID: s.stableID("persona:"+name, id.NewPersonaID), Name: name, Identity: "spy identity"}, nil
 }
 
 // GetSkillByName returns a usable skill so BuildSystemPrompt's skill
 // injection has something to record scope on.
 func (s *Spy) GetSkillByName(ctx context.Context, name string) (*skill.Skill, error) {
 	s.record(ctx, "GetSkillByName")
-	return &skill.Skill{ID: id.NewSkillID(), Name: name, SystemPromptFragment: "spy skill fragment"}, nil
+	return &skill.Skill{ID: s.stableID("skill:"+name, id.NewSkillID), Name: name, SystemPromptFragment: "spy skill fragment"}, nil
 }
 
 // GetOverlayForAgentAt records the scope of one rung of the ancestor
@@ -477,5 +495,5 @@ func (s *Spy) GetOverlayForAgentAt(ctx context.Context, _ id.AgentID, _ cortex.S
 // injection has something to record scope on.
 func (s *Spy) GetTraitByName(ctx context.Context, name string) (*trait.Trait, error) {
 	s.record(ctx, "GetTraitByName")
-	return &trait.Trait{ID: id.NewTraitID(), Name: name}, nil
+	return &trait.Trait{ID: s.stableID("trait:"+name, id.NewTraitID), Name: name}, nil
 }

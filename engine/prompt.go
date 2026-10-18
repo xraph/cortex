@@ -13,9 +13,11 @@ import (
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
+	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/trait"
 )
 
 // resolvedConfig holds the effective configuration after merging
@@ -215,7 +217,9 @@ func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, 
 	// A non-empty personaRef is a request for a specific persona, not an
 	// optional lookup, so a failure aborts instead of omitting Identity.
 	if personaRef != "" {
-		p, err := e.store.GetPersonaByName(ctx, personaRef)
+		p, err := readPreparedSource(ctx, "persona:"+personaRef, func(readCtx context.Context) (*persona.Persona, error) {
+			return e.store.GetPersonaByName(readCtx, personaRef)
+		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve persona %q: %w", personaRef, err)
 		}
@@ -247,7 +251,9 @@ func (e *Engine) collectPreparedSections(ctx context.Context, ag *agent.Config, 
 		if name == "" {
 			continue
 		}
-		t, tErr := e.store.GetTraitByName(ctx, name)
+		t, tErr := readPreparedSource(ctx, "trait:"+name, func(readCtx context.Context) (*trait.Trait, error) {
+			return e.store.GetTraitByName(readCtx, name)
+		})
 		if tErr != nil {
 			return nil, nil, fmt.Errorf("resolve trait %q: %w", name, tErr)
 		}
@@ -289,7 +295,9 @@ func (e *Engine) resolveSkills(ctx context.Context, names []string) ([]*skill.Sk
 		if name == "" {
 			continue
 		}
-		sk, err := e.store.GetSkillByName(ctx, name)
+		sk, err := readPreparedSource(ctx, "skill:"+name, func(readCtx context.Context) (*skill.Skill, error) {
+			return e.store.GetSkillByName(readCtx, name)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("resolve skill %q: %w", name, err)
 		}
@@ -414,7 +422,13 @@ func (e *Engine) loadScopeOverlays(ctx context.Context, agentID id.AgentID) ([]*
 	for depth := 1; depth <= len(scope.Levels); depth++ {
 		ancestor := cortex.Scope{Levels: scope.Levels[:depth]}
 
-		o, err := e.store.GetOverlayForAgentAt(ctx, agentID, ancestor)
+		o, err := readPreparedSource(ctx, "overlay:"+ancestor.Canonical(), func(readCtx context.Context) (*prompt.Overlay, error) {
+			value, readErr := e.store.GetOverlayForAgentAt(readCtx, agentID, ancestor)
+			if errors.Is(readErr, cortex.ErrOverlayNotFound) {
+				return nil, nil
+			}
+			return value, readErr
+		})
 		if err != nil {
 			if errors.Is(err, cortex.ErrOverlayNotFound) {
 				continue

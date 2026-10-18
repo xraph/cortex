@@ -22,6 +22,10 @@ type Revision struct {
 // ExecutionProvenance identifies the inputs behind a run without copying prompt
 // or evidence bytes into metadata. Empty fields mean unavailable, not verified.
 type ExecutionProvenance struct {
+	// SourceValidation reports collection checks, not transactional consistency.
+	// read_set_checked detects observed changes but is not an atomic snapshot.
+	SourceValidation     string                   `json:"source_validation,omitempty"`
+	SourceReads          []Revision               `json:"source_reads,omitempty"`
 	PublicationStatus    safety.PublicationStatus `json:"publication_status,omitempty"`
 	SchemaVersion        int                      `json:"schema_version"`
 	PreparedDigest       string                   `json:"prepared_digest"`
