@@ -169,6 +169,10 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
+		if ctx.Err() != nil {
+			stopReason = run.StopCancelled
+			break
+		}
 		resp, err := e.llm.Complete(ctx, req)
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
@@ -401,6 +405,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
+		if ctx.Err() != nil {
+			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
+			return
+		}
 		stream, err := e.llm.CompleteStream(ctx, req)
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
@@ -960,6 +968,9 @@ func pendingReason(toolName string) suspension.SuspendReason {
 // approved reports it with the timings of the whole pause, and two
 // emitters for one call is how a subscriber ends up counting it twice.
 func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return jsonResult("error", err.Error()), outcomeFailed, err
+	}
 	inv := cortex.Invocation{Subject: s, Call: tc}
 
 	if result, outcome, handled := e.executeBuiltinTool(ctx, inv); handled {

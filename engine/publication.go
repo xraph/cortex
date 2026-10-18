@@ -235,7 +235,7 @@ func sendEvent(ctx context.Context, events chan<- StreamEvent, event StreamEvent
 	case <-ctx.Done():
 		return false
 	case events <- event:
-		return true
+		return ctx.Err() == nil
 	}
 }
 
