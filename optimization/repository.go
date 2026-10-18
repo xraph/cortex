@@ -2,6 +2,7 @@ package optimization
 
 import (
 	"context"
+	"time"
 
 	"github.com/xraph/cortex/id"
 )
@@ -24,6 +25,15 @@ type Repository interface {
 type Transaction interface {
 	CreateExperiment(ExperimentBundle) error
 	CommitTransition(Transition) error
+	ClaimWork(ClaimRequest) (WorkLease, error)
+	RenewLease(WorkLease) error
+}
+
+// ClaimRequest names one queued or expired experiment and the claiming worker.
+type ClaimRequest struct {
+	ExperimentID id.ID         `json:"experiment_id"`
+	Owner        string        `json:"owner"`
+	Duration     time.Duration `json:"duration"`
 }
 
 // Transition binds a requested state change to its prior revision and actor.

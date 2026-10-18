@@ -42,15 +42,27 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if experiment.Revision != change.ExpectedRevision {
 		return optimization.ErrConflict
 	}
-	if change.NextPhase != "" || change.Lease.Generation != 0 {
-		return optimization.ErrConflict
-	}
 	allowed := experiment.State == optimization.StateDraft && change.NextState == optimization.StateQueued
 	allowed = allowed || (experiment.State == optimization.StateDraft || experiment.State == optimization.StateQueued) && change.NextState == optimization.StateCancelled
+	if experiment.State == optimization.StateRunning && change.NextState == optimization.StateRunning {
+		if !tx.validLease(experiment, change.Lease) {
+			return optimization.ErrConflict
+		}
+		allowed = nextPhase(experiment.Phase, change.NextPhase)
+		if allowed && change.NextPhase == optimization.PhasePropose {
+			if experiment.Round >= experiment.Spec.Limits.MaxRounds {
+				return optimization.ErrConflict
+			}
+			experiment.Round++
+		}
+	} else if change.NextPhase != "" || change.Lease.Generation != 0 {
+		return optimization.ErrConflict
+	}
 	if !allowed {
 		return optimization.ErrConflict
 	}
 	experiment.State = change.NextState
+	experiment.Phase = change.NextPhase
 	experiment.Revision++
 	experiment.UpdatedAt = tx.now
 	if change.NextState == optimization.StateQueued {
@@ -62,8 +74,31 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		tx.data.Transitions[key] = prior
 	}
 	prior[change.IdempotencyKey] = digest
-	tx.appendEvent(experiment, string(change.NextState), change.Actor)
+	eventType := string(change.NextState)
+	if change.NextPhase != "" {
+		eventType = string(change.NextPhase)
+	}
+	tx.appendEvent(experiment, eventType, change.Actor)
 	return nil
+}
+
+func nextPhase(current, next optimization.Phase) bool {
+	switch current {
+	case optimization.PhaseBaseline:
+		return next == optimization.PhasePropose
+	case optimization.PhasePropose:
+		return next == optimization.PhaseProbe
+	case optimization.PhaseProbe:
+		return next == optimization.PhaseCompose || next == optimization.PhasePropose || next == optimization.PhaseValidate
+	case optimization.PhaseCompose:
+		return next == optimization.PhaseProbe
+	case optimization.PhaseValidate:
+		return next == optimization.PhaseDecide
+	case optimization.PhaseDecide:
+		return next == optimization.PhaseReflect
+	default:
+		return false
+	}
 }
 
 func (tx *transaction) appendEvent(experiment optimization.Experiment, eventType string, actor optimization.IdentityRef) {

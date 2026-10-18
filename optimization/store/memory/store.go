@@ -224,7 +224,7 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if e.State != "" && e.State != optimization.StateDraft {
 		return optimization.ErrInvalidSpec
 	}
-	if e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 {
+	if e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
 	versions := make(map[string]optimization.HarnessVersion)

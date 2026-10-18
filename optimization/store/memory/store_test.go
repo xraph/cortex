@@ -14,9 +14,9 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) store.Store {
+	storetest.Run(t, func(t *testing.T, now func() time.Time) store.Store {
 		t.Helper()
-		s, err := memory.New()
+		s, err := memory.New(memory.WithClock(now))
 		if err != nil {
 			t.Fatal(err)
 		}

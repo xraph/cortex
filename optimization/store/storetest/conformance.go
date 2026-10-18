@@ -18,14 +18,15 @@ import (
 )
 
 // Factory returns an empty backend and registers its cleanup with the test.
-type Factory func(*testing.T) store.Store
+type Factory func(*testing.T, func() time.Time) store.Store
 
 // Run checks store semantics with populated records and exact identity assertions.
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 	lifecycle(t, factory)
+	leases(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")
 		for _, bundle := range []optimization.ExperimentBundle{a, b} {
 			ctx := scoped(bundle.Experiment.Spec.Scope)
@@ -58,7 +59,7 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("TransactionRollback", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "rollback")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		aborted := errors.New("abort fixture")
@@ -82,7 +83,7 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("DetachedReadsAndWrites", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "copy")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		wantID, wantVersion := bundle.Experiment.ID, bundle.Experiment.Spec.Baseline
@@ -111,7 +112,7 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("TransactionHandleExpires", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "expired")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		var escaped store.Tx
@@ -126,7 +127,7 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("VersionReusePreservesCreationIdentity", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "version-reuse")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CreateExperiment(bundle) }); err != nil {

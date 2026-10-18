@@ -3,6 +3,7 @@ package storetest
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
@@ -12,7 +13,7 @@ import (
 func lifecycle(t *testing.T, factory Factory) {
 	t.Helper()
 	t.Run("DraftEventAtomic", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "draft-event")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		abort := errors.New("abort")
@@ -39,7 +40,7 @@ func lifecycle(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("DuplicateStartIdempotency", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "start")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CreateExperiment(bundle) }); err != nil {
@@ -89,7 +90,7 @@ func lifecycle(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("TransitionRollback", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "transition-rollback")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CreateExperiment(bundle) }); err != nil {
@@ -118,7 +119,7 @@ func lifecycle(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("CursorPaging", func(t *testing.T) {
-		s := factory(t)
+		s := factory(t, time.Now)
 		bundle := Fixture(t, "paging")
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		ids := map[id.ID]bool{}
