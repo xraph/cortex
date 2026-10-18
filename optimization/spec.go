@@ -44,6 +44,9 @@ type ContentRef struct {
 	Digest   string `json:"digest"`
 }
 
+// Validate checks the complete identity of a frozen external resource.
+func (ref ContentRef) Validate() error { return validateContentRef(ref) }
+
 // IdentityRef names a host subject whose current permissions workers must resolve.
 type IdentityRef struct {
 	Subject string `json:"subject"`

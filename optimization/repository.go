@@ -18,6 +18,7 @@ type Repository interface {
 	GetReservation(context.Context, id.ID, string) (Reservation, error)
 	GetValidationAllocation(context.Context, id.ID) (ValidationAllocation, error)
 	GetCandidate(context.Context, id.ID) (Candidate, error)
+	GetTrial(context.Context, id.ID) (Trial, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -73,6 +74,24 @@ type Transition struct {
 	Actor            IdentityRef      `json:"actor"`
 	Candidates       []Candidate      `json:"candidates,omitempty"`
 	Versions         []HarnessVersion `json:"versions,omitempty"`
+	Trials           []Trial          `json:"trials,omitempty"`
+	TrialUpdates     []TrialUpdate    `json:"trial_updates,omitempty"`
+}
+
+// TrialUpdate changes execution state without replacing the frozen trial identity.
+// StartAttemptID creates a new attempt; all other writes fence the current one.
+type TrialUpdate struct {
+	TrialID                 id.ID               `json:"trial_id"`
+	ExpectedRevision        int64               `json:"expected_revision"`
+	State                   TrialState          `json:"state"`
+	StartAttemptID          id.ID               `json:"start_attempt_id,omitempty"`
+	AttemptID               id.ID               `json:"attempt_id,omitempty"`
+	ExpectedAttemptRevision int64               `json:"expected_attempt_revision"`
+	Receipt                 *EnvironmentReceipt `json:"receipt,omitempty"`
+	Stop                    *StopReceipt        `json:"stop,omitempty"`
+	Execution               *ExecutionRecord    `json:"execution,omitempty"`
+	RetryApproval           *ContentRef         `json:"retry_approval,omitempty"`
+	Error                   string              `json:"error,omitempty"`
 }
 
 // ExperimentBundle atomically creates a draft and its frozen version content.

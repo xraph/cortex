@@ -34,6 +34,7 @@ type scopeData struct {
 	Receipts     map[string]map[string]string                   `json:"receipts"`
 	Allocations  map[string]optimization.ValidationAllocation   `json:"allocations"`
 	Candidates   map[string]optimization.Candidate              `json:"candidates"`
+	Trials       map[string]optimization.Trial                  `json:"trials"`
 }
 
 var _ store.Store = (*Store)(nil)
@@ -67,7 +68,7 @@ func New(options ...Option) (*Store, error) {
 }
 
 func newScopeData() *scopeData {
-	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate)}
+	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate), Trials: make(map[string]optimization.Trial)}
 }
 
 func contextScope(ctx context.Context) (string, error) {
@@ -106,7 +107,7 @@ func (s *Store) Transact(ctx context.Context, fn func(store.Tx) error) error {
 		}
 		data = &copied
 	}
-	tx := &transaction{ctx: ctx, scope: key, data: data, active: true, now: s.now().UTC()}
+	tx := &transaction{ctx: ctx, scope: key, data: data, original: s.scopes[key], active: true, now: s.now().UTC()}
 	defer func() { tx.active = false }()
 	if transactionErr := fn(tx); transactionErr != nil {
 		return transactionErr
@@ -193,11 +194,12 @@ func clone[T any](value T) (T, error) {
 }
 
 type transaction struct {
-	ctx    context.Context
-	scope  string
-	data   *scopeData
-	active bool
-	now    time.Time
+	ctx      context.Context
+	scope    string
+	data     *scopeData
+	original *scopeData
+	active   bool
+	now      time.Time
 }
 
 func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) error {

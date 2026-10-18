@@ -49,6 +49,7 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return optimization.ErrConflict
 		}
 		allowed = nextPhase(experiment.Phase, change.NextPhase)
+		allowed = allowed || experiment.Phase == change.NextPhase && (len(change.Trials)+len(change.TrialUpdates) > 0)
 		if allowed && change.NextPhase == optimization.PhasePropose {
 			if experiment.Round >= experiment.Spec.Limits.MaxRounds {
 				return optimization.ErrConflict
@@ -65,6 +66,10 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if err != nil {
 		return err
 	}
+	trialResources, err := tx.prepareTrials(experiment, change, resources)
+	if err != nil {
+		return err
+	}
 	experiment.State = change.NextState
 	experiment.Phase = change.NextPhase
 	experiment.Revision++
@@ -73,6 +78,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
 	}
 	tx.data.Experiments[key] = experiment
+	for trialID, trial := range trialResources {
+		tx.data.Trials[trialID] = trial
+	}
 	for candidateID, candidate := range resources.candidates {
 		tx.data.Candidates[candidateID] = candidate
 	}
@@ -95,6 +103,17 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		event.Resources = append(event.Resources, candidate.ID)
 		if candidate.Accepted {
 			event.Resources = append(event.Resources, candidate.Version.ID)
+		}
+	}
+	for _, trial := range change.Trials {
+		event.Resources = append(event.Resources, trial.ID)
+	}
+	for _, update := range change.TrialUpdates {
+		event.Resources = append(event.Resources, update.TrialID)
+		if !update.StartAttemptID.IsNil() {
+			event.Resources = append(event.Resources, update.StartAttemptID)
+		} else if !update.AttemptID.IsNil() {
+			event.Resources = append(event.Resources, update.AttemptID)
 		}
 	}
 	return nil

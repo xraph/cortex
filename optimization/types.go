@@ -117,6 +117,8 @@ type Trial struct {
 	ID           id.ID            `json:"id"`
 	ExperimentID id.ID            `json:"experiment_id"`
 	CandidateID  id.ID            `json:"candidate_id,omitempty"`
+	AllocationID id.ID            `json:"allocation_id,omitempty"`
+	Split        Split            `json:"split"`
 	Version      VersionRef       `json:"version"`
 	CaseID       string           `json:"case_id"`
 	CaseDigest   string           `json:"case_digest"`
@@ -126,19 +128,25 @@ type Trial struct {
 	Attempts     []Attempt        `json:"attempts"`
 	Execution    *ExecutionRecord `json:"execution,omitempty"`
 	EvaluationID string           `json:"evaluation_id,omitempty"`
+	Error        string           `json:"error,omitempty"`
 	CreatedAt    time.Time        `json:"created_at"`
 }
 
 // Attempt preserves every external dispatch and its durable environment receipt.
 type Attempt struct {
-	ID          id.ID               `json:"id"`
-	State       TrialState          `json:"state"`
-	Revision    int64               `json:"revision"`
-	Receipt     *EnvironmentReceipt `json:"receipt,omitempty"`
-	StartedAt   time.Time           `json:"started_at"`
-	CompletedAt time.Time           `json:"completed_at"`
-	Usage       Usage               `json:"usage"`
-	Error       string              `json:"error,omitempty"`
+	ID            id.ID               `json:"id"`
+	State         TrialState          `json:"state"`
+	Revision      int64               `json:"revision"`
+	Receipt       *EnvironmentReceipt `json:"receipt,omitempty"`
+	Fence         Fence               `json:"fence"`
+	Stop          *StopReceipt        `json:"stop,omitempty"`
+	Replaces      id.ID               `json:"replaces,omitempty"`
+	RetryApproval *ContentRef         `json:"retry_approval,omitempty"`
+	Execution     *ExecutionRecord    `json:"execution,omitempty"`
+	StartedAt     time.Time           `json:"started_at"`
+	CompletedAt   time.Time           `json:"completed_at"`
+	Usage         Usage               `json:"usage"`
+	Error         string              `json:"error,omitempty"`
 }
 
 // DecisionOutcome is a recommendation, never an implicit activation command.

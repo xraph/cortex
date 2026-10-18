@@ -102,3 +102,11 @@ A review regression reproduced a version identity gap: content digests exclude g
 After that fix, coordinated `make f`, all-nine-module `make l`, both current-runtime and published-v1.8.0 optimizer race suites, and the module build passed. The atomic source foundation's red runtime tests do not prevent lint or these scoped optimizer checks from passing.
 
 CI at `6222838` passed optimization and the repaired Fabriq adapter. It then failed the root stream-cancellation race and docs generation; the runtime owner is correcting both. Atomic source capture is also in progress there, with intentionally failing foundation tests until its store and engine implementations land. Those files remain outside this chat's changes.
+
+The next CI run, `39149889570` at candidate commit `47ec851`, passed every job. The runtime owner still reproduced the intermittent cancellation defect and is shipping its fix alongside the docs-generation correction.
+
+Trial persistence now fixes each case, version, split and repetition, with unique original run IDs across attempts. Trial creation and updates commit with experiment revisions and audit events. A validation attempt requires a matching exposed allocation. Unknown external effects retain their concurrency slots. An approved replacement requires confirmed termination or quarantine and a resettable or idempotent environment; the original attempt and captured execution stay in history.
+
+Captured evidence binds `Outcome.Output`, run and trace identities, usage and the environment receipt into a digest. The receipt must exist in an earlier committed transaction before the store accepts a result. Known failures cannot become unknown after a late timeout, and incomplete execution cannot be stored as a completed trial. Current workers can reconcile the original result after takeover, while stale lease generations fail.
+
+Trial conformance passed under race detection against both the current runtime and published Cortex v1.8.0. The module builds. Coordinated final `make f` and all-nine-module `make l` passed with zero issues (`/tmp/cortex-combined-final-lint.log`). These are memory-store checks. Host approval authorization, trusted environment providers, artifact existence, terminal reconciliation and durable recovery still need their planned service and backend work.
