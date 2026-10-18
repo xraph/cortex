@@ -26,6 +26,7 @@ type Store struct {
 }
 
 type scopeData struct {
+	Evaluations  map[string]optimization.Evaluation             `json:"evaluations"`
 	Experiments  map[string]optimization.Experiment             `json:"experiments"`
 	Versions     map[string]optimization.HarnessVersion         `json:"versions"`
 	Events       map[string][]optimization.Event                `json:"events"`
@@ -68,7 +69,7 @@ func New(options ...Option) (*Store, error) {
 }
 
 func newScopeData() *scopeData {
-	return &scopeData{Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate), Trials: make(map[string]optimization.Trial)}
+	return &scopeData{Evaluations: make(map[string]optimization.Evaluation), Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate), Trials: make(map[string]optimization.Trial)}
 }
 
 func contextScope(ctx context.Context) (string, error) {
@@ -223,6 +224,18 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if _, exists := tx.data.Experiments[e.ID.String()]; exists {
 		return optimization.ErrConflict
 	}
+	if planErr := e.EvaluationPlan.Validate(e.Spec); planErr != nil {
+		return planErr
+	}
+	for _, existing := range tx.data.Experiments {
+		if existing.EvaluationPlan.Ref == e.EvaluationPlan.Ref {
+			metadata := e.EvaluationPlan
+			metadata.FrozenAt = existing.EvaluationPlan.FrozenAt
+			if !same(existing.EvaluationPlan, metadata) {
+				return optimization.ErrConflict
+			}
+		}
+	}
 	plan, err := optimization.Preflight(e.Spec)
 	if err != nil {
 		return err
@@ -251,7 +264,10 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 			return optimization.ErrInvalidSpec
 		}
 	}
-	encoded, err := canonical.Marshal(e.Spec)
+	encoded, err := canonical.Marshal(struct {
+		Spec           optimization.ExperimentSpec
+		EvaluationPlan optimization.EvaluationPlan
+	}{e.Spec, e.EvaluationPlan})
 	if err != nil {
 		return err
 	}

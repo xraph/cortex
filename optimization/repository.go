@@ -19,6 +19,7 @@ type Repository interface {
 	GetValidationAllocation(context.Context, id.ID) (ValidationAllocation, error)
 	GetCandidate(context.Context, id.ID) (Candidate, error)
 	GetTrial(context.Context, id.ID) (Trial, error)
+	GetEvaluation(context.Context, string) (Evaluation, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -76,6 +77,7 @@ type Transition struct {
 	Versions         []HarnessVersion `json:"versions,omitempty"`
 	Trials           []Trial          `json:"trials,omitempty"`
 	TrialUpdates     []TrialUpdate    `json:"trial_updates,omitempty"`
+	Evaluations      []Evaluation     `json:"evaluations,omitempty"`
 }
 
 // TrialUpdate changes execution state without replacing the frozen trial identity.

@@ -49,8 +49,8 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return optimization.ErrConflict
 		}
 		allowed = nextPhase(experiment.Phase, change.NextPhase)
-		allowed = allowed || experiment.Phase == change.NextPhase && (len(change.Trials)+len(change.TrialUpdates) > 0)
-		if allowed && change.NextPhase == optimization.PhasePropose {
+		allowed = allowed || experiment.Phase == change.NextPhase && (len(change.Trials)+len(change.TrialUpdates)+len(change.Evaluations) > 0)
+		if allowed && experiment.Phase != change.NextPhase && change.NextPhase == optimization.PhasePropose {
 			if experiment.Round >= experiment.Spec.Limits.MaxRounds {
 				return optimization.ErrConflict
 			}
@@ -70,6 +70,21 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if err != nil {
 		return err
 	}
+	evaluationResources, err := tx.prepareEvaluations(experiment, change, trialResources)
+	if err != nil {
+		return err
+	}
+	payload := json.RawMessage("{}")
+	if len(change.Evaluations) > 0 {
+		evaluationIDs := make([]string, 0, len(change.Evaluations))
+		for _, evaluation := range change.Evaluations {
+			evaluationIDs = append(evaluationIDs, evaluation.ID)
+		}
+		payload, err = canonical.Marshal(map[string][]string{"evaluation_ids": evaluationIDs})
+		if err != nil {
+			return err
+		}
+	}
 	experiment.State = change.NextState
 	experiment.Phase = change.NextPhase
 	experiment.Revision++
@@ -78,6 +93,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
 	}
 	tx.data.Experiments[key] = experiment
+	for evaluationID, evaluation := range evaluationResources {
+		tx.data.Evaluations[evaluationID] = evaluation
+	}
 	for trialID, trial := range trialResources {
 		tx.data.Trials[trialID] = trial
 	}
@@ -99,6 +117,7 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		eventType = string(change.NextPhase)
 	}
 	event := tx.appendEvent(experiment, eventType, change.Actor)
+	event.Payload = payload
 	for _, candidate := range change.Candidates {
 		event.Resources = append(event.Resources, candidate.ID)
 		if candidate.Accepted {
@@ -115,6 +134,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		} else if !update.AttemptID.IsNil() {
 			event.Resources = append(event.Resources, update.AttemptID)
 		}
+	}
+	for _, evaluation := range change.Evaluations {
+		event.Resources = append(event.Resources, evaluation.TrialID)
 	}
 	return nil
 }

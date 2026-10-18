@@ -50,20 +50,21 @@ const (
 
 // Experiment combines a frozen specification with revision-fenced work state.
 type Experiment struct {
-	ID         id.ID          `json:"id"`
-	Spec       ExperimentSpec `json:"spec"`
-	SpecDigest string         `json:"spec_digest"`
-	State      State          `json:"state"`
-	Phase      Phase          `json:"phase"`
-	Round      int            `json:"round"`
-	Revision   int64          `json:"revision"`
-	Lease      WorkLease      `json:"lease"`
-	Plan       TrialPlan      `json:"plan"`
-	LessonIDs  []id.ID        `json:"lesson_ids"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	Deadline   time.Time      `json:"deadline"`
-	Failure    string         `json:"failure,omitempty"`
+	ID             id.ID          `json:"id"`
+	Spec           ExperimentSpec `json:"spec"`
+	SpecDigest     string         `json:"spec_digest"`
+	EvaluationPlan EvaluationPlan `json:"evaluation_plan"`
+	State          State          `json:"state"`
+	Phase          Phase          `json:"phase"`
+	Round          int            `json:"round"`
+	Revision       int64          `json:"revision"`
+	Lease          WorkLease      `json:"lease"`
+	Plan           TrialPlan      `json:"plan"`
+	LessonIDs      []id.ID        `json:"lesson_ids"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	Deadline       time.Time      `json:"deadline"`
+	Failure        string         `json:"failure,omitempty"`
 }
 
 // WorkLease fences persisted writes from replaced workers.

@@ -80,9 +80,8 @@ func (tx *transaction) prepareCandidates(experiment optimization.Experiment, cha
 		if parentErr := tx.validateCandidateParents(experiment, candidate); parentErr != nil {
 			return empty, parentErr
 		}
-		// Trial evidence is admitted once its persisted ownership checks exist.
-		if len(candidate.Proposal.EvidenceIDs) != 0 {
-			return empty, optimization.ErrNotFound
+		if evidenceErr := tx.validateCandidateEvidence(experiment, candidate); evidenceErr != nil {
+			return empty, evidenceErr
 		}
 		if candidate.Accepted {
 			if candidate.Rejection != "" {
@@ -151,6 +150,34 @@ func (tx *transaction) validateCandidateParents(experiment optimization.Experime
 			return optimization.ErrInvalidSpec
 		}
 		seen[parentID.String()] = true
+	}
+	return nil
+}
+
+// Candidate evidence is restricted to persisted discovery results from this experiment.
+// Incomplete scores remain useful diagnostics, but never become validation evidence.
+func (tx *transaction) validateCandidateEvidence(experiment optimization.Experiment, candidate optimization.Candidate) error {
+	seen := make(map[string]bool, len(candidate.Proposal.EvidenceIDs))
+	for _, trialID := range candidate.Proposal.EvidenceIDs {
+		key := trialID.String()
+		if seen[key] {
+			return optimization.ErrInvalidSpec
+		}
+		seen[key] = true
+		trial, exists := tx.data.Trials[key]
+		if !exists || trial.ExperimentID != experiment.ID {
+			return optimization.ErrNotFound
+		}
+		if trial.Split != optimization.SplitDiscovery {
+			return optimization.ErrPolicyDenied
+		}
+		if trial.Execution == nil || trial.EvaluationID == "" {
+			return optimization.ErrIncompleteEvidence
+		}
+		evaluation, exists := tx.data.Evaluations[trial.EvaluationID]
+		if !exists || evaluation.TrialID != trial.ID || evaluation.ExecutionDigest != trial.Execution.Digest {
+			return optimization.ErrIncompleteEvidence
+		}
 	}
 	return nil
 }

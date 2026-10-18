@@ -90,6 +90,9 @@ func (tx *transaction) applyTrialUpdate(experiment optimization.Experiment, tria
 }
 
 func (tx *transaction) startAttempt(experiment optimization.Experiment, trial *optimization.Trial, update optimization.TrialUpdate, lease optimization.WorkLease, pending map[string]optimization.Trial) error {
+	if trial.EvaluationID != "" {
+		return optimization.ErrConflict
+	}
 	if update.State != optimization.TrialRunning || !update.AttemptID.IsNil() || update.ExpectedAttemptRevision != 0 || update.Receipt != nil || update.Stop != nil || update.Execution != nil || update.Error != "" {
 		return optimization.ErrInvalidSpec
 	}

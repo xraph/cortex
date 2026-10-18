@@ -25,10 +25,17 @@ type EvaluationSpec struct {
 // EvaluationPlan stores an immutable evaluator reference and scorer revisions.
 // Private rubric bytes remain in evaluator storage.
 type EvaluationPlan struct {
-	Ref         ContentRef        `json:"ref"`
-	CaseDigests map[string]string `json:"case_digests"`
-	Scorers     []run.Revision    `json:"scorers"`
-	FrozenAt    time.Time         `json:"frozen_at"`
+	Ref         ContentRef            `json:"ref"`
+	CaseDigests map[string]string     `json:"case_digests"`
+	Scorers     []run.Revision        `json:"scorers"`
+	FrozenAt    time.Time             `json:"frozen_at"`
+	Criteria    []CriterionDefinition `json:"criteria"`
+}
+
+// CriterionDefinition freezes the expected result roster and required gates.
+type CriterionDefinition struct {
+	ID       string `json:"id"`
+	Required bool   `json:"required"`
 }
 
 // EvaluationRequest contains recorded output, never a callback to execute a task.
@@ -71,6 +78,7 @@ type Evaluation struct {
 	JudgeUsage      Usage            `json:"judge_usage"`
 	StartedAt       time.Time        `json:"started_at"`
 	CompletedAt     time.Time        `json:"completed_at"`
+	RecordedAt      time.Time        `json:"recorded_at"`
 }
 
 // ComparisonRequest pairs exact evidence IDs under the frozen objective.

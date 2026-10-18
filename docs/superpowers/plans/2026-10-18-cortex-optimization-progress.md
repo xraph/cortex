@@ -110,3 +110,16 @@ Trial persistence now fixes each case, version, split and repetition, with uniqu
 Captured evidence binds `Outcome.Output`, run and trace identities, usage and the environment receipt into a digest. The receipt must exist in an earlier committed transaction before the store accepts a result. Known failures cannot become unknown after a late timeout, and incomplete execution cannot be stored as a completed trial. Current workers can reconcile the original result after takeover, while stale lease generations fail.
 
 Trial conformance passed under race detection against both the current runtime and published Cortex v1.8.0. The module builds. Coordinated final `make f` and all-nine-module `make l` passed with zero issues (`/tmp/cortex-combined-final-lint.log`). These are memory-store checks. Host approval authorization, trusted environment providers, artifact existence, terminal reconciliation and durable recovery still need their planned service and backend work.
+
+
+## Captured evaluation persistence
+
+Trial persistence was committed and pushed as `98ffaa7`. CI `39152040751` passed at `9b4a882`, which includes that commit and the runtime owner's atomic capture, cancellation and docs fixes. Atomic capture is now implemented on main; optimization still pins the published v1.8.0 root and cannot claim that release has the newer snapshot guarantee.
+
+Experiments now retain the frozen public evaluation plan: exact case digests, scorer revisions and the criterion roster. Draft creation validates those fields against the specification. A reused plan reference cannot change its metadata. The experiment digest covers both the specification and this plan metadata; private rubrics remain in evaluator storage.
+
+Evaluation writes bind the external job and report to a separately committed execution record, case, repetition and plan. The score, trial link and audit event commit together under the current worker lease. Returned records are detached and exactly scoped. Tests cover stale workers, rollback, duplicate jobs, changed identities and scorer revisions, invalid scores, missing criteria, valid zero scores and scorer failures retained without a score. Evaluating a failed execution preserves the failure. Once evaluated, that trial cannot retry and detach its score from the captured result.
+
+Candidate proposals can now reference stored discovery trials from their own experiment. Referenced trials must have captured execution and evaluation records; duplicates and foreign experiment references fail. Incomplete evaluations remain diagnostics for discovery.
+
+The optimizer's full race suite and build pass after coordinated formatting against both the current checkout and published Cortex v1.8.0. Initial whole-tree lint passed, and final optimizer lint reports zero issues. The shared final lint run found issues in the runtime chat's concurrent evidence/verification changes; that chat owns the fixes and final root recheck. These are storage checks. The Sentinel adapter, model-call budget enforcement, durable database backends, decision gates, activation and product flows remain unfinished.

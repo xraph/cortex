@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,8 @@ func validation(t *testing.T, factory Factory) {
 		renamedVersion.Name = "New harness name"
 		other.Versions = []optimization.HarnessVersion{renamedVersion}
 		other.Experiment.Spec.Baseline = optimization.VersionRef{ID: renamedVersion.ID, Digest: renamedVersion.Digest}
+		other.Experiment.Spec.Evaluation.Digest = strings.Repeat("c", 64)
+		other.Experiment.EvaluationPlan = fixtureEvaluationPlan(other.Experiment.Spec)
 		second := validationExperiment(ctx, t, s, other)
 		if err := s.Transact(ctx, func(tx store.Tx) error { _, err := tx.AllocateValidation(allocationRequest(other, second)); return err }); !errors.Is(err, optimization.ErrConflict) {
 			t.Fatalf("exposed inputs reused by another experiment: %v", err)
@@ -228,6 +231,7 @@ func validation(t *testing.T, factory Factory) {
 			child.Versions = nil
 			if index == 1 {
 				child.Experiment.Spec.Evaluation.Revision = "different-scorer"
+				child.Experiment.EvaluationPlan = fixtureEvaluationPlan(child.Experiment.Spec)
 			}
 			lease := validationExperiment(ctx, t, s, child)
 			request.PairedRoster = append(request.PairedRoster, allocationRequest(child, lease).PairedRoster[0])

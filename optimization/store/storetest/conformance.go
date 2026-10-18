@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/optimization/store"
+	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/scopespy"
 )
 
@@ -30,6 +31,9 @@ func Run(t *testing.T, factory Factory) {
 	candidates(t, factory)
 	trials(t, factory)
 	trialEvidence(t, factory)
+	evaluations(t, factory)
+	evaluationIntegrity(t, factory)
+	candidateEvidence(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")
@@ -194,5 +198,13 @@ func Fixture(t *testing.T, project string) optimization.ExperimentBundle {
 		tasks = append(tasks, task)
 	}
 	spec := optimization.ExperimentSpec{SchemaVersion: 1, Scope: scope, AgentID: agentID, Baseline: optimization.VersionRef{ID: base.ID, Digest: base.Digest}, Controller: optimization.VersionRef{ID: controller.ID, Digest: controller.Digest}, Mode: optimization.ModeSequential, Tasks: tasks, Evaluation: optimization.ContentRef{Ref: "plan", Revision: "1", Digest: strings.Repeat("b", 64)}, Limits: optimization.DefaultLimits(), Budget: optimization.Budget{MaxTokens: 1000, TokenOnly: true}, Objective: optimization.DefaultObjective(), Requester: optimization.IdentityRef{Subject: "fixture"}, LessonCutoff: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	return optimization.ExperimentBundle{Experiment: optimization.Experiment{ID: id.New(optimization.PrefixExperiment), Spec: spec}, Versions: []optimization.HarnessVersion{base, controller}}
+	return optimization.ExperimentBundle{Experiment: optimization.Experiment{ID: id.New(optimization.PrefixExperiment), Spec: spec, EvaluationPlan: fixtureEvaluationPlan(spec)}, Versions: []optimization.HarnessVersion{base, controller}}
+}
+
+func fixtureEvaluationPlan(spec optimization.ExperimentSpec) optimization.EvaluationPlan {
+	cases := make(map[string]string, len(spec.Tasks))
+	for _, task := range spec.Tasks {
+		cases[task.ID] = task.Digest
+	}
+	return optimization.EvaluationPlan{Ref: spec.Evaluation, CaseDigests: cases, Scorers: []run.Revision{{Name: "quality", Revision: "1"}}, Criteria: []optimization.CriterionDefinition{{ID: "quality"}}, FrozenAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 }
