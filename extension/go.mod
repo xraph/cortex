@@ -7,8 +7,8 @@ replace github.com/xraph/cortex => ../
 replace github.com/xraph/cortex/sentinel => ../sentinel
 
 require (
-	github.com/xraph/cortex v1.7.0
-	github.com/xraph/cortex/sentinel v1.7.0
+	github.com/xraph/cortex v1.8.0
+	github.com/xraph/cortex/sentinel v1.8.0
 	github.com/xraph/forge v1.12.7
 	github.com/xraph/grove v1.7.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.7.3
