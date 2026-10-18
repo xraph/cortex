@@ -34,6 +34,8 @@ func Run(t *testing.T, factory Factory) {
 	evaluations(t, factory)
 	evaluationIntegrity(t, factory)
 	candidateEvidence(t, factory)
+	phaseEvidence(t, factory)
+	pairedPhase(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")

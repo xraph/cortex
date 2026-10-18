@@ -123,3 +123,16 @@ Evaluation writes bind the external job and report to a separately committed exe
 Candidate proposals can now reference stored discovery trials from their own experiment. Referenced trials must have captured execution and evaluation records; duplicates and foreign experiment references fail. Incomplete evaluations remain diagnostics for discovery.
 
 The optimizer's full race suite and build pass after coordinated formatting against both the current checkout and published Cortex v1.8.0. Initial whole-tree lint passed, and final optimizer lint reports zero issues. The shared final lint run found issues in the runtime chat's concurrent evidence/verification changes; that chat owns the fixes and final root recheck. These are storage checks. The Sentinel adapter, model-call budget enforcement, durable database backends, decision gates, activation and product flows remain unfinished.
+
+
+## Phase evidence gates
+
+Captured evaluation persistence was committed and pushed as `7a3d115`. CI `39153324504` passed.
+
+Phase transitions now check the stored case and repetition identities. Baseline waits for every discovery repetition. Probe waits for every accepted candidate in the current round. Proposal and composition transitions must retain their candidate records, including rejected proposals. Validation waits for both frozen baseline and finalist arms. A final score can commit atomically with the phase transition that consumes it.
+
+For paired controller comparisons, both child experiments and their parent wait for the entire allocation roster. One completed arm cannot advance early. Allocations also reject a finalist that belongs to another experiment, even when the version exists under the same scope and agent.
+
+A completed execution needs its evaluation record before advancing. Explicit terminal failures can advance with their error evidence, so unavailable work can eventually produce an inconclusive decision. Unknown or running attempts remain unresolved. This gate establishes that evidence has been collected; selection policy still determines whether it supports a recommendation.
+
+Conformance fixtures now persist populated execution and evaluation records through the public store API. They use fixture outputs and scores, not live providers. The full optimizer suite and scoped lint pass. Coordinated formatting, post-format race tests and builds against the current checkout and published Cortex v1.8.0, and final all-nine-module lint passed. Decision persistence, activation, outbox work and the remaining phases are still open.

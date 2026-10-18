@@ -20,7 +20,7 @@ func candidates(t *testing.T, factory Factory) {
 		ctx := scoped(bundle.Experiment.Spec.Scope)
 		lease := proposalExperiment(ctx, t, s, bundle)
 		candidate, version := candidateVersion(t, bundle, "Check the evidence before answering.")
-		change := candidateTransition(bundle, lease, candidate, version)
+		change := candidateTransition(ctx, t, s, bundle, lease, candidate, version)
 		abort := errors.New("abort candidate")
 		if err := s.Transact(ctx, func(tx store.Tx) error {
 			if err := tx.CommitTransition(change); err != nil {
@@ -49,7 +49,7 @@ func candidates(t *testing.T, factory Factory) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stored.Version != candidate.Version || stored.CreatedAt.IsZero() || experiment.Phase != optimization.PhaseProbe || experiment.Revision != 5 {
+		if stored.Version != candidate.Version || stored.CreatedAt.IsZero() || experiment.Phase != optimization.PhaseProbe || experiment.Revision != change.ExpectedRevision+1 {
 			t.Fatalf("candidate/phase not committed together: %+v %+v", stored, experiment)
 		}
 		stored.Proposal.Edits[0].Text = "tampered"
@@ -73,7 +73,7 @@ func candidates(t *testing.T, factory Factory) {
 				ctx := scoped(bundle.Experiment.Spec.Scope)
 				lease := proposalExperiment(ctx, t, s, bundle)
 				candidate, version := candidateVersion(t, bundle, "Check the evidence before answering.")
-				change := candidateTransition(bundle, lease, candidate, version)
+				change := candidateTransition(ctx, t, s, bundle, lease, candidate, version)
 				switch mode {
 				case "wrong-experiment":
 					change.Candidates[0].ExperimentID = id.New(optimization.PrefixExperiment)
@@ -105,7 +105,7 @@ func candidates(t *testing.T, factory Factory) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if stored.Phase != optimization.PhasePropose || stored.Revision != 4 {
+				if stored.Phase != optimization.PhasePropose || stored.Revision != change.ExpectedRevision {
 					t.Fatal("rejected candidate advanced phase")
 				}
 			})
@@ -119,7 +119,7 @@ func candidates(t *testing.T, factory Factory) {
 		candidate, version := candidateVersion(t, bundle, "Check the evidence before answering.")
 		duplicate := candidate
 		duplicate.ID = id.New(optimization.PrefixCandidate)
-		change := candidateTransition(bundle, lease, candidate, version)
+		change := candidateTransition(ctx, t, s, bundle, lease, candidate, version)
 		change.Candidates = append(change.Candidates, duplicate)
 		if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }); !errors.Is(err, optimization.ErrConflict) {
 			t.Fatalf("duplicate candidate content admitted: %v", err)
@@ -146,7 +146,7 @@ func candidates(t *testing.T, factory Factory) {
 		original.HarnessID = id.New(optimization.PrefixHarness)
 		bundle.Versions = append(bundle.Versions, original)
 		lease := proposalExperiment(ctx, t, s, bundle)
-		change := candidateTransition(bundle, lease, candidate, version)
+		change := candidateTransition(ctx, t, s, bundle, lease, candidate, version)
 		if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }); !errors.Is(err, optimization.ErrConflict) {
 			t.Fatalf("existing version ID rebound to another harness: %v", err)
 		}
@@ -169,22 +169,19 @@ func candidates(t *testing.T, factory Factory) {
 				general, firstVersion := candidateVersion(t, bundle, "Check the evidence before answering.")
 				domain, secondVersion := candidateVersion(t, bundle, "Check domain assumptions before answering.")
 				domain.Origin = optimization.OriginDomain
-				change := candidateTransition(bundle, lease, general, firstVersion)
+				change := candidateTransition(ctx, t, s, bundle, lease, general, firstVersion)
 				change.Candidates = append(change.Candidates, domain)
 				change.Versions = append(change.Versions, secondVersion)
 				if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.Transact(ctx, func(tx store.Tx) error {
-					return tx.CommitTransition(optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 5, NextState: optimization.StateRunning, NextPhase: optimization.PhaseCompose, Lease: lease, IdempotencyKey: "compose", Actor: bundle.Experiment.Spec.Requester})
-				}); err != nil {
-					t.Fatal(err)
-				}
+				fillVersionTrials(ctx, t, s, bundle, lease, general.Version, general.ID, optimization.SplitDiscovery, id.ID{}, nil)
+				fillVersionTrials(ctx, t, s, bundle, lease, domain.Version, domain.ID, optimization.SplitDiscovery, id.ID{}, nil)
+				advanceFixture(ctx, t, s, bundle, lease, optimization.PhaseCompose)
 				composed, thirdVersion := candidateVersion(t, bundle, "Check evidence and domain assumptions before answering.")
 				composed.Origin = optimization.OriginComposed
 				composed.Parents = []id.ID{general.ID, domain.ID}
-				change = candidateTransition(bundle, lease, composed, thirdVersion)
-				change.ExpectedRevision = 6
+				change = candidateTransition(ctx, t, s, bundle, lease, composed, thirdVersion)
 				change.IdempotencyKey = "composition-result"
 				err := s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) })
 				if limit == 2 {
@@ -233,21 +230,14 @@ func proposalExperiment(ctx context.Context, t *testing.T, s store.Store, bundle
 	t.Helper()
 	var lease optimization.WorkLease
 	if err := s.Transact(ctx, func(tx store.Tx) error {
-		if err := tx.CreateExperiment(bundle); err != nil {
-			return err
-		}
-		if err := tx.CommitTransition(optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 1, NextState: optimization.StateQueued, IdempotencyKey: "start", Actor: bundle.Experiment.Spec.Requester}); err != nil {
-			return err
-		}
 		var err error
-		lease, err = tx.ClaimWork(optimization.ClaimRequest{ExperimentID: bundle.Experiment.ID, Owner: "proposal-worker", Duration: 5 * time.Minute})
-		if err != nil {
-			return err
-		}
-		return tx.CommitTransition(optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 3, NextState: optimization.StateRunning, NextPhase: optimization.PhasePropose, IdempotencyKey: "propose", Lease: lease, Actor: bundle.Experiment.Spec.Requester})
+		lease, err = startFixture(tx, bundle, "proposal-worker")
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
+	fillVersionTrials(ctx, t, s, bundle, lease, bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, nil)
+	advanceFixture(ctx, t, s, bundle, lease, optimization.PhasePropose)
 	return lease
 }
 
@@ -263,6 +253,11 @@ func candidateVersion(t *testing.T, bundle optimization.ExperimentBundle, body s
 	return candidate, version
 }
 
-func candidateTransition(bundle optimization.ExperimentBundle, lease optimization.WorkLease, candidate optimization.Candidate, version optimization.HarnessVersion) optimization.Transition {
-	return optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 4, NextState: optimization.StateRunning, NextPhase: optimization.PhaseProbe, Lease: lease, IdempotencyKey: "proposal-result", Actor: bundle.Experiment.Spec.Requester, Candidates: []optimization.Candidate{candidate}, Versions: []optimization.HarnessVersion{version}}
+func candidateTransition(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, lease optimization.WorkLease, candidate optimization.Candidate, version optimization.HarnessVersion) optimization.Transition {
+	t.Helper()
+	current, err := s.GetExperiment(ctx, bundle.Experiment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: current.Revision, NextState: optimization.StateRunning, NextPhase: optimization.PhaseProbe, Lease: lease, IdempotencyKey: "proposal-result", Actor: bundle.Experiment.Spec.Requester, Candidates: []optimization.Candidate{candidate}, Versions: []optimization.HarnessVersion{version}}
 }

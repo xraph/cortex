@@ -190,6 +190,11 @@ func openTrial(ctx context.Context, t *testing.T, s store.Store, bundle optimiza
 	attemptID := id.New(optimization.PrefixAttempt)
 	commitTrialChange(ctx, t, s, trialTransition(ctx, t, s, bundle.Experiment.ID, lease, key+"/start", nil, []optimization.TrialUpdate{{TrialID: trial.ID, ExpectedRevision: 1, State: optimization.TrialRunning, StartAttemptID: attemptID}}))
 	receipt := trialReceipt(bundle, lease, attemptID)
+	for _, task := range bundle.Experiment.Spec.Tasks {
+		if task.ID == trial.CaseID {
+			receipt.Snapshot = task.EnvironmentSnapshot
+		}
+	}
 	commitTrialChange(ctx, t, s, trialTransition(ctx, t, s, bundle.Experiment.ID, lease, key+"/receipt", nil, []optimization.TrialUpdate{{TrialID: trial.ID, ExpectedRevision: 2, State: optimization.TrialRunning, AttemptID: attemptID, ExpectedAttemptRevision: 1, Receipt: &receipt}}))
 	return receipt
 }

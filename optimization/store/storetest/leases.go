@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/optimization/store"
 )
@@ -46,6 +47,7 @@ func leases(t *testing.T, factory Factory) {
 		if _, err = claim("two"); !errors.Is(err, optimization.ErrConflict) {
 			t.Fatalf("live claim stolen: %v", err)
 		}
+		fillVersionTrials(ctx, t, s, bundle, first, bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, nil)
 		nanos.Add(int64(31 * time.Second))
 		second, err := claim("two")
 		if err != nil {

@@ -14,6 +14,7 @@ func candidateEvidence(t *testing.T, factory Factory) {
 	t.Run("CandidateReferencesOwnedDiscoveryEvidence", func(t *testing.T) {
 		s, value := evaluatedTrial(t, factory)
 		commitTrialChange(s.ctx, t, s.store, evaluationChange(t, s, value))
+		fillVersionTrials(s.ctx, t, s.store, s.bundle, s.lease, s.bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, []optimization.Trial{s.trial})
 		advance := trialTransition(s.ctx, t, s.store, s.bundle.Experiment.ID, s.lease, "propose-with-evidence", nil, nil)
 		advance.NextPhase = optimization.PhasePropose
 		commitTrialChange(s.ctx, t, s.store, advance)
@@ -30,6 +31,7 @@ func candidateEvidence(t *testing.T, factory Factory) {
 	t.Run("CandidateCannotBorrowAnotherExperimentsEvidence", func(t *testing.T) {
 		s, value := evaluatedTrial(t, factory)
 		commitTrialChange(s.ctx, t, s.store, evaluationChange(t, s, value))
+		fillVersionTrials(s.ctx, t, s.store, s.bundle, s.lease, s.bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, []optimization.Trial{s.trial})
 		other := s.bundle
 		other.Experiment.ID = id.New(optimization.PrefixExperiment)
 		lease := proposalExperiment(s.ctx, t, s.store, other)
@@ -43,13 +45,26 @@ func candidateEvidence(t *testing.T, factory Factory) {
 	})
 	t.Run("CandidateRejectsDuplicateOrUnscoredEvidence", func(t *testing.T) {
 		for _, evaluated := range []bool{false, true} {
-			s, value := evaluatedTrial(t, factory)
+			var s trialScenario
 			if evaluated {
-				commitTrialChange(s.ctx, t, s.store, evaluationChange(t, s, value))
+				var value optimization.Evaluation
+				s, value = evaluatedTrial(t, factory)
+				persistFixtureEvaluation(s.ctx, t, s.store, s.bundle, s.lease, value)
+				fillVersionTrials(s.ctx, t, s.store, s.bundle, s.lease, s.bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, []optimization.Trial{s.trial})
+			} else {
+				backend, ctx, bundle, lease := trialFixture(t, factory)
+				s = trialScenario{store: backend, ctx: ctx, bundle: bundle, lease: lease}
+				for repetition := range bundle.Experiment.Spec.Limits.Repetitions {
+					trial := queuedTrial(bundle, 0)
+					trial.Repetition = repetition
+					change := trialTransition(ctx, t, backend, bundle.Experiment.ID, lease, "blocked-queue/"+trial.ID.String(), []optimization.Trial{trial}, nil)
+					commitTrialChange(ctx, t, backend, change)
+					change = trialTransition(ctx, t, backend, bundle.Experiment.ID, lease, "blocked/"+trial.ID.String(), nil, []optimization.TrialUpdate{{TrialID: trial.ID, ExpectedRevision: 1, State: optimization.TrialBlocked, Error: "environment unavailable"}})
+					commitTrialChange(ctx, t, backend, change)
+					s.trial = trial
+				}
 			}
-			advance := trialTransition(s.ctx, t, s.store, s.bundle.Experiment.ID, s.lease, "propose", nil, nil)
-			advance.NextPhase = optimization.PhasePropose
-			commitTrialChange(s.ctx, t, s.store, advance)
+			advanceFixture(s.ctx, t, s.store, s.bundle, s.lease, optimization.PhasePropose)
 			evidence := []id.ID{s.trial.ID}
 			if evaluated {
 				evidence = append(evidence, s.trial.ID)

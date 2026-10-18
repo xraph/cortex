@@ -82,6 +82,18 @@ func (tx *transaction) AllocateValidation(request optimization.ValidationAllocat
 		if !tx.executionVersion(arm.Finalist, owner.Spec.AgentID) {
 			return empty, optimization.ErrStaleVersion
 		}
+		if arm.Finalist != child.Spec.Baseline {
+			owned := false
+			for _, candidate := range tx.data.Candidates {
+				if candidate.ExperimentID == child.ID && candidate.Accepted && candidate.Version == arm.Finalist {
+					owned = true
+					break
+				}
+			}
+			if !owned {
+				return empty, optimization.ErrNotFound
+			}
+		}
 	}
 	allocation := optimization.ValidationAllocation{ID: request.ID, Scope: owner.Spec.Scope, AgentID: owner.Spec.AgentID, ExperimentID: owner.ID, PairedRoster: request.PairedRoster, Revision: 1, CaseDigests: []string{}, InputDigests: []string{}, DatasetItems: []optimization.ContentRef{}}
 	for _, task := range tasks {

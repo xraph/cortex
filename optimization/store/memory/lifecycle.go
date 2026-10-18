@@ -54,7 +54,6 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			if experiment.Round >= experiment.Spec.Limits.MaxRounds {
 				return optimization.ErrConflict
 			}
-			experiment.Round++
 		}
 	} else if change.NextPhase != "" || change.Lease.Generation != 0 {
 		return optimization.ErrConflict
@@ -73,6 +72,12 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	evaluationResources, err := tx.prepareEvaluations(experiment, change, trialResources)
 	if err != nil {
 		return err
+	}
+	if phaseErr := tx.validatePhaseEvidence(experiment, change, resources, trialResources); phaseErr != nil {
+		return phaseErr
+	}
+	if experiment.Phase != change.NextPhase && change.NextPhase == optimization.PhasePropose {
+		experiment.Round++
 	}
 	payload := json.RawMessage("{}")
 	if len(change.Evaluations) > 0 {

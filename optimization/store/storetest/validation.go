@@ -244,28 +244,12 @@ func validation(t *testing.T, factory Factory) {
 
 func validationExperiment(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle) optimization.WorkLease {
 	t.Helper()
-	var lease optimization.WorkLease
-	if err := s.Transact(ctx, func(tx store.Tx) error {
-		if err := tx.CreateExperiment(bundle); err != nil {
-			return err
-		}
-		if err := tx.CommitTransition(optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 1, NextState: optimization.StateQueued, IdempotencyKey: "start", Actor: bundle.Experiment.Spec.Requester}); err != nil {
-			return err
-		}
-		var err error
-		lease, err = tx.ClaimWork(optimization.ClaimRequest{ExperimentID: bundle.Experiment.ID, Owner: "validation-worker", Duration: 5 * time.Minute})
-		if err != nil {
-			return err
-		}
-		for index, phase := range []optimization.Phase{optimization.PhasePropose, optimization.PhaseProbe, optimization.PhaseValidate} {
-			if transitionErr := tx.CommitTransition(optimization.Transition{ExperimentID: bundle.Experiment.ID, ExpectedRevision: int64(3 + index), NextState: optimization.StateRunning, NextPhase: phase, Lease: lease, IdempotencyKey: string(phase), Actor: bundle.Experiment.Spec.Requester}); transitionErr != nil {
-				return transitionErr
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	lease := proposalExperiment(ctx, t, s, bundle)
+	change := trialTransition(ctx, t, s, bundle.Experiment.ID, lease, "no-change-proposal", nil, nil)
+	change.NextPhase = optimization.PhaseProbe
+	change.Candidates = []optimization.Candidate{{ID: id.New(optimization.PrefixCandidate), ExperimentID: bundle.Experiment.ID, Origin: optimization.OriginGeneral, Round: 1, Rejection: "No candidate improves this fixture"}}
+	commitTrialChange(ctx, t, s, change)
+	advanceFixture(ctx, t, s, bundle, lease, optimization.PhaseValidate)
 	return lease
 }
 
