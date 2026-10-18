@@ -20,8 +20,9 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Complete, published as Sentinel v1.9.0 | Consume v1.9.0 after optimization bootstrap |
-| 2: optimization contracts | Harness contracts pushed as `8f3f91b`; experiment preflight and records in progress | Finish ports, constructor validation and CI coverage |
-| 3-5: persistence and recovery | Pending | Finish task 2 |
+| 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
+| 3: atomic memory storage | Initial scope, rollback, immutable version and clock tests pass | Add events, leases, transitions, allocations, accounting and activation |
+| 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
 ## Sentinel evidence
@@ -59,3 +60,11 @@ Task 12's generic upstream checks can run before the optimizer adapter exists. F
 Focused regressions pass, including stale revoked/deleted hits, foreign tenant rows, OR filters and undiscovered rows. A real PostgreSQL test under the non-superuser app role also passes. Explicit-ID create with expected version zero already rejects duplicates and preserves the original row. The full root/core race suite and both module lint checks pass. Documentation type checks and production build pass; lint has one existing non-blocking image warning. Code commit `d503a78` and docs commit `c071e83` are pushed. CI `39142380696` passed every code, security and integration job. Its only failure was module tag skew left by the earlier partial v1.8.1 release.
 
 The repository's documented recovery procedure calls for the next patch. Rehearsal `39144695298` and corrective dispatch `39144754887` both passed. All five v1.8.2 module tags exist; core points to `c071e83`, while root and the other modules point to the workflow's require-bump commit `7d625d4`. The real Go proxy resolves core v1.8.2. The unchanged module-version checker now passes. Binary/image release `39144824724` passed all three jobs, including the Helm chart and Docker Hub mirror. This is a prerequisite slice, not completion of task 12.
+
+## Optimization storage progress
+
+The initial memory backend stores drafts and their frozen versions in one transaction. Shared conformance checks cover exact three-level scope isolation, ancestor and foreign-ID refusal, rollback of both experiment and version rows, detached reads and writes, and expired transaction handles. A regression caught reused versions overwriting the original creator; existing version metadata now stays intact. An injected clock owns creation timestamps.
+
+These checks pass with the current runtime and with published Cortex v1.8.0. Scoped lint and builds pass after coordinated formatting. The required full lint run reported eight findings in the runtime owner's ongoing scope-hardening files; those findings were sent to that owner. All other modules, including optimization, passed that run.
+
+Task 3 remains incomplete. Audit events, work leases, transitions, budget accounting, holdout allocations, activation, publication and remaining readers still need implementation. The memory backend provides no durable recovery guarantee. Constructor wiring follows the storage ports so the optimizer does not import a package that already imports its domain types.

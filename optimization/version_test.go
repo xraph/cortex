@@ -166,10 +166,16 @@ func TestVersionRejectsAmbiguousPreparedScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = eng.PrepareAgent(cortex.WithScope(context.Background(), base.Scope), base.AgentID, nil); err != nil {
+		t.Fatalf("valid control preparation failed: %v", err)
+	}
 	ambiguous := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "test/project=two"}}}
 	base.Prepared, err = eng.PrepareAgent(cortex.WithScope(context.Background(), ambiguous), base.AgentID, nil)
 	if err != nil {
-		t.Fatal(err)
+		// New runtimes reject this before a snapshot exists. The published v1.8.0
+		// compatibility run still exercises optimization's own collision guard.
+		t.Logf("runtime rejected ambiguous source scope: %v", err)
+		return
 	}
 	base.Scope = cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "test"}, {Key: "project", Value: "two"}}}
 	if _, err = SealVersion(base); !errors.Is(err, ErrInvalidSpec) {
