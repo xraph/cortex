@@ -30,6 +30,7 @@ var (
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")
 	ErrRunCancelled     = errors.New("cortex: run cancelled")
+	ErrRunIncomplete    = errors.New("cortex: run incomplete")
 	ErrRunAlreadyDone   = errors.New("cortex: run already completed")
 	ErrBudgetExhausted  = errors.New("cortex: budget exhausted")
 	ErrMaxStepsReached  = errors.New("cortex: maximum steps reached")

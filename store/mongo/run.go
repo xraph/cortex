@@ -82,19 +82,23 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 
 	set := bson.M{
-		"agent_id":     m.AgentID,
-		"session_id":   m.SessionID,
-		"state":        m.State,
-		"input":        m.Input,
-		"output":       m.Output,
-		"error":        m.Error,
-		"step_count":   m.StepCount,
-		"tokens_used":  m.TokensUsed,
-		"started_at":   m.StartedAt,
-		"completed_at": m.CompletedAt,
-		"persona_ref":  m.PersonaRef,
-		"metadata":     m.Metadata,
-		"updated_at":   m.UpdatedAt,
+		"agent_id":            m.AgentID,
+		"session_id":          m.SessionID,
+		"state":               m.State,
+		"stop_reason":         m.StopReason,
+		"finish_reason":       m.FinishReason,
+		"verification_status": m.VerificationStatus,
+		"result_ref":          m.ResultRef,
+		"input":               m.Input,
+		"output":              m.Output,
+		"error":               m.Error,
+		"step_count":          m.StepCount,
+		"tokens_used":         m.TokensUsed,
+		"started_at":          m.StartedAt,
+		"completed_at":        m.CompletedAt,
+		"persona_ref":         m.PersonaRef,
+		"metadata":            m.Metadata,
+		"updated_at":          m.UpdatedAt,
 	}
 
 	res, err := s.mdb.NewUpdate((*runModel)(nil)).

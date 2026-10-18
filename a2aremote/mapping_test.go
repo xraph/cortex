@@ -13,11 +13,12 @@ import (
 
 func TestTaskStateProjection(t *testing.T) {
 	cases := map[run.State]TaskState{
-		run.StateCreated:   TaskStateSubmitted,
-		run.StateRunning:   TaskStateWorking,
-		run.StateCompleted: TaskStateCompleted,
-		run.StateFailed:    TaskStateFailed,
-		run.StateCancelled: TaskStateCanceled,
+		run.StateCreated:    TaskStateSubmitted,
+		run.StateRunning:    TaskStateWorking,
+		run.StateCompleted:  TaskStateCompleted,
+		run.StateIncomplete: TaskStateFailed,
+		run.StateFailed:     TaskStateFailed,
+		run.StateCancelled:  TaskStateCanceled,
 		// A paused run is waiting on something outside itself, which is
 		// exactly what INPUT_REQUIRED means. The peer learns that it is
 		// waiting without learning whose business it waits on.

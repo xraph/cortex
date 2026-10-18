@@ -23,6 +23,7 @@ var mutableRunColumns = []string{
 	"agent_id",
 	"session_id",
 	"state",
+	"stop_reason", "finish_reason", "verification_status", "result_ref",
 	"input",
 	"output",
 	"error",

@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
+	"github.com/xraph/cortex/run"
 )
 
 // agentRunnerAdapter adapts the engine's RunAgent to orchestration.AgentRunner.
@@ -16,6 +18,12 @@ func (a agentRunnerAdapter) RunAgent(ctx context.Context, agentName, input strin
 	r, err := a.eng.RunAgent(ctx, agentName, input, mapRunOpts(opts))
 	if err != nil {
 		return nil, err
+	}
+	if r.State == run.StateIncomplete {
+		return nil, fmt.Errorf("cortex: worker %s stopped with %s: %w", agentName, r.StopReason, cortex.ErrRunIncomplete)
+	}
+	if r.State == run.StateCancelled {
+		return nil, cortex.ErrRunCancelled
 	}
 	return &orchestration.AgentResult{
 		AgentName: agentName,

@@ -192,6 +192,8 @@ func TaskFromRun(r *run.Run, contextID string) Task {
 			Name:       "output",
 			Parts:      []Part{{Text: r.Output}},
 		}}
+	case r.State == run.StateIncomplete:
+		task.Status.Message = &Message{MessageID: r.ID.String() + "-status", Role: RoleAgent, Parts: []Part{{Text: "Execution incomplete: " + string(r.StopReason)}}}
 	case r.Error != "":
 		task.Status.Message = &Message{
 			MessageID: r.ID.String() + "-status",
@@ -210,7 +212,7 @@ func taskState(s run.State) TaskState {
 		return TaskStateWorking
 	case run.StateCompleted:
 		return TaskStateCompleted
-	case run.StateFailed:
+	case run.StateFailed, run.StateIncomplete:
 		return TaskStateFailed
 	case run.StateCancelled:
 		return TaskStateCanceled

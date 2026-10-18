@@ -30,12 +30,12 @@ Files: create `run/outcome.go`, `run/outcome_test.go`, `engine/finalize.go`, `en
 
 Interfaces: produces `run.StopReason`, `StateIncomplete`, additive result fields, and engine helper `finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcome) error`. `run.Outcome` contains stop reason, candidate output, finish reason, step/token usage and terminal time. The helper performs durable terminal update before emitting completion. It does not assign a passed verification status.
 
-- [ ] Write `TestRunStepLimitIsIncomplete`, `TestRunLengthFinishIsIncomplete`, `TestRunFinalAnswerIsUnchecked`, `TestRunTerminalWriteFailureDoesNotEmitDone` and table-driven sync/stream equivalents. Assert `StateIncomplete` with `step_limit` for tool-only exhaustion, no successful done event on persistence failure, and legacy completed decoding yields unchecked.
-- [ ] Run `GOWORK=off go test ./run ./engine -run 'TestRun(StepLimit|LengthFinish|FinalAnswer|TerminalWrite)' -count=1`. Confirm the current completion behavior fails the regression assertions.
-- [ ] Implement shared terminal outcome selection. Respect provider finish reasons, nil/malformed response failures, cancellation and limits. Use a bounded uncancelled context for terminal persistence. A persistence outage returns an error and retains a recoverable incomplete lifecycle, not a fabricated durable success.
-- [ ] Extend all backend conversions and migrations; historical rows retain original state with missing assurance fields interpreted as unchecked. Add compatibility fixtures for old run JSON and unknown future state/schema.
-- [ ] Run root `run`/`engine` tests with race detection and store conformance against SQLite, Postgres and Mongo. Test repeated finalization idempotency and completion plugin emission only after durable state.
-- [ ] Apply common quality/commit protocol. Subject: `fix(engine): distinguish incomplete runs from successful termination`.
+- [x] Write `TestRunStepLimitIsIncomplete`, `TestRunLengthFinishIsIncomplete`, `TestRunFinalAnswerIsUnchecked`, `TestRunTerminalWriteFailureDoesNotEmitDone` and table-driven sync/stream equivalents. Assert `StateIncomplete` with `step_limit` for tool-only exhaustion, no successful done event on persistence failure, and legacy completed decoding yields unchecked.
+- [x] Run `GOWORK=off go test ./run ./engine -run 'TestRun(StepLimit|LengthFinish|FinalAnswer|TerminalWrite)' -count=1`. Confirm the current completion behavior fails the regression assertions.
+- [x] Implement shared terminal outcome selection. Respect provider finish reasons, nil/malformed response failures, cancellation and limits. Use a bounded uncancelled context for terminal persistence. A persistence outage returns an error and retains a recoverable incomplete lifecycle, not a fabricated durable success.
+- [x] Extend all backend conversions and migrations; historical rows retain original state with missing assurance fields interpreted as unchecked. Add compatibility fixtures for old run JSON and unknown future state/schema.
+- [x] Run root `run`/`engine` tests with race detection and store conformance against SQLite, Postgres and Mongo. Test repeated finalization idempotency and completion plugin emission only after durable state.
+- [x] Apply common quality/commit protocol. Subject: `fix(engine): distinguish incomplete runs from successful termination`.
 
 ## S1.2: Freeze prepared execution and enforce cumulative limits
 

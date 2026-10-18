@@ -21,6 +21,7 @@ import (
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/verification"
 )
 
 // unmarshalField unmarshals a JSON string field into dest.
@@ -584,52 +585,60 @@ func sessionFromModel(m *sessionModel) (*session.Session, error) {
 // ──────────────────────────────────────────────────
 
 type runModel struct {
-	grove.BaseModel `grove:"table:cortex_runs"`
-	ID              string            `grove:"id,pk"`
-	AgentID         string            `grove:"agent_id,notnull"`
-	SessionID       string            `grove:"session_id,notnull"`
-	State           string            `grove:"state,notnull"`
-	Input           string            `grove:"input"`
-	Output          string            `grove:"output"`
-	Error           string            `grove:"error"`
-	StepCount       int               `grove:"step_count"`
-	TokensUsed      int               `grove:"tokens_used"`
-	StartedAt       *time.Time        `grove:"started_at"`
-	CompletedAt     *time.Time        `grove:"completed_at"`
-	PersonaRef      string            `grove:"persona_ref"`
-	Metadata        string            `grove:"metadata,type:jsonb"`
-	ScopeL0         string            `grove:"scope_l0,notnull"`
-	ScopeL1         string            `grove:"scope_l1,notnull"`
-	ScopeL2         string            `grove:"scope_l2,notnull"`
-	ScopeExtra      map[string]string `grove:"scope_extra,type:jsonb,notnull"`
-	ScopeCanon      string            `grove:"scope_canon,notnull"`
-	CreatedAt       time.Time         `grove:"created_at,notnull,default:current_timestamp"`
-	UpdatedAt       time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+	grove.BaseModel    `grove:"table:cortex_runs"`
+	ID                 string            `grove:"id,pk"`
+	AgentID            string            `grove:"agent_id,notnull"`
+	SessionID          string            `grove:"session_id,notnull"`
+	State              string            `grove:"state,notnull"`
+	StopReason         string            `grove:"stop_reason"`
+	Input              string            `grove:"input"`
+	Output             string            `grove:"output"`
+	Error              string            `grove:"error"`
+	StepCount          int               `grove:"step_count"`
+	TokensUsed         int               `grove:"tokens_used"`
+	StartedAt          *time.Time        `grove:"started_at"`
+	CompletedAt        *time.Time        `grove:"completed_at"`
+	PersonaRef         string            `grove:"persona_ref"`
+	Metadata           string            `grove:"metadata,type:jsonb"`
+	ScopeL0            string            `grove:"scope_l0,notnull"`
+	ScopeL1            string            `grove:"scope_l1,notnull"`
+	ScopeL2            string            `grove:"scope_l2,notnull"`
+	ScopeExtra         map[string]string `grove:"scope_extra,type:jsonb,notnull"`
+	ScopeCanon         string            `grove:"scope_canon,notnull"`
+	CreatedAt          time.Time         `grove:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt          time.Time         `grove:"updated_at,notnull,default:current_timestamp"`
+	FinishReason       string            `grove:"finish_reason"`
+	VerificationStatus string            `grove:"verification_status"`
+	ResultRef          string            `grove:"result_ref"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
-		ID:          r.ID.String(),
-		AgentID:     r.AgentID.String(),
-		SessionID:   r.SessionID.String(),
-		State:       string(r.State),
-		Input:       r.Input,
-		Output:      r.Output,
-		Error:       r.Error,
-		StepCount:   r.StepCount,
-		TokensUsed:  r.TokensUsed,
-		StartedAt:   r.StartedAt,
-		CompletedAt: r.CompletedAt,
-		PersonaRef:  r.PersonaRef,
-		Metadata:    mustJSON(r.Metadata),
-		ScopeL0:     l0,
-		ScopeL1:     l1,
-		ScopeL2:     l2,
-		ScopeExtra:  extra,
-		ScopeCanon:  r.Scope.Canonical(),
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:                 r.ID.String(),
+		AgentID:            r.AgentID.String(),
+		SessionID:          r.SessionID.String(),
+		State:              string(r.State),
+		StopReason:         string(r.StopReason),
+		FinishReason:       r.FinishReason,
+		VerificationStatus: string(r.VerificationStatus.Normalized()),
+		ResultRef:          r.ResultRef,
+		Input:              r.Input,
+		Output:             r.Output,
+		Error:              r.Error,
+		StepCount:          r.StepCount,
+		TokensUsed:         r.TokensUsed,
+		StartedAt:          r.StartedAt,
+		CompletedAt:        r.CompletedAt,
+		PersonaRef:         r.PersonaRef,
+		Metadata:           mustJSON(r.Metadata),
+		ScopeL0:            l0,
+		ScopeL1:            l1,
+		ScopeL2:            l2,
+		ScopeExtra:         extra,
+		ScopeCanon:         r.Scope.Canonical(),
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
 	}
 }
 
@@ -651,20 +660,24 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
 	r := &run.Run{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          runID,
-		AgentID:     agentID,
-		SessionID:   sessionID,
-		Scope:       scope,
-		State:       run.State(m.State),
-		Input:       m.Input,
-		Output:      m.Output,
-		Error:       m.Error,
-		StepCount:   m.StepCount,
-		TokensUsed:  m.TokensUsed,
-		StartedAt:   m.StartedAt,
-		CompletedAt: m.CompletedAt,
-		PersonaRef:  m.PersonaRef,
+		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:                 runID,
+		AgentID:            agentID,
+		SessionID:          sessionID,
+		Scope:              scope,
+		State:              run.State(m.State),
+		StopReason:         run.StopReason(m.StopReason),
+		FinishReason:       m.FinishReason,
+		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),
+		ResultRef:          m.ResultRef,
+		Input:              m.Input,
+		Output:             m.Output,
+		Error:              m.Error,
+		StepCount:          m.StepCount,
+		TokensUsed:         m.TokensUsed,
+		StartedAt:          m.StartedAt,
+		CompletedAt:        m.CompletedAt,
+		PersonaRef:         m.PersonaRef,
 	}
 	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
 		return nil, err

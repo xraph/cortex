@@ -259,8 +259,11 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		// already recorded above and their terminal events have already
 		// fired, so nothing is thrown away; what is refused is the
 		// pretence that the run finished.
-		return nil, nil, e.failResume(ctx, r, ag.ID,
-			fmt.Errorf("resume run %s at step %d of %d: %w", runID, st.stepIndex, cfg.MaxSteps, cortex.ErrMaxStepsReached))
+		limitErr := fmt.Errorf("resume run %s at step %d of %d: %w", runID, st.stepIndex, cfg.MaxSteps, cortex.ErrMaxStepsReached)
+		if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopStepLimit, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
+			return nil, nil, errors.Join(limitErr, err)
+		}
+		return nil, nil, limitErr
 	}
 
 	// The run's own start, not this call's, so a resumed run reports the

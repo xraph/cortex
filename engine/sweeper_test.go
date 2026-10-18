@@ -686,6 +686,7 @@ func TestSweepOnce_ClearsARowLeftOnATerminalRun(t *testing.T) {
 		wantState run.State
 	}{
 		{name: "failed run", state: run.StateFailed, wantGone: true, wantState: run.StateFailed},
+		{name: "incomplete run", state: run.StateIncomplete, wantGone: true, wantState: run.StateIncomplete},
 		{name: "completed run", state: run.StateCompleted, wantGone: true, wantState: run.StateCompleted},
 		{name: "cancelled run", state: run.StateCancelled, wantGone: true, wantState: run.StateCancelled},
 		// The one that must survive: a resume holds its row from the

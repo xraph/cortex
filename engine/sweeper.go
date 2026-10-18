@@ -279,7 +279,7 @@ func (e *Engine) deleteOrphanRow(ctx context.Context, susp *suspension.Suspensio
 // cost of being wrong the other way is deleting a row a run still needs.
 func isTerminalRunState(s run.State) bool {
 	switch s {
-	case run.StateCompleted, run.StateFailed, run.StateCancelled:
+	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled:
 		return true
 	case run.StateCreated, run.StateRunning, run.StatePaused:
 		return false

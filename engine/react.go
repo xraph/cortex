@@ -174,6 +174,8 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
+	var lastFinishReason string
+	stopReason := run.StopStepLimit
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
@@ -219,6 +221,10 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			return nil, fmt.Errorf("llm complete: %w", err)
 		}
 
+		if resp == nil {
+			return r, e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
+		}
+		lastFinishReason = resp.FinishReason
 		st.tokensUsed += resp.Usage.TotalTokens
 
 		// Record the step.
@@ -243,7 +249,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		st.stepIndex++
 
 		// Check for tool calls.
-		if len(resp.ToolCalls) > 0 {
+		if len(resp.ToolCalls) > 0 && responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls)) == run.StopFinalAnswer {
 			// Append assistant message with tool calls.
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
@@ -323,6 +329,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		// No tool calls — this is the final response.
 		finalOutput = resp.Content
+		stopReason = responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls))
 
 		// Safety: scan output before returning.
 		if e.safety != nil {
@@ -353,16 +360,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
-	r.State = run.StateCompleted
-	r.Output = finalOutput
-	r.StepCount = st.stepIndex
-	r.TokensUsed = st.tokensUsed
-	r.CompletedAt = &completedAt
-	if err := e.store.UpdateRun(ctx, r); err != nil {
-		e.logger.Error("update run", log.String("error", err.Error()))
+	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
+		return r, err
 	}
-
-	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(startedAt))
 	return r, nil
 }
 
@@ -449,6 +449,8 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
+	var lastFinishReason string
+	stopReason := run.StopStepLimit
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
@@ -509,8 +511,18 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			return
 		}
 
+		if stream == nil {
+			if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
+				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+			} else {
+				events <- outcomeEvent(r, time.Since(startedAt))
+			}
+			return
+		}
+
 		// Read all chunks from the stream.
 		var contentBuf string
+		var finishReason string
 		var toolCalls []llm.ToolCall
 		tokenIndex := 0
 
@@ -518,19 +530,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			select {
 			case <-ctx.Done():
 				_ = stream.Close()
-				r.State = run.StateCancelled
-				completedAt := time.Now().UTC()
-				r.CompletedAt = &completedAt
-				// ctx is already cancelled here, so a store write using
-				// it outright would fail before it starts and the
-				// cancel state would never persist, leaving the run
-				// stuck at "running". WithoutCancel keeps every context
-				// value (including scope) while dropping the
-				// cancellation signal for this one terminal write.
-				if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
-					e.logger.Error("update run on cancel", log.String("error", err.Error()))
+				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
+				message := ctx.Err().Error()
+				if terminalErr != nil {
+					message = terminalErr.Error()
 				}
-				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": "cancelled"}}
+				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": message}}
+
 				return
 			default:
 			}
@@ -548,6 +554,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				return
 			}
 
+			if chunk == nil {
+				finishReason = "invalid_response"
+				break
+			}
+			if chunk.FinishReason != "" {
+				finishReason = chunk.FinishReason
+			}
+
 			if chunk.Content != "" {
 				contentBuf += chunk.Content
 				events <- StreamEvent{Type: EventToken, Data: map[string]any{
@@ -559,6 +573,16 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 			if len(chunk.ToolCalls) > 0 {
 				toolCalls = mergeToolCallDeltas(toolCalls, chunk.ToolCalls)
+			}
+		}
+
+		lastFinishReason = finishReason
+		if finishReason == "" {
+			// EOF ends transport, not the model's answer. Retain the raw
+			// missing marker while classifying the interrupted response.
+			finishReason = "provider_unknown"
+			if contentBuf == "" && len(toolCalls) == 0 {
+				finishReason = "invalid_response"
 			}
 		}
 
@@ -592,7 +616,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		st.stepIndex++
 
 		// Check for tool calls.
-		if len(toolCalls) > 0 {
+		if len(toolCalls) > 0 && responseStopReason(finishReason, contentBuf, len(toolCalls)) == run.StopFinalAnswer {
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   contentBuf,
@@ -681,6 +705,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		// No tool calls — this is the final response.
 		finalOutput = contentBuf
+		stopReason = responseStopReason(finishReason, contentBuf, len(toolCalls))
 
 		// Safety: scan output before returning.
 		if e.safety != nil {
@@ -716,23 +741,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
-	r.State = run.StateCompleted
-	r.Output = finalOutput
-	r.StepCount = st.stepIndex
-	r.TokensUsed = st.tokensUsed
-	r.CompletedAt = &completedAt
-	if err := e.store.UpdateRun(ctx, r); err != nil {
-		e.logger.Error("update run", log.String("error", err.Error()))
+	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
+		events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+		return
 	}
 
-	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(startedAt))
-
-	events <- StreamEvent{Type: EventDone, Data: map[string]any{
-		"run_id":      r.ID.String(),
-		"output":      finalOutput,
-		"tokens_used": st.tokensUsed,
-		"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
-	}}
+	events <- outcomeEvent(r, completedAt.Sub(startedAt))
 }
 
 // ──────────────────────────────────────────────────
@@ -777,21 +791,32 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 // checkpoint drops the suspension afterwards, and dropping it while the
 // run is still paused would leave a run nothing can ever resume.
 //
-// The RunFailed hook fires either way. A subscriber told about a failure
-// that did not persist is recoverable; one told nothing about a run that
-// did fail is not.
+// The RunFailed hook fires after persistence, so observers never treat an
+// uncommitted failure as a durable outcome.
 func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	completedAt := time.Now().UTC()
 	// A dashboard cancellation persists before it stops the provider stream.
 	// Next can then return an error, but that error must not replace the
 	// operator's terminal cancellation or emit a misleading failure hook.
-	if saved, err := e.store.GetRun(context.WithoutCancel(ctx), r.ID); err == nil && saved.State == run.StateCancelled {
+	if saved, err := e.store.GetRun(writeCtx, r.ID); err == nil && saved.State == run.StateCancelled {
 		r.State = run.StateCancelled
+		r.StopReason = run.StopCancelled
 		r.Error = saved.Error
 		r.CompletedAt = &completedAt
-		return e.store.UpdateRun(context.WithoutCancel(ctx), r)
+		return e.store.UpdateRun(writeCtx, r)
 	}
 	r.State = run.StateFailed
+	r.StopReason = run.StopExecutionError
+	if ctx.Err() != nil {
+		r.State = run.StateCancelled
+		r.StopReason = run.StopCancelled
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			r.State = run.StateIncomplete
+			r.StopReason = run.StopDeadline
+		}
+	}
 	r.Error = runErr.Error()
 	r.CompletedAt = &completedAt
 	// A failure can arrive as an error from stream.Next on a ctx that's
@@ -802,14 +827,16 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 	// every context value (including scope) while dropping the
 	// cancellation signal for this one terminal write, exactly like the
 	// cancel branches do.
-	writeErr := e.store.UpdateRun(context.WithoutCancel(ctx), r)
+	writeErr := e.store.UpdateRun(writeCtx, r)
 	// Same reasoning as the store write above: a hook subscriber (audit,
 	// for instance) that does its own I/O keyed on ctx would otherwise
 	// silently drop the failure event on an already-cancelled ctx, even
 	// though the store now correctly recorded it.
-	e.extensions.EmitRunFailed(context.WithoutCancel(ctx), agentID, r.ID, runErr)
 	if writeErr != nil {
 		return fmt.Errorf("update run on failure: %w", writeErr)
+	}
+	if r.State == run.StateFailed {
+		e.extensions.EmitRunFailed(writeCtx, agentID, r.ID, runErr)
 	}
 	return nil
 }

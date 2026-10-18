@@ -568,13 +568,13 @@ func TestResume_AFailedReadAfterTheClaimDoesNotStrandTheRun(t *testing.T) {
 	}
 }
 
-// TestResume_FinalStepFailsRatherThanCompletingEmpty covers the edge the
+// TestResume_FinalStepIsIncomplete covers the edge the
 // step budget creates. Suspending on the last step stores a step index
 // the budget has no room for, so re-entering the loop falls straight
 // through it. Completing the run with empty output would read as a model
 // that had nothing to say rather than a run that ran out of steps, so the
-// run fails instead, explicitly.
-func TestResume_FinalStepFailsRatherThanCompletingEmpty(t *testing.T) {
+// run records an incomplete step-limit outcome.
+func TestResume_FinalStepIsIncomplete(t *testing.T) {
 	base := scopespy.New()
 	spy := &lastStepAgentSpy{Spy: base}
 	rec := &toolEventRecorder{}
@@ -589,15 +589,13 @@ func TestResume_FinalStepFailsRatherThanCompletingEmpty(t *testing.T) {
 		t.Errorf("Resume returned a run alongside the error: %+v", resumed)
 	}
 
-	// Failed, not completed, and above all not left running: the claim
-	// already moved it out of paused, so a run nobody fails is a run
-	// nothing can ever pick up again.
+	// The consumed claim must leave a durable incomplete outcome.
 	persisted, err := base.GetRun(resumeCtx(scopeA()), r.ID)
 	if err != nil {
 		t.Fatalf("reload the resumed run: %v", err)
 	}
-	if persisted.State != run.StateFailed {
-		t.Errorf("run ended as %q, want %q; a run left running after a claim can never be picked up again", persisted.State, run.StateFailed)
+	if persisted.State != run.StateIncomplete || persisted.StopReason != run.StopStepLimit {
+		t.Errorf("run ended as %q, want %q; a run left running after a claim can never be picked up again", persisted.State, run.StateIncomplete)
 	}
 
 	// The caller's work is not thrown away just because the run cannot

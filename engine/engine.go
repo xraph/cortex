@@ -779,6 +779,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	}
 
 	r.State = run.StateCancelled
+	r.StopReason = run.StopCancelled
 	completedAt := time.Now().UTC()
 	r.CompletedAt = &completedAt
 	if err := e.store.UpdateRun(ctx, r); err != nil {
@@ -808,6 +809,7 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	// take it again.
 	r = e.claimedRun(ctx, r.ID, r)
 	r.State = run.StateCancelled
+	r.StopReason = run.StopCancelled
 	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
 		// The suspension stays. It is the only record of what the run was
 		// waiting on, and the run is still running from the claim, so
@@ -874,6 +876,7 @@ const (
 	EventToken       StreamEventType = "token"
 	EventCheckpoint  StreamEventType = "checkpoint"
 	EventSafetyBlock StreamEventType = "safety_block"
+	EventIncomplete  StreamEventType = "incomplete"
 	EventDone        StreamEventType = "done"
 	EventError       StreamEventType = "error"
 	// EventSuspended is the terminal event of a run that paused instead
@@ -978,17 +981,9 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 		e.logger.Error("create step", log.String("error", err.Error()))
 	}
 
-	completedAt := time.Now().UTC()
-	r.State = run.StateCompleted
-	r.Output = step.Output
-	r.StepCount = 1
-	r.TokensUsed = step.TokensUsed
-	r.CompletedAt = &completedAt
-	if err := e.store.UpdateRun(ctx, r); err != nil {
-		e.logger.Error("update run", log.String("error", err.Error()))
+	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopFinalAnswer, Output: step.Output, StepCount: 1, TokensUsed: step.TokensUsed}); err != nil {
+		return r, err
 	}
-
-	e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(now))
 
 	return r, nil
 }
@@ -1041,19 +1036,13 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		for i, ch := range response {
 			select {
 			case <-ctx.Done():
-				r.State = run.StateCancelled
-				completedAt := time.Now().UTC()
-				r.CompletedAt = &completedAt
-				// ctx is already cancelled here, so a store write using it
-				// outright would fail before it starts and the cancel state
-				// would never persist, leaving the run stuck at "running".
-				// WithoutCancel keeps every context value (including scope)
-				// while dropping the cancellation signal for this one
-				// terminal write.
-				if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
-					e.logger.Error("update run on cancel", log.String("error", err.Error()))
+				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled})
+				message := ctx.Err().Error()
+				if terminalErr != nil {
+					message = terminalErr.Error()
 				}
-				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": "cancelled"}}
+				events <- StreamEvent{Type: EventError, Data: map[string]any{"message": message}}
+
 				return
 			default:
 			}
@@ -1074,24 +1063,11 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 			e.logger.Error("create step", log.String("error", err.Error()))
 		}
 
-		completedAt := time.Now().UTC()
-		r.State = run.StateCompleted
-		r.Output = response
-		r.StepCount = 1
-		r.TokensUsed = step.TokensUsed
-		r.CompletedAt = &completedAt
-		if err := e.store.UpdateRun(ctx, r); err != nil {
-			e.logger.Error("update run", log.String("error", err.Error()))
+		if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopFinalAnswer, Output: response, StepCount: 1, TokensUsed: step.TokensUsed}); err != nil {
+			events <- StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+			return
 		}
-
-		e.extensions.EmitRunCompleted(ctx, ag.ID, r.ID, r.Output, completedAt.Sub(now))
-
-		events <- StreamEvent{Type: EventDone, Data: map[string]any{
-			"run_id":      r.ID.String(),
-			"output":      r.Output,
-			"tokens_used": r.TokensUsed,
-			"duration_ms": completedAt.Sub(now).Milliseconds(),
-		}}
+		events <- outcomeEvent(r, time.Since(now))
 	}()
 
 	return nil

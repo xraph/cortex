@@ -32,12 +32,36 @@ import (
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/verification"
 )
 
 // Conformance runs the full scope-isolation contract against any backend.
 // newStore must return a freshly migrated, empty store; Conformance calls
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("RunOutcomeRoundTrip", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("outcome")
+		r := mustCreateRun(t, s, ctx)
+		if r.VerificationStatus.Normalized() != verification.StatusUnchecked {
+			t.Fatal("new run has verification evidence")
+		}
+		r.State = run.StateIncomplete
+		r.StopReason = run.StopStepLimit
+		r.FinishReason = "length"
+		r.VerificationStatus = verification.StatusInconclusive
+		r.ResultRef = "immutable-result-1"
+		if err := s.UpdateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != run.StateIncomplete || got.StopReason != run.StopStepLimit || got.FinishReason != "length" || got.VerificationStatus != verification.StatusInconclusive || got.ResultRef != r.ResultRef {
+			t.Fatalf("outcome lost: %+v", got)
+		}
+	})
 	t.Helper()
 
 	t.Run("ZeroScopeRejection", func(t *testing.T) { testZeroScopeRejection(t, newStore) })

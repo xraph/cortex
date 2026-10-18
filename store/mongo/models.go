@@ -24,6 +24,7 @@ import (
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/verification"
 )
 
 // ──────────────────────────────────────────────────
@@ -135,52 +136,60 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 // ──────────────────────────────────────────────────
 
 type runModel struct {
-	grove.BaseModel `grove:"table:cortex_runs"`
-	ID              string            `grove:"id,pk"          bson:"_id"`
-	AgentID         string            `grove:"agent_id"       bson:"agent_id"`
-	SessionID       string            `grove:"session_id"     bson:"session_id"`
-	State           string            `grove:"state"          bson:"state"`
-	Input           string            `grove:"input"          bson:"input"`
-	Output          string            `grove:"output"         bson:"output"`
-	Error           string            `grove:"error"          bson:"error"`
-	StepCount       int               `grove:"step_count"     bson:"step_count"`
-	TokensUsed      int               `grove:"tokens_used"    bson:"tokens_used"`
-	StartedAt       *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
-	CompletedAt     *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
-	PersonaRef      string            `grove:"persona_ref"    bson:"persona_ref"`
-	Metadata        map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
-	ScopeL0         string            `grove:"scope_l0"       bson:"scope_l0"`
-	ScopeL1         string            `grove:"scope_l1"       bson:"scope_l1"`
-	ScopeL2         string            `grove:"scope_l2"       bson:"scope_l2"`
-	ScopeExtra      map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
-	ScopeCanon      string            `grove:"scope_canon"    bson:"scope_canon"`
-	CreatedAt       time.Time         `grove:"created_at"     bson:"created_at"`
-	UpdatedAt       time.Time         `grove:"updated_at"     bson:"updated_at"`
+	grove.BaseModel    `grove:"table:cortex_runs"`
+	ID                 string            `grove:"id,pk"          bson:"_id"`
+	AgentID            string            `grove:"agent_id"       bson:"agent_id"`
+	SessionID          string            `grove:"session_id"     bson:"session_id"`
+	State              string            `grove:"state"          bson:"state"`
+	StopReason         string            `grove:"stop_reason" bson:"stop_reason,omitempty"`
+	Input              string            `grove:"input"          bson:"input"`
+	Output             string            `grove:"output"         bson:"output"`
+	Error              string            `grove:"error"          bson:"error"`
+	StepCount          int               `grove:"step_count"     bson:"step_count"`
+	TokensUsed         int               `grove:"tokens_used"    bson:"tokens_used"`
+	StartedAt          *time.Time        `grove:"started_at"     bson:"started_at,omitempty"`
+	CompletedAt        *time.Time        `grove:"completed_at"   bson:"completed_at,omitempty"`
+	PersonaRef         string            `grove:"persona_ref"    bson:"persona_ref"`
+	Metadata           map[string]any    `grove:"metadata"       bson:"metadata,omitempty"`
+	ScopeL0            string            `grove:"scope_l0"       bson:"scope_l0"`
+	ScopeL1            string            `grove:"scope_l1"       bson:"scope_l1"`
+	ScopeL2            string            `grove:"scope_l2"       bson:"scope_l2"`
+	ScopeExtra         map[string]string `grove:"scope_extra"    bson:"scope_extra,omitempty"`
+	ScopeCanon         string            `grove:"scope_canon"    bson:"scope_canon"`
+	CreatedAt          time.Time         `grove:"created_at"     bson:"created_at"`
+	UpdatedAt          time.Time         `grove:"updated_at"     bson:"updated_at"`
+	FinishReason       string            `grove:"finish_reason" bson:"finish_reason"`
+	VerificationStatus string            `grove:"verification_status" bson:"verification_status"`
+	ResultRef          string            `grove:"result_ref" bson:"result_ref"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
-		ID:          r.ID.String(),
-		AgentID:     r.AgentID.String(),
-		SessionID:   r.SessionID.String(),
-		State:       string(r.State),
-		Input:       r.Input,
-		Output:      r.Output,
-		Error:       r.Error,
-		StepCount:   r.StepCount,
-		TokensUsed:  r.TokensUsed,
-		StartedAt:   r.StartedAt,
-		CompletedAt: r.CompletedAt,
-		PersonaRef:  r.PersonaRef,
-		Metadata:    r.Metadata,
-		ScopeL0:     l0,
-		ScopeL1:     l1,
-		ScopeL2:     l2,
-		ScopeExtra:  extra,
-		ScopeCanon:  r.Scope.Canonical(),
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:                 r.ID.String(),
+		AgentID:            r.AgentID.String(),
+		SessionID:          r.SessionID.String(),
+		State:              string(r.State),
+		StopReason:         string(r.StopReason),
+		FinishReason:       r.FinishReason,
+		VerificationStatus: string(r.VerificationStatus.Normalized()),
+		ResultRef:          r.ResultRef,
+		Input:              r.Input,
+		Output:             r.Output,
+		Error:              r.Error,
+		StepCount:          r.StepCount,
+		TokensUsed:         r.TokensUsed,
+		StartedAt:          r.StartedAt,
+		CompletedAt:        r.CompletedAt,
+		PersonaRef:         r.PersonaRef,
+		Metadata:           r.Metadata,
+		ScopeL0:            l0,
+		ScopeL1:            l1,
+		ScopeL2:            l2,
+		ScopeExtra:         extra,
+		ScopeCanon:         r.Scope.Canonical(),
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
 	}
 }
 
@@ -202,21 +211,25 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
 	return &run.Run{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          runID,
-		AgentID:     agentID,
-		SessionID:   sessionID,
-		Scope:       scope,
-		State:       run.State(m.State),
-		Input:       m.Input,
-		Output:      m.Output,
-		Error:       m.Error,
-		StepCount:   m.StepCount,
-		TokensUsed:  m.TokensUsed,
-		StartedAt:   m.StartedAt,
-		CompletedAt: m.CompletedAt,
-		PersonaRef:  m.PersonaRef,
-		Metadata:    m.Metadata,
+		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:                 runID,
+		AgentID:            agentID,
+		SessionID:          sessionID,
+		Scope:              scope,
+		State:              run.State(m.State),
+		StopReason:         run.StopReason(m.StopReason),
+		FinishReason:       m.FinishReason,
+		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),
+		ResultRef:          m.ResultRef,
+		Input:              m.Input,
+		Output:             m.Output,
+		Error:              m.Error,
+		StepCount:          m.StepCount,
+		TokensUsed:         m.TokensUsed,
+		StartedAt:          m.StartedAt,
+		CompletedAt:        m.CompletedAt,
+		PersonaRef:         m.PersonaRef,
+		Metadata:           m.Metadata,
 	}, nil
 }
 

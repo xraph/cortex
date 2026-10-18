@@ -1,0 +1,47 @@
+package sqlite
+
+import (
+	"context"
+	"testing"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
+)
+
+func TestRunOutcomeMigrationPreservesHistoricalCompletion(t *testing.T) {
+	s := newTestStore(t)
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "migration"}}})
+	// Reconstruct the prior schema after creating a legacy-shaped run. The old
+	// columns and data survive while the additive migration is replayed.
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "historical"}
+	if err := s.Create(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	r := &run.Run{ID: id.NewAgentRunID(), AgentID: ag.ID, State: run.StateCompleted, Output: "old answer"}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"stop_reason", "finish_reason", "verification_status", "result_ref"} {
+		if _, err := s.sdb.Exec(ctx, "ALTER TABLE cortex_runs DROP COLUMN "+column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if _, err := s.sdb.Exec(ctx, `DELETE FROM grove_migrations WHERE version = ? AND "group" = 'cortex'`, "20261018000001"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetRun(ctx, r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != run.StateCompleted || got.Output != "old answer" || got.StopReason != "" || got.VerificationStatus != verification.StatusUnchecked {
+			t.Fatalf("migration fabricated assurance: %+v", got)
+		}
+	}
+}
