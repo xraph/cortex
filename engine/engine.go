@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
@@ -918,11 +919,16 @@ type StreamEvent struct {
 // Otherwise, it falls back to mock/echo mode.
 //
 // The run is traced as one run agent span covering the whole call.
-func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
+func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, false)
-	r, err := e.runAgent(ctx, agentName, input, overrides)
-	rt.end(r, err)
-	return r, err
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(r, telemetry.ErrPanic)
+			panic(p)
+		}
+		rt.end(r, err)
+	}()
+	return e.runAgent(ctx, agentName, input, overrides)
 }
 
 func (e *Engine) runAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
@@ -958,13 +964,18 @@ func (e *Engine) runAgent(ctx context.Context, agentName, input string, override
 //
 // The run agent span lasts until the stream's goroutine finishes, not until
 // this call returns.
-func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) (err error) {
 	ctx, rt := e.startRun(ctx, modeStream, false)
-	if err := e.streamAgent(ctx, agentName, input, overrides, events); err != nil {
-		rt.end(nil, err)
-		return err
-	}
-	return nil
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(nil, telemetry.ErrPanic)
+			panic(p)
+		}
+		if err != nil {
+			rt.end(nil, err)
+		}
+	}()
+	return e.streamAgent(ctx, agentName, input, overrides, events)
 }
 
 func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
@@ -1081,7 +1092,13 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 
 	go func() {
 		defer close(events)
-		defer rt.end(r, nil)
+		defer func() {
+			if p := recover(); p != nil {
+				rt.end(r, telemetry.ErrPanic)
+				panic(p)
+			}
+			rt.end(r, nil)
+		}()
 
 		sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
 			"run_id":   r.ID.String(),

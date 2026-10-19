@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/run"
@@ -149,7 +150,13 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	// forgot.
 	runCtx := ctx
 	var stepSpan *stepTrace
-	defer func() { stepSpan.finish(stepError, nil) }()
+	defer func() {
+		if p := recover(); p != nil {
+			stepSpan.finish(stepError, telemetry.ErrPanic)
+			panic(p)
+		}
+		stepSpan.finish(stepError, nil)
+	}()
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
@@ -400,7 +407,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	// Same step span discipline as continueReAct: see its comment.
 	runCtx := ctx
 	var stepSpan *stepTrace
-	defer func() { stepSpan.finish(stepError, nil) }()
+	defer func() {
+		if p := recover(); p != nil {
+			stepSpan.finish(stepError, telemetry.ErrPanic)
+			panic(p)
+		}
+		stepSpan.finish(stepError, nil)
+	}()
 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {

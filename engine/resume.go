@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -116,13 +117,18 @@ const (
 //
 // Every resume, public, approved or answered by a peer agent, is one run
 // agent span marked resumed.
-func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
+func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, resumeSourceLabel(source)))
-	r, err := e.resumeRun(ctx, runID, in, source)
-	rt.end(r, err)
-	return r, err
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(r, telemetry.ErrPanic)
+			panic(p)
+		}
+		rt.end(r, err)
+	}()
+	return e.resumeRun(ctx, runID, in, source)
 }
 
 func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
@@ -135,20 +141,34 @@ func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeIn
 
 // ResumeStream is Resume over the streaming loop. The channel is closed
 // when execution completes, same as StreamAgent's.
-func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) error {
+func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
 	ctx, rt := e.startRun(ctx, modeStream, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, resumeSourceLabel(resumeSourcePublic)))
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(nil, telemetry.ErrPanic)
+			panic(p)
+		}
+		if err != nil {
+			rt.end(nil, err)
+		}
+	}()
 	ctx, rz, err := e.claimForResume(ctx, runID, in, resumeSourcePublic)
 	if err != nil {
 		close(events)
-		rt.end(nil, err)
 		return err
 	}
 
 	go func() {
 		defer close(events)
-		defer rt.end(rz.run, nil)
+		defer func() {
+			if p := recover(); p != nil {
+				rt.end(rz.run, telemetry.ErrPanic)
+				panic(p)
+			}
+			rt.end(rz.run, nil)
+		}()
 
 		// A resumed stream announces itself as started, because that is
 		// the event every existing consumer already waits for before it

@@ -36,6 +36,10 @@ func Fail(span trace.Span, err error) {
 	span.AddEvent("exception", trace.WithAttributes(attribute.String("exception.type", class)))
 }
 
+// ErrPanic stands in for a call that panicked. A deferred end records it,
+// as the class "panic", while the panic carries on unwinding.
+var ErrPanic = errors.New("cortex: panic")
+
 // sentinels names the errors callers branch on. A wrapped sentinel is
 // reported by its name, because its Go type (*errors.errorString) says
 // nothing.
@@ -43,6 +47,7 @@ var sentinels = []struct {
 	err  error
 	name string
 }{
+	{ErrPanic, "panic"},
 	{context.Canceled, "context.Canceled"},
 	{context.DeadlineExceeded, "context.DeadlineExceeded"},
 	{safety.ErrBlocked, "safety.ErrBlocked"},

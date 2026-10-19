@@ -470,6 +470,8 @@ func (rt *runTrace) end(r *run.Run, err error) {
 		}
 	}
 	switch {
+	case errors.Is(err, telemetry.ErrPanic):
+		telemetry.Fail(rt.span, err)
 	case bound != nil && bound.State == run.StateFailed:
 		if err == nil {
 			err = errRunFailed
@@ -613,7 +615,11 @@ func noteToolFailure(ctx context.Context, err error) {
 // reaches the span only when a host or the engine registered it; a name the
 // model made up is "unknown", because it is model output. Metric labels
 // carry the kind alone: registered names are host-defined and unbounded.
-func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, suspension.SuspendReason)) (string, toolOutcome, suspension.SuspendReason) {
+//
+// The span and the metrics are closed in a deferred call, so a tool, an
+// authorizer or a hook that panics still ends its span (as the class
+// "panic") and is still counted before the panic carries on.
+func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, suspension.SuspendReason)) (result string, outcome toolOutcome, reason suspension.SuspendReason) {
 	kind := e.toolKind(tc.Name)
 	name := tc.Name
 	if kind == toolKindUnknown {
@@ -631,20 +637,29 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 	ctx = context.WithValue(ctx, toolFailureKey{}, failure)
 	ctx, span := telemetry.Tracer().Start(ctx, spanCallTool, trace.WithAttributes(attrs...))
 	start := time.Now()
-
-	result, outcome, reason := call(ctx)
-
-	label := toolOutcomeLabel(outcome)
-	span.SetAttributes(attribute.String(attrToolOutcome, label))
-	if outcome == outcomeFailed {
-		err := failure.err
-		if err == nil {
-			err = errToolFailed
+	returned := false
+	defer func() {
+		label := toolOutcomeLabel(outcome)
+		var failErr error
+		switch {
+		case !returned:
+			label, failErr = "failed", telemetry.ErrPanic
+		case outcome == outcomeFailed:
+			failErr = failure.err
+			if failErr == nil {
+				failErr = errToolFailed
+			}
 		}
-		telemetry.Fail(span, err)
-	}
-	e.instr.toolHandled(kind, label, outcome != outcomePending, time.Since(start))
-	span.End()
+		span.SetAttributes(attribute.String(attrToolOutcome, label))
+		if failErr != nil {
+			telemetry.Fail(span, failErr)
+		}
+		e.instr.toolHandled(kind, label, !returned || outcome != outcomePending, time.Since(start))
+		span.End()
+	}()
+
+	result, outcome, reason = call(ctx)
+	returned = true
 	return result, outcome, reason
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
@@ -23,11 +24,16 @@ type PreparedRunOptions struct {
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
-func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (*run.Run, error) {
+func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, false)
-	r, err := e.runPrepared(ctx, p, input, opts)
-	rt.end(r, err)
-	return r, err
+	defer func() {
+		if rec := recover(); rec != nil {
+			rt.end(r, telemetry.ErrPanic)
+			panic(rec)
+		}
+		rt.end(r, err)
+	}()
+	return e.runPrepared(ctx, p, input, opts)
 }
 
 func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (*run.Run, error) {
@@ -39,13 +45,18 @@ func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string
 }
 
 // StreamPrepared streams the same prepared execution used by RunPrepared.
-func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) error {
+func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) (err error) {
 	ctx, rt := e.startRun(ctx, modeStream, false)
-	if err := e.streamPrepared(ctx, p, input, opts, events); err != nil {
-		rt.end(nil, err)
-		return err
-	}
-	return nil
+	defer func() {
+		if rec := recover(); rec != nil {
+			rt.end(nil, telemetry.ErrPanic)
+			panic(rec)
+		}
+		if err != nil {
+			rt.end(nil, err)
+		}
+	}()
+	return e.streamPrepared(ctx, p, input, opts, events)
 }
 
 // streamPrepared starts the stream's goroutine, which ends the pass's run
@@ -59,7 +70,13 @@ func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input str
 	rt := runTraceFrom(ctx)
 	go func() {
 		defer close(events)
-		defer rt.end(rz.run, nil)
+		defer func() {
+			if rec := recover(); rec != nil {
+				rt.end(rz.run, telemetry.ErrPanic)
+				panic(rec)
+			}
+			rt.end(rz.run, nil)
+		}()
 		if !sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{"run_id": rz.run.ID.String(), "agent_id": rz.ag.ID.String(), "prepared_digest": rz.run.Provenance.PreparedDigest}}) {
 			e.cancelPublication(ctx, rz.run, 0, 0)
 			return
