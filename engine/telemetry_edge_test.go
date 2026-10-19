@@ -5,16 +5,20 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
+	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry/telemetrytest"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/store/scopespy"
 	"github.com/xraph/cortex/suspension"
 )
@@ -44,6 +48,27 @@ func (s *chunkStream) Next(ctx context.Context) (*llm.Chunk, error) {
 func (s *chunkStream) Close() error      { return nil }
 func (s *chunkStream) Usage() *llm.Usage { return &llm.Usage{TotalTokens: 3} }
 
+// streamingLLM hands out its streams in order, then plain answers.
+type streamingLLM struct {
+	mu      sync.Mutex
+	streams []*chunkStream
+}
+
+func (m *streamingLLM) Complete(context.Context, *llm.Request) (*llm.Response, error) {
+	return nil, errors.New("streamingLLM: streaming only")
+}
+
+func (m *streamingLLM) CompleteStream(context.Context, *llm.Request) (llm.Stream, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.streams) == 0 {
+		return &chunkStream{chunks: []*llm.Chunk{{Content: "done", FinishReason: "stop"}}}, nil
+	}
+	s := m.streams[0]
+	m.streams = m.streams[1:]
+	return s, nil
+}
+
 func assertNoCanaries(t *testing.T, rec *tracetest.SpanRecorder, sink *telemetrytest.Sink, canaries []string) {
 	t.Helper()
 	for _, s := range rec.Ended() {
@@ -63,6 +88,107 @@ func assertNoCanaries(t *testing.T, rec *tracetest.SpanRecorder, sink *telemetry
 			t.Errorf("the metric scrape carries %q", c)
 		}
 	}
+}
+
+// The streaming loop, with loaded history and a scope value of its own,
+// keeps every chunk, history message and scope value off spans and labels.
+func TestStreamingTelemetryCarriesNoUserContent(t *testing.T) {
+	rec := recordSpans(t)
+	sink := telemetrytest.NewSink()
+	gate := &approvingGate{}
+	model := &streamingLLM{streams: []*chunkStream{
+		{chunks: []*llm.Chunk{
+			{Content: "CHUNK-CANARY looking up alice@example.com "},
+			{ToolCalls: []llm.ToolCall{{ID: "call-9", Name: "lookup_customer", Arguments: `{"email":"alice@example.com","note":"ARG-CANARY"}`}}, FinishReason: "tool_calls"},
+		}},
+		{chunks: []*llm.Chunk{{Content: "final OUTPUT-CANARY CHUNK-CANARY", FinishReason: "stop"}}},
+	}}
+	st := &historySpy{Spy: scopespy.New(), history: []memory.Message{
+		{Role: "user", Content: "HISTORY-CANARY earlier, from alice@example.com"},
+		{Role: "assistant", Content: "HISTORY-CANARY earlier reply"},
+	}}
+	e, err := New(WithStore(st), WithLLM(model), WithMetrics(sink), WithPublicationGate(gate),
+		WithTool(llm.Tool{Name: "lookup_customer", Description: "test-only"}, func(context.Context, cortex.Invocation) (string, error) {
+			return `{"flag":"RESULT-CANARY","email":"alice@example.com"}`, nil
+		}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "SCOPE-CANARY-tenant"}}})
+	events := make(chan StreamEvent, 128)
+	if err := e.StreamAgent(ctx, "secret-agent-name", "INPUT-CANARY alice@example.com", &RunOverrides{SystemPrompt: "PROMPT-CANARY"}, events); err != nil {
+		t.Fatalf("StreamAgent: %v", err)
+	}
+	var last StreamEvent
+	for ev := range events {
+		last = ev
+	}
+	if last.Type != EventDone {
+		t.Fatalf("last event = %v, want done", last)
+	}
+	for _, want := range []string{"HISTORY-CANARY", "CHUNK-CANARY", "ARG-CANARY", "RESULT-CANARY", "INPUT-CANARY"} {
+		if !gate.saw(want) {
+			t.Fatalf("the gate never saw %q", want)
+		}
+	}
+	assertNoCanaries(t, rec, sink, append([]string{"SCOPE-CANARY", "HISTORY-CANARY", "CHUNK-CANARY"}, canaries...))
+
+	spans := cortexSpans(rec)
+	runs := spansNamed(spans, spanRunAgent)
+	if len(runs) != 1 || attrString(runs[0], attrRunMode) != modeStream || attrString(runs[0], attrRunState) != "completed" {
+		t.Fatalf("run agent spans = %v", runs)
+	}
+	var history bool
+	for _, s := range spansNamed(spans, spanCheckPublication) {
+		if attrString(s, attrPublicationSource) == "history" && attrString(s, attrPublicationChecks) == "2" {
+			history = true
+		}
+	}
+	if !history {
+		t.Error("no history batch span for the two loaded messages")
+	}
+	if got := sink.Value(metricToolCallsHandled, map[string]string{"kind": "registered", "outcome": "completed"}); got != 1 {
+		t.Errorf("tool calls = %v, want 1", got)
+	}
+}
+
+// What one agent sends another, and the agents' names, stay off the
+// delivery and run spans too.
+func TestMessagingTelemetryCarriesNoUserContent(t *testing.T) {
+	rec := recordSpans(t)
+	sink := telemetrytest.NewSink()
+	ctx := wsCtx()
+	st := newApprovalStore(ctx, t)
+	model := &twoStepLLM{
+		calls: []llm.ToolCall{{ID: "call-1", Name: toolAgentSend,
+			Arguments: `{"to":"secret-agent-name-worker","content":"A2A-CANARY tell alice@example.com"}`}},
+		final: "sent",
+	}
+	e, err := New(WithStore(st), WithLLM(model), WithMetrics(sink), WithA2A(a2a.Options{HopCeiling: 6, Workers: 1}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, name := range []string{"secret-agent-name-planner", "secret-agent-name-worker"} {
+		if createErr := e.CreateAgent(ctx, &agent.Config{ID: id.NewAgentID(), Name: name, Model: "test-model", MaxSteps: 4}); createErr != nil {
+			t.Fatalf("CreateAgent: %v", createErr)
+		}
+	}
+	if _, err := e.RunAgent(ctx, "secret-agent-name-planner", "pass it on", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if _, err := e.A2A().Drain(ctx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	var delivered bool
+	for _, s := range rec.Ended() {
+		if s.Name() == "deliver agent message" && attrString(s, "cortex.a2a.class") == "informative" {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Fatal("the message was never delivered, so the test proves nothing")
+	}
+	assertNoCanaries(t, rec, sink, []string{"A2A-CANARY", "alice@example.com", "secret-agent-name"})
 }
 
 // A tool that panics still ends its span, its step and its run, and the

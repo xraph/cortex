@@ -45,10 +45,48 @@ func newTestApp(t *testing.T, name string) forge.App {
 		forge.WithEnableConfigAutoDiscovery(false))
 }
 
+// lengthLLM answers in full, unless the input asks it to run out of
+// tokens, so one app sees runs end two different ways.
+type lengthLLM struct{}
+
+func (lengthLLM) answer(req *llm.Request) (string, string) {
+	if last := req.Messages[len(req.Messages)-1].Content; last == "long" {
+		return "cut off", "length"
+	}
+	return "hi", "stop"
+}
+
+func (m lengthLLM) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	content, finish := m.answer(req)
+	return &llm.Response{Content: content, FinishReason: finish}, nil
+}
+
+func (m lengthLLM) CompleteStream(_ context.Context, req *llm.Request) (llm.Stream, error) {
+	content, finish := m.answer(req)
+	return &oneChunk{chunk: &llm.Chunk{Content: content, FinishReason: finish}}, nil
+}
+
+type oneChunk struct{ chunk *llm.Chunk }
+
+func (s *oneChunk) Next(context.Context) (*llm.Chunk, error) {
+	if s.chunk == nil {
+		return nil, io.EOF
+	}
+	c := s.chunk
+	s.chunk = nil
+	return c, nil
+}
+
+func (s *oneChunk) Close() error      { return nil }
+func (s *oneChunk) Usage() *llm.Usage { return nil }
+
+func scopeCtx() context.Context {
+	return cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
+}
+
 func runOnce(t *testing.T, e *Extension) {
 	t.Helper()
-	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}})
-	if _, err := e.Engine().RunAgent(ctx, "assistant", "hello", nil); err != nil {
+	if _, err := e.Engine().RunAgent(scopeCtx(), "assistant", "hello", nil); err != nil {
 		t.Fatalf("RunAgent: %v", err)
 	}
 }
@@ -62,21 +100,38 @@ func TestRegisterWiresAppMetricsAndTracing(t *testing.T) {
 	if err := forge.RegisterSpanProcessor(app, rec); err != nil {
 		t.Fatal(err)
 	}
-	e := New(WithStore(scopespy.New()), WithEngineOption(engine.WithLLM(&llm.MockClient{})))
+	e := New(WithStore(scopespy.New()), WithEngineOption(engine.WithLLM(lengthLLM{})))
 	if err := e.Register(app); err != nil {
 		t.Fatal(err)
 	}
+	// Three runs that end differently, so every family has more than one
+	// series and the scrape shows how the labels split them.
 	runOnce(t, e)
+	if _, err := e.Engine().RunAgent(scopeCtx(), "assistant", "long", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	events := make(chan engine.StreamEvent, 16)
+	if err := e.Engine().StreamAgent(scopeCtx(), "assistant", "hello", nil, events); err != nil {
+		t.Fatalf("StreamAgent: %v", err)
+	}
+	for ev := range events {
+		_ = ev
+	}
 
 	body := scrape(t, app)
 	for _, want := range []string{
 		"# TYPE forge_cortex_runs_finished_total counter",
-		`forge_cortex_runs_finished_total{purpose="normal",state="completed",stop_reason="final_answer"} 1`,
+		`forge_cortex_runs_finished_total{purpose="normal",state="completed",stop_reason="final_answer"} 2`,
+		`forge_cortex_runs_finished_total{purpose="normal",state="incomplete",stop_reason="token_limit"} 1`,
 		"# TYPE forge_cortex_run_duration_seconds histogram",
-		`forge_cortex_run_duration_seconds_count{purpose="normal",state="completed"} 1`,
+		`forge_cortex_run_duration_seconds_count{purpose="normal",state="completed"} 2`,
+		`forge_cortex_run_duration_seconds_count{purpose="normal",state="incomplete"} 1`,
 		`forge_cortex_runs_in_progress{mode="sync"} 0`,
-		`forge_cortex_steps_executed_total{outcome="final"} 1`,
-		`forge_cortex_publication_checks_completed_total{direction="input",result="unscanned",source="user_input"} 1`,
+		`forge_cortex_runs_in_progress{mode="stream"} 0`,
+		`forge_cortex_steps_executed_total{outcome="final"} 2`,
+		`forge_cortex_steps_executed_total{outcome="stopped"} 1`,
+		`forge_cortex_publication_checks_completed_total{direction="input",result="unscanned",source="user_input"} 3`,
+		`forge_cortex_publication_checks_completed_total{direction="output",result="unscanned",source="model_output"} 3`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scrape is missing %q", want)
@@ -92,8 +147,8 @@ func TestRegisterWiresAppMetricsAndTracing(t *testing.T) {
 			runs++
 		}
 	}
-	if runs != 1 {
-		t.Errorf("run agent spans on forge's provider = %d, want 1", runs)
+	if runs != 3 {
+		t.Errorf("run agent spans on forge's provider = %d, want 3", runs)
 	}
 }
 
