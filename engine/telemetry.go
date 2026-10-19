@@ -660,8 +660,8 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 		attribute.String(attrGenAIToolName, name),
 		attribute.String(attrToolKind, kind),
 	}
-	if tc.ID != "" {
-		attrs = append(attrs, attribute.String(attrGenAIToolCallID, tc.ID))
+	if callID, ok := toolCallID(tc.ID); ok {
+		attrs = append(attrs, attribute.String(attrGenAIToolCallID, callID))
 	}
 	failure := &toolFailure{}
 	ctx = context.WithValue(ctx, toolFailureKey{}, failure)
@@ -679,6 +679,12 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 			if failErr == nil {
 				failErr = errToolFailed
 			}
+		case outcome == outcomeCompleted && failure.err != nil:
+			// The tool answered the model with an error payload (a failed
+			// retrieval, say) and the loop treats the call as completed.
+			// What the model and the hooks see is unchanged; the span and
+			// the metric say it failed.
+			label, failErr = "failed", failure.err
 		}
 		span.SetAttributes(attribute.String(attrToolOutcome, label))
 		if failErr != nil {
@@ -691,6 +697,23 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 	result, outcome, reason = call(ctx)
 	returned = true
 	return result, outcome, reason
+}
+
+// toolCallID returns the provider's call ID for a span, or false when it
+// is not a short opaque token. The ID comes from the model's response, so
+// anything long or with characters an ID would not use is dropped.
+func toolCallID(id string) (string, bool) {
+	if id == "" || len(id) > 64 {
+		return "", false
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-', c == '.', c == ':':
+		default:
+			return "", false
+		}
+	}
+	return id, true
 }
 
 // errToolFailed stands in for a failure whose error stayed inside the tool.

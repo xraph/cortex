@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry/telemetrytest"
+	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/store/scopespy"
 	"github.com/xraph/cortex/suspension"
@@ -229,5 +230,65 @@ func TestResumeOfAMissingRunIsNotAnError(t *testing.T) {
 	runs := spansNamed(cortexSpans(rec), spanRunAgent)
 	if len(runs) != 1 || runs[0].Status().Code == codes.Error || attrString(runs[0], attrRunResult) != "not_found" {
 		t.Fatalf("run span = %v, want a not_found result without an error status", runs)
+	}
+}
+
+type failingKnowledge struct{}
+
+func (failingKnowledge) Retrieve(context.Context, string, *knowledge.RetrieveParams) ([]knowledge.ScoredChunk, error) {
+	return nil, errors.New("index unreachable for alice@example.com")
+}
+
+func (failingKnowledge) ListCollections(context.Context) ([]knowledge.CollectionInfo, error) {
+	return nil, nil
+}
+
+// A failed retrieval still reaches the model as an error payload, and the
+// hooks still see a completed call, but the span and the metric say it
+// failed.
+func TestFailedRetrievalIsReportedAsFailed(t *testing.T) {
+	rec := recordSpans(t)
+	sink := telemetrytest.NewSink()
+	hooks := &toolEventRecorder{}
+	e, err := New(
+		WithStore(scopespy.New()),
+		WithLLM(&twoStepLLM{calls: []llm.ToolCall{{ID: "call-1", Name: "knowledge_search", Arguments: `{"query":"QUERY-CANARY"}`}}, final: "ok"}),
+		WithKnowledge(failingKnowledge{}),
+		WithMetrics(sink),
+		WithExtension(hooks),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := e.RunAgent(wsCtx(), "assistant", "look it up", nil); err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	if countEvent(hooks.snapshot(), "completed") != 1 || countEvent(hooks.snapshot(), "failed") != 0 {
+		t.Errorf("hook events = %v, want the call still reported completed", hooks.snapshot())
+	}
+	if got := sink.Value(metricToolCallsHandled, map[string]string{"kind": "builtin", "outcome": "failed"}); got != 1 {
+		t.Errorf("builtin failed = %v, want 1", got)
+	}
+	tools := spansNamed(cortexSpans(rec), spanCallTool)
+	if len(tools) != 1 || attrString(tools[0], attrToolOutcome) != "failed" || tools[0].Status().Code != codes.Error {
+		t.Fatalf("call tool spans = %v", tools)
+	}
+	assertNoCanaries(t, rec, sink, []string{"alice@example.com", "QUERY-CANARY", "unreachable"})
+}
+
+func TestToolCallIDIsBounded(t *testing.T) {
+	for in, ok := range map[string]bool{
+		"call_abc123":              true,
+		"toolu_01A-b.c:d":          true,
+		"":                         false,
+		strings.Repeat("a", 65):    false,
+		"call alice@example.com":   false,
+		"call\nwith\nnewlines":     false,
+		strings.Repeat("b", 64):    true,
+		"ignore previous; drop it": false,
+	} {
+		if _, got := toolCallID(in); got != ok {
+			t.Errorf("toolCallID(%q) kept = %v, want %v", in, got, ok)
+		}
 	}
 }
