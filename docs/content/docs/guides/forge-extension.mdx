@@ -229,26 +229,23 @@ Call `Use` before `app.Run()`. Forge copies a router's middleware into a group w
 
 ## Adding plugins
 
-Register Cortex plugins (metrics, audit hooks and so on) alongside the extension:
+Register Cortex plugins (audit hooks and so on) alongside the extension:
 
 ```go
 import (
     audithook "github.com/xraph/cortex/audit_hook"
     cortexext "github.com/xraph/cortex/extension"
-    "github.com/xraph/cortex/observability"
 )
 
-metricsPlugin := observability.NewMetricsExtensionWithFactory(app.Metrics())
 auditPlugin := audithook.New(myRecorder)
 
 cortexExt := cortexext.New(
     cortexext.WithStore(store),
-    cortexext.WithExtension(metricsPlugin),
     cortexext.WithExtension(auditPlugin),
 )
 ```
 
-`NewMetricsExtensionWithFactory(app.Metrics())` records the counters in the Forge app's metrics, so they show up wherever the app exports metrics. `observability.NewMetricsExtension()` uses a collector of its own instead.
+You don't need a plugin for metrics or tracing. `Register` hands the engine `app.Metrics()`, so the engine's series show up on the app's `/_/metrics` as `forge_cortex_*`, and its spans go to the tracer provider Forge installs. Pass `cortexext.WithEngineOption(engine.WithMetrics(nil))` if you want the metrics off. [Observability](/docs/infrastructure/observability) lists every span and series. The old `observability` plugin is deprecated and records nothing.
 
 ## Health checks
 
@@ -299,7 +296,6 @@ import (
     "github.com/xraph/cortex/api"
     "github.com/xraph/cortex/engine"
     cortexext "github.com/xraph/cortex/extension"
-    "github.com/xraph/cortex/observability"
     pgstore "github.com/xraph/cortex/store/postgres"
 )
 
@@ -316,7 +312,6 @@ func main() {
 
     cortexExt := cortexext.New(
         cortexext.WithStore(pgstore.New(db)),
-        cortexext.WithExtension(observability.NewMetricsExtension()),
         cortexext.WithRoutes(func(eng *engine.Engine, r forge.Router) cortexext.RouteSet {
             return api.New(eng, r)
         }),
@@ -340,5 +335,5 @@ func main() {
 - the 59 REST routes under `/cortex/v1`
 - migrations on startup
 - health checks through `store.Ping`
-- lifecycle counters from the metrics plugin
+- run, step and tool spans, and `forge_cortex_*` metrics on the app's scrape
 - graceful shutdown with plugin notification

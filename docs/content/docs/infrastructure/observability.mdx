@@ -1,65 +1,159 @@
 ---
 title: Observability
-description: Built-in metrics extension with 11 lifecycle counters.
+description: The spans and metrics the engine records, and the data that never goes on them.
 ---
 
-The `observability` package provides a `MetricsExtension` that records counters for agent lifecycle events through a `go-utils` `MetricFactory`.
+The engine traces every agent run and records its own metrics. In a Forge app you don't have to do anything: the cortex extension hands the engine the app's metrics, and Forge installs the OpenTelemetry tracer provider the engine traces through. Run an agent and look at `/_/metrics` or your trace backend.
 
-## Setup
+Outside Forge you wire the two halves yourself:
 
 ```go
-import "github.com/xraph/cortex/observability"
+import (
+    "go.opentelemetry.io/otel"
+    "github.com/xraph/cortex/engine"
+)
 
-// Using a collector of its own, named "cortex/observability"
-metricsExt := observability.NewMetricsExtension()
+otel.SetTracerProvider(myTracerProvider) // spans go wherever this exports
 
-// Or with your own factory (github.com/xraph/go-utils/metrics)
-factory := metrics.NewMetricsCollector("my-app")
-metricsExt := observability.NewMetricsExtensionWithFactory(factory)
-
-// Register with engine
 eng, err := engine.New(
-    engine.WithExtension(metricsExt),
+    engine.WithStore(store),
+    engine.WithLLM(client),
+    engine.WithMetrics(myMetrics), // any github.com/xraph/go-utils/metrics sink; nil records nothing
 )
 ```
 
-`NewMetricsExtension` records into a collector nothing else reads, so the counters only leave the process if you export that collector yourself. In a Forge app, pass the app's metrics instead: `observability.NewMetricsExtensionWithFactory(app.Metrics())`, registered with `extension.WithExtension`.
+Spans use the instrumentation scope `github.com/xraph/cortex`. Without a tracer provider they cost next to nothing, and without `WithMetrics` no metric is declared at all.
 
-## Counters
+## What else shows up
 
-The extension records 11 counters:
+Cortex leaves a lot of the trace to the libraries it calls, and you'll see their spans nested inside cortex's:
 
-| Counter name | Hook | Description |
-|-------------|------|-------------|
-| `cortex.agent.run.started` | `OnRunStarted` | Agent runs initiated |
-| `cortex.agent.run.completed` | `OnRunCompleted` | Runs completed successfully |
-| `cortex.agent.run.failed` | `OnRunFailed` | Runs that failed |
-| `cortex.tool.called` | `OnToolCalled` | Tool invocations initiated |
-| `cortex.tool.completed` | `OnToolCompleted` | Tool calls completed |
-| `cortex.tool.failed` | `OnToolFailed` | Tool calls that failed |
-| `cortex.persona.resolved` | `OnPersonaResolved` | Personas resolved for runs |
-| `cortex.behavior.triggered` | `OnBehaviorTriggered` | Behaviors triggered |
-| `cortex.cognitive.phase_changed` | `OnCognitivePhaseChanged` | Cognitive phase transitions |
-| `cortex.checkpoint.created` | `OnCheckpointCreated` | Checkpoints created |
-| `cortex.checkpoint.resolved` | `OnCheckpointResolved` | Checkpoints resolved |
+- the model call, from Nexus (`chat <model>` with the `gen_ai.*` attributes and token usage), under the step that made it
+- every store query, from Grove (`db.client` spans and `db.client.operation.duration`)
+- each Shield scan (`scan content`) under the publication check that asked for it
+- each Weave retrieval (`retrieve chunks`) under the `knowledge_search` call or the preparation that asked for it
+- the HTTP request itself, from Forge, when a run starts from the REST API or the dashboard
 
-The persona, behavior and cognitive counters stay at zero, because the engine never fires those three hooks. Steps, tool denials, orchestration and messaging have hooks but no counters here.
+Nexus also strips inbound baggage before it calls a model provider, so a client's baggage header never reaches a third party.
 
-## Interface compliance
+## Spans
 
-The `MetricsExtension` implements 11 hook interfaces plus the base `plugin.Extension`:
+| Span | Kind | Attributes |
+|---|---|---|
+| `run agent` | Internal | `gen_ai.operation.name` (`invoke_agent`), `gen_ai.agent.id`, `gen_ai.conversation.id` (the session ID), `gen_ai.request.model`, `cortex.run.id`, `cortex.run.mode` (`sync`, `stream`), `cortex.run.resumed`, `cortex.run.resume_source` (`public`, `approval`, `agent_reply`), `cortex.run.purpose`, `cortex.run.state`, `cortex.run.stop_reason`, `cortex.run.steps`, `cortex.run.tokens` |
+| `prepare agent` | Internal | `gen_ai.agent.id`, `cortex.prepare.atomic`, `cortex.prepare.sections`, `cortex.prepare.knowledge_sections`, `cortex.prepare.tools` |
+| `run agent step` | Internal | `cortex.step.index`, `cortex.step.tool_calls`, `cortex.step.outcome` (`tool_calls`, `final`, `suspended`, `stopped`, `error`) |
+| `call tool` | Internal | `gen_ai.operation.name` (`execute_tool`), `gen_ai.tool.name`, `gen_ai.tool.call.id`, `cortex.tool.kind` (`builtin`, `registered`, `external`, `unknown`), `cortex.tool.outcome` (`completed`, `failed`, `denied`, `pending`) |
+| `check publication` | Internal | `cortex.publication.source`, `cortex.publication.direction` (`input`, `output`), `cortex.publication.mode`, `cortex.publication.status`, and `cortex.publication.checks` on a batch |
+| `suspend run` | Internal | `cortex.run.id`, `cortex.suspension.reason` (`approval`, `external_tool`, `agent_reply`, `mixed`), `cortex.suspension.pending_calls` |
+| `expire suspension` | Internal, root | `cortex.run.id`, `cortex.suspension.reason`, `cortex.suspension.outcome` (`expired`, `skipped`, `orphan_dropped`, `error`) |
+| `run orchestration` | Internal | `cortex.orchestration.id`, `cortex.orchestration.strategy`, `cortex.orchestration.runs`, `cortex.orchestration.status` |
+| `deliver agent message` | Consumer, root | `cortex.a2a.delivery.id`, `cortex.a2a.message.id`, `cortex.a2a.conversation.id`, `cortex.a2a.performative`, `cortex.a2a.class` (`directive`, `informative`, `control`), `cortex.a2a.route` (`local`, `remote`), `cortex.a2a.result` (`delivered`, `failed`, `error`) |
 
-```go
-var _ plugin.Extension             = (*MetricsExtension)(nil)
-var _ plugin.RunStarted            = (*MetricsExtension)(nil)
-var _ plugin.RunCompleted          = (*MetricsExtension)(nil)
-var _ plugin.RunFailed             = (*MetricsExtension)(nil)
-var _ plugin.ToolCalled            = (*MetricsExtension)(nil)
-var _ plugin.ToolCompleted         = (*MetricsExtension)(nil)
-var _ plugin.ToolFailed            = (*MetricsExtension)(nil)
-var _ plugin.PersonaResolved       = (*MetricsExtension)(nil)
-var _ plugin.BehaviorTriggered     = (*MetricsExtension)(nil)
-var _ plugin.CognitivePhaseChanged = (*MetricsExtension)(nil)
-var _ plugin.CheckpointCreated     = (*MetricsExtension)(nil)
-var _ plugin.CheckpointResolved    = (*MetricsExtension)(nil)
+A `run agent` span is one pass of the loop. A fresh run is one pass from the call to its end or its pause. A resume is another pass, marked `cortex.run.resumed`, carrying the same `cortex.run.id`. `cortex.run.stop_reason` is only set once the run has ended, and it's the engine's own `run.StopReason`, never the provider's raw finish reason.
+
+A span is marked as an error only when something actually broke: a run that failed, a tool that failed, a publication gate that couldn't answer, a delivery the bus couldn't record. A run that ends incomplete or cancelled, a check that blocks content, a denied tool call and a paused run all did what they were told, and their attributes say how.
+
+History and retrieved knowledge sections are checked as a batch, so a run that loads a hundred messages costs one `check publication` span with `cortex.publication.checks` set to 100. Streaming segment checks get no span at all (there's one per decided stretch of streamed text), but they're counted.
+
+### Work that outlives its caller
+
+Some runs carry on after the thing that started them has finished, and a child span that outlives its parent reads badly in every trace viewer. So:
+
+- A dashboard live run keeps going for minutes after the command that started it returns. Its `run agent` span is a new root linked to the command's span. You get the same behaviour for your own detached runs by passing `engine.DetachTrace(ctx)`.
+- Every claimed agent-to-agent delivery is a root `deliver agent message` span. It links to the span that queued it when this process still remembers that (the link table is memory only, so nothing is added to the envelope), and to the span on the context that drained it. A directive's `run agent` span nests under the delivery, and so does the resume of the agent that asked.
+- The startup redrive still runs inside `Extension.Start`, before the app reports itself started. Its queries belong to Forge's `start cortex` span, and each delivery it carries is a root linked to it.
+- The delivery workers, the overdue-ask sweep and the suspension sweeper start no trace while they're idle. A tick that finds nothing makes its queries with no parent span, so Grove records nothing for it. The suspension sweeper opens one root `expire suspension` span per expired row.
+
+## Metrics
+
+Every name below is how a Forge app scrapes it. The engine declares `cortex_runs_finished_total`, and Forge adds the `forge_` prefix.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `forge_cortex_runs_finished_total` | counter | `state`, `stop_reason`, `purpose` |
+| `forge_cortex_run_duration_seconds` | histogram | `state`, `purpose` |
+| `forge_cortex_runs_in_progress` | gauge | `mode` |
+| `forge_cortex_steps_executed_total` | counter | `outcome` |
+| `forge_cortex_tool_calls_handled_total` | counter | `kind`, `outcome` |
+| `forge_cortex_tool_call_duration_seconds` | histogram | `kind`, `outcome` |
+| `forge_cortex_publication_checks_completed_total` | counter | `source`, `direction`, `result` |
+| `forge_cortex_runs_suspended_total` | counter | `reason`, `result` |
+| `forge_cortex_suspensions_expired_total` | counter | `reason`, `result` |
+| `forge_cortex_orchestrations_finished_total` | counter | `strategy`, `result` |
+| `forge_cortex_a2a_deliveries_attempted_total` | counter | `class`, `route`, `result` |
+
+Every label is a closed set. Anything the engine doesn't recognise lands in `other` or `unknown`, so a stored row from a newer version can't mint a new series:
+
+| Label | Values |
+|---|---|
+| `state` | `completed`, `incomplete`, `failed`, `cancelled`, `other`, and on the duration histogram also `paused` |
+| `stop_reason` | `final_answer`, `step_limit`, `tool_limit`, `token_limit`, `cost_limit`, `deadline`, `cancelled`, `safety_block`, `policy_unavailable`, `execution_error`, `invalid_response`, `provider_unknown`, `tool_error`, `persistence_error`, `verification_failed`, `unknown` |
+| `purpose` | `normal`, `evaluation`, `optimization_trial`, `optimization_controller`, `unknown` |
+| `mode` | `sync`, `stream` |
+| `outcome` (steps) | `tool_calls`, `final`, `suspended`, `stopped`, `error` |
+| `kind` | `builtin`, `registered`, `external`, `unknown` |
+| `outcome` (tools) | `completed`, `failed`, `denied`, `pending` |
+| `source` | `user_input`, `history`, `retrieval`, `model_output`, `model_output_segment`, `tool_call`, `provider_finish`, `provider_error`, `tool_result`, `tool_error`, `other` |
+| `direction` | `input`, `output` |
+| `result` (publication) | `approved`, `redacted`, `flagged`, `unscanned`, `blocked`, `limit`, `unavailable`, `cancelled` |
+| `reason` | `approval`, `external_tool`, `agent_reply`, `unknown`, and `mixed` on a suspension refused because one step's calls wanted different reasons |
+| `strategy` | `sequential`, `parallel`, `router`, `hierarchical`, `debate`, `other` |
+| `class` | `directive`, `informative`, `control`, `unknown` |
+| `route` | `local`, `remote` |
+| `result` (deliveries) | `delivered`, `failed`, `error` |
+| `result` (everything else) | `ok`, `error` |
+
+A few of these need a sentence each.
+
+`forge_cortex_runs_finished_total` counts a run once, when its terminal state is written, from whichever path ended it: the loop, a cancel, a rejected checkpoint or the expiry sweep. It's the same moment the `RunTerminated` hook fires.
+
+`forge_cortex_run_duration_seconds` times one pass of the loop, not the run's wall clock. A run that waits a day for a human approval would otherwise drown every real latency in the histogram. A paused and resumed run contributes two observations, one with `state="paused"` and one with how it ended. The buckets run from 50ms to 10 minutes.
+
+`forge_cortex_runs_in_progress` is set from a real count of the passes running in this process, not incremented and decremented blindly.
+
+`forge_cortex_tool_call_duration_seconds` only observes calls that ran, so a `pending` call is counted but never timed. A call that waits on approval and then runs is counted twice: once as `pending`, once with how it ended. Its buckets run from 1ms to 30s.
+
+An orchestration that never starts (an unknown name, an invalid strategy) isn't counted, though its span is marked failed.
+
+```text
+# Runs ending in something other than a final answer, by reason
+sum by (stop_reason) (rate(forge_cortex_runs_finished_total{stop_reason!="final_answer"}[5m]))
+
+# p95 latency of one pass of the loop
+histogram_quantile(0.95, sum by (le) (rate(forge_cortex_run_duration_seconds_bucket{state!="paused"}[5m])))
+
+# Share of publication checks that blocked content
+sum(rate(forge_cortex_publication_checks_completed_total{result="blocked"}[5m]))
+  / sum(rate(forge_cortex_publication_checks_completed_total[5m]))
 ```
+
+## What never goes on a span or a label
+
+The run's input and output, prompts and prompt sections, conversation history, stream chunks, tool arguments and results, knowledge queries, collections and retrieved text, fabriq payloads, agent-to-agent message content, checkpoint reasons, publication text and findings, scope values, the principal, peer headers and URLs, and error messages. A failed span carries the error's Go type (or a sentinel's name, like `cortex.ErrAgentNotFound`) as its status and as the only attribute of its `exception` event, because a provider, driver or tool message can quote any of the above.
+
+Agent, persona, skill and orchestration names are yours to choose, so they never appear anywhere either: spans use the IDs. A tool name reaches `gen_ai.tool.name` only when you or the engine registered it. A name the model invented is model output, and it shows up as `unknown`. Metric labels carry the tool's kind and never its name, since a host can register any number of tools. The model name is on the `run agent` span and never on a label.
+
+## The engine doesn't log yet
+
+The engine still logs to a no-op logger, even inside Forge. Handing it the app's logger would switch on around forty log lines, and a lot of them log raw store errors, so that waits for an audit of its own.
+
+## Migrating from the metrics plugin
+
+The `observability` package is deprecated. `observability.NewMetricsExtension()` and `NewMetricsExtensionWithFactory(...)` still compile and still register, but the plugin implements no hooks and records nothing, and its counter fields (`RunStartedCount` and the rest) are gone.
+
+If you scraped its dotted counters through `NewMetricsExtensionWithFactory(app.Metrics())`, those series stop. The closest replacements:
+
+| Old counter | Now |
+|---|---|
+| `cortex.agent.run.started` | `forge_cortex_run_duration_seconds_count` counts passes; `forge_cortex_runs_in_progress` shows what's running |
+| `cortex.agent.run.completed` | `forge_cortex_runs_finished_total{state="completed"}` |
+| `cortex.agent.run.failed` | `forge_cortex_runs_finished_total{state="failed"}` |
+| `cortex.agent.run.incomplete`, `cortex.agent.run.cancelled` | `forge_cortex_runs_finished_total{state="incomplete"}` and `{state="cancelled"}` |
+| `cortex.agent.run.policy_failure` | `forge_cortex_runs_finished_total` with `stop_reason` of `safety_block` or `policy_unavailable` |
+| `cortex.tool.called`, `cortex.tool.completed`, `cortex.tool.failed` | `forge_cortex_tool_calls_handled_total` by `outcome` |
+| `cortex.publication.rejected` | `forge_cortex_publication_checks_completed_total` with `result` of `blocked`, `limit` or `unavailable` |
+| `cortex.checkpoint.created` | `forge_cortex_runs_suspended_total{reason="approval",result="ok"}` |
+| `cortex.persona.resolved`, `cortex.behavior.triggered`, `cortex.cognitive.phase_changed`, `cortex.checkpoint.resolved` | nothing; the first three never fired |
+
+Drop the plugin from your `engine.WithExtension` or `extension.WithExtension` list. In a Forge app there's nothing to add in its place. Outside Forge, pass `engine.WithMetrics`.
