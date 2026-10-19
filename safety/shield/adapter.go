@@ -69,8 +69,10 @@ func (a *Adapter) ScanInput(ctx context.Context, req *safety.ScanRequest) (*safe
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// v1.7.1 returns allow from placeholder layers without a policy receipt.
-	// Registration alone cannot qualify that result as effective screening.
+	// Shield v1.7.1 and v1.8.0 both return allow from placeholder layers
+	// (every layer in the engine's scan is still a TODO) and never set
+	// ProfileUsed. Registration alone cannot qualify that result as
+	// effective screening.
 	if result == nil || result.ProfileUsed == "" {
 		return nil, safety.ErrUnavailable
 	}
@@ -108,8 +110,10 @@ func (a *Adapter) ScanOutput(ctx context.Context, req *safety.ScanRequest) (*saf
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// v1.7.1 returns allow from placeholder layers without a policy receipt.
-	// Registration alone cannot qualify that result as effective screening.
+	// Shield v1.7.1 and v1.8.0 both return allow from placeholder layers
+	// (every layer in the engine's scan is still a TODO) and never set
+	// ProfileUsed. Registration alone cannot qualify that result as
+	// effective screening.
 	if result == nil || result.ProfileUsed == "" {
 		return nil, safety.ErrUnavailable
 	}
