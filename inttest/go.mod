@@ -13,7 +13,7 @@ replace github.com/xraph/cortex/integrations/fabriq => ../integrations/fabriq
 require (
 	github.com/xraph/cortex v1.6.1
 	github.com/xraph/cortex/integrations/fabriq v0.0.0-20260827002006-bb2528ddd778
-	github.com/xraph/fabriq v1.7.1
+	github.com/xraph/fabriq v1.8.2
 	github.com/xraph/fabriq/core v1.8.2
 )
 
@@ -106,8 +106,8 @@ require (
 	github.com/xraph/go-utils v1.4.1 // indirect
 	github.com/xraph/grove v1.8.0 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.8.0 // indirect
-	github.com/xraph/grove/kv v1.7.3 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.7.3 // indirect
+	github.com/xraph/grove/kv v1.8.0 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.8.0 // indirect
 	github.com/xraph/trove v1.7.1 // indirect
 	github.com/xraph/vessel v1.0.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

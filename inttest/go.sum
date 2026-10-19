@@ -220,8 +220,8 @@ github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IU
 github.com/vmihailenco/msgpack/v5 v5.4.1/go.mod h1:GaZTsDaehaPpQVyxrf5mtQlH+pc21PIudVV/E3rRQok=
 github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-github.com/xraph/fabriq v1.7.1 h1:9ZEcf7e8Mm6cIDbQz8r4vEvcWaEKcD9/aiVqT1g826Q=
-github.com/xraph/fabriq v1.7.1/go.mod h1:lRsuipqn5N2DZ4A2OJkZr9uua8Y8+q5jvqS3nvtX6lM=
+github.com/xraph/fabriq v1.8.2 h1:qC0lLY8Kz6chnA3M47HTP8oi1rB5zAWGGlcQOYI4JJI=
+github.com/xraph/fabriq v1.8.2/go.mod h1:7g+FAuUAPijN2HiMPFAykZeCVn58YlaOHtaai8k+jrI=
 github.com/xraph/fabriq/core v1.8.2 h1:hIpiGgPgRJlzs4sqOyTiJ9mX7e4HAL0ht/cdFmeF0og=
 github.com/xraph/fabriq/core v1.8.2/go.mod h1:O0bh4Z1+t8dYJ/WrrBwBUziWgR1h3f0trtn9Z1W6d2w=
 github.com/xraph/go-utils v1.4.1 h1:uP4CD+AaCKThbfR8kdQUh0kKHCFFaGb300fKMEJoSJY=
@@ -232,10 +232,10 @@ github.com/xraph/grove/drivers/pgdriver v1.8.0 h1:UxYJKdObN9Qd0kQD8JrD9AX4AeDRAV
 github.com/xraph/grove/drivers/pgdriver v1.8.0/go.mod h1:V9vYMFGIWdtkTOrOEB+rR5kXlhkuQeWjjCKRa0btTdg=
 github.com/xraph/grove/drivers/sqlitedriver v1.8.0 h1:CKTCDEN7t/DQbTuZEuvcZx5JYe+rvxLw0oRXaBeyAOo=
 github.com/xraph/grove/drivers/sqlitedriver v1.8.0/go.mod h1:ZC2rVcW+ZfWDIiTl1BZ2F9jeIlhl5LayBMyENJoXZSk=
-github.com/xraph/grove/kv v1.7.3 h1:5A+fkV01d14qfFK53+Yz9H1MvC4AjuJKwalkPDk4B3A=
-github.com/xraph/grove/kv v1.7.3/go.mod h1:Po/f07wtXHU54APbZldEF1BkRSUCyBgnKQ7rxNS6S68=
-github.com/xraph/grove/kv/drivers/redisdriver v1.7.3 h1:IUVmk3dM843LKKgN0HsmEkZH8emLK6Lsh+zOb7Sz4+4=
-github.com/xraph/grove/kv/drivers/redisdriver v1.7.3/go.mod h1:svwrBXvdJZckBZpDV1RDfhMDE8/41NoyqGST0h0X7i0=
+github.com/xraph/grove/kv v1.8.0 h1:YZFeZYWK7omUaloWlVpMwFobl1dI2NCBHH2/iTs6yxo=
+github.com/xraph/grove/kv v1.8.0/go.mod h1:dRzQTDR3/btTAxaBr/gXLv5KtSgkdQKWxzE7jaQAoDI=
+github.com/xraph/grove/kv/drivers/redisdriver v1.8.0 h1:cyIWJffqtQbhPzSDCvTdZ8xHD12Qs0oclKRxd5h3+L0=
+github.com/xraph/grove/kv/drivers/redisdriver v1.8.0/go.mod h1:iW0FOUNFeFi6VBw8OQpV8wUr2U/D/Xyv006NKc1ae9Y=
 github.com/xraph/trove v1.7.1 h1:zQ9y5eyaNhaTxhfwN2SaNlRZvp20kl8TPaUX0vX+/fI=
 github.com/xraph/trove v1.7.1/go.mod h1:bLs3RZEd6OlBY4xjmLaaacNKR7M5RdM75GQvEIAPVCo=
 github.com/xraph/vessel v1.0.4 h1:YVG80hm7bAKTwogwLXZMlp46tMHHJThUcvCUOWao9Yk=
