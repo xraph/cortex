@@ -159,7 +159,18 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, con
 		attribute.Int(attrSuspensionPending, len(pend.calls)),
 	))
 	reason, err := e.suspendRun(ctx, r, pend, cont)
-	e.finishSuspend(span, reason, err)
+	// The label comes from the pending calls, not from what suspendRun
+	// returned: a store failure returns no reason, and it must not read as
+	// calls that disagreed.
+	label := suspendReasonLabel(reason)
+	if reason == "" {
+		if wanted, mixedErr := pend.reason(); mixedErr == nil {
+			label = suspendReasonLabel(wanted)
+		} else {
+			label = "mixed"
+		}
+	}
+	e.finishSuspend(span, label, err)
 	return reason, err
 }
 

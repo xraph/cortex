@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/orchestration"
@@ -54,6 +55,7 @@ const (
 	attrRunStopReason   = "cortex.run.stop_reason"
 	attrRunSteps        = "cortex.run.steps"
 	attrRunTokens       = "cortex.run.tokens"
+	attrRunResult       = "cortex.run.result"
 
 	attrPrepareAtomic    = "cortex.prepare.atomic"
 	attrPrepareSections  = "cortex.prepare.sections"
@@ -478,11 +480,32 @@ func (rt *runTrace) end(r *run.Run, err error) {
 		}
 		telemetry.Fail(rt.span, err)
 	case bound != nil && (isTerminalRunState(bound.State) || bound.State == run.StatePaused):
-	case err != nil && !errors.Is(err, context.Canceled):
+	case err == nil, errors.Is(err, context.Canceled):
+	default:
+		if result, benign := benignRunError(err); benign {
+			rt.span.SetAttributes(attribute.String(attrRunResult, result))
+			break
+		}
 		telemetry.Fail(rt.span, err)
 	}
 	rt.instr.trackInFlight(rt.mode, -1)
 	rt.span.End()
+}
+
+// benignRunError says whether a call that failed before it had a run to
+// speak for did so for an ordinary reason: the agent or run it named does
+// not exist, or somebody else claimed the paused run first. Those are
+// answers, not faults, so the span carries cortex.run.result instead of an
+// error status.
+func benignRunError(err error) (string, bool) {
+	switch {
+	case errors.Is(err, cortex.ErrAgentNotFound), errors.Is(err, cortex.ErrRunNotFound):
+		return "not_found", true
+	case errors.Is(err, cortex.ErrNotSuspended):
+		return "claim_lost", true
+	default:
+		return "", false
+	}
 }
 
 // errRunFailed stands in for the error of a run whose loop recorded the
@@ -549,9 +572,16 @@ func (e *Engine) startStep(ctx context.Context, index int) (context.Context, *st
 
 // finish ends the step once; a nil or finished step ignores it, which is
 // what lets the loop keep a deferred backstop next to its explicit calls.
+//
+// A step the caller cancelled, or that ran out its deadline, is stopped
+// and not failed, wherever the loop noticed: the provider hands the
+// context's error back through the same path as a real failure.
 func (s *stepTrace) finish(outcome string, err error) {
 	if s == nil || s.done {
 		return
+	}
+	if outcome == stepError && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		outcome = stepStopped
 	}
 	s.done = true
 	s.span.SetAttributes(attribute.String(attrStepOutcome, outcome), attribute.Int(attrStepToolCalls, s.toolCalls))
@@ -729,11 +759,7 @@ func (e *Engine) startPublicationBatch(ctx context.Context, p safety.Policy, sou
 // Suspension and orchestration spans
 // ──────────────────────────────────────────────────
 
-func (e *Engine) finishSuspend(span trace.Span, reason suspension.SuspendReason, err error) {
-	label := suspendReasonLabel(reason)
-	if reason == "" && err != nil {
-		label = "mixed"
-	}
+func (e *Engine) finishSuspend(span trace.Span, label string, err error) {
 	result := resultOK
 	if err != nil {
 		result = resultError
