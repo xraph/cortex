@@ -19,6 +19,7 @@ type dispatcher struct {
 	bus         *Bus
 	synchronous bool
 	wake        chan struct{}
+	links       producerLinks
 
 	mu      sync.Mutex
 	started bool
@@ -54,7 +55,11 @@ func (b *Bus) Start(ctx context.Context) error {
 		return nil
 	}
 
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// The workers outlive Start, and in a Forge app Start's ctx carries
+	// the start hook's span. Dropping it keeps an idle drain's queries
+	// out of a trace that ended at boot; each claimed delivery opens a
+	// root span of its own.
+	runCtx, cancel := context.WithCancel(stripSpan(context.WithoutCancel(ctx)))
 	// done is captured locally rather than read back off the struct when
 	// the workers finish. Stop clears the field as soon as it has the
 	// handle it needs, so a closer reading it later closes a nil channel.

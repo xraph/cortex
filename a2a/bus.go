@@ -9,6 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
+	gometrics "github.com/xraph/go-utils/metrics"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
@@ -42,6 +46,10 @@ type BusConfig struct {
 	Transports []Transport
 	Options    Options
 
+	// Metrics records the bus's delivery counter. Nil, the default,
+	// records nothing; the engine passes whatever WithMetrics gave it.
+	Metrics gometrics.Metrics
+
 	// Synchronous makes the dispatcher deliver only when Drain is called.
 	// Tests set it so an assertion can never observe a run mid-flight.
 	Synchronous bool
@@ -57,6 +65,7 @@ type Bus struct {
 	clock    Clock
 	opts     Options
 	dispatch *dispatcher
+	metrics  busMetrics
 
 	// mu guards transports, which AddTransport appends to after the bus
 	// exists. Registration happens at startup and reads happen once per
@@ -113,6 +122,7 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		clock:      cfg.Clock,
 		transports: cfg.Transports,
 		opts:       cfg.Options.withDefaults(),
+		metrics:    newBusMetrics(cfg.Metrics),
 	}
 	if len(b.transports) == 0 {
 		b.transports = []Transport{inProcess{}}
@@ -332,6 +342,7 @@ func (b *Bus) route(ctx context.Context, e *Envelope) (*SendResult, error) {
 			continue
 		}
 		res.Deliveries = append(res.Deliveries, DeliveryOutcome{Receiver: r, Status: DeliveryQueued, DeliveryID: d.ID})
+		b.dispatch.links.put(d.ID, trace.SpanContextFromContext(ctx), b.clock.Now())
 		b.dispatch.enqueue(d.ID)
 	}
 
