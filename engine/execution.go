@@ -58,7 +58,15 @@ func (e *Engine) executionTools(ctx context.Context, subject cortex.Subject, cfg
 	return filterByName(defs, names)
 }
 
+// executePreparedTool runs one call the model asked for, under a call tool
+// span.
 func (e *Engine) executePreparedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, suspension.SuspendReason) {
+	return e.traceTool(ctx, tc, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+		return e.executeAllowedTool(ctx, subject, tc, st)
+	})
+}
+
+func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, suspension.SuspendReason) {
 	if err := ctx.Err(); err != nil {
 		e.extensions.EmitToolDenied(ctx, subject.RunID, tc.Name, err.Error())
 		return jsonResult("error", err.Error()), outcomeDenied, ""

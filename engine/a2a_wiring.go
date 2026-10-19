@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 )
 
 // a2aConfig is what WithA2A recorded, held until New has finished running
@@ -51,6 +52,7 @@ func (e *Engine) buildA2A() error {
 		Resolver: a2aResolver{eng: e},
 		Hooks:    a2aHooks{eng: e},
 		Options:  e.a2aCfg.opts,
+		Metrics:  e.metrics,
 	})
 	if err != nil {
 		return err
@@ -115,6 +117,11 @@ func (h a2aHooks) MessageRefused(ctx context.Context, msgID id.MessageID, to, re
 
 // startA2A brings the bus up with the engine: orphaned deliveries from a
 // previous process are redriven first, then the workers start.
+//
+// The redrive stays synchronous and keeps ctx, so its queries belong to
+// the start hook's trace. Each delivery it carries is still a root span of
+// its own, linked to that trace, and a directive's run nests under it
+// rather than under the boot span.
 func (e *Engine) startA2A(ctx context.Context) {
 	if e.a2a == nil {
 		return
@@ -149,7 +156,11 @@ func (e *Engine) startAskSweep(ctx context.Context) {
 	if interval <= 0 {
 		interval = a2a.DefaultSweepInterval
 	}
-	sweepCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// The sweep outlives Start, whose ctx carries the start hook's span
+	// in a Forge app. Without dropping it, every tick's queries would land
+	// in the boot trace. A run an overdue ask resumes gets a root run
+	// agent span of its own.
+	sweepCtx, cancel := context.WithCancel(telemetry.StripSpan(context.WithoutCancel(ctx)))
 	e.a2aSweepCancel = cancel
 	e.a2aSweepDone = make(chan struct{})
 

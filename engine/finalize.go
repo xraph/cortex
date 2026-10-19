@@ -108,6 +108,10 @@ func outcomeEvent(r *run.Run, duration time.Duration) StreamEvent {
 	}}
 }
 
+// emitTerminalOutcome is called once per run, after its terminal state is
+// written, from every path that ends one. That makes it the place to count
+// finished runs: the RunTerminated hook has the same once-only contract.
 func (e *Engine) emitTerminalOutcome(ctx context.Context, r *run.Run) {
+	e.instr.runFinished(r)
 	e.extensions.EmitRunTerminated(ctx, r.AgentID, r.ID, r.TerminalSummary())
 }

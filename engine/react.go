@@ -116,7 +116,7 @@ func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, o
 	if err != nil {
 		return nil, err
 	}
-	return e.RunPrepared(ctx, p, input, preparedOptions(overrides))
+	return e.runPrepared(ctx, p, input, preparedOptions(overrides))
 }
 
 // continueReAct runs the ReAct loop over a run that already exists and a
@@ -141,8 +141,19 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	var lastFinishReason string
 	stopReason := run.StopStepLimit
 
+	// Each step runs under its own run agent step span. ctx is pointed at
+	// the step's span for the body of the loop and put back afterwards, so
+	// the model call and every tool call nest under their step, and the
+	// writes after the loop belong to the run. stepSpan is finished
+	// explicitly at every exit; the deferred call only catches a path that
+	// forgot.
+	runCtx := ctx
+	var stepSpan *stepTrace
+	defer func() { stepSpan.finish(stepError, nil) }()
+
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		ctx = runCtx
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -153,6 +164,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		}
 
 		stepStart := time.Now().UTC()
+		ctx, stepSpan = e.startStep(runCtx, st.stepIndex)
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		// Built once per step and threaded to both authorizer calls
@@ -171,6 +183,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
+			stepSpan.finish(stepStopped, nil)
 			break
 		}
 		resp, err := e.llm.Complete(ctx, req)
@@ -182,14 +195,18 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			}
 			st.failedAttempt(reported, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
+			stepSpan.finish(stepError, err)
 			return nil, fmt.Errorf("llm complete: %w", err)
 		}
 
 		if resp == nil {
 			st.failedAttempt(0, cfg, r)
-			return r, e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
+			endErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
+			stepSpan.finish(stepStopped, nil)
+			return r, endErr
 		}
 		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
+		stepSpan.toolCalls = len(resp.ToolCalls)
 		responseReason := responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls))
 		checked, checkErr := e.checkResponse(ctx, ag, r, cfg.Publication, resp.Content, resp.ToolCalls)
 		if checkErr == nil {
@@ -200,7 +217,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		if checkErr != nil {
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
-			return r, e.stopPublication(ctx, r, st, checkErr)
+			stopErr := e.stopPublication(ctx, r, st, checkErr)
+			stepSpan.finish(stepStopped, nil)
+			return r, stopErr
 		}
 		// The provider may retain its response; keep approved content separate.
 		responseCopy := *resp
@@ -234,11 +253,13 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		// Check for tool calls.
 		if cfg.Budget.MaxTokens > 0 && st.tokensUsed > cfg.Budget.MaxTokens {
 			stopReason = run.StopTokenLimit
+			stepSpan.finish(stepStopped, nil)
 			break
 		}
 		if len(resp.ToolCalls) > 0 && responseReason == run.StopFinalAnswer {
 			if limit := st.admitTools(len(resp.ToolCalls), cfg); limit != "" {
 				stopReason = run.StopReason(limit)
+				stepSpan.finish(stepStopped, nil)
 				break
 			}
 			// Append assistant message with tool calls.
@@ -278,7 +299,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 				approvedResult, resultErr := e.checkToolResult(ctx, ag, r, cfg.Publication, result, "tool_result")
 				if resultErr != nil {
-					return r, e.stopPublication(ctx, r, st, resultErr)
+					stopErr := e.stopPublication(ctx, r, st, resultErr)
+					stepSpan.finish(stepStopped, nil)
+					return r, stopErr
 				}
 				result = string(approvedResult)
 				tcEnd := time.Now().UTC()
@@ -317,10 +340,13 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				cont := st.continuation(cfg)
 				if _, err := e.suspend(ctx, r, pending, cont); err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
+					stepSpan.finish(stepError, err)
 					return nil, fmt.Errorf("suspend run: %w", err)
 				}
+				stepSpan.finish(stepSuspended, nil)
 				return r, nil
 			}
+			stepSpan.finish(stepToolCalls, nil)
 			continue // Continue the ReAct loop.
 		}
 
@@ -329,8 +355,10 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		stopReason = responseReason
 
 		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
+	ctx = runCtx
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -350,7 +378,7 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 		close(events)
 		return err
 	}
-	return e.StreamPrepared(ctx, p, input, preparedOptions(overrides), events)
+	return e.streamPrepared(ctx, p, input, preparedOptions(overrides), events)
 }
 
 // continueStreamReAct is continueReAct's streaming twin: same contract,
@@ -369,8 +397,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	var lastFinishReason string
 	stopReason := run.StopStepLimit
 
+	// Same step span discipline as continueReAct: see its comment.
+	runCtx := ctx
+	var stepSpan *stepTrace
+	defer func() { stepSpan.finish(stepError, nil) }()
+
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
+		ctx = runCtx
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -381,6 +415,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 
 		stepStart := time.Now().UTC()
+		ctx, stepSpan = e.startStep(runCtx, st.stepIndex)
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		stepID := id.NewStepID()
@@ -388,6 +423,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			"step_id": stepID.String(), "index": st.stepIndex, "type": "generation",
 		}}) {
 			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
+			stepSpan.finish(stepStopped, nil)
 			return
 		}
 
@@ -407,6 +443,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		if ctx.Err() != nil {
 			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
+			stepSpan.finish(stepStopped, nil)
 			return
 		}
 		stream, err := e.llm.CompleteStream(ctx, req)
@@ -414,6 +451,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			st.failedAttempt(0, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
+			stepSpan.finish(stepError, err)
 			sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 				"message": err.Error(),
 			}})
@@ -427,6 +465,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			} else {
 				sendEvent(ctx, events, outcomeEvent(r, time.Since(startedAt)))
 			}
+			stepSpan.finish(stepStopped, nil)
 			return
 		}
 
@@ -435,6 +474,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			_ = stream.Close()
 			st.failedAttempt(streamReportedTokens(stream), cfg, r)
 			terminalErr := e.stopPublication(ctx, r, st, segmentErr)
+			stepSpan.finish(stepStopped, nil)
 			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 			return
 		}
@@ -454,6 +494,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				if terminalErr != nil {
 					message = terminalErr.Error()
 				}
+				stepSpan.finish(stepStopped, nil)
 				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": message}})
 
 				return
@@ -469,6 +510,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				_ = stream.Close()
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				e.failRun(ctx, r, ag.ID, err, startedAt)
+				stepSpan.finish(stepError, err)
 				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 					"message": err.Error(),
 				}})
@@ -491,6 +533,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				_ = stream.Close()
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				terminalErr := e.stopPublication(ctx, r, st, safety.ErrLimit)
+				stepSpan.finish(stepStopped, nil)
 				sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 				return
 			}
@@ -502,6 +545,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 						_ = stream.Close()
 						st.failedAttempt(streamReportedTokens(stream), cfg, r)
 						terminalErr := e.stopPublication(ctx, r, st, checkErr)
+						stepSpan.finish(stepStopped, nil)
 						sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 						return
 					}
@@ -530,6 +574,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			st.chargeTokens(0, cfg, r)
 		}
 		_ = stream.Close()
+		stepSpan.toolCalls = len(toolCalls)
 		responseReason := responseStopReason(finishReason, contentBuf, len(toolCalls))
 		var checked approvedText
 		var checkErr error
@@ -551,12 +596,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
 			terminalErr := e.stopPublication(ctx, r, st, checkErr)
+			stepSpan.finish(stepStopped, nil)
 			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 			return
 		}
 		contentBuf = string(checked)
 		if segments == nil && !publishToken(ctx, events, checked, 0) {
 			e.cancelPublication(ctx, r, st.stepIndex+1, st.tokensUsed)
+			stepSpan.finish(stepStopped, nil)
 			return
 		}
 
@@ -588,11 +635,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		// Check for tool calls.
 		if cfg.Budget.MaxTokens > 0 && st.tokensUsed > cfg.Budget.MaxTokens {
 			stopReason = run.StopTokenLimit
+			stepSpan.finish(stepStopped, nil)
 			break
 		}
 		if len(toolCalls) > 0 && responseReason == run.StopFinalAnswer {
 			if limit := st.admitTools(len(toolCalls), cfg); limit != "" {
 				stopReason = run.StopReason(limit)
+				stepSpan.finish(stepStopped, nil)
 				break
 			}
 			st.messages = append(st.messages, llm.Message{
@@ -629,6 +678,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				approvedResult, resultErr := e.checkToolResult(ctx, ag, r, cfg.Publication, result, "tool_result")
 				if resultErr != nil {
 					terminalErr := e.stopPublication(ctx, r, st, resultErr)
+					stepSpan.finish(stepStopped, nil)
 					sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 					return
 				}
@@ -669,6 +719,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				reason, err := e.suspend(ctx, r, pending, cont)
 				if err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
+					stepSpan.finish(stepError, err)
 					sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
 						"message": err.Error(),
 					}})
@@ -679,6 +730,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				// event and read it as a run that just stopped. It
 				// needs the pending calls too: it is the one that has
 				// to execute them.
+				stepSpan.finish(stepSuspended, nil)
 				sendEvent(ctx, events, StreamEvent{Type: EventSuspended, Data: map[string]any{
 					"run_id":  r.ID.String(),
 					"reason":  string(reason),
@@ -686,6 +738,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				}})
 				return
 			}
+			stepSpan.finish(stepToolCalls, nil)
 			continue // Continue the ReAct loop.
 		}
 
@@ -694,8 +747,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		stopReason = responseReason
 
 		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
+	ctx = runCtx
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -940,6 +995,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
 	if outcome == outcomeFailed {
+		noteToolFailure(ctx, failErr)
 		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
 	if outcome == outcomePending {

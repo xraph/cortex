@@ -24,6 +24,13 @@ type PreparedRunOptions struct {
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
 func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (*run.Run, error) {
+	ctx, rt := e.startRun(ctx, modeSync, false)
+	r, err := e.runPrepared(ctx, p, input, opts)
+	rt.end(r, err)
+	return r, err
+}
+
+func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (*run.Run, error) {
 	ctx, rz, err := e.startPrepared(ctx, p, input, opts)
 	if err != nil {
 		return nil, err
@@ -33,13 +40,26 @@ func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string
 
 // StreamPrepared streams the same prepared execution used by RunPrepared.
 func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) error {
+	ctx, rt := e.startRun(ctx, modeStream, false)
+	if err := e.streamPrepared(ctx, p, input, opts, events); err != nil {
+		rt.end(nil, err)
+		return err
+	}
+	return nil
+}
+
+// streamPrepared starts the stream's goroutine, which ends the pass's run
+// agent span when it finishes.
+func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) error {
 	ctx, rz, err := e.startPrepared(ctx, p, input, opts)
 	if err != nil {
 		close(events)
 		return err
 	}
+	rt := runTraceFrom(ctx)
 	go func() {
 		defer close(events)
+		defer rt.end(rz.run, nil)
 		if !sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{"run_id": rz.run.ID.String(), "agent_id": rz.ag.ID.String(), "prepared_digest": rz.run.Provenance.PreparedDigest}}) {
 			e.cancelPublication(ctx, rz.run, 0, 0)
 			return
@@ -117,6 +137,7 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	if err = e.store.CreateRun(ctx, r); err != nil {
 		return nil, nil, fmt.Errorf("cortex: create prepared run: %w", err)
 	}
+	runTraceFrom(ctx).bind(r, cfg.Model)
 	e.extensions.EmitRunStarted(ctx, r.AgentID, r.ID, input)
 	history, err := e.store.LoadConversation(ctx, r.AgentID, sessionID, 100)
 	if err != nil {
