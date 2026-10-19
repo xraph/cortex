@@ -40,10 +40,10 @@ Nexus also strips inbound baggage before it calls a model provider, so a client'
 
 | Span | Kind | Attributes |
 |---|---|---|
-| `run agent` | Internal | `gen_ai.operation.name` (`invoke_agent`), `gen_ai.agent.id`, `gen_ai.conversation.id` (the session ID), `gen_ai.request.model`, `cortex.run.id`, `cortex.run.mode` (`sync`, `stream`), `cortex.run.resumed`, `cortex.run.resume_source` (`public`, `approval`, `agent_reply`), `cortex.run.purpose`, `cortex.run.state`, `cortex.run.stop_reason`, `cortex.run.steps`, `cortex.run.tokens` |
+| `run agent` | Internal | `gen_ai.operation.name` (`invoke_agent`), `gen_ai.agent.id`, `gen_ai.conversation.id` (the session ID), `gen_ai.request.model`, `cortex.run.id`, `cortex.run.mode` (`sync`, `stream`), `cortex.run.resumed`, `cortex.run.resume_source` (`public`, `approval`, `agent_reply`), `cortex.run.purpose`, `cortex.run.state`, `cortex.run.stop_reason`, `cortex.run.steps`, `cortex.run.tokens`, `cortex.run.result` (`not_found`, `claim_lost`) |
 | `prepare agent` | Internal | `gen_ai.agent.id`, `cortex.prepare.atomic`, `cortex.prepare.sections`, `cortex.prepare.knowledge_sections`, `cortex.prepare.tools` |
 | `run agent step` | Internal | `cortex.step.index`, `cortex.step.tool_calls`, `cortex.step.outcome` (`tool_calls`, `final`, `suspended`, `stopped`, `error`) |
-| `call tool` | Internal | `gen_ai.operation.name` (`execute_tool`), `gen_ai.tool.name`, `gen_ai.tool.call.id`, `cortex.tool.kind` (`builtin`, `registered`, `external`, `unknown`), `cortex.tool.outcome` (`completed`, `failed`, `denied`, `pending`) |
+| `call tool` | Internal | `gen_ai.operation.name` (`execute_tool`), `gen_ai.tool.name`, `gen_ai.tool.call.id` (only a short opaque token), `cortex.tool.kind` (`builtin`, `registered`, `external`, `unknown`), `cortex.tool.outcome` (`completed`, `failed`, `denied`, `pending`) |
 | `check publication` | Internal | `cortex.publication.source`, `cortex.publication.direction` (`input`, `output`), `cortex.publication.mode`, `cortex.publication.status`, and `cortex.publication.checks` on a batch |
 | `suspend run` | Internal | `cortex.run.id`, `cortex.suspension.reason` (`approval`, `external_tool`, `agent_reply`, `mixed`), `cortex.suspension.pending_calls` |
 | `expire suspension` | Internal, root | `cortex.run.id`, `cortex.suspension.reason`, `cortex.suspension.outcome` (`expired`, `skipped`, `orphan_dropped`, `error`) |
@@ -52,7 +52,11 @@ Nexus also strips inbound baggage before it calls a model provider, so a client'
 
 A `run agent` span is one pass of the loop. A fresh run is one pass from the call to its end or its pause. A resume is another pass, marked `cortex.run.resumed`, carrying the same `cortex.run.id`. `cortex.run.stop_reason` is only set once the run has ended, and it's the engine's own `run.StopReason`, never the provider's raw finish reason.
 
-A span is marked as an error only when something actually broke: a run that failed, a tool that failed, a publication gate that couldn't answer, a delivery the bus couldn't record. A run that ends incomplete or cancelled, a check that blocks content, a denied tool call and a paused run all did what they were told, and their attributes say how.
+A span is marked as an error only when something actually broke: a run that failed, a tool that failed, a publication gate that couldn't answer, a delivery the bus couldn't record. A run that ends incomplete or cancelled, a check that blocks content, a denied tool call and a paused run all did what they were told, and their attributes say how. A step the caller cancelled, or that hit its deadline mid-call, is `stopped`, not `error`. A call that names an agent or run that doesn't exist, or loses the race to claim a paused run, gets `cortex.run.result` instead of an error status.
+
+If a tool, an authorizer, a hook or the model client panics, the call tool, step and run spans still end, with the status `panic`, and the in-flight gauge comes back down before the panic reaches you.
+
+`knowledge_search` answers a failed retrieval with an error payload, and the model and your hooks still see a completed call. The span and `forge_cortex_tool_calls_handled_total` report it as `failed`.
 
 History and retrieved knowledge sections are checked as a batch, so a run that loads a hundred messages costs one `check publication` span with `cortex.publication.checks` set to 100. Streaming segment checks get no span at all (there's one per decided stretch of streamed text), but they're counted.
 
