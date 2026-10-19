@@ -107,6 +107,16 @@ func (e *Extension) Register(fapp forge.App) error {
 
 // init builds the engine and API handler.
 func (e *Extension) init(fapp forge.App) error {
+	// The app's metrics go in first, so an engine option the host passed
+	// (WithEngineOption(engine.WithMetrics(nil)), say) still has the last
+	// word. The engine traces through the global provider Forge installs,
+	// so spans need nothing here.
+	//
+	// The app's logger is deliberately not handed over yet: the engine
+	// logs through a no-op logger today, and wiring e.Logger() would turn
+	// on lines that log raw store errors. That needs an audit of its own.
+	e.engineOpts = append([]engine.Option{engine.WithMetrics(e.Metrics())}, e.engineOpts...)
+
 	// Resolve store from grove DI if configured.
 	if e.useGrove {
 		groveDB, err := e.resolveGroveDB(fapp)

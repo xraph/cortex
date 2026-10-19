@@ -77,7 +77,10 @@ func (s *service) bindStream(d *dispatcher.Dispatcher) error {
 			return nil, &dc.Error{Code: dc.CodeUnavailable, Message: "Live run capacity reached. Try again after completed streams expire.", Retryable: true}
 		}
 		// Serialize allocation until the engine has supplied the durable run ID.
-		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+		// The run outlives this command by minutes, so its trace is
+		// detached: a new root linked to the command's span, not a child
+		// still running after its parent ended.
+		runCtx, cancel := context.WithTimeout(engine.DetachTrace(context.WithoutCancel(ctx)), 5*time.Minute)
 		events := make(chan engine.StreamEvent, 32)
 		r := &liveRun{cancel: cancel}
 		if err = s.deps.Engine.StreamAgent(runCtx, ag.Name, in.Input, o, events); err != nil {
