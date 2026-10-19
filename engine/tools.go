@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/knowledge"
@@ -65,6 +66,7 @@ func (e *Engine) executeBuiltinTool(ctx context.Context, inv cortex.Invocation) 
 // executeKnowledgeSearch handles the knowledge_search tool call.
 func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocation) string {
 	if e.knowledge == nil {
+		noteToolFailure(ctx, errKnowledgeUnavailable)
 		return jsonResult("error", "knowledge provider not configured")
 	}
 
@@ -73,9 +75,11 @@ func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocati
 		Collection string `json:"collection"`
 	}
 	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
+		noteToolFailure(ctx, errToolArguments)
 		return jsonResult("error", "invalid arguments: "+err.Error())
 	}
 	if args.Query == "" {
+		noteToolFailure(ctx, errToolArguments)
 		return jsonResult("error", "query is required")
 	}
 
@@ -86,6 +90,7 @@ func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocati
 
 	chunks, err := e.knowledge.Retrieve(ctx, args.Query, params)
 	if err != nil {
+		noteToolFailure(ctx, err)
 		return jsonResult("error", "retrieval failed: "+err.Error())
 	}
 
@@ -110,6 +115,13 @@ func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocati
 	})
 	return string(b)
 }
+
+// Failure classes for a knowledge_search call that answers the model with an
+// error payload. They only reach the call tool span, as its error type.
+var (
+	errKnowledgeUnavailable = errors.New("cortex: knowledge provider not configured")
+	errToolArguments        = errors.New("cortex: invalid tool arguments")
+)
 
 // jsonResult is a helper for simple JSON tool results.
 func jsonResult(key, value string) string {

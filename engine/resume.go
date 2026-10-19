@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -111,7 +114,24 @@ const (
 
 // resume is Resume with the one thing a public caller must not be able to
 // say: which authority this is arriving under.
-func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
+//
+// Every resume, public, approved or answered by a peer agent, is one run
+// agent span marked resumed.
+func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (r *run.Run, err error) {
+	ctx, rt := e.startRun(ctx, modeSync, true,
+		attribute.String(attrRunID, runID.String()),
+		attribute.String(attrRunResumeSource, resumeSourceLabel(source)))
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(r, telemetry.ErrPanic)
+			panic(p)
+		}
+		rt.end(r, err)
+	}()
+	return e.resumeRun(ctx, runID, in, source)
+}
+
+func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
 	ctx, rz, err := e.claimForResume(ctx, runID, in, source)
 	if err != nil {
 		return nil, err
@@ -121,7 +141,19 @@ func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 
 // ResumeStream is Resume over the streaming loop. The channel is closed
 // when execution completes, same as StreamAgent's.
-func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) error {
+func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
+	ctx, rt := e.startRun(ctx, modeStream, true,
+		attribute.String(attrRunID, runID.String()),
+		attribute.String(attrRunResumeSource, resumeSourceLabel(resumeSourcePublic)))
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(nil, telemetry.ErrPanic)
+			panic(p)
+		}
+		if err != nil {
+			rt.end(nil, err)
+		}
+	}()
 	ctx, rz, err := e.claimForResume(ctx, runID, in, resumeSourcePublic)
 	if err != nil {
 		close(events)
@@ -130,6 +162,13 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 
 	go func() {
 		defer close(events)
+		defer func() {
+			if p := recover(); p != nil {
+				rt.end(rz.run, telemetry.ErrPanic)
+				panic(p)
+			}
+			rt.end(rz.run, nil)
+		}()
 
 		// A resumed stream announces itself as started, because that is
 		// the event every existing consumer already waits for before it
@@ -211,6 +250,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
 	r := e.claimedRun(ctx, runID, snapshot)
+	runTraceFrom(ctx).bind(r, susp.Cont.Config.Model)
 
 	ag, err := e.store.Get(ctx, r.AgentID)
 	if err != nil {
@@ -499,23 +539,39 @@ func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p susp
 	}
 
 	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments}
+	content, _, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+		out, outcome := e.runResumedTool(ctx, s, call, approved, &errText)
+		return out, outcome, ""
+	})
+	return content, errText
+}
+
+// runResumedTool authorizes and dispatches one approved call, reporting the
+// error text the run records through errText. The outcome is for the call
+// tool span: an approved external call cannot run here, so it counts as a
+// failure.
+func (e *Engine) runResumedTool(ctx context.Context, s cortex.Subject, call llm.ToolCall, approved bool, errText *string) (string, toolOutcome) {
 	if err := e.authorizeResumedTool(ctx, s, call, approved); err != nil {
-		return jsonResult("error", err.Error()), err.Error()
+		*errText = err.Error()
+		return jsonResult("error", err.Error()), outcomeDenied
 	}
 	out, outcome, err := e.dispatchTool(ctx, s, call)
 	switch outcome {
 	case outcomeCompleted:
-		return out, ""
+		return out, outcomeCompleted
 	case outcomeFailed:
-		return out, err.Error()
+		noteToolFailure(ctx, err)
+		*errText = err.Error()
+		return out, outcomeFailed
 	default:
 		// An approved call that turns out to be external: the engine
 		// cannot run it, and the only honest close is a failure that
 		// says what to do instead. Suspending again is the alternative,
 		// and it would mean a second place in the codebase where a run
 		// pauses, which is the one thing this design refuses.
-		msg := fmt.Sprintf("tool %q is external: an approved external call is answered by supplying its result, not by asking the engine to run it", p.Name)
-		return jsonResult("error", msg), msg
+		msg := fmt.Sprintf("tool %q is external: an approved external call is answered by supplying its result, not by asking the engine to run it", call.Name)
+		*errText = msg
+		return jsonResult("error", msg), outcomeFailed
 	}
 }
 

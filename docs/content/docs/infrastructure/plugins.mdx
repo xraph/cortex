@@ -114,7 +114,7 @@ if err := e.hook.OnRunStarted(ctx, agentID, runID, input); err != nil {
 
 ## Built-in extensions
 
-- `observability.MetricsExtension`: 11 counters for run, tool, persona, behavior, cognitive and checkpoint events
+- `observability.MetricsExtension`: deprecated, implements no hooks and records nothing. The engine records its own metrics and spans; see [Observability](/docs/infrastructure/observability)
 - `audithook.Extension`: turns lifecycle events into an audit trail
 - the `sentinel` module: evaluation through Sentinel
 

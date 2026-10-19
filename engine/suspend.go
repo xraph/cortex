@@ -7,12 +7,16 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -146,7 +150,31 @@ func (p *pendingCalls) reason() (suspension.SuspendReason, error) {
 // the messages, and Resume is what eventually persists them: saving now
 // would have the resumed run reload its own in-flight messages as
 // history and answer them twice.
+//
+// The whole pause runs under a suspend run span, and every attempt is
+// counted by reason and result.
 func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, cont suspension.Continuation) (suspension.SuspendReason, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, spanSuspendRun, trace.WithAttributes(
+		attribute.String(attrRunID, r.ID.String()),
+		attribute.Int(attrSuspensionPending, len(pend.calls)),
+	))
+	reason, err := e.suspendRun(ctx, r, pend, cont)
+	// The label comes from the pending calls, not from what suspendRun
+	// returned: a store failure returns no reason, and it must not read as
+	// calls that disagreed.
+	label := suspendReasonLabel(reason)
+	if reason == "" {
+		if wanted, mixedErr := pend.reason(); mixedErr == nil {
+			label = suspendReasonLabel(wanted)
+		} else {
+			label = "mixed"
+		}
+	}
+	e.finishSuspend(span, label, err)
+	return reason, err
+}
+
+func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, cont suspension.Continuation) (suspension.SuspendReason, error) {
 	reason, err := pend.reason()
 	if err != nil {
 		return "", err

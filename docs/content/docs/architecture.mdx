@@ -57,7 +57,8 @@ eng, err := engine.New(
         DefaultModel:    "gpt-4o",
         DefaultMaxSteps: 30,
     }),
-    engine.WithExtension(metricsExt),    // lifecycle hooks
+    engine.WithExtension(auditExt),      // lifecycle hooks
+    engine.WithMetrics(metrics),         // a go-utils metrics sink; Forge passes its own
     engine.WithLogger(logger),           // a go-utils log.Logger; defaults to a no-op logger
 )
 ```
@@ -113,7 +114,7 @@ The `plugin.Registry` sorts extensions by hook at registration time, so an emit 
 
 Built-in extensions:
 
-- `observability.MetricsExtension`: 11 counters for run, tool, persona, behavior, cognitive and checkpoint events
+- `observability.MetricsExtension`: deprecated and records nothing; the engine records its own metrics through `engine.WithMetrics`
 - `audithook.Extension`: turns lifecycle events into an audit trail
 - the `sentinel` module: evaluation through Sentinel
 
@@ -148,7 +149,7 @@ Built-in extensions:
 | `store/postgres` | `.../store/postgres` | PostgreSQL backend (Grove) |
 | `store/mongo` | `.../store/mongo` | MongoDB backend (Grove) |
 | `plugin` | `.../plugin` | Extension interfaces and Registry |
-| `observability` | `.../observability` | Metrics extension (11 counters) |
+| `observability` | `.../observability` | Deprecated metrics plugin; see [Observability](/docs/infrastructure/observability) |
 | `audit_hook` | `.../audit_hook` | Audit trail extension |
 | `api` | `.../api` (own module) | Forge HTTP handlers (59 routes) |
 | `extension` | `.../extension` (own module) | Forge extension and dashboard contract |

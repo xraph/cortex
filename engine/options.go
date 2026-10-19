@@ -7,6 +7,7 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/knowledge"
@@ -39,6 +40,22 @@ func WithExtension(ext plugin.Extension) Option {
 func WithLogger(l log.Logger) Option {
 	return func(e *Engine) error {
 		e.logger = l
+		return nil
+	}
+}
+
+// WithMetrics records the engine's metrics on m: runs, steps, tool calls,
+// publication checks, suspensions and orchestrations, plus the message
+// bus's deliveries when WithA2A is set. Every label is a bounded enum. In a
+// Forge app pass app.Metrics(); the cortex Forge extension does it for you,
+// and the scrape shows each name with a forge_ prefix. A nil m, the
+// default, records nothing.
+//
+// Spans need no option: the engine traces through the global OpenTelemetry
+// tracer provider, which Forge installs.
+func WithMetrics(m gometrics.Metrics) Option {
+	return func(e *Engine) error {
+		e.metrics = m
 		return nil
 	}
 }

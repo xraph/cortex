@@ -46,7 +46,8 @@ The central coordinator.
 | `Engine.SendMessage`, `AgentInbox`, `ListConversations`, `GetConversation`, `ListMessages` | Agent messaging |
 | `Engine.VisibleTools(ctx, agentID)` | The tools an agent would see |
 | `RunOverrides`, `ResumeInput`, `ToolResult`, `StreamEvent`, `ToolHandler` | Run inputs and outputs |
-| `WithStore`, `WithLLM`, `WithConfig`, `WithTool`, `WithExternalTool`, `WithToolAuthorizer`, `WithSafety`, `WithKnowledge`, `WithA2A`, `WithExtension`, `WithLogger`, `WithSuspensionTTL`, `WithSuspensionSweepInterval`, `WithSuspensionSweepLimit` | Engine options; see [Configuration](/docs/concepts/configuration) |
+| `WithStore`, `WithLLM`, `WithConfig`, `WithTool`, `WithExternalTool`, `WithToolAuthorizer`, `WithSafety`, `WithKnowledge`, `WithA2A`, `WithExtension`, `WithLogger`, `WithMetrics`, `WithSuspensionTTL`, `WithSuspensionSweepInterval`, `WithSuspensionSweepLimit` | Engine options; see [Configuration](/docs/concepts/configuration) |
+| `DetachTrace(ctx)` | A context whose run is traced as a new root linked to ctx's span; see [Observability](/docs/infrastructure/observability) |
 
 ## Domain packages
 
@@ -518,11 +519,11 @@ func (r *Registry) Extensions() []Extension
 
 ### `github.com/xraph/cortex/observability`
 
-Metrics plugin with 11 counters, recorded through a go-utils `MetricFactory`.
+Deprecated. The plugin implements no hooks and records nothing; the engine records its own metrics through `engine.WithMetrics`. Both constructors still compile so existing code builds.
 
 ```go
-func NewMetricsExtension() *MetricsExtension // its own collector
-func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension
+func NewMetricsExtension() *MetricsExtension                                  // records nothing
+func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension // the factory is ignored
 ```
 
 ### `github.com/xraph/cortex/audit_hook`
@@ -615,7 +616,7 @@ Agent2Agent over JSON-RPC, REST and SSE, with gRPC in `a2aremote/grpcbind`. Not 
 | `store/sqlite` | Infrastructure | SQLite implementation |
 | `store/mongo` | Infrastructure | MongoDB implementation |
 | `plugin` | Infrastructure | Plugin system |
-| `observability` | Infrastructure | Metrics plugin |
+| `observability` | Infrastructure | Deprecated metrics plugin |
 | `audit_hook` | Infrastructure | Audit plugin |
 | `api` | Module | HTTP handlers |
 | `extension` | Module | Forge extension |

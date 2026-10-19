@@ -7,6 +7,7 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
@@ -15,6 +16,7 @@ import (
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/knowledge"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
@@ -37,6 +39,8 @@ type registeredTool struct {
 type Engine struct {
 	config            cortex.Config
 	logger            log.Logger
+	metrics           gometrics.Metrics
+	instr             *engineMetrics
 	store             store.Store
 	atomicPreparation bool
 	llm               llm.Client
@@ -120,6 +124,10 @@ func New(opts ...Option) (*Engine, error) {
 	if err := e.configurePublication(); err != nil {
 		return nil, err
 	}
+
+	// Instruments are declared once here, after every option has run, so
+	// WithMetrics can sit anywhere in the caller's list.
+	e.instr = newEngineMetrics(e.metrics)
 
 	e.extensions = plugin.NewRegistry(e.logger)
 	for _, ext := range e.pendingExts {
@@ -909,7 +917,21 @@ type StreamEvent struct {
 // RunAgent executes an agent synchronously.
 // When an LLM client is configured, it uses the ReAct reasoning loop.
 // Otherwise, it falls back to mock/echo mode.
-func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
+//
+// The run is traced as one run agent span covering the whole call.
+func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (r *run.Run, err error) {
+	ctx, rt := e.startRun(ctx, modeSync, false)
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(r, telemetry.ErrPanic)
+			panic(p)
+		}
+		rt.end(r, err)
+	}()
+	return e.runAgent(ctx, agentName, input, overrides)
+}
+
+func (e *Engine) runAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (*run.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -939,7 +961,24 @@ func (e *Engine) RunAgent(ctx context.Context, agentName, input string, override
 // The channel is closed when execution completes.
 // When an LLM client is configured, it uses the ReAct reasoning loop with streaming.
 // Otherwise, it falls back to mock/echo mode.
-func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+//
+// The run agent span lasts until the stream's goroutine finishes, not until
+// this call returns.
+func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) (err error) {
+	ctx, rt := e.startRun(ctx, modeStream, false)
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(nil, telemetry.ErrPanic)
+			panic(p)
+		}
+		if err != nil {
+			rt.end(nil, err)
+		}
+	}()
+	return e.streamAgent(ctx, agentName, input, overrides, events)
+}
+
+func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
 	if e.store == nil {
 		close(events)
 		return cortex.ErrNoStore
@@ -990,6 +1029,7 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return nil, fmt.Errorf("create run: %w", err)
 	}
+	runTraceFrom(ctx).bind(r, "")
 
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
 
@@ -1045,11 +1085,20 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		close(events)
 		return fmt.Errorf("create run: %w", err)
 	}
+	rt := runTraceFrom(ctx)
+	rt.bind(r, "")
 
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
 
 	go func() {
 		defer close(events)
+		defer func() {
+			if p := recover(); p != nil {
+				rt.end(r, telemetry.ErrPanic)
+				panic(p)
+			}
+			rt.end(r, nil)
+		}()
 
 		sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
 			"run_id":   r.ID.String(),

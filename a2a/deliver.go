@@ -16,15 +16,29 @@ import (
 // A recipient's failure is never returned here. It becomes a failure
 // message the sender can read, because a peer that broke is information for
 // the asker and not a reason to stop the delivery loop.
+//
+// A claimed delivery is one root deliver agent message span; a claim that
+// loses its race starts nothing.
 func (b *Bus) deliverOne(ctx context.Context, deliveryID id.DeliveryID) error {
 	d, err := b.store.ClaimDelivery(ctx, deliveryID)
 	if err != nil {
 		return err
 	}
+	// The link is taken by the claim's winner only. Two workers here can
+	// list the same row, and the loser must not walk off with it.
+	ctx, tr := b.startDelivery(ctx, d, b.dispatch.links.take(deliveryID))
+	err = b.carry(ctx, d, tr)
+	tr.end(d, err)
+	return err
+}
+
+// carry is the delivery itself, once claimed.
+func (b *Bus) carry(ctx context.Context, d *Delivery, tr *deliveryTrace) error {
 	e, err := b.store.GetMessage(ctx, d.MessageID)
 	if err != nil {
 		return b.failDelivery(ctx, d, err)
 	}
+	tr.envelope(e)
 
 	// A remote receiver is carried by a transport, whatever the
 	// performative says. Routing by class first would run a LOCAL agent

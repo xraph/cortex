@@ -26,7 +26,10 @@ func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 	subject := cortex.Subject{Scope: cortex.ScopeFromContext(ctx), Principal: cortex.PrincipalFromContext(ctx)}
 	// The outcome is what tells the ReAct loop whether a ToolCompleted event
 	// is still owed. Dispatch has no run to attribute one to, so it drops it.
-	result, outcome, reason := e.executeTool(ctx, subject, llm.ToolCall{Name: name, Arguments: arguments})
+	call := llm.ToolCall{Name: name, Arguments: arguments}
+	result, outcome, reason := e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+		return e.executeTool(ctx, subject, call)
+	})
 	// A pending call can only be answered by suspending a run, and
 	// Dispatch has no run to suspend. Returning executeTool's empty
 	// pending result verbatim would hand the caller a blank string that

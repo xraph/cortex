@@ -206,7 +206,7 @@ Plugins are notified in registration order. If plugin A is registered before plu
 
 | Plugin | Package | Hooks implemented |
 |--------|---------|-------------------|
-| Metrics | `observability` | 11 hooks: run started, completed and failed; tool called, completed and failed; persona, behavior and cognitive; checkpoint created and resolved |
+| Metrics | `observability` | None. Deprecated: the engine records its own metrics now, see [Observability](/docs/infrastructure/observability) |
 | Audit | `audit_hook` | 10 hooks, recorded as structured audit events and filterable with `WithActions` |
 
 ## Tips

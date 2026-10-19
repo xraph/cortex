@@ -34,7 +34,8 @@ All seven are stored, scoped and served by the engine and the REST API. At run t
 - Human in the loop: your `ToolAuthorizer` can hide tools, deny calls, or pause a run at a checkpoint until someone approves.
 - Suspend and resume: a run that waits for an external tool result or an approval is a stored row, not a blocked goroutine.
 - Host-defined scope: every entity belongs to a scope you define (tenant, workspace, app, whatever you need), and every store call checks it.
-- Plugin system: 21 lifecycle hook interfaces for metrics, audit trails and custom processing. An extension implements only the ones it cares about.
+- Plugin system: 21 lifecycle hook interfaces for audit trails and custom processing. An extension implements only the ones it cares about.
+- Tracing and metrics: every run, step, tool call and publication check is an OpenTelemetry span, and the engine records bounded metrics of its own. In a Forge app both are on without any setup.
 - Conversation memory: sessions keep conversation history per agent.
 - Three stores: PostgreSQL, SQLite and MongoDB, all on Grove, with migrations registered in Go.
 - Forge integration: a `forge.Extension` that builds the engine, provides it through DI and runs migrations on start. The REST API (59 routes) lives in the separate `api` module, and you mount it with `extension.WithRoutes` when you want it.

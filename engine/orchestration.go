@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/run"
 )
@@ -74,6 +75,9 @@ func (h registryHookEmitter) AgentHandoff(ctx context.Context, orchID id.Orchest
 
 // RunOrchestration loads a stored orchestration config by name and executes it,
 // persisting a Run and firing orchestration lifecycle hooks.
+//
+// It runs under a run orchestration span, and every participant's run
+// agent span nests under it, parallel workers included.
 func (e *Engine) RunOrchestration(ctx context.Context, name, input string) (*orchestration.Run, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
@@ -84,5 +88,8 @@ func (e *Engine) RunOrchestration(ctx context.Context, name, input string) (*orc
 		e.store,
 		registryHookEmitter{eng: e},
 	)
-	return svc.Run(ctx, name, input)
+	ctx, span := telemetry.Tracer().Start(ctx, spanRunOrchestration)
+	rec, err := svc.Run(ctx, name, input)
+	e.finishOrchestration(span, rec, err)
+	return rec, err
 }

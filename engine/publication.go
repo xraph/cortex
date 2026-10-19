@@ -65,6 +65,10 @@ func publicationRequest(ctx context.Context, ag *agent.Config, r *run.Run, text,
 }
 
 func (e *Engine) checkPublication(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, text, source string, direction safety.Direction) (approved approvedText, rejectionErr error) {
+	// Counted once per check, whatever its outcome. status stays unscanned
+	// unless a gate was consulted and said otherwise.
+	status := safety.StatusUnscanned
+	defer func() { e.instr.publicationChecked(source, direction, publicationResult(status, rejectionErr)) }()
 	defer func() {
 		if rejectionErr == nil || ctx.Err() != nil {
 			return
@@ -105,7 +109,9 @@ func (e *Engine) checkPublication(ctx context.Context, ag *agent.Config, r *run.
 	}
 	decision := safety.PublicationDecision{Text: text, Status: safety.StatusUnscanned}
 	if p.Mode != safety.ModeDisabled && e.publicationGate != nil {
-		decision, err = e.publicationGate.Check(ctx, publicationRequest(ctx, ag, r, text, source, direction))
+		gateCtx, span := startPublicationCheck(ctx, source, direction, p.Mode)
+		decision, err = e.publicationGate.Check(gateCtx, publicationRequest(ctx, ag, r, text, source, direction))
+		endPublicationCheck(span, decision.Status, err)
 		if err != nil {
 			return "", closedPublicationError(err)
 		}
@@ -124,6 +130,7 @@ func (e *Engine) checkPublication(ctx context.Context, ag *agent.Config, r *run.
 	if r != nil {
 		r.Provenance.PublicationStatus = mergePublicationStatus(r.Provenance.PublicationStatus, decision.Status)
 	}
+	status = decision.Status
 	return approvedText(decision.Text), nil
 }
 
@@ -193,7 +200,9 @@ func (e *Engine) checkToolCalls(ctx context.Context, ag *agent.Config, r *run.Ru
 	return nil
 }
 
-func (e *Engine) checkMessages(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, messages []llm.Message) error {
+func (e *Engine) checkMessages(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, messages []llm.Message) (batchErr error) {
+	ctx, done := e.startPublicationBatch(ctx, p, "history", safety.DirectionInput, len(messages))
+	defer func() { done(batchErr) }()
 	total := 0
 	for i := range messages {
 		if len(messages[i].Content) > p.MaxInputBytes-total {
@@ -246,8 +255,16 @@ func publishToken(ctx context.Context, events chan<- StreamEvent, text approvedT
 	return sendEvent(ctx, events, StreamEvent{Type: EventToken, Data: map[string]any{"content": string(text), "index": index}})
 }
 
-func (e *Engine) checkPreparedSources(ctx context.Context, ag *agent.Config, snap *preparedSnapshot) error {
+func (e *Engine) checkPreparedSources(ctx context.Context, ag *agent.Config, snap *preparedSnapshot) (batchErr error) {
 	receipt := &run.Run{Provenance: snap.Provenance}
+	knowledge := 0
+	for i := range snap.Sections {
+		if snap.Sections[i].Source == prompt.SourceKnowledge {
+			knowledge++
+		}
+	}
+	ctx, done := e.startPublicationBatch(ctx, snap.Config.Publication, "retrieval", safety.DirectionInput, knowledge)
+	defer func() { done(batchErr) }()
 	total := 0
 	for i := range snap.Sections {
 		if snap.Sections[i].Source != prompt.SourceKnowledge {

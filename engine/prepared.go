@@ -110,6 +110,13 @@ func (p *PreparedAgent) snapshot() (*preparedSnapshot, error) {
 // PrepareAgent resolves an agent and freezes its effective configuration and
 // sources under the caller's exact scope. Tool authorization remains live.
 func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides *RunOverrides) (*PreparedAgent, error) {
+	ctx, span := e.startPrepare(ctx, agentID.String())
+	p, err := e.prepareAgentByID(ctx, agentID, overrides)
+	endPrepare(span, err)
+	return p, err
+}
+
+func (e *Engine) prepareAgentByID(ctx context.Context, agentID id.AgentID, overrides *RunOverrides) (*PreparedAgent, error) {
 	if e.store == nil {
 		return nil, cortex.ErrNoStore
 	}
@@ -123,7 +130,7 @@ func (e *Engine) PrepareAgent(ctx context.Context, agentID id.AgentID, overrides
 	if err != nil {
 		return nil, fmt.Errorf("cortex: prepare agent: %w", err)
 	}
-	return e.prepareAgent(ctx, ag, overrides)
+	return e.buildPrepared(ctx, ag, overrides)
 }
 
 func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, overrides *RunOverrides) (*preparedSnapshot, error) {

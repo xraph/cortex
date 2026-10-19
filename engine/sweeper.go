@@ -7,9 +7,13 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
 )
@@ -163,7 +167,46 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 // between. Such a row is still listed as expired, and this is exactly
 // where an unclaimed sweeper would fail a run mid-flight. The claim
 // sees the run is running and skips it.
+//
+// Each expired row is its own root expire suspension span. The sweep's tick
+// and its list query start no trace, so a quiet minute costs nothing.
 func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspension, now time.Time) error {
+	reason := suspendReasonLabel(susp.Reason)
+	ctx, span := telemetry.Tracer().Start(ctx, spanExpireSuspension, trace.WithNewRoot(), trace.WithAttributes(
+		attribute.String(attrRunID, susp.RunID.String()),
+		attribute.String(attrSuspensionReason, reason),
+	))
+	defer span.End()
+
+	outcome, err := e.expireOne(ctx, susp, now)
+	span.SetAttributes(attribute.String(attrSuspensionOutcome, outcome))
+	switch {
+	case err != nil:
+		telemetry.Fail(span, err)
+		if e.instr != nil {
+			e.instr.expired.Inc(reason, resultError)
+		}
+	case outcome == expiryExpired && e.instr != nil:
+		e.instr.expired.Inc(reason, resultOK)
+	}
+	return err
+}
+
+// How one expired row ended up, for the expire suspension span.
+const (
+	// expiryExpired: the run was failed and the row dropped.
+	expiryExpired = "expired"
+	// expirySkipped: somebody else owns the run (resumed, decided or
+	// already swept), so the row was left alone.
+	expirySkipped = "skipped"
+	// expiryOrphan: the run had already ended or was gone, and only the
+	// leftover row was cleared.
+	expiryOrphan = "orphan_dropped"
+	// expiryError: something failed; the next sweep tries again.
+	expiryError = "error"
+)
+
+func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now time.Time) (string, error) {
 	// Under the run's OWN scope, not the sweeper's, which has none.
 	// Crossing scopes to find the work does not license doing the work
 	// unscoped, and everything a run records has to land where its
@@ -177,18 +220,25 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 	if err != nil {
 		if errors.Is(err, cortex.ErrRunNotFound) {
 			// No run to fail. The row is all that is left of it.
-			return e.deleteOrphanRow(ctx, susp)
+			return orphanOutcome(e.deleteOrphanRow(ctx, susp))
 		}
-		return fmt.Errorf("load the run behind an expired suspension: %w", err)
+		return expiryError, fmt.Errorf("load the run behind an expired suspension: %w", err)
 	}
 
 	if _, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now); err != nil {
 		if errors.Is(err, cortex.ErrNotSuspended) {
 			// Somebody else owns this run: it was resumed, decided, or
 			// already swept. Not an error, and nothing to log.
-			return e.dropOrphanedSuspension(ctx, susp)
+			dropped, dropErr := e.dropOrphanedSuspension(ctx, susp)
+			if dropErr != nil {
+				return expiryError, dropErr
+			}
+			if dropped {
+				return expiryOrphan, nil
+			}
+			return expirySkipped, nil
 		}
-		return fmt.Errorf("claim expired suspension: %w", err)
+		return expiryError, fmt.Errorf("claim expired suspension: %w", err)
 	}
 
 	// From here the run belongs to this sweep and it is no longer
@@ -202,10 +252,10 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 
 	r := e.claimedRun(ctx, susp.RunID, snapshot)
 
-	if err := e.persistFailure(ctx, r, r.AgentID, expiryError(susp)); err != nil {
+	if err := e.persistFailure(ctx, r, r.AgentID, expiredRunError(susp)); err != nil {
 		// The suspension stays. It is the only record of what the run
 		// was waiting on, and the next sweep will find it again.
-		return fmt.Errorf("fail expired run %s: %w", susp.RunID, err)
+		return expiryError, fmt.Errorf("fail expired run %s: %w", susp.RunID, err)
 	}
 
 	// The run is failed and no claim will ever take it again, so the row
@@ -225,7 +275,15 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 	// error out of the claim. Resolved here, the queue only ever holds
 	// decisions that can still change something.
 	e.closePendingCheckpoints(ctx, susp.RunID, "nobody answered in time, so the run was failed and there is nothing left to decide")
-	return nil
+	return expiryExpired, nil
+}
+
+// orphanOutcome reports a row cleared because its run was gone.
+func orphanOutcome(err error) (string, error) {
+	if err != nil {
+		return expiryError, err
+	}
+	return expiryOrphan, nil
 }
 
 // dropOrphanedSuspension clears a row whose run has already finished.
@@ -246,20 +304,22 @@ func (e *Engine) expireSuspension(ctx context.Context, susp *suspension.Suspensi
 //
 // Everything else the refused claim could mean (the run is paused again,
 // running, or the row is simply gone) is left exactly as found.
-func (e *Engine) dropOrphanedSuspension(ctx context.Context, susp *suspension.Suspension) error {
+//
+// It reports whether it dropped the row.
+func (e *Engine) dropOrphanedSuspension(ctx context.Context, susp *suspension.Suspension) (bool, error) {
 	r, err := e.store.GetRun(ctx, susp.RunID)
 	if err != nil {
 		if errors.Is(err, cortex.ErrRunNotFound) {
 			// No run to be orphaned from. Dropping the row is the only
 			// thing left that can ever be done with it.
-			return e.deleteOrphanRow(ctx, susp)
+			return true, e.deleteOrphanRow(ctx, susp)
 		}
-		return fmt.Errorf("load run behind a refused claim: %w", err)
+		return false, fmt.Errorf("load run behind a refused claim: %w", err)
 	}
 	if !isTerminalRunState(r.State) {
-		return nil
+		return false, nil
 	}
-	return e.deleteOrphanRow(ctx, susp)
+	return true, e.deleteOrphanRow(ctx, susp)
 }
 
 func (e *Engine) deleteOrphanRow(ctx context.Context, susp *suspension.Suspension) error {
@@ -288,11 +348,11 @@ func isTerminalRunState(s run.State) bool {
 	}
 }
 
-// expiryError is what the run's Error field ends up saying. It wraps
+// expiredRunError is what the run's Error field ends up saying. It wraps
 // cortex.ErrSuspensionExpired so a caller can match on it, and it names
 // the deadline, because "expired" without a time sends whoever reads it
 // looking for a log line to find out when.
-func expiryError(susp *suspension.Suspension) error {
+func expiredRunError(susp *suspension.Suspension) error {
 	deadline := "its deadline"
 	if susp.ExpiresAt != nil {
 		deadline = susp.ExpiresAt.Format(time.RFC3339)

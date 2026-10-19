@@ -13,8 +13,8 @@ replace github.com/xraph/cortex/integrations/fabriq => ../integrations/fabriq
 require (
 	github.com/xraph/cortex v1.6.1
 	github.com/xraph/cortex/integrations/fabriq v0.0.0-20260827002006-bb2528ddd778
-	github.com/xraph/fabriq v1.7.1
-	github.com/xraph/fabriq/core v1.7.1
+	github.com/xraph/fabriq v1.8.2
+	github.com/xraph/fabriq/core v1.8.2
 )
 
 require (
@@ -103,11 +103,11 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	github.com/xraph/go-utils v1.3.0 // indirect
-	github.com/xraph/grove v1.7.3 // indirect
-	github.com/xraph/grove/drivers/pgdriver v1.7.3 // indirect
-	github.com/xraph/grove/kv v1.7.3 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.7.3 // indirect
+	github.com/xraph/go-utils v1.4.1 // indirect
+	github.com/xraph/grove v1.8.0 // indirect
+	github.com/xraph/grove/drivers/pgdriver v1.8.0 // indirect
+	github.com/xraph/grove/kv v1.8.0 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.8.0 // indirect
 	github.com/xraph/trove v1.7.1 // indirect
 	github.com/xraph/vessel v1.0.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
@@ -115,7 +115,7 @@ require (
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect

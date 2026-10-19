@@ -269,7 +269,13 @@ Those are the defaults. `default_model` is `smart`, which only means something i
 
 ## Lifecycle hooks
 
-You write a hook as a plain value that implements any of the 21 small interfaces in `plugin`, and you register it with `engine.WithExtension`. They cover runs and steps (`OnRunStarted`, `OnStepCompleted`), tools (`OnToolCalled`, `OnToolFailed`, `OnToolDenied`), the human model (`OnPersonaResolved`, `OnBehaviorTriggered`, `OnCognitivePhaseChanged`), checkpoints, orchestration and handoffs, agent messages, and shutdown. `audit_hook` turns them into an audit trail for [Chronicle](https://github.com/xraph/chronicle), and `observability` counts them as metrics.
+You write a hook as a plain value that implements any of the 21 small interfaces in `plugin`, and you register it with `engine.WithExtension`. They cover runs and steps (`OnRunStarted`, `OnStepCompleted`), tools (`OnToolCalled`, `OnToolFailed`, `OnToolDenied`), the human model (`OnPersonaResolved`, `OnBehaviorTriggered`, `OnCognitivePhaseChanged`), checkpoints, orchestration and handoffs, agent messages, and shutdown. `audit_hook` turns them into an audit trail for [Chronicle](https://github.com/xraph/chronicle).
+
+## Tracing and metrics
+
+Every run is traced. A run is a `run agent` span, with a span per step, per tool call and per publication check under it, and the model call, store queries and safety scans from Nexus, Grove and Shield nest inside. The engine also records its own metrics: runs finished by state and stop reason, pass latency, steps, tool calls by kind, publication checks, suspensions, orchestrations and agent-to-agent deliveries. Every label is a closed set, and no prompt, tool argument, model output or agent name ever reaches a span or a label.
+
+In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as `forge_cortex_*`. Outside Forge, set an OpenTelemetry tracer provider and pass `engine.WithMetrics`. The [observability page](https://www.xraph.com/docs/cortex/infrastructure/observability) lists every span and series. The old `observability` metrics plugin is deprecated and records nothing now.
 
 ## Modules
 
@@ -291,7 +297,7 @@ You write a hook as a plain value that implements any of the 21 small interfaces
 | Execution | [Runs, steps and tool calls](https://www.xraph.com/docs/cortex/execution/runs), [memory](https://www.xraph.com/docs/cortex/execution/memory), [checkpoints](https://www.xraph.com/docs/cortex/execution/checkpoints), [orchestration](https://www.xraph.com/docs/cortex/execution/orchestration) |
 | Scope and config | [Host-defined scope](https://www.xraph.com/docs/cortex/concepts/multi-tenancy), [configuration](https://www.xraph.com/docs/cortex/concepts/configuration) |
 | Storage | [PostgreSQL](https://www.xraph.com/docs/cortex/stores/postgres), [SQLite](https://www.xraph.com/docs/cortex/stores/sqlite), [MongoDB](https://www.xraph.com/docs/cortex/stores/mongo) |
-| Forge, HTTP and plugins | [Forge extension](https://www.xraph.com/docs/cortex/guides/forge-extension), [HTTP API](https://www.xraph.com/docs/cortex/api-reference/http-api), [plugin system](https://www.xraph.com/docs/cortex/infrastructure/plugins), [Fabriq brain](https://www.xraph.com/docs/cortex/integrations/fabriq) |
+| Forge, HTTP and plugins | [Forge extension](https://www.xraph.com/docs/cortex/guides/forge-extension), [HTTP API](https://www.xraph.com/docs/cortex/api-reference/http-api), [plugin system](https://www.xraph.com/docs/cortex/infrastructure/plugins), [observability](https://www.xraph.com/docs/cortex/infrastructure/observability), [Fabriq brain](https://www.xraph.com/docs/cortex/integrations/fabriq) |
 
 A few newer pages are in the repo but not on the site yet: [tool authorization](docs/content/docs/concepts/authorization.mdx), [suspension](docs/content/docs/concepts/suspension.mdx), [sessions](docs/content/docs/concepts/sessions.mdx), [agent messaging](docs/content/docs/execution/messaging.mdx) and [remote agents](docs/content/docs/execution/remote-messaging.mdx). The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex).
 
