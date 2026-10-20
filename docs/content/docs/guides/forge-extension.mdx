@@ -245,7 +245,7 @@ cortexExt := cortexext.New(
 )
 ```
 
-You don't need a plugin for metrics or tracing. `Register` hands the engine `app.Metrics()`, so the engine's series show up on the app's `/_/metrics` as `forge_cortex_*`, and its spans go to the tracer provider Forge installs. Pass `cortexext.WithEngineOption(engine.WithMetrics(nil))` if you want the metrics off. [Observability](/docs/infrastructure/observability) lists every span and series. The old `observability` plugin is deprecated and records nothing.
+You don't need a plugin for metrics, tracing or logs. `Register` hands the engine `app.Metrics()` and the app's logger, so the engine's series show up on the app's `/_/metrics` as `forge_cortex_*`, its lines land in the app's log, and its spans go to the tracer provider Forge installs. Pass `cortexext.WithEngineOption(engine.WithMetrics(nil))` if you want the metrics off. [Observability](/docs/infrastructure/observability) lists every span and series. The old `observability` plugin is deprecated and records nothing.
 
 ## Health checks
 

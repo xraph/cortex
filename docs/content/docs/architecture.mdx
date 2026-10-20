@@ -59,7 +59,7 @@ eng, err := engine.New(
     }),
     engine.WithExtension(auditExt),      // lifecycle hooks
     engine.WithMetrics(metrics),         // a go-utils metrics sink; Forge passes its own
-    engine.WithLogger(logger),           // a go-utils log.Logger; defaults to a no-op logger
+    engine.WithLogger(logger),           // a go-utils log.Logger; defaults to a no-op logger, Forge passes its own
 )
 ```
 

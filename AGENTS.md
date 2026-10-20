@@ -115,7 +115,7 @@ Sentinels live in `errors.go` with a `cortex: ` prefix. Wrap with `%w` and the s
 
 ### Engine, plugins and the Forge extension
 
-`engine.New(opts ...engine.Option)` takes `func(*Engine) error` options such as `WithStore`, `WithLLM`, `WithSafety`, `WithKnowledge`, `WithTool`, `WithToolAuthorizer` and `WithLogger`. The engine logs through `github.com/xraph/go-utils/log` and defaults to `log.NewNoopLogger()`.
+`engine.New(opts ...engine.Option)` takes `func(*Engine) error` options such as `WithStore`, `WithLLM`, `WithSafety`, `WithKnowledge`, `WithTool`, `WithToolAuthorizer` and `WithLogger`. The engine logs through `github.com/xraph/go-utils/log` and defaults to `log.NewNoopLogger()`; the Forge extension passes the app's logger. Log a failure with `e.logError` or `e.logWarn` (engine/logging.go): they log the error's type, never its text, and throttle each message to a line a minute. Fields are IDs and counts, never run content or scope values.
 
 Lifecycle hooks live in `plugin/`, one interface per event, and you register a hook with `engine.WithExtension`.
 
