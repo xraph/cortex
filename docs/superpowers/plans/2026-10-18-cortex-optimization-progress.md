@@ -19,7 +19,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | Task                                                                         | State                                                         | Next gate                                                                     |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
-| 6: Sentinel foundation | Published as v1.9.0; comparison granularity gap found | Add authoritative comparison over persisted job sets |
+| 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`, accounting `f02dec9`; allocation checks pass | Complete resource invariants, terminal reconciliation and activation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
@@ -161,7 +161,9 @@ Sentinel's full race suite and build passed against the updated Forge and Grove
 dependencies. Final formatting and the comparison race suite passed. `make l`
 was blocked by the shared linter lock; the uncapped equivalent with an isolated
 cache and `--allow-parallel-runners` passed with zero issues. The comparison
-change is committed as `059a4be`; CI and the follow-up release are pending.
+change is committed as `059a4be`. CI `39510864056` and release workflow
+`39511561339` passed. Sentinel v1.9.2 resolves through proxy.golang.org at that
+commit, including the job-set comparator.
 
 Cortex now retains the evaluator aggregate as `Evaluation.Score`. A completed
 evaluation needs a finite value from zero through one; incomplete evidence keeps
@@ -170,6 +172,9 @@ Conformance tests reproduced the missing validation before the fix and now pass,
 including zero scores, invalid values and detached reads. Coordinated `make f`,
 optimizer lint, full race suites and builds against both the current checkout
 and published Cortex v1.8.0 passed. The shared all-module lint run passed
-optimization but found issues in the runtime chat's concurrent sandbox changes;
-that chat owns the fixes and final root recheck. Decision persistence and the
-remaining implementation phases are still open.
+optimization but found issues in the runtime chat's concurrent sandbox changes.
+Those fixes are now committed, and the final all-ten-module lint pass is clean
+(`/tmp/cortex-s24-final-lint-2.log`). The score change is committed as `3425b6a`.
+Its optimization CI job passed; a newer runtime push canceled the remaining
+root test job. Decision persistence and the remaining implementation phases
+are still open.
