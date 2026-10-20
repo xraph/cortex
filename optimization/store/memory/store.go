@@ -26,17 +26,19 @@ type Store struct {
 }
 
 type scopeData struct {
-	Decisions    map[string]optimization.Decision               `json:"decisions"`
-	Evaluations  map[string]optimization.Evaluation             `json:"evaluations"`
-	Experiments  map[string]optimization.Experiment             `json:"experiments"`
-	Versions     map[string]optimization.HarnessVersion         `json:"versions"`
-	Events       map[string][]optimization.Event                `json:"events"`
-	Transitions  map[string]map[string]string                   `json:"transitions"`
-	Reservations map[string]map[string]optimization.Reservation `json:"reservations"`
-	Receipts     map[string]map[string]string                   `json:"receipts"`
-	Allocations  map[string]optimization.ValidationAllocation   `json:"allocations"`
-	Candidates   map[string]optimization.Candidate              `json:"candidates"`
-	Trials       map[string]optimization.Trial                  `json:"trials"`
+	Activations     map[string]optimization.Activation             `json:"activations"`
+	ActivationHeads map[string]id.ID                               `json:"activation_heads"`
+	Decisions       map[string]optimization.Decision               `json:"decisions"`
+	Evaluations     map[string]optimization.Evaluation             `json:"evaluations"`
+	Experiments     map[string]optimization.Experiment             `json:"experiments"`
+	Versions        map[string]optimization.HarnessVersion         `json:"versions"`
+	Events          map[string][]optimization.Event                `json:"events"`
+	Transitions     map[string]map[string]string                   `json:"transitions"`
+	Reservations    map[string]map[string]optimization.Reservation `json:"reservations"`
+	Receipts        map[string]map[string]string                   `json:"receipts"`
+	Allocations     map[string]optimization.ValidationAllocation   `json:"allocations"`
+	Candidates      map[string]optimization.Candidate              `json:"candidates"`
+	Trials          map[string]optimization.Trial                  `json:"trials"`
 }
 
 var _ store.Store = (*Store)(nil)

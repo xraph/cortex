@@ -21,6 +21,8 @@ type Repository interface {
 	GetTrial(context.Context, id.ID) (Trial, error)
 	GetEvaluation(context.Context, string) (Evaluation, error)
 	GetDecision(context.Context, id.ID) (Decision, error)
+	GetActivation(context.Context, id.AgentID, string) (Activation, error)
+	GetActivationGeneration(context.Context, id.ID) (Activation, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -38,6 +40,7 @@ type Transaction interface {
 	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
 	ExposeValidation(ValidationAccess) error
 	ReleaseValidation(ValidationAccess) error
+	CompareAndSwapActivation(ActivationChange) (Activation, error)
 }
 
 // ValidationAllocationRequest freezes one experiment or a parent's paired child

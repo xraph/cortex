@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Draft storage `c80e580`, audit/transitions `12e4a9f`, leases `ddece76`, accounting `f02dec9`; allocation checks pass | Complete resource invariants, terminal reconciliation and activation |
+| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Publication/revocation, remaining readers and terminal reconciliation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -215,3 +215,33 @@ dependency configurations. Shared all-module lint also passed before the final
 formatter. Failure keys preserve case and criterion identities even when their
 names contain separators.
 Activation, publication outbox, durable stores and service integration remain open.
+
+
+## Activation storage
+
+Activation now has an atomic compare-and-swap command, an exact scope/agent/channel
+pointer and immutable generation readers. The command ID is its retry key. You
+can retry an old successful command without moving the current pointer; changing
+that command under the same ID returns a conflict. An empty channel resolves to
+`default`, and channel names accept up to 64 ASCII letters, digits, dots,
+underscores or hyphens.
+
+Each activation binds the stored recommendation, version digest, agent and policy.
+The store refuses inconclusive, exploratory, contrastive, task-local and controller
+evidence. Rollback appends a generation referencing an activation already stored
+for the same agent and channel. It preserves the qualifying decision and checks
+the expected current generation. The pointer, immutable record and audit event
+commit together, with timestamps supplied by the store.
+
+Conformance tests cover concurrent reviewers, conflicting retries, detached
+reads, exact scope, transaction rollback, separate channels and audit resources.
+The shared evidence validator also rejects version/experiment scope mismatches.
+The new API tests first failed to compile; the scope checks then failed before
+the validator fix. Focused tests now pass. Coordinated `make f` and shared `make l` passed all ten modules.
+Full race suites and builds passed against the current checkout and published
+Cortex v1.8.0 (memory conformance: 55.698s and 51.306s).
+
+This is storage work. Current grants, source drift, artifact retention, lesson
+eligibility and the production `RunActive` binding remain service-level work in
+task 11. The fixture recommendation uses a reduced sample policy and does not
+qualify a live production version.

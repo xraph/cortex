@@ -37,6 +37,7 @@ func Run(t *testing.T, factory Factory) {
 	phaseEvidence(t, factory)
 	pairedPhase(t, factory)
 	decisions(t, factory)
+	activations(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")
