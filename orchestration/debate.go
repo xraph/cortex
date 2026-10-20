@@ -20,7 +20,6 @@ func (o *debate) Strategy() string { return StrategyDebate }
 
 func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result, error) {
 	res := &Result{OrchestrationID: bb.OrchestrationID(), Strategy: StrategyDebate}
-	opts := runOptsFromSettings(o.settings)
 
 	judge := o.resolveJudge()
 	debaters := o.debaters(judge)
@@ -33,25 +32,25 @@ func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	for r := 0; r < rounds; r++ {
 		for _, d := range debaters {
 			prompt := buildDebatePrompt(input, bb.Snapshot(), r+1)
-			ar, err := o.runner.RunAgent(ctx, d.AgentName, prompt, opts)
+			ar, err := invokeAgent(ctx, o.runner, o.settings, d.AgentName, prompt)
+			res.AgentResults = append(res.AgentResults, ar)
 			if err != nil {
 				res.Err = err
 				return res, err
 			}
 			bb.Append(d.AgentName, ar.Output)
-			res.AgentResults = append(res.AgentResults, *ar)
 			last = ar.Output
 		}
 	}
 
 	if judge != "" {
-		ar, err := o.runner.RunAgent(ctx, judge, buildJudgePrompt(input, bb.Snapshot()), opts)
+		ar, err := invokeAgent(ctx, o.runner, o.settings, judge, buildJudgePrompt(input, bb.Snapshot()))
+		res.AgentResults = append(res.AgentResults, ar)
 		if err != nil {
 			res.Err = err
 			res.Handoffs = bb.Handoffs()
 			return res, err
 		}
-		res.AgentResults = append(res.AgentResults, *ar)
 		res.Output = ar.Output
 		res.Handoffs = bb.Handoffs()
 		return res, nil

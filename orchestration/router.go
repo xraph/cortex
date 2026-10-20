@@ -23,7 +23,6 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	if len(o.parts) == 0 {
 		return res, nil
 	}
-	opts := runOptsFromSettings(o.settings)
 
 	chosen := o.parts[0].AgentName
 	routedBy := ""
@@ -48,19 +47,20 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		}
 	case o.settings.RouterAgent != "":
 		prompt := buildRoutingPrompt(o.parts, input)
-		ar, err := o.runner.RunAgent(ctx, o.settings.RouterAgent, prompt, opts)
+		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.RouterAgent, prompt)
+		res.AgentResults = append(res.AgentResults, ar)
 		if err != nil {
 			res.Err = err
 			return res, err
 		}
-		res.AgentResults = append(res.AgentResults, *ar)
 		if name, ok := matchParticipant(o.parts, ar.Output); ok {
 			chosen = name
 		}
 		routedBy = o.settings.RouterAgent
 	}
 
-	ar, err := o.runner.RunAgent(ctx, chosen, composeInput(input, bb.Snapshot()), opts)
+	ar, err := invokeAgent(ctx, o.runner, o.settings, chosen, composeInput(input, bb.Snapshot()))
+	res.AgentResults = append(res.AgentResults, ar)
 	if err != nil {
 		res.Err = err
 		return res, err
@@ -69,7 +69,6 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	if routedBy != "" {
 		bb.Handoff(ctx, routedBy, chosen, input)
 	}
-	res.AgentResults = append(res.AgentResults, *ar)
 	res.Output = ar.Output
 	res.Handoffs = bb.Handoffs()
 	return res, nil
