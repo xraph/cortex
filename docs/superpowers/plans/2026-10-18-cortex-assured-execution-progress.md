@@ -204,3 +204,14 @@ Parallel orchestration could return success after a worker failed if its aggrega
 CI `39513609152` exposed a hosted-runner change: Linux `7.0.0-1017-azure` triggers the MongoDB 8.3.2 image's allocator compatibility refusal. The default database test fixture now pins MongoDB 7.0.41 by digest. Its real-container conformance, migration and rescope race tests pass locally without skips. You can still override the fixture explicitly. MongoDB 8.3.2 remains unqualified on these kernels; no startup guard is bypassed.
 
 Final coordinated formatting, all ten modules of lint, the root build and fresh orchestration/engine adapter race checks pass. Exact-commit CI remains pending. G1, G2 and the deferred live Linux sandbox gate remain open.
+
+
+## S3.1 domain foundation
+
+The pure `planning` package now seals bounded task DAGs with exact scope, immutable acceptance contracts, finite task budgets, resource revision grants, owner rosters and unique artifact ownership. `ApplyRevision` preserves the plan identity and contract, rejects widened grants or budgets, records the previous digest and derives the changed/dependent task set. Replaying the same proposal produces the same digest. Storage still needs an atomic expected-revision check.
+
+`Ready` takes an explicit observation time and returns an error for malformed or superseded state. Pending tasks become eligible only when every prerequisite has fresh trusted reports for its assigned criteria. The check follows transitive artifact references and current authority/context bindings. Artifact producers include the sealed plan digest and task ID, so another task's result or an older revision's evidence cannot be relabeled as current. The host must authenticate verifier records, rebuild current bindings from authorized state and confirm artifact availability before calling this pure function.
+
+TDD covered missing implementations, graph cycles and unknown dependencies, criterion loss, scope/grant/budget widening, digest mutation, deterministic replay, depth/edge bounds, stale/revoked/missing checks, cross-task artifact reuse, old-evidence relabeling and transitive provenance. Race tests pass for planning, execution and verification. Final coordinated formatting and all ten modules of lint pass; the root build is recorded with the final checks.
+
+S3.1 remains partial. Durable plan revisions and backend conformance, task state persistence, effect/retry requirements, source provenance capture and strategy adapters are still open. This packet does not add a scheduler, claims, shared budget reservations, evidence reuse policy or production task acceptance. G2 remains required before activation.
