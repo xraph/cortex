@@ -33,7 +33,11 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 		return nil, err
 	}
 	var rows []assurance.Record
-	q := d.store.pgdb.NewSelect(&rows).Where("kind = ?", query.Kind).Where("scope_canon = ?", scope.Canonical()).Limit(query.Limit).OrderExpr("id ASC")
+	order, after := "id ASC", "id > ?"
+	if query.Reverse {
+		order, after = "id DESC", "id < ?"
+	}
+	q := d.store.pgdb.NewSelect(&rows).Where("kind = ?", query.Kind).Where("scope_canon = ?", scope.Canonical()).Limit(query.Limit).OrderExpr(order)
 	for _, predicate := range scopePredicates(scope, true) {
 		q = q.Where(predicate.Column+" = ?", predicate.Value)
 	}
@@ -47,7 +51,7 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 		q = q.Where("run_id = ?", query.RunID)
 	}
 	if query.After != "" {
-		q = q.Where("id > ?", query.After)
+		q = q.Where(after, query.After)
 	}
 	if err = q.Scan(ctx); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err

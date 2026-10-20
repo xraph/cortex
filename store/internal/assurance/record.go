@@ -44,6 +44,7 @@ type Record struct {
 type Query struct {
 	Kind, ID, Digest, RunID, After string
 	Limit                          int
+	Reverse                        bool
 }
 
 // Driver contains only database-specific operations. Insert must never update

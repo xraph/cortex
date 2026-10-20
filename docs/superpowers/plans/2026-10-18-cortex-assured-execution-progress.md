@@ -215,3 +215,16 @@ The pure `planning` package now seals bounded task DAGs with exact scope, immuta
 TDD covered missing implementations, graph cycles and unknown dependencies, criterion loss, scope/grant/budget widening, digest mutation, deterministic replay, depth/edge bounds, stale/revoked/missing checks, cross-task artifact reuse, old-evidence relabeling and transitive provenance. Race tests pass for planning, execution and verification. Final coordinated formatting and all ten modules of lint pass; the root build is recorded with the final checks.
 
 S3.1 remains partial. Durable plan revisions and backend conformance, task state persistence, effect/retry requirements, source provenance capture and strategy adapters are still open. This packet does not add a scheduler, claims, shared budget reservations, evidence reuse policy or production task acceptance. G2 remains required before activation.
+
+
+## S3.1 immutable plan persistence
+
+SQLite, PostgreSQL and MongoDB now expose the optional `planning.Store` capability through the shared assurance repository. Create/read/list operations require exact scope. Each successor is a single immutable insert keyed by plan ID and a fixed-width revision number; the existing scoped unique index resolves competing writers. Reading the highest committed revision avoids a separate mutable head. Identical retries return the original accepted revision without changing newer history.
+
+Conformance tests cover creation conflicts, detached reads, pagination, history through revision 12, ancestor/sibling denial, cancellation, scope inventory and twelve competing proposals with one winner. SQLite and real-container PostgreSQL/MongoDB pass the planning and existing assurance race tests without skips. A SQLite fault adapter loses the acknowledgement after the durable insert; a fresh repository recovers the same revision on retry and rejects changed retry content. This tests the ambiguous acknowledgement window, not a full worker/process crash matrix.
+
+The existing assurance table/collection and indexes hold these additive record kinds, so this packet needs no new database migration. Task claims, task-state transitions, effect/retry policy, source capture and strategy adapters remain open. Stored definitions do not activate scheduling or close G2/G3.
+
+CI `39516036204` at `e51dea8` passed every job, including root race/coverage, docs, security and all nested modules. It covers the orchestration failure fix, Mongo fixture repair and planning domain foundation. The newer persistence packet needs its own exact-commit CI run.
+
+The persistence packet passes final coordinated formatting, all ten modules of lint, the root build and post-format planning/assurance race tests on SQLite and real PostgreSQL/MongoDB containers. No database test skipped.

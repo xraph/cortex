@@ -49,6 +49,10 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 		return nil, err
 	}
 	filter["kind"] = query.Kind
+	direction, after := 1, "$gt"
+	if query.Reverse {
+		direction, after = -1, "$lt"
+	}
 	if query.ID != "" {
 		filter["id"] = query.ID
 	}
@@ -59,9 +63,9 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 		filter["run_id"] = query.RunID
 	}
 	if query.After != "" {
-		filter["id"] = bson.M{"$gt": query.After}
+		filter["id"] = bson.M{after: query.After}
 	}
-	cursor, err := d.store.mdb.Collection(colAssurance).Find(ctx, filter, options.Find().SetLimit(int64(query.Limit)).SetSort(bson.D{{Key: "id", Value: 1}}))
+	cursor, err := d.store.mdb.Collection(colAssurance).Find(ctx, filter, options.Find().SetLimit(int64(query.Limit)).SetSort(bson.D{{Key: "id", Value: direction}}))
 	if err != nil {
 		return nil, err
 	}
