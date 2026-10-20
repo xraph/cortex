@@ -50,6 +50,7 @@ const (
 
 // Experiment combines a frozen specification with revision-fenced work state.
 type Experiment struct {
+	DecisionID     id.ID          `json:"decision_id,omitempty"`
 	ID             id.ID          `json:"id"`
 	Spec           ExperimentSpec `json:"spec"`
 	SpecDigest     string         `json:"spec_digest"`
@@ -162,6 +163,8 @@ const (
 
 // Decision binds selection policy to the exact compared evidence.
 type Decision struct {
+	AllocationID  id.ID           `json:"allocation_id"`
+	SpecDigest    string          `json:"spec_digest"`
 	ID            id.ID           `json:"id"`
 	ExperimentID  id.ID           `json:"experiment_id"`
 	Baseline      VersionRef      `json:"baseline"`

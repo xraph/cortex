@@ -178,3 +178,40 @@ Those fixes are now committed, and the final all-ten-module lint pass is clean
 Its optimization CI job passed; a newer runtime push canceled the remaining
 root test job. Decision persistence and the remaining implementation phases
 are still open.
+
+
+## Decision persistence and evidence binding
+
+Decisions now bind the experiment specification digest, exposed validation
+allocation, frozen baseline and finalist, policy digest and exact evaluation-job
+sets. The decision, experiment link, reflection phase and audit event commit
+atomically. Reflection refuses a missing decision. Drafts cannot inject a
+decision link, stale leases cannot finalize one, and retries preserve the
+original record. Reads are detached and exactly scoped.
+
+Stored trial and evaluation records supply the case/repetition roster and paired
+score deltas. The validator checks reported case means, aggregate improvement,
+required failures, protected regressions and any reported cost or latency ratio.
+It checks confidence settings against the frozen objective and leaves bootstrap
+calculation in Sentinel. The service must still obtain that report from the
+trusted evaluator and verify current permissions, artifact availability and
+host qualification before recommending or activating a version.
+
+Missing scores remain inconclusive. An unchanged baseline can be retained
+without inventing a candidate comparison. Recommendations require the configured
+sample and improvement thresholds, a positive lower confidence bound, passing
+hard criteria and usable constrained metrics. Reproducibility-required decisions
+also need receipts declaring atomic source capture and frozen retrieval. These
+receipt flags do not establish live host qualification by themselves.
+
+The tests use stored fixture executions and comparisons. The positive storage
+fixture explicitly uses a smaller sample threshold and disables reproducibility;
+it does not demonstrate qualification under the default policy. Separate checks
+refuse insufficient default samples and missing reproducibility declarations.
+The full race suites passed against the current checkout and published Cortex
+v1.8.0. After the final failure-key correction and coordinated `make f`, the
+decision and key race tests, builds and scoped lint passed against both
+dependency configurations. Shared all-module lint also passed before the final
+formatter. Failure keys preserve case and criterion identities even when their
+names contain separators.
+Activation, publication outbox, durable stores and service integration remain open.

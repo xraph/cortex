@@ -20,6 +20,7 @@ type Repository interface {
 	GetCandidate(context.Context, id.ID) (Candidate, error)
 	GetTrial(context.Context, id.ID) (Trial, error)
 	GetEvaluation(context.Context, string) (Evaluation, error)
+	GetDecision(context.Context, id.ID) (Decision, error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -66,6 +67,7 @@ type ClaimRequest struct {
 // Transition binds a requested state change to its prior revision and actor.
 // Idempotency keys can be reused only with identical request content.
 type Transition struct {
+	Decision         *Decision        `json:"decision,omitempty"`
 	ExperimentID     id.ID            `json:"experiment_id"`
 	ExpectedRevision int64            `json:"expected_revision"`
 	NextState        State            `json:"next_state"`

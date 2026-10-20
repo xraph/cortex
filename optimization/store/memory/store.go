@@ -26,6 +26,7 @@ type Store struct {
 }
 
 type scopeData struct {
+	Decisions    map[string]optimization.Decision               `json:"decisions"`
 	Evaluations  map[string]optimization.Evaluation             `json:"evaluations"`
 	Experiments  map[string]optimization.Experiment             `json:"experiments"`
 	Versions     map[string]optimization.HarnessVersion         `json:"versions"`
@@ -69,7 +70,7 @@ func New(options ...Option) (*Store, error) {
 }
 
 func newScopeData() *scopeData {
-	return &scopeData{Evaluations: make(map[string]optimization.Evaluation), Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate), Trials: make(map[string]optimization.Trial)}
+	return &scopeData{Decisions: make(map[string]optimization.Decision), Evaluations: make(map[string]optimization.Evaluation), Experiments: make(map[string]optimization.Experiment), Versions: make(map[string]optimization.HarnessVersion), Events: make(map[string][]optimization.Event), Transitions: make(map[string]map[string]string), Reservations: make(map[string]map[string]optimization.Reservation), Receipts: make(map[string]map[string]string), Allocations: make(map[string]optimization.ValidationAllocation), Candidates: make(map[string]optimization.Candidate), Trials: make(map[string]optimization.Trial)}
 }
 
 func contextScope(ctx context.Context) (string, error) {
@@ -243,7 +244,7 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if e.State != "" && e.State != optimization.StateDraft {
 		return optimization.ErrInvalidSpec
 	}
-	if e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
+	if !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
 	versions, err := tx.validateVersions(e.Spec.AgentID, bundle.Versions)

@@ -247,7 +247,12 @@ func evaluatedTrial(t *testing.T, factory Factory) (trialScenario, optimization.
 func evaluationFor(scenario trialScenario, record optimization.ExecutionRecord) optimization.Evaluation {
 	zero := 0.0
 	plan := scenario.bundle.Experiment.EvaluationPlan
-	return optimization.Evaluation{ID: "job-1", ReportID: "report-1", ExperimentID: scenario.bundle.Experiment.ID, TrialID: scenario.trial.ID, CaseID: scenario.trial.CaseID, CaseDigest: scenario.trial.CaseDigest, Repetition: scenario.trial.Repetition, PlanDigest: plan.Ref.Digest, ExecutionDigest: record.Digest, Scorers: plan.Scorers, Score: &zero, Criteria: []optimization.CriterionValue{{ID: "quality", Score: &zero}}, Complete: true, JudgeUsage: optimization.Usage{Tokens: 3, TokenQuality: optimization.UsageKnown}, StartedAt: record.CompletedAt, CompletedAt: record.CompletedAt.Add(time.Millisecond)}
+	criteria := make([]optimization.CriterionValue, 0, len(plan.Criteria))
+	for _, definition := range plan.Criteria {
+		score := 0.0
+		criteria = append(criteria, optimization.CriterionValue{ID: definition.ID, Required: definition.Required, Score: &score})
+	}
+	return optimization.Evaluation{ID: "job-1", ReportID: "report-1", ExperimentID: scenario.bundle.Experiment.ID, TrialID: scenario.trial.ID, CaseID: scenario.trial.CaseID, CaseDigest: scenario.trial.CaseDigest, Repetition: scenario.trial.Repetition, PlanDigest: plan.Ref.Digest, ExecutionDigest: record.Digest, Scorers: plan.Scorers, Score: &zero, Criteria: criteria, Complete: true, JudgeUsage: optimization.Usage{Tokens: 3, TokenQuality: optimization.UsageKnown}, StartedAt: record.CompletedAt, CompletedAt: record.CompletedAt.Add(time.Millisecond)}
 }
 
 func evaluationChange(t *testing.T, s trialScenario, value optimization.Evaluation) optimization.Transition {

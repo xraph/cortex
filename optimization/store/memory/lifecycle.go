@@ -73,6 +73,10 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if err != nil {
 		return err
 	}
+	decision, err := tx.prepareDecision(experiment, change)
+	if err != nil {
+		return err
+	}
 	if phaseErr := tx.validatePhaseEvidence(experiment, change, resources, trialResources); phaseErr != nil {
 		return phaseErr
 	}
@@ -96,6 +100,10 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	experiment.UpdatedAt = tx.now
 	if change.NextState == optimization.StateQueued {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
+	}
+	if decision != nil {
+		tx.data.Decisions[decision.ID.String()] = *decision
+		experiment.DecisionID = decision.ID
 	}
 	tx.data.Experiments[key] = experiment
 	for evaluationID, evaluation := range evaluationResources {
@@ -123,6 +131,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	}
 	event := tx.appendEvent(experiment, eventType, change.Actor)
 	event.Payload = payload
+	if decision != nil {
+		event.Resources = append(event.Resources, decision.ID, decision.AllocationID)
+	}
 	for _, candidate := range change.Candidates {
 		event.Resources = append(event.Resources, candidate.ID)
 		if candidate.Accepted {
