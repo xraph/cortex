@@ -101,6 +101,14 @@ func (evaluation Evaluation) ValidateCaptured(experiment Experiment, trial Trial
 			incomplete = true
 		}
 	}
+	if evaluation.Score != nil {
+		score := *evaluation.Score
+		if !evaluation.Complete || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
+			return ErrIncompleteEvidence
+		}
+	} else if evaluation.Complete {
+		return ErrIncompleteEvidence
+	}
 	if evaluation.Complete && incomplete {
 		return ErrIncompleteEvidence
 	}

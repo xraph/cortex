@@ -145,3 +145,31 @@ Decision integration exposed a mismatch in the published foundation. Cortex's `E
 Task 6 therefore needs a follow-up before Task 7 can use its comparison API. Add a generic comparison operation over explicit baseline and candidate job-ID sets. It must read the authoritative jobs, validate every plan/case/repetition identity and reject overlapping or substituted evidence. Reuse Sentinel's existing paired-case aggregation and bootstrap. The single-job API remains supported. The adapter must not create synthetic completed jobs or duplicate the statistical implementation in Cortex.
 
 The optimizer also needs to retain the evaluator's aggregate quality score separately from per-criterion scores. Sentinel compares `evalrun.Result.Score`; inferring that value from criterion scores could change its frozen weighting. Resolve this record shape before implementing final decision qualification.
+
+
+## Job-set comparison and aggregate scores
+
+Sentinel now compares explicit baseline and candidate job sets through
+`CompareRecordedSets`. It reads the authoritative jobs, rejects repeated or
+overlapping evidence and mixed plan identities, and retains each job ID and
+request digest. The single-job API uses the same calculation. Tests show that
+splitting 60 captures across separate jobs preserves the paired scores, mean and
+bootstrap interval, including when the two arms use different batch sizes.
+Pending jobs remain inconclusive, and required failures survive a high average.
+
+Sentinel's full race suite and build passed against the updated Forge and Grove
+dependencies. Final formatting and the comparison race suite passed. `make l`
+was blocked by the shared linter lock; the uncapped equivalent with an isolated
+cache and `--allow-parallel-runners` passed with zero issues. The comparison
+change is committed as `059a4be`; CI and the follow-up release are pending.
+
+Cortex now retains the evaluator aggregate as `Evaluation.Score`. A completed
+evaluation needs a finite value from zero through one; incomplete evidence keeps
+no aggregate. Storage preserves this value independently of criterion scores.
+Conformance tests reproduced the missing validation before the fix and now pass,
+including zero scores, invalid values and detached reads. Coordinated `make f`,
+optimizer lint, full race suites and builds against both the current checkout
+and published Cortex v1.8.0 passed. The shared all-module lint run passed
+optimization but found issues in the runtime chat's concurrent sandbox changes;
+that chat owns the fixes and final root recheck. Decision persistence and the
+remaining implementation phases are still open.
