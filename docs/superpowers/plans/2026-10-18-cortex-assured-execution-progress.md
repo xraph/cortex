@@ -17,7 +17,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.4 | implemented | this chat | Runtime, backend, API mapping, dashboard contract and A2A checks pass; installed application scope qualification stays in G1 |
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
-| Stages 2 through 4 | queued | unassigned | No implementation claimed |
+| S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
+| S2.2 through S2.7, Stages 3 and 4 | queued | unassigned | Runtime verification gates remain disabled |
 
 ## Interface rulings
 
@@ -138,7 +139,7 @@ Dashboard validation: 41 tests, scoped ESLint, TypeScript checking and the shell
 
 Runtime validation: full engine/run/audit/metrics race suites passed, along with API, extension/contract, A2A and gRPC suites. Docs type generation, typecheck, lint and production build passed. Final all-nine-module lint, root build and the final gRPC race suite passed after an import-shadow correction and coordinated formatting. CI exposed two Fabriq fixtures without explicit scope; the optimization owner is correcting those fixtures and reports its full race suite/build passing. No production scope rule was relaxed.
 
-Open G1 qualification: effective scanner and live-provider deployment, the remaining installed fault matrix, exact final CI and final source review. Stage 1 is not accepted as a whole. Stages 2 through 4 remain queued; no sandbox isolation, contextual correctness or complete autonomous coordination is claimed.
+Open G1 qualification: effective scanner and live-provider deployment, the remaining installed fault matrix and final source review. Stage 1 is not accepted as a whole. Pure Stage 2 contracts are in development; no sandbox isolation, contextual correctness or complete autonomous coordination is claimed.
 
 
 ## Atomic store capture follow-up
@@ -156,3 +157,18 @@ Final review fix pass: the reviewer found cancellation could occur inside a step
 
 
 Committed atomic store capture as `0e4de20` and the docs-generation fix as `bbc81c9`. After the cancellation fix, the full engine/run/suspension race suites passed again (engine 130 seconds). The final fresh-review gate remains blocked by the review session's usage-limit failure; installed live-provider/scanner qualification is still open. Stage 2 pure evidence and verifier development may proceed under the plan's early-development allowance, without enabling runtime verification gates.
+
+
+## Evidence and verification contracts
+
+S2.1 supplies version-1 evidence references, acceptance contracts, reports and typed verifier registrations. Evidence IDs use `evi`, contracts use `vcontract` and reports use `vreport`. Required criteria are all-of. Optional scores cannot override them; missing checks, incompatible bindings, unknown verifier revisions and conflicting outcomes remain inconclusive. Freshness binds the exact scope, run, candidate, evidence, prepared execution, principal, authority, policy, tools, sources, environment and dataset. Contracts can bound both report age and source observation age. Invalid UTF-8, unsupported schemas, duplicate criterion IDs and nonfinite scores fail validation.
+
+The host supplies capture identity and time. Registered schema, test, state and human adapters receive typed requests containing immutable manifest references, without model-supplied commands or callbacks. The wrapper freezes inputs, checks current host authority before each check and after evaluation, enforces the deadline, stamps observation time and rejects cancellation after callbacks. Human decisions name their actor, decision revision, exact binding digest and expiry. A sealed report proves integrity only; authenticated host paths must control report creation and storage.
+
+SQLite, PostgreSQL and MongoDB expose optional `evidence.Storage`, `evidence.TombstoneReader` and `verification.Store` capabilities. The composite store interface stays compatible. Shared validation sits in `store/internal/assurance`; backend drivers own exact-scope queries and atomic inserts or tombstone replacement. SQL migration `20261018000003` adds immutable assurance records. MongoDB uses equivalent identity, run, digest and scope indexes. Each backend preserves canonical JSON text so database JSON transformations cannot change the recorded representation.
+
+Built-in evidence storage accepts at most one MiB of bytes. Larger artifacts require an injected repository. `evidence.NewRepository` requires an explicit host authorizer and byte bound, verifies content and metadata on every read, and rechecks access after retrieval. Deletion atomically removes bytes while retaining the reference, authenticated actor, time and reason. Identical retries are idempotent; conflicting deletion reasons and attempts to resurrect deleted evidence fail. Retention and sensitivity enforcement belong to the required host authorizer. No background retention worker or public download route is claimed.
+
+Tests first failed for missing packages and backend capabilities. Behavioral red cases also reproduced lossy UTF-8 canonicalization and a source observation remaining eligible after its permitted window. Added tests cover cross-scope and ancestor denial, corruption, authority revoked during retrieval, immutable ID conflicts, concurrent creates, missing contracts, pagination, cancellation, tombstones, mixed-run reports, missing evidence and expired human decisions. SQLite and real Docker PostgreSQL/MongoDB passed the initial shared persistence race tests. The first broad run hit a SQLite timeout and two PostgreSQL container-start failures; the full SQLite retry and affected PostgreSQL retries passed. After fast-forwarding the checkout to the telemetry and dependency updates, fresh race suites passed for evidence, verification, engine, SQLite, PostgreSQL and MongoDB. The engine took 384 seconds and SQLite 669 seconds under shared machine load. Root build, documentation lint/types/build, formatting and the nine-module pre-sandbox lint pass are recorded in the validation logs. No store test was counted as live sandbox qualification.
+
+CI run `39152040751` passed on `9b4a882`, including docs, formatting, security, root and nested-module gates. This closes the exact-commit CI item for the Stage 1 cancellation fix. The interrupted fresh review and installed live-provider/scanner checks remain open. S2.1 does not enable engine verification or claim a qualified sandbox.

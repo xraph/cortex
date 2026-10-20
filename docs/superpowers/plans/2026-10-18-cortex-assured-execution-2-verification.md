@@ -30,12 +30,12 @@ Files: create `evidence/{artifact,repository,digest}.go`, `evidence/artifact_tes
 
 Interfaces: the spec's `evidence.Repository`, `verification.Verifier`, `Aggregate` and `CheckFreshness`. `verification.Store` exposes `CreateContract`, `GetContract`, `SaveReport`, `GetReport`, and `ListReports` with scoped immutable identifiers; `SaveReport` rejects digest reuse with different content. Define typed request structs in this packet so later callers do not invent argument shapes.
 
-- [ ] Write `TestRequiredCriterionMissingIsInconclusive`, `TestOptionalScoreCannotOverrideRequiredFailure`, `TestArtifactDigestMismatchRejected`, `TestContextRevisionMakesReportStale`, `TestEvidenceDeniedAcrossScope`, `TestRevocationInvalidatesReport`, and `TestLegacyCompletedRemainsUnchecked`.
-- [ ] Run `GOWORK=off go test ./evidence ./verification -count=1`, confirming missing implementation then behavioral failures.
-- [ ] Implement canonical versioned encodings and content digests, ordered criterion evaluation, exact scope checks, evidence retention/tombstones and per-verifier revision binding. Reject unsupported schemas, duplicate criterion IDs and nonfinite scores. Use a fake clock for freshness; do not trust model-supplied timestamps.
-- [ ] Implement all backend capability stores and conformance tests. Evidence bytes have a size limit and sensitivity policy; large artifacts use the injected repository. Digest verification occurs on read, not only on upload. An authorized read rechecks access to referenced resources.
-- [ ] Add schema, executable-test, external-state and human-approval verifier adapters with typed registrations. Human verdicts bind actor, decision revision and exact evidence; an expired approval cannot pass a new artifact.
-- [ ] Run root package/race tests and backend conformance, then common checks and commit `feat(verification): bind acceptance reports to immutable evidence`.
+- [x] Write `TestRequiredCriterionMissingIsInconclusive`, `TestOptionalScoreCannotOverrideRequiredFailure`, `TestArtifactDigestMismatchRejected`, `TestContextRevisionMakesReportStale`, `TestEvidenceDeniedAcrossScope`, `TestRevocationInvalidatesReport`, and `TestLegacyCompletedRemainsUnchecked`.
+- [x] Run `GOWORK=off go test ./evidence ./verification -count=1`, confirming missing implementation then behavioral failures.
+- [x] Implement canonical versioned encodings and content digests, ordered criterion evaluation, exact scope checks, evidence retention/tombstones and per-verifier revision binding. Reject unsupported schemas, duplicate criterion IDs and nonfinite scores. Use a fake clock for freshness; do not trust model-supplied timestamps.
+- [x] Implement all backend capability stores and conformance tests. Evidence bytes have a size limit and sensitivity policy; large artifacts use the injected repository. Digest verification occurs on read, not only on upload. An authorized read rechecks access to referenced resources.
+- [x] Add schema, executable-test, external-state and human-approval verifier adapters with typed registrations. Human verdicts bind actor, decision revision and exact evidence; an expired approval cannot pass a new artifact.
+- [x] Run root package/race tests and backend conformance, then common checks and commit `feat(verification): bind acceptance reports to immutable evidence`.
 
 ## S2.2: Gate run success and prevent stale publication
 

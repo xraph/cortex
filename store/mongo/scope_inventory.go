@@ -19,7 +19,7 @@ func (s *Store) InspectScopes(ctx context.Context, visit func(store.ScopeIssue) 
 	if visit == nil {
 		return fmt.Errorf("cortex: scope inventory callback is required")
 	}
-	collections := []string{colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints, colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colOverlays, colOrchestrationConfigs, colOrchestrationRuns, colA2AMessages, colA2AConversations, colA2ADeliveries, colA2APendingAsks}
+	collections := []string{colAssurance, colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints, colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colOverlays, colOrchestrationConfigs, colOrchestrationRuns, colA2AMessages, colA2AConversations, colA2ADeliveries, colA2APendingAsks}
 	for _, collection := range collections {
 		if err := s.inspectCollectionScopes(ctx, collection, visit); err != nil {
 			return err
