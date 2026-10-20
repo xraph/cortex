@@ -6,8 +6,29 @@
   "runtime_version": null,
   "runtime_sha256": null,
   "image_digests": [],
-  "host": {"os": "linux", "kernel": null, "architecture": null},
+  "host": {
+    "os": "linux",
+    "kernel": null,
+    "architecture": null
+  },
   "qualification_evidence": [],
-  "blocked_probes": ["descendant-cancellation", "resource-limits", "egress-denial", "metadata-denial", "restart-recovery", "protected-grading"],
-  "reason": "Broker and fixture tests are implemented. Linux worker selection and live runtime qualification are deferred by the user."
+  "blocked_probes": [
+    "descendant-cancellation",
+    "resource-limits",
+    "egress-denial",
+    "metadata-denial",
+    "restart-recovery",
+    "protected-grading"
+  ],
+  "reason": "Broker and fixture tests are implemented. Linux worker selection and live runtime qualification are deferred by the user.",
+  "available_probes": [
+    "baseline-execution",
+    "host-and-readonly-input-protection",
+    "scratch-exhaustion",
+    "local-private-network-and-dns-denial",
+    "effective-cgroup-limits",
+    "descendant-cancellation",
+    "runtime-state-reopen"
+  ],
+  "probe_status": "implemented and Linux-compiled; live execution blocked pending worker selection"
 }

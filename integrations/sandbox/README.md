@@ -78,3 +78,39 @@ image/runtime pin validation and protected grading. `compatibility.json` records
 that state without claiming a tested runtime version. Run these probes on the
 chosen Linux worker before issuing a qualification attestation or enabling the
 adapter in an installed host.
+
+## Linux probe suite
+
+The `sandbox_qualification` build tag adds host-side probes. They fail when the
+worker, cgroup v2, root access or pinned binaries are missing. There are no skips.
+Run them only on the dedicated Linux worker selected for qualification.
+
+Build the trusted fixture from this checkout, then supply the approved runsc
+binary and its release checksum. Use a root shell on that worker:
+
+```sh
+CORTEX_PROBE_BUILD_DIR="$(mktemp -d)"
+CGO_ENABLED=0 GOWORK=off go build -trimpath \
+  -o "$CORTEX_PROBE_BUILD_DIR/probe" ./testdata/isolation-probe
+export CORTEX_QUALIFICATION_RUNSC=/usr/local/bin/runsc
+export CORTEX_QUALIFICATION_RUNSC_SHA256="approved-runtime-sha256"
+export CORTEX_QUALIFICATION_PROBE="$CORTEX_PROBE_BUILD_DIR/probe"
+export CORTEX_QUALIFICATION_PROBE_SHA256="$(sha256sum "$CORTEX_QUALIFICATION_PROBE" | cut -d ' ' -f 1)"
+GOWORK=off go test -v -tags=sandbox_qualification \
+  -run '^TestLiveIsolationQualification$' -count=1 -timeout=5m .
+```
+
+The suite creates disposable OCI bundles containing that fixture. It checks
+read-only root/input mounts, denied host-file access, scratch exhaustion, denied
+TCP/DNS access to local private-address fixtures, effective cgroup limits,
+descendant termination and reopening runtime state. The redirect fixture must
+receive no connection at all. It does not contact public services or a real
+cloud metadata endpoint.
+
+Record the runtime version, checksums, host kernel, architecture and Go version
+with the test log. The fixture's binary digest is a test identity, not a
+qualification of a production OCI image. CI compiles these probes and their
+fixture; it does not execute them or turn `compatibility.json` into a qualified
+manifest. Broker crash recovery, wall/output supervision, memory/CPU exhaustion,
+guest process exhaustion, deployed image pins and protected grading still need
+live acceptance checks.

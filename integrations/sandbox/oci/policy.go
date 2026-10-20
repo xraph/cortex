@@ -29,6 +29,11 @@ func Spec(j sandbox.Job, rootfs string, inputs map[string]string) (*specs.Spec, 
 	period := uint64(100000)
 	memory := j.Limits.MemoryBytes
 	processes := j.Limits.Processes
+	// Keep the signed-to-unsigned conversion guarded at this boundary.
+	if processes < 0 {
+		return nil, fmt.Errorf("cortex: negative sandbox process limit")
+	}
+	guestProcesses := uint64(processes)
 	env := []string{"PATH=/usr/bin:/bin", "HOME=/tmp", "TMPDIR=/tmp"}
 	keys := make([]string, 0, len(j.Env))
 	for key := range j.Env {
@@ -52,7 +57,7 @@ func Spec(j sandbox.Job, rootfs string, inputs map[string]string) (*specs.Spec, 
 	return &specs.Spec{
 		Version: specs.Version,
 		Root:    &specs.Root{Path: rootfs, Readonly: true},
-		Process: &specs.Process{User: specs.User{UID: 65532, GID: 65532}, Args: append([]string(nil), j.Argv...), Env: env, Cwd: "/tmp", NoNewPrivileges: true, Capabilities: &specs.LinuxCapabilities{}, Rlimits: []specs.POSIXRlimit{{Type: "RLIMIT_NOFILE", Hard: 1024, Soft: 1024}}},
+		Process: &specs.Process{User: specs.User{UID: 65532, GID: 65532}, Args: append([]string(nil), j.Argv...), Env: env, Cwd: "/tmp", NoNewPrivileges: true, Capabilities: &specs.LinuxCapabilities{}, Rlimits: []specs.POSIXRlimit{{Type: "RLIMIT_NOFILE", Hard: 1024, Soft: 1024}, {Type: "RLIMIT_NPROC", Hard: guestProcesses, Soft: guestProcesses}, {Type: "RLIMIT_CORE", Hard: 0, Soft: 0}}},
 		Mounts:  mounts, Hooks: &specs.Hooks{},
 		Linux: &specs.Linux{
 			CgroupsPath: "/cortex-sandbox/" + j.ID.String(),

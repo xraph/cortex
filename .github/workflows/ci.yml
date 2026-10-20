@@ -101,6 +101,12 @@ jobs:
       - name: Test
         run: go test -race -count=1 ./...
 
+      - name: Compile deferred Linux qualification probes
+        if: matrix.module == 'integrations/sandbox'
+        run: |
+          go test -c -tags=sandbox_qualification -o "$RUNNER_TEMP/cortex-sandbox-qualification.test" .
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/cortex-sandbox-isolation-probe" ./testdata/isolation-probe
+
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
     name: Docs

@@ -45,3 +45,20 @@ func TestPolicyEncodesRequiredControls(t *testing.T) {
 		t.Fatal("host hooks injected")
 	}
 }
+
+func TestGuestProcessLimitIsIndependentOfHostThreads(t *testing.T) {
+	j, err := sandbox.Seal(sandbox.Job{SchemaVersion: 1, ID: id.New(sandbox.PrefixJob), Key: "test", Scope: cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "a"}}}, Principal: "alice", Image: "sha256:" + strings.Repeat("a", 64), Argv: []string{"/bin/check"}, Network: sandbox.NetworkDenied, Limits: sandbox.Limits{CPUMillis: 500, MemoryBytes: 64 << 20, Processes: 16, ScratchBytes: 8 << 20, WallTime: time.Minute, OutputBytes: 4096}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := oci.Spec(j, "/private/bundle/rootfs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range spec.Process.Rlimits {
+		if limit.Type == "RLIMIT_NPROC" && limit.Hard == 16 && limit.Soft == 16 {
+			return
+		}
+	}
+	t.Fatal("guest process limit missing; a host-thread cgroup limit alone cannot bound guest processes")
+}
