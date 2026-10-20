@@ -7,6 +7,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/run"
 )
 
@@ -133,6 +134,7 @@ type shutdownEntry struct {
 type Registry struct {
 	extensions []Extension
 	logger     log.Logger
+	hookErrors telemetry.Throttle
 
 	publicationRejected    []publicationRejectedEntry
 	runTerminated          []runTerminatedEntry
@@ -448,13 +450,28 @@ func (r *Registry) EmitShutdown(ctx context.Context) {
 }
 
 // logHookError logs a warning when a lifecycle hook returns an error.
-// Errors from hooks are never propagated — they must not block the pipeline.
+// Errors from hooks are never propagated: they must not block the pipeline.
+//
+// The line names the error by its type, never its text, because a hook's
+// error usually quotes what it was handed: run input, model output, a tool's
+// arguments or result. It is throttled per hook and extension, so an
+// extension that fails on every step during an outage logs once a minute
+// with a count of what it skipped. Both keys come from code and from the
+// extensions you registered, so the throttle's state stays bounded.
 func (r *Registry) logHookError(hook, extName string, err error) {
-	r.logger.Warn("extension hook error",
+	ok, suppressed := r.hookErrors.Allow(hook+"\xff"+extName, time.Now())
+	if !ok {
+		return
+	}
+	fields := []log.Field{
 		log.String("hook", hook),
 		log.String("extension", extName),
-		log.String("error", err.Error()),
-	)
+		log.String("error_type", telemetry.ErrorType(err)),
+	}
+	if suppressed > 0 {
+		fields = append(fields, log.Int("suppressed", suppressed))
+	}
+	r.logger.Warn("extension hook error", fields...)
 }
 
 // EmitRunTerminated notifies observers only after the caller persists the outcome.
