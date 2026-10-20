@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -67,4 +68,24 @@ func TestNilVecsRecordNothing(t *testing.T) {
 	c.Inc("v")
 	h.Observe(1, "v")
 	g.Set(1, "v")
+}
+
+func TestThrottleCountsWhatItSkips(t *testing.T) {
+	var th Throttle
+	start := time.Unix(1000, 0)
+	if ok, n := th.Allow("create step", start); !ok || n != 0 {
+		t.Fatalf("first line: ok = %v, suppressed = %d", ok, n)
+	}
+	for i := range 3 {
+		if ok, _ := th.Allow("create step", start.Add(time.Duration(i+1)*time.Second)); ok {
+			t.Fatal("a second line inside the interval was allowed")
+		}
+	}
+	if ok, _ := th.Allow("save conversation", start.Add(time.Second)); !ok {
+		t.Error("one site's throttle held back another's")
+	}
+	ok, n := th.Allow("create step", start.Add(LogInterval))
+	if !ok || n != 3 {
+		t.Fatalf("after the interval: ok = %v, suppressed = %d, want true and 3", ok, n)
+	}
 }
