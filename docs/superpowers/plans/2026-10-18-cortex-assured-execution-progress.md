@@ -195,3 +195,12 @@ The `sandbox_qualification` test tag now supplies trusted host-side runsc probes
 A failing policy test exposed the missing guest `RLIMIT_NPROC`. The OCI profile now includes that limit as well as the host cgroup PID limit, and disables core dumps. Unit/race tests pass. The host probe suite and static fixture compile for Linux, all ten modules pass lint with the qualification tag included, and the attempted local probe run fails with `qualification blocked: a Linux worker is required`. No live assertion is recorded as passed. Memory/CPU/guest-process exhaustion, broker crash recovery, wall/output supervision, deployed image pins and protected grading remain open.
 
 CI `39512157030` passed tests, security, lint, docs, formatting and every nested module. Its sole failure was root module tidiness after the telemetry merge: `testify v1.11.1` is imported directly by telemetry tests but remained marked indirect. Commit `c6bc79e` fixes that classification without changing the version. A second local tidy is stable, and telemetry race tests plus the root build pass. New exact-commit CI evidence remains pending.
+
+
+## Worker result validation and hosted Mongo fixture
+
+Parallel orchestration could return success after a worker failed if its aggregator succeeded. A regression reproduced that failure and another reproduced queued dispatch after cancellation. Sequential, router and debate strategies also ignored errors carried inside an agent result. All strategies now share the hierarchical invocation checks, retain failed run identities and reject missing, mismatched, empty or cancelled results. Parallel synthesis requires every worker to pass; errors from multiple workers remain inspectable. Ten race repetitions and the engine orchestration adapter tests pass. These checks establish execution failure propagation, not verified task acceptance.
+
+CI `39513609152` exposed a hosted-runner change: Linux `7.0.0-1017-azure` triggers the MongoDB 8.3.2 image's allocator compatibility refusal. The default database test fixture now pins MongoDB 7.0.41 by digest. Its real-container conformance, migration and rescope race tests pass locally without skips. You can still override the fixture explicitly. MongoDB 8.3.2 remains unqualified on these kernels; no startup guard is bypassed.
+
+Final coordinated formatting, all ten modules of lint, the root build and fresh orchestration/engine adapter race checks pass. Exact-commit CI remains pending. G1, G2 and the deferred live Linux sandbox gate remain open.

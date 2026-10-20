@@ -17,27 +17,13 @@ import (
 	"github.com/xraph/cortex/store/storetest"
 )
 
-// mongoConformanceImage pins the mongod build used for TestConformance.
-// The literal "mongodb/mongodb-community-server:8.3.2" tag doesn't exist
-// on Docker Hub for this image: mongodb-community-server only publishes
-// OS-qualified tags (verified: `docker manifest inspect
-// mongodb/mongodb-community-server:8.3.2` 404s, while the -ubi9-slim
-// variant resolves). This is the same 8.3.2 build used previously, just
-// with the OS suffix Docker Hub actually requires.
-const mongoConformanceImage = "mongodb/mongodb-community-server:8.3.2-ubi9-slim"
+// mongoConformanceImage pins the backend test fixture. MongoDB 8.3.2 refuses
+// to start on Linux kernels >=6.19, including current hosted CI runners.
+// You can test another server with CORTEX_TEST_MONGO_IMAGE; passing this
+// fixture does not qualify an untested server version.
+const mongoConformanceImage = "mongo:7.0.41@sha256:8102f674c3d5b5c3b5a248397778b8d148a998c6409f390ff62628eb617f0847"
 
-// mongoImage returns the image to run, letting CORTEX_TEST_MONGO_IMAGE
-// override the pin.
-//
-// The override exists because the pinned image refuses to start on a
-// Linux kernel of 6.19 or newer, which is what current Docker Desktop
-// ships: it guards against an allocator incompatibility and exits 1
-// before mongod runs. The effect is that these tests cannot run at all
-// on an up-to-date desktop, while CI's older runner kernel is fine, so
-// the backend goes untested exactly where it is being changed.
-//
-// `CORTEX_TEST_MONGO_IMAGE=mongo:7 go test ./store/mongo/` runs the
-// suite on such a machine. CI keeps the pin.
+// mongoImage returns the pinned fixture unless you override it explicitly.
 func mongoImage() string {
 	if img := os.Getenv("CORTEX_TEST_MONGO_IMAGE"); img != "" {
 		return img

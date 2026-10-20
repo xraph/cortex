@@ -58,11 +58,15 @@ cd extension && GOWORK=off go test -race -count=1 ./...
 
 The SQLite store tests always run. The Postgres and Mongo conformance, migration and rescope tests in `store/postgres` and `store/mongo` start their own containers through testcontainers-go, and each one calls `testcontainers.SkipIfProviderIsNotHealthy` first. Without Docker they skip and the package still reports `ok`, so run with `-v` if you need to know whether they ran. CI has Docker, so there they run for real.
 
-The pinned Mongo image refuses to start on a Linux kernel of 6.19 or newer, which is what current Docker Desktop ships. Override it locally:
+The Mongo test fixture is pinned to MongoDB 7.0.41 by image digest. The previous
+8.3.2 image refuses to start on Linux kernels >=6.19, including current hosted
+CI runners. You can test another version explicitly:
 
 ```bash
 CORTEX_TEST_MONGO_IMAGE=mongo:7 GOWORK=off go test -v ./store/mongo/
 ```
+
+Passing the pinned fixture does not qualify other MongoDB versions.
 
 `inttest/` holds the end-to-end fabriq test, behind the `integration` build tag. It starts a Postgres container through `fabriqtest.StartPostgres` and fails, not skips, without Docker. Run it with `make test-integration`.
 
