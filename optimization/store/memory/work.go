@@ -23,6 +23,9 @@ func (tx *transaction) ClaimWork(request optimization.ClaimRequest) (optimizatio
 	if !exists {
 		return empty, optimization.ErrNotFound
 	}
+	if lessonErr := checkLessonBindings(tx.data, experiment, tx.now); lessonErr != nil {
+		return empty, lessonErr
+	}
 	if experiment.State != optimization.StateQueued && experiment.State != optimization.StateRunning {
 		return empty, optimization.ErrConflict
 	}
@@ -66,6 +69,9 @@ func (tx *transaction) RenewLease(lease optimization.WorkLease) error {
 	experiment, exists := tx.data.Experiments[key]
 	if !exists {
 		return optimization.ErrNotFound
+	}
+	if lessonErr := checkLessonBindings(tx.data, experiment, tx.now); lessonErr != nil {
+		return lessonErr
 	}
 	if !tx.validLease(experiment, lease) || !lease.ExpiresAt.After(tx.now) || lease.ExpiresAt.Before(experiment.Lease.ExpiresAt) || lease.ExpiresAt.After(experiment.Deadline) {
 		return optimization.ErrConflict

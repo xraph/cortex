@@ -62,6 +62,7 @@ type Experiment struct {
 	Lease          WorkLease      `json:"lease"`
 	Plan           TrialPlan      `json:"plan"`
 	LessonIDs      []id.ID        `json:"lesson_ids"`
+	FrozenLessons  []LessonRef    `json:"frozen_lessons"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	Deadline       time.Time      `json:"deadline"`

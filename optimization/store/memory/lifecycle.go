@@ -42,6 +42,11 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if experiment.Revision != change.ExpectedRevision {
 		return optimization.ErrConflict
 	}
+	if change.NextState != optimization.StateCancelled {
+		if lessonErr := checkLessonBindings(tx.data, experiment, tx.now); lessonErr != nil {
+			return lessonErr
+		}
+	}
 	allowed := experiment.State == optimization.StateDraft && change.NextState == optimization.StateQueued
 	allowed = allowed || (experiment.State == optimization.StateDraft || experiment.State == optimization.StateQueued) && change.NextState == optimization.StateCancelled
 	if experiment.State == optimization.StateRunning && change.NextState == optimization.StateRunning {

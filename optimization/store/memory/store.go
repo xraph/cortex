@@ -26,19 +26,23 @@ type Store struct {
 }
 
 type scopeData struct {
-	Activations     map[string]optimization.Activation             `json:"activations"`
-	ActivationHeads map[string]id.ID                               `json:"activation_heads"`
-	Decisions       map[string]optimization.Decision               `json:"decisions"`
-	Evaluations     map[string]optimization.Evaluation             `json:"evaluations"`
-	Experiments     map[string]optimization.Experiment             `json:"experiments"`
-	Versions        map[string]optimization.HarnessVersion         `json:"versions"`
-	Events          map[string][]optimization.Event                `json:"events"`
-	Transitions     map[string]map[string]string                   `json:"transitions"`
-	Reservations    map[string]map[string]optimization.Reservation `json:"reservations"`
-	Receipts        map[string]map[string]string                   `json:"receipts"`
-	Allocations     map[string]optimization.ValidationAllocation   `json:"allocations"`
-	Candidates      map[string]optimization.Candidate              `json:"candidates"`
-	Trials          map[string]optimization.Trial                  `json:"trials"`
+	Lessons             map[string]optimization.Lesson                 `json:"lessons"`
+	Publications        map[string]optimization.Publication            `json:"publications"`
+	PublicationRequests map[string]optimization.PublicationRequest     `json:"publication_requests"`
+	Revocations         map[string]optimization.LessonRevocation       `json:"revocations"`
+	Activations         map[string]optimization.Activation             `json:"activations"`
+	ActivationHeads     map[string]id.ID                               `json:"activation_heads"`
+	Decisions           map[string]optimization.Decision               `json:"decisions"`
+	Evaluations         map[string]optimization.Evaluation             `json:"evaluations"`
+	Experiments         map[string]optimization.Experiment             `json:"experiments"`
+	Versions            map[string]optimization.HarnessVersion         `json:"versions"`
+	Events              map[string][]optimization.Event                `json:"events"`
+	Transitions         map[string]map[string]string                   `json:"transitions"`
+	Reservations        map[string]map[string]optimization.Reservation `json:"reservations"`
+	Receipts            map[string]map[string]string                   `json:"receipts"`
+	Allocations         map[string]optimization.ValidationAllocation   `json:"allocations"`
+	Candidates          map[string]optimization.Candidate              `json:"candidates"`
+	Trials              map[string]optimization.Trial                  `json:"trials"`
 }
 
 var _ store.Store = (*Store)(nil)
@@ -249,6 +253,13 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
+	if len(e.FrozenLessons) != 0 {
+		return optimization.ErrInvalidSpec
+	}
+	e.FrozenLessons, err = tx.freezeLessons(e)
+	if err != nil {
+		return err
+	}
 	versions, err := tx.validateVersions(e.Spec.AgentID, bundle.Versions)
 	if err != nil {
 		return err
@@ -270,7 +281,8 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	encoded, err := canonical.Marshal(struct {
 		Spec           optimization.ExperimentSpec
 		EvaluationPlan optimization.EvaluationPlan
-	}{e.Spec, e.EvaluationPlan})
+		Lessons        []optimization.LessonRef
+	}{e.Spec, e.EvaluationPlan, e.FrozenLessons})
 	if err != nil {
 		return err
 	}

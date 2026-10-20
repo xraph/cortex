@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Publication/revocation, remaining readers and terminal reconciliation |
+| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox checks pass; remaining readers and terminal reconciliation |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -245,3 +245,43 @@ This is storage work. Current grants, source drift, artifact retention, lesson
 eligibility and the production `RunActive` binding remain service-level work in
 task 11. The fixture recommendation uses a reduced sample policy and does not
 qualify a live production version.
+
+
+## Lesson publication and local revocation
+
+Accepted reflections now commit a local lesson and an immutable publication
+payload in one transaction. The record fixes the remote aggregate ID before a
+publisher can make its first call. It also records the source experiment, local
+revision and payload digest. Identical retries preserve the original record;
+changed content, duplicate remote IDs and unsupported evidence classes fail.
+A decision and its publication can commit together, and rollback removes both.
+
+Experiments freeze lesson IDs, revisions and publication digests in their
+specification digest. The store rejects unavailable, expired, revoked or
+post-cutoff lessons. `ResolveLesson` checks the frozen reference and source
+eligibility through the dependency chain before returning content. Raw lesson
+reads remain available for review and audit.
+
+Revocation advances local eligibility to revision two and queues a separate
+revocation payload with the same remote aggregate ID. The original publish
+payload stays intact and is marked superseded. Direct consumers become paused
+with `lesson_revoked`, their leases expire, and new starts, claims, renewals and
+phase writes cannot use the withdrawn lesson. Activation lookup refuses the
+stale version while historical activation records remain readable. Dependent
+lesson resolution and late publication retries also reject invalid source
+lessons.
+
+Conformance tests reproduced missing expiry guards, usable activations after
+revocation and a delayed publication retry that ignored source invalidation.
+Those checks and the full optimizer race suites pass against both the current
+checkout and published Cortex v1.8.0 (memory: 87.270s and 78.615s). Both builds
+also pass. The coordinated `make f` and all-ten-module `make l` passed after the
+final edits. Earlier decision and activation commits passed full CI in
+`39516036204` at `e51dea8`; this lesson slice still needs its own CI run.
+
+This is the memory-store contract. Durable backends, publisher claims and
+acknowledgments, bounded remote retry, Fabriq schema provisioning and actual
+remote revocation are still open. The worker must stop external work and
+reconcile unresolved attempts after local invalidation; storage tests do not
+prove that operational behavior. Current actor grants and retained artifacts
+remain service checks.
