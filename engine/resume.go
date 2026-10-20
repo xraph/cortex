@@ -403,9 +403,8 @@ func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot *
 	if err == nil {
 		return r
 	}
-	e.logger.Error("read a claimed run, falling back to the pre-claim snapshot",
+	e.logError("read a claimed run, falling back to the pre-claim snapshot", err,
 		log.String("run_id", runID.String()),
-		log.String("error", err.Error()),
 	)
 	return snapshot
 }
@@ -491,7 +490,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 				CompletedAt: &completedAt,
 			}
 			if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
-				e.logger.Error("create resumed tool call", log.String("error", err.Error()))
+				e.logError("create resumed tool call", err, log.String("run_id", r.ID.String()))
 			}
 		}
 
@@ -591,7 +590,7 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 	}
 	steps, err := e.store.ListSteps(ctx, runID)
 	if err != nil {
-		e.logger.Error("list steps for resumed tool calls", log.String("error", err.Error()))
+		e.logError("list steps for resumed tool calls", err, log.String("run_id", runID.String()))
 		return id.StepID{}
 	}
 	for _, s := range steps {
@@ -599,7 +598,7 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 			return s.ID
 		}
 	}
-	e.logger.Warn("no step found for resumed tool calls", log.String("run_id", runID.String()))
+	e.logWarn("no step found for resumed tool calls", nil, log.String("run_id", runID.String()))
 	return id.StepID{}
 }
 

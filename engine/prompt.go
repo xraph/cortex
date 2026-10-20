@@ -537,16 +537,13 @@ func (e *Engine) logDeclinedPatches(o *prompt.Overlay, declined []prompt.Patch) 
 		return
 	}
 
-	ids := make([]string, 0, len(declined))
-	for _, p := range declined {
-		ids = append(ids, p.ID)
-	}
-
-	e.logger.Warn("prompt overlay patches declined",
+	// The scope value and the section names stay out of the line: a scope
+	// level can be a tenant or user ID, and section names carry skill and
+	// persona names. The overlay ID is enough to find the rest.
+	e.logWarn("prompt overlay patches declined", nil,
 		log.String("overlay_id", o.ID.String()),
 		log.String("agent_id", o.AgentID.String()),
-		log.String("scope", o.Scope.Canonical()),
-		log.String("sections", strings.Join(ids, ",")),
+		log.Int("declined", len(declined)),
 	)
 }
 

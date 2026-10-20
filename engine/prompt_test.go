@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -253,16 +254,8 @@ func TestBuildSystemPrompt_LockedSectionRefusesReplaceAndLogsTheDecline(t *testi
 	if !strings.Contains(warns[0].msg, "declined") {
 		t.Errorf("warning message = %q, want it to say the patches were declined", warns[0].msg)
 	}
-	sections, ok := warns[0].fields["sections"].(string)
-	if !ok {
-		t.Fatalf("declined-patch warning carries no sections field: %+v", warns[0])
-	}
-	if !strings.Contains(sections, "tone") {
-		t.Errorf("declined-patch warning names sections %q, want it to name %q", sections, "tone")
-	}
-	if strings.Contains(sections, "role") {
-		t.Errorf("declined-patch warning names %q, but that patch was applied, not declined", "role")
-	}
+	// One, not two: the "role" patch was applied, so it is not counted.
+	assertDeclinedWarning(t, warns[0], 1)
 }
 
 // TestBuildSystemPrompt_AppendToALockedSectionIsStillAccepted is the
@@ -616,11 +609,24 @@ func TestBuildSystemPrompt_StoredPatchWithAnUnusableModeIsDeclined(t *testing.T)
 	if len(warns) != 1 {
 		t.Fatalf("logger recorded %d warnings, want 1 naming the declined patch: %+v", len(warns), warns)
 	}
-	sections, ok := warns[0].fields["sections"].(string)
-	if !ok {
-		t.Fatalf("declined-patch warning carries no sections field: %+v", warns[0])
+	assertDeclinedWarning(t, warns[0], 1)
+}
+
+// assertDeclinedWarning checks the declined-patch warning counts the patches
+// and names neither the sections nor the scope: section IDs carry skill and
+// persona names ("skill:<name>"), and a scope level can be a tenant or user
+// ID. The overlay ID is what an operator follows from there.
+func assertDeclinedWarning(t *testing.T, w capturedWarn, want int) {
+	t.Helper()
+	if got := fmt.Sprint(w.fields["declined"]); got != fmt.Sprint(want) {
+		t.Errorf("declined-patch warning declined = %s, want %d", got, want)
 	}
-	if !strings.Contains(sections, "tone") {
-		t.Errorf("declined-patch warning names sections %q, want it to name %q", sections, "tone")
+	if _, ok := w.fields["overlay_id"]; !ok {
+		t.Errorf("declined-patch warning has no overlay_id: %+v", w)
+	}
+	for _, key := range []string{"sections", "scope"} {
+		if _, ok := w.fields[key]; ok {
+			t.Errorf("declined-patch warning still carries %q: %+v", key, w)
+		}
 	}
 }

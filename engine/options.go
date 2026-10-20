@@ -37,8 +37,13 @@ func WithExtension(ext plugin.Extension) Option {
 }
 
 // WithLogger sets the structured logger.
+//
+// A nil l keeps the no-op logger.
 func WithLogger(l log.Logger) Option {
 	return func(e *Engine) error {
+		if l == nil {
+			l = log.NewNoopLogger()
+		}
 		e.logger = l
 		return nil
 	}
