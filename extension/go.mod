@@ -10,6 +10,7 @@ require (
 	github.com/xraph/cortex v1.7.0
 	github.com/xraph/cortex/sentinel v1.7.0
 	github.com/xraph/forge v1.12.9
+	github.com/xraph/go-utils v1.4.1
 	github.com/xraph/grove v1.8.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.8.0
 	github.com/xraph/nexus v1.8.0
@@ -105,7 +106,6 @@ require (
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/go-utils v1.4.1 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.8.0 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.8.0 // indirect
 	github.com/xraph/sentinel v1.8.0 // indirect
