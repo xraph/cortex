@@ -69,6 +69,8 @@ Interfaces: upstream `Engine.FreezeEvaluation(ctx, FreezeRequest) (*EvaluationPl
 
 ## S2.4: Qualified sandbox port, broker and runtime
 
+Broker packet implemented October 20, 2026: sealed root contracts, authenticated durable broker/client, signed results, export checks, recovery tests and OCI configuration builder. The user deferred Linux worker selection. Runtime adapter/daemon, pinned deployment and live qualification probes remain open, so the full packet stays unchecked. See the progress ledger and `integrations/sandbox/README.md`.
+
 Depends on F0; S1 safety/scope before deployment. Owner: sandbox chat. Release owner handles module registration.
 
 Files: create root `sandbox/{runner,job,policy,receipt,conformance}.go` and tests. Create separate module `integrations/sandbox/` with `client.go`, `broker.go`, `auth.go`, `oci/runner.go`, `oci/policy.go`, `cmd/cortex-sandboxd/main.go`, `testdata/`, `compatibility.json`, integration tests and README. Add `go.mod`/`go.sum` through release owner. No implementation in root `cmd/cortex`.

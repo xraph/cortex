@@ -1,0 +1,80 @@
+# Cortex sandbox broker
+
+You can embed this broker behind an authenticated HTTPS server. It accepts sealed
+`sandbox.Job` requests, writes a signed receipt to SQLite before dispatch and
+keeps job identity across retries and restarts. The root `sandbox` package carries
+only the contracts. This module owns HTTP, durable state and export handling.
+
+The Linux runtime is still pending. No production adapter, daemon or qualified
+worker ships in this packet. Unit tests use an explicit fixture runtime, which
+cannot establish isolation, descendant termination or resource enforcement. The
+worker will be selected separately, as agreed on October 18, 2026.
+
+## Host integration
+
+1. Create a private directory with mode `0700` for the SQLite journal. Keep both
+   the journal and runtime state across restarts. One broker process owns it.
+2. Provide `Config.Runtime`, a host image allowlist, an Ed25519 signing key and
+   `Config.Authorize`. The authorizer rechecks current grants on every access.
+   Only the runtime adapter can attest that a deployed worker passed its probes.
+3. Mount `broker.Handler(authenticate)` on an HTTPS server. Map verified client
+   certificates or host credentials to an exact `Identity`. Do not copy scope or
+   principal from request bodies into authentication context.
+4. Give clients the broker's public key through trusted configuration. Create
+   `NewClient` with your authenticated HTTP transport. Redirects are rejected.
+5. Call `Reconcile` at startup and on a bounded timer, using the host clock. It
+   completes pending cancellations and cancels expired recorded jobs. It never
+   starts new work. Keep calling it when an individual runtime call fails.
+
+Set server read/header/write/idle timeouts in the embedding host. The client has
+its own timeout, and HTTP bodies have fixed size limits. The default admission
+limits are 16 active jobs and 10,000 retained records. You can lower them through
+`Config`; a full journal denies new work until the host manages retention. There
+is no automatic deletion of job identity history.
+
+The caller must retry the same sealed job after an uncertain submission. A new
+ID changes the digest and conflicts with an existing request key. `Inspect`
+reconciles execution status; `Collect` returns a terminal result. Revoked callers
+cannot inspect, cancel or collect. The trusted supervisor can still reap their
+expired workloads without exposing output.
+
+## Runtime obligations
+
+`Runtime.Start` must preserve durable idempotency, including terminal tombstones.
+It must never rerun a completed ID when a previous response was lost. `Cancel`
+must stop every descendant and retain terminal status. A broker receipt is not
+permission to fall back to host execution when the runtime is unavailable.
+
+Schema one accepts a digest-pinned image, argv, read-only evidence inputs under
+`/inputs`, a small locale environment allowlist and finite CPU, memory, process,
+scratch, wall-time and output limits. It has no host-mount, privileged-mode,
+capability or credential fields. Network access is denied. Output is limited to
+one MiB, and an executable's stdout cannot supply a trusted grading verdict.
+
+The intended profile uses gVisor's `runsc` with external networking disabled.
+The [gVisor networking guide](https://gvisor.dev/docs/user_guide/networking/)
+describes `--network=none`; the
+[OCI guide](https://gvisor.dev/docs/user_guide/quick_start/oci/) describes runtime
+bundles. The `oci.Spec` builder encodes namespaces, read-only mounts, empty
+capabilities, non-root identity, cgroups and scratch limits using OCI runtime-spec
+v1.3.0. The adapter must enforce that configuration. Neither the configuration
+checks nor the broker tests qualify a running worker.
+
+After execution has stopped, `ReadExport` can read bounded regular files through
+no-follow descriptors on Linux and macOS. It rejects traversal, symlinks, hard
+links and special files. It does not expand archives. The host still needs to
+verify content digests, authorize destinations and approve export separately.
+
+## Validation
+
+```sh
+GOWORK=off go test -race -count=1 ./...
+GOWORK=off go build ./...
+```
+
+Required live probes remain open: descendant cancellation, resource exhaustion,
+DNS and redirect denial, metadata/private-host denial, restart during execution,
+image/runtime pin validation and protected grading. `compatibility.json` records
+that state without claiming a tested runtime version. Run these probes on the
+chosen Linux worker before issuing a qualification attestation or enabling the
+adapter in an installed host.

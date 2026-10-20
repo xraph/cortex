@@ -286,6 +286,7 @@ In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as
 | `github.com/xraph/cortex/extension` | The Forge extension and dashboard contract | yes |
 | `github.com/xraph/cortex/sentinel` | Evaluation through [Sentinel](https://github.com/xraph/sentinel) | yes |
 | `github.com/xraph/cortex/integrations/fabriq` | [Fabriq](https://github.com/xraph/fabriq) as a knowledge provider, with extra tools and a learning-loop plugin | yes |
+| `github.com/xraph/cortex/integrations/sandbox` | Authenticated evaluation broker and OCI policy builder; Linux runtime qualification pending | not yet |
 | `github.com/xraph/cortex/a2aremote`, `.../grpcbind` | Agent2Agent over the network, and its gRPC binding | not yet |
 
 ## Documentation

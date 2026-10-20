@@ -18,7 +18,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 through S2.7, Stages 3 and 4 | queued | unassigned | Runtime verification gates remain disabled |
+| S2.4 broker | implemented, runtime pending | this chat | Authenticated durable broker, client, export checks and OCI policy fixtures pass; no qualified Linux adapter |
+| S2.2, S2.3, S2.5 through S2.7, Stages 3 and 4 | queued | shared owners | Runtime verification gates remain disabled |
 
 ## Interface rulings
 
@@ -172,3 +173,16 @@ Built-in evidence storage accepts at most one MiB of bytes. Larger artifacts req
 Tests first failed for missing packages and backend capabilities. Behavioral red cases also reproduced lossy UTF-8 canonicalization and a source observation remaining eligible after its permitted window. Added tests cover cross-scope and ancestor denial, corruption, authority revoked during retrieval, immutable ID conflicts, concurrent creates, missing contracts, pagination, cancellation, tombstones, mixed-run reports, missing evidence and expired human decisions. SQLite and real Docker PostgreSQL/MongoDB passed the initial shared persistence race tests. The first broad run hit a SQLite timeout and two PostgreSQL container-start failures; the full SQLite retry and affected PostgreSQL retries passed. After fast-forwarding the checkout to the telemetry and dependency updates, fresh race suites passed for evidence, verification, engine, SQLite, PostgreSQL and MongoDB. The engine took 384 seconds and SQLite 669 seconds under shared machine load. Root build, documentation lint/types/build, formatting and the nine-module pre-sandbox lint pass are recorded in the validation logs. No store test was counted as live sandbox qualification.
 
 CI run `39152040751` passed on `9b4a882`, including docs, formatting, security, root and nested-module gates. This closes the exact-commit CI item for the Stage 1 cancellation fix. The interrupted fresh review and installed live-provider/scanner checks remain open. S2.1 does not enable engine verification or claim a qualified sandbox.
+
+
+## Sandbox broker and control contracts
+
+Ruling: split S2.4 into a broker packet and a Linux runtime packet. The user chose to build the broker and tests now and select a Linux worker later. This packet ships the host-independent code; it does not mark S2.4 or G2 complete. Production runsc lifecycle wiring, the daemon and live probes remain implementation work.
+
+The root `sandbox` package defines sealed schema-one jobs, runtime capabilities, receipts and execution results. Jobs bind exact scope/principal, image digest, argv, read-only evidence inputs, a locale environment allowlist and finite limits. Unknown privileges, network access, unpinned images and unsupported qualification fail closed. The broker uses a private SQLite journal with an exclusive connection, records receipt identity before dispatch and preserves cancellation intent before contacting the runtime. Admission limits bound active jobs and retained records. Runtime adapters must preserve job ID history across ambiguous starts and restarts.
+
+`integrations/sandbox` adds HTTPS authentication callbacks, a redirect-denying client, Ed25519 receipts and terminal results, current-grant checks, bounded bodies and outputs, and supervisor reconciliation of expired recorded work. Export reads use no-follow descriptors on Linux/macOS and reject traversal, symlinks, hard links, special files and excess bytes. The host still authorizes content and destination. No candidate stdout can supply a trusted verdict.
+
+The OCI builder pins runtime-spec v1.3.0 and encodes non-root execution, empty capabilities, no new privileges, private namespaces, read-only root/inputs, CPU/memory/process limits and bounded tmpfs scratch. This is configuration evidence only. `compatibility.json` remains unqualified with no invented runtime/image pins. Live descendant-kill, cgroup exhaustion, network/metadata denial, runsc restart and protected-grading probes remain open.
+
+TDD failures covered the missing port/broker/export/recovery implementations, a policy callback mutating sealed job arguments, and cancellation after acceptance but before runtime creation. The fixes pass race tests together with concurrent idempotency, conflicting retries, tenant denial, revoked collection, signature tampering, output caps, exclusive journal ownership, restart recovery and admission capacity. Full ten-module lint, final formatting, root/module builds and the root contract plus broker/OCI race suites passed. CI and the release workflow now include the new module; no release was dispatched by this packet.

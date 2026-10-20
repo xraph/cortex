@@ -9,6 +9,7 @@ Cortex is an agent orchestration engine for Go. You compose agents from skills, 
 | `github.com/xraph/cortex/sentinel` | `sentinel` | `sentinel/vX.Y.Z` |
 | `github.com/xraph/cortex/extension` | `extension` | `extension/vX.Y.Z` |
 | `github.com/xraph/cortex/integrations/fabriq` | `integrations/fabriq` | `integrations/fabriq/vX.Y.Z` |
+| `github.com/xraph/cortex/integrations/sandbox` | `integrations/sandbox` | `integrations/sandbox/vX.Y.Z` (first release pending) |
 | `github.com/xraph/cortex/a2aremote` | `a2aremote` | no |
 | `github.com/xraph/cortex/a2aremote/grpcbind` | `a2aremote/grpcbind` | no |
 | `github.com/xraph/cortex/inttest` | `inttest` | no, never published |
@@ -48,7 +49,7 @@ cd extension && GOWORK=off go test -race -count=1 ./...
 |---|---|---|
 | `ci` (shared `xraph/workflows` `go-ci.yml@v1`, Go 1.26) | root | `make test`, `go test -race -covermode=atomic -coverprofile=coverage.out ./...`, golangci-lint at the version pinned there, `gofmt -l .`, `make vet`, a `go mod tidy` diff, gosec and govulncheck (both gating), and a check that nested modules require cortex at versions the proxy can serve |
 | `format` | whole tree | `goimports -l -local github.com/xraph/cortex .` must print nothing |
-| `submodules` | `api`, `sentinel`, `extension`, `integrations/fabriq` | `go mod tidy` diff, `go build ./...`, `go test -race -count=1 ./...` |
+| `submodules` | `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization` | `go mod tidy` diff, `go build ./...`, `go test -race -count=1 ./...` |
 | `docs` | `docs/` | `pnpm install --frozen-lockfile`, `pnpm types:check`, `pnpm lint`, `pnpm build` |
 
 `a2aremote`, `a2aremote/grpcbind` and `inttest` aren't built, tested or linted in CI. If you touch them, run their tests and `make lint` yourself.
@@ -164,10 +165,10 @@ You release by dispatching the workflow. Never push a tag by hand.
 `.github/workflows/release.yml` runs these steps:
 
 1. It tags `main` with the input as `github-actions[bot]` and pushes the tag. Nothing checks the input before that push (`pin-submodules.sh` validates it two steps later), so type the leading `v`.
-2. It verifies the root with `go mod download`, a `go mod tidy` diff, `go build ./...` and `go test -race -count=1 ./...`, then does the same in `api`, `sentinel`, `extension` and `integrations/fabriq`.
-3. It runs `scripts/pin-submodules.sh vX.Y.Z`. The script validates the version, then uses `go mod edit -require` to point every `github.com/xraph/cortex...` require in those four `go.mod` files at the new tag, and it fails the run if it finds a cortex require still at `v0.0.0` (a `v0.0.0-...` pseudo-version counts).
-4. It commits the four `go.mod` files as `chore: pin sub-modules to vX.Y.Z`, tags that commit `api/vX.Y.Z`, `sentinel/vX.Y.Z`, `extension/vX.Y.Z` and `integrations/fabriq/vX.Y.Z` (skipping any that already exist), pushes the tags and runs `git reset --hard HEAD~1`.
-5. In a throwaway module it runs `go get github.com/xraph/cortex/<mod>@vX.Y.Z` against `proxy.golang.org` for each of the four, so a tag that can't resolve fails the run.
+2. It verifies the root with `go mod download`, a `go mod tidy` diff, `go build ./...` and `go test -race -count=1 ./...`, then does the same in `api`, `sentinel`, `extension`, `integrations/fabriq` and `integrations/sandbox`.
+3. It runs `scripts/pin-submodules.sh vX.Y.Z`. The script validates the version, then uses `go mod edit -require` to point every `github.com/xraph/cortex...` require in those five `go.mod` files at the new tag, and it fails the run if it finds a cortex require still at `v0.0.0` (a `v0.0.0-...` pseudo-version counts).
+4. It commits the five `go.mod` files as `chore: pin sub-modules to vX.Y.Z`, tags that commit `api/vX.Y.Z`, `sentinel/vX.Y.Z`, `extension/vX.Y.Z`, `integrations/fabriq/vX.Y.Z` and `integrations/sandbox/vX.Y.Z` (skipping any that already exist), pushes the tags and runs `git reset --hard HEAD~1`.
+5. In a throwaway module it runs `go get github.com/xraph/cortex/<mod>@vX.Y.Z` against `proxy.golang.org` for each of the five, so a tag that can't resolve fails the run.
 6. It publishes a GitHub release with notes from `git log` since the previous tag.
 
 The pin commit is never pushed to a branch, and only the sub-module tags reach it. So `main` keeps each sub-module's requires at an earlier release with `replace => ../` for local work, while a consumer who fetches `cortex/extension@vX.Y.Z` resolves the pinned requires from the tag, which means a sub-module tag and the root tag of the same version point at different commits: the root tag at the `main` commit, the sub-module tags at the pin commit on top of it.

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "status": "unqualified",
+  "profile": "runsc-deny-all-v1",
+  "runtime": "runsc",
+  "runtime_version": null,
+  "runtime_sha256": null,
+  "image_digests": [],
+  "host": {"os": "linux", "kernel": null, "architecture": null},
+  "qualification_evidence": [],
+  "blocked_probes": ["descendant-cancellation", "resource-limits", "egress-denial", "metadata-denial", "restart-recovery", "protected-grading"],
+  "reason": "Broker and fixture tests are implemented. Linux worker selection and live runtime qualification are deferred by the user."
+}

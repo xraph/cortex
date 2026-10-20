@@ -71,6 +71,7 @@ jobs:
           - sentinel
           - extension
           - integrations/fabriq
+          - integrations/sandbox
           - optimization
 
     defaults:
