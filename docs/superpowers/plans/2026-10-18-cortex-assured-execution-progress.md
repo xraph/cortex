@@ -911,3 +911,47 @@ passed across all ten modules, and Linux lint passed with qualification, peer an
 mount fixture tags. Service binaries compiled for Linux arm64 and amd64. The
 Linux image, evidence, report and private-socket tests passed ten repetitions
 without skips. Live runtime qualification remains deferred by the user's choice.
+
+
+## S2.4 worker image-source assembly
+
+WorkerSession.ImageSource now connects image staging to ReadImageAt. It requires
+an active execution, the exact signed scope, a valid digest, and the configured
+compressed-byte ceiling. Current deployment and claim checks run before transfer
+and again before clean EOF, under the original signed deadline.
+
+Image and evidence readers share one bounded pipe lifecycle. The reader owns the
+session lock until transfer completes; Close cancels and joins the transfer.
+Late receipt failures and revoked grants remain read/close errors even when every
+content byte arrived. Artifact readback still records verification only after all
+transport and authority checks succeed.
+
+worker.Run now obtains all content capabilities from its bootstrapped session.
+The external image-source argument is removed from this internal package. Its
+local image guard checks signed job identity, scope and manifest pin before
+staging, while the daemon owns source credentials and current provider grants.
+
+Tests first failed for the absent session image capability and pipeline binding.
+They cover execution ordering, missing scope, malformed image pins, mixed job
+identity, lost final receipts, revoked authority, cancellation and concurrent
+session access. The Linux bootstrap fixture now reads image bytes through the
+private socket before capture and report submission. It retains the explicit
+service-membership seam and does not claim a deployed runtime integration.
+
+Installed source configuration, executable daemon/worker assembly, independent
+service and retained-file recovery, broker wiring and live Linux qualification
+remain open. S2.4 and G2 are incomplete.
+
+Validation: the first broad race run failed several short-deadline fixtures during
+heavy shared-host load. A serial retry passed every package except the bulk
+upload success test, whose one-second allowance expired. The image/evidence bulk
+success fixtures now allow ten seconds; production limits and deadline-denial
+tests are unchanged. The cancellation fixture waits for provider entry before
+cancelling. The complete service race suite then passed, covering the shared
+reader change. Linux worker-pipeline and authenticated-session suites each passed
+ten repetitions without skips. Linux builds and arm64/amd64 service compilation
+passed. CI 39628861484 passed at c411c52 for the preceding image transport.
+Scoped `make f`, final root `make l` across all ten modules and Linux tagged lint
+passed. The earlier full lint runs caught in-progress optimizer changes, which
+its owner resolved before the final pass. Independent full-plan review and live
+runtime qualification remain outstanding.

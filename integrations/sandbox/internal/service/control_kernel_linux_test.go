@@ -48,7 +48,13 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 		return nil
 	}, beginReport: func(_ context.Context, _ *net.UnixConn, claim WorkerClaim) (reportSession, error) {
 		captureSession := &fixtureCaptureSession{fixtureReportSession: fixtureReportSession{claim: claim}}
-		return &journalEvidenceSession{fixtureEvidenceSession: fixtureEvidenceSession{fixtureReportSession: fixtureReportSession{claim: claim}, data: []byte("candidate")}, capture: captureSession.Capture}, nil
+		return &struct {
+			*journalEvidenceSession
+			imageSession
+		}{
+			&journalEvidenceSession{fixtureEvidenceSession: fixtureEvidenceSession{fixtureReportSession: fixtureReportSession{claim: claim}, data: []byte("candidate")}, capture: captureSession.Capture},
+			&fixtureImageSession{data: []byte("image data")},
+		}, nil
 	}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -58,6 +64,7 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 	// authentication and startup/capture/report exchanges, not a live systemd worker.
 	boundary.authorize, boundary.report, boundary.capture = AuthorizeAt, ReportAt, CaptureAt
 	boundary.readEvidence, boundary.putArtifact = ReadEvidenceAt, PutArtifactAt
+	boundary.readImage = ReadImageAt
 	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
 	if err != nil || authorizations.Load() != 2 {
 		t.Fatal("authenticated activation handshake failed", err)
@@ -66,6 +73,15 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := credential.Record.Receipt.Job
+	imageReader, imageErr := worker.ImageSource().Open(cortex.WithScope(t.Context(), job.Scope), imagePin([]byte("image data")))
+	if imageErr != nil {
+		t.Fatal(imageErr)
+	}
+	imageBytes, imageErr := io.ReadAll(imageReader)
+	imageCloseErr := imageReader.Close()
+	if imageErr != nil || imageCloseErr != nil || string(imageBytes) != "image data" {
+		t.Fatal("private image source failed", imageErr, imageCloseErr)
+	}
 	ref := captureRefForJob(t, job)
 	if err = worker.CaptureJournal().Record(t.Context(), job, ref); err != nil {
 		t.Fatal("private intent failed", err)

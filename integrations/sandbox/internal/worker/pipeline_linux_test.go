@@ -148,7 +148,7 @@ func pipelineFixture(t *testing.T, fail string) (*fixtureSession, workerSources,
 	root := filepath.Join(cfg.Settings.Service.StateDirectory, "workspaces", job.ID.String())
 	paths := workspace.Paths{JobID: job.ID, JobDigest: job.Digest, Directory: root, Images: filepath.Join(root, "stage", "images"), Inputs: filepath.Join(root, "stage", "inputs"), Bundle: filepath.Join(root, "stage", "bundle"), Runtime: filepath.Join(root, "stage", "runtime"), Scratch: filepath.Join(root, "scratch")}
 	w := &fixtureWorkspace{paths: paths, calls: &calls, fail: fail}
-	sources := workerSources{Sources: Sources{Images: imageSource{}, AuthorizeImage: func(context.Context, sandbox.Job, string) error { return nil }}, Inputs: inputSource{}, AuthorizeInput: func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }}
+	sources := workerSources{Images: imageSource{}, AuthorizeImage: func(context.Context, sandbox.Job, string) error { return nil }, Inputs: inputSource{}, AuthorizeInput: func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }}
 	deps := dependencies{
 		workspace: func(ctx context.Context, c workspace.Config) (work, error) {
 			calls = append(calls, "workspace")
@@ -299,7 +299,7 @@ func TestPipelineMissingSourcesNeverStarts(t *testing.T) {
 	if _, err := execute(t.Context(), s, workerSources{}, deps); err == nil || len(*calls) != 0 {
 		t.Fatal("missing sources reached execution")
 	}
-	if receipt, err := Run(t.Context(), nil, Sources{}); err == nil || !receipt.JobID.IsNil() {
+	if receipt, err := Run(t.Context(), nil); err == nil || !receipt.JobID.IsNil() {
 		t.Fatal("nil worker session accepted")
 	}
 }

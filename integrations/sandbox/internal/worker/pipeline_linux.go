@@ -30,16 +30,9 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-// Sources supplies the approved image source and its current grant check.
-// Evidence reads and capture uploads always use the bootstrapped worker session;
-// repository credentials stay in the daemon. Image readers must honor context.
-type Sources struct {
-	Images         image.Source
-	AuthorizeImage func(context.Context, sandbox.Job, string) error
-}
-
 type workerSources struct {
-	Sources
+	Images          image.Source
+	AuthorizeImage  func(context.Context, sandbox.Job, string) error
 	Inputs          staging.Source
 	AuthorizeInput  func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 	Artifacts       capture.Repository
@@ -77,14 +70,15 @@ type dependencies struct {
 
 // Run stages and executes one bootstrapped job, cleans up and submits its report.
 // It captures bounded stdout/stderr and declared files as restricted evidence.
-// The worker process must exit after this call.
+// Content sources come from the private session. The worker process must exit
+// after this call.
 // Failed runtime cleanup leaves storage intact for independent recovery. A report
 // acknowledgement confirms durable receipt only, never result finalization.
-func Run(ctx context.Context, worker *service.WorkerSession, sources Sources) (service.WorkerReportReceipt, error) {
+func Run(ctx context.Context, worker *service.WorkerSession) (service.WorkerReportReceipt, error) {
 	if worker == nil {
 		return service.WorkerReportReceipt{}, fmt.Errorf("cortex: worker session is required")
 	}
-	return execute(ctx, worker, bindWorkerSources(worker, sources), dependencies{
+	return execute(ctx, worker, bindWorkerSources(worker), dependencies{
 		workspace: func(ctx context.Context, cfg workspace.Config) (work, error) {
 			w, err := workspace.Create(ctx, cfg)
 			if w == nil {
@@ -103,14 +97,25 @@ func Run(ctx context.Context, worker *service.WorkerSession, sources Sources) (s
 	})
 }
 
-type evidenceWorker interface {
+type contentWorker interface {
+	ImageSource() image.Source
 	session
 	InputSource() staging.Source
 	ArtifactRepository() capture.Repository
 }
 
-func bindWorkerSources(worker evidenceWorker, sources Sources) workerSources {
-	return workerSources{Sources: sources, Inputs: worker.InputSource(), Artifacts: worker.ArtifactRepository(),
+func bindWorkerSources(worker contentWorker) workerSources {
+	return workerSources{Images: worker.ImageSource(), Inputs: worker.InputSource(), Artifacts: worker.ArtifactRepository(),
+		AuthorizeImage: func(ctx context.Context, job sandbox.Job, pin string) error {
+			pinned, err := worker.Job()
+			if err != nil {
+				return err
+			}
+			if job.Validate() != nil || job.Digest != pinned.Digest || pin != pinned.Image || cortex.ScopeFromContext(ctx).Canonical() != pinned.Scope.Canonical() {
+				return broker.ErrDenied
+			}
+			return worker.Authorize(ctx)
+		},
 		AuthorizeInput: func(ctx context.Context, job sandbox.Job, action evidence.Action, ref evidence.Ref) error {
 			return authorizeEvidence(ctx, worker, job, action, ref, false)
 		},

@@ -39,9 +39,9 @@ func TestImageTransportVerifiesBoundedContentAndReceipt(t *testing.T) {
 			claim := controlClaim()
 			data := bytes.Repeat([]byte("x"), size)
 			session := &fixtureImageSession{fixtureReportSession: fixtureReportSession{claim: claim}, data: data}
-			path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
+			path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: 10 * time.Second})
 			var got bytes.Buffer
-			if err := readImageConnection(t.Context(), dialControl(t, path), claim, imagePin(data), 1<<20, &got, time.Second); err != nil || !bytes.Equal(got.Bytes(), data) {
+			if err := readImageConnection(t.Context(), dialControl(t, path), claim, imagePin(data), 1<<20, &got, 10*time.Second); err != nil || !bytes.Equal(got.Bytes(), data) {
 				t.Fatal("image stream", err)
 			}
 			cancel()
@@ -288,18 +288,32 @@ func TestImageTransportUsesSignedManifestService(t *testing.T) {
 
 func TestImageTransportCancelsProviderAndJoinsPeer(t *testing.T) {
 	claim := controlClaim()
-	stopped := make(chan struct{})
+	entered, stopped := make(chan struct{}), make(chan struct{})
 	session := &fixtureImageSession{fixtureReportSession: fixtureReportSession{claim: claim}, read: func(ctx context.Context, _ string, _ io.Writer) (int64, error) {
+		close(entered)
 		defer close(stopped)
 		<-ctx.Done()
 		return 0, ctx.Err()
 	}}
-	path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: 50 * time.Millisecond})
-	if err := readImageConnection(t.Context(), dialControl(t, path), claim, imagePin([]byte("image")), 1024, io.Discard, time.Second); err == nil {
-		t.Fatal("timed out image was acknowledged")
+	path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: 10 * time.Second})
+	defer cancel()
+	result := make(chan error, 1)
+	conn := dialControl(t, path)
+	go func() {
+		result <- readImageConnection(t.Context(), conn, claim, imagePin([]byte("image")), 1024, io.Discard, 10*time.Second)
+	}()
+	select {
+	case <-entered:
+	case err := <-result:
+		t.Fatal("image transfer ended before provider entry", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("image provider did not start")
 	}
 	cancel()
 	_ = awaitControllerStop(t, done)
+	if err := <-result; err == nil {
+		t.Fatal("cancelled image was acknowledged")
+	}
 	select {
 	case <-stopped:
 	default:

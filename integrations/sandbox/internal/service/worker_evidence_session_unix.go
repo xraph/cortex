@@ -89,6 +89,26 @@ func (s sessionEvidenceSource) Open(ctx context.Context, ref evidence.Ref) (io.R
 	if s.artifact && !w.captures[ref.ID].uploaded {
 		return nil, broker.ErrConflict
 	}
+	ref = detachedCaptureRef(ref)
+	reader, err := w.openContentLocked(ctx, func(operation context.Context, destination io.Writer) error {
+		return w.boundary.readEvidence(operation, w.configuration.Settings.ControlSocket, w.claim, ref, s.artifact, destination)
+	}, func() {
+		if s.artifact {
+			attempt := w.captures[ref.ID]
+			attempt.readbackVerified = true
+			w.captures[ref.ID] = attempt
+		}
+	})
+	if err == nil {
+		locked = false
+	}
+	return reader, err
+}
+
+// openContentLocked transfers ownership of reportMu to the reader on success.
+// On synchronous failure the caller still owns the lock. verified runs with the
+// lock held, only after the transport and final authority checks have succeeded.
+func (w *WorkerSession) openContentLocked(ctx context.Context, read func(context.Context, io.Writer) error, verified func()) (io.ReadCloser, error) {
 	operation, cancel := context.WithDeadline(ctx, w.Deadline())
 	operation, bound := context.WithTimeout(operation, 30*time.Second)
 	stop := func() { bound(); cancel() }
@@ -96,21 +116,17 @@ func (s sessionEvidenceSource) Open(ctx context.Context, ref evidence.Ref) (io.R
 		stop()
 		return nil, err
 	}
-	ref = detachedCaptureRef(ref)
 	reader, writer := io.Pipe()
-	transfer := &sessionEvidenceReader{PipeReader: reader, cancel: stop, done: make(chan struct{})}
+	transfer := &sessionContentReader{PipeReader: reader, cancel: stop, done: make(chan struct{})}
 	interrupt := context.AfterFunc(operation, func() { _ = reader.CloseWithError(operation.Err()) })
-	locked = false
 	go func() {
-		err := w.boundary.readEvidence(operation, w.configuration.Settings.ControlSocket, w.claim, ref, s.artifact, writer)
+		err := read(operation, writer)
 		if err == nil {
 			err = w.authorizeConfigured(operation)
 		}
 		err = errors.Join(err, operation.Err())
-		if err == nil && s.artifact {
-			attempt := w.captures[ref.ID]
-			attempt.readbackVerified = true
-			w.captures[ref.ID] = attempt
+		if err == nil && verified != nil {
+			verified()
 		}
 		transfer.err = err
 		interrupt()
@@ -124,7 +140,7 @@ func (s sessionEvidenceSource) Open(ctx context.Context, ref evidence.Ref) (io.R
 	return transfer, nil
 }
 
-type sessionEvidenceReader struct {
+type sessionContentReader struct {
 	*io.PipeReader
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -132,7 +148,7 @@ type sessionEvidenceReader struct {
 	err    error
 }
 
-func (r *sessionEvidenceReader) Close() error {
+func (r *sessionContentReader) Close() error {
 	r.once.Do(func() {
 		select {
 		case <-r.done:

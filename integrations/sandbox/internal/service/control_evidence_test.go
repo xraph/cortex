@@ -197,13 +197,13 @@ func TestEvidenceTransportStreamsBoundContentAndStoresUpload(t *testing.T) {
 				t.Fatal(err)
 			}
 			session := &fixtureEvidenceSession{fixtureReportSession: fixtureReportSession{claim: claim}}
-			path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
-			if ref, putErr := putArtifactConnection(t.Context(), dialControl(t, path), claim, a, time.Second); putErr != nil || ref.ID != a.Ref.ID {
+			path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: 10 * time.Second})
+			if ref, putErr := putArtifactConnection(t.Context(), dialControl(t, path), claim, a, 10*time.Second); putErr != nil || ref.ID != a.Ref.ID {
 				t.Fatal(ref, putErr)
 			}
 			for _, artifact := range []bool{false, true} {
 				var got bytes.Buffer
-				if readErr := readEvidenceConnection(t.Context(), dialControl(t, path), claim, a.Ref, artifact, &got, time.Second); readErr != nil || !bytes.Equal(got.Bytes(), a.Data) {
+				if readErr := readEvidenceConnection(t.Context(), dialControl(t, path), claim, a.Ref, artifact, &got, 10*time.Second); readErr != nil || !bytes.Equal(got.Bytes(), a.Data) {
 					t.Fatal("evidence stream", readErr)
 				}
 			}

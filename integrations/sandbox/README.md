@@ -793,11 +793,11 @@ check; partial bytes and late failures remain failures. Closing early cancels an
 joins the transfer. Reports and other session operations cannot overlap an active
 transfer. The original signed deadline remains in force.
 
-`worker.Run` always obtains evidence capabilities from the bootstrapped session.
-Its `Sources` argument now supplies only the approved image source and image
-policy. Local staging guards verify signed bindings; current repository grants
-are enforced by the daemon at the content operation. Approved image delivery,
-installed provider configuration and live qualification remain open.
+`worker.Run` obtains image, input and artifact capabilities from the bootstrapped
+session. Local staging guards verify the signed job and image bindings; current
+source and repository grants are enforced by the daemon at each content operation.
+Registry and repository credentials stay in the daemon. Installed provider
+configuration and live qualification remain open.
 
 ## Approved image access
 
@@ -833,7 +833,14 @@ returns an error, even if some bytes reached your destination. No automatic retr
 occurs. Image requests accept at most two KiB of canonical metadata and cannot
 supply a source URL.
 
-Worker image-source assembly and installed provider configuration remain open.
+`WorkerSession.ImageSource` binds image reads to an active execution, exact scope,
+current deployment checks and the configured compressed-byte ceiling. It uses the
+same reader lifecycle as evidence: early Close cancels and joins the transfer,
+while clean EOF requires both the transport receipt and a final authority check.
+A report or another content operation cannot overlap an active reader.
+
+The worker pipeline takes its image source from this session and checks the signed
+job's image pin before staging. Installed provider configuration remains open.
 These transport tests do not qualify a live systemd/runsc deployment.
 
 ## Linux probe suite

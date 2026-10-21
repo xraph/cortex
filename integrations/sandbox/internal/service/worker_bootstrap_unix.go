@@ -21,6 +21,7 @@ import (
 )
 
 type workerBoundary struct {
+	readImage     func(context.Context, string, WorkerClaim, string, int64, io.Writer) error
 	readEvidence  func(context.Context, string, WorkerClaim, evidence.Ref, bool, io.Writer) error
 	putArtifact   func(context.Context, string, WorkerClaim, evidence.Artifact) (evidence.Ref, error)
 	capture       func(context.Context, string, WorkerClaim, evidence.Ref, bool) (WorkerCaptureReceipt, error)
@@ -52,7 +53,7 @@ func BootstrapWorker(ctx context.Context, configPath, credentialDirectory string
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return nil, errUnsupported
 	}
-	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt, capture: CaptureAt, readEvidence: ReadEvidenceAt, putArtifact: PutArtifactAt})
+	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt, capture: CaptureAt, readEvidence: ReadEvidenceAt, putArtifact: PutArtifactAt, readImage: ReadImageAt})
 }
 
 func bootstrapWorker(ctx context.Context, configPath, credentialDirectory string, key id.ID, boundary workerBoundary) (*WorkerSession, error) {
