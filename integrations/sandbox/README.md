@@ -263,7 +263,7 @@ before guest execution. Cancellation, completion, reaping and expiration
 invalidate that current-ownership check.
 
 These launch and handoff components are implemented and fixture-tested. The
-worker CLI, authenticated daemon control, daemon startup wiring, cleanup of
+worker CLI, private control transport, daemon startup wiring, cleanup of
 retained credential files, full deadline supervision and broker activation are
 still pending. No live systemd/runsc launch is qualified by these tests.
 
@@ -299,7 +299,8 @@ error closes admission and stops that controller; resolve the error before
 constructing another instance. `Status` exposes readiness and the retained error
 to the daemon.
 
-Cancelling `Run` closes admission and cancels in-flight launch contexts. The
+Cancelling `Run` closes admission and cancels in-flight launch and worker
+authorization contexts. The
 controller joins those calls before using an independent 30-second context to
 recover remaining claims. Cleanup errors stay visible, and unresolved journal
 entries remain available to the next controller. Host callbacks must honor
@@ -309,6 +310,41 @@ The executable daemon still needs to construct and run these components. A slow
 cleanup can delay a later page, so scans cannot enforce an exact execution
 deadline. Worker deadline supervision, the outer service ceiling, discovery of
 services absent from the journal and cleanup of retained files remain required.
+
+## Worker identity and authorization
+
+The internal `workerpeer.Open` captures a connected Unix stream peer with
+`SO_PEERPIDFD`. It also requires root socket credentials, current root process
+credentials, matching procfs PID numbering and the exact job's `supervisor`
+subgroup. The handle is checked for exit around the bounded procfs reads.
+Close it when the connection ends. A numeric PID supplied in a request cannot
+replace that handle, and unsupported hosts are refused.
+
+This requires Linux's peer-pidfd socket option. The
+[kernel implementation](https://github.com/torvalds/linux/blob/v6.6/net/core/sock.c)
+obtains the handle from the socket's recorded peer; the
+[pidfd documentation](https://man7.org/linux/man-pages/man2/pidfd_open.2.html)
+describes observing process exit through that handle. The adapter does not use
+`pidfd_open` on a numeric peer PID as a fallback.
+
+Pass the live peer and private `WorkerClaim` to `Controller.AuthorizeWorker`.
+The controller checks its readiness, the profile digest, current journal token
+and revision, current grants and the effective running service. The service's
+main PID and execution record must match the peer, and its pinned files and
+resource settings must match the approved profile. Grant callbacks receive the
+verified job scope. The controller checks peer liveness after the last grant
+lookup and checks the journal again before returning a detached record.
+
+Authorization creates no claim, starts no process and commits no result. Repeat
+it after staging, immediately before guest execution. It never extends the
+original deadline. Keep claim tokens out of URLs, logs and guest mounts.
+
+The `sandbox_peer_kernel` test tag runs real Unix-socket and child-process
+checks on Linux as root. CI compiles a race-enabled test binary and runs those
+checks. They cover process capture, exit detection and rejection of a root
+process outside the job service, including descriptor cleanup. They do not
+start systemd jobs or qualify the running-service acceptance path. Private
+transport, worker startup and result-finalization wiring remain pending.
 
 ## Evidence input staging
 

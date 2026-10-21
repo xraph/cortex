@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerstore"
 	"github.com/xraph/cortex/sandbox"
@@ -24,16 +25,17 @@ type ControllerStatus struct {
 // Controller owns launch admission and recovery for one daemon lifetime. Use
 // Launch through this controller exclusively after constructing it. The host
 // must not call its underlying launcher or scanner concurrently from elsewhere.
-// It does not authenticate a worker, expose a runtime adapter or qualify Linux.
+// It does not expose a control transport or runtime adapter, or qualify Linux.
 type Controller struct {
-	launcher *Launcher
-	scanner  *RecoveryScanner
-	interval time.Duration
-	mu       sync.Mutex
-	started  bool
-	status   ControllerStatus
-	lifetime context.Context
-	ops      sync.WaitGroup
+	launcher    *Launcher
+	scanner     *RecoveryScanner
+	interval    time.Duration
+	mu          sync.Mutex
+	started     bool
+	status      ControllerStatus
+	lifetime    context.Context
+	ops         sync.WaitGroup
+	checkWorker func(context.Context, LaunchProfile, id.ID, uint32) error
 }
 
 // NewController joins a launcher and scanner that share the exact journal and
@@ -43,7 +45,7 @@ func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.D
 	if launcher == nil || scanner == nil || launcher.store == nil || launcher.reaper == nil || launcher.store != scanner.store || launcher.reaper != scanner.reaper || scanner.revalidate == nil || scanner.now == nil || scanner.pageSize < 1 || scanner.pageSize > 256 || interval < 10*time.Millisecond || interval > time.Second {
 		return nil, fmt.Errorf("cortex: invalid sandbox controller")
 	}
-	return &Controller{launcher: launcher, scanner: scanner, interval: interval}, nil
+	return &Controller{launcher: launcher, scanner: scanner, interval: interval, checkWorker: launcher.reaper.CheckWorker}, nil
 }
 
 // Status reports readiness without granting admission; Launch checks it again.
@@ -56,7 +58,7 @@ func (c *Controller) Status() ControllerStatus {
 // Run recovers every old acceptance before admitting launches, then scans on a
 // bounded timer. Any scan error closes admission and stops the controller. A
 // stopped controller cannot be restarted; resolve its error and create another.
-// Cancellation closes admission, cancels and joins in-flight launch calls, then
+// Cancellation closes admission, cancels and joins in-flight operations, then
 // recovers outstanding claims with an independent 30-second cleanup context.
 // Host callbacks must honor their contexts for shutdown to remain bounded.
 func (c *Controller) Run(ctx context.Context) (err error) {
@@ -128,24 +130,30 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 // both its caller and daemon lifetime. A stopped or unready controller returns
 // ErrPending without enrolling or starting the receipt.
 func (c *Controller) Launch(ctx context.Context, receipt sandbox.Receipt) error {
-	if err := ctx.Err(); err != nil {
+	operation, finish, err := c.begin(ctx)
+	if err != nil {
 		return err
+	}
+	defer finish()
+	return c.launcher.Launch(operation, receipt)
+}
+
+func (c *Controller) begin(ctx context.Context) (context.Context, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	c.mu.Lock()
 	if !c.status.Ready || c.lifetime.Err() != nil {
 		c.mu.Unlock()
-		return broker.ErrPending
+		return nil, nil, broker.ErrPending
 	}
 	c.ops.Add(1)
 	lifetime := c.lifetime
 	c.mu.Unlock()
-	defer c.ops.Done()
 	operation, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(lifetime, cancel)
-	defer stop()
-	defer cancel()
 	if lifetime.Err() != nil {
 		cancel()
 	}
-	return c.launcher.Launch(operation, receipt)
+	return operation, func() { stop(); cancel(); c.ops.Done() }, nil
 }

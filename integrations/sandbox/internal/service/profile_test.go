@@ -95,7 +95,7 @@ func TestAdmissionRejectsChangedFilesBeforeLoadingService(t *testing.T) {
 	}
 	calls := 0
 	check := func(context.Context, string) (map[string]any, error) { calls++; return nil, nil }
-	if err := checkLaunch(t.Context(), p, id.New(sandbox.PrefixJob), uint32(os.Geteuid()), check); err == nil || calls != 0 {
+	if err := checkDeployment(t.Context(), p, id.New(sandbox.PrefixJob), uint32(os.Geteuid()), 0, check); err == nil || calls != 0 {
 		t.Fatal("changed template reached service admission")
 	}
 }
@@ -120,7 +120,7 @@ func TestAdmissionLoadsEffectiveSettingsWithoutStartingWorker(t *testing.T) {
 		}
 	}}
 	manager := &systemManager{bus: b}
-	if err := checkLaunch(t.Context(), p, key, uint32(os.Geteuid()), manager.Loaded); err != nil {
+	if err := checkDeployment(t.Context(), p, key, uint32(os.Geteuid()), 0, manager.Loaded); err != nil {
 		t.Fatal(err)
 	}
 	if len(b.calls) != 2 {

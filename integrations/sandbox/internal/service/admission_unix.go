@@ -44,6 +44,20 @@ func verifyProfile(ctx context.Context, p LaunchProfile, owner uint32) error {
 // dispatch. Only the host may supply profiles; callers must also authenticate
 // the receipt, enforce current grants and retain one-time launch ownership.
 func (r *Reaper) CheckLaunch(ctx context.Context, p LaunchProfile, key id.ID) error {
+	return r.checkProfile(ctx, p, key, 0)
+}
+
+// CheckWorker verifies that a live peer is the current main worker of the
+// approved service. Obtain pid from a live workerpeer.Peer and check that handle
+// again after this call; a request-supplied PID is not authenticated identity.
+func (r *Reaper) CheckWorker(ctx context.Context, p LaunchProfile, key id.ID, pid uint32) error {
+	if pid <= 1 {
+		return fmt.Errorf("cortex: invalid worker main process")
+	}
+	return r.checkProfile(ctx, p, key, pid)
+}
+
+func (r *Reaper) checkProfile(ctx context.Context, p LaunchProfile, key id.ID, pid uint32) error {
 	if runtime.GOOS != "linux" {
 		return errUnsupported
 	}
@@ -59,10 +73,10 @@ func (r *Reaper) CheckLaunch(ctx context.Context, p LaunchProfile, key id.ID) er
 	if !ok {
 		return fmt.Errorf("cortex: service manager cannot inspect launch configuration")
 	}
-	return checkLaunch(ctx, p, key, 0, reader.Loaded)
+	return checkDeployment(ctx, p, key, 0, pid, reader.Loaded)
 }
 
-func checkLaunch(ctx context.Context, p LaunchProfile, key id.ID, owner uint32, load func(context.Context, string) (map[string]any, error)) error {
+func checkDeployment(ctx context.Context, p LaunchProfile, key id.ID, owner, pid uint32, load func(context.Context, string) (map[string]any, error)) error {
 	layout, err := containment.ForJob(key)
 	if err != nil {
 		return err
@@ -74,8 +88,10 @@ func checkLaunch(ctx context.Context, p LaunchProfile, key id.ID, owner uint32, 
 	if err != nil {
 		return err
 	}
-	if operationErr := checkProperties(p, key, properties); operationErr != nil {
-		return operationErr
+	if pid == 0 {
+		err = checkProperties(p, key, properties)
+	} else {
+		err = checkWorkerProperties(p, key, properties, pid)
 	}
-	return ctx.Err()
+	return errors.Join(err, ctx.Err())
 }

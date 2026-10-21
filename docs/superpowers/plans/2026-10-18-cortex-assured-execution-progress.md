@@ -380,3 +380,17 @@ Shutdown cancels active launch contexts and joins their calls before recovering 
 Executable daemon setup, authenticated worker control, the worker CLI, runtime activation, independent service discovery, retained-file cleanup and exact worker deadlines remain open. The controller's scan interval does not bound the time spent recovering earlier pages. Live systemd/runsc qualification remains deferred; S2.4 and G2 are still incomplete.
 
 Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build, Linux-targeted lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. CI `39535273937` at `bd94a13` passed every job for the preceding recovery-scanner packet. This controller packet still needs its own CI result; fixture evidence does not qualify a deployed manager or runtime.
+
+## Worker process identity and current authorization
+
+The internal peer verifier captures a Unix-stream connection's original process through `SO_PEERPIDFD`. It requires root socket and current process credentials, matching procfs PID numbering, bounded no-follow procfs reads and the exact worker subgroup. It checks liveness before and after reading identity and serializes checks with descriptor closure. Tests use real Linux sockets and child processes to verify process capture, exit detection, ambient-root refusal and handle cleanup.
+
+Ruling: require the kernel's peer-pidfd socket option and refuse numeric-PID fallback. Opening a new handle from a received PID would reintroduce PID reuse between socket authentication and process inspection. Hosts without that option cannot run this control path; the Linux worker is still selected later.
+
+Running-service admission reuses the pinned-profile checker and additionally binds the live main PID, execution record and active state. Inactive launch admission now also rejects stale main-process metadata. `Controller.AuthorizeWorker` joins the controller lifecycle, verifies profile and durable claim identity, rechecks host grants, checks the running service and returns detached current state. It does not start execution or commit completion.
+
+Two regressions were observed failing before correction. A peer could exit during the last grant read after its liveness check had passed; the final peer check now follows that read. Grant lookup also inherited a caller's context scope; it now receives the verified signed job scope without exposing stored state to callback mutation. Cancellation and changed claim revisions still fail the final journal check.
+
+The new sandbox-only CI step runs the tagged peer-kernel test binary as root. It exercises local process authentication without systemd or runsc, so it does not qualify the complete service path. Private worker transport, worker startup, result finalization, independent service discovery, retained-file cleanup, runtime activation and live Linux qualification remain open. S2.4 and G2 remain incomplete.
+
+Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build, Linux lint with the peer-kernel build tag, amd64/arm64 test compilation and restricted Linux peer/service fixtures pass. Authorization and controller race tests also pass ten repetitions, and actionlint accepts the CI change. CI `39536007636` at `c0e7b7e` passed every job for the preceding controller packet. This worker-authentication packet still needs its own CI result; deployed qualification remains deferred.

@@ -24,6 +24,13 @@ func launchProperties(p LaunchProfile, key id.ID) map[string]any {
 	for _, name := range []string{"RootDirectory", "RootImage", "WorkingDirectory"} {
 		props[name] = ""
 	}
+	for _, name := range []string{"MainPID", "ExecMainPID", "ControlPID", "NRestarts"} {
+		props[name] = uint32(0)
+	}
+	for _, name := range []string{"ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic", "ExecMainExitTimestamp", "ExecMainExitTimestampMonotonic"} {
+		props[name] = uint64(0)
+	}
+	props["ExecMainCode"], props["ExecMainStatus"] = int32(0), int32(0)
 	return props
 }
 

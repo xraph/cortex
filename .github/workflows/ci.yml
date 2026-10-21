@@ -109,6 +109,12 @@ jobs:
           go test -c -tags=sandbox_qualification -o "$RUNNER_TEMP/cortex-sandbox-qualification.test" .
           CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/cortex-sandbox-isolation-probe" ./testdata/isolation-probe
 
+      - name: Test local worker peer authentication
+        if: matrix.module == 'integrations/sandbox'
+        run: |
+          GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-peer.test" ./internal/workerpeer
+          sudo -- "$RUNNER_TEMP/cortex-worker-peer.test" -test.v -test.timeout=60s
+
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
     name: Docs

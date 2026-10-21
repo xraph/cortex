@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerstore"
@@ -14,6 +15,7 @@ import (
 
 // RecoveryConfig supplies trusted host services, independent of a user request.
 // Revalidate must check current grants for the signed job scope and principal.
+// Its context carries the verified job scope, not an inherited caller scope.
 // It must honor context cancellation and must not require the original caller
 // to remain connected. A non-nil error stops the job, including provider outages.
 type RecoveryConfig struct {
@@ -186,6 +188,7 @@ func (s *RecoveryScanner) eligible(ctx context.Context, receipt sandbox.Receipt)
 	defer cancel()
 	check, bound := context.WithTimeout(check, 30*time.Second)
 	defer bound()
+	check = cortex.WithScope(check, job.Scope)
 	if err = s.revalidate(check, job); err != nil {
 		return errors.Join(err, checkAcceptanceTime(receipt, s.now()))
 	}

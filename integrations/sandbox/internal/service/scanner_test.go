@@ -11,12 +11,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerstore"
 	"github.com/xraph/cortex/sandbox"
 )
+
+func TestRecoveryRevalidationBindsVerifiedScope(t *testing.T) {
+	scanner, receipts, _ := scannerFixture(t, 1)
+	scanner.revalidate = func(ctx context.Context, job sandbox.Job) error {
+		scope := cortex.ScopeFromContext(ctx)
+		if scope.Canonical() != job.Scope.Canonical() {
+			t.Errorf("grant lookup inherited unverified scope: %s", scope.Canonical())
+		}
+		if len(scope.Levels) > 0 {
+			scope.Levels[0].Value = "mutated"
+		}
+		return nil
+	}
+	ctx := cortex.WithScope(t.Context(), cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "foreign"}}})
+	if _, err := scanner.Sweep(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	record, err := scanner.store.Load(t.Context(), receipts[0].Job.ID)
+	if err != nil || record.Receipt.Job.Scope.Canonical() != receipts[0].Job.Scope.Canonical() {
+		t.Fatal("grant lookup mutated signed scope")
+	}
+}
 
 func scannerFixture(t *testing.T, count int, configure ...func(*sandbox.Receipt)) (*RecoveryScanner, []sandbox.Receipt, *fakeManager) {
 	t.Helper()

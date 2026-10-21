@@ -12,7 +12,18 @@ import (
 	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 )
 
+func checkWorkerProperties(p LaunchProfile, key id.ID, properties map[string]any, pid uint32) error {
+	if pid <= 1 {
+		return fmt.Errorf("cortex: invalid worker main process")
+	}
+	return checkEffectiveProperties(p, key, properties, pid)
+}
+
 func checkProperties(p LaunchProfile, key id.ID, properties map[string]any) error {
+	return checkEffectiveProperties(p, key, properties, 0)
+}
+
+func checkEffectiveProperties(p LaunchProfile, key id.ID, properties map[string]any, workerPID uint32) error {
 	if err := p.validate(); err != nil {
 		return err
 	}
@@ -24,6 +35,7 @@ func checkProperties(p LaunchProfile, key id.ID, properties map[string]any) erro
 	if wallMicros <= 0 {
 		return fmt.Errorf("cortex: invalid service wall clock bound")
 	}
+	command := [][]any{{p.Worker.Path, []string{p.Worker.Path, "--job", key.String(), "--config", p.Config.Path}, false, uint64(0), uint64(0), uint64(0), uint64(0), uint32(0), int32(0), int32(0)}}
 	expected := map[string]any{
 		"Id": layout.Unit, "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead", "Following": "", "Transient": false, "NeedDaemonReload": false, "RefuseManualStart": false, "FragmentPath": p.TemplatePath, "SourcePath": "", "ControlGroup": "", "RootDirectory": "", "RootImage": "", "WorkingDirectory": "",
 		"Type": "exec", "User": "root", "Group": "root", "Slice": "system.slice", "Delegate": true, "DelegateSubgroup": "supervisor", "Restart": "no", "KillMode": "control-group", "KillSignal": int32(9), "SendSIGKILL": true,
@@ -31,7 +43,31 @@ func checkProperties(p LaunchProfile, key id.ID, properties map[string]any) erro
 		"UMask": uint32(0o077), "NoNewPrivileges": true, "LimitCORE": uint64(0), "StandardOutput": "null", "StandardError": "null", "Environment": []string{"LANG=C.UTF-8"},
 		"Job":            []any{uint32(0), dbus.ObjectPath("/")},
 		"LoadCredential": [][]any{{"cortex-claim", p.StateDirectory + "/launch/" + key.String() + "/claim.json"}},
-		"ExecStart":      [][]any{{p.Worker.Path, []string{p.Worker.Path, "--job", key.String(), "--config", p.Config.Path}, false, uint64(0), uint64(0), uint64(0), uint64(0), uint32(0), int32(0), int32(0)}},
+		"ExecStart":      command,
+		"MainPID":        uint32(0), "ExecMainPID": uint32(0), "ControlPID": uint32(0), "NRestarts": uint32(0), "ExecMainStartTimestamp": uint64(0), "ExecMainStartTimestampMonotonic": uint64(0), "ExecMainExitTimestamp": uint64(0), "ExecMainExitTimestampMonotonic": uint64(0), "ExecMainCode": int32(0), "ExecMainStatus": int32(0),
+	}
+	if workerPID != 0 {
+		expected["ActiveState"], expected["SubState"], expected["ControlGroup"] = "active", "running", layout.Parent
+		expected["MainPID"], expected["ExecMainPID"] = workerPID, workerPID
+		for _, name := range []string{"ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic"} {
+			stamp, ok := properties[name].(uint64)
+			if !ok || stamp == 0 {
+				return fmt.Errorf("cortex: running worker has no start timestamp")
+			}
+			expected[name] = stamp
+		}
+		rows, ok := properties["ExecStart"].([][]any)
+		if !ok || len(rows) != 1 || len(rows[0]) != 10 {
+			return fmt.Errorf("cortex: malformed worker execution record")
+		}
+		for _, index := range []int{3, 4} {
+			stamp, valid := rows[0][index].(uint64)
+			if !valid || stamp == 0 {
+				return fmt.Errorf("cortex: worker command has no start timestamp")
+			}
+			command[0][index] = stamp
+		}
+		command[0][7] = workerPID
 	}
 	for name, value := range expected {
 		if !reflect.DeepEqual(properties[name], value) {
