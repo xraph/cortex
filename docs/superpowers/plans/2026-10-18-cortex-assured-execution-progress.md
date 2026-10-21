@@ -282,3 +282,16 @@ Tests cover valid staging and retries, changed content, excess stream bytes, per
 CI `39522046871` at `7c62986` passed all jobs. It covers the runtime deployment verifier, worker supervisor, telemetry fixture correction and optimizer SQLite foundation. The input staging packet needs its own exact-commit CI evidence.
 
 The input staging packet passes final coordinated formatting, all ten modules of lint, native/Linux sandbox lint, root sandbox/evidence races, the full sandbox module race suite and root/module builds. Linux arm64 staging-test compilation is included in the final checks. These checks do not establish a qualified worker or production image path.
+
+
+## Verified OCI image staging
+
+The internal image service verifies an approved single-platform OCI manifest, its config, compressed layers and uncompressed DiffIDs before building a private rootfs. It supports Linux amd64/arm64 tar and gzip images under explicit byte, archive-entry/component, layer and time bounds. Host authorization runs before content access, before layer application and before returning the tree. Sources receive digest identifiers only; descriptor URLs and embedded content cannot redirect reads.
+
+Containerd v2.2.10 supplies OCI extraction, link resolution and whiteouts. The preflight rejects unsafe paths, duplicate entries, devices, FIFOs, extended attributes, setuid/setgid permissions and trailing payloads. Tests reproduced an implicit-directory budget bypass and duplicate/case-colliding JSON acceptance; both are now rejected. A link-escape fixture checks that the host canary remains unchanged while guest-root path resolution is preserved. Image process defaults are not applied, and the worker retains file ownership. Evidence and image staging share bounded, cancellation-aware content copying.
+
+Each attempt creates its own private directory. Failure cleanup retains errors and removes only that attempt; retries reauthorize and rebuild. There is no persistent image cache or crash-recovery claim. Broker dispatch still needs durable claims, external worker containment/reaping, disk quotas and qualification of the selected Linux deployment. The live gate remains deferred by the user's environment decision.
+
+The image packet passes final coordinated formatting, all ten modules of lint, native/Linux scoped lint, root sandbox/evidence races, full sandbox module races and root/module builds. The full sandbox races and build also pass with Go 1.26.9. Linux amd64/arm64 test binaries compile, and module tidy is stable. The installed Go 1.26.3 vulnerability scan reports 16 reachable standard-library advisories; a fresh scan with Go 1.26.9 reports no vulnerabilities. The default local toolchain was not changed. Deployed builds still require a patched toolchain.
+
+CI `39523884180` at `ec02ab4` passed every job, covering the preceding evidence-input staging packet and optimizer PostgreSQL persistence. This image packet needs its own exact-commit CI result. No live Linux isolation or image qualification is claimed.

@@ -68,6 +68,9 @@ verify content digests, authorize destinations and approve export separately.
 
 ## Validation
 
+Build deployed brokers and workers with a patched Go toolchain. The module's
+language minimum does not establish a secure compiler or standard library.
+
 The `deployment` package verifies a dedicated runsc installation against a
 trusted `Manifest`. Pin every executable, including the sidecars under
 `gvisor-bin/`, by path, SHA256, byte count and mode (`493` for `0755`, or `365`
@@ -119,7 +122,7 @@ until the external reaper proves the worker's containment has stopped. No
 terminal result is returned merely because forced deletion succeeded.
 
 This code is not wired into broker admission. You still need durable job claims,
-verified image staging, external worker supervision and a reaper that can
+image staging integration, external worker supervision and a reaper that can
 stop the whole workload if either the broker or worker dies. The internal driver
 does not provide those guarantees, and the runtime remains unqualified.
 
@@ -159,6 +162,39 @@ image/runtime pin validation and protected grading. `compatibility.json` records
 that state without claiming a tested runtime version. Run these probes on the
 chosen Linux worker before issuing a qualification attestation or enabling the
 adapter in an installed host.
+
+## Image staging
+
+The internal image service builds a fresh root filesystem from an approved OCI
+manifest digest. You supply a content source and an authorizer that binds current
+image access to the authenticated caller. The source receives digests only.
+Descriptor URLs, embedded data, image indexes and foreign layers are rejected.
+
+The supported profile is Linux on the worker's `amd64` or `arm64` architecture,
+without additional platform variants or features. Layers may use tar or gzip.
+The service verifies the manifest and config, each compressed layer and every
+uncompressed DiffID before extraction. It rejects duplicate metadata fields,
+ambiguous paths, duplicate archive entries, device nodes, FIFOs, extended
+attributes and setuid/setgid permissions. Containerd's pinned OCI extractor
+handles hard links, guest symlinks and whiteouts within the staged rootfs.
+
+Set aggregate compressed and expanded byte limits, an entry budget and a
+timeout. Compressed bytes include metadata; expanded bytes include tar headers
+and padding. The entry budget charges each header and its path/link components,
+including repeated parents, to bound implicit directory creation. Maximums are
+4 GiB compressed, 8 GiB expanded, 100,000 entry/component units, 128 layers and
+ten minutes. Provision space for both the extracted tree and temporary layer
+copies, plus filesystem metadata. The external worker still needs a disk quota.
+
+You retain ownership of the private staging directory. Extraction keeps the
+worker's UID/GID, and image process defaults never change the sealed job's
+command, environment, identity or mounts. Do not follow guest symlinks from the
+host. Keep the tree unchanged until the workload is destroyed.
+
+Failed attempts remove their own temporary directory and report cleanup errors.
+Retries build a fresh copy and recheck authorization. This is not a durable image
+cache: a crashed worker may leave an orphan for the external reaper. Broker
+dispatch, durable claims and live qualification remain open.
 
 ## Linux probe suite
 

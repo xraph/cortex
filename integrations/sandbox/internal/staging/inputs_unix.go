@@ -6,15 +6,12 @@ package staging
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -22,6 +19,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
+	"github.com/xraph/cortex/integrations/sandbox/internal/verifiedio"
 	"github.com/xraph/cortex/sandbox"
 )
 
@@ -247,58 +245,11 @@ func copySource(ctx context.Context, cfg Config, ref evidence.Ref, destination i
 	if reader == nil {
 		return fmt.Errorf("cortex: evidence source returned no reader")
 	}
-	var once sync.Once
-	var closeErr error
-	closeReader := func() { once.Do(func() { closeErr = reader.Close() }) }
-	stop := context.AfterFunc(ctx, closeReader)
-	copyErr := copyVerified(ctx, reader, destination, ref)
-	stop()
-	closeReader()
-	return errors.Join(copyErr, closeErr, ctx.Err())
+	return verifiedio.Read(ctx, reader, destination, ref.Bytes, ref.Bytes, ref.SHA256)
 }
 
 func copyVerified(ctx context.Context, source io.Reader, destination io.Writer, ref evidence.Ref) error {
-	reader := io.LimitReader(source, ref.Bytes+1)
-	hash := sha256.New()
-	writer := io.MultiWriter(destination, hash)
-	buffer := make([]byte, 64<<10)
-	var total int64
-	empty := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		n, err := reader.Read(buffer)
-		if n > 0 {
-			total += int64(n)
-			if total > ref.Bytes {
-				return evidence.ErrDigestMismatch
-			}
-			written, writeErr := writer.Write(buffer[:n])
-			if writeErr != nil {
-				return writeErr
-			}
-			if written != n {
-				return io.ErrShortWrite
-			}
-			empty = 0
-		} else {
-			empty++
-			if empty > 100 {
-				return io.ErrNoProgress
-			}
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-	if total != ref.Bytes || hex.EncodeToString(hash.Sum(nil)) != ref.SHA256 {
-		return evidence.ErrDigestMismatch
-	}
-	return ctx.Err()
+	return verifiedio.Copy(ctx, source, destination, ref.Bytes, ref.SHA256)
 }
 
 func openFile(directory *os.File, name string, owner uint32, mode uint64, maximum int64) (*os.File, error) {
