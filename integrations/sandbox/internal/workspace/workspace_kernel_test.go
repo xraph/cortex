@@ -58,8 +58,11 @@ func exerciseWorkspace(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	paths, err := w.Paths()
-	if err != nil || calls != 2 {
+	if err != nil || calls != 2 || paths.JobID != job.ID || paths.JobDigest != job.Digest {
 		t.Fatal("workspace ready without two authority checks", calls, err)
+	}
+	if err = w.VerifyStorage(context.Background()); err != nil || calls != 2 {
+		t.Fatal("storage verification required execution authority", err, calls)
 	}
 	if err = w.Check(ctx); err != nil {
 		t.Fatal(err)

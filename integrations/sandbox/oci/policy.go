@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 
@@ -29,6 +30,39 @@ func ContainedSpec(j sandbox.Job, rootfs string, inputs map[string]string) (*spe
 	}
 	spec.Linux.CgroupsPath = layout.Payload
 	return spec, nil
+}
+
+// WorkspaceSpec binds /tmp to the worker's bounded scratch filesystem so files
+// survive runtime deletion for host-authorized export. The caller must verify
+// its mount identity, quotas and isolation before every runtime command.
+func WorkspaceSpec(j sandbox.Job, rootfs string, inputs map[string]string, scratch string) (*specs.Spec, error) {
+	if scratch == "/" || !filepath.IsAbs(scratch) || filepath.Clean(scratch) != scratch || overlap(scratch, rootfs) {
+		return nil, fmt.Errorf("cortex: invalid workspace scratch path")
+	}
+	for _, input := range inputs {
+		if overlap(scratch, input) {
+			return nil, fmt.Errorf("cortex: scratch overlaps verified input")
+		}
+	}
+	spec, err := ContainedSpec(j, rootfs, inputs)
+	if err != nil {
+		return nil, err
+	}
+	replaced := 0
+	for index, mount := range spec.Mounts {
+		if mount.Destination == "/tmp" {
+			spec.Mounts[index] = specs.Mount{Destination: "/tmp", Type: "bind", Source: scratch, Options: []string{"bind", "rw", "nosuid", "nodev", "noexec", "rprivate"}}
+			replaced++
+		}
+	}
+	if replaced != 1 {
+		return nil, fmt.Errorf("cortex: ambiguous workspace scratch mount")
+	}
+	return spec, nil
+}
+
+func overlap(left, right string) bool {
+	return left == "/" || right == "/" || left == right || strings.HasPrefix(left, right+string(filepath.Separator)) || strings.HasPrefix(right, left+string(filepath.Separator))
 }
 
 // Spec encodes a sealed job with host-staged rootfs and input paths. Staging must

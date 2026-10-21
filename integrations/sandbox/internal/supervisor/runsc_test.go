@@ -211,3 +211,92 @@ func TestRunscAmbiguousCreateNeedsExternalReaping(t *testing.T) {
 		t.Fatalf("ambiguous create became collectible: %+v %v", r, err)
 	}
 }
+
+func workspaceRunscFixture(t *testing.T, j sandbox.Job) *runscDriver {
+	t.Helper()
+	d := fixtureRunsc(t, j)
+	d.serviceID = j.ID
+	d.checkMembership = func(context.Context, id.ID) error { return nil }
+	d.scratch = "/private/scratch"
+	d.checkStorage = func(ctx context.Context) error { return ctx.Err() }
+	d.checkExecution = func(ctx context.Context) error { return ctx.Err() }
+	spec, err := oci.WorkspaceSpec(j, d.cfg.Rootfs, nil, d.scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(d.cfg.Bundle, "config.json"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestWorkspaceRunscRevocationStillPermitsCleanup(t *testing.T) {
+	j := job(t)
+	d := workspaceRunscFixture(t, j)
+	revoked := errors.New("current grant revoked")
+	active := true
+	d.checkExecution = func(context.Context) error {
+		if !active {
+			return revoked
+		}
+		return nil
+	}
+	var verbs []string
+	d.invoke = func(cmd *exec.Cmd) error { verbs = append(verbs, cmd.Args[3]); active = false; return nil }
+	result, err := Run(t.Context(), d, j, time.Now().Add(time.Second))
+	if !errors.Is(err, revoked) || errors.Is(err, ErrCleanup) || result.State == "" || strings.Join(verbs, ",") != "create,delete" {
+		t.Fatal("revocation failed to fence execution or blocked cleanup", result, err, verbs)
+	}
+}
+
+func TestWorkspaceRunscRefusesChangedStorageIncludingCleanup(t *testing.T) {
+	j := job(t)
+	d := workspaceRunscFixture(t, j)
+	changed := errors.New("workspace replaced")
+	valid := true
+	d.checkStorage = func(context.Context) error {
+		if !valid {
+			return changed
+		}
+		return nil
+	}
+	var verbs []string
+	d.invoke = func(cmd *exec.Cmd) error { verbs = append(verbs, cmd.Args[3]); valid = false; return nil }
+	result, err := Run(t.Context(), d, j, time.Now().Add(time.Second))
+	if !errors.Is(err, changed) || !errors.Is(err, ErrCleanup) || result.State != "" || strings.Join(verbs, ",") != "create" {
+		t.Fatal("changed storage reached runtime or produced a result", result, err, verbs)
+	}
+}
+
+func TestWorkspaceRunscRejectsMissingChecksAndChangedScratch(t *testing.T) {
+	for _, mode := range []string{"storage", "execution", "source", "containment"} {
+		t.Run(mode, func(t *testing.T) {
+			j := job(t)
+			d := workspaceRunscFixture(t, j)
+			switch mode {
+			case "storage":
+				d.checkStorage = nil
+			case "execution":
+				d.checkExecution = nil
+			case "source":
+				d.scratch = "/another/scratch"
+			case "containment":
+				d.serviceID = id.ID{}
+			}
+			d.invoke = func(*exec.Cmd) error { t.Fatal("unbound workspace reached runtime"); return nil }
+			if err := d.Prepare(t.Context(), j, io.Discard, io.Discard); err == nil {
+				t.Fatal("unbound workspace accepted")
+			}
+		})
+	}
+}
+
+func TestRunscConstructorFailureReturnsNoDriver(t *testing.T) {
+	if driver, err := NewRunsc(t.Context(), RunscConfig{}); err == nil || driver != nil {
+		t.Fatal("invalid constructor returned a driver", err)
+	}
+}

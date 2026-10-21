@@ -34,7 +34,11 @@ type Config struct {
 
 // Paths names host-controlled staging and guest scratch directories. They carry
 // no authority; call Check before using them for staging, execution or export.
-type Paths struct{ Directory, Images, Inputs, Bundle, Runtime, Scratch string }
+type Paths struct {
+	JobID                                               id.ID
+	JobDigest                                           string
+	Directory, Images, Inputs, Bundle, Runtime, Scratch string
+}
 
 // Workspace owns one exclusive job directory and two quota-enforced filesystems.
 // It never reuses retained job directories. Failed cleanup requires retry or
@@ -120,7 +124,7 @@ func create(ctx context.Context, cfg Config, verify func(context.Context, id.ID)
 	}
 	w.directory = os.NewFile(uintptr(fd), name)
 	base := filepath.Join(cfg.Root, name)
-	w.paths = Paths{Directory: base, Images: filepath.Join(base, "stage", "images"), Inputs: filepath.Join(base, "stage", "inputs"), Bundle: filepath.Join(base, "stage", "bundle"), Runtime: filepath.Join(base, "stage", "runtime"), Scratch: filepath.Join(base, "scratch")}
+	w.paths = Paths{JobID: job.ID, JobDigest: job.Digest, Directory: base, Images: filepath.Join(base, "stage", "images"), Inputs: filepath.Join(base, "stage", "inputs"), Bundle: filepath.Join(base, "stage", "bundle"), Runtime: filepath.Join(base, "stage", "runtime"), Scratch: filepath.Join(base, "scratch")}
 	for i, child := range []string{"stage", "scratch"} {
 		if checkErr := unix.Mkdirat(fd, child, 0o700); checkErr != nil {
 			return w, checkErr
@@ -208,6 +212,18 @@ func (w *Workspace) Check(ctx context.Context) error {
 		return err
 	}
 	return w.checkStorage(operation)
+}
+
+// VerifyStorage checks the retained filesystem identity without granting
+// execution authority. Runtime cleanup may call it after grants or the signed
+// deadline expire, using its own independent bounded context.
+func (w *Workspace) VerifyStorage(ctx context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.ready || w.closing || w.closed {
+		return fmt.Errorf("cortex: workspace is unavailable")
+	}
+	return w.checkStorage(ctx)
 }
 
 func (w *Workspace) checkStorage(ctx context.Context) error {

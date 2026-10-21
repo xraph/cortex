@@ -578,6 +578,14 @@ Only the owned empty mountpoints and job directory are removed. A failed setup
 can return an unusable workspace with unresolved cleanup; its caller must retry
 cleanup or exit the worker for independent service recovery.
 
+`NewWorkspaceRunsc` binds the runtime to that workspace's job, bundle, runtime
+state, image directory and input directory. `WorkspaceSpec` mounts the retained
+scratch filesystem at `/tmp` with private propagation and the same guest
+restrictions. Runtime commands recheck storage identity; execution commands also
+recheck current grants. Forced runtime cleanup uses `VerifyStorage`, which grants
+no execution authority and does not depend on an unexpired execution deadline.
+Keep the workspace open through runtime cleanup and any authorized export.
+
 The `sandbox_mount_kernel` tests create a child mount namespace before the Go
 runtime starts. They exercise actual byte and inode exhaustion, replacement
 refusal, revocation, cancellation, busy cleanup and mount removal on process

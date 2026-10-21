@@ -492,3 +492,34 @@ and build, tagged Linux lint, amd64/arm64 workspace-test compilation, twenty
 kernel-fixture repetitions and the restricted Linux service suite pass.
 `actionlint` accepts the new isolated-mount CI step. Live installed-service and
 runtime qualification remain deferred until the Linux worker is selected.
+
+## Runtime binding to retained scratch storage
+
+`WorkspaceSpec` derives the contained OCI profile and replaces only guest `/tmp`
+with the worker's bounded scratch mount. The bind remains writable, private,
+`nosuid`, `nodev` and `noexec`. Rootfs and input overlap are refused. Runtime
+removal can now leave scratch owned by the workspace for later authorized export;
+actual runsc behavior still requires live qualification.
+
+`NewWorkspaceRunsc` accepts a live workspace and binds the exact job, bundle,
+runtime state, staged image and staged input paths. Callers cannot supply an
+independent scratch path through runtime configuration. Each command verifies
+workspace identity and worker membership. Execution also checks current grants;
+cleanup uses a separate storage-only check so revocation and execution expiry do
+not prevent reaping. Changed storage blocks cleanup commands and withholds the
+result for independent recovery.
+
+Tests first failed for the new OCI and driver contracts. They cover unchanged
+guest restrictions, path/job substitution, missing guards, revocation between
+create and start, and replaced storage before cleanup. A constructor regression
+also failed before typed nil drivers were prevented from escaping error returns.
+Linux fixtures verify storage-only checks without execution authority and the
+workspace-bound path validator. Full worker assembly, source adapters, export
+authorization and live qualification remain open. S2.4 and G2 remain incomplete.
+
+CI `39550464023` at `460423e` passed every job, including the new kernel mount
+fixture. Final shared formatting and all ten modules of lint pass for this
+runtime-binding packet. The full sandbox race suite/build, twenty supervisor/OCI
+race repetitions, tagged Linux lint, amd64/arm64 supervisor compilation and
+twenty Linux workspace/supervisor fixture repetitions pass. Live runsc binding
+and export behavior remain unqualified.

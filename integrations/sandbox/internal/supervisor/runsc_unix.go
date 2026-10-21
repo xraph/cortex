@@ -48,7 +48,11 @@ type RunscConfig struct {
 // durable job claims and external process supervision. No program is executed
 // here. This driver must never be used as a host-execution fallback.
 func NewRunsc(ctx context.Context, cfg RunscConfig) (Driver, error) {
-	return newRunsc(ctx, cfg, id.ID{})
+	driver, err := newRunsc(ctx, cfg, id.ID{})
+	if err != nil {
+		return nil, err
+	}
+	return driver, nil
 }
 
 // NewContainedRunsc requires the worker's exact job service membership and puts
@@ -63,10 +67,14 @@ func NewContainedRunsc(ctx context.Context, cfg RunscConfig, key id.ID) (Driver,
 	if err := containment.VerifyCurrent(ctx, key); err != nil {
 		return nil, err
 	}
-	return newRunsc(ctx, cfg, key)
+	driver, err := newRunsc(ctx, cfg, key)
+	if err != nil {
+		return nil, err
+	}
+	return driver, nil
 }
 
-func newRunsc(ctx context.Context, cfg RunscConfig, serviceID id.ID) (Driver, error) {
+func newRunsc(ctx context.Context, cfg RunscConfig, serviceID id.ID) (*runscDriver, error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return nil, fmt.Errorf("cortex: sandbox supervision requires a root-run Linux worker")
 	}
@@ -103,6 +111,9 @@ func newRunsc(ctx context.Context, cfg RunscConfig, serviceID id.ID) (Driver, er
 }
 
 type runscDriver struct {
+	scratch            string
+	checkStorage       func(context.Context) error
+	checkExecution     func(context.Context) error
 	cfg                RunscConfig
 	jobID              id.ID
 	invoke             func(*exec.Cmd) error
@@ -129,7 +140,7 @@ func (d *runscDriver) Prepare(ctx context.Context, job sandbox.Job, stdout, stde
 	if !d.serviceID.IsNil() && job.ID != d.serviceID {
 		return fmt.Errorf("cortex: runsc service identity mismatch")
 	}
-	if err := d.verifyMembership(ctx); err != nil {
+	if err := d.verifyWorkspace(ctx, false); err != nil {
 		return err
 	}
 	if err := d.verifyBundle(job); err != nil {
@@ -169,15 +180,21 @@ func (d *runscDriver) Prepare(ctx context.Context, job sandbox.Job, stdout, stde
 	cmd.Stdout = outWrite
 	cmd.Stderr = errWrite
 	d.createAttempted = true
-	err = d.executeCommand(control, cmd)
+	err = d.executeCommand(control, cmd, false)
 	d.createAcknowledged = err == nil
 	return errors.Join(err, outWrite.Close(), errWrite.Close())
 }
 
 func (d *runscDriver) verifyBundle(job sandbox.Job) error {
-	expected, err := oci.Spec(job, d.cfg.Rootfs, d.cfg.Inputs)
-	if !d.serviceID.IsNil() {
+	var expected *specs.Spec
+	var err error
+	switch {
+	case d.scratch != "":
+		expected, err = oci.WorkspaceSpec(job, d.cfg.Rootfs, d.cfg.Inputs, d.scratch)
+	case !d.serviceID.IsNil():
 		expected, err = oci.ContainedSpec(job, d.cfg.Rootfs, d.cfg.Inputs)
+	default:
+		expected, err = oci.Spec(job, d.cfg.Rootfs, d.cfg.Inputs)
 	}
 	if err != nil {
 		return err
@@ -219,11 +236,32 @@ func (d *runscDriver) verifyMembership(ctx context.Context) error {
 	return d.checkMembership(ctx, d.serviceID)
 }
 
-func (d *runscDriver) executeCommand(ctx context.Context, cmd *exec.Cmd) error {
-	if err := d.verifyMembership(ctx); err != nil {
+func (d *runscDriver) executeCommand(ctx context.Context, cmd *exec.Cmd, cleanup bool) error {
+	if err := d.verifyWorkspace(ctx, cleanup); err != nil {
 		return err
 	}
 	return d.invoke(cmd)
+}
+
+func (d *runscDriver) verifyWorkspace(ctx context.Context, cleanup bool) error {
+	if err := d.verifyMembership(ctx); err != nil {
+		return err
+	}
+	if d.scratch == "" {
+		return ctx.Err()
+	}
+	if d.serviceID.IsNil() || d.checkStorage == nil || d.checkExecution == nil {
+		return fmt.Errorf("cortex: workspace runtime binding is incomplete")
+	}
+	if err := d.checkStorage(ctx); err != nil {
+		return err
+	}
+	if !cleanup {
+		if err := d.checkExecution(ctx); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 func (d *runscDriver) Start(ctx context.Context) error {
@@ -315,7 +353,7 @@ func (d *runscDriver) control(ctx context.Context, args ...string) ([]byte, erro
 	cmd := d.command(control, args...)
 	cmd.Stdout = &stream{capture: output}
 	cmd.Stderr = &stream{capture: output, diagnostic: true}
-	err := d.executeCommand(control, cmd)
+	err := d.executeCommand(control, cmd, len(args) > 0 && args[0] == "delete")
 	stdout, _, outputErr := output.finish()
 	return stdout, errors.Join(err, outputErr, context.Cause(control))
 }
