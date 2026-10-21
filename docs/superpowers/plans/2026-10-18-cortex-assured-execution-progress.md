@@ -19,7 +19,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
 | S2.4 broker | implemented, runtime pending | this chat | Authenticated durable broker, client, export checks and OCI policy fixtures pass; no qualified Linux adapter |
-| S2.2, S2.3, S2.5 through S2.7, Stages 3 and 4 | queued | shared owners | Runtime verification gates remain disabled |
+| S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
+| S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
 ## Interface rulings
 
@@ -228,3 +229,18 @@ The existing assurance table/collection and indexes hold these additive record k
 CI `39516036204` at `e51dea8` passed every job, including root race/coverage, docs, security and all nested modules. It covers the orchestration failure fix, Mongo fixture repair and planning domain foundation. The newer persistence packet needs its own exact-commit CI run.
 
 The persistence packet passes final coordinated formatting, all ten modules of lint, the root build and post-format planning/assurance race tests on SQLite and real PostgreSQL/MongoDB containers. No database test skipped.
+
+
+## Task effect/source manifests and strategy adaptation
+
+Plans now pin host effect declarations with tool revisions, effect class, bounded retry policy and explicit idempotency, reconciliation or compensation references where required. Tasks select from that manifest and cannot introduce a handler or claim write effects against read-only resources. These are declarations only. Automatic retry, external reconciliation and compensation execution belong to S3.4 and are not enabled by this packet. An absent effect manifest allows no effect tools.
+
+Captured sources reuse the verification source contract. Each source must match a resource grant and have a consuming task. Readiness checks the exact tool and source context as well as current reports; regressions reproduced acceptance of missing/extra tools, changed tool revisions and substituted source digests/timestamps before the fix. Ordinary plan revisions cannot replace host source or handler pins. An authorized source-recapture policy remains future work.
+
+`orchestration.AdaptPlan` builds static sequential, parallel and hierarchical graphs from host task templates without dispatching agents. It preserves acceptance, resource and budget declarations, requires every worker before synthesis, rejects ambiguous templates and reuses the strict hierarchical parser. Hierarchical instructions must match a captured proposal digest that every worker consumes. Execution-relevant configuration is hashed into the graph origin, including model/settings and ordered participants. Invalid UTF-8 scope data is rejected rather than hashed after lossy JSON replacement.
+
+Router and debate still use the existing runner strategies; they have no static graph adapter. Task execution registration, blackboard/runtime integration, claims and scheduler recovery remain open. The current APIs create and validate definitions; they do not activate production task acceptance.
+
+CI `39517232117` at `6b7e1f6` passed all jobs, covering immutable planning persistence from `42d5d45` and the earlier domain foundation. This newer manifest/adapter packet needs its own exact-commit CI result.
+
+Final formatting, all ten modules of lint, the root build and execution/planning/verification/orchestration race suites pass for this packet. The shared manifest round-trip and revision tests also pass on SQLite and real PostgreSQL/MongoDB containers without skips.

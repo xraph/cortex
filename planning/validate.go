@@ -29,6 +29,9 @@ func validateFields(p Plan, limits Limits) error {
 	if p.Contract.Scope.Canonical() != p.Scope.Canonical() || p.Objective != p.Contract.Objective {
 		return invalid("contract binding")
 	}
+	if p.Origin != (Origin{}) && (p.Origin.Kind != "orchestration" || p.Origin.ID.IsNil() || p.Origin.ID.Prefix() != id.PrefixOrchestrationConfig || !evidence.ValidDigest(p.Origin.Digest)) {
+		return invalid("origin reference")
+	}
 	if !boundedBudget(p.Budget) {
 		return invalid("finite plan budget required")
 	}
@@ -108,6 +111,9 @@ func validateFields(p Plan, limits Limits) error {
 			return invalid("affected task identity")
 		}
 		seenAffected[taskID] = true
+	}
+	if err := validateRequirements(p); err != nil {
+		return err
 	}
 	return validateDAG(tasks, limits.MaxDepth)
 }

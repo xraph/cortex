@@ -111,6 +111,9 @@ func Ready(p Plan, states []TaskState, at time.Time) ([]id.ID, error) {
 
 func taskAccepted(p Plan, task Task, state TaskState, at time.Time) bool {
 	binding := state.Current
+	if !taskContextMatches(p, task, binding.Context) {
+		return false
+	}
 	if binding.Validate() != nil || binding.Scope.Canonical() != p.Scope.Canonical() || binding.ContractDigest != p.Contract.Digest || binding.Candidate.Producer != ArtifactProducer(p, task.ID) || binding.Candidate.MediaType != task.Output.MediaType || binding.Candidate.Bytes > task.Output.MaxBytes {
 		return false
 	}

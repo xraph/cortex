@@ -72,15 +72,8 @@ func (b Binding) Validate() error {
 		}
 		seen[ref.ID] = true
 	}
-	sources := make(map[string]bool, len(b.Context.Sources))
-	for _, source := range b.Context.Sources {
-		if !validText(source.Resource, source.Revision) {
-			return ErrInvalid
-		}
-		if strings.TrimSpace(source.Resource) == "" || strings.TrimSpace(source.Revision) == "" || !evidence.ValidDigest(source.Digest) || source.RetrievedAt.IsZero() || sources[source.Resource] {
-			return ErrInvalid
-		}
-		sources[source.Resource] = true
+	if err := ValidateSources(b.Context.Sources); err != nil {
+		return err
 	}
 	tools := make(map[string]bool, len(b.Context.Tools))
 	for _, tool := range b.Context.Tools {

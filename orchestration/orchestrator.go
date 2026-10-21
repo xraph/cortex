@@ -1,7 +1,7 @@
-// Package orchestration coordinates multiple Cortex agents working together —
+// Package orchestration coordinates multiple Cortex agents working together,
 // in sequence, in parallel, hierarchically, via a router, or in a debate.
 //
-// It is a leaf package: it depends only on id and cortex, and reaches
+// It depends on root domain packages, including planning, and reaches
 // host capabilities (running an agent, emitting plugin hooks) through injected
 // interfaces and callbacks, never by importing the engine or plugin packages.
 package orchestration

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/planning"
@@ -22,7 +23,7 @@ func storedPlan(t *testing.T, scope cortex.Scope) planning.Plan {
 	contract, err := verification.SealContract(verification.Contract{SchemaVersion: 1, ID: id.New(verification.PrefixContract), Scope: scope, Revision: "1", Objective: "checked report", Criteria: []verification.Criterion{{ID: "check", Kind: verification.KindTest, Required: true, Verifier: "tests", VerifierRevision: "1", Parameters: verification.Parameters{ManifestRevision: "1"}, MaxAge: time.Hour}}})
 	require.NoError(t, err)
 	budget := execution.Budget{MaxSteps: 10, MaxTokens: 1000, MaxToolCalls: 10, Deadline: time.Now().UTC().Add(time.Hour)}
-	p, err := planning.Seal(planning.Plan{SchemaVersion: 1, ID: id.New(planning.PrefixPlan), Scope: scope, Revision: 1, Objective: contract.Objective, Contract: contract, Budget: budget, Owners: []string{"worker"}, Actor: "host", Reason: "request", Tasks: []planning.Task{{ID: id.New(planning.PrefixTask), Instruction: "produce report", Owner: "worker", Criteria: []string{"check"}, Budget: budget, Output: planning.ArtifactRequirement{Name: "report", MediaType: "text/plain", MaxBytes: 4096}}}}, planning.Limits{})
+	p, err := planning.Seal(planning.Plan{SchemaVersion: 1, ID: id.New(planning.PrefixPlan), Scope: scope, Revision: 1, Objective: contract.Objective, Contract: contract, Budget: budget, Origin: planning.Origin{Kind: "orchestration", ID: id.NewOrchestrationConfigID(), Digest: evidence.Digest([]byte("config"))}, Owners: []string{"worker"}, Resources: []planning.ResourceGrant{{Resource: "source", Revision: "1", Access: planning.AccessRead}}, Effects: []execution.EffectRequirement{{Tool: "lookup", Revision: "1", Class: execution.EffectReadOnly, Retry: execution.RetryPolicy{MaxAttempts: 1}}}, Sources: []verification.Source{{Resource: "source", Revision: "1", Digest: evidence.Digest([]byte("source")), RetrievedAt: time.Now().UTC().Add(-time.Minute)}}, Actor: "host", Reason: "request", Tasks: []planning.Task{{ID: id.New(planning.PrefixTask), Instruction: "produce report", Owner: "worker", Criteria: []string{"check"}, Effects: []string{"lookup"}, Sources: []string{"source"}, Resources: []planning.ResourceGrant{{Resource: "source", Revision: "1", Access: planning.AccessRead}}, Budget: budget, Output: planning.ArtifactRequirement{Name: "report", MediaType: "text/plain", MaxBytes: 4096}}}}, planning.Limits{})
 	require.NoError(t, err)
 	return p
 }

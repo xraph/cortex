@@ -64,26 +64,39 @@ type Task struct {
 	Resources   []ResourceGrant     `json:"resources,omitempty"`
 	Budget      execution.Budget    `json:"budget"`
 	Output      ArtifactRequirement `json:"output"`
+	Effects     []string            `json:"effects,omitempty"`
+	Sources     []string            `json:"sources,omitempty"`
+}
+
+// Origin pins the execution configuration used to derive a graph. It is
+// provenance, not authorization to load or execute the referenced configuration.
+type Origin struct {
+	Kind   string `json:"kind"`
+	ID     id.ID  `json:"id"`
+	Digest string `json:"digest"`
 }
 
 // Plan binds a graph to an exact scope, contract and authority ceiling. Digests
 // establish integrity only; Actor is a host-authenticated audit reference.
 type Plan struct {
-	SchemaVersion  int                   `json:"schema_version"`
-	ID             id.ID                 `json:"id"`
-	Scope          cortex.Scope          `json:"scope"`
-	Revision       int64                 `json:"revision"`
-	Digest         string                `json:"digest"`
-	PreviousDigest string                `json:"previous_digest,omitempty"`
-	Objective      string                `json:"objective"`
-	Contract       verification.Contract `json:"contract"`
-	Budget         execution.Budget      `json:"budget"`
-	Owners         []string              `json:"owners"`
-	Resources      []ResourceGrant       `json:"resources,omitempty"`
-	Tasks          []Task                `json:"tasks"`
-	Actor          string                `json:"actor"`
-	Reason         string                `json:"reason"`
-	AffectedTasks  []id.ID               `json:"affected_tasks,omitempty"`
+	SchemaVersion  int                           `json:"schema_version"`
+	ID             id.ID                         `json:"id"`
+	Scope          cortex.Scope                  `json:"scope"`
+	Revision       int64                         `json:"revision"`
+	Digest         string                        `json:"digest"`
+	PreviousDigest string                        `json:"previous_digest,omitempty"`
+	Objective      string                        `json:"objective"`
+	Contract       verification.Contract         `json:"contract"`
+	Budget         execution.Budget              `json:"budget"`
+	Owners         []string                      `json:"owners"`
+	Resources      []ResourceGrant               `json:"resources,omitempty"`
+	Tasks          []Task                        `json:"tasks"`
+	Actor          string                        `json:"actor"`
+	Reason         string                        `json:"reason"`
+	AffectedTasks  []id.ID                       `json:"affected_tasks,omitempty"`
+	Effects        []execution.EffectRequirement `json:"effects,omitempty"`
+	Sources        []verification.Source         `json:"sources,omitempty"`
+	Origin         Origin                        `json:"origin,omitzero"`
 }
 
 // Limits can narrow the hard bounds of 256 tasks, 64 levels and 4096 edges.

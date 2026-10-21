@@ -30,7 +30,7 @@ func ApplyRevision(current Plan, proposal Revision, expected int64, limits Limit
 		return Plan{}, invalid("revision exhausted")
 	}
 	next := proposal.Plan
-	if next.ID != current.ID || next.Scope.Canonical() != current.Scope.Canonical() || next.Contract.Digest != current.Contract.Digest || next.Objective != current.Objective {
+	if next.ID != current.ID || next.Scope.Canonical() != current.Scope.Canonical() || next.Contract.Digest != current.Contract.Digest || next.Objective != current.Objective || next.Origin != current.Origin {
 		return Plan{}, invalid("plan identity or acceptance changed")
 	}
 	if !budgetWithin(next.Budget, current.Budget) || !resourcesWithin(next.Resources, current.Resources) {
@@ -44,6 +44,9 @@ func ApplyRevision(current Plan, proposal Revision, expected int64, limits Limit
 		if !owners[owner] {
 			return Plan{}, invalid("revision widens owner roster")
 		}
+	}
+	if !effectsWithin(next.Effects, current.Effects) || !sourcesEqual(next.Sources, current.Sources) {
+		return Plan{}, invalid("revision replaces host effect or source pins")
 	}
 	next.Revision = current.Revision + 1
 	next.PreviousDigest = current.Digest
@@ -76,7 +79,7 @@ func affectedTasks(current, next Plan) []id.ID {
 		changed[taskID] = true
 	}
 	// Global grant changes require every task to revalidate its assumptions.
-	if !current.Budget.Equal(next.Budget) || !slices.Equal(current.Resources, next.Resources) || !slices.Equal(current.Owners, next.Owners) {
+	if !current.Budget.Equal(next.Budget) || !slices.Equal(current.Resources, next.Resources) || !slices.Equal(current.Owners, next.Owners) || !slices.Equal(current.Effects, next.Effects) {
 		for _, task := range next.Tasks {
 			changed[task.ID] = true
 		}
@@ -105,5 +108,5 @@ func affectedTasks(current, next Plan) []id.ID {
 }
 
 func tasksEqual(a, b Task) bool {
-	return a.ID == b.ID && a.Instruction == b.Instruction && a.Owner == b.Owner && a.Budget.Equal(b.Budget) && a.Output == b.Output && slices.Equal(a.DependsOn, b.DependsOn) && slices.Equal(a.Criteria, b.Criteria) && slices.Equal(a.Resources, b.Resources)
+	return a.ID == b.ID && a.Instruction == b.Instruction && a.Owner == b.Owner && a.Budget.Equal(b.Budget) && a.Output == b.Output && slices.Equal(a.DependsOn, b.DependsOn) && slices.Equal(a.Criteria, b.Criteria) && slices.Equal(a.Resources, b.Resources) && slices.Equal(a.Effects, b.Effects) && slices.Equal(a.Sources, b.Sources)
 }
