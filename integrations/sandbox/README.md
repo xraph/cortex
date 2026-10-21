@@ -168,10 +168,42 @@ The broker and worker share a private-file opener that rejects file symlinks,
 hard links, special files, unsafe permissions and another application's journal.
 The host owner must prevent directory and file substitution while it is open.
 
-The journal does not launch processes, prove containment or enforce current user
-grants. Those checks belong to the runtime adapter and external supervisor, whose
-integration remains pending. The subprocess test establishes claim durability
-after process exit; it does not establish that an orphan sandbox was killed.
+The journal does not launch processes or enforce current user grants. The
+subprocess test establishes claim durability after process exit; it does not
+establish that an orphan sandbox was killed.
+
+## Service recovery
+
+The internal service reaper connects directly to `/run/systemd/private` on Linux
+and checks that the Unix peer is root PID 1 before authenticating. It does not
+use an environment-selected bus, a shell or a fallback process killer. Connection
+setup is bounded to five seconds; each recovery operation is capped at thirty.
+
+Recovery permanently masks the exact job instance, reloads systemd and replaces
+queued starts with a stop job. It drains the cgroup before waiting for service
+quiescence, then drains again to catch descendants created by stop helpers.
+Success requires a persistent mask, a masked nontransient loaded unit or explicit
+unit absence, no pending manager job, and empty or absent containment. The reaper
+checks its own membership before asking systemd to stop anything.
+
+Use an installed worker template. Transient units, aliases, runtime-only masks,
+stale loaded configuration and malformed state cannot supply recovery proof.
+The mask and state checks use the documented
+[systemd manager API](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html).
+The host must reserve this service namespace, retain masks and journal identities,
+and prevent payload migration outside the fixed hierarchy. No operation here
+unmasks a service or deletes a completed identity.
+
+`Reap` moves claimed work to durable `reaping` before touching the service and
+records its result only at that revision after cleanup succeeds. For cancellation,
+call the journal's `Cancel` first. A concurrent cancellation, lost final database
+write or failed service operation leaves unresolved work available for retry.
+Tests cover these paths with the real SQLite journal and a simulated manager.
+
+The service reaper is implemented, but live systemd/runsc qualification is still
+pending. Template installation and pinning, launch admission, daemon control,
+resource ceilings, periodic orphan discovery and broker wiring remain open.
+The current low-level runsc qualification probes do not qualify this service path.
 
 ## Evidence input staging
 

@@ -150,9 +150,13 @@ func (kernelGroup) Events(ctx context.Context, key id.ID) ([]byte, error) {
 	return body, errors.Join(readErr, file.Close(), ctx.Err())
 }
 
-func (kernelGroup) Kill(ctx context.Context, key id.ID) error {
+// VerifyReaper refuses containment operations from inside the target hierarchy.
+func VerifyReaper(ctx context.Context, key id.ID) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("cortex: containment requires root")
 	}
 	layout, err := ForJob(key)
 	if err != nil {
@@ -168,6 +172,13 @@ func (kernelGroup) Kill(ctx context.Context, key id.ID) error {
 	}
 	if current == layout.Parent || strings.HasPrefix(current, layout.Parent+"/") {
 		return fmt.Errorf("cortex: reaper cannot kill its own containment")
+	}
+	return ctx.Err()
+}
+
+func (kernelGroup) Kill(ctx context.Context, key id.ID) error {
+	if err := VerifyReaper(ctx, key); err != nil {
+		return err
 	}
 	directory, err := openGroup(ctx, key)
 	if err != nil {

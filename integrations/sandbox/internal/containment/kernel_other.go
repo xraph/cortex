@@ -15,6 +15,11 @@ type kernelGroup struct{}
 func VerifyCurrent(context.Context, id.ID) error {
 	return fmt.Errorf("cortex: Linux cgroup-v2 containment required")
 }
+
+// VerifyReaper rejects hosts without Linux containment controls.
+func VerifyReaper(context.Context, id.ID) error {
+	return fmt.Errorf("cortex: Linux cgroup-v2 containment required")
+}
 func (kernelGroup) Events(context.Context, id.ID) ([]byte, error) {
 	return nil, fmt.Errorf("cortex: Linux cgroup-v2 containment required")
 }

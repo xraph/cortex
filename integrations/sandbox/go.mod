@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/containerd/containerd/v2 v2.2.10
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/runtime-spec v1.3.0
