@@ -772,3 +772,38 @@ complete sandbox race suite and sandbox build passed. Linux arm64/amd64 service
 compilation passed, and the Linux evidence-service fixtures passed ten repetitions
 without skips. CI `39562227912` at `5f73670` passed all recovery-commit jobs.
 Independent full-plan review and installed provider verification remain open.
+
+
+## S2.4 private evidence transfer
+
+The private worker socket now carries signed input reads, bounded output uploads
+and output readback. Its optional WorkerEvidence service must share the controller.
+The protocol reuses report/capture authentication, capacity limits, deadlines and
+peer lifetime. One connection remains reserved for authorization. A missing
+evidence service refuses the request before admitting payload bytes.
+
+Downloads use bounded binary chunks and verify length and SHA256 on both sides.
+The worker accepts success only after an end marker, a request-bound receipt for
+the complete evidence identity and EOF. Upload success acknowledges storage only;
+readback and durable capture confirmation remain separate. There are no automatic
+retries. A regression reproduced success after a provider ignored an oversized
+write. The writer now retains its first error and refuses later completion.
+
+Socket fixtures cover empty and maximum-size artifacts, malformed requests and
+chunks, corrupt and incomplete content, mismatched or mixed receipts, missing or
+extra completion frames, cancellation, shared capacity and peer-close failure.
+A real controller/journal fixture exercises input read, intent, upload, readback
+and durable confirmation, then rejects further upload and a dead worker. Service
+membership remains an explicit fixture seam. Linux tests exercise private endpoint
+authentication, unsafe socket permissions, service configuration binding and
+ambient-root denial. These tests do not qualify systemd or runsc containment.
+
+CI `39563762496` at `3c7564d` passed all jobs for the preceding provider-boundary
+change. Worker source adapters, approved image delivery, installed providers and
+the live Linux worker remain outstanding. S2.4 and G2 remain incomplete.
+
+Final checks passed: `make f`, `make l` across all ten modules, separate Linux
+lint with kernel/mount/qualification tags, the complete sandbox race suite and
+sandbox build. Linux arm64/amd64 service test binaries compiled, and the Linux
+evidence/socket fixtures passed ten repetitions without skips. Independent
+full-plan review and installed provider qualification remain outstanding.

@@ -385,7 +385,7 @@ func TestReportControlLostAcknowledgementRetainsOneProposal(t *testing.T) {
 func TestReportClientRejectsUnboundReadinessAndReceipts(t *testing.T) {
 	claim := controlClaim()
 	result := testWireResult()
-	for _, mode := range []string{"ready digest", "ready receipt", "ready capture", "busy capture", "final capture", "busy digest", "busy receipt", "wrong job", "wrong revision", "wrong result", "wrong schema", "missing receipt", "trailing frame"} {
+	for _, mode := range []string{"ready evidence", "busy evidence", "final evidence", "ready digest", "ready receipt", "ready capture", "busy capture", "final capture", "busy digest", "busy receipt", "wrong job", "wrong revision", "wrong result", "wrong schema", "missing receipt", "trailing frame"} {
 		t.Run(mode, func(t *testing.T) {
 			listener, path := controlListener(t)
 			readPayload := make(chan bool, 1)
@@ -404,11 +404,14 @@ func TestReportClientRejectsUnboundReadinessAndReceipts(t *testing.T) {
 					return
 				}
 				ready := reportReply{SchemaVersion: 2, Status: "ready", RequestDigest: evidence.Digest(body)}
-				if mode == "busy digest" || mode == "busy receipt" || mode == "busy capture" {
+				if mode == "busy digest" || mode == "busy receipt" || mode == "busy capture" || mode == "busy evidence" {
 					ready.Status = "busy"
 				}
 				if mode == "ready digest" || mode == "busy digest" {
 					ready.RequestDigest = evidence.Digest([]byte("foreign"))
+				}
+				if mode == "ready evidence" || mode == "busy evidence" {
+					ready.Evidence = &evidenceReceipt{SchemaVersion: 1}
 				}
 				if mode == "ready receipt" || mode == "busy receipt" {
 					ready.Receipt = &WorkerReportReceipt{SchemaVersion: 1}
@@ -431,6 +434,8 @@ func TestReportClientRejectsUnboundReadinessAndReceipts(t *testing.T) {
 				receipt := WorkerReportReceipt{SchemaVersion: 1, JobID: claim.JobID, ClaimRevision: claim.Revision, ProposalDigest: header.Digest}
 				final := reportReply{SchemaVersion: 2, Status: "reported", RequestDigest: evidence.Digest(body), Receipt: &receipt}
 				switch mode {
+				case "final evidence":
+					final.Evidence = &evidenceReceipt{SchemaVersion: 1}
 				case "final capture":
 					final.Capture = &WorkerCaptureReceipt{SchemaVersion: 1}
 				case "wrong job":

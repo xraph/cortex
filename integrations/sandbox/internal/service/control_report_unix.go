@@ -37,6 +37,7 @@ type reportReply struct {
 	RequestDigest string                `json:"request_digest,omitempty"`
 	Receipt       *WorkerReportReceipt  `json:"receipt,omitempty"`
 	Capture       *WorkerCaptureReceipt `json:"capture,omitempty"`
+	Evidence      *evidenceReceipt      `json:"evidence,omitempty"`
 }
 
 type workerReportSession struct {
@@ -103,11 +104,9 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 			}
 		}
 	}()
-	if header.Operation != "report" {
-		if _, ok := session.(captureSession); !ok {
-			deny()
-			return
-		}
+	if !supportsUpload(session, header.Operation) {
+		deny()
+		return
 	}
 	deadline := session.Deadline()
 	if deadline.IsZero() {
@@ -130,12 +129,25 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 	if err != nil || len(payload) != header.Bytes || evidence.Digest(payload) != header.Digest || requireControlEOF(conn) != nil {
 		return
 	}
-	reply, err := submitUpload(operation, session, header, payload)
+	var reply reportReply
+	if isEvidenceRead(header.Operation) {
+		reply, err = streamEvidence(operation, session, header, payload, conn)
+	} else {
+		reply, err = submitUpload(operation, session, header, payload)
+	}
 	closeErr := session.Close()
 	closed = true
 	if err != nil || closeErr != nil || operation.Err() != nil {
+		if isEvidenceRead(header.Operation) {
+			return
+		}
 		deny()
 		return
+	}
+	if isEvidenceRead(header.Operation) {
+		if err = endEvidenceStream(conn); err != nil {
+			return
+		}
 	}
 	reply.SchemaVersion, reply.RequestDigest = 2, requestDigest
 	if err = writeControlFrame(conn, reply); err != nil {
@@ -173,7 +185,7 @@ func reportConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClaim
 	if err != nil {
 		return WorkerReportReceipt{}, err
 	}
-	if reply.Status != "reported" || reply.Capture != nil || reply.Receipt == nil || !reportReceiptMatches(*reply.Receipt, header) {
+	if reply.Status != "reported" || reply.Evidence != nil || reply.Capture != nil || reply.Receipt == nil || !reportReceiptMatches(*reply.Receipt, header) {
 		return WorkerReportReceipt{}, broker.ErrDenied
 	}
 	return *reply.Receipt, nil
@@ -189,45 +201,58 @@ func uploadConnection(ctx context.Context, conn *net.UnixConn, timeout time.Dura
 	if err != nil {
 		return reportReply{}, reportHeader{}, err
 	}
+	requestDigest, err := sendUpload(operation, conn, header, payload)
+	if err != nil {
+		return reportReply{}, reportHeader{}, err
+	}
+	reply, err := receiveUploadReply(operation, conn, requestDigest)
+	return reply, header, err
+}
+
+func sendUpload(operation context.Context, conn *net.UnixConn, header reportHeader, payload []byte) (string, error) {
 	body, err := json.Marshal(header)
 	if err != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return "", broker.ErrDenied
 	}
 	if err = writeBoundedFrame(conn, body, controlFrameLimit); err != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return "", broker.ErrDenied
 	}
 	requestDigest := evidence.Digest(body)
 	var reply reportReply
-	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil || reply.Capture != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil || reply.Capture != nil || reply.Evidence != nil {
+		return "", broker.ErrDenied
 	}
 	if operationErr := operation.Err(); operationErr != nil {
-		return reportReply{}, reportHeader{}, operationErr
+		return "", operationErr
 	}
 	if reply.Status == "busy" {
-		return reportReply{}, reportHeader{}, broker.ErrPending
+		return "", broker.ErrPending
 	}
 	if reply.Status != "ready" {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return "", broker.ErrDenied
 	}
 	if err = writeBoundedFrame(conn, payload, uploadFrameLimit(header.Operation)); err != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return "", broker.ErrDenied
 	}
 	if err = conn.CloseWrite(); err != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return "", broker.ErrDenied
 	}
+	return requestDigest, nil
+}
+
+func receiveUploadReply(operation context.Context, conn *net.UnixConn, requestDigest string) (reportReply, error) {
 	// Decode into a new value so absent fields cannot inherit the ready reply.
 	var final reportReply
-	if _, err = readControlFrame(conn, &final); err != nil || requireControlEOF(conn) != nil {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+	if _, err := readControlFrame(conn, &final); err != nil || requireControlEOF(conn) != nil {
+		return reportReply{}, broker.ErrDenied
 	}
 	if operationErr := operation.Err(); operationErr != nil {
-		return reportReply{}, reportHeader{}, operationErr
+		return reportReply{}, operationErr
 	}
 	if final.SchemaVersion != 2 || final.RequestDigest != requestDigest {
-		return reportReply{}, reportHeader{}, broker.ErrDenied
+		return reportReply{}, broker.ErrDenied
 	}
-	return final, header, nil
+	return final, nil
 }
 
 func prepareReport(claim WorkerClaim, result sandbox.Result) (reportHeader, []byte, error) {

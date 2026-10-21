@@ -3,14 +3,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -159,4 +162,69 @@ func TestControlKernelReportClientAuthenticatesPrivateDaemon(t *testing.T) {
 	}
 	cancel()
 	_ = awaitControllerStop(t, done)
+}
+
+func TestControlKernelEvidenceClientsAuthenticatePrivateDaemon(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("worker evidence transport fixture requires root")
+	}
+	claim := controlClaim()
+	a := evidence.Artifact{Ref: wireCaptureRef(t), Data: []byte("candidate")}
+	session := &fixtureEvidenceSession{fixtureReportSession: fixtureReportSession{claim: claim}}
+	path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
+	defer func() { cancel(); _ = awaitControllerStop(t, done) }()
+	if _, err := PutArtifactAt(t.Context(), path, claim, a); err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range []bool{false, true} {
+		var content bytes.Buffer
+		if err := ReadEvidenceAt(t.Context(), path, claim, a.Ref, artifact, &content); err != nil || !bytes.Equal(content.Bytes(), a.Data) {
+			t.Fatal("private evidence read", err)
+		}
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PutArtifactAt(t.Context(), path, claim, a); err == nil {
+		t.Fatal("upload reached unsafe endpoint")
+	}
+	if err := ReadEvidenceAt(t.Context(), path, claim, a.Ref, false, io.Discard); err == nil {
+		t.Fatal("download reached unsafe endpoint")
+	}
+	if session.closes.Load() != 3 {
+		t.Fatal("unsafe endpoint acquired service peer")
+	}
+}
+
+func TestControlKernelEvidenceServiceBindingAndAmbientRootDenial(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("worker evidence transport fixture requires root")
+	}
+	access, c, claim, _, input, output, repo := workerEvidenceFixture(t)
+	limits := ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second}
+	for _, providers := range [][]*WorkerEvidence{{nil}, {access, access}, {&WorkerEvidence{controller: &Controller{}}}} {
+		if server, err := NewWorkerControl(c, limits, providers...); err == nil || server != nil {
+			t.Fatal("invalid evidence binding accepted")
+		}
+	}
+	server, err := NewWorkerControl(c, limits, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, path := controlListener(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx, listener) }()
+	if _, err = PutArtifactAt(t.Context(), path, claim, output); err == nil {
+		t.Fatal("ambient root uploaded evidence")
+	}
+	if err = ReadEvidenceAt(t.Context(), path, claim, input.Ref, false, io.Discard); err == nil {
+		t.Fatal("ambient root read evidence")
+	}
+	cancel()
+	_ = awaitControllerStop(t, done)
+	if repo.puts != 0 || repo.opens != 0 {
+		t.Fatal("ambient root reached provider")
+	}
 }

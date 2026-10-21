@@ -763,8 +763,22 @@ to one MiB, verify the returned reference and perform no provider retry after an
 uncertain response. A returned upload reference still requires repository readback
 and capture confirmation before a result can use it.
 
-These methods are the broker's provider boundary. The private byte-transfer
-protocol, worker source adapters, approved image source and installed provider
+Pass the evidence service as the optional third argument to `NewWorkerControl`
+to enable private byte transfer. It must use the same controller. `ReadEvidenceAt`
+reads signed inputs or output readback; `PutArtifactAt` uploads an output. These
+operations share the report/capture capacity limit and preserve the reserved
+authorization connection. Without the service, evidence requests fail before
+payload admission.
+
+Requests authenticate through the private endpoint before sending canonical JSON.
+References are bounded to 32 KiB and uploads to two MiB of encoded data, with a
+one MiB content ceiling. Downloads use chunks of at most 64 KiB and independently
+verify exact length and SHA256 at both ends. Completion requires an explicit end
+marker, a receipt bound to the request, job, claim and full artifact reference,
+and EOF. Partial data, ignored write failures, provider errors, peer-close errors
+and cancellation cannot acknowledge success. The transport performs no retry.
+
+Worker source adapters, approved image delivery and installed provider
 configuration remain to be connected. Workers must not receive repository
 credentials or open the daemon's database as a substitute for that integration.
 

@@ -27,8 +27,8 @@ const controlFrameLimit = 2048
 // callbacks must honor their contexts for handler shutdown to remain bounded.
 type ControlLimits struct {
 	Connections int
-	// Reports permits up to four concurrent uploads and must be less than
-	// Connections. Zero disables report submission.
+	// Reports permits up to four concurrent report, capture or evidence
+	// exchanges and must be less than Connections. Zero disables all three.
 	Reports int
 	Timeout time.Duration
 }
@@ -40,8 +40,9 @@ func (l ControlLimits) validate() error {
 	return nil
 }
 
-// WorkerControl serves authorization, capture and report receipt. It cannot launch,
-// cancel or complete jobs. Frames are canonical JSON with explicit byte bounds.
+// WorkerControl serves authorization, capture, evidence transfer and report
+// receipt. It cannot launch, cancel or complete jobs. JSON frames are canonical;
+// JSON and binary evidence chunks have explicit byte bounds.
 type WorkerControl struct {
 	limits      ControlLimits
 	controller  *Controller
@@ -54,7 +55,9 @@ type WorkerControl struct {
 
 // NewWorkerControl binds the transport to kernel peer authentication and the
 // controller's current grants, service configuration and durable claim checks.
-func NewWorkerControl(controller *Controller, limits ControlLimits) (*WorkerControl, error) {
+// An optional evidence service enables byte transfer and must share the same
+// controller. All transfer operations share the Reports capacity limit.
+func NewWorkerControl(controller *Controller, limits ControlLimits, evidenceServices ...*WorkerEvidence) (*WorkerControl, error) {
 	if runtime.GOOS != "linux" {
 		return nil, errUnsupported
 	}
@@ -64,7 +67,25 @@ func NewWorkerControl(controller *Controller, limits ControlLimits) (*WorkerCont
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
-	return &WorkerControl{controller: controller, limits: limits, beginReport: controller.openReportSession, authorize: func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (err error) {
+	if len(evidenceServices) > 1 || (len(evidenceServices) == 1 && (evidenceServices[0] == nil || evidenceServices[0].controller != controller)) {
+		return nil, fmt.Errorf("cortex: invalid worker evidence binding")
+	}
+	begin := controller.openReportSession
+	if len(evidenceServices) == 1 {
+		evidenceService := evidenceServices[0]
+		begin = func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (reportSession, error) {
+			session, err := controller.openReportSession(ctx, conn, claim)
+			if err != nil {
+				return nil, err
+			}
+			native, ok := session.(*workerReportSession)
+			if !ok {
+				return nil, errors.Join(broker.ErrDenied, session.Close())
+			}
+			return &workerEvidenceSession{workerReportSession: native, evidence: evidenceService}, nil
+		}
+	}
+	return &WorkerControl{controller: controller, limits: limits, beginReport: begin, authorize: func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (err error) {
 		peer, err := workerpeer.Open(ctx, conn, claim.JobID)
 		if err != nil {
 			return err
