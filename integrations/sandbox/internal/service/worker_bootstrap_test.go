@@ -195,3 +195,25 @@ func TestWorkerBootstrapRejectsChangedCredentialBeforeControl(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerBootstrapRefusesStorageOutsideServiceBudget(t *testing.T) {
+	name, directory, credential, boundary := workerBootstrapFixture(t)
+	loaded, err := readWorkerConfig(t.Context(), name, boundary.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := loaded.Settings
+	cfg.Workspace.StagingBytes = int64(cfg.Service.MemoryBytes)
+	writeWorkerConfig(t, name, cfg)
+	loaded, err = readWorkerConfig(t.Context(), name, boundary.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential.ProfileDigest = loaded.ProfileDigest
+	writeBootstrapCredential(t, directory, credential)
+	var calls atomic.Int32
+	boundary.authorize = func(context.Context, string, WorkerClaim) error { calls.Add(1); return nil }
+	if worker, bootstrapErr := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary); bootstrapErr == nil || worker != nil || calls.Load() != 0 {
+		t.Fatal("storage budget reached execution authority")
+	}
+}

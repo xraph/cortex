@@ -31,6 +31,7 @@ func launchProperties(p LaunchProfile, key id.ID) map[string]any {
 		props[name] = uint64(0)
 	}
 	props["ExecMainCode"], props["ExecMainStatus"] = int32(0), int32(0)
+	props["PrivateMounts"] = true
 	return props
 }
 

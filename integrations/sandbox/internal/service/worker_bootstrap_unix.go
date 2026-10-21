@@ -68,6 +68,9 @@ func bootstrapWorker(ctx context.Context, configPath, credentialDirectory string
 	if credential.Record.Receipt.Capabilities.RuntimeDigest != configuration.RuntimeDigest {
 		return nil, broker.ErrDenied
 	}
+	if admissionErr := configuration.Settings.Workspace.Admit(credential.Record.Receipt.Job, configuration.Profile.MemoryBytes); admissionErr != nil {
+		return nil, admissionErr
+	}
 	w := &WorkerSession{configuration: configuration, credential: credential, boundary: boundary,
 		claim: WorkerClaim{SchemaVersion: 1, JobID: key, Token: credential.Token, Revision: credential.Record.Revision, ProfileDigest: configuration.ProfileDigest}}
 	operation, deadline := context.WithDeadline(operation, w.Deadline())

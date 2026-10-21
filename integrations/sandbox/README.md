@@ -549,6 +549,42 @@ Retries build a fresh copy and recheck authorization. This is not a durable imag
 cache: a crashed worker may leave an orphan for the external reaper. Broker
 dispatch, durable claims and live qualification remain open.
 
+## Bounded worker storage
+
+The internal Linux workspace owns separate staging and scratch filesystems.
+`WorkerConfig.workspace` pins staging bytes, staging and scratch inode ceilings,
+and a worker memory reserve. Bootstrap refuses a signed job unless staging,
+scratch, guest memory and that reserve fit the outer service memory limit.
+These are ceilings. They do not guarantee that a workload will fit.
+
+Workspace setup requires the exact worker subgroup, current authorization and
+an existing root-owned `0700` parent directory. Each job gets a new directory;
+retained directories are refused. The service template requires `PrivateMounts`.
+Setup also checks the actual mount namespace against PID 1 before making its
+mounts recursively private. It never changes a running Go thread's namespace.
+
+Both filesystems require Linux's descriptor-based mount API, unique mount IDs
+and tmpfs `noswap`. Missing kernel features fail setup. There is no disk-backed
+fallback. Staging is private; scratch is writable by the guest with `nodev`,
+`nosuid` and `noexec`. Scratch capacity rounds down to native pages so it cannot
+exceed the signed limit. The [kernel tmpfs documentation](https://www.kernel.org/doc/html/v6.12/filesystems/tmpfs.html)
+explains its byte, inode and swap controls.
+
+`Check` repeats authority, containment, directory identity, mount identity,
+capacity, flags and propagation checks within the original deadline. Cleanup
+uses an independent context and normal unmounts. Busy mounts remain available
+for cleanup retry, while replaced mounts or directories are left untouched.
+Only the owned empty mountpoints and job directory are removed. A failed setup
+can return an unusable workspace with unresolved cleanup; its caller must retry
+cleanup or exit the worker for independent service recovery.
+
+The `sandbox_mount_kernel` tests create a child mount namespace before the Go
+runtime starts. They exercise actual byte and inode exhaustion, replacement
+refusal, revocation, cancellation, busy cleanup and mount removal on process
+exit. Run them as root only in a disposable Linux environment. These tests do
+not qualify systemd, runsc or a production worker. Worker execution and export
+assembly, retained-file recovery and live qualification remain open.
+
 ## Linux probe suite
 
 The `sandbox_qualification` build tag adds host-side probes. They fail when the

@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
+	"github.com/xraph/cortex/integrations/sandbox/internal/workspace"
 )
 
 // WorkerService configures the installed service without a self-referential
@@ -43,6 +44,7 @@ type WorkerConfig struct {
 	ControlSocket   string            `json:"control_socket"`
 	Service         WorkerService     `json:"service"`
 	Runtime         WorkerRuntime     `json:"runtime"`
+	Workspace       workspace.Policy  `json:"workspace"`
 }
 
 // WorkerConfiguration binds a parsed configuration to its installed profile.
@@ -70,6 +72,9 @@ func readWorkerConfig(ctx context.Context, name string, owner uint32) (WorkerCon
 		return WorkerConfiguration{}, fmt.Errorf("cortex: invalid worker configuration")
 	}
 	settings := cfg.Service
+	if policyErr := cfg.Workspace.Validate(); policyErr != nil {
+		return WorkerConfiguration{}, policyErr
+	}
 	profile := LaunchProfile{SchemaVersion: 1, Worker: settings.Worker, Config: hostfs.Pin{Path: name, SHA256: evidence.Digest(body), Bytes: int64(len(body)), Mode: 0o600}, TemplatePath: settings.TemplatePath, StateDirectory: settings.StateDirectory, CPUMillis: settings.CPUMillis, MemoryBytes: settings.MemoryBytes, Tasks: settings.Tasks, WallTime: settings.WallTime}
 	profileDigest, err := profile.Digest()
 	if err != nil {

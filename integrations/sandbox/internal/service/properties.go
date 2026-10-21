@@ -40,7 +40,8 @@ func checkEffectiveProperties(p LaunchProfile, key id.ID, properties map[string]
 	}
 	command := [][]any{{p.Worker.Path, []string{p.Worker.Path, "--job", key.String(), "--config", p.Config.Path}, false, uint64(0), uint64(0), uint64(0), uint64(0), uint32(0), int32(0), int32(0)}}
 	expected := map[string]any{
-		"Id": layout.Unit, "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead", "Following": "", "Transient": false, "NeedDaemonReload": false, "RefuseManualStart": false, "FragmentPath": p.TemplatePath, "SourcePath": "", "ControlGroup": "", "RootDirectory": "", "RootImage": "", "WorkingDirectory": "",
+		"PrivateMounts": true,
+		"Id":            layout.Unit, "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead", "Following": "", "Transient": false, "NeedDaemonReload": false, "RefuseManualStart": false, "FragmentPath": p.TemplatePath, "SourcePath": "", "ControlGroup": "", "RootDirectory": "", "RootImage": "", "WorkingDirectory": "",
 		"Type": "exec", "User": "root", "Group": "root", "Slice": "system.slice", "Delegate": true, "DelegateSubgroup": "supervisor", "Restart": "no", "KillMode": "control-group", "KillSignal": int32(9), "SendSIGKILL": true,
 		"TimeoutStartUSec": uint64(10 * time.Second / time.Microsecond), "TimeoutStopUSec": uint64(5 * time.Second / time.Microsecond), "RuntimeMaxUSec": uint64(wallMicros), "OOMPolicy": "kill", "MemoryMax": p.MemoryBytes, "MemorySwapMax": uint64(0), "TasksMax": p.Tasks, "CPUQuotaPerSecUSec": p.CPUMillis * 1000,
 		"UMask": uint32(0o077), "NoNewPrivileges": true, "LimitCORE": uint64(0), "StandardOutput": "null", "StandardError": "null", "Environment": []string{"LANG=C.UTF-8"},

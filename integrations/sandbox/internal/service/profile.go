@@ -97,6 +97,7 @@ TasksMax=%d
 CPUQuota=%d.%d%%
 UMask=0077
 NoNewPrivileges=yes
+PrivateMounts=yes
 LimitCORE=0
 StandardOutput=null
 StandardError=null

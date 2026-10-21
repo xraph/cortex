@@ -452,3 +452,43 @@ CI `39545303597` at `968b94b` passed all jobs for the preceding report-transport
 A test through the full deployment checker exposed an error wrapper that hid the sole activation signal. It failed before the wrapper preserved that signal when no context error existed. Cancellation and peer-cleanup failures still prevent retries. Concurrent report tests confirm that one upload excludes another report and further execution authorization.
 
 Final `make f` and `make l` pass across all ten modules. The full sandbox race suite and build, twenty bootstrap/session race repetitions, tagged Linux lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. The Linux fixture includes the protected configuration, credential and private-daemon activation/report exchange, while retaining an explicit membership seam. Live installed-service and runtime qualification remain deferred.
+
+## Bounded worker workspace storage
+
+Worker configuration now pins staging bytes, staging and scratch inode limits,
+and a worker memory reserve. Bootstrap refuses jobs whose storage, guest memory
+and reserve exceed the outer service memory ceiling. Scratch is rounded down to
+native pages, never above its signed limit. The installed template and effective
+service checks now require `PrivateMounts`.
+
+The internal Linux workspace verifies exact worker containment, current grants,
+job scope and the original deadline before setup. It owns a new job directory
+and two bounded, nonswapping tmpfs mounts in a namespace distinct from PID 1.
+Descriptor-based mount APIs and unique mount IDs are mandatory. Missing features
+fail closed. Staging, scratch, owner/mode, mount flags, quota totals and mount
+propagation are rechecked before use; no ordinary-disk fallback exists.
+
+Cleanup uses an independent bounded context, normal unmounts and retained
+identity descriptors. Busy cleanup stays retryable. A replacement regression
+failed before cleanup was changed to preserve an empty directory substituted
+for an owned mountpoint. Replaced filesystems and job directories are refused as
+well. Failed setup returns a nonusable handle when cleanup is unresolved, so its
+caller can retry or arrange independent service recovery.
+
+The kernel tests run in a child mount namespace created before Go starts. They
+exercise real byte and inode exhaustion, namespace isolation, mount replacement,
+revocation, cancellation, partial cleanup and concurrent checking/closure. The
+local disposable container has only the mount capability added, no network,
+read-only root and explicit process/memory ceilings. These fixtures do not
+qualify a deployed worker, systemd or runsc.
+
+CI `39547791052` at `d356dd0` passed every job for the preceding bootstrap packet.
+This workspace packet still needs its own CI result. Worker execution/export
+assembly, source integration, daemon setup, orphan discovery, retained-file
+recovery and live Linux qualification remain open. S2.4 and G2 are incomplete.
+
+Final `make f` and `make l` pass across all ten modules. The sandbox race suite
+and build, tagged Linux lint, amd64/arm64 workspace-test compilation, twenty
+kernel-fixture repetitions and the restricted Linux service suite pass.
+`actionlint` accepts the new isolated-mount CI step. Live installed-service and
+runtime qualification remain deferred until the Linux worker is selected.

@@ -78,7 +78,7 @@ func TestTemplateContainsOnlyFixedWorkerCommandAndWholeServiceLimits(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Slice=system.slice\n", "Delegate=cpu memory pids\n", "DelegateSubgroup=supervisor\n", "Restart=no\n", "KillMode=control-group\n", "MemorySwapMax=0\n", "CPUQuota=200.0%\n", "LoadCredential=cortex-claim:" + p.StateDirectory + "/launch/%i/claim.json\n"} {
+	for _, expected := range []string{"PrivateMounts=yes\n", "Slice=system.slice\n", "Delegate=cpu memory pids\n", "DelegateSubgroup=supervisor\n", "Restart=no\n", "KillMode=control-group\n", "MemorySwapMax=0\n", "CPUQuota=200.0%\n", "LoadCredential=cortex-claim:" + p.StateDirectory + "/launch/%i/claim.json\n"} {
 		if !strings.Contains(string(body), expected) {
 			t.Fatalf("missing control %q", expected)
 		}

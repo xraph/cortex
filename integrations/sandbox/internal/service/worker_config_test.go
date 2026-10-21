@@ -12,6 +12,7 @@ import (
 
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
+	"github.com/xraph/cortex/integrations/sandbox/internal/workspace"
 )
 
 func workerConfigFixture(t *testing.T) (string, WorkerConfig, ed25519.PrivateKey) {
@@ -31,8 +32,9 @@ func workerConfigFixture(t *testing.T) (string, WorkerConfig, ed25519.PrivateKey
 	}
 	_, socket := controlListener(t)
 	cfg := WorkerConfig{SchemaVersion: 1, Broker: "trusted", BrokerPublicKey: public, ControlSocket: socket,
-		Service: WorkerService{Worker: p.Worker, TemplatePath: p.TemplatePath, StateDirectory: p.StateDirectory, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, Tasks: p.Tasks, WallTime: p.WallTime},
-		Runtime: WorkerRuntime{Directory: root, Manifest: deployment.Manifest{SchemaVersion: 1, Architecture: runtime.GOARCH, Files: []deployment.File{{Path: "runsc", SHA256: evidence.Digest(body), Bytes: int64(len(body)), Mode: 0o755}}}},
+		Workspace: workspace.Policy{StagingBytes: 32 << 20, StagingInodes: 4096, ScratchInodes: 1024, ReserveMemoryBytes: 64 << 20},
+		Service:   WorkerService{Worker: p.Worker, TemplatePath: p.TemplatePath, StateDirectory: p.StateDirectory, CPUMillis: p.CPUMillis, MemoryBytes: p.MemoryBytes, Tasks: p.Tasks, WallTime: p.WallTime},
+		Runtime:   WorkerRuntime{Directory: root, Manifest: deployment.Manifest{SchemaVersion: 1, Architecture: runtime.GOARCH, Files: []deployment.File{{Path: "runsc", SHA256: evidence.Digest(body), Bytes: int64(len(body)), Mode: 0o755}}}},
 	}
 	writeWorkerConfig(t, p.Config.Path, cfg)
 	return p.Config.Path, cfg, private
@@ -77,11 +79,13 @@ func TestWorkerConfigBindsExactBytesWithoutSelfReference(t *testing.T) {
 }
 
 func TestWorkerConfigRejectsMalformedOrChangedDeployment(t *testing.T) {
-	for _, mode := range []string{"unknown", "duplicate", "whitespace", "oversized", "key", "socket", "overlap", "architecture", "worker", "template", "runtime", "permissions", "schema"} {
+	for _, mode := range []string{"unknown", "duplicate", "whitespace", "oversized", "key", "socket", "overlap", "architecture", "worker", "template", "runtime", "permissions", "schema", "workspace"} {
 		t.Run(mode, func(t *testing.T) {
 			name, cfg, _ := workerConfigFixture(t)
 			var err error
 			switch mode {
+			case "workspace":
+				cfg.Workspace = workspace.Policy{}
 			case "key":
 				cfg.BrokerPublicKey = nil
 			case "socket":
