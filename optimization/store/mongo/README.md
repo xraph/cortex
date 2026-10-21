@@ -35,6 +35,10 @@ write failure and retries with record writes forbidden.
 
 One store instance can serve independent scopes concurrently. Migration and
 close wait for active operations before accessing the connection exclusively.
-The adapter currently loads the complete exact scope. Selective loading, bounded
-database pagination, artifact retention and throughput qualification remain open. These storage checks
-do not qualify the optimizer's runtime or production activation path.
+Single-resource getters query the exact record identity and only its body chunks.
+They read at most the expected chunk count plus one, so extra chunks are detected
+without loading other records. Metadata and content still come from one snapshot.
+Lists, current eligibility checks and mutations load the complete exact scope.
+Bounded database pagination, selective transaction loading, artifact retention
+and throughput qualification remain open. These storage checks do not qualify the
+optimizer's runtime or production activation path.

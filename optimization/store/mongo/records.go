@@ -58,6 +58,14 @@ type chunkDocument struct {
 }
 
 func (b *backend) Load(ctx context.Context, key string) ([]state.Record, error) {
+	return b.loadSnapshot(ctx, key, nil)
+}
+
+func (b *backend) LoadRecord(ctx context.Context, key string, record state.RecordKey) ([]state.Record, error) {
+	return b.loadSnapshot(ctx, key, &record)
+}
+
+func (b *backend) loadSnapshot(ctx context.Context, key string, record *state.RecordKey) ([]state.Record, error) {
 	scope, err := scoped.New(ctx, key)
 	if err != nil {
 		return nil, err
@@ -65,7 +73,7 @@ func (b *backend) Load(ctx context.Context, key string) ([]state.Record, error) 
 	var records []state.Record
 	err = b.transact(ctx, func(session context.Context) error {
 		var loadErr error
-		records, loadErr = b.load(session, scope)
+		records, loadErr = b.load(session, scope, record)
 		return loadErr
 	})
 	if err != nil {
@@ -74,8 +82,8 @@ func (b *backend) Load(ctx context.Context, key string) ([]state.Record, error) 
 	return records, nil
 }
 
-func documents[T any](ctx context.Context, collection *mongo.Collection, filter bson.D) (result []T, resultErr error) {
-	cursor, err := collection.Find(ctx, filter)
+func documents[T any](ctx context.Context, collection *mongo.Collection, filter bson.D, limit int64) (result []T, resultErr error) {
+	cursor, err := collection.Find(ctx, filter, options.Find().SetLimit(limit))
 	if err != nil {
 		return nil, databaseError("find records", err)
 	}
@@ -90,14 +98,20 @@ func documents[T any](ctx context.Context, collection *mongo.Collection, filter 
 	return result, databaseError("read cursor", cursor.Err())
 }
 
-func (b *backend) load(ctx context.Context, scope scoped.Index) ([]state.Record, error) {
-	headers, err := documents[recordDocument](ctx, b.mongo.Collection(recordCollection), scopeFilter(scope))
+func (b *backend) load(ctx context.Context, scope scoped.Index, record *state.RecordKey) ([]state.Record, error) {
+	headerFilter, chunkFilter := scopeFilter(scope), scopeFilter(scope)
+	var headerLimit int64
+	if record != nil {
+		headerFilter = append(headerFilter, bson.E{Key: "_id", Value: scope.Hash + "/" + record.ID()})
+		chunkFilter = append(chunkFilter, bson.E{Key: "record_id", Value: record.ID()})
+		headerLimit = 2
+	}
+	headers, err := documents[recordDocument](ctx, b.mongo.Collection(recordCollection), headerFilter, headerLimit)
 	if err != nil {
 		return nil, err
 	}
-	chunks, err := documents[chunkDocument](ctx, b.mongo.Collection(chunkCollection), scopeFilter(scope))
-	if err != nil {
-		return nil, err
+	if record != nil && len(headers) > 1 {
+		return nil, corruptRecords()
 	}
 	byID := make(map[string]recordDocument, len(headers))
 	for _, header := range headers {
@@ -108,6 +122,19 @@ func (b *backend) load(ctx context.Context, scope scoped.Index) ([]state.Record,
 			return nil, corruptRecords()
 		}
 		byID[header.RecordID] = header
+	}
+	// A point read needs at most its expected chunks plus one to detect stale
+	// or orphan content. The full-scope transaction path checks every chunk.
+	var chunkLimit int64
+	if record != nil {
+		chunkLimit = 1
+		if len(headers) == 1 {
+			chunkLimit += headers[0].Chunks
+		}
+	}
+	chunks, err := documents[chunkDocument](ctx, b.mongo.Collection(chunkCollection), chunkFilter, chunkLimit)
+	if err != nil {
+		return nil, err
 	}
 	parts := make(map[string][]chunkDocument, len(headers))
 	for _, chunk := range chunks {
@@ -174,7 +201,7 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 		if fence.Canon != scope.Canon {
 			return fmt.Errorf("%w: stored scope digest collision", optimization.ErrUnavailable)
 		}
-		records, err := b.load(session, scope)
+		records, err := b.load(session, scope, nil)
 		if err != nil {
 			return err
 		}

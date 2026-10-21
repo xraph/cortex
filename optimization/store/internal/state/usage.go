@@ -23,7 +23,7 @@ func (s *Store) GetReservation(ctx context.Context, experimentID id.ID, callKey 
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "reservations", Key: callKey, Parent: experimentID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}

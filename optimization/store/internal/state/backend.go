@@ -8,11 +8,13 @@ import (
 )
 
 // Backend provides coherent exact-scope reads and serialized database updates.
+// LoadRecord queries one indexed compound identity and returns at most one row.
 // Update must acquire its database fence before reading, invoke the callback
 // once, and atomically persist its mutations or none. It must never retry a
 // callback or use a process-local lock as its only concurrency control.
 type Backend interface {
 	Load(context.Context, string) ([]Record, error)
+	LoadRecord(context.Context, string, RecordKey) ([]Record, error)
 	Update(context.Context, string, func([]Record) ([]Mutation, error)) error
 	Migrate(context.Context) error
 	Ping(context.Context) error

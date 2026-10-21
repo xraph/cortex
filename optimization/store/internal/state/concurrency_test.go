@@ -31,6 +31,10 @@ func (b *admissionBackend) Load(context.Context, string) ([]Record, error) {
 	return nil, nil
 }
 
+func (b *admissionBackend) LoadRecord(ctx context.Context, scope string, _ RecordKey) ([]Record, error) {
+	return b.Load(ctx, scope)
+}
+
 func (b *admissionBackend) Close() error { b.closes.Add(1); return nil }
 
 func operationContext(name string) context.Context {

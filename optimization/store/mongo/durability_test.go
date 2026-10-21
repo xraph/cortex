@@ -145,7 +145,8 @@ func TestDatabaseFailureAndMissingChunkRefusePartialState(t *testing.T) {
 	if err := s.Transact(ctx, func(tx store.Tx) error { return tx.CreateExperiment(bundle) }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mdb.Collection(chunkCollection).DeleteOne(ctx, bson.D{}); err != nil {
+	recordID := (state.RecordKey{Kind: "experiments", Key: bundle.Experiment.ID.String()}).ID()
+	if _, err := mdb.Collection(chunkCollection).DeleteOne(ctx, bson.D{{Key: "record_id", Value: recordID}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.GetExperiment(ctx, bundle.Experiment.ID); !errors.Is(err, optimization.ErrUnavailable) {

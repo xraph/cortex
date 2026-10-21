@@ -45,7 +45,7 @@ func digestParts(parts ...string) string {
 }
 
 func sealRecord(record Record) Record {
-	record.ID = digestParts(record.Kind, record.Parent, record.Key)
+	record.ID = (RecordKey{Kind: record.Kind, Parent: record.Parent, Key: record.Key}).ID()
 	record.Digest = digestParts(strconv.Itoa(record.Schema), record.Scope, record.Kind, record.Parent, record.Key, string(record.Body))
 	return record
 }

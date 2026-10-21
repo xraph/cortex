@@ -21,7 +21,7 @@ func (s *Store) GetValidationAllocation(ctx context.Context, allocationID id.ID)
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "allocations", Key: allocationID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}

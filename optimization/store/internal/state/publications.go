@@ -22,7 +22,7 @@ func (s *Store) GetLesson(ctx context.Context, lessonID id.ID) (optimization.Les
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "lessons", Key: lessonID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}
@@ -75,7 +75,7 @@ func (s *Store) GetPublication(ctx context.Context, lessonID id.ID, revision int
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "publications", Key: publicationKey(lessonID, revision)})
 	if loadErr != nil {
 		return empty, loadErr
 	}

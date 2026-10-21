@@ -27,7 +27,9 @@ is repeatable read, cancellation while waiting for a scope lock, rollback after
 a database write failure and lease takeover from a fresh process. SQLite uses
 the same subprocess test helper.
 
-As with SQLite, the adapter currently loads a complete exact scope and writes
-only changed records. Database pagination, selective loading, artifact retention
+Single-resource getters use the scope and record primary key, then validate the
+selected record's identity, schema and content digest. Lists, eligibility checks
+and updates still load a complete exact scope and updates write only changed
+records. Database pagination, selective transaction loading, artifact retention
 and throughput qualification remain open. These storage tests do not establish
 production optimization readiness.

@@ -22,7 +22,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4: durable persistence | SQLite, PostgreSQL and Mongo foundations verified; independent database operations can overlap | Artifact storage, bounded database queries and throughput qualification |
+| 4: durable persistence | Durable backends, concurrent database operations and indexed resource reads verified | Artifact storage, database pagination, selective transaction loading and throughput qualification |
 | 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -481,3 +481,35 @@ that time. Its PostgreSQL and SQLite tests passed, as did every other CI job.
 The optimization CI job now uses the same bounded thirty-minute timeout as local
 full race runs; other sub-modules keep ten minutes. A new CI run must verify that
 change. Artifact retention, bounded reads and throughput qualification remain open.
+
+## Indexed resource reads
+
+Eleven single-resource getters now use an exact compound record identity instead
+of loading the entire scope. The shared identity hash is unchanged, so existing
+records need no migration. SQL uses the scope and record primary key with a row
+limit. Mongo selects one metadata record and only its expected chunks plus one,
+within a snapshot transaction. The additional chunk detects stale or unexpected
+content that a strict expected-count limit could hide.
+
+The common decoder still checks identity, scope, schema and content digest.
+Current activation eligibility, transitive lesson resolution, lists and mutation
+callbacks retain their broader reads. A raw resource lookup does not claim that
+its related evidence is currently eligible.
+
+Tests reproduced whole-scope reads for all eleven getters before implementation.
+A real SQLite driver counter now proves that one experiment lookup consumes one
+database row. Corrupting a different experiment in the same scope leaves that
+lookup usable, while reading the corrupt experiment or entering a mutation
+callback fails. Mongo tests establish the same separation for chunks and reject
+extra target chunks. The 17 MiB round trip and corruption suite also pass.
+
+Full module race tests and build passed: memory took 68.329s, Mongo 236.103s,
+PostgreSQL 166.715s and SQLite 166.274s. After shared formatting, source hashes
+were unchanged and focused point-read/corruption races passed again. Published
+Cortex v1.8.0 compatibility checks passed for point reads, corruption, the large
+record, populated resource readers and exact-scope isolation, followed by a
+successful build. The final `make l` passed all ten modules.
+
+CI `39527689658` passed all jobs for shared commit `9c0d1e5`, which includes
+Mongo storage and the concurrency/timeout changes from `e452baf`. The earlier
+`e452baf` run was cancelled when that newer shared commit was pushed.

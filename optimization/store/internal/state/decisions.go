@@ -19,7 +19,7 @@ func (s *Store) GetDecision(ctx context.Context, decisionID id.ID) (optimization
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "decisions", Key: decisionID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}

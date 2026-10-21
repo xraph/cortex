@@ -20,7 +20,7 @@ func (s *Store) GetTrial(ctx context.Context, trialID id.ID) (optimization.Trial
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "trials", Key: trialID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}

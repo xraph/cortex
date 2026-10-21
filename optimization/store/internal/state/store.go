@@ -129,7 +129,7 @@ func (s *Store) GetExperiment(ctx context.Context, entityID id.ID) (optimization
 	if s.closed {
 		return optimization.Experiment{}, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "experiments", Key: entityID.String()})
 	if loadErr != nil {
 		return optimization.Experiment{}, loadErr
 	}
@@ -152,7 +152,7 @@ func (s *Store) GetVersion(ctx context.Context, entityID id.ID) (optimization.Ha
 	if s.closed {
 		return optimization.HarnessVersion{}, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "versions", Key: entityID.String()})
 	if loadErr != nil {
 		return optimization.HarnessVersion{}, loadErr
 	}

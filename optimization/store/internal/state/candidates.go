@@ -20,7 +20,7 @@ func (s *Store) GetCandidate(ctx context.Context, candidateID id.ID) (optimizati
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data, loadErr := s.loadScope(ctx, key)
+	data, loadErr := s.loadResource(ctx, key, RecordKey{Kind: "candidates", Key: candidateID.String()})
 	if loadErr != nil {
 		return empty, loadErr
 	}

@@ -29,11 +29,12 @@ startup. Unknown record kinds, unsupported record versions and malformed stored
 content refuse reads and writes, so an older worker cannot silently discard
 fields it does not understand.
 
-The current adapter loads a complete exact scope to apply the shared rules and
-writes only changed rows. Large scopes therefore increase read and transaction
-cost. Selective loading, bounded database pagination and throughput qualification
-remain part of Task 4. SQLite also permits one database writer at a time, even
-when workers operate in different scopes.
+Single-resource getters use the scope and record primary key, then validate the
+selected record's identity, schema and content digest. Lists, current activation
+eligibility and updates still load a complete exact scope. Large scopes increase
+the cost of those operations. Bounded database pagination, selective transaction
+loading and throughput qualification remain part of Task 4. SQLite also permits
+one database writer at a time, even when workers operate in different scopes.
 
 The database artifact adapter and service recovery remain in progress.
 PostgreSQL and MongoDB have separate adapters. This store does not establish sandbox,

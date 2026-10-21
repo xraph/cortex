@@ -17,15 +17,33 @@ func (s *Store) GetActivation(ctx context.Context, agentID id.AgentID, channel s
 	if err != nil {
 		return optimization.Activation{}, err
 	}
-	return s.readActivation(ctx, func(data *scopeData) id.ID { return data.ActivationHeads[key] }, true)
+	return s.readActivation(ctx, func(data *scopeData) id.ID { return data.ActivationHeads[key] })
 }
 
 // GetActivationGeneration reads an immutable historical activation by ID.
 func (s *Store) GetActivationGeneration(ctx context.Context, activationID id.ID) (optimization.Activation, error) {
-	return s.readActivation(ctx, func(*scopeData) id.ID { return activationID }, false)
+	key, err := contextScope(ctx)
+	if err != nil {
+		return optimization.Activation{}, err
+	}
+	unlock := s.lockOperation()
+	defer unlock()
+	if s.closed {
+		return optimization.Activation{}, optimization.ErrUnavailable
+	}
+	data, err := s.loadResource(ctx, key, RecordKey{Kind: "activations", Key: activationID.String()})
+	if err != nil {
+		return optimization.Activation{}, err
+	}
+	if data != nil {
+		if value, exists := data.Activations[activationID.String()]; exists {
+			return clone(value)
+		}
+	}
+	return optimization.Activation{}, optimization.ErrNotFound
 }
 
-func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id.ID, current bool) (optimization.Activation, error) {
+func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id.ID) (optimization.Activation, error) {
 	var empty optimization.Activation
 	key, err := contextScope(ctx)
 	if err != nil {
@@ -42,18 +60,16 @@ func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id
 	}
 	if data != nil {
 		if value, exists := data.Activations[selectID(data).String()]; exists {
-			if current {
-				decision, found := data.Decisions[value.DecisionID.String()]
-				if !found {
-					return empty, optimization.ErrIncompleteEvidence
-				}
-				experiment, found := data.Experiments[decision.ExperimentID.String()]
-				if !found {
-					return empty, optimization.ErrIncompleteEvidence
-				}
-				if lessonErr := checkLessonBindings(data, experiment, s.now().UTC()); lessonErr != nil {
-					return empty, lessonErr
-				}
+			decision, found := data.Decisions[value.DecisionID.String()]
+			if !found {
+				return empty, optimization.ErrIncompleteEvidence
+			}
+			experiment, found := data.Experiments[decision.ExperimentID.String()]
+			if !found {
+				return empty, optimization.ErrIncompleteEvidence
+			}
+			if lessonErr := checkLessonBindings(data, experiment, s.now().UTC()); lessonErr != nil {
+				return empty, lessonErr
 			}
 			return clone(value)
 		}

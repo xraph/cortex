@@ -21,13 +21,26 @@ func (b *backend) Load(ctx context.Context, key string) ([]state.Record, error) 
 	if err != nil {
 		return nil, err
 	}
-	return load(ctx, b.sql, scope)
+	return load(ctx, b.sql, scope, nil)
 }
 
-func load(ctx context.Context, query queryer, scope scoped.Index) (records []state.Record, resultErr error) {
-	rows, err := query.Query(ctx, `SELECT schema_version, scope_canon, kind, parent_key, item_key, record_id, digest, body
-	 FROM cortex_optimization_records WHERE scope_hash = ? AND scope_canon = ? AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ?`,
-		scope.Hash, scope.Canon, scope.Levels[0], scope.Levels[1], scope.Levels[2])
+func (b *backend) LoadRecord(ctx context.Context, key string, record state.RecordKey) ([]state.Record, error) {
+	scope, err := scoped.New(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return load(ctx, b.sql, scope, &record)
+}
+
+func load(ctx context.Context, query queryer, scope scoped.Index, record *state.RecordKey) (records []state.Record, resultErr error) {
+	statement := `SELECT schema_version, scope_canon, kind, parent_key, item_key, record_id, digest, body
+	 FROM cortex_optimization_records WHERE scope_hash = ? AND scope_canon = ? AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ?`
+	args := []any{scope.Hash, scope.Canon, scope.Levels[0], scope.Levels[1], scope.Levels[2]}
+	if record != nil {
+		statement += ` AND record_id = ? LIMIT 2`
+		args = append(args, record.ID())
+	}
+	rows, err := query.Query(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +78,7 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 	if storedScope != scope.Canon {
 		return fmt.Errorf("%w: stored scope digest collision", optimization.ErrUnavailable)
 	}
-	records, err := load(ctx, tx, scope)
+	records, err := load(ctx, tx, scope, nil)
 	if err != nil {
 		return err
 	}
