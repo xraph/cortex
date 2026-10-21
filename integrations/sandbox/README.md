@@ -738,6 +738,36 @@ journal retains the capture binding and disposal reason. Production repository
 permissions, installed daemon lifecycle and live runtime qualification still need
 end-to-end verification.
 
+## Worker evidence access
+
+`service.WorkerEvidence` supplies the daemon-side input, upload and readback
+boundary. Configure an input source, current read policy and a byte ceiling of
+at most one GiB. Input references must exactly match the signed job. Output
+access uses the capture policy and the same repository as artifact recovery;
+it cannot choose a different destination. Output writes require a matching
+unconfirmed capture intent, while readback accepts the retained intent or
+confirmation for that claim.
+
+Each operation verifies the live worker, service configuration, claim and current
+grants. Policies receive detached signed identity and reference values. A policy
+callback cannot change the retained job or upload binding. The service rechecks
+capture state after policy evaluation, so a confirmation during that callback
+prevents a later upload from starting.
+
+Reads use bounded copying with exact length and SHA256 checks. The source is
+closed on cancellation, read failure or completion, and close errors prevent
+success. Current authority is checked after opening and again after copying.
+The caller must unblock destination writes when the context is cancelled.
+Transferred bytes remain provisional until the call succeeds. Uploads are limited
+to one MiB, verify the returned reference and perform no provider retry after an
+uncertain response. A returned upload reference still requires repository readback
+and capture confirmation before a result can use it.
+
+These methods are the broker's provider boundary. The private byte-transfer
+protocol, worker source adapters, approved image source and installed provider
+configuration remain to be connected. Workers must not receive repository
+credentials or open the daemon's database as a substitute for that integration.
+
 ## Linux probe suite
 
 The `sandbox_qualification` build tag adds host-side probes. They fail when the

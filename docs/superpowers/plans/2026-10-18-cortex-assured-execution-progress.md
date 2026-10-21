@@ -737,3 +737,38 @@ conformance passed with race detection on SQLite and real PostgreSQL/MongoDB
 containers. MongoDB used `mongo:7`; no backend test was skipped. The Linux
 recovery/controller/private-socket fixtures passed ten repetitions. Independent
 full-plan review and installed external-provider qualification remain outstanding.
+
+
+## S2.4 broker evidence-provider boundary
+
+The daemon-side WorkerEvidence service now binds input reads, output uploads and
+output readback to the authenticated worker claim. Inputs require exact signed
+references. Outputs require the retained capture binding and use the same evidence
+repository as recovery. Upload after confirmation is refused. Source and capture
+policies receive detached signed identity and context scope; repository credentials
+stay in the daemon.
+
+Reads use the shared bounded digest/length copier and close sources exactly once
+on cancellation. Open, read and close failures remain failures. Current grants are
+checked after opening and after copying, and capture state is checked again after
+policy evaluation. Regressions caught bytes copied after source revocation during
+Open and upload started after confirmation during a policy callback; both now fail
+before the content operation. Uploads check the returned complete reference and
+never retry provider errors. They do not establish readback or grading success.
+
+Fixtures cover foreign and substituted references, missing intents, byte and
+metadata limits, stale claims, expired retention, revoked peers/policies, partial
+reader failures, blocked-read cancellation, uncertain upload acknowledgements and
+provider mutation. A race in the fixture's shutdown setup was fixed by configuring
+real recovery before starting the controller, with no runtime field replacement.
+
+The byte-transfer protocol and worker source adapters are still pending. Approved
+image delivery, installed provider configuration and live qualification also remain
+open. This service is a tested provider boundary, not a deployed end-to-end
+integration. S2.4 and G2 remain incomplete.
+
+Final formatting, lint across all ten modules, separate tagged Linux lint, the
+complete sandbox race suite and sandbox build passed. Linux arm64/amd64 service
+compilation passed, and the Linux evidence-service fixtures passed ten repetitions
+without skips. CI `39562227912` at `5f73670` passed all recovery-commit jobs.
+Independent full-plan review and installed provider verification remain open.
