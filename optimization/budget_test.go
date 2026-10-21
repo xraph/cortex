@@ -28,13 +28,18 @@ func (f meterResolver) Resolve(ctx context.Context, actor optimization.IdentityR
 
 func meterFixture(t *testing.T) (*memory.Store, context.Context, optimization.UsageReservation, optimization.IdentityRef) {
 	t.Helper()
+	return meterFixtureWithBudget(t, optimization.Budget{MaxTokens: 100, TokenOnly: true})
+}
+
+func meterFixtureWithBudget(t *testing.T, budget optimization.Budget) (*memory.Store, context.Context, optimization.UsageReservation, optimization.IdentityRef) {
+	t.Helper()
 	s, err := memory.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	bundle := storetest.Fixture(t, "meter")
-	bundle.Experiment.Spec.Budget = optimization.Budget{MaxTokens: 100, TokenOnly: true}
+	bundle.Experiment.Spec.Budget = budget
 	ctx := cortex.WithScope(context.Background(), bundle.Experiment.Spec.Scope)
 	var lease optimization.WorkLease
 	if err = s.Transact(ctx, func(tx optimization.Transaction) error {

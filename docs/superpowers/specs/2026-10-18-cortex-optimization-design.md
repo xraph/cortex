@@ -289,6 +289,23 @@ The ledger covers baseline runs, proposals, probes, compositions, validation, re
 
 `CallMeter` extends that port with `BeginCall(ctx, UsageReservation, requestDigest) (Reservation, error)`. The call boundary commits the reservation and one dispatch marker together before invoking the provider. A reservation retry alone cannot authorize another invocation. The marker binds the actual frozen request digest and current worker lease; an identical repeat requires reconciliation, while changed content under the same key conflicts. The host adapter computes the digest and establishes receipt provenance. Cancellation or a lost acknowledgment after commit retains the debit and marker.
 
+`MeteredClient` implements the existing `llm.Client` port for synchronous and
+streaming calls. Its configuration freezes exact scope, experiment, attempt,
+operation, model and model revision, plus accepted request and response JSON
+limits. It passes a detached actual request to `UsageEstimator`, binds the full
+request and streaming mode to the dispatch digest, and verifies returned dispatch
+authority before calling the provider. Provider routing must be pinned by the
+host; a configured model name cannot establish that pin.
+
+`ModelUsageReporter.Observe(ctx, ModelObservation) (ModelUsageReport, error)`
+establishes receipt provenance and frozen prices. Execution completion and
+accounting completeness are separate facts. Raw `llm.Usage` cannot prove that
+reporting is complete, so absent a valid authoritative report the ledger retains
+the upper bound and records observed overruns. Streaming cancellation closes the
+source, captures usage available during close and settles once. Only clean
+iteration and settlement return EOF. Accounting failures must not wrap EOF,
+because the existing engine tests that sentinel before other errors.
+
 Each trial receives a fresh session, a reset copy of its environment snapshot, frozen retrieval inputs and an allowlisted tool registry. Use host-provided containers, virtual machines or equivalent isolation where tools touch files, networks or processes. A new database scope or session is not a sandbox. Keep the existing one-to-three-level Cortex scope intact and attach experiment identity separately.
 
 The optimizer validates scope structure, exact agent scope, unique level keys and forbidden canonical separators before creating records. Workers and adapters never manufacture a missing scope. A required host mapper converts that scope to Sentinel app/tenant and Fabriq tenant/filter context. Empty, malformed, conflicting or unauthorized mappings fail before any external read or write. Cross-scope list access is explicit authorization; exact resource mutations never rely on ancestor prefix matching alone.

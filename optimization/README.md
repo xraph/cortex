@@ -37,8 +37,38 @@ transaction. A cancelled or expired worker cannot bypass those checks by keeping
 an old meter instance. Cancellation after a dispatch commit returns an error and
 leaves the conservative debit in place.
 
-Model, judge and tool wrappers still need to call this boundary for every metered
-operation. These foundations do not establish that integration on their own.
+## Model calls
+
+Use `NewMeteredClient` around your `llm.Client`, then supply it through
+`engine.WithLLM`. You provide the ledger meter, a conservative `UsageEstimator`
+and a configuration bound to the exact scope, experiment, attempt, operation and
+model revision. The estimator sees a detached copy of the actual request. It
+must include input tokens, the output cap and any frozen pricing in its bound.
+Give each logical call a durable key that survives retries.
+
+The wrapper hashes the full request with that binding and whether the call is
+streaming. It commits dispatch before invoking your provider. Requests for a
+different scope or model, missing output caps and oversized request JSON fail
+before dispatch. Byte limits bound accepted JSON, not the provider's allocations.
+You still need to pin the provider's routing to the configured model revision.
+
+Supply a `ModelUsageReporter` when your provider can establish authoritative
+usage. It receives accounting facts and request identity without prompt or output
+content. Verify the provider receipt and frozen pricing there. Without a reporter,
+token counts remain uncertain: the ledger retains the reservation and records
+any observed overrun. Invalid receipts, inconsistent counts and underreporting
+cannot release the debit. Reporting must not perform unmetered charged work.
+
+Streaming closes and settles once at EOF or failure. Always close a stream you
+abandon. Closing cancels a blocked read, provided your provider honors context
+cancellation, and usage available during close is included in accounting. A
+settlement error remains an error when Cortex consumes the stream; it cannot
+be mistaken for EOF. Settlement uses the original caller context, so caller
+cancellation may leave the durable dispatch debit awaiting later reconciliation.
+
+The wrapper is available for model and judge calls. Controller and judge wiring,
+the concrete estimator and pricing adapters, and tool accounting remain open.
+Late receipts after the worker loses its running lease also need a recovery path.
 
 ## Artifact lifecycle
 

@@ -708,3 +708,36 @@ and internal-store races passed again. Published Cortex v1.8.0 compatibility
 checks passed, as did current and published full-module builds. Final `make f`
 and `make l` passed across all ten modules. The final optimizer source hashes
 remained unchanged during review.
+
+## Metered model client
+
+`MeteredClient` now wraps the existing `llm.Client` interface. It checks exact
+scope and model binding, clones the request before estimation, and commits one
+dispatch marker bound to the full request before calling the provider. Changing
+messages, tools, output limits, model revision or streaming mode cannot reuse
+that dispatch permission.
+
+`ModelUsageReporter` separates authoritative accounting from raw provider token
+counts. Missing or invalid reports retain the reserved debit, while observed
+overruns remain recorded. Hosts supply the conservative estimator, receipt
+verification and frozen pricing. No concrete provider accounting adapter is
+claimed by this packet.
+
+Stream regressions first reproduced hidden accounting errors at EOF, discarded
+oversized-chunk errors, unclosed canceled reads, and usage missed during close.
+Further regressions caught a mismatched dispatch lease reaching the provider and
+an accounting EOF being interpreted as successful iteration. The fixes preserve
+non-EOF failure causes and close and settle each stream once. Concurrent close
+cancels a blocked read. A test through Cortex's streaming engine confirms that
+an accounting failure emits an error without a successful completion event.
+
+Task 5 remains open. Controller, worker and judge integration, concrete estimator
+and pricing adapters, tool accounting and late receipt recovery remain unfinished.
+This packet does not mark a phase complete.
+
+Verification: the full optimization root-package race suite passed against the
+current checkout (1.999s) and published Cortex v1.8.0 (2.380s). Full optimization
+module builds passed with both dependencies. The scoped `make f` target and
+all-module `make l` passed, with zero lint issues across ten modules. Persistence
+implementations did not change in this packet; their database suites were not
+rerun.
