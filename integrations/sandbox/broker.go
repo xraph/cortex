@@ -7,25 +7,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // Durable broker journal, independent of engine stores.
-
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/sandbox/internal/journal"
 	"github.com/xraph/cortex/sandbox"
 )
 
 // Runtime owns durable idempotency for Start, including completed-job tombstones.
 // A lost response must never cause the same ID to execute twice. Cancel must stop
 // the whole workload and retain its terminal status. No host execution fallback
-// is permitted. Runtime qualification belongs to the deployed adapter.
+// is permitted. Start receives the signed original acceptance, including its
+// deadline and runtime binding. Verify it against the configured broker key;
+// retries must never reset AcceptedAt. Qualification belongs to the adapter.
 type Runtime interface {
 	Capabilities(context.Context) (sandbox.Capabilities, error)
-	Start(context.Context, sandbox.Job) error
+	Start(context.Context, sandbox.Receipt) error
 	Inspect(context.Context, id.ID) (sandbox.Result, error)
 	Cancel(context.Context, id.ID) error
 }
@@ -40,6 +40,7 @@ type Config struct {
 	MaxJobs    int
 	MaxActive  int
 	Images     []string
+	Now        func() time.Time // Trusted host clock; defaults to time.Now.
 }
 
 // Broker serializes journal transitions and authenticates every access. A single
@@ -73,51 +74,22 @@ func Open(cfg Config) (*Broker, error) {
 	if cfg.MaxActive <= 0 {
 		cfg.MaxActive = 16
 	}
-	parent, err := os.Stat(filepath.Dir(cfg.Database))
-	if err != nil {
-		return nil, err
-	}
-	if !parent.IsDir() || parent.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("cortex: sandbox journal directory must be private")
-	}
-	file, err := os.OpenFile(cfg.Database, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err == nil {
-		if operationErr := file.Close(); operationErr != nil {
-			return nil, operationErr
-		}
-	} else if !errors.Is(err, os.ErrExist) {
-		return nil, err
-	}
-	info, err := os.Lstat(cfg.Database)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("cortex: sandbox journal must be a private regular file")
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 	cfg.SigningKey = append(ed25519.PrivateKey(nil), cfg.SigningKey...)
-	db, err := sql.Open("sqlite", cfg.Database)
+	persistent, err := journal.Open(context.Background(), cfg.Database, journal.Broker)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	for _, statement := range []string{"PRAGMA locking_mode=EXCLUSIVE", "PRAGMA synchronous=FULL", "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, scope TEXT NOT NULL, principal TEXT NOT NULL, request_key TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(scope,principal,request_key))"} {
-		if _, err = conn.ExecContext(context.Background(), statement); err != nil {
-			_ = conn.Close()
-			_ = db.Close()
-			return nil, fmt.Errorf("cortex: open sandbox journal: %w", err)
-		}
+	if _, err = persistent.Conn.ExecContext(context.Background(), "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, scope TEXT NOT NULL, principal TEXT NOT NULL, request_key TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(scope,principal,request_key))"); err != nil {
+		return nil, errors.Join(err, persistent.Close())
 	}
 	images := make(map[string]bool, len(cfg.Images))
 	for _, value := range cfg.Images {
 		images[value] = true
 	}
-	return &Broker{db: db, conn: conn, cfg: cfg, images: images}, nil
+	return &Broker{db: persistent.DB, conn: persistent.Conn, cfg: cfg, images: images}, nil
 }
 
 // Close releases the journal. It does not terminate persisted workloads.
@@ -209,7 +181,11 @@ func (b *Broker) Submit(ctx context.Context, j sandbox.Job) (sandbox.Receipt, er
 	if operationErr := b.authorize(ctx, j); operationErr != nil {
 		return sandbox.Receipt{}, operationErr
 	}
-	receipt := sandbox.Receipt{SchemaVersion: 1, Job: j, Capabilities: caps, Broker: b.cfg.Name, AcceptedAt: time.Now().UTC()}
+	acceptedAt := b.cfg.Now().UTC()
+	if acceptedAt.IsZero() {
+		return sandbox.Receipt{}, fmt.Errorf("cortex: missing sandbox acceptance time")
+	}
+	receipt := sandbox.Receipt{SchemaVersion: 1, Job: j, Capabilities: caps, Broker: b.cfg.Name, AcceptedAt: acceptedAt}
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		return sandbox.Receipt{}, err
@@ -255,10 +231,24 @@ func (b *Broker) start(ctx context.Context, rec *record) error {
 	if operationErr := b.authorize(ctx, j); operationErr != nil {
 		return operationErr
 	}
-	detached, err := sandbox.Seal(j)
+	detachedJob, err := sandbox.Seal(j)
 	if err != nil {
 		return err
 	}
+	now := b.cfg.Now()
+	if now.IsZero() {
+		return fmt.Errorf("cortex: missing sandbox dispatch time")
+	}
+	if !now.Before(rec.Status.Receipt.AcceptedAt.Add(j.Limits.WallTime)) {
+		rec.Cancelling = true
+		if operationErr := b.save(ctx, rec); operationErr != nil {
+			return operationErr
+		}
+		return errors.Join(context.DeadlineExceeded, b.refresh(ctx, rec))
+	}
+	detached := rec.Status.Receipt
+	detached.Job = detachedJob
+	detached.Signature = append([]byte(nil), detached.Signature...)
 	if operationErr := b.cfg.Runtime.Start(ctx, detached); operationErr != nil {
 		return fmt.Errorf("cortex: sandbox start uncertain; inspect same job: %w", operationErr)
 	}
@@ -332,7 +322,7 @@ func (b *Broker) refresh(ctx context.Context, rec *record) error {
 	if err != nil {
 		return err
 	}
-	if operationErr := validateResult(*result, rec.Status.Receipt.Job); operationErr != nil {
+	if operationErr := ValidateRuntimeResult(*result, rec.Status.Receipt.Job); operationErr != nil {
 		return operationErr
 	}
 	if operationErr := b.authorize(ctx, rec.Status.Receipt.Job); operationErr != nil {
@@ -348,9 +338,17 @@ func (b *Broker) refresh(ctx context.Context, rec *record) error {
 	return b.save(ctx, rec)
 }
 
-func validateResult(result sandbox.Result, j sandbox.Job) error {
+// ValidateRuntimeResult checks bounded runtime output against a sealed job.
+// It establishes neither signature authenticity nor task correctness.
+func ValidateRuntimeResult(result sandbox.Result, j sandbox.Job) error {
+	if err := j.Validate(); err != nil {
+		return err
+	}
 	if result.JobDigest != j.Digest || len(result.Reason) > 4096 || int64(len(result.Stdout))+int64(len(result.Stderr)) > j.Limits.OutputBytes || len(result.Artifacts) > 256 {
 		return fmt.Errorf("cortex: invalid sandbox runtime result")
+	}
+	if result.State == sandbox.StateExited && (result.ExitCode < 0 || result.ExitCode > 255) {
+		return fmt.Errorf("cortex: invalid sandbox exit status")
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > 2<<20 {
@@ -419,7 +417,10 @@ func bindingCheck(rec *record, key ed25519.PublicKey) error {
 }
 func (b *Broker) save(ctx context.Context, rec *record) error {
 	rec.Status.Revision++
-	rec.Status.UpdatedAt = time.Now().UTC()
+	rec.Status.UpdatedAt = b.cfg.Now().UTC()
+	if rec.Status.UpdatedAt.IsZero() {
+		return fmt.Errorf("cortex: missing sandbox observation time")
+	}
 	body, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -468,7 +469,7 @@ func VerifyResult(result sandbox.Result, j sandbox.Job, key ed25519.PublicKey) e
 	if err := j.Validate(); err != nil {
 		return err
 	}
-	if err := validateResult(result, j); err != nil {
+	if err := ValidateRuntimeResult(result, j); err != nil {
 		return err
 	}
 	if result.State == sandbox.StateRunning {

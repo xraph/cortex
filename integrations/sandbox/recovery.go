@@ -56,7 +56,7 @@ func (b *Broker) Reconcile(ctx context.Context, now time.Time) error {
 				failures = append(failures, inspectErr)
 				continue
 			}
-			if operationErr := validateResult(*result, j); operationErr != nil {
+			if operationErr := ValidateRuntimeResult(*result, j); operationErr != nil {
 				failures = append(failures, operationErr)
 				continue
 			}

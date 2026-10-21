@@ -41,6 +41,12 @@ expired workloads without exposing output.
 
 ## Runtime obligations
 
+`Runtime.Start` receives the signed original receipt. Verify it with the pinned
+broker public key and retain its acceptance time, runtime binding and job digest.
+The execution deadline is `AcceptedAt + Job.Limits.WallTime`. Expired accepted
+retries enter cancellation before dispatch. The optional `Config.Now` is a trusted
+host clock, and defaults to `time.Now`.
+
 `Runtime.Start` must preserve durable idempotency, including terminal tombstones.
 It must never rerun a completed ID when a previous response was lost. `Cancel`
 must stop every descendant and retain terminal status. A broker receipt is not
@@ -121,10 +127,36 @@ runsc also succeeds when its state record is absent. That case remains unresolve
 until the external reaper proves the worker's containment has stopped. No
 terminal result is returned merely because forced deletion succeeded.
 
-This code is not wired into broker admission. You still need durable job claims,
-image staging integration, external worker supervision and a reaper that can
+This code is not wired into broker admission. You still need claim and staging
+integration, external worker supervision and a reaper that can
 stop the whole workload if either the broker or worker dies. The internal driver
 does not provide those guarantees, and the runtime remains unqualified.
+
+## Durable worker ownership
+
+The internal worker journal enrolls the exact signed receipt before issuing a
+single worker claim. Its database is bound to the broker name and public key.
+A retry cannot change the receipt, recover a lost claim token or claim a completed
+job again. Terminal records count toward the configured capacity and are never
+automatically evicted. Keep this journal across restarts.
+
+Claimed jobs have no automatic lease takeover. Cancellation and recovery fence
+late worker results and move unresolved execution to reaping. You must stop the
+external worker and every sandbox descendant before recording `Reaped` at the
+expected revision. Missing runtime state is insufficient. The terminal state is
+failed or cancelled, with no invented successful output. Normal completion also
+requires the caller to prove cleanup before persisting the result.
+
+One daemon owns the journal's exclusive SQLite connection. Workers must use that
+daemon's authenticated control path; they cannot open the database concurrently.
+The broker and worker share a private-file opener that rejects file symlinks,
+hard links, special files, unsafe permissions and another application's journal.
+The host owner must prevent directory and file substitution while it is open.
+
+The journal does not launch processes, prove containment or enforce current user
+grants. Those checks belong to the runtime adapter and external supervisor, whose
+integration remains pending. The subprocess test establishes claim durability
+after process exit; it does not establish that an orphan sandbox was killed.
 
 ## Evidence input staging
 

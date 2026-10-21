@@ -295,3 +295,18 @@ Each attempt creates its own private directory. Failure cleanup retains errors a
 The image packet passes final coordinated formatting, all ten modules of lint, native/Linux scoped lint, root sandbox/evidence races, full sandbox module races and root/module builds. The full sandbox races and build also pass with Go 1.26.9. Linux amd64/arm64 test binaries compile, and module tidy is stable. The installed Go 1.26.3 vulnerability scan reports 16 reachable standard-library advisories; a fresh scan with Go 1.26.9 reports no vulnerabilities. The default local toolchain was not changed. Deployed builds still require a patched toolchain.
 
 CI `39523884180` at `ec02ab4` passed every job, covering the preceding evidence-input staging packet and optimizer PostgreSQL persistence. This image packet needs its own exact-commit CI result. No live Linux isolation or image qualification is claimed.
+
+
+## Durable worker ownership and acceptance handoff
+
+The runtime now receives the broker's signed original receipt, including its acceptance time and runtime binding. A trusted host clock makes expiry deterministic in tests. An expired accepted retry records cancellation before contacting the runtime, so retrying cannot restart the wall budget. Detached receipt tests prevent runtime callbacks from changing persisted arguments, scope or signatures. Runtime-result validation now rejects an unsealed job and invalid exit status.
+
+The internal worker journal persists the exact receipt before granting one worker token. Concurrent contenders have one winner; process exit does not release that claim. Identical completion retries retain the terminal revision, while changed results, forged or replaced receipts and foreign tokens fail. Cancellation or recovery fences late completion and leaves a nonterminal reaping record until a trusted external supervisor proves containment stopped at the expected revision. Uncertain work becomes failed or cancelled, never successful. Terminal identity records are retained and count against capacity.
+
+Broker and worker journals share an exclusive SQLite opener with private owner/mode checks, file-link and special-file rejection, and application binding. The worker journal also pins the broker name/key and schema version. Tests cover failed database writes, corruption, future schema, capacity, expired claims, process exit and competing claims. The owner must preserve filesystem integrity; this is not protection against restoring an old database snapshot or a malicious host owner.
+
+This packet establishes durable ownership independently of runtime activation. Claim/staging wiring, authenticated worker control, launch/cancel races at the external process manager, disk quotas, orphan containment and live Linux qualification remain open. The journal's `Reaped` call records a trusted proof supplied by its caller; the external proof implementation is still pending.
+
+Final coordinated formatting and all ten modules of lint pass. The full sandbox race suite and build pass, as do native/Linux scoped lint and Linux amd64/arm64 worker-journal test compilation. The full sandbox race suite and build also pass with Go 1.26.10. A fresh scan reported GO-2026-6809 against Go 1.26.9; the Go 1.26.10 scan reports no vulnerabilities. The default local toolchain remains unchanged.
+
+CI `39526179993` at `a0ae9ac` passed the sandbox module, root tests, security, docs and formatting, covering the preceding image-staging packet. The overall run failed because optimizer Mongo tests exceeded the default ten-minute package timeout; the optimizer owner is handling that bounded CI timeout separately. This worker-ownership packet needs its own exact-commit CI result.

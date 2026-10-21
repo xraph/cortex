@@ -24,14 +24,21 @@ type fixtureRuntime struct {
 	jobs        map[string]sandbox.Result
 	startErr    error
 	startAbsent bool
+	receipts    []sandbox.Receipt
+	onStart     func(*sandbox.Receipt)
 }
 
 func (r *fixtureRuntime) Capabilities(context.Context) (sandbox.Capabilities, error) {
 	return sandbox.Capabilities{SchemaVersion: 1, Runtime: "runsc", RuntimeDigest: strings.Repeat("b", 64), Profile: sandbox.ProfileDenyAll, Qualification: "test-fixture-not-live", QualifiedUntil: time.Now().Add(time.Hour), Limits: limits()}, nil
 }
-func (r *fixtureRuntime) Start(_ context.Context, j sandbox.Job) error {
+func (r *fixtureRuntime) Start(_ context.Context, receipt sandbox.Receipt) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.receipts = append(r.receipts, receipt)
+	j := receipt.Job
+	if r.onStart != nil {
+		r.onStart(&receipt)
+	}
 	if r.startAbsent {
 		return r.startErr
 	}
@@ -40,6 +47,72 @@ func (r *fixtureRuntime) Start(_ context.Context, j sandbox.Job) error {
 		r.jobs[j.ID.String()] = sandbox.Result{JobDigest: j.Digest, State: sandbox.StateRunning}
 	}
 	return r.startErr
+}
+
+func TestRuntimeReceivesOriginalDetachedAcceptance(t *testing.T) {
+	b, r, _, ctx := setup(t)
+	j := job(t)
+	r.onStart = func(receipt *sandbox.Receipt) {
+		if err := broker.VerifyReceipt(*receipt, b.PublicKey()); err != nil {
+			t.Fatal(err)
+		}
+		receipt.Job.Argv[0] = "mutated"
+		receipt.Job.Scope.Levels[0].Value = "mutated"
+		receipt.Signature[0] ^= 1
+	}
+	receipt, err := b.Submit(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = broker.VerifyReceipt(receipt, b.PublicKey()); err != nil {
+		t.Fatalf("runtime mutated journal receipt: %v", err)
+	}
+	status, err := b.Inspect(ctx, j.ID)
+	if err != nil || !status.Receipt.AcceptedAt.Equal(receipt.AcceptedAt) {
+		t.Fatalf("acceptance changed: %+v %v", status, err)
+	}
+}
+
+func TestRuntimeResultValidationRequiresSealedJob(t *testing.T) {
+	if err := broker.ValidateRuntimeResult(sandbox.Result{State: sandbox.StateExited}, sandbox.Job{}); err == nil {
+		t.Fatal("unbound runtime result accepted")
+	}
+}
+
+func TestExpiredAcceptedRetryCannotRestartTheClock(t *testing.T) {
+	b, r, cfg, ctx := setup(t)
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	accepted := now
+	cfg.Now = func() time.Time { return now }
+	next, err := broker.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.Close()
+	r.startAbsent, r.startErr = true, errors.New("lost startup acknowledgement")
+	j := job(t)
+	if _, err = next.Submit(ctx, j); err == nil {
+		t.Fatal("uncertain start hidden")
+	}
+	now = now.Add(2 * time.Minute)
+	r.startAbsent, r.startErr = false, nil
+	if _, err = next.Submit(ctx, j); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired retry: %v", err)
+	}
+	if r.starts != 0 || len(r.receipts) != 1 {
+		t.Fatalf("expired runtime dispatched: %d %+v", r.starts, r.receipts)
+	}
+	result, err := next.Collect(ctx, j.ID)
+	if err != nil || result.State != sandbox.StateCancelled {
+		t.Fatalf("expired result: %+v %v", result, err)
+	}
+	receipt, err := next.Submit(ctx, j)
+	if err != nil || !receipt.AcceptedAt.Equal(accepted) || r.starts != 0 {
+		t.Fatalf("terminal retry: %+v %v", receipt, err)
+	}
 }
 func (r *fixtureRuntime) Inspect(_ context.Context, key id.ID) (sandbox.Result, error) {
 	r.mu.Lock()
