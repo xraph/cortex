@@ -358,3 +358,15 @@ The journal now exposes current claim verification, sharing token matching with 
 Fixture tests cover twelve concurrent submissions, a lost start response, revoked grants, late cancellation, expiry, changed deployment, failed recovery, callback mutation, credential substitution and unsafe directories. The worker CLI, authenticated daemon control, startup/periodic recovery, credential cleanup, full deadline supervision, broker activation and live systemd/runsc qualification remain open. S2.4 and G2 remain incomplete.
 
 Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build pass, along with post-format Linux-targeted lint and service-test compilation for amd64/arm64. Service and worker-journal fixtures pass inside a restricted Linux container. These checks do not establish installed systemd or runsc behavior. CI `39532436440` at `4fd8b5e` passed all jobs and covers the preceding pinned-profile packet. This launch packet still needs its own CI result.
+
+## Bounded startup and periodic recovery scans
+
+The internal recovery scanner walks verified journal entries in pages of at most 256. Startup recovery cancels unclaimed acceptances and fences every old claim without issuing another execution token. It continues through later pages after an individual failure and retains bounded error reporting. Periodic scans keep live authorized jobs, retry reaping and cancel work after its original deadline, qualification expiry or grant revocation.
+
+Grant checks receive detached jobs and a context bounded by the original acceptance and qualification times. Provider outages remain errors even after successful cancellation and cleanup. A regression test first exposed a provider timeout being mistaken for ordinary expiry; separate expiry identification fixes that distinction. Launch, credential reading and recovery now share the acceptance deadline calculation.
+
+Tests cover pagination after failed cleanup, successful retry, restart state, expiry during authorization, qualification expiry, clock failure, callback mutation, cancellation and journal read/write failures. When a known service record cannot be read or a cancellation cannot be saved, the scanner still attempts a service fence and retains the unresolved error.
+
+Daemon admission gating, continuous scheduling, independent service discovery, worker/control integration, exact execution-deadline supervision and retained-file cleanup remain open. Sequential recovery pages do not promise timely execution cutoff; the worker and outer service still need their own bounds. S2.4 and G2 remain incomplete, and live Linux qualification stays deferred.
+
+Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build, Linux-targeted lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. CI `39534354717` at `f0881b3` passed every job, covering the launch handoff and optimizer retention work. This recovery-scanner packet still needs its own CI result; no deployed qualification is claimed.

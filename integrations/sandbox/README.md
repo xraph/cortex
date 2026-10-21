@@ -263,9 +263,38 @@ before guest execution. Cancellation, completion, reaping and expiration
 invalidate that current-ownership check.
 
 These launch and handoff components are implemented and fixture-tested. The
-worker CLI, authenticated daemon control, startup/periodic recovery, cleanup of
+worker CLI, authenticated daemon control, recovery-loop wiring, cleanup of
 retained credential files, full deadline supervision and broker activation are
 still pending. No live systemd/runsc launch is qualified by these tests.
+
+## Recovery scans
+
+Use the internal `service.RecoveryScanner` with a separate host authorizer that
+checks current grants for the receipt's signed scope and principal. It runs
+without the original client connection. Authorization outages stop the job and
+remain visible as scan errors.
+
+Keep admission closed while `Recover` visits every pending journal page. It
+cancels unclaimed acceptances and fences old claims, preserving any cancellation
+already recorded. A cleanup failure does not prevent later pages from running.
+Open admission only after a complete pass returns no error.
+
+During operation, call `Sweep` with its returned `Next` cursor until `Done`, then
+begin another pass with an empty cursor. Each page contains at most 256 entries.
+Continue across individual failures so later jobs get checked; the next pass
+retries unresolved entries. `Done` reports the end of the index, not success.
+Check the returned error too.
+
+Sweeps recheck original deadlines, qualification expiry and current grants, then
+cancel and reap work that no longer qualifies. The scanner reloads each full
+record before acting. A known service identity still gets a stop attempt when
+its record cannot be read or cancellation cannot be saved, but those failures
+cannot produce a terminal result.
+
+You still need the daemon's admission gate and continuous scheduling loop. A
+slow cleanup can delay a later page, so scans cannot enforce an exact execution
+deadline. Worker deadline supervision, the outer service ceiling, discovery of
+services absent from the journal and cleanup of retained files remain required.
 
 ## Evidence input staging
 

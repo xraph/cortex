@@ -200,8 +200,8 @@ func readCredential(ctx context.Context, directory, name string, key id.ID, prof
 	if operationErr := broker.VerifyReceipt(receipt, publicKey); operationErr != nil {
 		return Credential{}, operationErr
 	}
-	if now.Before(receipt.AcceptedAt) || !now.Before(receipt.AcceptedAt.Add(receipt.Job.Limits.WallTime)) {
-		return Credential{}, context.DeadlineExceeded
+	if operationErr := checkAcceptanceTime(receipt, now); operationErr != nil {
+		return Credential{}, operationErr
 	}
 	if operationErr := receipt.Capabilities.Supports(receipt.Job); operationErr != nil {
 		return Credential{}, operationErr

@@ -91,11 +91,7 @@ func (l *Launcher) Launch(ctx context.Context, receipt sandbox.Receipt) error {
 	if operationErr := l.admit(receipt); operationErr != nil {
 		return operationErr
 	}
-	deadline := receipt.AcceptedAt.Add(receipt.Job.Limits.WallTime)
-	if receipt.Capabilities.QualifiedUntil.Before(deadline) {
-		deadline = receipt.Capabilities.QualifiedUntil
-	}
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	ctx, cancel := context.WithDeadline(ctx, acceptanceDeadline(receipt))
 	defer cancel()
 	ctx, bound := context.WithTimeout(ctx, 30*time.Second)
 	defer bound()
@@ -153,7 +149,7 @@ func (l *Launcher) dispatch(ctx context.Context, receipt sandbox.Receipt, claim 
 	if operationErr := l.start(ctx, receipt.Job.ID); operationErr != nil {
 		return operationErr
 	}
-	return errors.Join(ctx.Err(), l.deadline(receipt))
+	return errors.Join(ctx.Err(), checkAcceptanceTime(receipt, l.now()))
 }
 
 func (l *Launcher) authorized(ctx context.Context, job sandbox.Job) error {
@@ -170,22 +166,11 @@ func (l *Launcher) authorized(ctx context.Context, job sandbox.Job) error {
 	return ctx.Err()
 }
 
-func (l *Launcher) deadline(receipt sandbox.Receipt) error {
-	now := l.now()
-	if now.IsZero() || now.Before(receipt.AcceptedAt) {
-		return fmt.Errorf("cortex: invalid launcher acceptance time")
-	}
-	if !now.Before(receipt.AcceptedAt.Add(receipt.Job.Limits.WallTime)) || !now.Before(receipt.Capabilities.QualifiedUntil) {
-		return context.DeadlineExceeded
-	}
-	return nil
-}
-
 func (l *Launcher) admit(receipt sandbox.Receipt) error {
 	if err := l.profile.validate(); err != nil {
 		return err
 	}
-	if err := l.deadline(receipt); err != nil {
+	if err := checkAcceptanceTime(receipt, l.now()); err != nil {
 		return err
 	}
 	cpu, memory, processes := receipt.Job.Limits.CPUMillis, receipt.Job.Limits.MemoryBytes, receipt.Job.Limits.Processes
