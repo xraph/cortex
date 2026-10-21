@@ -27,6 +27,7 @@ func Run(t *testing.T, factory Factory) {
 	lifecycle(t, factory)
 	leases(t, factory)
 	accounting(t, factory)
+	dispatch(t, factory)
 	validation(t, factory)
 	candidates(t, factory)
 	trials(t, factory)

@@ -54,6 +54,7 @@ type Transaction interface {
 	ClaimWork(ClaimRequest) (WorkLease, error)
 	RenewLease(WorkLease) error
 	Reserve(UsageReservation) (Reservation, error)
+	BeginUsageCall(UsageReservation, string) (Reservation, error)
 	Settle(UsageSettlement) error
 	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
 	ExposeValidation(ValidationAccess) error

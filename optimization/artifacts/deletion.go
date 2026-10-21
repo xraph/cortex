@@ -169,32 +169,7 @@ func (s *DeletionService) authorize(ctx context.Context, ref optimization.Artifa
 }
 
 func (s *DeletionService) resolve(ctx context.Context, request optimization.ArtifactDeletion) (context.Context, context.CancelFunc, error) {
-	resolved, err := s.resolver.Resolve(detachContext(ctx), request.Actor, detachRef(request.Ref).Scope)
-	if err != nil {
-		return nil, nil, err
-	}
-	if resolved == nil {
-		return nil, nil, optimization.ErrPolicyDenied
-	}
-	key, err := optimization.ScopeKey(cortex.ScopeFromContext(resolved))
-	if err != nil || key != request.Ref.Scope.Canonical() {
-		return nil, nil, optimization.ErrPolicyDenied
-	}
-	// A resolver may rebuild context values, but cannot extend caller cancellation.
-	var child context.Context
-	var cancel context.CancelFunc
-	if deadline, exists := ctx.Deadline(); exists {
-		child, cancel = context.WithDeadline(detachContext(resolved), deadline)
-	} else {
-		child, cancel = context.WithCancel(detachContext(resolved))
-	}
-	stop := context.AfterFunc(ctx, cancel)
-	if err = ctx.Err(); err != nil {
-		stop()
-		cancel()
-		return nil, nil, err
-	}
-	return child, func() { stop(); cancel() }, nil
+	return optimization.ResolveIdentity(ctx, s.resolver, request.Actor, request.Ref.Scope)
 }
 
 func detachRef(ref optimization.ArtifactRef) optimization.ArtifactRef {

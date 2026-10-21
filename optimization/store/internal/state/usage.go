@@ -39,32 +39,17 @@ func (s *Store) GetReservation(ctx context.Context, experimentID id.ID, callKey 
 
 func (tx *transaction) Reserve(request optimization.UsageReservation) (optimization.Reservation, error) {
 	var empty optimization.Reservation
-	if !tx.active {
-		return empty, optimization.ErrConflict
-	}
-	if err := tx.ctx.Err(); err != nil {
+	experiment, err := tx.reservationExperiment(request)
+	if err != nil {
 		return empty, err
 	}
 	key := request.ExperimentID.String()
-	experiment, exists := tx.data.Experiments[key]
-	if !exists {
-		return empty, optimization.ErrNotFound
-	}
-	if experiment.State == optimization.StateBudgetExhausted || !tx.now.Before(experiment.Deadline) {
-		return empty, optimization.ErrBudgetExceeded
-	}
-	if !tx.validLease(experiment, request.Lease) {
-		return empty, optimization.ErrConflict
-	}
-	if err := validateReservation(request, experiment.Spec.Budget, tx.now, experiment.Deadline); err != nil {
-		return empty, err
+	if validationErr := validateReservation(request, experiment.Spec.Budget, tx.now, experiment.Deadline); validationErr != nil {
+		return empty, validationErr
 	}
 	entries := tx.data.Reservations[key]
 	if previous, found := entries[request.CallKey]; found {
-		left, right := previous.Request, request
-		// Authority can change on recovery; the original call content cannot.
-		left.Lease, right.Lease = optimization.WorkLease{}, optimization.WorkLease{}
-		if !same(left, right) {
+		if !sameReservationRequest(previous.Request, request) {
 			return empty, optimization.ErrConflict
 		}
 		return clone(previous)
@@ -88,6 +73,33 @@ func (tx *transaction) Reserve(request optimization.UsageReservation) (optimizat
 		return empty, err
 	}
 	return clone(detached)
+}
+
+func (tx *transaction) reservationExperiment(request optimization.UsageReservation) (optimization.Experiment, error) {
+	var empty optimization.Experiment
+	if !tx.active {
+		return empty, optimization.ErrConflict
+	}
+	if err := tx.ctx.Err(); err != nil {
+		return empty, err
+	}
+	experiment, exists := tx.data.Experiments[request.ExperimentID.String()]
+	if !exists {
+		return empty, optimization.ErrNotFound
+	}
+	if experiment.State == optimization.StateBudgetExhausted || !tx.now.Before(experiment.Deadline) {
+		return empty, optimization.ErrBudgetExceeded
+	}
+	if !tx.validLease(experiment, request.Lease) {
+		return empty, optimization.ErrConflict
+	}
+	return experiment, nil
+}
+
+func sameReservationRequest(left, right optimization.UsageReservation) bool {
+	// Recovery changes authority, never the frozen call content.
+	left.Lease, right.Lease = optimization.WorkLease{}, optimization.WorkLease{}
+	return same(left, right)
 }
 
 func validateReservation(request optimization.UsageReservation, budget optimization.Budget, now, deadline time.Time) error {
@@ -212,15 +224,19 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 
 func (tx *transaction) appendUsageEvent(experiment optimization.Experiment, eventType string, value optimization.Reservation, owner string) error {
 	payload := struct {
-		CallKey   string                      `json:"call_key"`
-		Operation optimization.OperationClass `json:"operation"`
-		Receipt   string                      `json:"receipt,omitempty"`
-		Revision  int64                       `json:"reservation_revision"`
-		Tokens    int64                       `json:"tokens_debited"`
-		Money     int64                       `json:"usd_micros_debited"`
+		CallKey       string                      `json:"call_key"`
+		Operation     optimization.OperationClass `json:"operation"`
+		Receipt       string                      `json:"receipt,omitempty"`
+		Revision      int64                       `json:"reservation_revision"`
+		Tokens        int64                       `json:"tokens_debited"`
+		Money         int64                       `json:"usd_micros_debited"`
+		RequestDigest string                      `json:"request_digest,omitempty"`
 	}{CallKey: value.Request.CallKey, Operation: value.Request.Operation, Revision: value.Revision, Tokens: value.DebitedTokens, Money: value.DebitedUSDMicros}
 	if value.Settlement != nil {
 		payload.Receipt = value.Settlement.Receipt
+	}
+	if value.Call != nil {
+		payload.RequestDigest = value.Call.RequestDigest
 	}
 	encoded, err := canonical.Marshal(payload)
 	if err != nil {

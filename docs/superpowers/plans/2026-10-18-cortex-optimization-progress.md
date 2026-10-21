@@ -660,3 +660,51 @@ passed across all ten modules. Post-format focused races passed on the current
 checkout, and full optimization builds passed against both current and published
 root dependencies. The tested optimizer source remained unchanged through the
 final review.
+
+## Durable call boundary and authorized meter
+
+`BeginUsageCall` reserves usage and records one possible provider dispatch in the
+same transaction. It binds the request digest, trusted start time and current
+worker lease. An identical retry cannot authorize another dispatch. A different
+payload under the same key conflicts. Existing reservations also recheck the
+experiment's total debit before dispatch, so a reported overrun stops them.
+
+`LedgerMeter` applies host authorization before those accounting transactions.
+It checks both the caller and the experiment's original requester using current
+grants. `Reserve` holds capacity, `BeginCall` grants one committed dispatch and
+`Settle` records attributed usage. Unknown usage retains its upper bound until an
+authoritative receipt reconciles it. Cancellation after commit returns an error
+without removing the dispatch marker or debit.
+
+Artifact deletion now delegates identity resolution to the shared
+`ResolveIdentity` helper. It preserves exact scope, deadline and cancellation;
+the existing artifact recovery regressions exercise the refactor.
+
+The new tests first failed on the missing dispatch boundary and meter API. A
+separate regression reproduced dispatch permission returned after cancellation
+at commit, then passed with the post-commit cancellation check. Shared store
+tests cover concurrent dispatch, conflicting content, rollback, stale authority,
+settled reservations and an overrun reported after reservation.
+
+A review regression also caught an expired dispatch reported as an invalid new
+reservation. Dispatch recovery now checks the saved call before expiry validation,
+while still enforcing current scope and lease authority. The shared reservation
+helpers keep those authority and immutable-content checks consistent.
+
+The model/judge/tool wrappers, estimator and pricing integration, optimizer
+commands and worker lifecycle remain unfinished. Worker recovery must also cover
+late receipts after cancellation, when the normal running lease is no longer
+valid. This packet does not mark Task 5 or any phase complete.
+
+The full optimization race run passed every package except PostgreSQL and Mongo,
+whose conformance setup failed while starting the Testcontainers reaper, before
+the test bodies ran. Full sequential package retries passed: PostgreSQL took
+207.561s and Mongo 271.545s. Memory and SQLite passed their initial full suites
+in 69.042s and 194.942s.
+
+After the expiry fix, focused accounting races passed on all four backends,
+including the existing reservation and settlement cases. Root-package, artifact
+and internal-store races passed again. Published Cortex v1.8.0 compatibility
+checks passed, as did current and published full-module builds. Final `make f`
+and `make l` passed across all ten modules. The final optimizer source hashes
+remained unchanged during review.
