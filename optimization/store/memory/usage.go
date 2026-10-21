@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
@@ -91,7 +88,7 @@ func (tx *transaction) Reserve(request optimization.UsageReservation) (optimizat
 }
 
 func validateReservation(request optimization.UsageReservation, budget optimization.Budget, now, deadline time.Time) error {
-	if !validAccountingKey(request.CallKey) || request.MaxTokens < 0 || request.MaxUSDMicros < 0 || (request.MaxTokens == 0 && request.MaxUSDMicros == 0) || !request.ExpiresAt.After(now) || request.ExpiresAt.After(deadline) {
+	if !optimization.ValidOpaqueKey(request.CallKey) || request.MaxTokens < 0 || request.MaxUSDMicros < 0 || (request.MaxTokens == 0 && request.MaxUSDMicros == 0) || !request.ExpiresAt.After(now) || request.ExpiresAt.After(deadline) {
 		return optimization.ErrInvalidSpec
 	}
 	if _, err := optimization.ParseID(request.AttemptID.String(), optimization.PrefixAttempt); err != nil {
@@ -131,7 +128,7 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 	if !tx.validLease(experiment, settlement.Lease) {
 		return optimization.ErrConflict
 	}
-	if !validAccountingKey(settlement.Receipt) || !validAccountingKey(settlement.CallKey) {
+	if !optimization.ValidOpaqueKey(settlement.Receipt) || !optimization.ValidOpaqueKey(settlement.CallKey) {
 		return optimization.ErrInvalidSpec
 	}
 	if err := settlement.Usage.Validate(); err != nil {
@@ -230,10 +227,6 @@ func (tx *transaction) appendUsageEvent(experiment optimization.Experiment, even
 	event.Resources = append(event.Resources, value.Request.AttemptID)
 	event.Payload = encoded
 	return nil
-}
-
-func validAccountingKey(value string) bool {
-	return value != "" && len(value) <= 512 && strings.TrimSpace(value) == value && utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
 }
 
 func debits(entries map[string]optimization.Reservation) (tokens, money int64) {

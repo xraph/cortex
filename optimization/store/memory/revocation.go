@@ -41,7 +41,7 @@ func (tx *transaction) RevokeLesson(request optimization.LessonRevocation) error
 	if err != nil {
 		return err
 	}
-	publication := optimization.Publication{ExperimentID: previous.ExperimentID, LessonID: lesson.ID, Operation: optimization.PublicationRevoke, Payload: lesson, PayloadDigest: digest, LocalRevision: lesson.Revision, RemoteAggregateID: previous.RemoteAggregateID, RemoteVersion: previous.RemoteVersion}
+	publication := optimization.Publication{CreatedAt: tx.now, ExperimentID: previous.ExperimentID, LessonID: lesson.ID, Operation: optimization.PublicationRevoke, Payload: lesson, PayloadDigest: digest, LocalRevision: lesson.Revision, RemoteAggregateID: previous.RemoteAggregateID, RemoteVersion: previous.RemoteVersion}
 	detachedLesson, err := clone(lesson)
 	if err != nil {
 		return err

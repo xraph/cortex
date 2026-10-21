@@ -21,7 +21,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox checks pass; remaining readers and terminal reconciliation |
+| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
 | 4-5: durable persistence and recovery | Pending | Finish store contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -277,7 +277,8 @@ Those checks and the full optimizer race suites pass against both the current
 checkout and published Cortex v1.8.0 (memory: 87.270s and 78.615s). Both builds
 also pass. The coordinated `make f` and all-ten-module `make l` passed after the
 final edits. Earlier decision and activation commits passed full CI in
-`39516036204` at `e51dea8`; this lesson slice still needs its own CI run.
+`39516036204` at `e51dea8`. The lesson slice then passed full CI
+`39517232117` at `6b7e1f6`.
 
 This is the memory-store contract. Durable backends, publisher claims and
 acknowledgments, bounded remote retry, Fabriq schema provisioning and actual
@@ -285,3 +286,39 @@ remote revocation are still open. The worker must stop external work and
 reconcile unresolved attempts after local invalidation; storage tests do not
 prove that operational behavior. Current actor grants and retained artifacts
 remain service checks.
+
+
+## Scoped resource readers
+
+The memory backend now pages versions, candidates, trials, evaluation jobs,
+decisions, reservations, validation allocations, lessons, publications and
+activation history. Experiment lists use the same pagination code. Results sort
+by their stored creation or recording time, then identity; event lists retain
+their monotonic sequence cursor.
+
+Cursors bind exact scope, collection, parent and filters. The scope and filter
+bindings use digests so a valid long scope cannot create an unusable cursor.
+The 8 KiB cursor bound also allows JSON escaping of a valid 512-byte external ID.
+Parent resources must exist in the current scope. Page size defaults to 100 and
+is capped at 500. Lessons can be filtered by current eligibility, and publication
+lists can exclude acknowledged, superseded or terminally failed records. Listing
+a pending record does not claim delivery authority.
+
+The store now supplies creation timestamps for new versions, allocations and
+publication records. Captured evaluation job/report keys share the accounting
+key validator: at most 512 bytes, valid UTF-8, no surrounding whitespace or
+control characters. This keeps exact external identities usable in bounded
+cursors without silently truncating them.
+
+Tests reproduced the old experiment ID ordering, long-scope cursor failure,
+unknown-state empty results and unbounded evaluation IDs before the fixes.
+Populated reader checks compare exact identity sets across pages, preserve
+original trial attempts, and refuse cursors reused across scopes, parents,
+collections or filters. The full race suites and builds passed against the current checkout and
+published Cortex v1.8.0 (memory: 75.130s and 72.278s). Shared lint passed all ten
+modules after coordinated formatting. Final review then reproduced and fixed
+the escaped-ID cursor bound. After the final coordinated formatter, focused
+reader race tests and builds passed in both dependency configurations, and a
+new shared `make l` passed all ten modules. The verbose reader runs include
+all seven pagination and identity cases (11.554s and 11.261s). Durable backends
+and recovery remain open.

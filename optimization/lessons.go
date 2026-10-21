@@ -93,6 +93,7 @@ const (
 
 // Publication is the durable outbox entry committed with its local decision.
 type Publication struct {
+	CreatedAt         time.Time            `json:"created_at"`
 	ExperimentID      id.ID                `json:"experiment_id"`
 	SupersededAt      time.Time            `json:"superseded_at,omitempty"`
 	LessonID          id.ID                `json:"lesson_id"`

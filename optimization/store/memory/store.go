@@ -339,6 +339,7 @@ func (tx *transaction) validateVersions(agentID id.AgentID, input []optimization
 			versions[version.ID.String()] = existing
 			continue
 		}
+		sealed.CreatedAt = tx.now
 		versions[version.ID.String()] = sealed
 	}
 	return versions, nil

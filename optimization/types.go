@@ -198,6 +198,7 @@ type Activation struct {
 
 // ValidationAllocation permanently tracks holdout exposure per scope and agent.
 type ValidationAllocation struct {
+	CreatedAt    time.Time       `json:"created_at"`
 	ID           id.ID           `json:"id"`
 	Scope        cortex.Scope    `json:"scope"`
 	AgentID      id.AgentID      `json:"agent_id"`

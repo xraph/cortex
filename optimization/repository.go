@@ -26,6 +26,16 @@ type Repository interface {
 	GetLesson(context.Context, id.ID) (Lesson, error)
 	ResolveLesson(context.Context, LessonRef) (Lesson, error)
 	GetPublication(context.Context, id.ID, int64) (Publication, error)
+	ListVersions(context.Context, VersionQuery) (Page[HarnessVersion], error)
+	ListCandidates(context.Context, id.ID, PageQuery) (Page[Candidate], error)
+	ListTrials(context.Context, id.ID, TrialQuery) (Page[Trial], error)
+	ListEvaluations(context.Context, id.ID, PageQuery) (Page[Evaluation], error)
+	ListDecisions(context.Context, id.ID, PageQuery) (Page[Decision], error)
+	ListReservations(context.Context, id.ID, PageQuery) (Page[Reservation], error)
+	ListValidationAllocations(context.Context, id.ID, PageQuery) (Page[ValidationAllocation], error)
+	ListLessons(context.Context, LessonQuery) (Page[Lesson], error)
+	ListPublications(context.Context, PublicationQuery) (Page[Publication], error)
+	ListActivationHistory(context.Context, id.AgentID, string, PageQuery) (Page[Activation], error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error

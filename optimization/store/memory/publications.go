@@ -137,7 +137,7 @@ func (tx *transaction) PutPublication(request optimization.PublicationRequest) e
 	if err != nil {
 		return err
 	}
-	publication := optimization.Publication{ExperimentID: experiment.ID, LessonID: lesson.ID, Operation: optimization.PublicationPublish, Payload: lesson, PayloadDigest: digest, LocalRevision: 1, RemoteAggregateID: request.RemoteAggregateID}
+	publication := optimization.Publication{CreatedAt: tx.now, ExperimentID: experiment.ID, LessonID: lesson.ID, Operation: optimization.PublicationPublish, Payload: lesson, PayloadDigest: digest, LocalRevision: 1, RemoteAggregateID: request.RemoteAggregateID}
 	detachedLesson, err := clone(lesson)
 	if err != nil {
 		return err

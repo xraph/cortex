@@ -2,84 +2,32 @@ package memory
 
 import (
 	"context"
-	"encoding/base64"
-	"slices"
 	"strconv"
+	"time"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
-	"github.com/xraph/cortex/optimization/internal/canonical"
 )
 
-type listCursor struct {
-	Scope string             `json:"scope"`
-	Agent string             `json:"agent"`
-	State optimization.State `json:"state"`
-	After string             `json:"after"`
-}
-
-// ListExperiments pages exact-scope identities in stable ID order.
+// ListExperiments pages exact-scope records by creation time and ID.
 func (s *Store) ListExperiments(ctx context.Context, query optimization.ListQuery) (optimization.Page[optimization.Experiment], error) {
-	page := optimization.Page[optimization.Experiment]{Items: []optimization.Experiment{}}
-	key, err := contextScope(ctx)
-	if err != nil {
-		return page, err
+	switch query.State {
+	case "", optimization.StateDraft, optimization.StateQueued, optimization.StateRunning, optimization.StatePaused, optimization.StateReviewRequired, optimization.StateCompleted, optimization.StateCancelled, optimization.StateFailed, optimization.StateBudgetExhausted:
+	default:
+		return optimization.Page[optimization.Experiment]{}, optimization.ErrInvalidSpec
 	}
-	limit, err := pageLimit(query.Limit)
-	if err != nil {
-		return page, err
-	}
-	cursor := listCursor{Scope: key, Agent: query.AgentID.String(), State: query.State}
-	if query.Cursor != "" {
-		if len(query.Cursor) > 4096 {
-			return page, optimization.ErrInvalidSpec
+	if !query.AgentID.IsNil() {
+		if _, err := id.ParseWithPrefix(query.AgentID.String(), id.PrefixAgent); err != nil {
+			return optimization.Page[optimization.Experiment]{}, optimization.ErrInvalidSpec
 		}
-		data, decodeErr := base64.RawURLEncoding.DecodeString(query.Cursor)
-		if decodeErr != nil {
-			return page, optimization.ErrInvalidSpec
-		}
-		var previous listCursor
-		if decodeErr = canonical.Decode(data, &previous); decodeErr != nil {
-			return page, optimization.ErrInvalidSpec
-		}
-		if previous.Scope != key || previous.Agent != cursor.Agent || previous.State != query.State {
-			return page, optimization.ErrInvalidSpec
-		}
-		cursor.After = previous.After
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return page, optimization.ErrUnavailable
-	}
-	data := s.scopes[key]
-	if data == nil {
-		return page, nil
-	}
-	keys := make([]string, 0, len(data.Experiments))
-	for entityID, experiment := range data.Experiments {
-		if entityID <= cursor.After || (!query.AgentID.IsNil() && experiment.Spec.AgentID != query.AgentID) || (query.State != "" && experiment.State != query.State) {
-			continue
-		}
-		keys = append(keys, entityID)
-	}
-	slices.Sort(keys)
-	more := len(keys) > limit
-	if more {
-		keys = keys[:limit]
-	}
-	for _, entityID := range keys {
-		page.Items = append(page.Items, data.Experiments[entityID])
-	}
-	if more {
-		cursor.After = keys[len(keys)-1]
-		encoded, encodeErr := canonical.Marshal(cursor)
-		if encodeErr != nil {
-			return page, encodeErr
-		}
-		page.NextCursor = base64.RawURLEncoding.EncodeToString(encoded)
-	}
-	return clone(page)
+	page := optimization.PageQuery{Limit: query.Limit, Cursor: query.Cursor}
+	query.Limit, query.Cursor = 0, ""
+	return readPage(ctx, s, "experiments", id.Nil, query, page, func(data *scopeData) ([]pageRow[optimization.Experiment], error) {
+		return selectRows(data.Experiments, func(value optimization.Experiment) bool {
+			return (query.AgentID.IsNil() || value.Spec.AgentID == query.AgentID) && (query.State == "" || value.State == query.State)
+		}, func(value optimization.Experiment) time.Time { return value.CreatedAt }), nil
+	})
 }
 
 // ListEvents returns monotonic audit entries after the supplied sequence.

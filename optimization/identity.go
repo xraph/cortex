@@ -9,6 +9,12 @@ import (
 	"github.com/xraph/cortex"
 )
 
+// ValidOpaqueKey bounds external job, report and accounting keys used in cursors.
+// It preserves spelling while rejecting whitespace ambiguity and control bytes.
+func ValidOpaqueKey(value string) bool {
+	return value != "" && len(value) <= 512 && strings.TrimSpace(value) == value && utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
+}
+
 // ScopeKey returns an unambiguous exact key supported by every Cortex backend.
 func ScopeKey(scope cortex.Scope) (string, error) {
 	if len(scope.Levels) < 1 || len(scope.Levels) > 3 {

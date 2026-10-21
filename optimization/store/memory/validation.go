@@ -95,7 +95,7 @@ func (tx *transaction) AllocateValidation(request optimization.ValidationAllocat
 			}
 		}
 	}
-	allocation := optimization.ValidationAllocation{ID: request.ID, Scope: owner.Spec.Scope, AgentID: owner.Spec.AgentID, ExperimentID: owner.ID, PairedRoster: request.PairedRoster, Revision: 1, CaseDigests: []string{}, InputDigests: []string{}, DatasetItems: []optimization.ContentRef{}}
+	allocation := optimization.ValidationAllocation{CreatedAt: tx.now, ID: request.ID, Scope: owner.Spec.Scope, AgentID: owner.Spec.AgentID, ExperimentID: owner.ID, PairedRoster: request.PairedRoster, Revision: 1, CaseDigests: []string{}, InputDigests: []string{}, DatasetItems: []optimization.ContentRef{}}
 	for _, task := range tasks {
 		allocation.CaseDigests = append(allocation.CaseDigests, task.Digest)
 		allocation.InputDigests = append(allocation.InputDigests, task.InputDigest)
