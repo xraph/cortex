@@ -21,6 +21,8 @@ type Repository interface {
 // SaveEvidence is immutable and idempotent only for identical artifacts.
 // LoadEvidence returns ErrDeleted for tombstones. TombstoneEvidence atomically
 // removes bytes and retains the original reference, actor, time and reason.
+// For an absent identity it records the tombstone before any bytes arrive, so
+// delayed uploads cannot resurrect content. All saves must honor that fence.
 // Every operation must match the exact context scope, including reads.
 type Storage interface {
 	SaveEvidence(context.Context, Artifact) error

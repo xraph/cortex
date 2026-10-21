@@ -107,46 +107,67 @@ func (s *Repository) LoadEvidence(ctx context.Context, ref evidence.Ref) (eviden
 	return artifact, nil
 }
 
-// TombstoneEvidence atomically removes bytes and preserves the first revocation.
-// A retry with a different actor or reason conflicts instead of rewriting audit.
+// TombstoneEvidence atomically removes bytes or reserves an absent identity.
+// The durable tombstone rejects delayed uploads and preserves the first actor
+// and reason. A retry cannot rewrite that audit record.
 func (s *Repository) TombstoneEvidence(ctx context.Context, ref evidence.Ref, reason string) error {
 	row, err := s.evidenceRecord(ctx, ref)
-	if err != nil {
+	if err != nil && !errors.Is(err, evidence.ErrNotFound) {
 		return err
 	}
 	actor := evidence.DeletionActor(ctx)
 	if !utf8.ValidString(actor) || !utf8.ValidString(reason) || strings.TrimSpace(actor) == "" || strings.TrimSpace(reason) == "" || len(actor) > 4096 || len(reason) > 4096 {
 		return evidence.ErrInvalid
 	}
-	if row.Deleted {
-		previous, readErr := s.GetEvidenceTombstone(ctx, ref)
-		if readErr != nil {
-			return readErr
-		}
-		if previous.Actor == actor && previous.Reason == reason {
-			return nil
-		}
-		return evidence.ErrConflict
-	}
 	tombstone := evidence.Tombstone{Ref: ref, Actor: actor, Reason: reason, DeletedAt: time.Now().UTC()}
+	if errors.Is(err, evidence.ErrNotFound) {
+		digest, digestErr := ref.BindingDigest()
+		if digestErr != nil {
+			return digestErr
+		}
+		reserved, recordErr := record(KindEvidence, ref.ID.String(), digest, "", ref.Scope, tombstone)
+		if recordErr != nil {
+			return recordErr
+		}
+		if len(reserved.Body) > 2*MaxEvidenceBytes {
+			return evidence.ErrTooLarge
+		}
+		reserved.Deleted = true
+		insertErr := s.driver.Insert(ctx, reserved)
+		if !errors.Is(insertErr, ErrExists) {
+			return insertErr
+		}
+		// A concurrent upload or deletion won the identity. Re-read its exact
+		// binding and either remove those bytes or verify its immutable tombstone.
+		row, err = s.evidenceRecord(ctx, ref)
+		if err != nil {
+			return err
+		}
+	}
+	if row.Deleted {
+		return s.matchEvidenceTombstone(ctx, ref, actor, reason)
+	}
 	data, err := json.Marshal(tombstone)
 	if err != nil {
 		return err
 	}
 	previousBody := row.Body
-	row.Body = string(data)
-	row.Deleted = true
+	row.Body, row.Deleted = string(data), true
 	if err = s.driver.ReplaceEvidence(ctx, row, previousBody); errors.Is(err, ErrExists) {
-		previous, readErr := s.GetEvidenceTombstone(ctx, ref)
-		if readErr != nil {
-			return readErr
-		}
-		if previous.Actor == actor && previous.Reason == reason {
-			return nil
-		}
-		return evidence.ErrConflict
+		return s.matchEvidenceTombstone(ctx, ref, actor, reason)
 	}
 	return err
+}
+
+func (s *Repository) matchEvidenceTombstone(ctx context.Context, ref evidence.Ref, actor, reason string) error {
+	previous, err := s.GetEvidenceTombstone(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if previous.Actor != actor || previous.Reason != reason {
+		return evidence.ErrConflict
+	}
+	return nil
 }
 
 // GetEvidenceTombstone reads audit metadata under exact scope. The caller must

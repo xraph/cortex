@@ -19,6 +19,7 @@ import (
 // It must honor context cancellation and must not require the original caller
 // to remain connected. A non-nil error stops the job, including provider outages.
 type RecoveryConfig struct {
+	Captures   *CaptureRecovery
 	Store      *workerstore.Store
 	Reaper     *Reaper
 	Revalidate func(context.Context, sandbox.Job) error
@@ -29,6 +30,7 @@ type RecoveryConfig struct {
 // RecoveryReport counts observations in one scan, not unique lifetime events.
 // Unresolved counts entries whose checks or cleanup returned an error.
 type RecoveryReport struct {
+	Captures                                CaptureRecoveryReport
 	Examined, Cancelled, Reaped, Unresolved int
 }
 
@@ -46,6 +48,7 @@ type RecoveryPage struct {
 // any recovery error, and call Sweep continuously during operation. Sweeps are a
 // recovery fallback, not a substitute for worker and external deadline limits.
 type RecoveryScanner struct {
+	captures   *CaptureRecovery
 	store      *workerstore.Store
 	reaper     *Reaper
 	revalidate func(context.Context, sandbox.Job) error
@@ -55,13 +58,16 @@ type RecoveryScanner struct {
 
 // NewRecoveryScanner requires explicit grant revalidation and a bounded page.
 func NewRecoveryScanner(cfg RecoveryConfig) (*RecoveryScanner, error) {
+	if cfg.Captures != nil && cfg.Captures.store != cfg.Store {
+		return nil, fmt.Errorf("cortex: capture recovery uses another journal")
+	}
 	if cfg.Store == nil || cfg.Reaper == nil || cfg.Revalidate == nil || cfg.PageSize < 1 || cfg.PageSize > 256 {
 		return nil, fmt.Errorf("cortex: invalid sandbox recovery scanner")
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &RecoveryScanner{store: cfg.Store, reaper: cfg.Reaper, revalidate: cfg.Revalidate, now: cfg.Now, pageSize: cfg.PageSize}, nil
+	return &RecoveryScanner{captures: cfg.Captures, store: cfg.Store, reaper: cfg.Reaper, revalidate: cfg.Revalidate, now: cfg.Now, pageSize: cfg.PageSize}, nil
 }
 
 // Recover reconciles every outstanding acceptance before the daemon admits work.
@@ -83,10 +89,22 @@ func (s *RecoveryScanner) Recover(ctx context.Context) (RecoveryReport, error) {
 			first = err
 		}
 		if page.Done || ctx.Err() != nil || page.Next == cursor {
-			return report, errors.Join(first, ctx.Err())
+			break
 		}
 		cursor = page.Next
 	}
+	if s.captures != nil && ctx.Err() == nil {
+		captures, captureErr := s.captures.Recover(ctx)
+		report.Captures = captures
+		first = errors.Join(first, captureErr)
+	} else if s.captures == nil && ctx.Err() == nil {
+		pending, pendingErr := s.store.CaptureJobs(ctx, "", 1)
+		first = errors.Join(first, pendingErr)
+		if len(pending) != 0 {
+			first = errors.Join(first, fmt.Errorf("cortex: pending captures require recovery services"))
+		}
+	}
+	return report, errors.Join(first, ctx.Err())
 }
 
 // Sweep checks one index page using fresh records. It retries reaping, cancels

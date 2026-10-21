@@ -43,6 +43,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("PlanningConcurrentRevision", func(t *testing.T) { testPlanningConcurrentRevision(t, newStore) })
 	t.Run("Verification", func(t *testing.T) { testVerification(t, newStore) })
 	t.Run("EvidenceConcurrentIdentity", func(t *testing.T) { testEvidenceConcurrentIdentity(t, newStore) })
+	t.Run("EvidenceDeletionFence", func(t *testing.T) { testEvidenceDeletionFence(t, newStore) })
 	t.Run("PreparationSnapshot", func(t *testing.T) { testPreparationSnapshot(t, newStore) })
 	t.Run("ScopeBoundary", func(t *testing.T) { testScopeBoundary(t, newStore) })
 	t.Run("PreparedRoundTrip", func(t *testing.T) { testPreparedRoundTrip(t, newStore) })

@@ -48,6 +48,7 @@ type Controller struct {
 // reaper. The interval is between 10ms and one second; slow cleanup can still
 // delay a scan, so independent worker and service deadline limits are required.
 // An optional capture policy enables artifact persistence; omission denies it.
+// Enabling capture requires recovery bound to the same journal.
 func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.Duration, policies ...CapturePolicy) (*Controller, error) {
 	if len(policies) > 1 || (len(policies) == 1 && policies[0] == nil) {
 		return nil, fmt.Errorf("cortex: invalid sandbox capture policy")
@@ -55,6 +56,9 @@ func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.D
 	var policy CapturePolicy
 	if len(policies) == 1 {
 		policy = policies[0]
+	}
+	if policy != nil && (launcher == nil || scanner == nil || scanner.captures == nil || scanner.captures.store != launcher.store) {
+		return nil, fmt.Errorf("cortex: capture policy requires matching recovery")
 	}
 	if launcher == nil || scanner == nil || launcher.store == nil || launcher.reaper == nil || launcher.store != scanner.store || launcher.reaper != scanner.reaper || scanner.revalidate == nil || scanner.now == nil || scanner.pageSize < 1 || scanner.pageSize > 256 || interval < 10*time.Millisecond || interval > time.Second {
 		return nil, fmt.Errorf("cortex: invalid sandbox controller")
@@ -122,7 +126,7 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 	}
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
-	cursor := ""
+	cursor, captureCursor := "", ""
 	for {
 		select {
 		case <-c.lifetime.Done():
@@ -135,6 +139,16 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 			cursor = page.Next
 			if page.Done {
 				cursor = ""
+			}
+			if c.scanner.captures != nil {
+				capturePage, captureErr := c.scanner.captures.Sweep(c.lifetime, captureCursor)
+				if captureErr != nil {
+					return captureErr
+				}
+				captureCursor = capturePage.Next
+				if capturePage.Done {
+					captureCursor = ""
+				}
 			}
 		}
 	}

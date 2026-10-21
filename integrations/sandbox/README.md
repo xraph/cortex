@@ -626,7 +626,7 @@ authenticated capture journal through its private daemon connection.
 Zero disables capture. A job requesting capture is refused before execution if
 these services are unavailable. Authorized release remains a separate host
 operation. Source adapters, executable worker/daemon installation, broker runtime
-activation, retained-file and artifact recovery, and live qualification remain
+activation, retained-file recovery, production repository integration and live qualification remain
 open. The Linux staging fixture uses real image/input verification, bundle writes
 and artifact capture with an explicit test executor and workspace. It does not
 attest to runtime isolation.
@@ -695,11 +695,48 @@ explicit upload backpressure consumes the capture attempt. An uncertain response
 requires daemon inspection; it cannot trigger another upload. Failed capture still
 permits a failed job report. Workers never open the daemon's database.
 
-Repository adapters and the recovery worker remain required before deployment.
+Production repository adapters remain required before deployment.
 Tests connect the private transport to real journal persistence with an explicit
 worker-identity fixture. Linux fixtures exercise daemon socket authentication and
 the session exchange with a service-membership seam. Artifact capture
 does not authorize publication, deployment or an external destination write.
+
+## Artifact recovery
+
+Configure `service.CaptureRecovery` with the worker journal, evidence repository,
+tombstone reader and an independent cleanup actor and policy. Pass it through
+`RecoveryConfig.Captures`. Enabling a controller capture policy requires recovery
+bound to the same journal. Existing pending captures also keep startup closed
+when recovery services are missing.
+
+The controller recovers execution first, then captures, before admitting work.
+Periodic scans keep separate bounded cursors for execution and artifact recovery.
+Each capture page visits at most 256 jobs and each job has a 30-second cleanup
+budget. A failed artifact does not prevent checking later artifacts or pages.
+An unresolved scan stops admission and remains available for the next recovery.
+
+Recovery leaves nonterminal jobs alone. It retains exact artifacts referenced by
+the terminal result until their retention deadline. Other captures are abandoned,
+including uploads whose confirmation or result was lost. Recovery never turns
+those bytes into a successful result. Both abandoned and expired captures require
+current deletion and audit authority, followed by an exact durable tombstone,
+before the journal records disposal. A denied read or momentary absence is not
+proof of cleanup.
+
+Deletion must reserve the identity even when content has not arrived yet. The
+shared SQLite, PostgreSQL and Mongo evidence adapter now creates such tombstones
+for absent identities. Concurrent or delayed saves cannot resurrect those bytes.
+An identical deletion preserves its original actor, reason and time; a different
+binding, actor or reason conflicts. External repositories must provide the same
+barrier, including for uploads already in flight. A backend that only reports
+that an object is missing cannot satisfy this contract.
+
+After a lost deletion acknowledgement, the next scan reads the retained tombstone
+instead of issuing another deletion. Recovery rechecks authority after reading
+that proof. The repository keeps its original revocation audit, while the worker
+journal retains the capture binding and disposal reason. Production repository
+permissions, installed daemon lifecycle and live runtime qualification still need
+end-to-end verification.
 
 ## Linux probe suite
 

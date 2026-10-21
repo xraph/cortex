@@ -695,3 +695,45 @@ Linux private-control/capture fixtures passed ten repetitions; the complete Linu
 worker fixture passed twenty. No required fixture was skipped. These checks do
 not qualify an installed systemd/runsc worker or an external evidence repository.
 Independent review of the full plan remains outstanding.
+
+
+## S2.4 artifact recovery and delayed-upload fences
+
+Artifact recovery now follows execution recovery at daemon startup and maintains
+its own bounded cursor during periodic scans. Live or finalizing jobs are left
+alone. Exact artifacts retained by terminal results survive until their retention
+deadline. Abandoned and expired captures require independent deletion/audit policy
+and exact durable repository tombstone proof before journal disposal. Recovery
+never promotes an uncertain upload into a successful result.
+
+The controller refuses capture configuration without matching recovery services.
+Startup also refuses existing captures when those services are unavailable. A red
+regression demonstrated admission with unresolved captures before this check.
+Each job gets a 30-second cleanup budget. Failed artifacts do not starve later
+artifacts or pages; unresolved scans close admission and retain recovery state.
+
+The shared evidence adapter now tombstones absent identities. This closes the
+race where an upload arrives after recovery observed no object. SQLite,
+PostgreSQL and MongoDB preserve the first full binding, actor, reason and deletion
+time and reject delayed saves. No schema migration is needed: existing tombstone
+rows already fence writes. Oversized reference metadata cannot reserve an identity.
+
+Tests began with failing absent-upload, concurrent-upload, metadata-bound and
+missing-recovery cases. Scanner fixtures cover permission changes, malformed or
+missing proof, lost deletion acknowledgements, reported retention, execution
+cleanup, cancellation, bounded pagination and continuing past failures. A lost
+acknowledgement is reconciled through tombstone readback without repeating delete.
+
+CI `39560612122` at `bee9290` passed every job for authenticated worker capture.
+The recovery scanner uses injected repository and audit services. Production
+source/repository adapters, executable installation, independent service discovery,
+retained-file cleanup, broker runtime wiring and live qualification remain open.
+S2.4 and G2 remain incomplete; Linux worker selection remains deferred.
+
+Final checks passed: `make f`, `make l` across all ten modules, separate tagged
+Linux lint, the complete sandbox race suite, root evidence tests, root/sandbox
+builds and Linux arm64/amd64 service compilation. Evidence and verification
+conformance passed with race detection on SQLite and real PostgreSQL/MongoDB
+containers. MongoDB used `mongo:7`; no backend test was skipped. The Linux
+recovery/controller/private-socket fixtures passed ten repetitions. Independent
+full-plan review and installed external-provider qualification remain outstanding.
