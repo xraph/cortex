@@ -588,3 +588,37 @@ races passed, and `make l` reported zero issues across all ten modules.
 The database content bridge, provider reconciliation, retention worker, bounded
 list reads and throughput qualification remain open. Task 4 and all phases remain
 unfinished. CI `39530942630` passed for artifact verifier commit `bd5df2b`.
+
+## Artifact deletion recovery and retained reads
+
+The new `optimization/artifacts` package coordinates the metadata transaction with
+an injected content provider. Deletion checks host authority and resolves the
+original actor before invalidating evidence. It then makes one provider call and
+requires a matching durable tombstone receipt before recording completion. The
+provider contract fences delayed uploads, including when the object is absent.
+
+Unknown outcomes and failed completion writes stay pending. Recovery uses the
+saved request and current grants for its original actor. Tests cover a new service
+instance and a reopened SQLite database, mismatched receipts, revoked grants,
+cancellation and provider success followed by a metadata failure. A regression
+caught an identity resolver dropping the caller's deadline; resolution now
+preserves both deadline and cancellation.
+
+`RetainedReader` checks metadata before and after the shared content verifier.
+A deletion committed during the fetch prevents bytes from being returned. Provider
+content cannot extend the registered retention dates. Missing, expired, denied or
+invalidated evidence remains unavailable. The final read is an observation point;
+decision and activation transactions still enforce their own eligibility checks.
+
+The concrete database content adapter and durable scan/scheduling worker remain
+open. Provider receipt fixtures verify the coordination contract, not a live
+object-store integration. Root evidence APIs remain unreleased, so published
+Cortex v1.8.0 compatibility is preserved through the injected provider.
+
+Current and published-version root-package and artifact-package races passed,
+followed by builds of the full optimization module. Ten artifact race repetitions
+passed in 11.829s, including real SQLite close/reopen recovery. Shared formatting
+left the tested source unchanged.
+
+Final shared lint passed all ten modules. Post-format root-package and artifact
+races and the optimization build passed again.
