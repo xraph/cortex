@@ -27,6 +27,18 @@ func NewBackend(backend Backend) *Store {
 	return &Store{backend: backend, now: time.Now}
 }
 
+// lockOperation keeps migration and close exclusive. Database operations use
+// detached snapshots and database fences, so they can share this lifecycle lock.
+// Memory operations still exclusively protect their process-local scope map.
+func (s *Store) lockOperation() func() {
+	if s.backend != nil {
+		s.mu.RLock()
+		return s.mu.RUnlock
+	}
+	s.mu.Lock()
+	return s.mu.Unlock
+}
+
 func (s *Store) loadScope(ctx context.Context, scope string) (*scopeData, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

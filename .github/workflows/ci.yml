@@ -99,7 +99,9 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -race -count=1 ./...
+        env:
+          TEST_TIMEOUT: ${{ matrix.module == 'optimization' && '30m' || '10m' }}
+        run: go test -race -count=1 -timeout="$TEST_TIMEOUT" ./...
 
       - name: Compile deferred Linux qualification probes
         if: matrix.module == 'integrations/sandbox'

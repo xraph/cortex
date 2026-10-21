@@ -44,8 +44,8 @@ func (s *Store) ListEvents(ctx context.Context, experimentID id.ID, after int64,
 	if err != nil {
 		return page, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return page, optimization.ErrUnavailable
 	}

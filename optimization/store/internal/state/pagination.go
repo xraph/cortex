@@ -82,8 +82,8 @@ func readPage[T any](ctx context.Context, s *Store, collection string, parent id
 		}
 		cursor = previous
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return page, optimization.ErrUnavailable
 	}

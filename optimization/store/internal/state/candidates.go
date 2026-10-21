@@ -15,8 +15,8 @@ func (s *Store) GetCandidate(ctx context.Context, candidateID id.ID) (optimizati
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

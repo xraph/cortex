@@ -14,8 +14,8 @@ func (s *Store) GetDecision(ctx context.Context, decisionID id.ID) (optimization
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

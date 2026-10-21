@@ -19,7 +19,7 @@ import (
 // Store applies storage invariants and detaches caller-owned values at each boundary.
 type Store struct {
 	backend Backend
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	scopes  map[string]*scopeData
 	closed  bool
 	now     func() time.Time
@@ -99,8 +99,8 @@ func (s *Store) Transact(ctx context.Context, fn func(store.Tx) error) error {
 	if fn == nil {
 		return optimization.ErrInvalidSpec
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return optimization.ErrUnavailable
 	}
@@ -124,8 +124,8 @@ func (s *Store) GetExperiment(ctx context.Context, entityID id.ID) (optimization
 	if err != nil {
 		return optimization.Experiment{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return optimization.Experiment{}, optimization.ErrUnavailable
 	}
@@ -147,8 +147,8 @@ func (s *Store) GetVersion(ctx context.Context, entityID id.ID) (optimization.Ha
 	if err != nil {
 		return optimization.HarnessVersion{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return optimization.HarnessVersion{}, optimization.ErrUnavailable
 	}
@@ -185,8 +185,8 @@ func (s *Store) Ping(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return optimization.ErrUnavailable
 	}

@@ -18,8 +18,8 @@ func (s *Store) GetReservation(ctx context.Context, experimentID id.ID, callKey 
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

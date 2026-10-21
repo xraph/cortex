@@ -13,8 +13,8 @@ func (s *Store) GetEvaluation(ctx context.Context, evaluationID string) (optimiz
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

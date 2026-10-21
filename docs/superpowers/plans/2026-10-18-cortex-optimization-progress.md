@@ -22,7 +22,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4: durable persistence | SQLite, PostgreSQL and Mongo foundations verified | Artifact storage, bounded database queries and finer concurrency |
+| 4: durable persistence | SQLite, PostgreSQL and Mongo foundations verified; independent database operations can overlap | Artifact storage, bounded database queries and throughput qualification |
 | 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -447,3 +447,37 @@ all ten modules. PostgreSQL commit `ec02ab4` passed CI in `39523884180`.
 The shared exact-scope index helper now serves all three durable adapters.
 Complete-scope loading and per-instance serialization remain, along with artifact
 storage and retention checks. Task 4 and every implementation phase remain open.
+
+## Concurrent durable store operations
+
+Durable store operations now share a lifecycle read lock. Each operation already
+uses its own detached state snapshot and database transaction fence, so a held
+callback no longer blocks an independent scope through the same store instance.
+Memory retains its exclusive mutex. Migration and close still acquire the
+exclusive lifecycle lock and wait for active operations to finish.
+
+The admission tests reproduced blocked reads and writes before the change.
+Real PostgreSQL and Mongo tests also timed out with a held transaction in another
+scope. Both now pass under the race detector, in 3.360s and 3.876s respectively.
+A lifecycle test verifies that close drains an active operation, closes the
+backend once, and refuses later reads or callbacks.
+
+The full race run passed memory, PostgreSQL and SQLite in 66.988s, 252.443s and
+260.049s. Mongo exposed an outdated reservation test assumption: its database
+fence can reject the loser before the callback reaches the budget check. The test
+now accepts that conflict while requiring exactly one persisted 60-token debit
+and refusing a new 41-token reservation against the 100-token budget. Every other
+test in that full run passed. No production behavior changed after that run.
+
+After the final formatter, focused races passed against current and published
+Cortex v1.8.0. They cover operation admission, close, independent scopes, database
+conflicts, cancellation, subprocess recovery, the strengthened reservation race,
+validation allocation and scope isolation. Both builds passed, and the final
+`make l` reported zero issues across all ten modules.
+
+CI `39526179993` for Mongo commit `a0ae9ac` reached Go's default ten-minute timeout
+while decoding the large-record fixture after conformance had consumed most of
+that time. Its PostgreSQL and SQLite tests passed, as did every other CI job.
+The optimization CI job now uses the same bounded thirty-minute timeout as local
+full race runs; other sub-modules keep ten minutes. A new CI run must verify that
+change. Artifact retention, bounded reads and throughput qualification remain open.

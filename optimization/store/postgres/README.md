@@ -12,9 +12,9 @@ callback runs once. The adapter does not replay it after a database failure.
 
 The scope lock is held until commit or rollback. Workers with separate
 connections can continue in other scopes while one scope is locked. A cancelled
-worker waiting for that lock never enters its callback. The shared store instance
-still serializes its own operations; finer concurrency and bounded loading are
-part of the remaining storage work.
+worker waiting for that lock never enters its callback. One store instance can
+serve independent scopes concurrently. Migration and close wait for active
+operations before accessing the connection exclusively.
 
 Migrations acquire a transaction-scoped advisory lock before creating schema
 objects. This matters during concurrent startup: PostgreSQL's `IF NOT EXISTS`

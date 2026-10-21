@@ -15,8 +15,8 @@ func (s *Store) GetTrial(ctx context.Context, trialID id.ID) (optimization.Trial
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

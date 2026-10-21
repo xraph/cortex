@@ -31,6 +31,14 @@ func TestLeaseTakeoverAcrossProcesses(t *testing.T) {
 	})
 }
 
+func TestSameInstanceIndependentScopes(t *testing.T) {
+	s := New(openDatabase(t, testDatabase(t)))
+	if err := s.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	storetest.IndependentScopes(t, s)
+}
+
 func TestConcurrentMigrations(t *testing.T) {
 	dsn := testDatabase(t)
 	const workers = 8

@@ -17,8 +17,8 @@ func (s *Store) GetLesson(ctx context.Context, lessonID id.ID) (optimization.Les
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
@@ -41,8 +41,8 @@ func (s *Store) ResolveLesson(ctx context.Context, ref optimization.LessonRef) (
 	if err != nil {
 		return empty, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
@@ -70,8 +70,8 @@ func (s *Store) GetPublication(ctx context.Context, lessonID id.ID, revision int
 	if revision < 1 {
 		return empty, optimization.ErrInvalidSpec
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock := s.lockOperation()
+	defer unlock()
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}

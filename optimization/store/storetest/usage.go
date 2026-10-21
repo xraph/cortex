@@ -37,7 +37,7 @@ func accounting(t *testing.T, factory Factory) {
 			switch {
 			case err == nil:
 				wins++
-			case errors.Is(err, optimization.ErrBudgetExceeded):
+			case errors.Is(err, optimization.ErrBudgetExceeded), errors.Is(err, optimization.ErrConflict):
 				refused++
 			default:
 				t.Fatal(err)
@@ -45,6 +45,29 @@ func accounting(t *testing.T, factory Factory) {
 		}
 		if wins != 1 || refused != 1 {
 			t.Fatalf("100-token budget admitted two 60-token calls: %d/%d", wins, refused)
+		}
+		// Optimistic backends can refuse the losing call at the database fence
+		// before its callback reaches the budget check. Inspect committed state
+		// and attempt a fresh reservation to prove the budget was still enforced.
+		stored := 0
+		for i := range 2 {
+			value, err := s.GetReservation(ctx, experiment, fmt.Sprintf("call-%d", i))
+			if errors.Is(err, optimization.ErrNotFound) {
+				continue
+			}
+			if err != nil || value.Request.MaxTokens != 60 || value.DebitedTokens != 60 || value.State != optimization.ReservationHeld {
+				t.Fatalf("committed reservation: %+v, %v", value, err)
+			}
+			stored++
+		}
+		if stored != 1 {
+			t.Fatalf("stored %d competing reservations, want one", stored)
+		}
+		if err := s.Transact(ctx, func(tx store.Tx) error {
+			_, reserveErr := tx.Reserve(reservation(experiment, lease, "after-race", 41))
+			return reserveErr
+		}); !errors.Is(err, optimization.ErrBudgetExceeded) {
+			t.Fatalf("reservation race lost its debit: %v", err)
 		}
 	})
 	t.Run("DuplicateReceiptSettlesOnce", func(t *testing.T) {

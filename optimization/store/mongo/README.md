@@ -33,7 +33,8 @@ standalone refusal, concurrent startup, independent connections, subprocess leas
 takeover, a 17 MiB record, corrupt or missing chunks, rollback after a database
 write failure and retries with record writes forbidden.
 
-The adapter currently loads the complete exact scope, and each store instance
-serializes its own operations. Selective loading, bounded database pagination,
-artifact retention and throughput qualification remain open. These storage checks
+One store instance can serve independent scopes concurrently. Migration and
+close wait for active operations before accessing the connection exclusively.
+The adapter currently loads the complete exact scope. Selective loading, bounded
+database pagination, artifact retention and throughput qualification remain open. These storage checks
 do not qualify the optimizer's runtime or production activation path.

@@ -30,6 +30,14 @@ func TestStandaloneRefusesTransactions(t *testing.T) {
 	}
 }
 
+func TestSameInstanceIndependentScopes(t *testing.T) {
+	s := New(openDatabase(t, testDatabase(t, true)))
+	if err := s.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	storetest.IndependentScopes(t, s)
+}
+
 func TestLargeRecordRoundTrip(t *testing.T) {
 	s := New(openDatabase(t, testDatabase(t, true)))
 	if err := s.Migrate(context.Background()); err != nil {
