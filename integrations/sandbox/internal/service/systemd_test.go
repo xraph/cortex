@@ -121,3 +121,19 @@ func TestSystemdOnlyAcceptsExplicitAbsenceAndPersistentMask(t *testing.T) {
 		}
 	}
 }
+
+func TestStartNeverReplacesAQueuedStopOrRetriesAnAmbiguousReply(t *testing.T) {
+	for _, body := range [][]any{{dbus.ObjectPath("/org/freedesktop/systemd1/job/9")}, {dbus.ObjectPath("/")}, nil} {
+		b := &fakeBus{reply: func(c busCall) ([]any, error) {
+			if c.method != managerInterface+"StartUnit" || !reflect.DeepEqual(c.args, []any{"one.service", "fail"}) {
+				t.Fatal("unsafe start request")
+			}
+			return body, nil
+		}}
+		err := (&systemManager{bus: b}).Start(t.Context(), "one.service")
+		good := len(body) == 1 && body[0] == dbus.ObjectPath("/org/freedesktop/systemd1/job/9")
+		if good != (err == nil) || len(b.calls) != 1 {
+			t.Fatal("incorrect start acknowledgement or retry")
+		}
+	}
+}

@@ -346,3 +346,15 @@ This packet does not consume a launch claim or execute the worker. Credential cr
 CI `39530942630` at `bd5df2b` passed all jobs and covers the preceding service-recovery implementation. Its earlier exact-commit run was superseded by that optimizer push.
 
 Final shared formatting, all ten modules of lint, the full sandbox race suite and build pass. Linux-targeted lint and service-test compilation for amd64/arm64 pass. The service/admission and host-file pin suites also pass in a restricted Linux container, including the real D-Bus wire-format regression. These fixture results do not qualify an installed template, live manager or runtime. This packet still needs its own CI result.
+
+## One-time service dispatch and protected credentials
+
+The internal launcher now joins receipt enrollment, current host authorization, deployment preflight, durable claim acquisition, private credential publication and one non-replacing `StartUnit` request. Concurrent submissions have one claim winner. Existing claims and terminal records cannot trigger another start, and unresolved reaping remains pending. Authorization callbacks receive detached jobs.
+
+Credential files bind the signed receipt, claim revision/token and approved profile digest. New private directories, exclusive file creation, synchronization and refusal to replace an existing identity protect publication. The reader checks private metadata, canonical encoding, signature, job/profile binding and time validity. Tokens never enter a guest mount or logging path through this implementation; retained files still need fenced lifecycle cleanup.
+
+The journal now exposes current claim verification, sharing token matching with completion. Cancellation, changed revisions, completion and expiry reject stale credentials. The launcher uses this check immediately before dispatch. A qualification-expiry regression failed before the dispatch context was shortened to the earlier signed boundary. Lost start acknowledgements and other failures after claiming enter independent bounded recovery instead of a second attempt.
+
+Fixture tests cover twelve concurrent submissions, a lost start response, revoked grants, late cancellation, expiry, changed deployment, failed recovery, callback mutation, credential substitution and unsafe directories. The worker CLI, authenticated daemon control, startup/periodic recovery, credential cleanup, full deadline supervision, broker activation and live systemd/runsc qualification remain open. S2.4 and G2 remain incomplete.
+
+Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build pass, along with post-format Linux-targeted lint and service-test compilation for amd64/arm64. Service and worker-journal fixtures pass inside a restricted Linux container. These checks do not establish installed systemd or runsc behavior. CI `39532436440` at `4fd8b5e` passed all jobs and covers the preceding pinned-profile packet. This launch packet still needs its own CI result.

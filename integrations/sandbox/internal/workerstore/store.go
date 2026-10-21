@@ -254,6 +254,37 @@ func (s *Store) Claim(ctx context.Context, key id.ID) (Claim, error) {
 	return Claim{Record: record, Token: token}, nil
 }
 
+// VerifyClaim checks current ownership without issuing another execution grant.
+// The daemon must authenticate the worker's service identity and recheck user
+// grants separately. Cancellation, reaping, completion and expiration invalidate
+// an old credential even when its signed receipt remains cryptographically valid.
+func (s *Store) VerifyClaim(ctx context.Context, key id.ID, token string, revision uint64) (Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, err := s.load(ctx, key)
+	if err != nil {
+		return Record{}, err
+	}
+	if record.Phase != Claimed || record.Revision != revision || !matchesToken(record, token) {
+		return Record{}, ErrConflict
+	}
+	if operationErr := s.admit(record.Receipt); operationErr != nil {
+		return Record{}, operationErr
+	}
+	if operationErr := ctx.Err(); operationErr != nil {
+		return Record{}, operationErr
+	}
+	return record, nil
+}
+
+func matchesToken(record Record, token string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	hash := evidence.Digest([]byte(token))
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(record.TokenHash)) == 1
+}
+
 // Complete persists a cleaned-up worker result. The caller must prove cleanup
 // before calling it. A reaping transition fences even a previously valid token.
 func (s *Store) Complete(ctx context.Context, key id.ID, token string, result sandbox.Result) (Record, error) {
@@ -263,8 +294,7 @@ func (s *Store) Complete(ctx context.Context, key id.ID, token string, result sa
 	if err != nil {
 		return Record{}, err
 	}
-	hash := evidence.Digest([]byte(token))
-	if len(token) != 64 || subtle.ConstantTimeCompare([]byte(hash), []byte(record.TokenHash)) != 1 {
+	if !matchesToken(record, token) {
 		return Record{}, ErrConflict
 	}
 	if operationErr := terminalResult(result, record.Receipt.Job); operationErr != nil {

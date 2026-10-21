@@ -229,12 +229,43 @@ aliases and changed resource settings fail admission. This matters because
 [systemd can combine unit files with overrides](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
 Missing required properties fail closed, including worker subgroup delegation.
 
-This is preflight validation, not execution permission. The controller still
-needs current authorization, a durable one-time claim, protected credential
-handoff and enforcement of the signed receipt's original deadline. The profile's
+This preflight feeds the internal launcher described below. The profile's
 wall-time value is only an outer service ceiling. Template installation, the
-worker executable/configuration contract, launch wiring and live manager tests
-remain pending. No template is installed or service started by these checks.
+worker executable/configuration contract, daemon/broker wiring and live manager
+tests remain pending. Preflight alone installs nothing and starts no service.
+
+## One-time launch handoff
+
+The internal launcher rechecks current host authorization, enrolls the exact
+signed receipt and checks the installed deployment before consuming a durable
+claim. Only that claim's winner can prepare credentials and issue `StartUnit`.
+Concurrent requests and retries acknowledge existing claimed or completed work
+without another start attempt. Reaping work remains pending.
+
+Credentials bind the receipt, claim revision, token and launch-profile digest.
+Publication creates a new private job directory, synchronizes a `0400` file and
+its parent directories, and refuses to overwrite an existing identity. The
+credential is capped at one MiB. Keep it outside guest mounts and logs. Failed
+or interrupted publication is retained for fenced cleanup; it is never used to
+reconstruct a lost claim or retry execution.
+
+Before dispatch, the launcher repeats deployment and grant checks, verifies the
+current journal token/revision and enforces both acceptance-deadline and runtime
+qualification expiry. The start request cannot replace a queued stop. A lost
+acknowledgement, cancellation or other failure after claiming triggers bounded
+recovery with an independent context. Failed recovery retains `reaping` state.
+
+The worker credential reader requires the exact service subgroup, private file
+metadata, canonical JSON, the broker signature and matching job/profile identity.
+A copied credential cannot establish current authority by itself: use the
+journal's `VerifyClaim` through authenticated daemon control and recheck grants
+before guest execution. Cancellation, completion, reaping and expiration
+invalidate that current-ownership check.
+
+These launch and handoff components are implemented and fixture-tested. The
+worker CLI, authenticated daemon control, startup/periodic recovery, cleanup of
+retained credential files, full deadline supervision and broker activation are
+still pending. No live systemd/runsc launch is qualified by these tests.
 
 ## Evidence input staging
 

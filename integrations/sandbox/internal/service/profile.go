@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -22,6 +23,18 @@ type LaunchProfile struct {
 	CPUMillis, MemoryBytes       uint64
 	Tasks                        uint64
 	WallTime                     time.Duration
+}
+
+// Digest binds the approved host paths, file pins and outer service ceilings.
+func (p LaunchProfile) Digest() (string, error) {
+	if err := p.validate(); err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return evidence.Digest(body), nil
 }
 
 func (p LaunchProfile) validate() error {

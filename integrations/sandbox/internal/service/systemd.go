@@ -80,12 +80,24 @@ func (m *systemManager) Stop(ctx context.Context, unit string) error {
 	if err != nil {
 		return err
 	}
+	return jobAcknowledgement(body)
+}
+
+func (m *systemManager) Start(ctx context.Context, unit string) error {
+	body, err := m.bus.Call(ctx, managerPath, managerInterface+"StartUnit", unit, "fail")
+	if err != nil {
+		return err
+	}
+	return jobAcknowledgement(body)
+}
+
+func jobAcknowledgement(body []any) error {
 	var job dbus.ObjectPath
 	if operationErr := dbus.Store(body, &job); operationErr != nil {
 		return operationErr
 	}
 	if !job.IsValid() || !strings.HasPrefix(string(job), "/org/freedesktop/systemd1/job/") {
-		return fmt.Errorf("cortex: invalid stop job acknowledgement")
+		return fmt.Errorf("cortex: invalid service job acknowledgement")
 	}
 	return nil
 }
