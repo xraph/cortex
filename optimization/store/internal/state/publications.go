@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -22,7 +22,11 @@ func (s *Store) GetLesson(ctx context.Context, lessonID id.ID) (optimization.Les
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if value, exists := data.Lessons[lessonID.String()]; exists {
 			return clone(value)
 		}
@@ -42,7 +46,10 @@ func (s *Store) ResolveLesson(ctx context.Context, ref optimization.LessonRef) (
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data := s.scopes[key]
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
 	if data == nil {
 		return empty, optimization.ErrNotFound
 	}
@@ -68,7 +75,11 @@ func (s *Store) GetPublication(ctx context.Context, lessonID id.ID, revision int
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if value, exists := data.Publications[publicationKey(lessonID, revision)]; exists {
 			return clone(value)
 		}

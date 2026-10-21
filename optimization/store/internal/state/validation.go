@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -21,7 +21,11 @@ func (s *Store) GetValidationAllocation(ctx context.Context, allocationID id.ID)
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if allocation, exists := data.Allocations[allocationID.String()]; exists {
 			return clone(allocation)
 		}

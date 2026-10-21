@@ -1,0 +1,141 @@
+package sqlite
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+
+	"github.com/xraph/grove/driver"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/optimization"
+	"github.com/xraph/cortex/optimization/store/internal/state"
+)
+
+type queryer interface {
+	Query(context.Context, string, ...any) (driver.Rows, error)
+}
+
+type scopeColumns struct {
+	hash, canon string
+	levels      [3]string
+}
+
+func columns(ctx context.Context, key string) (scopeColumns, error) {
+	var result scopeColumns
+	scope := cortex.ScopeFromContext(ctx)
+	canonical, err := optimization.ScopeKey(scope)
+	if err != nil {
+		return result, err
+	}
+	if canonical != key {
+		return result, optimization.ErrPolicyDenied
+	}
+	digest := sha256.Sum256([]byte(key))
+	result.hash, result.canon = hex.EncodeToString(digest[:]), key
+	for i, level := range scope.Levels {
+		result.levels[i] = level.Key + "=" + level.Value
+	}
+	return result, nil
+}
+
+func (b *backend) Load(ctx context.Context, key string) ([]state.Record, error) {
+	scope, err := columns(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return load(ctx, b.sql, scope)
+}
+
+func load(ctx context.Context, query queryer, scope scopeColumns) (records []state.Record, resultErr error) {
+	rows, err := query.Query(ctx, `SELECT schema_version, scope_canon, kind, parent_key, item_key, record_id, digest, body
+	 FROM cortex_optimization_records WHERE scope_hash = ? AND scope_canon = ? AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ?`,
+		scope.hash, scope.canon, scope.levels[0], scope.levels[1], scope.levels[2])
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	for rows.Next() {
+		var record state.Record
+		if scanErr := rows.Scan(&record.Schema, &record.Scope, &record.Kind, &record.Parent, &record.Key, &record.ID, &record.Digest, &record.Body); scanErr != nil {
+			return nil, scanErr
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (b *backend) Update(ctx context.Context, key string, update func([]state.Record) ([]state.Mutation, error)) error {
+	scope, err := columns(ctx, key)
+	if err != nil {
+		return err
+	}
+	tx, err := b.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // Commit or the triggering error determines the result.
+	// The first statement acquires SQLite's write lock before any snapshot read.
+	// The persistent scope row also detects a digest collision before writing.
+	if _, err = tx.Exec(ctx, `INSERT INTO cortex_optimization_scopes (scope_hash, scope_canon) VALUES (?, ?)
+	 ON CONFLICT(scope_hash) DO UPDATE SET scope_canon = cortex_optimization_scopes.scope_canon`, scope.hash, scope.canon); err != nil {
+		return err
+	}
+	var storedScope string
+	if scopeErr := tx.QueryRow(ctx, `SELECT scope_canon FROM cortex_optimization_scopes WHERE scope_hash = ?`, scope.hash).Scan(&storedScope); scopeErr != nil {
+		return scopeErr
+	}
+	if storedScope != scope.canon {
+		return fmt.Errorf("%w: stored scope digest collision", optimization.ErrUnavailable)
+	}
+	records, err := load(ctx, tx, scope)
+	if err != nil {
+		return err
+	}
+	changes, err := update(records)
+	if err != nil {
+		return err
+	}
+	for _, change := range changes {
+		if applyErr := apply(ctx, tx, scope, change); applyErr != nil {
+			return applyErr
+		}
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return tx.Commit()
+}
+
+func apply(ctx context.Context, tx driver.Tx, scope scopeColumns, change state.Mutation) error {
+	record := change.Record
+	if record.Scope != scope.canon {
+		return optimization.ErrPolicyDenied
+	}
+	var result driver.Result
+	var err error
+	if change.ExpectedDigest == "" {
+		result, err = tx.Exec(ctx, `INSERT INTO cortex_optimization_records
+		 (scope_hash, scope_canon, scope_l0, scope_l1, scope_l2, record_id, schema_version, kind, parent_key, item_key, digest, body)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_hash, record_id) DO NOTHING`,
+			scope.hash, scope.canon, scope.levels[0], scope.levels[1], scope.levels[2], record.ID, record.Schema, record.Kind, record.Parent, record.Key, record.Digest, record.Body)
+	} else {
+		result, err = tx.Exec(ctx, `UPDATE cortex_optimization_records SET schema_version = ?, digest = ?, body = ?
+		 WHERE scope_hash = ? AND scope_canon = ? AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ?
+		 AND record_id = ? AND kind = ? AND parent_key = ? AND item_key = ? AND digest = ?`,
+			record.Schema, record.Digest, record.Body, scope.hash, scope.canon, scope.levels[0], scope.levels[1], scope.levels[2], record.ID, record.Kind, record.Parent, record.Key, change.ExpectedDigest)
+	}
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return optimization.ErrConflict
+	}
+	return nil
+}

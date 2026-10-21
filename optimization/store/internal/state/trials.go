@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -20,7 +20,11 @@ func (s *Store) GetTrial(ctx context.Context, trialID id.ID) (optimization.Trial
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if trial, exists := data.Trials[trialID.String()]; exists {
 			return clone(trial)
 		}

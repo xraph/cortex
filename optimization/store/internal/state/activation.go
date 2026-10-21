@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -36,7 +36,11 @@ func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if value, exists := data.Activations[selectID(data).String()]; exists {
 			if current {
 				decision, found := data.Decisions[value.DecisionID.String()]

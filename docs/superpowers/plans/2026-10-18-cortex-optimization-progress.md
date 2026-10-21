@@ -22,7 +22,8 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4-5: durable persistence and recovery | Pending | Finish store contracts |
+| 4: durable persistence | Shared storage rules and SQLite foundation verified | PostgreSQL, Mongo, artifact storage and bounded database queries |
+| 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
 ## Sentinel evidence
@@ -322,3 +323,45 @@ reader race tests and builds passed in both dependency configurations, and a
 new shared `make l` passed all ten modules. The verbose reader runs include
 all seven pagination and identity cases (11.554s and 11.261s). Durable backends
 and recovery remain open.
+
+## Shared storage rules and SQLite
+
+The storage rules now live in `optimization/store/internal/state`. The memory
+backend keeps its public constructor and clock option, and SQLite uses the same
+transaction checks. This includes the boundary between evidence committed in a
+previous transaction and evidence supplied in the current callback.
+
+SQLite stores individual versioned records for each entity, audit event and
+idempotency key. Nested reservation and receipt maps become separate rows.
+Compound identities keep their original components alongside bounded hash keys.
+Reads require the exact canonical scope and all indexed scope levels. Writes
+acquire a database write lock before loading current state, then commit only
+changed records with expected previous digests. No-op retries leave record
+history untouched.
+
+Stored records are checked for scope, identity, content digest, duplicate keys,
+schema version and unknown fields. Tests reproduced acceptance of missing and
+null record values before the decoder was corrected. Event reconstruction sorts
+numeric sequences and rejects gaps. Unknown database schema versions refuse
+migration, and callback errors or database write failures roll back the whole
+transaction.
+
+The first populated SQLite race suite passed in 281.635s. Separate focused race
+tests passed for subprocess lease takeover, stale-owner rejection, competing
+claims through independent connections, failure on the second database write,
+corrupt records, unknown schema versions and idempotent transactions with writes
+explicitly forbidden by database triggers.
+
+Final full-module race tests and builds passed against the current checkout and
+published Cortex v1.8.0. Memory took 80.699s and 76.683s; SQLite took 425.803s and
+414.798s in the concurrent compatibility runs. The shared formatter left the
+optimizer source unchanged, and the final `make l` passed all ten modules. An
+earlier shared lint run caught two formatting errors in concurrent sandbox work;
+that work was formatted before the successful rerun. Reader commit `908eae6`
+also passed full CI in `39519005197`.
+
+The adapter currently loads a complete exact scope before applying the shared
+rules. Database pagination, selective loading and throughput qualification
+remain open. PostgreSQL, transactional Mongo, the artifact adapter and artifact
+retention checks are also unfinished, so Task 4 is not complete. No service,
+sandbox or production activation readiness follows from these storage tests.

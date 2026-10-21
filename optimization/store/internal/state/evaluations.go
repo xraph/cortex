@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -18,7 +18,11 @@ func (s *Store) GetEvaluation(ctx context.Context, evaluationID string) (optimiz
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if value, exists := data.Evaluations[evaluationID]; exists {
 			return clone(value)
 		}

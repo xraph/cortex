@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -20,7 +20,11 @@ func (s *Store) GetCandidate(ctx context.Context, candidateID id.ID) (optimizati
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	if data := s.scopes[key]; data != nil {
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
+	if data != nil {
 		if candidate, exists := data.Candidates[candidateID.String()]; exists {
 			return clone(candidate)
 		}

@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"bytes"
@@ -23,7 +23,10 @@ func (s *Store) GetReservation(ctx context.Context, experimentID id.ID, callKey 
 	if s.closed {
 		return empty, optimization.ErrUnavailable
 	}
-	data := s.scopes[key]
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return empty, loadErr
+	}
 	if data == nil {
 		return empty, optimization.ErrNotFound
 	}

@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -49,7 +49,10 @@ func (s *Store) ListEvents(ctx context.Context, experimentID id.ID, after int64,
 	if s.closed {
 		return page, optimization.ErrUnavailable
 	}
-	data := s.scopes[key]
+	data, loadErr := s.loadScope(ctx, key)
+	if loadErr != nil {
+		return page, loadErr
+	}
 	if data == nil {
 		return page, optimization.ErrNotFound
 	}

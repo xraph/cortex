@@ -1,4 +1,4 @@
-package memory
+package state
 
 import (
 	"context"
@@ -90,7 +90,10 @@ func readPage[T any](ctx context.Context, s *Store, collection string, parent id
 	if contextErr := ctx.Err(); contextErr != nil {
 		return page, contextErr
 	}
-	data := s.scopes[scope]
+	data, loadErr := s.loadScope(ctx, scope)
+	if loadErr != nil {
+		return page, loadErr
+	}
 	if data == nil {
 		data = newScopeData()
 	}
