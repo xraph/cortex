@@ -370,3 +370,13 @@ Tests cover pagination after failed cleanup, successful retry, restart state, ex
 Daemon admission gating, continuous scheduling, independent service discovery, worker/control integration, exact execution-deadline supervision and retained-file cleanup remain open. Sequential recovery pages do not promise timely execution cutoff; the worker and outer service still need their own bounds. S2.4 and G2 remain incomplete, and live Linux qualification stays deferred.
 
 Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build, Linux-targeted lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. CI `39534354717` at `f0881b3` passed every job, covering the launch handoff and optimizer retention work. This recovery-scanner packet still needs its own CI result; no deployed qualification is claimed.
+
+## Controller admission and recovery lifecycle
+
+The internal controller now owns launch admission, startup recovery, periodic scans and shutdown for one daemon lifetime. It requires the launcher and scanner to share their exact journal and reaper. Before startup recovery succeeds, submissions return pending without enrollment or dispatch. Scan errors close admission and stop the controller; they remain available through its status and return value.
+
+Shutdown cancels active launch contexts and joins their calls before recovering remaining claims under an independent 30-second context. Admission and launch registration share a lock, preventing a new submission from crossing the shutdown wait. A stopped controller cannot run again. Tests cover blocked startup cleanup, failed startup, an active claim on shutdown, cancellation during credential preparation, authorization outages, unresolved cleanup and mismatched ownership. The controller race tests also pass twenty repetitions.
+
+Executable daemon setup, authenticated worker control, the worker CLI, runtime activation, independent service discovery, retained-file cleanup and exact worker deadlines remain open. The controller's scan interval does not bound the time spent recovering earlier pages. Live systemd/runsc qualification remains deferred; S2.4 and G2 are still incomplete.
+
+Final shared formatting and all ten modules of lint pass. The full sandbox race suite and build, Linux-targeted lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. CI `39535273937` at `bd94a13` passed every job for the preceding recovery-scanner packet. This controller packet still needs its own CI result; fixture evidence does not qualify a deployed manager or runtime.

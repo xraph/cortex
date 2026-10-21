@@ -263,7 +263,7 @@ before guest execution. Cancellation, completion, reaping and expiration
 invalidate that current-ownership check.
 
 These launch and handoff components are implemented and fixture-tested. The
-worker CLI, authenticated daemon control, recovery-loop wiring, cleanup of
+worker CLI, authenticated daemon control, daemon startup wiring, cleanup of
 retained credential files, full deadline supervision and broker activation are
 still pending. No live systemd/runsc launch is qualified by these tests.
 
@@ -291,8 +291,22 @@ record before acting. A known service identity still gets a stop attempt when
 its record cannot be read or cancellation cannot be saved, but those failures
 cannot produce a terminal result.
 
-You still need the daemon's admission gate and continuous scheduling loop. A
-slow cleanup can delay a later page, so scans cannot enforce an exact execution
+`service.Controller` joins a launcher and scanner that share the same journal
+and reaper. Run it for the daemon's lifetime and submit exclusively through its
+`Launch` method. Admission stays closed until startup recovery succeeds. The
+controller then schedules pages every 10ms to one second, as configured. A scan
+error closes admission and stops that controller; resolve the error before
+constructing another instance. `Status` exposes readiness and the retained error
+to the daemon.
+
+Cancelling `Run` closes admission and cancels in-flight launch contexts. The
+controller joins those calls before using an independent 30-second context to
+recover remaining claims. Cleanup errors stay visible, and unresolved journal
+entries remain available to the next controller. Host callbacks must honor
+their contexts. A stopped controller cannot run again.
+
+The executable daemon still needs to construct and run these components. A slow
+cleanup can delay a later page, so scans cannot enforce an exact execution
 deadline. Worker deadline supervision, the outer service ceiling, discovery of
 services absent from the journal and cleanup of retained files remain required.
 
