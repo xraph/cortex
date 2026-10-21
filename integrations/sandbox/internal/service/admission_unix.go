@@ -93,5 +93,8 @@ func checkDeployment(ctx context.Context, p LaunchProfile, key id.ID, owner, pid
 	} else {
 		err = checkWorkerProperties(p, key, properties, pid)
 	}
-	return errors.Join(err, ctx.Err())
+	if operationErr := ctx.Err(); operationErr != nil {
+		return errors.Join(err, operationErr)
+	}
+	return err
 }

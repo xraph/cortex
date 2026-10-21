@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -11,6 +12,8 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 )
+
+var errWorkerActivating = errors.New("cortex: worker activation pending")
 
 func checkWorkerProperties(p LaunchProfile, key id.ID, properties map[string]any, pid uint32) error {
 	if pid <= 1 {
@@ -46,8 +49,18 @@ func checkEffectiveProperties(p LaunchProfile, key id.ID, properties map[string]
 		"ExecStart":      command,
 		"MainPID":        uint32(0), "ExecMainPID": uint32(0), "ControlPID": uint32(0), "NRestarts": uint32(0), "ExecMainStartTimestamp": uint64(0), "ExecMainStartTimestampMonotonic": uint64(0), "ExecMainExitTimestamp": uint64(0), "ExecMainExitTimestampMonotonic": uint64(0), "ExecMainCode": int32(0), "ExecMainStatus": int32(0),
 	}
+	pending := false
 	if workerPID != 0 {
 		expected["ActiveState"], expected["SubState"], expected["ControlGroup"] = "active", "running", layout.Parent
+		if job, ok := properties["Job"].([]any); ok && len(job) == 2 {
+			if jobID, valid := job[0].(uint32); valid && jobID != 0 && job[1] == dbus.ObjectPath(fmt.Sprintf("/org/freedesktop/systemd1/job/%d", jobID)) {
+				expected["Job"] = job
+				pending = true
+				if properties["ActiveState"] == "activating" && properties["SubState"] == "start" {
+					expected["ActiveState"], expected["SubState"] = "activating", "start"
+				}
+			}
+		}
 		expected["MainPID"], expected["ExecMainPID"] = workerPID, workerPID
 		for _, name := range []string{"ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic"} {
 			stamp, ok := properties[name].(uint64)
@@ -92,6 +105,9 @@ func checkEffectiveProperties(p LaunchProfile, key id.ID, properties map[string]
 	slices.Sort(controllers)
 	if !slices.Equal(controllers, []string{"cpu", "memory", "pids"}) {
 		return fmt.Errorf("cortex: unexpected worker controller delegation")
+	}
+	if pending {
+		return errWorkerActivating
 	}
 	return nil
 }

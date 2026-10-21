@@ -71,7 +71,7 @@ Interfaces: upstream `Engine.FreezeEvaluation(ctx, FreezeRequest) (*EvaluationPl
 
 Broker packet implemented October 20, 2026: sealed root contracts, authenticated durable broker/client, signed results, export checks, recovery tests and OCI configuration builder. The user deferred Linux worker selection. Runtime adapter/daemon, pinned deployment and live qualification probes remain open, so the full packet stays unchecked. See the progress ledger and `integrations/sandbox/README.md`.
 
-The internal worker core now verifies a complete deployment inventory, binds the OCI bundle to the sealed job, bounds output/deadlines and withholds terminal results after unresolved cleanup. Linux worker probes are implemented and cross-compiled. Verified image/input staging and the durable worker claim journal are implemented independently. Claim/staging integration, external supervision/reaping, broker wiring and live qualification are still required before this packet can close.
+The internal worker core verifies a complete deployment inventory, binds the OCI bundle to the sealed job, bounds output/deadlines and withholds terminal results after unresolved cleanup. Linux worker probes are implemented and cross-compiled. Verified image/input staging and the durable worker claim journal are implemented independently. Authenticated report transport and worker bootstrap connect configuration, credentials and current broker authority. Worker execution assembly, claim/staging integration, disk accounting, independent service discovery, retained-file cleanup, broker wiring and live qualification are still required before this packet can close.
 
 Depends on F0; S1 safety/scope before deployment. Owner: sandbox chat. Release owner handles module registration.
 

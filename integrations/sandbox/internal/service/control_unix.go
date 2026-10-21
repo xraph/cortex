@@ -69,7 +69,11 @@ func NewWorkerControl(controller *Controller, limits ControlLimits) (*WorkerCont
 		if err != nil {
 			return err
 		}
-		defer func() { err = errors.Join(err, peer.Close()) }()
+		defer func() {
+			if closeErr := peer.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		_, err = controller.AuthorizeWorker(ctx, peer, claim)
 		return err
 	}}, nil
@@ -173,9 +177,14 @@ func (s *WorkerControl) exchange(parent context.Context, conn *net.UnixConn) {
 		return
 	}
 	reply := controlReply{SchemaVersion: 1, Status: "denied"}
-	if err = s.authorize(ctx, conn, claim); err == nil && ctx.Err() == nil {
-		reply.Status = "authorized"
-		reply.ClaimDigest = evidence.Digest(body)
+	if err = s.authorize(ctx, conn, claim); ctx.Err() == nil {
+		if err == nil || err == errWorkerActivating { //nolint:errorlint // A joined cleanup or authority failure must never permit retry.
+			reply.Status = "authorized"
+			if err != nil {
+				reply.Status = "pending"
+			}
+			reply.ClaimDigest = evidence.Digest(body)
+		}
 	}
 	// Deliberately discard internal errors, which may contain a capability or
 	// private deployment data. A write failure never retries authorization.
@@ -193,7 +202,8 @@ type controlReply struct {
 // AuthorizeAt checks the private endpoint and root daemon before sending a
 // claim. Success is a point-in-time decision, not a lease or completion proof.
 // Use a verified launch credential, keep the socket outside guest mounts and
-// call again after staging immediately before guest execution. No retry occurs.
+// call again after staging immediately before guest execution. ErrPending means
+// the verified worker still has an outstanding service job. No retry occurs.
 func AuthorizeAt(ctx context.Context, path string, claim WorkerClaim) error {
 	if err := validateWorkerClaim(claim); err != nil {
 		return err
@@ -236,10 +246,17 @@ func authorizeConnection(ctx context.Context, conn *net.UnixConn, claim WorkerCl
 	if operationErr := operation.Err(); operationErr != nil {
 		return operationErr
 	}
-	if reply.SchemaVersion != 1 || reply.Status != "authorized" || reply.ClaimDigest != evidence.Digest(body) {
+	if reply.SchemaVersion != 1 || reply.ClaimDigest != evidence.Digest(body) {
 		return broker.ErrDenied
 	}
-	return nil
+	switch reply.Status {
+	case "authorized":
+		return nil
+	case "pending":
+		return broker.ErrPending
+	default:
+		return broker.ErrDenied
+	}
 }
 
 func controlConnection(ctx context.Context, conn *net.UnixConn, timeout time.Duration) (context.Context, func(), error) {

@@ -91,6 +91,37 @@ func TestWorkerAuthorizationBindsPeerProfileAndCurrentClaim(t *testing.T) {
 	}
 }
 
+func TestPendingWorkerActivationRechecksCurrentAuthority(t *testing.T) {
+	for _, mode := range []string{"pending", "cancelled", "peer exit", "revoked"} {
+		t.Run(mode, func(t *testing.T) {
+			c, claim, peer, _ := authorizationFixture(t)
+			var checks atomic.Int32
+			c.scanner.revalidate = func(context.Context, sandbox.Job) error {
+				if checks.Add(1) > 1 && mode == "revoked" {
+					return broker.ErrDenied
+				}
+				return nil
+			}
+			c.checkWorker = func(ctx context.Context, _ LaunchProfile, key id.ID, _ uint32) error {
+				if mode == "cancelled" {
+					_, _ = c.launcher.store.Cancel(ctx, key)
+				}
+				if mode == "peer exit" {
+					peer.dieAfterFirst.Store(true)
+				}
+				return errWorkerActivating
+			}
+			record, err := c.authorizeWorker(t.Context(), peer, claim)
+			if !record.Receipt.Job.ID.IsNil() || err == nil {
+				t.Fatal("pending worker received execution authority")
+			}
+			if errors.Is(err, errWorkerActivating) != (mode == "pending") {
+				t.Fatalf("activation classification ignored current authority: %v", err)
+			}
+		})
+	}
+}
+
 func TestWorkerAuthorizationRechecksCancellationPeerAndGrants(t *testing.T) {
 	for _, mode := range []string{"cancel", "peer exit", "grants", "deployment"} {
 		t.Run(mode, func(t *testing.T) {

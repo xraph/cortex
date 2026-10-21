@@ -436,3 +436,19 @@ CI `39541860307` at `9c6fb19` passed all jobs for the preceding result-finalizat
 Final inspection found an artifact digest field that could reach JSON encoding without a length check. A failing regression drove canonical digest validation before encoding. A repeated race run also exposed the maximum-output test's one-second throughput assumption under concurrent load. That capacity test now uses a ten-second exchange allowance; the separate short-deadline tests keep their original bounds.
 
 Final `make f` and `make l` pass across all ten modules. The full sandbox race suite and build, twenty repetitions of control/report race tests, tagged Linux lint, amd64/arm64 test compilation and restricted Linux service fixtures pass. These fixtures do not qualify a deployed daemon or runtime.
+
+## Worker configuration, activation and authenticated bootstrap
+
+`WorkerConfig` binds host-installed service settings, the broker public key, private control socket and complete runtime inventory. Its protected file is canonical JSON with an exact mode and a one-MiB ceiling. The loader computes the configuration pin from those bytes and builds the launch profile without a self-referential hash. A shared owned-file reader also supplies the metadata checks used by file-pin verification.
+
+`BootstrapWorker` requires the exact Linux worker subgroup, verifies installed files and the signed credential, matches the runtime digest and obtains current authority over the private socket. Its 30-second startup bound can only shorten the signed deadline. A validated outstanding service job can produce a distinct internal activation signal after all deployment, peer, grant and claim checks. The wire client exposes that signal as pending. Startup retries it every 50ms for at most ten seconds, bounded by the signed deadline; other failures stop startup.
+
+A regression showed that a provider's pending error could otherwise be mistaken for activation. That test failed before the internal activation signal was separated. Joined peer-cleanup errors cannot preserve retry permission. The worker session rechecks deployment and authority before execution, returns detached snapshots, and prevents further execution authorization after reporting starts. It permits only identical report retries after explicit upload backpressure; lost acknowledgements require broker inspection.
+
+The configuration loader, bootstrap and report-session tests failed against their empty implementations before passing. Coverage includes configuration/credential/runtime substitution, activation races, revocation, peer exit, cancellation, snapshot mutation and report retry binding. The Linux socket fixture keeps its service-membership seam explicit. Executable worker assembly, staging/source integration, disk accounting, runtime/export wiring, daemon setup, orphan discovery, retained-file cleanup and live Linux qualification remain open. S2.4 and G2 are still incomplete.
+
+CI `39545303597` at `968b94b` passed all jobs for the preceding report-transport packet. This bootstrap packet still needs its own CI result.
+
+A test through the full deployment checker exposed an error wrapper that hid the sole activation signal. It failed before the wrapper preserved that signal when no context error existed. Cancellation and peer-cleanup failures still prevent retries. Concurrent report tests confirm that one upload excludes another report and further execution authorization.
+
+Final `make f` and `make l` pass across all ten modules. The full sandbox race suite and build, twenty bootstrap/session race repetitions, tagged Linux lint, amd64/arm64 service-test compilation and restricted Linux service fixtures pass. The Linux fixture includes the protected configuration, credential and private-daemon activation/report exchange, while retaining an explicit membership seam. Live installed-service and runtime qualification remain deferred.

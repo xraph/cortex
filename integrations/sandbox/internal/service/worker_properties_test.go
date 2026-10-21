@@ -2,12 +2,64 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
+
+	"github.com/godbus/dbus/v5"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/sandbox"
 )
+
+func TestWorkerActivationIsPendingOnlyAfterProfileAndIdentityChecks(t *testing.T) {
+	p := profileFixture(t)
+	key := id.New(sandbox.PrefixJob)
+	for _, activating := range []bool{true, false} {
+		properties := runningProperties(p, key)
+		properties["Job"] = []any{uint32(42), dbus.ObjectPath("/org/freedesktop/systemd1/job/42")}
+		if activating {
+			properties["ActiveState"], properties["SubState"] = "activating", "start"
+		}
+		if err := checkWorkerProperties(p, key, properties, 123); !errors.Is(err, errWorkerActivating) {
+			t.Fatalf("worker activation did not remain pending: %v", err)
+		}
+		for name, value := range map[string]any{"MainPID": uint32(124), "NRestarts": uint32(1), "MemoryMax": uint64(1), "Job": []any{uint32(42), dbus.ObjectPath("/org/freedesktop/systemd1/job/43")}} {
+			original := properties[name]
+			properties[name] = value
+			if err := checkWorkerProperties(p, key, properties, 123); err == nil || errors.Is(err, errWorkerActivating) {
+				t.Fatalf("changed %s treated as safe activation: %v", name, err)
+			}
+			properties[name] = original
+		}
+	}
+}
+
+func TestWorkerActivationSignalSurvivesDeploymentVerification(t *testing.T) {
+	p := profileFixture(t)
+	key := id.New(sandbox.PrefixJob)
+	for _, cancelled := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		load := func(context.Context, string) (map[string]any, error) {
+			properties := runningProperties(p, key)
+			properties["ActiveState"], properties["SubState"] = "activating", "start"
+			properties["Job"] = []any{uint32(42), dbus.ObjectPath("/org/freedesktop/systemd1/job/42")}
+			if cancelled {
+				cancel()
+			}
+			return properties, nil
+		}
+		err := checkDeployment(ctx, p, key, uint32(os.Geteuid()), 123, load)
+		cancel()
+		if cancelled {
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("cancelled deployment check lost cancellation", err)
+			}
+		} else if err != errWorkerActivating { //nolint:errorlint // The wire permits only this sole signal, not a joined failure.
+			t.Fatalf("deployment verification wrapped the sole activation signal: %v", err)
+		}
+	}
+}
 
 func TestRunningWorkerAdmissionRechecksPinnedFiles(t *testing.T) {
 	p := profileFixture(t)

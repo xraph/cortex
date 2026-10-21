@@ -81,8 +81,9 @@ func (c *Controller) authorizeWorker(ctx context.Context, peer workerIdentity, c
 	if c.checkWorker == nil {
 		return workerstore.Record{}, fmt.Errorf("cortex: missing running worker verifier")
 	}
-	if checkErr := c.checkWorker(operation, c.launcher.profile, claim.JobID, pid); checkErr != nil {
-		return workerstore.Record{}, checkErr
+	workerErr := c.checkWorker(operation, c.launcher.profile, claim.JobID, pid)
+	if workerErr != nil && workerErr != errWorkerActivating { //nolint:errorlint // Only the sole activation signal may continue to the final authority checks.
+		return workerstore.Record{}, workerErr
 	}
 	if checkErr := c.scanner.eligible(operation, record.Receipt); checkErr != nil {
 		return workerstore.Record{}, checkErr
@@ -94,5 +95,12 @@ func (c *Controller) authorizeWorker(ctx context.Context, peer workerIdentity, c
 	if current != pid {
 		return workerstore.Record{}, broker.ErrDenied
 	}
-	return c.launcher.store.VerifyClaim(operation, claim.JobID, claim.Token, claim.Revision)
+	verified, err := c.launcher.store.VerifyClaim(operation, claim.JobID, claim.Token, claim.Revision)
+	if err != nil {
+		return workerstore.Record{}, err
+	}
+	if workerErr != nil {
+		return workerstore.Record{}, workerErr
+	}
+	return verified, nil
 }

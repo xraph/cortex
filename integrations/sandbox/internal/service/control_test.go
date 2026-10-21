@@ -19,6 +19,30 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
+func TestControlPreservesAuthenticatedActivationPending(t *testing.T) {
+	path, cancel, done := startControl(t, func(context.Context, *net.UnixConn, WorkerClaim) error {
+		return errWorkerActivating
+	}, ControlLimits{Connections: 1, Timeout: time.Second})
+	if err := authorizeConnection(t.Context(), dialControl(t, path), controlClaim(), time.Second); !errors.Is(err, broker.ErrPending) {
+		t.Fatalf("activation pending was lost: %v", err)
+	}
+	cancel()
+	_ = awaitControllerStop(t, done)
+}
+
+func TestControlProviderPendingDoesNotPermitStartupRetry(t *testing.T) {
+	for _, failure := range []error{broker.ErrPending, errors.Join(errWorkerActivating, errors.New("peer cleanup failed"))} {
+		path, cancel, done := startControl(t, func(context.Context, *net.UnixConn, WorkerClaim) error {
+			return failure
+		}, ControlLimits{Connections: 1, Timeout: time.Second})
+		if err := authorizeConnection(t.Context(), dialControl(t, path), controlClaim(), time.Second); !errors.Is(err, broker.ErrDenied) {
+			t.Fatalf("provider or cleanup failure was treated as worker activation: %v", err)
+		}
+		cancel()
+		_ = awaitControllerStop(t, done)
+	}
+}
+
 func controlListener(t *testing.T) (*net.UnixListener, string) {
 	t.Helper()
 	directory, err := os.MkdirTemp("/tmp", "cx-control-")
@@ -265,7 +289,7 @@ func TestControlClientRejectsForgedOrUnboundedReplies(t *testing.T) {
 	claim := controlClaim()
 	body, _ := json.Marshal(claim)
 	valid := controlReply{SchemaVersion: 1, Status: "authorized", ClaimDigest: evidence.Digest(body)}
-	for _, mode := range []string{"different claim", "wrong schema", "unknown status", "trailing data", "oversized", "truncated", "no EOF", "canceled"} {
+	for _, mode := range []string{"different claim", "unbound pending", "wrong schema", "unknown status", "trailing data", "oversized", "truncated", "no EOF", "canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			listener, path := controlListener(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -290,6 +314,8 @@ func TestControlClientRejectsForgedOrUnboundedReplies(t *testing.T) {
 				switch mode {
 				case "different claim":
 					reply.ClaimDigest = evidence.Digest([]byte("different"))
+				case "unbound pending":
+					reply.Status, reply.ClaimDigest = "pending", evidence.Digest([]byte("different"))
 				case "wrong schema":
 					reply.SchemaVersion++
 				case "unknown status":
@@ -314,8 +340,8 @@ func TestControlClientRejectsForgedOrUnboundedReplies(t *testing.T) {
 					time.Sleep(100 * time.Millisecond)
 				}
 			}()
-			if err := authorizeConnection(ctx, dialControl(t, path), claim, 50*time.Millisecond); err == nil {
-				t.Fatal("invalid reply authorized worker")
+			if err := authorizeConnection(ctx, dialControl(t, path), claim, 50*time.Millisecond); err == nil || errors.Is(err, broker.ErrPending) {
+				t.Fatal("invalid reply authorized worker or permitted activation retry")
 			}
 			select {
 			case <-done:

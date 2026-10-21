@@ -242,8 +242,8 @@ aliases and changed resource settings fail admission. This matters because
 Missing required properties fail closed, including worker subgroup delegation.
 
 This preflight feeds the internal launcher described below. The profile's
-wall-time value is only an outer service ceiling. Template installation, the
-worker executable/configuration contract, daemon/broker wiring and live manager
+wall-time value is only an outer service ceiling. Template installation,
+worker execution assembly, daemon/broker wiring and live manager
 tests remain pending. Preflight alone installs nothing and starts no service.
 
 ## One-time launch handoff
@@ -357,7 +357,7 @@ checks on Linux as root. CI compiles a race-enabled test binary and runs those
 checks. They cover process capture, exit detection and rejection of a root
 process outside the job service, including descriptor cleanup. They do not
 start systemd jobs or qualify the running-service acceptance path. Worker
-startup and runtime integration remain pending.
+bootstrap is described below; staging and runtime integration remain pending.
 
 `Controller.ProposeWorkerResult` applies the same live peer, claim, deployment
 and grant checks before persisting a report. Its acknowledgement contains the
@@ -390,7 +390,10 @@ join them.
 
 For authorization, the server opens a kernel peer handle and calls
 `Controller.AuthorizeWorker`.
-It returns only a denial or an authorization bound to the exact request digest.
+It returns a denial, authorization or activation-pending response. Authorization
+and pending responses bind the exact request digest. Pending requires the
+approved live worker and current claim/grants, with a validated outstanding
+service job. Provider availability failures do not permit activation retries.
 Internal errors and tokens are never copied into replies. This endpoint cannot
 launch, cancel or complete a job, and it does not retry an exchange.
 
@@ -428,6 +431,53 @@ acknowledgement, maximum output and peer-handle cleanup. The tagged Linux
 tests also exercise daemon socket authentication and the public server's refusal
 of an unrelated root process. These checks do not qualify an installed worker,
 systemd service or runsc deployment.
+
+## Worker configuration and bootstrap
+
+Install `service.WorkerConfig` as canonical JSON from `json.Marshal`, without
+indentation or a trailing newline, in a protected `0600` file capped at one MiB.
+You supply the broker name and public key, private control socket,
+`WorkerService` settings and complete `WorkerRuntime` manifest. Keep approved
+runtime and worker pins in your deployment inputs. The loader does not infer
+them from installed binaries or grant qualification from matching hashes.
+
+The configuration contains no hash of itself. To prepare the launch profile,
+serialize the settings once and use the exact byte count and SHA-256 as its
+`Config` pin. Install the corresponding template, then call
+`service.ReadWorkerConfig` to verify the files and obtain the complete profile
+and digest for the launcher. Any change to the settings requires a new matching
+profile and credential. The host must keep these files stable during use.
+
+Call `service.BootstrapWorker` from the worker with the configured path,
+systemd's credential directory and the job ID. It requires root on Linux in the
+exact worker subgroup, checks the protected configuration and installed files,
+verifies the signed credential, matches its runtime pin and asks the private
+daemon for current authority. Bootstrap is bounded to 30 seconds. An explicit,
+bound activation-pending response permits retries every 50ms for at most ten
+seconds, also bounded by the earlier signed execution or qualification deadline.
+Denial, connection loss, provider failure and cancellation stop startup.
+
+The returned `WorkerSession` keeps the launch token private. `Job` and
+`Configuration` return detached snapshots. Carry `Deadline` through staging and
+supervision, then call `Authorize` immediately before execution. That call checks
+the installed files, current subgroup and broker authority again, with no
+activation retry. No call extends the original deadline.
+
+Use `WorkerSession.Report` for the bounded execution result. It binds the result
+to the session's job and checks the returned receipt. After the first send, only
+an identical report may be retried following an explicit capacity refusal.
+Further execution authorization is refused, including while a report is waiting
+for upload capacity. A successful or uncertain report cannot be sent again from
+that session; inspect the broker to resolve a lost acknowledgement.
+
+This is an internal startup component. Worker CLI assembly, evidence and image
+source adapters, staging integration, disk accounting, execution/export wiring,
+daemon setup and retained-file cleanup still need implementation. Tests cover configuration
+and credential substitution, activation races, deadline/cancellation handling,
+snapshot isolation and report retry rules. Linux root fixtures exercise the real
+private-daemon client with an explicit service-membership seam and reject ambient
+root through the public bootstrap function. They do not qualify an installed
+systemd worker or runsc deployment.
 
 ## Evidence input staging
 
