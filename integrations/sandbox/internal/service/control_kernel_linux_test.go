@@ -19,7 +19,7 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("worker bootstrap transport fixture requires root")
 	}
-	name, directory, credential, boundary := workerBootstrapFixture(t)
+	name, directory, credential, boundary := workerBootstrapFixture(t, declareCapture)
 	listener, socket := controlListener(t)
 	loaded, err := readWorkerConfig(t.Context(), name, 0)
 	if err != nil {
@@ -43,22 +43,42 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 		}
 		return nil
 	}, beginReport: func(_ context.Context, _ *net.UnixConn, claim WorkerClaim) (reportSession, error) {
-		return &fixtureReportSession{claim: claim}, nil
+		return &fixtureCaptureSession{fixtureReportSession: fixtureReportSession{claim: claim}}, nil
 	}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- server.serve(ctx, listener) }()
 	// Keep the service-membership seam explicit: this checks real daemon socket
-	// authentication and the startup/report exchange, not a live systemd worker.
-	boundary.authorize, boundary.report = AuthorizeAt, ReportAt
+	// authentication and startup/capture/report exchanges, not a live systemd worker.
+	boundary.authorize, boundary.report, boundary.capture = AuthorizeAt, ReportAt, CaptureAt
 	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
 	if err != nil || authorizations.Load() != 2 {
 		t.Fatal("authenticated activation handshake failed", err)
 	}
+	if err = worker.BeginExecution(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	job := credential.Record.Receipt.Job
+	ref := captureRefForJob(t, job)
+	if err = worker.CaptureJournal().Record(t.Context(), job, ref); err != nil {
+		t.Fatal("private intent failed", err)
+	}
+	if err = worker.CaptureJournal().Confirm(t.Context(), job, ref); err != nil {
+		t.Fatal("private confirmation failed", err)
+	}
 	result := sandbox.Result{JobDigest: credential.Record.Receipt.Job.Digest, State: sandbox.StateExited}
 	if _, err = worker.Report(t.Context(), result); err != nil {
 		t.Fatal("bootstrapped worker report failed", err)
+	}
+	if err = os.Chmod(socket, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = CaptureAt(t.Context(), socket, worker.claim, ref, false); err == nil {
+		t.Fatal("capture sent through unsafe endpoint")
+	}
+	if err = os.Chmod(socket, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if ambient, ambientErr := BootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID); ambientErr == nil || ambient != nil {
 		t.Fatal("ambient root process bootstrapped outside its worker service")
@@ -104,6 +124,9 @@ func TestControlKernelPublicServerRejectsAmbientRootAndJoinsController(t *testin
 	}
 	if _, err = ReportAt(t.Context(), path, controlClaim(), testWireResult()); !errors.Is(err, broker.ErrDenied) {
 		t.Fatalf("ambient root report: %v", err)
+	}
+	if _, err = CaptureAt(t.Context(), path, controlClaim(), wireCaptureRef(t), false); !errors.Is(err, broker.ErrDenied) {
+		t.Fatal("ambient root captured", err)
 	}
 	cancelController()
 	if err = awaitControllerStop(t, controllerDone); !errors.Is(err, context.Canceled) {

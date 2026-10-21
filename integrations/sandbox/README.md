@@ -619,9 +619,10 @@ original deadline. An uncertain acknowledgement requires broker inspection.
 The worker process must exit after the coordinator returns.
 
 After runtime cleanup, the coordinator captures declared files before removing
-the workspace. You must supply an immutable evidence repository, an authenticated
-durable capture journal, current output policy and a pinned `capture_retention_ns`
-between zero (exclusive) and 24 hours.
+the workspace. You must supply an immutable evidence repository, current output
+policy and a pinned `capture_retention_ns`
+between zero (exclusive) and 24 hours. The worker session supplies the
+authenticated capture journal through its private daemon connection.
 Zero disables capture. A job requesting capture is refused before execution if
 these services are unavailable. Authorized release remains a separate host
 operation. Source adapters, executable worker/daemon installation, broker runtime
@@ -675,10 +676,29 @@ whole-service cleanup and authorized repository cleanup, `DiscardCapture` retain
 a revision-bound tombstone. The caller must prove a durable repository tombstone
 or authoritative absence; a missing process or denied read does not suffice.
 
-The capture journal port and daemon persistence are implemented. The authenticated
-worker-control adapter, repository adapters and recovery worker remain required
-before deployment. Tests bridge capture to the real journal in process; production
-workers must not open or share the daemon's database directly. Artifact capture
+The worker-control adapter sends `capture-intent` and `capture-confirm` through
+the existing authenticated upload handshake. Each reference is bounded to 32 KiB;
+captures share the report capacity ceiling and preserve the authorization reserve.
+Receipts bind the exact job, claim revision, artifact, reference and capture state.
+A report receipt cannot acknowledge capture, or vice versa.
+
+Supply a `service.CapturePolicy` when constructing the controller to enable
+capture. Omission denies it. The policy receives the signed job principal,
+detached reference and scoped context for put or read authorization. The controller
+rechecks the peer, current grants, service configuration and claim after policy
+approval, then commits under the original deadline before acknowledging.
+
+`WorkerSession.CaptureJournal` binds the pipeline to this transport. It permits
+one intent and one confirmation attempt per declared output after execution starts,
+serializes them with reporting, and rechecks authority after the response. Even
+explicit upload backpressure consumes the capture attempt. An uncertain response
+requires daemon inspection; it cannot trigger another upload. Failed capture still
+permits a failed job report. Workers never open the daemon's database.
+
+Repository adapters and the recovery worker remain required before deployment.
+Tests connect the private transport to real journal persistence with an explicit
+worker-identity fixture. Linux fixtures exercise daemon socket authentication and
+the session exchange with a service-membership seam. Artifact capture
 does not authorize publication, deployment or an external destination write.
 
 ## Linux probe suite

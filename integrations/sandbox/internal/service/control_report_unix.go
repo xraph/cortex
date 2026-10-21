@@ -32,10 +32,11 @@ type reportHeader struct {
 }
 
 type reportReply struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Status        string               `json:"status"`
-	RequestDigest string               `json:"request_digest,omitempty"`
-	Receipt       *WorkerReportReceipt `json:"receipt,omitempty"`
+	SchemaVersion int                   `json:"schema_version"`
+	Status        string                `json:"status"`
+	RequestDigest string                `json:"request_digest,omitempty"`
+	Receipt       *WorkerReportReceipt  `json:"receipt,omitempty"`
+	Capture       *WorkerCaptureReceipt `json:"capture,omitempty"`
 }
 
 type workerReportSession struct {
@@ -69,7 +70,7 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 			return
 		}
 	}
-	if header.SchemaVersion != 2 || header.Operation != "report" || validateWorkerClaim(header.Claim) != nil || header.Bytes < 1 || header.Bytes > reportFrameLimit || !evidence.ValidDigest(header.Digest) || s.limits.Reports == 0 || s.beginReport == nil {
+	if header.SchemaVersion != 2 || uploadFrameLimit(header.Operation) == 0 || validateWorkerClaim(header.Claim) != nil || header.Bytes < 1 || header.Bytes > uploadFrameLimit(header.Operation) || !evidence.ValidDigest(header.Digest) || s.limits.Reports == 0 || s.beginReport == nil {
 		deny()
 		return
 	}
@@ -102,6 +103,12 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 			}
 		}
 	}()
+	if header.Operation != "report" {
+		if _, ok := session.(captureSession); !ok {
+			deny()
+			return
+		}
+	}
 	deadline := session.Deadline()
 	if deadline.IsZero() {
 		deny()
@@ -123,18 +130,15 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 	if err != nil || len(payload) != header.Bytes || evidence.Digest(payload) != header.Digest || requireControlEOF(conn) != nil {
 		return
 	}
-	var result sandbox.Result
-	if decodeCanonical(payload, &result) != nil || operation.Err() != nil {
-		return
-	}
-	receipt, err := session.Submit(operation, result)
+	reply, err := submitUpload(operation, session, header, payload)
 	closeErr := session.Close()
 	closed = true
-	if err != nil || closeErr != nil || operation.Err() != nil || !reportReceiptMatches(receipt, header) {
+	if err != nil || closeErr != nil || operation.Err() != nil {
 		deny()
 		return
 	}
-	if err = writeControlFrame(conn, reportReply{SchemaVersion: 2, Status: "reported", RequestDigest: requestDigest, Receipt: &receipt}); err != nil {
+	reply.SchemaVersion, reply.RequestDigest = 2, requestDigest
+	if err = writeControlFrame(conn, reply); err != nil {
 		return
 	}
 }
@@ -165,54 +169,65 @@ func ReportAt(ctx context.Context, path string, claim WorkerClaim, result sandbo
 }
 
 func reportConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClaim, result sandbox.Result, timeout time.Duration) (WorkerReportReceipt, error) {
-	operation, finish, err := controlConnection(ctx, conn, timeout)
+	reply, header, err := uploadConnection(ctx, conn, timeout, func() (reportHeader, []byte, error) { return prepareReport(claim, result) })
 	if err != nil {
 		return WorkerReportReceipt{}, err
 	}
-	defer finish()
-	header, payload, err := prepareReport(claim, result)
+	if reply.Status != "reported" || reply.Capture != nil || reply.Receipt == nil || !reportReceiptMatches(*reply.Receipt, header) {
+		return WorkerReportReceipt{}, broker.ErrDenied
+	}
+	return *reply.Receipt, nil
+}
+
+func uploadConnection(ctx context.Context, conn *net.UnixConn, timeout time.Duration, prepare func() (reportHeader, []byte, error)) (reportReply, reportHeader, error) {
+	operation, finish, err := controlConnection(ctx, conn, timeout)
 	if err != nil {
-		return WorkerReportReceipt{}, err
+		return reportReply{}, reportHeader{}, err
+	}
+	defer finish()
+	header, payload, err := prepare()
+	if err != nil {
+		return reportReply{}, reportHeader{}, err
 	}
 	body, err := json.Marshal(header)
 	if err != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	if err = writeBoundedFrame(conn, body, controlFrameLimit); err != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	requestDigest := evidence.Digest(body)
 	var reply reportReply
-	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil || reply.Capture != nil {
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	if operationErr := operation.Err(); operationErr != nil {
-		return WorkerReportReceipt{}, operationErr
+		return reportReply{}, reportHeader{}, operationErr
 	}
 	if reply.Status == "busy" {
-		return WorkerReportReceipt{}, broker.ErrPending
+		return reportReply{}, reportHeader{}, broker.ErrPending
 	}
 	if reply.Status != "ready" {
-		return WorkerReportReceipt{}, broker.ErrDenied
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
-	if err = writeBoundedFrame(conn, payload, reportFrameLimit); err != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+	if err = writeBoundedFrame(conn, payload, uploadFrameLimit(header.Operation)); err != nil {
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	if err = conn.CloseWrite(); err != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	// Decode into a new value so absent fields cannot inherit the ready reply.
 	var final reportReply
 	if _, err = readControlFrame(conn, &final); err != nil || requireControlEOF(conn) != nil {
-		return WorkerReportReceipt{}, broker.ErrDenied
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
 	if operationErr := operation.Err(); operationErr != nil {
-		return WorkerReportReceipt{}, operationErr
+		return reportReply{}, reportHeader{}, operationErr
 	}
-	if final.SchemaVersion != 2 || final.Status != "reported" || final.RequestDigest != requestDigest || final.Receipt == nil || !reportReceiptMatches(*final.Receipt, header) {
-		return WorkerReportReceipt{}, broker.ErrDenied
+	if final.SchemaVersion != 2 || final.RequestDigest != requestDigest {
+		return reportReply{}, reportHeader{}, broker.ErrDenied
 	}
-	return *final.Receipt, nil
+	return final, header, nil
 }
 
 func prepareReport(claim WorkerClaim, result sandbox.Result) (reportHeader, []byte, error) {
@@ -242,30 +257,34 @@ func boundedReportInput(result sandbox.Result) bool {
 		return false
 	}
 	remaining := reportFrameLimit - len(result.Stdout) - len(result.Stderr) - len(result.Reason)
-	consume := func(value string) bool {
-		if len(value) > remaining {
+	for _, ref := range result.Artifacts {
+		if !boundedRefInput(ref, &remaining) {
 			return false
 		}
-		remaining -= len(value)
+	}
+	return true
+}
+
+func boundedRefInput(ref evidence.Ref, remaining *int) bool {
+	if !evidence.ValidDigest(ref.SHA256) || len(ref.Scope.Levels) > *remaining/2 {
+		return false
+	}
+	*remaining -= len(ref.Scope.Levels) * 2
+	consume := func(value string) bool {
+		if len(value) > *remaining {
+			return false
+		}
+		*remaining -= len(value)
 		return true
 	}
-	for _, ref := range result.Artifacts {
-		if !evidence.ValidDigest(ref.SHA256) {
+	for _, field := range []string{ref.MediaType, ref.Version, ref.Producer, ref.SourceURI, string(ref.Sensitivity)} {
+		if !consume(field) {
 			return false
 		}
-		if len(ref.Scope.Levels) > remaining/2 {
+	}
+	for _, level := range ref.Scope.Levels {
+		if !consume(level.Key) || !consume(level.Value) {
 			return false
-		}
-		remaining -= len(ref.Scope.Levels) * 2
-		for _, field := range []string{ref.MediaType, ref.Version, ref.Producer, ref.SourceURI, string(ref.Sensitivity)} {
-			if !consume(field) {
-				return false
-			}
-		}
-		for _, level := range ref.Scope.Levels {
-			if !consume(level.Key) || !consume(level.Value) {
-				return false
-			}
 		}
 	}
 	return true

@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
+	"github.com/xraph/cortex/integrations/sandbox/internal/capture"
 	"github.com/xraph/cortex/integrations/sandbox/internal/image"
 	"github.com/xraph/cortex/integrations/sandbox/internal/service"
 	"github.com/xraph/cortex/integrations/sandbox/internal/staging"
@@ -25,6 +26,7 @@ import (
 )
 
 type fixtureSession struct {
+	journal  capture.Journal
 	job      sandbox.Job
 	cfg      service.WorkerConfiguration
 	deadline time.Time
@@ -33,6 +35,8 @@ type fixtureSession struct {
 	reports  []sandbox.Result
 	pending  bool
 }
+
+func (s *fixtureSession) CaptureJournal() capture.Journal { return s.journal }
 
 func (s *fixtureSession) Job() (sandbox.Job, error)                  { return sandbox.Seal(s.job) }
 func (s *fixtureSession) Configuration() service.WorkerConfiguration { return s.cfg }

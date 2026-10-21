@@ -653,3 +653,45 @@ passed. Linux capture and pipeline fixtures passed twenty repetitions; the full
 Linux journal fixture passed ten. Whitespace checks passed. The in-process bridge
 and fixture services establish persistence/ordering behavior, not deployed
 authentication, repository integration or runtime isolation.
+
+
+## S2.4 authenticated capture transport
+
+Capture intent and confirmation now share the authenticated upload handshake with
+result reports. Reference frames are capped at 32 KiB, use the same capacity
+ceiling and retain a slot for current-authority checks. Replies bind the complete
+reference, job, claim revision and durable capture state. Unknown operations,
+malformed references and mixed receipt types fail closed.
+
+An explicit daemon capture policy authorizes put or read under the signed job's
+principal and scope. The controller rechecks current peer, grants, deployment and
+claim after the policy callback, then persists before acknowledging. Callbacks
+receive detached values. Capture writes remain registered through controller
+shutdown and use the original acceptance deadline.
+
+The worker session now provides the pipeline's capture journal. Hosts no longer
+inject an arbitrary journal through worker Sources. Each declared output gets one
+intent attempt and one confirmation attempt, serialized with authority checks and
+reporting. Lost responses, explicit backpressure, changed receipts and revocation
+consume the attempt. No upload replay follows uncertainty. Failed capture can still
+produce a failed job report after cleanup.
+
+Targeted red tests preceded the controller and worker-session implementations.
+Fixtures cover durable acknowledgement ordering, permission changes during policy
+and after acknowledgement, exact intent binding, malformed frames, capacity
+reservation, uncertain replies and concurrent reporting. The Linux private-daemon
+fixture covers startup, intent, confirmation and report exchanges, unsafe socket
+permissions and ambient-root rejection. Its service-membership seam is explicit.
+
+CI `39558378630` at `a371cc2` passed every job for durable capture persistence.
+Repository adapters, artifact recovery, executable daemon/worker installation,
+production runtime activation and live Linux qualification remain open. Choosing
+the Linux worker remains deferred at the user's request. S2.4 and G2 are incomplete.
+
+Final checks passed: `make f`, `make l` across all ten modules, separate Linux
+lint with qualification/peer/mount tags, root and sandbox race suites, sandbox
+build, and Linux arm64/amd64 service and worker fixture compilation. The final
+Linux private-control/capture fixtures passed ten repetitions; the complete Linux
+worker fixture passed twenty. No required fixture was skipped. These checks do
+not qualify an installed systemd/runsc worker or an external evidence repository.
+Independent review of the full plan remains outstanding.

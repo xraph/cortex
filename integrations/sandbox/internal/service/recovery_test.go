@@ -19,7 +19,7 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-func recoveryStore(t *testing.T) (*workerstore.Store, sandbox.Receipt, workerstore.Config) {
+func recoveryStore(t *testing.T, changes ...func(*sandbox.Job)) (*workerstore.Store, sandbox.Receipt, workerstore.Config) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -34,8 +34,15 @@ func recoveryStore(t *testing.T) (*workerstore.Store, sandbox.Receipt, workersto
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, change := range changes {
+		change(&job)
+	}
+	job, err = sandbox.Seal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
-	receipt := sandbox.Receipt{SchemaVersion: 1, Job: job, Broker: "trusted", AcceptedAt: now, Capabilities: sandbox.Capabilities{SchemaVersion: 1, Runtime: "runsc", RuntimeDigest: strings.Repeat("b", 64), Profile: sandbox.ProfileDenyAll, Qualification: "fixture-not-qualified", QualifiedUntil: now.Add(time.Hour), Limits: limits}}
+	receipt := sandbox.Receipt{SchemaVersion: 1, Job: job, Broker: "trusted", AcceptedAt: now, Capabilities: sandbox.Capabilities{SchemaVersion: 1, Runtime: "runsc", RuntimeDigest: strings.Repeat("b", 64), Profile: sandbox.ProfileDenyAll, Qualification: "fixture-not-qualified", QualifiedUntil: now.Add(time.Hour), Limits: job.Limits}}
 	body, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)

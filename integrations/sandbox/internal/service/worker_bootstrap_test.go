@@ -19,14 +19,14 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-func workerBootstrapFixture(t *testing.T) (string, string, Credential, workerBoundary) {
+func workerBootstrapFixture(t *testing.T, changes ...func(*sandbox.Job)) (string, string, Credential, workerBoundary) {
 	t.Helper()
 	name, cfg, private := workerConfigFixture(t)
 	loaded, err := readWorkerConfig(t.Context(), name, uint32(os.Geteuid()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, receipt, _ := recoveryStore(t)
+	_, receipt, _ := recoveryStore(t, changes...)
 	receipt.Capabilities.RuntimeDigest = loaded.RuntimeDigest
 	receipt.Signature = nil
 	body, err := json.Marshal(receipt)

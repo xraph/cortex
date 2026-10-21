@@ -32,6 +32,11 @@ func (p *fixtureWorkerPeer) Check(ctx context.Context, key id.ID) (uint32, error
 func authorizationFixture(t *testing.T, configure ...func(*Controller, *fixtureWorkerPeer)) (*Controller, WorkerClaim, *fixtureWorkerPeer, func()) {
 	t.Helper()
 	c, receipt, _ := controllerFixture(t)
+	return authorizationControllerFixture(t, c, receipt, configure...)
+}
+
+func authorizationControllerFixture(t *testing.T, c *Controller, receipt sandbox.Receipt, configure ...func(*Controller, *fixtureWorkerPeer)) (*Controller, WorkerClaim, *fixtureWorkerPeer, func()) {
+	t.Helper()
 	c.interval = time.Second
 	var captured workerstore.Claim
 	c.launcher.prepare = func(_ context.Context, _ LaunchProfile, claim workerstore.Claim) error { captured = claim; return nil }

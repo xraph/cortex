@@ -41,7 +41,6 @@ type Sources struct {
 	AuthorizeInput  func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 	AuthorizeImage  func(context.Context, sandbox.Job, string) error
 	Artifacts       capture.Repository
-	CaptureJournal  capture.Journal
 	AuthorizeOutput func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 }
 
@@ -52,6 +51,7 @@ func (f inputAuthorizer) AuthorizeEvidence(ctx context.Context, action evidence.
 }
 
 type session interface {
+	CaptureJournal() capture.Journal
 	Job() (sandbox.Job, error)
 	Configuration() service.WorkerConfiguration
 	Deadline() time.Time
@@ -113,7 +113,7 @@ func execute(ctx context.Context, worker session, sources Sources, deps dependen
 		return service.WorkerReportReceipt{}, validationErr
 	}
 	cfg := worker.Configuration()
-	if len(job.Outputs) != 0 && (sources.Artifacts == nil || sources.CaptureJournal == nil || sources.AuthorizeOutput == nil || deps.capture == nil || capture.ValidateRetention(cfg.Settings.CaptureRetention) != nil) {
+	if len(job.Outputs) != 0 && (sources.Artifacts == nil || worker.CaptureJournal() == nil || sources.AuthorizeOutput == nil || deps.capture == nil || capture.ValidateRetention(cfg.Settings.CaptureRetention) != nil) {
 		return service.WorkerReportReceipt{}, fmt.Errorf("cortex: sandbox artifact capture is unavailable")
 	}
 	if entryErr := worker.BeginExecution(ctx); entryErr != nil {
@@ -246,7 +246,7 @@ func runPrepared(ctx context.Context, worker session, sources Sources, deps depe
 		return preparedResult{failure: runErr, cleanupPending: true}
 	}
 	if result.State == sandbox.StateExited && len(job.Outputs) != 0 {
-		refs, captureErr := deps.capture(ctx, capture.Config{Root: paths.Scratch, Repository: sources.Artifacts, Journal: sources.CaptureJournal, Retention: cfg.Settings.CaptureRetention, Authorize: authorize, Check: w.Check, Policy: sources.AuthorizeOutput}, job)
+		refs, captureErr := deps.capture(ctx, capture.Config{Root: paths.Scratch, Repository: sources.Artifacts, Journal: worker.CaptureJournal(), Retention: cfg.Settings.CaptureRetention, Authorize: authorize, Check: w.Check, Policy: sources.AuthorizeOutput}, job)
 		if validationErr := job.ValidateArtifacts(refs, captureErr == nil); validationErr != nil {
 			refs = nil
 			captureErr = errors.Join(captureErr, validationErr)

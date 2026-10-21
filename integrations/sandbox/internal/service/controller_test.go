@@ -15,10 +15,10 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-func controllerFixture(t *testing.T) (*Controller, sandbox.Receipt, *atomic.Int32) {
+func controllerFixture(t *testing.T, changes ...func(*sandbox.Job)) (*Controller, sandbox.Receipt, *atomic.Int32) {
 	t.Helper()
 	launcher, _, starts := launcherFixture(t)
-	_, receipt, cfg := recoveryStore(t)
+	_, receipt, cfg := recoveryStore(t, changes...)
 	directory := t.TempDir()
 	if err := os.Chmod(directory, 0o700); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
@@ -19,6 +20,7 @@ import (
 )
 
 type workerBoundary struct {
+	capture       func(context.Context, string, WorkerClaim, evidence.Ref, bool) (WorkerCaptureReceipt, error)
 	owner         uint32
 	verifyCurrent func(context.Context, id.ID) error
 	authorize     func(context.Context, string, WorkerClaim) error
@@ -29,6 +31,7 @@ type workerBoundary struct {
 // It does not stage files or execute a workload. Reauthorize after staging and
 // immediately before execution; the original signed deadline never moves.
 type WorkerSession struct {
+	captures         map[id.ID]captureAttempt
 	configuration    WorkerConfiguration
 	credential       Credential
 	claim            WorkerClaim
@@ -46,7 +49,7 @@ func BootstrapWorker(ctx context.Context, configPath, credentialDirectory string
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return nil, errUnsupported
 	}
-	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt})
+	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt, capture: CaptureAt})
 }
 
 func bootstrapWorker(ctx context.Context, configPath, credentialDirectory string, key id.ID, boundary workerBoundary) (*WorkerSession, error) {

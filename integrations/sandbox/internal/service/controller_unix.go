@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerstore"
@@ -22,30 +23,43 @@ type ControllerStatus struct {
 	Err            error
 }
 
+// CapturePolicy authorizes a declared artifact for the signed job subject.
+// Callbacks receive detached values and must honor cancellation.
+type CapturePolicy func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
+
 // Controller owns launch admission and recovery for one daemon lifetime. Use
 // Launch through this controller exclusively after constructing it. The host
 // must not call its underlying launcher or scanner concurrently from elsewhere.
 // It does not expose a control transport or runtime adapter, or qualify Linux.
 type Controller struct {
-	launcher    *Launcher
-	scanner     *RecoveryScanner
-	interval    time.Duration
-	mu          sync.Mutex
-	started     bool
-	status      ControllerStatus
-	lifetime    context.Context
-	ops         sync.WaitGroup
-	checkWorker func(context.Context, LaunchProfile, id.ID, uint32) error
+	capturePolicy CapturePolicy
+	launcher      *Launcher
+	scanner       *RecoveryScanner
+	interval      time.Duration
+	mu            sync.Mutex
+	started       bool
+	status        ControllerStatus
+	lifetime      context.Context
+	ops           sync.WaitGroup
+	checkWorker   func(context.Context, LaunchProfile, id.ID, uint32) error
 }
 
 // NewController joins a launcher and scanner that share the exact journal and
 // reaper. The interval is between 10ms and one second; slow cleanup can still
 // delay a scan, so independent worker and service deadline limits are required.
-func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.Duration) (*Controller, error) {
+// An optional capture policy enables artifact persistence; omission denies it.
+func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.Duration, policies ...CapturePolicy) (*Controller, error) {
+	if len(policies) > 1 || (len(policies) == 1 && policies[0] == nil) {
+		return nil, fmt.Errorf("cortex: invalid sandbox capture policy")
+	}
+	var policy CapturePolicy
+	if len(policies) == 1 {
+		policy = policies[0]
+	}
 	if launcher == nil || scanner == nil || launcher.store == nil || launcher.reaper == nil || launcher.store != scanner.store || launcher.reaper != scanner.reaper || scanner.revalidate == nil || scanner.now == nil || scanner.pageSize < 1 || scanner.pageSize > 256 || interval < 10*time.Millisecond || interval > time.Second {
 		return nil, fmt.Errorf("cortex: invalid sandbox controller")
 	}
-	return &Controller{launcher: launcher, scanner: scanner, interval: interval, checkWorker: launcher.reaper.CheckWorker}, nil
+	return &Controller{capturePolicy: policy, launcher: launcher, scanner: scanner, interval: interval, checkWorker: launcher.reaper.CheckWorker}, nil
 }
 
 // Status reports readiness without granting admission; Launch checks it again.

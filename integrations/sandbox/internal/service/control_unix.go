@@ -40,7 +40,7 @@ func (l ControlLimits) validate() error {
 	return nil
 }
 
-// WorkerControl serves authorization and report receipt. It cannot launch,
+// WorkerControl serves authorization, capture and report receipt. It cannot launch,
 // cancel or complete jobs. Frames are canonical JSON with explicit byte bounds.
 type WorkerControl struct {
 	limits      ControlLimits

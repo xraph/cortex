@@ -53,7 +53,7 @@ func TestPipelineCapturesOnlyAfterRuntimeCleanupAndBeforeWorkspaceCleanup(t *tes
 			}
 			s.cfg.Settings.CaptureRetention = time.Hour
 			sources.Artifacts = &captureRepository{}
-			sources.CaptureJournal = captureJournal{}
+			s.journal = captureJournal{}
 			sources.AuthorizeOutput = func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }
 			paths := workspace.Paths{JobID: s.job.ID, JobDigest: s.job.Digest, Scratch: "/fixture/scratch"}
 			deps.workspace = func(context.Context, workspace.Config) (work, error) {
@@ -92,7 +92,7 @@ func TestPipelineCapturesOnlyAfterRuntimeCleanupAndBeforeWorkspaceCleanup(t *tes
 			}
 			switch failure {
 			case "capture-journal":
-				sources.CaptureJournal = nil
+				s.journal = nil
 			case "capture-disabled":
 				s.cfg.Settings.CaptureRetention = 0
 			case "capture-provider":
