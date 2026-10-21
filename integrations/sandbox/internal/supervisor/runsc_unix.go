@@ -22,6 +22,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
+	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 	"github.com/xraph/cortex/integrations/sandbox/oci"
 	"github.com/xraph/cortex/sandbox"
@@ -47,6 +48,25 @@ type RunscConfig struct {
 // durable job claims and external process supervision. No program is executed
 // here. This driver must never be used as a host-execution fallback.
 func NewRunsc(ctx context.Context, cfg RunscConfig) (Driver, error) {
+	return newRunsc(ctx, cfg, id.ID{})
+}
+
+// NewContainedRunsc requires the worker's exact job service membership and puts
+// the payload below that service. It rechecks membership before every control
+// command. The service manager's start fence, kill policy, limits and live
+// qualification still belong to the external adapter. Use NewRunsc only for
+// independently supervised low-level probes or another proven containment host.
+func NewContainedRunsc(ctx context.Context, cfg RunscConfig, key id.ID) (Driver, error) {
+	if _, err := containment.ForJob(key); err != nil {
+		return nil, err
+	}
+	if err := containment.VerifyCurrent(ctx, key); err != nil {
+		return nil, err
+	}
+	return newRunsc(ctx, cfg, key)
+}
+
+func newRunsc(ctx context.Context, cfg RunscConfig, serviceID id.ID) (Driver, error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return nil, fmt.Errorf("cortex: sandbox supervision requires a root-run Linux worker")
 	}
@@ -79,7 +99,7 @@ func NewRunsc(ctx context.Context, cfg RunscConfig) (Driver, error) {
 		}
 	}
 	cfg.Inputs = maps.Clone(cfg.Inputs)
-	return &runscDriver{cfg: cfg, invoke: func(cmd *exec.Cmd) error { return cmd.Run() }}, nil
+	return &runscDriver{cfg: cfg, serviceID: serviceID, checkMembership: containment.VerifyCurrent, invoke: func(cmd *exec.Cmd) error { return cmd.Run() }}, nil
 }
 
 type runscDriver struct {
@@ -92,6 +112,8 @@ type runscDriver struct {
 	prepared           bool
 	createAttempted    bool
 	createAcknowledged bool
+	serviceID          id.ID
+	checkMembership    func(context.Context, id.ID) error
 }
 
 func (d *runscDriver) Prepare(ctx context.Context, job sandbox.Job, stdout, stderr io.Writer) error {
@@ -103,6 +125,12 @@ func (d *runscDriver) Prepare(ctx context.Context, job sandbox.Job, stdout, stde
 	}
 	if d.prepared || job.Digest != d.cfg.JobDigest {
 		return fmt.Errorf("cortex: runsc job binding mismatch or repeated prepare")
+	}
+	if !d.serviceID.IsNil() && job.ID != d.serviceID {
+		return fmt.Errorf("cortex: runsc service identity mismatch")
+	}
+	if err := d.verifyMembership(ctx); err != nil {
+		return err
 	}
 	if err := d.verifyBundle(job); err != nil {
 		return err
@@ -141,13 +169,16 @@ func (d *runscDriver) Prepare(ctx context.Context, job sandbox.Job, stdout, stde
 	cmd.Stdout = outWrite
 	cmd.Stderr = errWrite
 	d.createAttempted = true
-	err = d.invoke(cmd)
+	err = d.executeCommand(control, cmd)
 	d.createAcknowledged = err == nil
 	return errors.Join(err, outWrite.Close(), errWrite.Close())
 }
 
 func (d *runscDriver) verifyBundle(job sandbox.Job) error {
 	expected, err := oci.Spec(job, d.cfg.Rootfs, d.cfg.Inputs)
+	if !d.serviceID.IsNil() {
+		expected, err = oci.ContainedSpec(job, d.cfg.Rootfs, d.cfg.Inputs)
+	}
 	if err != nil {
 		return err
 	}
@@ -176,6 +207,23 @@ func (d *runscDriver) verifyBundle(job sandbox.Job) error {
 		return fmt.Errorf("cortex: sandbox OCI specification does not match sealed job")
 	}
 	return nil
+}
+
+func (d *runscDriver) verifyMembership(ctx context.Context) error {
+	if d.serviceID.IsNil() {
+		return ctx.Err()
+	}
+	if d.checkMembership == nil {
+		return fmt.Errorf("cortex: runsc containment checker missing")
+	}
+	return d.checkMembership(ctx, d.serviceID)
+}
+
+func (d *runscDriver) executeCommand(ctx context.Context, cmd *exec.Cmd) error {
+	if err := d.verifyMembership(ctx); err != nil {
+		return err
+	}
+	return d.invoke(cmd)
 }
 
 func (d *runscDriver) Start(ctx context.Context) error {
@@ -267,7 +315,7 @@ func (d *runscDriver) control(ctx context.Context, args ...string) ([]byte, erro
 	cmd := d.command(control, args...)
 	cmd.Stdout = &stream{capture: output}
 	cmd.Stderr = &stream{capture: output, diagnostic: true}
-	err := d.invoke(cmd)
+	err := d.executeCommand(control, cmd)
 	stdout, _, outputErr := output.finish()
 	return stdout, errors.Join(err, outputErr, context.Cause(control))
 }

@@ -127,6 +127,21 @@ runsc also succeeds when its state record is absent. That case remains unresolve
 until the external reaper proves the worker's containment has stopped. No
 terminal result is returned merely because forced deletion succeeded.
 
+The contained driver binds the worker and payload to one job service. Its fixed
+parent is `/system.slice/cortex-sandbox-worker@<job-id>.service`, with the worker
+in `supervisor` and the OCI payload in `payload`. The service adapter must select
+`system.slice` explicitly, delegate the required controllers and install the
+worker subgroup. The driver checks actual membership before each runsc command
+and rejects an OCI bundle targeting the older, separate hierarchy.
+
+The Linux reaper helper writes `cgroup.kill` and waits up to ten seconds for the
+whole hierarchy to become empty. It verifies procfs/cgroup-v2 and root ownership,
+refuses linked control files and cannot target its own service. An absent group
+is reported separately from an empty group. Neither observation fences a queued
+service launch, so neither automatically authorizes `Reaped`. The external
+adapter must durably prevent later starts before recording cleanup. Unsupported
+hosts and failed or cancelled observations return errors without cleanup proof.
+
 This code is not wired into broker admission. You still need claim and staging
 integration, external worker supervision and a reaper that can
 stop the whole workload if either the broker or worker dies. The internal driver

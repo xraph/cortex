@@ -10,8 +10,26 @@ import (
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 
+	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 	"github.com/xraph/cortex/sandbox"
 )
+
+// ContainedSpec places the payload beneath its fixed worker service cgroup.
+// The service must delegate CPU, memory and PID controllers, place the worker
+// in its supervisor subgroup, and enforce a kill policy for the complete tree.
+// This encoding does not attest to those external controls being installed.
+func ContainedSpec(j sandbox.Job, rootfs string, inputs map[string]string) (*specs.Spec, error) {
+	spec, err := Spec(j, rootfs, inputs)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := containment.ForJob(j.ID)
+	if err != nil {
+		return nil, err
+	}
+	spec.Linux.CgroupsPath = layout.Payload
+	return spec, nil
+}
 
 // Spec encodes a sealed job with host-staged rootfs and input paths. Staging must
 // verify the pinned image and each evidence digest before creating the bundle.

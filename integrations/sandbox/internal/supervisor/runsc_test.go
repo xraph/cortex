@@ -16,9 +16,55 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/integrations/sandbox/oci"
 	"github.com/xraph/cortex/sandbox"
 )
+
+func TestContainedDriverRejectsPayloadOutsideWorkerService(t *testing.T) {
+	j := job(t)
+	d := fixtureRunsc(t, j)
+	d.serviceID = j.ID
+	d.checkMembership = func(context.Context, id.ID) error { return nil }
+	d.invoke = func(*exec.Cmd) error { t.Fatal("escaped payload reached runsc"); return nil }
+	if err := d.Prepare(t.Context(), j, io.Discard, io.Discard); err == nil {
+		t.Fatal("legacy cgroup accepted for contained worker")
+	}
+}
+
+func TestContainedDriverFencesCommandsAfterWorkerMoves(t *testing.T) {
+	j := job(t)
+	d := fixtureRunsc(t, j)
+	spec, err := oci.ContainedSpec(j, d.cfg.Rootfs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(d.cfg.Bundle, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.serviceID = j.ID
+	moved := false
+	failure := errors.New("worker left service cgroup")
+	d.checkMembership = func(_ context.Context, key id.ID) error {
+		if key != j.ID {
+			t.Fatal("wrong membership target")
+		}
+		if moved {
+			return failure
+		}
+		return nil
+	}
+	var verbs []string
+	d.invoke = func(cmd *exec.Cmd) error { verbs = append(verbs, cmd.Args[3]); moved = true; return nil }
+	result, err := Run(t.Context(), d, j, time.Now().Add(time.Second))
+	if !errors.Is(err, failure) || !errors.Is(err, ErrCleanup) || result.State != "" || strings.Join(verbs, ",") != "create" {
+		t.Fatalf("moved worker still controlled runtime: %+v %v %v", result, verbs, err)
+	}
+}
 
 func fixtureRunsc(t *testing.T, j sandbox.Job) *runscDriver {
 	t.Helper()

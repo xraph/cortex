@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/sandbox/internal/containment"
 	"github.com/xraph/cortex/integrations/sandbox/oci"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -43,6 +44,21 @@ func TestPolicyEncodesRequiredControls(t *testing.T) {
 	}
 	if !reflect.DeepEqual(spec.Hooks, &specs.Hooks{}) {
 		t.Fatal("host hooks injected")
+	}
+	contained, err := oci.ContainedSpec(j, "/private/bundle/rootfs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout, err := containment.ForJob(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contained.Linux.CgroupsPath != layout.Payload {
+		t.Fatalf("payload escaped worker service: %q", contained.Linux.CgroupsPath)
+	}
+	contained.Linux.CgroupsPath = spec.Linux.CgroupsPath
+	if !reflect.DeepEqual(contained, spec) {
+		t.Fatal("contained profile widened other sandbox controls")
 	}
 }
 

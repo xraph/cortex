@@ -310,3 +310,13 @@ This packet establishes durable ownership independently of runtime activation. C
 Final coordinated formatting and all ten modules of lint pass. The full sandbox race suite and build pass, as do native/Linux scoped lint and Linux amd64/arm64 worker-journal test compilation. The full sandbox race suite and build also pass with Go 1.26.10. A fresh scan reported GO-2026-6809 against Go 1.26.9; the Go 1.26.10 scan reports no vulnerabilities. The default local toolchain remains unchanged.
 
 CI `39526179993` at `a0ae9ac` passed the sandbox module, root tests, security, docs and formatting, covering the preceding image-staging packet. The overall run failed because optimizer Mongo tests exceeded the default ten-minute package timeout; the optimizer owner is handling that bounded CI timeout separately. This worker-ownership packet needs its own exact-commit CI result.
+
+## Job service containment boundary
+
+The contained runsc path now places its payload beneath the same fixed service as the worker. The worker must occupy the exact `supervisor` subgroup, with the payload in its sibling `payload` subgroup. Membership is checked before every control command, and bundle validation rejects an OCI configuration targeting the older external hierarchy. The low-level driver remains available for independently supervised qualification probes.
+
+The Linux containment helper checks procfs, cgroup-v2, root ownership and control-file types, then uses `cgroup.kill` and bounded population observation. It refuses to kill its own hierarchy. Tests cover changed membership, wrong payload placement, malformed observations, disappearance, an appearing group after an absent kill target, cancellation and cleanup failure. A cancellation regression initially returned an absent observation alongside an error; the fix returns no cleanup observation on that path.
+
+These helpers do not launch a systemd service or prove a future start is fenced. Empty and absent observations remain distinct, and neither calls the worker journal's `Reaped` operation. The service adapter, authenticated daemon control, launch/cancel fencing, external resource bounds, broker activation and live Linux qualification remain open. The selected worker service must explicitly use `system.slice` and delegate controllers with the worker in its own subgroup.
+
+Final shared formatting, all ten modules of lint, the full sandbox race suite and build pass. Linux-specific lint passes, and containment tests compile for Linux amd64 and arm64. These checks do not establish deployed service isolation. CI `39527689658` at `9c0d1e5` passed all jobs, covering the durable worker-ownership packet and the optimizer concurrency changes. This containment packet still needs its own exact-commit CI result.
