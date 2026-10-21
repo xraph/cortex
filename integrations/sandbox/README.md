@@ -205,6 +205,37 @@ pending. Template installation and pinning, launch admission, daemon control,
 resource ceilings, periodic orphan discovery and broker wiring remain open.
 The current low-level runsc qualification probes do not qualify this service path.
 
+## Worker deployment admission
+
+The internal launch profile renders one installed worker template. You supply
+approved worker and configuration hashes, exact sizes and private state paths.
+The worker executable must have mode `0755`, its configuration `0600`, the
+template `0644` and the state directory `0700`. Verification rejects links,
+extra hard links, changed bytes, unsafe owners and writable ancestors. Reuse the
+approved pins from your deployment process; do not calculate expected hashes
+from the installation being inspected.
+
+The template delegates CPU, memory and PID controls to the worker subgroup and
+sets whole-service memory, swap, task, CPU and wall-time ceilings. It disables
+automatic restart, kills the whole service on stop, suppresses stdout/stderr
+logging and loads the job claim through a fixed credential name. Paths cannot
+inject unit directives or substitutions. Executable, configuration and template
+files must remain outside the worker's writable state directory.
+
+`CheckLaunch` verifies those bytes, loads the job instance without starting it,
+and checks the effective manager properties. Overrides, alternate roots or
+mounts, additional commands or credentials, stale configuration, pending jobs,
+aliases and changed resource settings fail admission. This matters because
+[systemd can combine unit files with overrides](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
+Missing required properties fail closed, including worker subgroup delegation.
+
+This is preflight validation, not execution permission. The controller still
+needs current authorization, a durable one-time claim, protected credential
+handoff and enforcement of the signed receipt's original deadline. The profile's
+wall-time value is only an outer service ceiling. Template installation, the
+worker executable/configuration contract, launch wiring and live manager tests
+remain pending. No template is installed or service started by these checks.
+
 ## Evidence input staging
 
 The internal staging service copies evidence into private directories keyed by

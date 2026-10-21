@@ -332,3 +332,17 @@ Recovery connects this service proof to the worker journal's revision fence. Fai
 Template installation and pinning, safe launch admission, daemon control, external resource ceilings, periodic orphan discovery, broker activation and live qualification remain open. S2.4 and G2 remain incomplete.
 
 Final shared `make f`, all ten modules of `make l`, the full sandbox race suite and build pass. Linux-targeted lint and amd64/arm64 compilation pass. The service fixtures and Linux containment refusal tests also run successfully in a restricted local Linux container; its simulated manager does not establish live systemd behavior. Go 1.26.10 vulnerability scans for macOS and Linux report no findings. CI `39529487667` at `0e11b1c` passed all jobs and covers the preceding containment packet. This service-recovery packet needs its own CI result and deployed qualification.
+
+## Pinned worker profiles and effective launch checks
+
+Launch profiles now render a bounded installed service template and verify approved worker/configuration pins, exact template bytes and the private state directory. A shared host-file verifier uses the existing bounded digest-copy implementation and rejects symlinks, hard links, special files, unsafe permissions, cancellation and changed lengths or hashes. Profiles reject directive injection and keep deployment files outside writable worker state.
+
+The preflight loads the job unit without starting it, then checks effective identity, commands, credentials, roots/mounts, controller delegation, resource ceilings, restart/kill behavior and logging. Missing properties and stale configuration fail closed. Review tests first exposed acceptance of alternate roots, bind mounts and credential overrides; the corrected checks reject them. The manager reader is shared with recovery so both paths decode properties consistently.
+
+A D-Bus encode/decode regression exposed a mismatch between simulated arrays and the actual command/credential struct-array types. It failed before the expected types were corrected and now covers real wire encoding independently of a live manager.
+
+This packet does not consume a launch claim or execute the worker. Credential creation and single-use handoff, the worker CLI/configuration contract, controller dispatch/recovery wiring, receipt-deadline enforcement, template installation and live systemd/runsc qualification remain open. The outer template wall-time ceiling does not replace the original signed acceptance deadline. S2.4 and G2 remain incomplete.
+
+CI `39530942630` at `bd5df2b` passed all jobs and covers the preceding service-recovery implementation. Its earlier exact-commit run was superseded by that optimizer push.
+
+Final shared formatting, all ten modules of lint, the full sandbox race suite and build pass. Linux-targeted lint and service-test compilation for amd64/arm64 pass. The service/admission and host-file pin suites also pass in a restricted Linux container, including the real D-Bus wire-format regression. These fixture results do not qualify an installed template, live manager or runtime. This packet still needs its own CI result.

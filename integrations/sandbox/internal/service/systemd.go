@@ -18,6 +18,41 @@ type bus interface {
 }
 type systemManager struct{ bus bus }
 
+func (m *systemManager) Loaded(ctx context.Context, unit string) (map[string]any, error) {
+	body, err := m.bus.Call(ctx, managerPath, managerInterface+"LoadUnit", unit)
+	if err != nil {
+		return nil, err
+	}
+	var object dbus.ObjectPath
+	if decodeErr := dbus.Store(body, &object); decodeErr != nil {
+		return nil, decodeErr
+	}
+	if !object.IsValid() || !strings.HasPrefix(string(object), "/org/freedesktop/systemd1/unit/") {
+		return nil, fmt.Errorf("cortex: invalid loaded service object")
+	}
+	properties, err := m.properties(ctx, object, "")
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]any, len(properties))
+	for name, value := range properties {
+		result[name] = value.Value()
+	}
+	return result, nil
+}
+
+func (m *systemManager) properties(ctx context.Context, object dbus.ObjectPath, iface string) (map[string]dbus.Variant, error) {
+	body, err := m.bus.Call(ctx, object, "org.freedesktop.DBus.Properties.GetAll", iface)
+	if err != nil {
+		return nil, err
+	}
+	var properties map[string]dbus.Variant
+	if decodeErr := dbus.Store(body, &properties); decodeErr != nil {
+		return nil, decodeErr
+	}
+	return properties, nil
+}
+
 func (m *systemManager) Mask(ctx context.Context, unit string) error {
 	_, err := m.bus.Call(ctx, managerPath, managerInterface+"MaskUnitFiles", []string{unit}, false, false)
 	return err
@@ -69,13 +104,9 @@ func (m *systemManager) Stopped(ctx context.Context, unit string) (bool, error) 
 	if !object.IsValid() || !strings.HasPrefix(string(object), "/org/freedesktop/systemd1/unit/") {
 		return false, fmt.Errorf("cortex: invalid service object")
 	}
-	body, err = m.bus.Call(ctx, object, "org.freedesktop.DBus.Properties.GetAll", "org.freedesktop.systemd1.Unit")
+	properties, err := m.properties(ctx, object, "org.freedesktop.systemd1.Unit")
 	if err != nil {
 		return false, err
-	}
-	var properties map[string]dbus.Variant
-	if operationErr := dbus.Store(body, &properties); operationErr != nil {
-		return false, operationErr
 	}
 	name, nameOK := properties["Id"].Value().(string)
 	following, followingOK := properties["Following"].Value().(string)
