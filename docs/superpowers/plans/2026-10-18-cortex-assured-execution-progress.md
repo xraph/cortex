@@ -807,3 +807,39 @@ lint with kernel/mount/qualification tags, the complete sandbox race suite and
 sandbox build. Linux arm64/amd64 service test binaries compiled, and the Linux
 evidence/socket fixtures passed ten repetitions without skips. Independent
 full-plan review and installed provider qualification remain outstanding.
+
+
+## S2.4 worker evidence adapters and pipeline wiring
+
+WorkerSession now exposes input and artifact capabilities over the private broker
+transport. Staging and capture in worker.Run obtain those capabilities from the
+bootstrapped session. The public Sources configuration supplies only image access;
+workers no longer accept an alternate evidence repository or input provider.
+
+Session adapters enforce signed scope/reference bindings, execution state, current
+deployment and job grants, and the original deadline. Artifact upload consumes one
+attempt after acknowledged intent, before external authorization or transport.
+Uncertain replies, including capacity refusal, cannot trigger replay. Readback
+requires acknowledged upload. A regression reproduced capture confirmation before
+readback; evidence-enabled sessions now refuse that transition.
+
+Input and readback streams use a bounded pipe. EOF follows the bound broker receipt
+and final authority check. Early Close cancels and joins the transfer; lost receipts,
+late revocation and cancellation remain failures even after all bytes arrived.
+Session serialization prevents a report from overlapping an active transfer.
+
+Tests cover scope/binding substitution, missing capabilities, execution/report
+state, upload attempts, provider mutation, early close, post-transfer failures,
+and production source binding. Linux socket fixtures connect a bootstrapped
+session's capture, upload and readback through the private endpoint. Image/input
+staging and output capture fixtures retain explicit runtime/service seams.
+
+Approved image delivery, installed provider configuration, daemon lifecycle and
+live systemd/runsc qualification remain open. S2.4 and G2 remain incomplete.
+
+Final checks passed: shared `make f`, `make l` across all ten modules, separate
+Linux lint with qualification/kernel/mount tags, the complete sandbox race suite
+and build. Worker and service test binaries compiled for Linux arm64 and amd64.
+Linux service/socket fixtures and the worker pipeline suite each passed ten
+repetitions without skips. Independent full-plan review, installed image/provider
+verification and live containment qualification remain outstanding.

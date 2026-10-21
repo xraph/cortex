@@ -136,7 +136,7 @@ func (inputSource) Open(context.Context, evidence.Ref) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
-func pipelineFixture(t *testing.T, fail string) (*fixtureSession, Sources, dependencies, *[]string) {
+func pipelineFixture(t *testing.T, fail string) (*fixtureSession, workerSources, dependencies, *[]string) {
 	t.Helper()
 	job, err := sandbox.Seal(sandbox.Job{SchemaVersion: 1, ID: id.New(sandbox.PrefixJob), Key: "pipeline", Scope: cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "one"}}}, Principal: "host", Image: "sha256:" + strings.Repeat("a", 64), Argv: []string{"/check"}, Network: sandbox.NetworkDenied, Limits: sandbox.Limits{CPUMillis: 1000, MemoryBytes: 64 << 20, Processes: 16, ScratchBytes: 1 << 20, WallTime: time.Minute, OutputBytes: 1024}})
 	if err != nil {
@@ -148,7 +148,7 @@ func pipelineFixture(t *testing.T, fail string) (*fixtureSession, Sources, depen
 	root := filepath.Join(cfg.Settings.Service.StateDirectory, "workspaces", job.ID.String())
 	paths := workspace.Paths{JobID: job.ID, JobDigest: job.Digest, Directory: root, Images: filepath.Join(root, "stage", "images"), Inputs: filepath.Join(root, "stage", "inputs"), Bundle: filepath.Join(root, "stage", "bundle"), Runtime: filepath.Join(root, "stage", "runtime"), Scratch: filepath.Join(root, "scratch")}
 	w := &fixtureWorkspace{paths: paths, calls: &calls, fail: fail}
-	sources := Sources{Images: imageSource{}, Inputs: inputSource{}, AuthorizeInput: func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }, AuthorizeImage: func(context.Context, sandbox.Job, string) error { return nil }}
+	sources := workerSources{Sources: Sources{Images: imageSource{}, AuthorizeImage: func(context.Context, sandbox.Job, string) error { return nil }}, Inputs: inputSource{}, AuthorizeInput: func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }}
 	deps := dependencies{
 		workspace: func(ctx context.Context, c workspace.Config) (work, error) {
 			calls = append(calls, "workspace")
@@ -296,7 +296,7 @@ func TestPipelineReportsDoNotReplayAfterUncertainOutcome(t *testing.T) {
 
 func TestPipelineMissingSourcesNeverStarts(t *testing.T) {
 	s, _, deps, calls := pipelineFixture(t, "")
-	if _, err := execute(t.Context(), s, Sources{}, deps); err == nil || len(*calls) != 0 {
+	if _, err := execute(t.Context(), s, workerSources{}, deps); err == nil || len(*calls) != 0 {
 		t.Fatal("missing sources reached execution")
 	}
 	if receipt, err := Run(t.Context(), nil, Sources{}); err == nil || !receipt.JobID.IsNil() {

@@ -30,16 +30,18 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-// Sources supplies host-authenticated image and evidence services. Image access
-// must check the approved manifest digest and current source grant. Policies
-// receive a detached signed job with its verified principal and scope. These ports
-// never receive guest URLs or destination credentials. Providers must honor
-// cancellation and close their readers promptly.
+// Sources supplies the approved image source and its current grant check.
+// Evidence reads and capture uploads always use the bootstrapped worker session;
+// repository credentials stay in the daemon. Image readers must honor context.
 type Sources struct {
-	Images          image.Source
+	Images         image.Source
+	AuthorizeImage func(context.Context, sandbox.Job, string) error
+}
+
+type workerSources struct {
+	Sources
 	Inputs          staging.Source
 	AuthorizeInput  func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
-	AuthorizeImage  func(context.Context, sandbox.Job, string) error
 	Artifacts       capture.Repository
 	AuthorizeOutput func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 }
@@ -82,7 +84,7 @@ func Run(ctx context.Context, worker *service.WorkerSession, sources Sources) (s
 	if worker == nil {
 		return service.WorkerReportReceipt{}, fmt.Errorf("cortex: worker session is required")
 	}
-	return execute(ctx, worker, sources, dependencies{
+	return execute(ctx, worker, bindWorkerSources(worker, sources), dependencies{
 		workspace: func(ctx context.Context, cfg workspace.Config) (work, error) {
 			w, err := workspace.Create(ctx, cfg)
 			if w == nil {
@@ -101,7 +103,64 @@ func Run(ctx context.Context, worker *service.WorkerSession, sources Sources) (s
 	})
 }
 
-func execute(ctx context.Context, worker session, sources Sources, deps dependencies) (service.WorkerReportReceipt, error) {
+type evidenceWorker interface {
+	session
+	InputSource() staging.Source
+	ArtifactRepository() capture.Repository
+}
+
+func bindWorkerSources(worker evidenceWorker, sources Sources) workerSources {
+	return workerSources{Sources: sources, Inputs: worker.InputSource(), Artifacts: worker.ArtifactRepository(),
+		AuthorizeInput: func(ctx context.Context, job sandbox.Job, action evidence.Action, ref evidence.Ref) error {
+			return authorizeEvidence(ctx, worker, job, action, ref, false)
+		},
+		AuthorizeOutput: func(ctx context.Context, job sandbox.Job, action evidence.Action, ref evidence.Ref) error {
+			return authorizeEvidence(ctx, worker, job, action, ref, true)
+		},
+	}
+}
+
+// Local guards bind staging/capture to the signed job. The daemon independently
+// checks the current provider grant at each byte operation and after readback.
+func authorizeEvidence(ctx context.Context, worker session, job sandbox.Job, action evidence.Action, ref evidence.Ref, artifact bool) error {
+	pinned, err := worker.Job()
+	if err != nil {
+		return err
+	}
+	if job.Validate() != nil || job.Digest != pinned.Digest || cortex.ScopeFromContext(ctx).Canonical() != pinned.Scope.Canonical() {
+		return broker.ErrDenied
+	}
+	if artifact {
+		if action != evidence.ActionRead && action != evidence.ActionPut {
+			return evidence.ErrDenied
+		}
+		if validationErr := pinned.ValidateArtifacts([]evidence.Ref{ref}, false); validationErr != nil {
+			return validationErr
+		}
+	} else {
+		if action != evidence.ActionRead {
+			return evidence.ErrDenied
+		}
+		binding, bindingErr := ref.BindingDigest()
+		if bindingErr != nil {
+			return bindingErr
+		}
+		found := false
+		for _, input := range pinned.Inputs {
+			digest, digestErr := input.Ref.BindingDigest()
+			if digestErr == nil && digest == binding {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return evidence.ErrDenied
+		}
+	}
+	return worker.Authorize(ctx)
+}
+
+func execute(ctx context.Context, worker session, sources workerSources, deps dependencies) (service.WorkerReportReceipt, error) {
 	if sources.Images == nil || sources.Inputs == nil || sources.AuthorizeInput == nil || sources.AuthorizeImage == nil {
 		return service.WorkerReportReceipt{}, fmt.Errorf("cortex: worker source services are incomplete")
 	}
@@ -158,7 +217,7 @@ type preparedResult struct {
 	cleanupPending bool
 }
 
-func runPrepared(ctx context.Context, worker session, sources Sources, deps dependencies, w work, cfg service.WorkerConfiguration, job sandbox.Job, authorize func(context.Context, sandbox.Job) error) preparedResult {
+func runPrepared(ctx context.Context, worker session, sources workerSources, deps dependencies, w work, cfg service.WorkerConfiguration, job sandbox.Job, authorize func(context.Context, sandbox.Job) error) preparedResult {
 	failure := func(reason string, err error) preparedResult {
 		return preparedResult{result: sandbox.Result{JobDigest: job.Digest, State: sandbox.StateFailed, ExitCode: -1, Reason: reason}, failure: err}
 	}

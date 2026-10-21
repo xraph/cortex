@@ -472,10 +472,11 @@ Further execution authorization is refused, including while a report is waiting
 for upload capacity. A successful or uncertain report cannot be sent again from
 that session; inspect the broker to resolve a lost acknowledgement.
 
-This is an internal startup component. Worker CLI assembly, evidence and image
-source adapters, staging integration, disk accounting, execution/export wiring,
-daemon setup and retained-file cleanup still need implementation. Tests cover configuration
-and credential substitution, activation races, deadline/cancellation handling,
+This is an internal startup component. Worker CLI assembly, approved image
+delivery, production broker/export wiring, daemon setup and retained-file cleanup
+still need implementation. Session evidence adapters now connect input staging
+and output capture to the private daemon. Tests cover configuration and credential
+substitution, activation races, deadline/cancellation handling,
 snapshot isolation and report retry rules. Linux root fixtures exercise the real
 private-daemon client with an explicit service-membership seam and reject ambient
 root through the public bootstrap function. They do not qualify an installed
@@ -778,9 +779,24 @@ marker, a receipt bound to the request, job, claim and full artifact reference,
 and EOF. Partial data, ignored write failures, provider errors, peer-close errors
 and cancellation cannot acknowledge success. The transport performs no retry.
 
-Worker source adapters, approved image delivery and installed provider
-configuration remain to be connected. Workers must not receive repository
-credentials or open the daemon's database as a substitute for that integration.
+`WorkerSession.InputSource` and `ArtifactRepository` connect staging and capture
+to this transport. They require the signed scope and reference, an active execution
+attempt, and current deployment and job authority. Output upload requires the
+acknowledged capture intent and consumes one attempt before contacting the daemon.
+Even explicit backpressure cannot replay that upload. Readback requires successful
+upload, and a session with evidence access cannot confirm capture before verified
+readback completes.
+
+Readers stream through a bounded pipe. EOF follows the final receipt and authority
+check; partial bytes and late failures remain failures. Closing early cancels and
+joins the transfer. Reports and other session operations cannot overlap an active
+transfer. The original signed deadline remains in force.
+
+`worker.Run` always obtains evidence capabilities from the bootstrapped session.
+Its `Sources` argument now supplies only the approved image source and image
+policy. Local staging guards verify signed bindings; current repository grants
+are enforced by the daemon at the content operation. Approved image delivery,
+installed provider configuration and live qualification remain open.
 
 ## Linux probe suite
 

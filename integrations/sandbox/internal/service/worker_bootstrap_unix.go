@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"slices"
@@ -20,6 +21,8 @@ import (
 )
 
 type workerBoundary struct {
+	readEvidence  func(context.Context, string, WorkerClaim, evidence.Ref, bool, io.Writer) error
+	putArtifact   func(context.Context, string, WorkerClaim, evidence.Artifact) (evidence.Ref, error)
 	capture       func(context.Context, string, WorkerClaim, evidence.Ref, bool) (WorkerCaptureReceipt, error)
 	owner         uint32
 	verifyCurrent func(context.Context, id.ID) error
@@ -49,7 +52,7 @@ func BootstrapWorker(ctx context.Context, configPath, credentialDirectory string
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return nil, errUnsupported
 	}
-	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt, capture: CaptureAt})
+	return bootstrapWorker(ctx, configPath, credentialDirectory, key, workerBoundary{verifyCurrent: containment.VerifyCurrent, authorize: AuthorizeAt, report: ReportAt, capture: CaptureAt, readEvidence: ReadEvidenceAt, putArtifact: PutArtifactAt})
 }
 
 func bootstrapWorker(ctx context.Context, configPath, credentialDirectory string, key id.ID, boundary workerBoundary) (*WorkerSession, error) {

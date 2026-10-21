@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/sandbox"
@@ -46,7 +47,8 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 		}
 		return nil
 	}, beginReport: func(_ context.Context, _ *net.UnixConn, claim WorkerClaim) (reportSession, error) {
-		return &fixtureCaptureSession{fixtureReportSession: fixtureReportSession{claim: claim}}, nil
+		captureSession := &fixtureCaptureSession{fixtureReportSession: fixtureReportSession{claim: claim}}
+		return &journalEvidenceSession{fixtureEvidenceSession: fixtureEvidenceSession{fixtureReportSession: fixtureReportSession{claim: claim}, data: []byte("candidate")}, capture: captureSession.Capture}, nil
 	}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -55,6 +57,7 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 	// Keep the service-membership seam explicit: this checks real daemon socket
 	// authentication and startup/capture/report exchanges, not a live systemd worker.
 	boundary.authorize, boundary.report, boundary.capture = AuthorizeAt, ReportAt, CaptureAt
+	boundary.readEvidence, boundary.putArtifact = ReadEvidenceAt, PutArtifactAt
 	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
 	if err != nil || authorizations.Load() != 2 {
 		t.Fatal("authenticated activation handshake failed", err)
@@ -66,6 +69,19 @@ func TestControlKernelWorkerBootstrapUsesPrivateDaemon(t *testing.T) {
 	ref := captureRefForJob(t, job)
 	if err = worker.CaptureJournal().Record(t.Context(), job, ref); err != nil {
 		t.Fatal("private intent failed", err)
+	}
+	evidenceContext := cortex.WithScope(t.Context(), job.Scope)
+	if _, err = worker.ArtifactRepository().Put(evidenceContext, evidence.Artifact{Ref: ref, Data: []byte("candidate")}); err != nil {
+		t.Fatal("private upload failed", err)
+	}
+	reader, readErr := worker.ArtifactRepository().Open(evidenceContext, ref)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || string(data) != "candidate" {
+		t.Fatal("private readback failed", readErr, closeErr)
 	}
 	if err = worker.CaptureJournal().Confirm(t.Context(), job, ref); err != nil {
 		t.Fatal("private confirmation failed", err)

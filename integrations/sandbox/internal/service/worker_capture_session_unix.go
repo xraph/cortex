@@ -13,6 +13,9 @@ import (
 )
 
 type captureAttempt struct {
+	readbackVerified    bool
+	uploadStarted       bool
+	uploaded            bool
 	digest              string
 	recorded            bool
 	confirmationStarted bool
@@ -58,6 +61,9 @@ func (w *WorkerSession) capture(ctx context.Context, job sandbox.Job, ref eviden
 	}
 	attempt, exists := w.captures[ref.ID]
 	if confirm {
+		if w.boundary.readEvidence != nil && !attempt.readbackVerified {
+			return broker.ErrConflict
+		}
 		if !exists || !attempt.recorded || attempt.confirmationStarted || attempt.digest != header.Digest {
 			return broker.ErrConflict
 		}
