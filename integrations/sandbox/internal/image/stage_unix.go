@@ -58,8 +58,11 @@ type Filesystem struct {
 // defaults are never returned or applied. Failed attempts remove only their
 // own temporary directory; retries create a fresh copy and reauthorize access.
 func Stage(ctx context.Context, cfg Config, image string) (result *Filesystem, err error) {
-	if cfg.Source == nil || cfg.Authorize == nil || !validDigest(image) || int64(cfg.OwnerUID) != int64(os.Geteuid()) || cfg.Architecture != runtime.GOARCH || (cfg.Architecture != "amd64" && cfg.Architecture != "arm64") || cfg.CompressedBytes <= 0 || cfg.CompressedBytes > 4<<30 || cfg.ExpandedBytes <= 0 || cfg.ExpandedBytes > 8<<30 || cfg.Entries <= 0 || cfg.Entries > 100_000 || cfg.Timeout <= 0 || cfg.Timeout > 10*time.Minute {
+	if cfg.Source == nil || cfg.Authorize == nil || !validDigest(image) || int64(cfg.OwnerUID) != int64(os.Geteuid()) || cfg.Architecture != runtime.GOARCH || (cfg.Architecture != "amd64" && cfg.Architecture != "arm64") {
 		return nil, fmt.Errorf("cortex: invalid image staging configuration")
+	}
+	if limitErr := (Limits{CompressedBytes: cfg.CompressedBytes, ExpandedBytes: cfg.ExpandedBytes, Entries: cfg.Entries, Timeout: cfg.Timeout}).Validate(); limitErr != nil {
+		return nil, limitErr
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()

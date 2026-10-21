@@ -593,6 +593,36 @@ exit. Run them as root only in a disposable Linux environment. These tests do
 not qualify systemd, runsc or a production worker. Worker execution and export
 assembly, retained-file recovery and live qualification remain open.
 
+## Worker execution coordinator
+
+The internal Linux worker coordinator joins an authenticated `WorkerSession`,
+bounded workspace, verified image/input staging, OCI bundle writer and contained
+runtime. `BeginExecution` consumes one attempt before current-authority checks;
+a failed entry cannot be retried through the same session. Reauthorization and
+reporting remain available within that attempt.
+
+Image and input staging limits come from the pinned worker configuration and
+share validation with the staging implementations. You supply authenticated
+source services and policies that receive a detached copy of the verified job,
+including its principal and scope. The coordinator repeats current broker
+checks around staging and before execution. It writes the canonical bundle
+exclusively, so an existing configuration cannot be overwritten.
+
+Runtime cleanup precedes workspace cleanup. Unresolved runtime cleanup leaves
+storage for independent service recovery and withholds the report. Preparation
+failures receive a bounded, generic reason only after workspace cleanup and a
+fresh authority check. A source error cannot change the cleanup sequence.
+Report submission retries only explicit backpressure, with the same payload and
+original deadline. An uncertain acknowledgement requires broker inspection.
+The worker process must exit after the coordinator returns.
+
+This entry point currently reports stdout and stderr. Artifact capture must be
+added before workspace cleanup; authorized release remains a separate host
+operation. Source adapters, executable worker/daemon installation, broker runtime
+activation, retained-file recovery and live qualification remain open. The root
+staging fixture uses real image/input verification and bundle writes, with an
+explicit test executor and workspace. It does not attest to runtime isolation.
+
 ## Linux probe suite
 
 The `sandbox_qualification` build tag adds host-side probes. They fail when the

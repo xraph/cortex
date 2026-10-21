@@ -14,6 +14,8 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
+	"github.com/xraph/cortex/integrations/sandbox/internal/image"
+	"github.com/xraph/cortex/integrations/sandbox/internal/staging"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workspace"
 )
 
@@ -45,6 +47,8 @@ type WorkerConfig struct {
 	Service         WorkerService     `json:"service"`
 	Runtime         WorkerRuntime     `json:"runtime"`
 	Workspace       workspace.Policy  `json:"workspace"`
+	ImageStaging    image.Limits      `json:"image_staging"`
+	InputStaging    staging.Limits    `json:"input_staging"`
 }
 
 // WorkerConfiguration binds a parsed configuration to its installed profile.
@@ -74,6 +78,12 @@ func readWorkerConfig(ctx context.Context, name string, owner uint32) (WorkerCon
 	settings := cfg.Service
 	if policyErr := cfg.Workspace.Validate(); policyErr != nil {
 		return WorkerConfiguration{}, policyErr
+	}
+	if limitErr := cfg.ImageStaging.Validate(); limitErr != nil {
+		return WorkerConfiguration{}, limitErr
+	}
+	if limitErr := cfg.InputStaging.Validate(); limitErr != nil {
+		return WorkerConfiguration{}, limitErr
 	}
 	profile := LaunchProfile{SchemaVersion: 1, Worker: settings.Worker, Config: hostfs.Pin{Path: name, SHA256: evidence.Digest(body), Bytes: int64(len(body)), Mode: 0o600}, TemplatePath: settings.TemplatePath, StateDirectory: settings.StateDirectory, CPUMillis: settings.CPUMillis, MemoryBytes: settings.MemoryBytes, Tasks: settings.Tasks, WallTime: settings.WallTime}
 	profileDigest, err := profile.Digest()

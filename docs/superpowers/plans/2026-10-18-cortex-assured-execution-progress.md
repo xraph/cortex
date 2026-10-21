@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker and worker core implemented, external supervision pending | this chat | Authenticated broker, deployment pins, bounded worker lifecycle and OCI binding tests pass; no qualified Linux adapter |
+| S2.4 broker/runtime | broker, containment and internal worker coordinator implemented; deployment pending | this chat | Verified staging, bounded storage, runtime/report binding and cleanup tests pass; no qualified Linux adapter |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -523,3 +523,47 @@ runtime-binding packet. The full sandbox race suite/build, twenty supervisor/OCI
 race repetitions, tagged Linux lint, amd64/arm64 supervisor compilation and
 twenty Linux workspace/supervisor fixture repetitions pass. Live runsc binding
 and export behavior remain unqualified.
+
+
+## Worker staging, execution and report coordinator
+
+The internal Linux coordinator now connects a bootstrapped session to bounded
+workspace creation, image staging, evidence staging, exclusive OCI bundle
+creation, contained runtime execution and authenticated reporting. Each session
+permits one execution entry, including concurrent calls and failed entry checks.
+It retains reauthorization and report access without permitting another attempt.
+Staging limits are pinned in worker configuration and validated through the same
+value types used by the existing stagers.
+
+Source policies receive detached signed job identity, principal and scope. They
+check source grants separately from current broker authority. Tests verify that
+policy mutations cannot alter retained job/input state. The worker uses the
+original signed deadline throughout and sends generic preparation-failure reasons
+without copying source errors into reports.
+
+Runtime cleanup must complete before workspace cleanup or reporting. A failed
+runtime reap retains storage for independent service recovery. Workspace cleanup
+uses an independent context, and any failure suppresses the report. A regression
+failed before source errors were prevented from impersonating unresolved runtime
+cleanup. A nil runtime factory regression also failed before invalid results
+were replaced by an explicit preparation failure.
+
+Reports follow cleanup and another authority check. Only explicit report
+backpressure permits an identical retry, bounded by the original deadline.
+Uncertain acknowledgements do not replay execution. The Linux staging fixture
+uses the real image and evidence stagers and bundle writer with explicit session,
+workspace and executor seams. It verifies the staged bytes and refuses an
+existing OCI configuration. It does not prove installed runtime isolation.
+
+CI `39551610960` at `44f920a` passed every job for the preceding runtime binding.
+Artifact capture before workspace cleanup, source adapters, executable worker
+and daemon installation, broker activation, orphan/retained-file recovery and
+live Linux qualification remain open. S2.4 and G2 remain incomplete.
+
+Validation passed after final formatting: lint across all ten modules, Linux
+tagged sandbox lint, the sandbox race suite, twenty session race repetitions,
+the sandbox build and Linux amd64/arm64 test compilation. The Linux pipeline
+suite passed twenty repetitions, including real image/input staging and bundle
+creation. The Linux private-control and worker-session suite also passed.
+Workflow validation and whitespace checks passed. These fixtures do not replace
+the deferred installed systemd/runsc qualification.

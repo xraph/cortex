@@ -173,3 +173,59 @@ func TestWorkerSessionRechecksDeploymentAndMembership(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerSessionAllowsOnlyOneExecutionAttempt(t *testing.T) {
+	name, directory, credential, boundary := workerBootstrapFixture(t)
+	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = worker.BeginExecution(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = worker.Authorize(t.Context()); err != nil {
+		t.Fatal("execution prevented current authority checks", err)
+	}
+	if err = worker.BeginExecution(t.Context()); !errors.Is(err, broker.ErrConflict) {
+		t.Fatal("execution repeated", err)
+	}
+}
+
+func TestWorkerSessionExecutionFailureDoesNotPermitAnotherAttempt(t *testing.T) {
+	name, directory, credential, boundary := workerBootstrapFixture(t)
+	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.boundary.authorize = func(context.Context, string, WorkerClaim) error { return broker.ErrDenied }
+	if err = worker.BeginExecution(t.Context()); !errors.Is(err, broker.ErrDenied) {
+		t.Fatal(err)
+	}
+	worker.boundary.authorize = boundary.authorize
+	if err = worker.BeginExecution(t.Context()); !errors.Is(err, broker.ErrConflict) {
+		t.Fatal("failed execution entry was retried", err)
+	}
+}
+
+func TestWorkerSessionConcurrentExecutionHasOneWinner(t *testing.T) {
+	name, directory, credential, boundary := workerBootstrapFixture(t)
+	worker, err := bootstrapWorker(t.Context(), name, directory, credential.Record.Receipt.Job.ID, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := make(chan error, 2)
+	for range 2 {
+		go func() { attempts <- worker.BeginExecution(t.Context()) }()
+	}
+	winners := 0
+	for range 2 {
+		if err = <-attempts; err == nil {
+			winners++
+		} else if !errors.Is(err, broker.ErrConflict) {
+			t.Fatal(err)
+		}
+	}
+	if winners != 1 {
+		t.Fatal("execution did not have exactly one winner", winners)
+	}
+}

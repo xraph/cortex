@@ -29,13 +29,14 @@ type workerBoundary struct {
 // It does not stage files or execute a workload. Reauthorize after staging and
 // immediately before execution; the original signed deadline never moves.
 type WorkerSession struct {
-	configuration WorkerConfiguration
-	credential    Credential
-	claim         WorkerClaim
-	boundary      workerBoundary
-	reportMu      sync.Mutex
-	reportDigest  string
-	reportSent    bool
+	configuration    WorkerConfiguration
+	credential       Credential
+	claim            WorkerClaim
+	boundary         workerBoundary
+	reportMu         sync.Mutex
+	reportDigest     string
+	reportSent       bool
+	executionStarted bool
 }
 
 // BootstrapWorker verifies the current Linux worker, protected configuration,
@@ -110,6 +111,28 @@ func (w *WorkerSession) Authorize(ctx context.Context) error {
 	if w.reportDigest != "" {
 		return broker.ErrConflict
 	}
+	return w.authorizeConfigured(ctx)
+}
+
+// BeginExecution consumes this session's one execution attempt before checking
+// current deployment and authority. A failed entry cannot be retried by the same
+// session. Authorize remains available to recheck grants during that attempt.
+func (w *WorkerSession) BeginExecution(ctx context.Context) error {
+	if !w.valid() {
+		return broker.ErrDenied
+	}
+	if !w.reportMu.TryLock() {
+		return broker.ErrConflict
+	}
+	defer w.reportMu.Unlock()
+	if w.executionStarted || w.reportDigest != "" {
+		return broker.ErrConflict
+	}
+	w.executionStarted = true
+	return w.authorizeConfigured(ctx)
+}
+
+func (w *WorkerSession) authorizeConfigured(ctx context.Context) error {
 	operation, cancel := context.WithDeadline(ctx, w.Deadline())
 	defer cancel()
 	if err := w.configuration.verify(operation, w.boundary.owner); err != nil {

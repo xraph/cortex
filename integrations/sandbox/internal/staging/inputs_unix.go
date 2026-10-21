@@ -66,8 +66,11 @@ func Stage(ctx context.Context, cfg Config, job sandbox.Job) (result *Inputs, er
 	if int64(cfg.OwnerUID) != int64(os.Geteuid()) {
 		return nil, fmt.Errorf("cortex: staging owner must match worker identity")
 	}
-	if cfg.Source == nil || cfg.Policy == nil || cfg.AuthorizeJob == nil || cfg.PerInputBytes <= 0 || cfg.PerInputBytes > 1<<30 || cfg.TotalBytes <= 0 || cfg.TotalBytes > 4<<30 {
+	if cfg.Source == nil || cfg.Policy == nil || cfg.AuthorizeJob == nil {
 		return nil, fmt.Errorf("cortex: invalid input staging configuration")
+	}
+	if limitErr := (Limits{PerInputBytes: cfg.PerInputBytes, TotalBytes: cfg.TotalBytes}).Validate(); limitErr != nil {
+		return nil, limitErr
 	}
 	if operationErr := job.Validate(); operationErr != nil {
 		return nil, operationErr

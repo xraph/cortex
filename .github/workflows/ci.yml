@@ -122,6 +122,8 @@ jobs:
         run: |
           GOWORK=off go test -race -c -tags=sandbox_mount_kernel -o "$RUNNER_TEMP/cortex-workspace.test" ./internal/workspace
           sudo -- "$RUNNER_TEMP/cortex-workspace.test" -test.v -test.timeout=60s
+          GOWORK=off go test -race -c -tags=sandbox_mount_kernel -o "$RUNNER_TEMP/cortex-worker-pipeline.test" ./internal/worker
+          sudo -- "$RUNNER_TEMP/cortex-worker-pipeline.test" -test.run='^TestWorkerKernel' -test.v -test.timeout=60s
 
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
