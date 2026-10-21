@@ -218,12 +218,12 @@ func TestControlKernelEvidenceServiceBindingAndAmbientRootDenial(t *testing.T) {
 	}
 	access, c, claim, _, input, output, repo := workerEvidenceFixture(t)
 	limits := ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second}
-	for _, providers := range [][]*WorkerEvidence{{nil}, {access, access}, {&WorkerEvidence{controller: &Controller{}}}} {
+	for _, providers := range [][]WorkerContent{{{}}, {{Evidence: access}, {Evidence: access}}, {{Evidence: &WorkerEvidence{controller: &Controller{}}}}} {
 		if server, err := NewWorkerControl(c, limits, providers...); err == nil || server != nil {
 			t.Fatal("invalid evidence binding accepted")
 		}
 	}
-	server, err := NewWorkerControl(c, limits, access)
+	server, err := NewWorkerControl(c, limits, WorkerContent{Evidence: access})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +242,59 @@ func TestControlKernelEvidenceServiceBindingAndAmbientRootDenial(t *testing.T) {
 	_ = awaitControllerStop(t, done)
 	if repo.puts != 0 || repo.opens != 0 {
 		t.Fatal("ambient root reached provider")
+	}
+}
+
+func TestControlKernelImageClientAuthenticatesPrivateDaemon(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("worker image transport fixture requires root")
+	}
+	claim := controlClaim()
+	data := []byte("image data")
+	session := &fixtureImageSession{fixtureReportSession: fixtureReportSession{claim: claim}, data: data}
+	path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) { return session, nil }, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
+	defer func() { cancel(); _ = awaitControllerStop(t, done) }()
+	var content bytes.Buffer
+	if err := ReadImageAt(t.Context(), path, claim, imagePin(data), 1024, &content); err != nil || !bytes.Equal(content.Bytes(), data) {
+		t.Fatal("private image read failed", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReadImageAt(t.Context(), path, claim, imagePin(data), 1024, io.Discard); err == nil {
+		t.Fatal("image reached unsafe endpoint")
+	}
+	if session.closes.Load() != 1 {
+		t.Fatal("unsafe endpoint acquired service peer")
+	}
+}
+
+func TestControlKernelImageServiceBindingAndAmbientRootDenial(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("worker image transport fixture requires root")
+	}
+	access, c, claim, _, source, root, _ := imageAccessFixture(t)
+	limits := ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second}
+	for _, content := range []WorkerContent{{Images: &WorkerImages{controller: &Controller{}}}, {Evidence: &WorkerEvidence{controller: &Controller{}}, Images: access}} {
+		if server, err := NewWorkerControl(c, limits, content); err == nil || server != nil {
+			t.Fatal("foreign content controller accepted")
+		}
+	}
+	server, err := NewWorkerControl(c, limits, WorkerContent{Images: access})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, path := controlListener(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx, listener) }()
+	if err = ReadImageAt(t.Context(), path, claim, root, 1<<20, io.Discard); err == nil {
+		t.Fatal("ambient root read image")
+	}
+	cancel()
+	_ = awaitControllerStop(t, done)
+	if source.opens != 0 {
+		t.Fatal("ambient root reached image source")
 	}
 }

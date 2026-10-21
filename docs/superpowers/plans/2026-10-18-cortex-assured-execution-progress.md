@@ -875,3 +875,39 @@ for Linux arm64 and amd64. Linux image-service and staging suites each passed te
 repetitions without skips. CI `39625181051` at `f6cd5ce` passed every job, covering
 the preceding worker evidence adapters and optimizer recovery. Independent
 full-plan review and installed image-provider/runtime qualification remain open.
+
+
+## S2.4 private image transfer
+
+The private control endpoint now serves the signed manifest and its direct blobs
+through WorkerImages. WorkerContent configures evidence and image access against
+one controller; each omitted capability is refused before payload admission.
+Image requests carry a pinned digest and byte ceiling in at most two KiB of
+canonical metadata. They share bounded transfer capacity with reports and
+artifacts, preserving the reserved authorization connection.
+
+Image and evidence clients share bounded download framing and cancellation.
+The image client verifies SHA256, the observed byte count, the request digest,
+job and claim revision, then requires a final receipt and EOF. Server/provider
+errors and peer-close failures never emit a successful stream terminator.
+Received bytes remain provisional until the client returns success.
+
+Regression tests cover corrupted and partial content, ignored destination errors,
+provider failure after bytes, malformed requests, mixed receipts, unrelated blob
+requests, expired claims, cancellation and capacity saturation. Linux fixtures
+exercise private endpoint permissions, foreign controller bindings and denial of
+an ambient root caller. The signed-manifest socket fixture uses a declared peer
+identity seam; it is not live service-membership qualification.
+
+CI 39627035662 at 2961e57 passed for the preceding provider boundary. Worker
+image-source assembly, installed content services, daemon/worker lifecycle,
+independent cleanup and Linux systemd/runsc qualification remain open. S2.4 and
+G2 are incomplete.
+
+Validation: the sandbox module race suite and build passed. The existing `make f`
+target ran from the sandbox directory with `-f ../../Makefile`, limiting the
+formatter to this module while concurrent optimizer work continued. Root `make l`
+passed across all ten modules, and Linux lint passed with qualification, peer and
+mount fixture tags. Service binaries compiled for Linux arm64 and amd64. The
+Linux image, evidence, report and private-socket tests passed ten repetitions
+without skips. Live runtime qualification remains deferred by the user's choice.

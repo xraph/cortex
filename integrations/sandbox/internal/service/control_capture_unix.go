@@ -35,6 +35,8 @@ type captureSession interface {
 
 func uploadFrameLimit(operation string) int {
 	switch operation {
+	case "image-read":
+		return controlFrameLimit
 	case "report", "artifact-put":
 		return reportFrameLimit
 	case "capture-intent", "capture-confirm", "input-read", "artifact-read":
@@ -91,7 +93,7 @@ func captureConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClai
 	if err != nil {
 		return WorkerCaptureReceipt{}, err
 	}
-	if reply.Status != "captured" || reply.Evidence != nil || reply.Receipt != nil || reply.Capture == nil || !captureReceiptMatches(*reply.Capture, header, ref.ID) {
+	if reply.Status != "captured" || reply.Evidence != nil || reply.Image != nil || reply.Receipt != nil || reply.Capture == nil || !captureReceiptMatches(*reply.Capture, header, ref.ID) {
 		return WorkerCaptureReceipt{}, broker.ErrDenied
 	}
 	return *reply.Capture, nil

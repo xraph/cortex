@@ -38,6 +38,7 @@ type reportReply struct {
 	Receipt       *WorkerReportReceipt  `json:"receipt,omitempty"`
 	Capture       *WorkerCaptureReceipt `json:"capture,omitempty"`
 	Evidence      *evidenceReceipt      `json:"evidence,omitempty"`
+	Image         *imageReceipt         `json:"image,omitempty"`
 }
 
 type workerReportSession struct {
@@ -130,21 +131,21 @@ func (s *WorkerControl) exchangeReport(ctx context.Context, conn *net.UnixConn, 
 		return
 	}
 	var reply reportReply
-	if isEvidenceRead(header.Operation) {
-		reply, err = streamEvidence(operation, session, header, payload, conn)
+	if isReadStream(header.Operation) {
+		reply, err = streamDownload(operation, session, header, payload, conn)
 	} else {
 		reply, err = submitUpload(operation, session, header, payload)
 	}
 	closeErr := session.Close()
 	closed = true
 	if err != nil || closeErr != nil || operation.Err() != nil {
-		if isEvidenceRead(header.Operation) {
+		if isReadStream(header.Operation) {
 			return
 		}
 		deny()
 		return
 	}
-	if isEvidenceRead(header.Operation) {
+	if isReadStream(header.Operation) {
 		if err = endEvidenceStream(conn); err != nil {
 			return
 		}
@@ -185,7 +186,7 @@ func reportConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClaim
 	if err != nil {
 		return WorkerReportReceipt{}, err
 	}
-	if reply.Status != "reported" || reply.Evidence != nil || reply.Capture != nil || reply.Receipt == nil || !reportReceiptMatches(*reply.Receipt, header) {
+	if reply.Status != "reported" || reply.Evidence != nil || reply.Image != nil || reply.Capture != nil || reply.Receipt == nil || !reportReceiptMatches(*reply.Receipt, header) {
 		return WorkerReportReceipt{}, broker.ErrDenied
 	}
 	return *reply.Receipt, nil
@@ -219,7 +220,7 @@ func sendUpload(operation context.Context, conn *net.UnixConn, header reportHead
 	}
 	requestDigest := evidence.Digest(body)
 	var reply reportReply
-	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil || reply.Capture != nil || reply.Evidence != nil {
+	if _, err = readControlFrame(conn, &reply); err != nil || reply.SchemaVersion != 2 || reply.RequestDigest != requestDigest || reply.Receipt != nil || reply.Capture != nil || reply.Evidence != nil || reply.Image != nil {
 		return "", broker.ErrDenied
 	}
 	if operationErr := operation.Err(); operationErr != nil {

@@ -27,8 +27,8 @@ const controlFrameLimit = 2048
 // callbacks must honor their contexts for handler shutdown to remain bounded.
 type ControlLimits struct {
 	Connections int
-	// Reports permits up to four concurrent report, capture or evidence
-	// exchanges and must be less than Connections. Zero disables all three.
+	// Reports permits up to four concurrent report, capture or content
+	// exchanges and must be less than Connections. Zero disables those exchanges.
 	Reports int
 	Timeout time.Duration
 }
@@ -40,9 +40,9 @@ func (l ControlLimits) validate() error {
 	return nil
 }
 
-// WorkerControl serves authorization, capture, evidence transfer and report
+// WorkerControl serves authorization, capture, content transfer and report
 // receipt. It cannot launch, cancel or complete jobs. JSON frames are canonical;
-// JSON and binary evidence chunks have explicit byte bounds.
+// JSON and binary content chunks have explicit byte bounds.
 type WorkerControl struct {
 	limits      ControlLimits
 	controller  *Controller
@@ -53,11 +53,18 @@ type WorkerControl struct {
 	reports     chan struct{}
 }
 
+// WorkerContent binds optional content services to the controller. An omitted
+// configuration leaves both capabilities unavailable on the private endpoint.
+type WorkerContent struct {
+	Evidence *WorkerEvidence
+	Images   *WorkerImages
+}
+
 // NewWorkerControl binds the transport to kernel peer authentication and the
 // controller's current grants, service configuration and durable claim checks.
-// An optional evidence service enables byte transfer and must share the same
-// controller. All transfer operations share the Reports capacity limit.
-func NewWorkerControl(controller *Controller, limits ControlLimits, evidenceServices ...*WorkerEvidence) (*WorkerControl, error) {
+// Optional content services must share the same controller. All transfer
+// operations share the Reports capacity limit.
+func NewWorkerControl(controller *Controller, limits ControlLimits, services ...WorkerContent) (*WorkerControl, error) {
 	if runtime.GOOS != "linux" {
 		return nil, errUnsupported
 	}
@@ -67,12 +74,18 @@ func NewWorkerControl(controller *Controller, limits ControlLimits, evidenceServ
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
-	if len(evidenceServices) > 1 || (len(evidenceServices) == 1 && (evidenceServices[0] == nil || evidenceServices[0].controller != controller)) {
-		return nil, fmt.Errorf("cortex: invalid worker evidence binding")
+	if len(services) > 1 {
+		return nil, fmt.Errorf("cortex: multiple worker content configurations")
+	}
+	var content WorkerContent
+	if len(services) == 1 {
+		content = services[0]
+		if (content.Evidence == nil && content.Images == nil) || (content.Evidence != nil && content.Evidence.controller != controller) || (content.Images != nil && content.Images.controller != controller) {
+			return nil, fmt.Errorf("cortex: invalid worker content binding")
+		}
 	}
 	begin := controller.openReportSession
-	if len(evidenceServices) == 1 {
-		evidenceService := evidenceServices[0]
+	if len(services) == 1 {
 		begin = func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (reportSession, error) {
 			session, err := controller.openReportSession(ctx, conn, claim)
 			if err != nil {
@@ -82,7 +95,7 @@ func NewWorkerControl(controller *Controller, limits ControlLimits, evidenceServ
 			if !ok {
 				return nil, errors.Join(broker.ErrDenied, session.Close())
 			}
-			return &workerEvidenceSession{workerReportSession: native, evidence: evidenceService}, nil
+			return &workerContentSession{workerReportSession: native, content: content}, nil
 		}
 	}
 	return &WorkerControl{controller: controller, limits: limits, beginReport: begin, authorize: func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (err error) {

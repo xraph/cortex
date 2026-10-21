@@ -26,7 +26,7 @@ type fixtureEvidenceSession struct {
 }
 
 func TestEvidenceDownloadRejectsUnboundCompletionAndMalformedChunks(t *testing.T) {
-	for _, mode := range []string{"missing-end", "missing-receipt", "wrong-request", "wrong-binding", "mixed-receipt", "trailing-frame", "oversized-chunk", "truncated-chunk", "ready-evidence"} {
+	for _, mode := range []string{"ready-image", "mixed-image", "missing-end", "missing-receipt", "wrong-request", "wrong-binding", "mixed-receipt", "trailing-frame", "oversized-chunk", "truncated-chunk", "ready-evidence"} {
 		t.Run(mode, func(t *testing.T) {
 			claim := controlClaim()
 			ref := wireCaptureRef(t)
@@ -46,6 +46,9 @@ func TestEvidenceDownloadRejectsUnboundCompletionAndMalformedChunks(t *testing.T
 					return
 				}
 				ready := reportReply{SchemaVersion: 2, Status: "ready", RequestDigest: evidence.Digest(body)}
+				if mode == "ready-image" {
+					ready.Image = &imageReceipt{SchemaVersion: 1}
+				}
 				if mode == "ready-evidence" {
 					ready.Evidence = &evidenceReceipt{SchemaVersion: 1}
 				}
@@ -83,6 +86,8 @@ func TestEvidenceDownloadRejectsUnboundCompletionAndMalformedChunks(t *testing.T
 					final.RequestDigest = evidence.Digest([]byte("foreign"))
 				case "wrong-binding":
 					receipt.BindingDigest = evidence.Digest([]byte("foreign"))
+				case "mixed-image":
+					final.Image = &imageReceipt{SchemaVersion: 1}
 				case "mixed-receipt":
 					final.Capture = &WorkerCaptureReceipt{SchemaVersion: 1}
 				}
@@ -118,6 +123,9 @@ func TestEvidenceTransportSharesCapacityAndPreservesAuthorityReserve(t *testing.
 	awaitReportReady(t, conn, header)
 	if err = readEvidenceConnection(t.Context(), dialControl(t, path), claim, wireCaptureRef(t), false, io.Discard, time.Second); !errors.Is(err, broker.ErrPending) {
 		t.Fatal("download bypassed capacity", err)
+	}
+	if err = readImageConnection(t.Context(), dialControl(t, path), claim, imagePin([]byte("image")), 1024, io.Discard, time.Second); !errors.Is(err, broker.ErrPending) {
+		t.Fatal("image bypassed shared capacity", err)
 	}
 	if _, err = reportConnection(t.Context(), dialControl(t, path), claim, testWireResult(), time.Second); !errors.Is(err, broker.ErrPending) {
 		t.Fatal("report bypassed capacity", err)

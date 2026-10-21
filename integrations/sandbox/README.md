@@ -764,8 +764,9 @@ to one MiB, verify the returned reference and perform no provider retry after an
 uncertain response. A returned upload reference still requires repository readback
 and capture confirmation before a result can use it.
 
-Pass the evidence service as the optional third argument to `NewWorkerControl`
-to enable private byte transfer. It must use the same controller. `ReadEvidenceAt`
+Pass `WorkerContent{Evidence: access}` as the optional third argument to
+`NewWorkerControl` to enable private evidence transfer. It must use the same
+controller. `ReadEvidenceAt`
 reads signed inputs or output readback; `PutArtifactAt` uploads an output. These
 operations share the report/capture capacity limit and preserve the reserved
 authorization connection. Without the service, evidence requests fail before
@@ -819,9 +820,21 @@ opening and after copying. A successful size receipt follows the final authority
 check; received bytes remain provisional until then. No source failure retries.
 The caller owns destination cancellation and must unblock its writes.
 
-This boundary still needs private image transport, a worker image-source adapter
-and installed provider configuration. It does not establish live containment or
-permission to execute an image.
+To enable image transfer, pass `WorkerContent{Images: access}` to
+`NewWorkerControl`, alongside `Evidence` when you need both. Each configured
+service must share the controller. Omitted capabilities reject requests before
+payload admission.
+
+`ReadImageAt` requests one pinned digest with a caller byte ceiling. It uses the
+same private endpoint, bounded transfer slots and 64 KiB chunks as evidence reads.
+Both ends verify SHA256. The final receipt binds the observed size, digest, job
+and claim to the request. A corrupt, incomplete, expired or unacknowledged stream
+returns an error, even if some bytes reached your destination. No automatic retry
+occurs. Image requests accept at most two KiB of canonical metadata and cannot
+supply a source URL.
+
+Worker image-source assembly and installed provider configuration remain open.
+These transport tests do not qualify a live systemd/runsc deployment.
 
 ## Linux probe suite
 

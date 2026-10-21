@@ -34,19 +34,25 @@ type evidenceSession interface {
 	PutEvidence(context.Context, evidence.Artifact) (evidence.Ref, error)
 }
 
-type workerEvidenceSession struct {
+type workerContentSession struct {
 	*workerReportSession
-	evidence *WorkerEvidence
+	content WorkerContent
 }
 
-func (s *workerEvidenceSession) ReadEvidence(ctx context.Context, ref evidence.Ref, artifact bool, destination io.Writer) error {
-	if artifact {
-		return s.evidence.ReadArtifact(ctx, s.peer, s.claim, ref, destination)
+func (s *workerContentSession) ReadEvidence(ctx context.Context, ref evidence.Ref, artifact bool, destination io.Writer) error {
+	if s.content.Evidence == nil {
+		return broker.ErrDenied
 	}
-	return s.evidence.ReadInput(ctx, s.peer, s.claim, ref, destination)
+	if artifact {
+		return s.content.Evidence.ReadArtifact(ctx, s.peer, s.claim, ref, destination)
+	}
+	return s.content.Evidence.ReadInput(ctx, s.peer, s.claim, ref, destination)
 }
-func (s *workerEvidenceSession) PutEvidence(ctx context.Context, a evidence.Artifact) (evidence.Ref, error) {
-	return s.evidence.PutArtifact(ctx, s.peer, s.claim, a)
+func (s *workerContentSession) PutEvidence(ctx context.Context, a evidence.Artifact) (evidence.Ref, error) {
+	if s.content.Evidence == nil {
+		return evidence.Ref{}, broker.ErrDenied
+	}
+	return s.content.Evidence.PutArtifact(ctx, s.peer, s.claim, a)
 }
 
 func isEvidenceRead(operation string) bool {
@@ -54,7 +60,13 @@ func isEvidenceRead(operation string) bool {
 }
 
 func supportsUpload(session reportSession, operation string) bool {
+	if configured, ok := session.(interface{ supportsContent(string) bool }); ok && !configured.supportsContent(operation) {
+		return false
+	}
 	switch operation {
+	case "image-read":
+		_, ok := session.(imageSession)
+		return ok
 	case "report":
 		return true
 	case "capture-intent", "capture-confirm":
@@ -283,39 +295,59 @@ func putArtifactConnection(ctx context.Context, conn *net.UnixConn, claim Worker
 	if err != nil {
 		return evidence.Ref{}, err
 	}
-	if reply.Status != "stored" || reply.Receipt != nil || reply.Capture != nil || !evidenceReceiptMatches(reply.Evidence, header, a.Ref) {
+	if reply.Status != "stored" || reply.Image != nil || reply.Receipt != nil || reply.Capture != nil || !evidenceReceiptMatches(reply.Evidence, header, a.Ref) {
 		return evidence.Ref{}, broker.ErrDenied
 	}
 	return detachedCaptureRef(a.Ref), nil
 }
 
 func readEvidenceConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClaim, ref evidence.Ref, artifact bool, destination io.Writer, timeout time.Duration) error {
-	operation, finish, err := controlConnection(ctx, conn, timeout)
+	reply, header, _, err := downloadConnection(ctx, conn, timeout, func() (reportHeader, []byte, error) { return prepareEvidenceRead(claim, ref, artifact) }, ref.Bytes, ref.Bytes, ref.SHA256, destination)
 	if err != nil {
 		return err
 	}
-	defer finish()
-	if destination == nil {
-		return broker.ErrDenied
-	}
-	header, payload, err := prepareEvidenceRead(claim, ref, artifact)
-	if err != nil {
-		return err
-	}
-	request, err := sendUpload(operation, conn, header, payload)
-	if err != nil {
-		return err
-	}
-	reader := &evidenceChunkReader{source: conn}
-	if copyErr := verifiedio.Copy(operation, reader, destination, ref.Bytes, ref.SHA256); copyErr != nil {
-		return copyErr
-	}
-	reply, err := receiveUploadReply(operation, conn, request)
-	if err != nil {
-		return err
-	}
-	if reply.Status != "read" || reply.Receipt != nil || reply.Capture != nil || !evidenceReceiptMatches(reply.Evidence, header, ref) {
+	if reply.Status != "read" || reply.Receipt != nil || reply.Capture != nil || reply.Image != nil || !evidenceReceiptMatches(reply.Evidence, header, ref) {
 		return broker.ErrDenied
 	}
 	return nil
+}
+
+func downloadConnection(ctx context.Context, conn *net.UnixConn, timeout time.Duration, prepare func() (reportHeader, []byte, error), size, maximum int64, digest string, destination io.Writer) (reportReply, reportHeader, int64, error) {
+	operation, finish, err := controlConnection(ctx, conn, timeout)
+	if err != nil {
+		return reportReply{}, reportHeader{}, 0, err
+	}
+	defer finish()
+	if destination == nil {
+		return reportReply{}, reportHeader{}, 0, broker.ErrDenied
+	}
+	header, payload, err := prepare()
+	if err != nil {
+		return reportReply{}, reportHeader{}, 0, err
+	}
+	request, err := sendUpload(operation, conn, header, payload)
+	if err != nil {
+		return reportReply{}, reportHeader{}, 0, err
+	}
+	reader := &evidenceChunkReader{source: conn}
+	counter := &downloadCounter{destination: destination}
+	if copyErr := verifiedio.CopyLimit(operation, reader, counter, size, maximum, digest); copyErr != nil {
+		return reportReply{}, reportHeader{}, 0, copyErr
+	}
+	reply, err := receiveUploadReply(operation, conn, request)
+	if err != nil {
+		return reportReply{}, reportHeader{}, 0, err
+	}
+	return reply, header, counter.bytes, nil
+}
+
+type downloadCounter struct {
+	destination io.Writer
+	bytes       int64
+}
+
+func (w *downloadCounter) Write(body []byte) (int, error) {
+	n, err := w.destination.Write(body)
+	w.bytes += int64(n)
+	return n, err
 }
