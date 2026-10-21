@@ -27,6 +27,24 @@ type fixtureRepository struct {
 	afterPut  func()
 }
 
+type fixtureJournal struct {
+	record  func(context.Context, sandbox.Job, evidence.Ref) error
+	confirm func(context.Context, sandbox.Job, evidence.Ref) error
+}
+
+func (j fixtureJournal) Record(ctx context.Context, job sandbox.Job, ref evidence.Ref) error {
+	if j.record != nil {
+		return j.record(ctx, job, ref)
+	}
+	return ctx.Err()
+}
+func (j fixtureJournal) Confirm(ctx context.Context, job sandbox.Job, ref evidence.Ref) error {
+	if j.confirm != nil {
+		return j.confirm(ctx, job, ref)
+	}
+	return ctx.Err()
+}
+
 func (r *fixtureRepository) Put(_ context.Context, a evidence.Artifact) (evidence.Ref, error) {
 	r.artifacts = append(r.artifacts, a)
 	if r.afterPut != nil {
@@ -101,7 +119,67 @@ func captureFixture(t *testing.T) (context.Context, Config, sandbox.Job, *fixtur
 	}
 	repo := &fixtureRepository{}
 	cfg := Config{Root: root, Repository: repo, Retention: time.Hour, Authorize: func(ctx context.Context, _ sandbox.Job) error { return ctx.Err() }, Check: func(ctx context.Context) error { return ctx.Err() }, Policy: func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }}
+	cfg.Journal = fixtureJournal{}
 	return cortex.WithScope(context.Background(), scope), cfg, j, repo
+}
+
+func TestCaptureRequiresDurableIntentBeforeUploadAndConfirmationBeforeResult(t *testing.T) {
+	for _, fail := range []string{"none", "missing", "record", "confirm", "revoked"} {
+		t.Run(fail, func(t *testing.T) {
+			ctx, cfg, job, repo := captureFixture(t)
+			calls := []string{}
+			revoked := false
+			cfg.Authorize = func(context.Context, sandbox.Job) error {
+				if revoked {
+					return evidence.ErrDenied
+				}
+				return nil
+			}
+			cfg.Journal = fixtureJournal{
+				record: func(_ context.Context, candidate sandbox.Job, ref evidence.Ref) error {
+					calls = append(calls, "record")
+					if len(repo.artifacts) != 0 || ref.ID != job.Outputs[0].ID || ref.SHA256 != evidence.Digest([]byte("candidate evidence")) {
+						t.Fatal("upload preceded durable binding")
+					}
+					candidate.Outputs[0].Path = "changed"
+					ref.Scope.Levels[0].Value = "changed"
+					if fail == "record" {
+						return errors.New("lost journal acknowledgement")
+					}
+					if fail == "revoked" {
+						revoked = true
+					}
+					return nil
+				},
+				confirm: func(_ context.Context, _ sandbox.Job, ref evidence.Ref) error {
+					calls = append(calls, "confirm")
+					if len(repo.artifacts) != 1 || ref.SHA256 != repo.artifacts[0].Ref.SHA256 {
+						t.Fatal("confirmed before upload")
+					}
+					if fail == "confirm" {
+						return errors.New("lost confirmation acknowledgement")
+					}
+					return nil
+				},
+			}
+			if fail == "missing" {
+				cfg.Journal = nil
+			}
+			refs, err := Collect(ctx, cfg, job)
+			if fail == "none" {
+				if err != nil || len(refs) != 1 || len(calls) != 2 {
+					t.Fatal(refs, calls, err)
+				}
+				return
+			}
+			if err == nil || len(refs) != 0 {
+				t.Fatal("uncertain capture published", refs, calls, err)
+			}
+			if fail != "confirm" && len(repo.artifacts) != 0 {
+				t.Fatal("upload without durable current authorization")
+			}
+		})
+	}
 }
 
 func TestCapturePersistsBoundRestrictedEvidence(t *testing.T) {
@@ -118,6 +196,22 @@ func TestCapturePersistsBoundRestrictedEvidence(t *testing.T) {
 	}
 	if refs[0].RetainUntil.Sub(refs[0].CreatedAt) != time.Hour {
 		t.Fatal("retention changed")
+	}
+}
+
+func TestCaptureRechecksReadGrantAfterJournalConfirmation(t *testing.T) {
+	ctx, cfg, job, _ := captureFixture(t)
+	revoked := false
+	cfg.Journal = fixtureJournal{confirm: func(context.Context, sandbox.Job, evidence.Ref) error { revoked = true; return nil }}
+	cfg.Policy = func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error {
+		if revoked {
+			return evidence.ErrDenied
+		}
+		return nil
+	}
+	refs, err := Collect(ctx, cfg, job)
+	if !errors.Is(err, evidence.ErrDenied) || len(refs) != 0 {
+		t.Fatal("confirmation bypassed current read grant", refs, err)
 	}
 }
 

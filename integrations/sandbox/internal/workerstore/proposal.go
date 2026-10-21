@@ -40,6 +40,9 @@ func (s *Store) Propose(ctx context.Context, key id.ID, token string, expected u
 	if resultErr := terminalResult(result, record.Receipt.Job); resultErr != nil {
 		return Record{}, resultErr
 	}
+	if captureErr := s.confirmedCaptures(ctx, record, result); captureErr != nil {
+		return Record{}, captureErr
+	}
 	digest, err := resultDigest(result)
 	if err != nil {
 		return Record{}, err
@@ -85,6 +88,9 @@ func (s *Store) Finalized(ctx context.Context, key id.ID, expected uint64) (Reco
 	}
 	if record.Phase != Finalizing || record.Revision != expected {
 		return Record{}, ErrConflict
+	}
+	if captureErr := s.confirmedCaptures(ctx, record, *record.Proposal.Result); captureErr != nil {
+		return Record{}, captureErr
 	}
 	operation, finish, admissionErr := s.reportContext(ctx, record.Receipt)
 	if admissionErr != nil {

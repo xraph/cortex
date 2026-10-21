@@ -193,7 +193,7 @@ func TestProposalJournalMigratesLegacyClaimsWithoutNewAuthority(t *testing.T) {
 	}
 	reopened := openStore(t, cfg)
 	var version int
-	if err = reopened.journal.Conn.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil || version != RecordVersion {
+	if err = reopened.journal.Conn.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil || version != JournalVersion {
 		t.Fatal("journal migration failed", err)
 	}
 	if _, err = reopened.Claim(t.Context(), receipt.Job.ID); !errors.Is(err, ErrConflict) {

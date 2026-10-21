@@ -23,6 +23,15 @@ import (
 
 type captureRepository struct{ artifact evidence.Artifact }
 
+type captureJournal struct{}
+
+func (captureJournal) Record(ctx context.Context, _ sandbox.Job, _ evidence.Ref) error {
+	return ctx.Err()
+}
+func (captureJournal) Confirm(ctx context.Context, _ sandbox.Job, _ evidence.Ref) error {
+	return ctx.Err()
+}
+
 func (r *captureRepository) Put(_ context.Context, a evidence.Artifact) (evidence.Ref, error) {
 	r.artifact = a
 	return a.Ref, nil
@@ -32,7 +41,7 @@ func (r *captureRepository) Open(context.Context, evidence.Ref) (io.ReadCloser, 
 }
 
 func TestPipelineCapturesOnlyAfterRuntimeCleanupAndBeforeWorkspaceCleanup(t *testing.T) {
-	for _, failure := range []string{"", "runtime-cleanup", "capture", "capture-cleanup-sentinel", "capture-disabled", "capture-provider", "capture-policy"} {
+	for _, failure := range []string{"", "runtime-cleanup", "capture", "capture-cleanup-sentinel", "capture-disabled", "capture-provider", "capture-policy", "capture-journal"} {
 		t.Run(failure, func(t *testing.T) {
 			s, sources, deps, calls := pipelineFixture(t, "")
 			s.job.Outputs = []sandbox.Output{{ID: id.New(evidence.PrefixArtifact), Path: "/tmp/outputs/report", MediaType: "text/plain", MaxBytes: 64}}
@@ -44,6 +53,7 @@ func TestPipelineCapturesOnlyAfterRuntimeCleanupAndBeforeWorkspaceCleanup(t *tes
 			}
 			s.cfg.Settings.CaptureRetention = time.Hour
 			sources.Artifacts = &captureRepository{}
+			sources.CaptureJournal = captureJournal{}
 			sources.AuthorizeOutput = func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error { return nil }
 			paths := workspace.Paths{JobID: s.job.ID, JobDigest: s.job.Digest, Scratch: "/fixture/scratch"}
 			deps.workspace = func(context.Context, workspace.Config) (work, error) {
@@ -81,6 +91,8 @@ func TestPipelineCapturesOnlyAfterRuntimeCleanupAndBeforeWorkspaceCleanup(t *tes
 				return []evidence.Ref{a.Ref}, sealErr
 			}
 			switch failure {
+			case "capture-journal":
+				sources.CaptureJournal = nil
 			case "capture-disabled":
 				s.cfg.Settings.CaptureRetention = 0
 			case "capture-provider":

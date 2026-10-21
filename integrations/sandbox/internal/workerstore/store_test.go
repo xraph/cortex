@@ -344,7 +344,7 @@ func TestWorkerJournalRejectsCorruptionAndFutureSchema(t *testing.T) {
 	if _, err := s.Load(t.Context(), receipt.Job.ID); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("inconsistent record accepted: %v", err)
 	}
-	if _, err := s.journal.Conn.ExecContext(t.Context(), "PRAGMA user_version=3"); err != nil {
+	if _, err := s.journal.Conn.ExecContext(t.Context(), "PRAGMA user_version=4"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

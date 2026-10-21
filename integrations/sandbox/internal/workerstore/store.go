@@ -30,8 +30,12 @@ var ErrConflict = broker.ErrConflict
 // ErrCorrupt means persisted state cannot establish a safe ownership decision.
 var ErrCorrupt = errors.New("cortex: corrupt sandbox worker journal")
 
-// RecordVersion is the current worker record and journal format.
+// RecordVersion is the current worker ownership record format.
 const RecordVersion = 2
+
+// JournalVersion includes the separately revisioned artifact capture table.
+// Older daemons refuse this version instead of ignoring pending captures.
+const JournalVersion = 3
 
 // Phase is the durable ownership state, not a correctness verdict.
 type Phase string
@@ -120,7 +124,7 @@ func (s *Store) migrate(ctx context.Context) (err error) {
 	if queryErr := s.journal.Conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); queryErr != nil {
 		return queryErr
 	}
-	if version != 0 && version != 1 && version != RecordVersion {
+	if version < 0 || version > JournalVersion {
 		return ErrCorrupt
 	}
 	if version == 0 {
@@ -162,10 +166,28 @@ func (s *Store) migrate(ctx context.Context) (err error) {
 	if brokerName != s.cfg.Broker || keyHash != evidence.Digest(s.cfg.PublicKey) {
 		return ErrConflict
 	}
-	if version < RecordVersion {
-		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+	if version < JournalVersion {
+		var tables int
+		if queryErr := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='worker_captures'").Scan(&tables); queryErr != nil {
+			return queryErr
+		}
+		if tables == 0 {
+			if _, err = tx.ExecContext(ctx, captureTableSQL); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
 			return err
 		}
+	}
+	// Pin the actual constraints as well as the version marker. A table without
+	// the compound primary key could admit multiple bindings for one output.
+	var captureSchema string
+	if queryErr := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND name='worker_captures'").Scan(&captureSchema); queryErr != nil {
+		return errors.Join(ErrCorrupt, queryErr)
+	}
+	if captureSchema != captureTableSQL {
+		return ErrCorrupt
 	}
 	return tx.Commit()
 }

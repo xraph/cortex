@@ -101,6 +101,7 @@ func TestWorkerKernelStagesVerifiedContent(t *testing.T) {
 	sources.Inputs = fixtureEvidence{artifact: artifact}
 	repository := &captureRepository{}
 	sources.Artifacts = repository
+	sources.CaptureJournal = captureJournal{}
 	sources.AuthorizeOutput = func(_ context.Context, candidate sandbox.Job, _ evidence.Action, ref evidence.Ref) error {
 		if candidate.Principal != s.job.Principal || ref.SourceURI != s.job.OutputSource(s.job.Outputs[0]) {
 			t.Fatal("capture lost signed identity")

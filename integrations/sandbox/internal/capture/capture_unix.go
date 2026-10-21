@@ -34,20 +34,12 @@ type Repository interface {
 type Config struct {
 	Root       string
 	Repository Repository
+	Journal    Journal
 	Retention  time.Duration
 	Authorize  func(context.Context, sandbox.Job) error
 	Check      func(context.Context) error
 	Policy     func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 	Now        func() time.Time
-}
-
-// ValidateRetention requires an explicit host retention window of at most a day.
-// A deployment may disable capture with zero, but cannot call Collect that way.
-func ValidateRetention(retention time.Duration) error {
-	if retention <= 0 || retention > 24*time.Hour {
-		return fmt.Errorf("cortex: invalid sandbox artifact retention")
-	}
-	return nil
 }
 
 // Collect captures only signed declarations and returns verified references.
@@ -56,7 +48,7 @@ func ValidateRetention(retention time.Duration) error {
 // Files, including archives and HTML, are opaque untrusted bytes. This function
 // neither extracts archives nor grades, publishes or deploys their contents.
 func Collect(ctx context.Context, cfg Config, job sandbox.Job) ([]evidence.Ref, error) {
-	if cfg.Root == "" || cfg.Repository == nil || cfg.Authorize == nil || cfg.Check == nil || cfg.Policy == nil {
+	if cfg.Root == "" || cfg.Repository == nil || cfg.Journal == nil || cfg.Authorize == nil || cfg.Check == nil || cfg.Policy == nil {
 		return nil, fmt.Errorf("cortex: incomplete artifact capture configuration")
 	}
 	if err := ValidateRetention(cfg.Retention); err != nil {
@@ -103,6 +95,12 @@ func Collect(ctx context.Context, cfg Config, job sandbox.Job) ([]evidence.Ref, 
 		if bindingErr != nil {
 			return refs, bindingErr
 		}
+		if journalErr := journalCapture(ctx, cfg, job, expected, false); journalErr != nil {
+			return refs, journalErr
+		}
+		if policyErr := authorize(ctx, cfg, job, evidence.ActionPut, expected); policyErr != nil {
+			return refs, policyErr
+		}
 		stored, putErr := cfg.Repository.Put(ctx, artifact)
 		if putErr != nil {
 			return refs, putErr
@@ -129,9 +127,35 @@ func Collect(ctx context.Context, cfg Config, job sandbox.Job) ([]evidence.Ref, 
 		if operationErr := authorize(ctx, cfg, job, evidence.ActionRead, expected); operationErr != nil {
 			return refs, operationErr
 		}
+		if journalErr := journalCapture(ctx, cfg, job, expected, true); journalErr != nil {
+			return refs, journalErr
+		}
+		if policyErr := authorize(ctx, cfg, job, evidence.ActionRead, expected); policyErr != nil {
+			return refs, policyErr
+		}
 		refs = append(refs, expected)
 	}
 	return refs, current(ctx, cfg, job)
+}
+
+func journalCapture(ctx context.Context, cfg Config, job sandbox.Job, ref evidence.Ref, confirmed bool) error {
+	if err := current(ctx, cfg, job); err != nil {
+		return err
+	}
+	candidate, err := sandbox.Seal(job)
+	if err != nil {
+		return err
+	}
+	ref.Scope.Levels = slices.Clone(ref.Scope.Levels)
+	if confirmed {
+		err = cfg.Journal.Confirm(ctx, candidate, ref)
+	} else {
+		err = cfg.Journal.Record(ctx, candidate, ref)
+	}
+	if err != nil {
+		return err
+	}
+	return current(ctx, cfg, job)
 }
 
 func current(ctx context.Context, cfg Config, job sandbox.Job) error {

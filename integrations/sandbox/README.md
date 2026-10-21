@@ -169,10 +169,12 @@ at that exact revision. Cancellation discards the proposal and advances the
 revision, so an older finalizer cannot overwrite it. Identical report retries
 return existing state; changed reports are refused.
 
-The journal upgrades its format marker to version 2 in a transaction after
-checking the broker key. Version 1 records remain readable and move to version 2
-on their next transition. Existing claims and terminal identities are retained;
-migration grants no new execution. Older binaries refuse the upgraded journal.
+The journal upgrades its format marker to version 3 in a transaction after
+checking the broker key and capture-table constraints. Ownership records retain
+format 2; version 1 ownership records move to format 2 on their next transition.
+Existing claims and terminal identities are retained. Migration grants no new
+execution. Older binaries refuse the upgraded journal rather than ignore pending
+artifact captures.
 
 One daemon owns the journal's exclusive SQLite connection. Workers must use that
 daemon's authenticated control path; they cannot open the database concurrently.
@@ -617,8 +619,9 @@ original deadline. An uncertain acknowledgement requires broker inspection.
 The worker process must exit after the coordinator returns.
 
 After runtime cleanup, the coordinator captures declared files before removing
-the workspace. You must supply an immutable evidence repository, current output
-policy and a pinned `capture_retention_ns` between zero (exclusive) and 24 hours.
+the workspace. You must supply an immutable evidence repository, an authenticated
+durable capture journal, current output policy and a pinned `capture_retention_ns`
+between zero (exclusive) and 24 hours.
 Zero disables capture. A job requesting capture is refused before execution if
 these services are unavailable. Authorized release remains a separate host
 operation. Source adapters, executable worker/daemon installation, broker runtime
@@ -651,13 +654,32 @@ previously verified captures may remain attached. Failed or interrupted executio
 does not attempt capture. The broker rejects undeclared, substituted or duplicate
 references. Captured output remains untrusted input for protected grading.
 
-Uploads are never retried automatically. A lost acknowledgement, later capture
-failure, cancellation or report loss can leave retained evidence without a final
-report. The signed job already records every allocated artifact ID so recovery
-can reconcile those objects without another execution or a new identity. That
-recovery worker and installed repository adapters are still required before
-deployment. Artifact capture does not authorize publication, deployment or a
-write to any external destination.
+Before upload, `capture.Journal.Record` must commit the exact reference, including
+digest, timestamps and provenance, to the daemon. After repository readback,
+`Confirm` must commit its confirmation. The worker checks current read permission
+again before returning the reference. Missing journal services refuse capture
+before execution. An uncertain journal acknowledgement stops capture, just as an
+uncertain repository acknowledgement does. Neither operation retries itself.
+
+The daemon's `workerstore.RecordCapture` and `ConfirmCapture` bind these operations
+to the current token, job and claim revision. Capture revisions are separate from
+execution revisions, so recording an intent cannot renew or invalidate the
+worker's claim. Records are limited to 64 KiB and must match signed declarations.
+`Propose` and `Finalized` accept only matching confirmed artifacts whose retention
+has not expired. Confirmation records verified readback, not task correctness.
+
+`CaptureJobs` pages up to 256 recovery job IDs, including terminal jobs. `Captures`
+loads their bounded records. A recovery worker can distinguish an uncertain
+upload from confirmed content using the retained reference. After independent
+whole-service cleanup and authorized repository cleanup, `DiscardCapture` retains
+a revision-bound tombstone. The caller must prove a durable repository tombstone
+or authoritative absence; a missing process or denied read does not suffice.
+
+The capture journal port and daemon persistence are implemented. The authenticated
+worker-control adapter, repository adapters and recovery worker remain required
+before deployment. Tests bridge capture to the real journal in process; production
+workers must not open or share the daemon's database directly. Artifact capture
+does not authorize publication, deployment or an external destination write.
 
 ## Linux probe suite
 

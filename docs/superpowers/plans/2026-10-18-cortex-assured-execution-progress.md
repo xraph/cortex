@@ -610,3 +610,46 @@ pipeline fixtures each passed twenty repetitions, including real file capture,
 repository readback and image/input staging. Whitespace checks passed. These
 tests use explicit runtime/repository fixtures and do not establish installed
 systemd/runsc qualification or a production repository integration.
+
+## Durable capture intents and confirmed readback
+
+The daemon journal now retains each capture reference before repository upload
+and records authenticated readback confirmation separately. Capture revisions
+never alter the current worker claim. Identical requests preserve one durable
+revision; changed bindings, stale claims, revoked claims and expired retention
+are refused. Result proposal and finalization require matching confirmed records.
+Retention is checked again at both boundaries. A regression exposed acceptance
+after artifact expiry and passed after the checks were added.
+
+Capture requires an injected authenticated journal port and refuses missing
+services before execution. Intent persistence precedes upload; confirmation
+follows bounded readback. Neither a lost intent acknowledgement nor a lost upload
+or confirmation acknowledgement triggers replay. Current evidence permission is
+checked again after confirmation. A regression showed that a grant revoked during
+confirmation could otherwise escape the final check.
+
+Journal version 3 adds a constrained capture table while retaining ownership
+record version 2. Upgrades preserve existing claims; old daemons refuse the new
+journal. Exact schema checks reject missing constraints. Per-job reads remain
+bounded to signed declarations, and capture recovery pages include terminal jobs.
+Discard records retain the full binding and require terminal execution state plus
+a caller-supplied proof of authorized repository cleanup. The journal does not
+manufacture that proof or perform deletion itself.
+
+Fixtures connect real file capture to the real SQLite journal through an explicit
+in-process bridge. They cover restart and acknowledgement loss at each boundary,
+concurrent duplicate requests, stale revisions, cancellation, corrupt records,
+expiry and historical schema upgrades. Production worker-control transport for
+capture, repository adapters and the recovery worker remain open. Runtime gates
+and live Linux qualification remain deferred. S2.4 and G2 are not complete.
+
+CI `39555744326` at `7a9094e` passed every job for declared artifact capture.
+
+Final formatting and lint across all ten modules passed, along with separate
+Linux tagged lint, the sandbox build and complete sandbox race suite. Capture
+and journal race suites passed ten repetitions, including abrupt process exit
+after intent and confirmation commits. Linux arm64/amd64 pipeline compilation
+passed. Linux capture and pipeline fixtures passed twenty repetitions; the full
+Linux journal fixture passed ten. Whitespace checks passed. The in-process bridge
+and fixture services establish persistence/ordering behavior, not deployed
+authentication, repository integration or runtime isolation.
