@@ -2,11 +2,10 @@
 package sqlite
 
 import (
-	"context"
-
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
+	"github.com/xraph/cortex/optimization/store/internal/sqlstore"
 	"github.com/xraph/cortex/optimization/store/internal/state"
 )
 
@@ -16,14 +15,6 @@ type Store struct{ *state.Store }
 // New binds an open Grove SQLite connection. Call Migrate before serving work.
 // Configure WAL and a busy timeout on the connection for concurrent workers.
 func New(db *grove.DB) *Store {
-	backend := &backend{db: db, sql: sqlitedriver.Unwrap(db)}
+	backend := sqlstore.New(db, sqlitedriver.Unwrap(db), sqlstore.SQLite)
 	return &Store{Store: state.NewBackend(backend)}
 }
-
-type backend struct {
-	db  *grove.DB
-	sql *sqlitedriver.SqliteDB
-}
-
-func (b *backend) Ping(ctx context.Context) error { return b.db.Ping(ctx) }
-func (b *backend) Close() error                   { return b.db.Close() }

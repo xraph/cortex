@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -77,8 +77,8 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 		return err
 	}
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // Commit or the triggering error determines the result.
-	// The first statement acquires SQLite's write lock before any snapshot read.
-	// The persistent scope row also detects a digest collision before writing.
+	// The first statement locks the scope row (SQLite locks the database)
+	// before reading state. The canonical key also detects hash collisions.
 	if _, err = tx.Exec(ctx, `INSERT INTO cortex_optimization_scopes (scope_hash, scope_canon) VALUES (?, ?)
 	 ON CONFLICT(scope_hash) DO UPDATE SET scope_canon = cortex_optimization_scopes.scope_canon`, scope.hash, scope.canon); err != nil {
 		return err

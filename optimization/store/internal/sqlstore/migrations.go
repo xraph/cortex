@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -13,6 +13,13 @@ func (b *backend) Migrate(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // Commit or the triggering error determines the result.
+	if b.sql.kind == PostgreSQL {
+		// PostgreSQL can race while creating catalog entries even with IF NOT
+		// EXISTS. This transaction-scoped lock serializes schema initialization.
+		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('cortex.optimization.schema', 0))`); lockErr != nil {
+			return lockErr
+		}
+	}
 	for _, statement := range []string{
 		`CREATE TABLE IF NOT EXISTS cortex_optimization_schema (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL)`,
 		`INSERT INTO cortex_optimization_schema (singleton, version) VALUES (1, 1) ON CONFLICT(singleton) DO NOTHING`,

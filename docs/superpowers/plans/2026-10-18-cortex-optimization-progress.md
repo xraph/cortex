@@ -22,7 +22,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4: durable persistence | Shared storage rules and SQLite foundation verified | PostgreSQL, Mongo, artifact storage and bounded database queries |
+| 4: durable persistence | SQLite and PostgreSQL foundations verified through shared SQL storage | Mongo, artifact storage and bounded database queries |
 | 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -334,7 +334,7 @@ previous transaction and evidence supplied in the current callback.
 SQLite stores individual versioned records for each entity, audit event and
 idempotency key. Nested reservation and receipt maps become separate rows.
 Compound identities keep their original components alongside bounded hash keys.
-Reads require the exact canonical scope and all indexed scope levels. Writes
+Reads require the exact canonical scope and all scope-level columns. Writes
 acquire a database write lock before loading current state, then commit only
 changed records with expected previous digests. No-op retries leave record
 history untouched.
@@ -365,3 +365,41 @@ rules. Database pagination, selective loading and throughput qualification
 remain open. PostgreSQL, transactional Mongo, the artifact adapter and artifact
 retention checks are also unfinished, so Task 4 is not complete. No service,
 sandbox or production activation readiness follows from these storage tests.
+
+## PostgreSQL and shared SQL persistence
+
+SQLite and PostgreSQL now use one SQL record adapter under
+`optimization/store/internal/sqlstore`. Domain checks remain in the shared state
+package. The SQL adapter handles parameter syntax and binary column types while
+preserving scoped reads, changed-row writes and expected-digest preconditions.
+
+PostgreSQL explicitly uses `READ COMMITTED` and locks the scope row before loading
+state. Tests configure the host to default to repeatable read and use a database
+trigger to reject writes at the wrong isolation level. Independent connections
+still produce one claim winner, with each transaction callback called once.
+Workers on other scopes can proceed while a scope is locked, and a cancelled
+waiter never enters its callback.
+
+Concurrent migration tests reproduced PostgreSQL catalog collisions despite
+`CREATE TABLE IF NOT EXISTS`. Migrations now take an advisory transaction lock
+before creating schema objects. Database failure tests abort the second record
+insert and verify that both records and the scope row roll back. Unsupported
+schema versions refuse migration.
+
+The subprocess lease test moved into `store/storetest` so both SQL backends use
+the same contract. A fresh process takes over an expired lease, and the parent's
+still-open connection cannot renew the old generation. The focused race runs
+passed for PostgreSQL and SQLite. The full normal PostgreSQL suite passed in
+115.656s with real containers.
+
+After coordinated formatting, full-module race tests and builds passed against
+the current checkout and published Cortex v1.8.0. PostgreSQL took 340.564s and
+332.253s, SQLite took 347.200s and 339.530s, and memory took 107.749s and 104.399s
+in the concurrent compatibility runs. Shared `make l` passed all ten modules.
+The optimizer source remained unchanged throughout those final checks. SQLite
+commit `7c62986` passed CI in `39522046871`.
+
+This remains Task 4 work. The shared store instance still serializes its own
+operations and each operation loads a complete exact scope. Bounded database
+queries, finer concurrency, Mongo transactions, artifact retention and throughput
+qualification remain open.
