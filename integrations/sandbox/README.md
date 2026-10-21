@@ -263,7 +263,7 @@ before guest execution. Cancellation, completion, reaping and expiration
 invalidate that current-ownership check.
 
 These launch and handoff components are implemented and fixture-tested. The
-worker CLI, private control transport, daemon startup wiring, cleanup of
+worker CLI, daemon startup wiring, cleanup of
 retained credential files, full deadline supervision and broker activation are
 still pending. No live systemd/runsc launch is qualified by these tests.
 
@@ -300,9 +300,9 @@ constructing another instance. `Status` exposes readiness and the retained error
 to the daemon.
 
 Cancelling `Run` closes admission and cancels in-flight launch and worker
-authorization contexts. The
-controller joins those calls before using an independent 30-second context to
-recover remaining claims. Cleanup errors stay visible, and unresolved journal
+authorization contexts. The controller joins those calls before using an
+independent 30-second context to recover remaining claims. Cleanup errors stay
+visible, and unresolved journal
 entries remain available to the next controller. Host callbacks must honor
 their contexts. A stopped controller cannot run again.
 
@@ -343,8 +343,42 @@ The `sandbox_peer_kernel` test tag runs real Unix-socket and child-process
 checks on Linux as root. CI compiles a race-enabled test binary and runs those
 checks. They cover process capture, exit detection and rejection of a root
 process outside the job service, including descriptor cleanup. They do not
-start systemd jobs or qualify the running-service acceptance path. Private
-transport, worker startup and result-finalization wiring remain pending.
+start systemd jobs or qualify the running-service acceptance path. Worker
+startup and result-finalization wiring remain pending.
+
+## Private worker control
+
+Use the internal `service.WorkerControl` to connect workers to the controller's
+authorization checks. After controller recovery, pass it a Unix listener in a
+root-owned `0700` directory with a root-owned `0600` socket. It takes ownership of
+the listener, closes it on shutdown and leaves the socket path for the host's
+fenced cleanup. Keep that directory stable and outside guest mounts. Socket
+installation, restart cleanup and executable daemon wiring remain pending.
+
+Set `ControlLimits` explicitly: one to 64 accepted connections, with a total
+exchange timeout between 10ms and 30 seconds. Each connection carries one
+length-prefixed canonical JSON claim, bounded to 2 KiB, followed by a write-side
+close. Unknown or duplicate fields, trailing bytes, oversized frames and stalled
+reads are refused. Grant callbacks must honor their contexts so shutdown can
+join them.
+
+The server opens a kernel peer handle and calls `Controller.AuthorizeWorker`.
+It returns only a denial or an authorization bound to the exact request digest.
+Internal errors and tokens are never copied into replies. This endpoint cannot
+launch, cancel or complete a job, and it does not retry an exchange.
+
+The worker calls `service.AuthorizeAt` with its verified credential's claim and
+the configured private socket path. The client checks the endpoint and the
+daemon's root credentials before sending the token, then checks the bounded
+reply, its request binding and the connection's end. Repeat authorization after
+staging, immediately before execution; success does not extend the signed
+deadline or replace independent cleanup proof.
+
+Tests cover concurrency ceilings, timeouts, malformed requests and replies,
+current claim cancellation, unsafe socket paths and shutdown. The tagged Linux
+tests also exercise daemon socket authentication and the public server's refusal
+of an unrelated root process. These checks do not qualify an installed worker,
+systemd service or runsc deployment.
 
 ## Evidence input staging
 

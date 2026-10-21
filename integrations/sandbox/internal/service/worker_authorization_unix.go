@@ -28,6 +28,13 @@ type workerIdentity interface {
 	Check(context.Context, id.ID) (uint32, error)
 }
 
+func validateWorkerClaim(claim WorkerClaim) error {
+	if claim.SchemaVersion != 1 || claim.JobID.IsNil() || claim.JobID.Prefix() != sandbox.PrefixJob || len(claim.Token) != 64 || claim.Revision < 2 || !evidence.ValidDigest(claim.ProfileDigest) {
+		return broker.ErrDenied
+	}
+	return nil
+}
+
 // AuthorizeWorker verifies a live local peer, effective service configuration,
 // current grants and durable ownership. It issues no new claim and persists no
 // completion. The worker must repeat this check before guest execution after
@@ -48,8 +55,8 @@ func (c *Controller) authorizeWorker(ctx context.Context, peer workerIdentity, c
 	defer finish()
 	operation, bound := context.WithTimeout(operation, 30*time.Second)
 	defer bound()
-	if claim.SchemaVersion != 1 || claim.JobID.IsNil() || claim.JobID.Prefix() != sandbox.PrefixJob || len(claim.Token) != 64 || claim.Revision < 2 || !evidence.ValidDigest(claim.ProfileDigest) {
-		return workerstore.Record{}, broker.ErrDenied
+	if claimErr := validateWorkerClaim(claim); claimErr != nil {
+		return workerstore.Record{}, claimErr
 	}
 	digest, err := c.launcher.profile.Digest()
 	if err != nil {

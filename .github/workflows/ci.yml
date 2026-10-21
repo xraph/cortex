@@ -114,6 +114,8 @@ jobs:
         run: |
           GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-peer.test" ./internal/workerpeer
           sudo -- "$RUNNER_TEMP/cortex-worker-peer.test" -test.v -test.timeout=60s
+          GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-control.test" ./internal/service
+          sudo -- "$RUNNER_TEMP/cortex-worker-control.test" -test.run='^TestControlKernel' -test.v -test.timeout=60s
 
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
