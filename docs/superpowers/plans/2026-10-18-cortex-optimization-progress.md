@@ -22,7 +22,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4: durable persistence | SQLite and PostgreSQL foundations verified through shared SQL storage | Mongo, artifact storage and bounded database queries |
+| 4: durable persistence | SQLite, PostgreSQL and Mongo foundations verified | Artifact storage, bounded database queries and finer concurrency |
 | 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
@@ -403,3 +403,47 @@ This remains Task 4 work. The shared store instance still serializes its own
 operations and each operation loads a complete exact scope. Bounded database
 queries, finer concurrency, Mongo transactions, artifact retention and throughput
 qualification remain open.
+
+## MongoDB transactions and chunked records
+
+The Mongo adapter uses the same storage rules as memory and SQL. Every operation
+reads metadata and chunks in one snapshot transaction. Updates first write an
+exact-scope fence, invoke the domain callback at most once, and commit changed
+records together. A conflicting fence returns before entering the callback.
+Commit acknowledgment failures return unavailable so a caller can reconcile
+persisted identities without assuming that the write failed.
+
+Migration performs an actual transactional query and refuses standalone MongoDB.
+It also creates collections before accepting work. A regression test exposed
+the first-transaction catalog race: implicitly creating the scope collection let
+a contender enter its callback before the first transaction committed. Explicit
+collection creation fixed that failure. Another test reproduced inherited
+secondary read preferences breaking transactions; the adapter now explicitly
+selects primary reads, snapshot isolation and majority writes.
+
+Bodies use chunks of at most 4 MiB, committed with their metadata. A real 17 MiB
+record round trip passes. Replacing a record checks its previous digest, writes
+new chunks and removes superseded chunks within the transaction. Corruption
+tests cover altered bytes, chunk identity, scope, order, size, missing content
+and unknown schemas. Invalid content blocks both reads and mutation callbacks.
+Database validation failures prove that new records and failed replacements
+roll back their chunks, metadata and scope fences together. No-op retries pass
+with record and chunk writes forbidden.
+
+The normal populated Mongo conformance suite passed against a real replica set
+in 92.797s. Separate corruption and replacement tests passed in 12.250s.
+Independent connection fencing, concurrent migration, standalone refusal and
+lease takeover from a fresh process also passed. Final full-module races and build
+passed against the current checkout: Mongo took 361.910s, PostgreSQL 267.300s,
+SQLite 274.969s and memory 78.344s. The published Cortex v1.8.0 run passed Mongo
+in 353.923s, SQLite in 265.980s and memory in 74.565s. Its PostgreSQL database
+failure test encountered a Docker startup timeout before reaching the test body;
+the isolated race rerun passed in 3.024s, followed by a successful published
+dependency build. All other tests in that compatibility run passed.
+
+Final formatting left optimizer source hashes unchanged, and `make l` passed
+all ten modules. PostgreSQL commit `ec02ab4` passed CI in `39523884180`.
+
+The shared exact-scope index helper now serves all three durable adapters.
+Complete-scope loading and per-instance serialization remain, along with artifact
+storage and retention checks. Task 4 and every implementation phase remain open.

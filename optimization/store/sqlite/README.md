@@ -35,6 +35,6 @@ cost. Selective loading, bounded database pagination and throughput qualificatio
 remain part of Task 4. SQLite also permits one database writer at a time, even
 when workers operate in different scopes.
 
-The database artifact adapter, PostgreSQL and Mongo stores, and service recovery
-are separate work still in progress. This store does not establish sandbox,
+The database artifact adapter and service recovery remain in progress.
+PostgreSQL and MongoDB have separate adapters. This store does not establish sandbox,
 evaluation or production activation readiness.
