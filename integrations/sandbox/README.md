@@ -119,9 +119,39 @@ until the external reaper proves the worker's containment has stopped. No
 terminal result is returned merely because forced deletion succeeded.
 
 This code is not wired into broker admission. You still need durable job claims,
-verified image/input staging, external worker supervision and a reaper that can
+verified image staging, external worker supervision and a reaper that can
 stop the whole workload if either the broker or worker dies. The internal driver
 does not provide those guarantees, and the runtime remains unqualified.
+
+## Evidence input staging
+
+The internal staging service copies evidence into private directories keyed by
+exact scope and job ID. You provide the authenticated context, a job authorizer,
+an evidence policy and a source compatible with `evidence.Repository.Open`.
+The job authorizer must bind the caller's host identity to the sealed principal.
+Scope and initial grant checks must pass before any files are created.
+Input paths cannot overlap: `/inputs/a` and `/inputs/a/b` cannot both
+name regular-file mounts.
+
+Set per-input and total byte limits explicitly. Their upper bounds are one GiB
+and four GiB respectively. Copies use bounded buffers and must match the exact
+declared length and SHA256. Cancellation closes the source reader; the provider
+must honor context and unblock reads when closed. Failed copies remove only the
+files created by that attempt.
+
+The completed record is published after file synchronization and another grant
+check. Returned files have mode `0444` inside a `0700` directory so the worker can
+bind them read-only for the guest. The trusted host owner must keep them unchanged
+while they are used. Retries check the stored bytes, current grants, retention
+and the authoritative source again. A deleted source cannot be replaced by an
+older local copy. Extra files, unsafe permissions, links and conflicting job
+digests fail the check.
+
+An interrupted directory without a completed record returns
+`ErrSandboxInputsIncomplete`. It is preserved for the authorized reaper rather
+than overwritten. This code does not claim jobs, resolve images, grant execution
+or replace the authorization check immediately before dispatch. Its production
+worker wiring remains pending.
 
 Required live probes remain open: descendant cancellation, resource exhaustion,
 DNS and redirect denial, metadata/private-host denial, restart during execution,

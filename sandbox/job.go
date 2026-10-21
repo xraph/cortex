@@ -112,6 +112,13 @@ func (j Job) validateFields() error {
 		}
 		seen[input.Path] = true
 	}
+	for name := range seen {
+		for parent := path.Dir(name); parent != "/inputs"; parent = path.Dir(parent) {
+			if seen[parent] {
+				return fmt.Errorf("cortex: sandbox input file overlaps another input directory")
+			}
+		}
+	}
 	for key, value := range j.Env {
 		// A small explicit set avoids loader, credential and proxy environment channels.
 		if key != "LANG" && key != "LC_ALL" && key != "TZ" {

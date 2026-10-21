@@ -270,3 +270,15 @@ Linux probes now exercise the worker path for normal exit, combined output overf
 CI `39519889695` at `084db20` failed an existing A2A telemetry test because the short private-name marker `w1` appeared inside a generated TypeID. Local repeated runs reproduced the collision. The fixture now uses hyphenated agent names that TypeIDs cannot contain, while retaining the checks for private names and message content. Two hundred repeated race runs and the complete A2A race suite pass.
 
 Final coordinated formatting and full ten-module lint pass. Sandbox module race tests, native/Linux scoped lint, root/module builds and Linux amd64/arm64 qualification compilation pass against the final source. The trusted probe binary also builds for Linux. No live isolation result is claimed; the next exact-commit CI run remains pending.
+
+## Verified evidence input staging
+
+The internal staging service now copies evidence into private directories keyed by exact scope and job ID. It requires host job authorization, evidence authorization and an explicit byte budget, checks exact source length/digest and retention, and publishes its completion record only after synchronized files and renewed access checks. Policy/source callbacks receive detached identities. Input mount paths that overlap a file with a directory are rejected by the root job contract in either ordering.
+
+Retries validate the completion binding, file inventory, owner, permissions, regular-file type and stored bytes. A regression demonstrated that checking only local bytes and grants would allow deleted source evidence to be reused. Retries now reopen and verify the authoritative source as well. Interrupted directories remain untouched for a fenced reaper; failed fresh copies remove only files owned by that attempt. Blocked reads are closed on cancellation.
+
+Tests cover valid staging and retries, changed content, excess stream bytes, per-job aggregate bounds, cross-scope job-ID reuse, missing host principal authorization, revoked and expired evidence, source deletion, symlinked files, source-close failure, incomplete directories and callback mutation. The input stager is implemented independently of production worker activation. Image staging, durable claims, external supervision/reaping and broker integration remain open; live Linux qualification is still deferred.
+
+CI `39522046871` at `7c62986` passed all jobs. It covers the runtime deployment verifier, worker supervisor, telemetry fixture correction and optimizer SQLite foundation. The input staging packet needs its own exact-commit CI evidence.
+
+The input staging packet passes final coordinated formatting, all ten modules of lint, native/Linux sandbox lint, root sandbox/evidence races, the full sandbox module race suite and root/module builds. Linux arm64 staging-test compilation is included in the final checks. These checks do not establish a qualified worker or production image path.

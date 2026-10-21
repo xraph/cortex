@@ -6,9 +6,29 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/sandbox"
 )
+
+func TestInputFilesCannotOverlapDirectories(t *testing.T) {
+	j := testJob()
+	now := time.Now().UTC()
+	a, err := evidence.Seal(evidence.Artifact{Ref: evidence.Ref{SchemaVersion: 1, ID: id.New(evidence.PrefixArtifact), Scope: j.Scope, MediaType: "text/plain", Version: "1", Producer: "test", Sensitivity: evidence.SensitivityInternal, CreatedAt: now, RetainUntil: now.Add(time.Hour)}, Data: []byte("input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, paths := range [][]string{{"/inputs/a", "/inputs/a/b"}, {"/inputs/a/b", "/inputs/a"}} {
+		j.Inputs = []sandbox.Input{{Path: paths[0], Ref: a.Ref}, {Path: paths[1], Ref: a.Ref}}
+		if _, err = sandbox.Seal(j); err == nil {
+			t.Fatalf("overlapping input mounts accepted: %v", paths)
+		}
+	}
+	j.Inputs = []sandbox.Input{{Path: "/inputs/a", Ref: a.Ref}, {Path: "/inputs/ab", Ref: a.Ref}}
+	if _, err = sandbox.Seal(j); err != nil {
+		t.Fatalf("distinct sibling mounts rejected: %v", err)
+	}
+}
 
 func testJob() sandbox.Job {
 	return sandbox.Job{SchemaVersion: 1, ID: id.New(sandbox.PrefixJob), Key: "request-1", Scope: cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "a"}}}, Principal: "actor-a", Image: "sha256:" + strings.Repeat("a", 64), Argv: []string{"/bin/task"}, Network: sandbox.NetworkDenied, Limits: sandbox.Limits{CPUMillis: 1000, MemoryBytes: 64 << 20, Processes: 32, ScratchBytes: 8 << 20, WallTime: time.Minute, OutputBytes: 1 << 20}}
