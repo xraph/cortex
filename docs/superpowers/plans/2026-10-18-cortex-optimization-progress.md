@@ -513,3 +513,37 @@ successful build. The final `make l` passed all ten modules.
 CI `39527689658` passed all jobs for shared commit `9c0d1e5`, which includes
 Mongo storage and the concurrency/timeout changes from `e452baf`. The earlier
 `e452baf` run was cancelled when that newer shared commit was pushed.
+
+## Artifact reference and content verification
+
+Artifact references now have one validator and a binding digest covering experiment,
+scope, content digest, size, media type, kind and access policy. Execution sealing uses
+that validator too. Equal bytes under different policies remain distinct protected
+references. Artifact content validation checks the byte digest, length, experiment
+identity and a finite retention interval.
+
+Experiment ownership moved from the artifact body into its reference. Without
+that identity, two experiments with identical bytes could collide at `Get(ref)`
+despite having separate retention records. This changes the unpublished artifact
+DTO; old references without an experiment are refused.
+
+The new verifier reads through an injected authorized provider. It checks exact
+context scope and the configured size limit before calling that provider, then
+validates returned content, reference binding, experiment and current retention.
+Missing or denied content retains its original error while also reporting incomplete
+evidence. Cancelled reads cannot return content. Input scopes and returned bytes
+are copied so callbacks and consumers cannot change each other's values.
+
+Tests cover substituted policies and experiments, corrupted content, expired and
+future retention intervals, byte limits, cancellation and shared-memory mutation.
+Root-package races passed against both the current checkout and published Cortex
+v1.8.0, followed by successful builds against both dependencies. After coordinated
+formatting, those checks passed again. Focused memory conformance races covering
+captured execution, decisions and activation passed in 32.075s. The final `make l`
+passed all ten modules.
+
+This is a read-time verifier. It does not yet fence decision or activation commits
+against deletion. The artifact metadata transaction, database content bridge,
+retention worker and dependent lesson revocation remain unfinished. Task 4 and
+all phases stay open. CI `39529487667` passed every job for the preceding indexed
+read commit `0e11b1c`.

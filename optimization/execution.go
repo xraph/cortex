@@ -91,11 +91,10 @@ func SealExecution(record ExecutionRecord) (ExecutionRecord, error) {
 		return empty, scopeErr
 	}
 	for _, artifact := range record.Artifacts {
-		artifactScope, err := ScopeKey(artifact.Scope)
-		if err != nil {
+		if err := artifact.Validate(); err != nil {
 			return empty, err
 		}
-		if artifactScope != scopeKey || !validDigest(artifact.Digest) || artifact.Size < 0 || strings.TrimSpace(artifact.Kind) == "" || strings.TrimSpace(artifact.AccessPolicy) == "" || strings.TrimSpace(artifact.MediaType) == "" {
+		if artifact.Scope.Canonical() != scopeKey {
 			return empty, ErrInvalidSpec
 		}
 	}
