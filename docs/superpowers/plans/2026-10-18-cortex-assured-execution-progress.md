@@ -244,3 +244,15 @@ Router and debate still use the existing runner strategies; they have no static 
 CI `39517232117` at `6b7e1f6` passed all jobs, covering immutable planning persistence from `42d5d45` and the earlier domain foundation. This newer manifest/adapter packet needs its own exact-commit CI result.
 
 Final formatting, all ten modules of lint, the root build and execution/planning/verification/orchestration race suites pass for this packet. The shared manifest round-trip and revision tests also pass on SQLite and real PostgreSQL/MongoDB containers without skips.
+
+## Runtime deployment inventory
+
+The sandbox module now validates a complete runsc installation against a trusted host manifest. Its digest binds architecture and the sorted file inventory, including each executable's path, SHA256, size and permissions. Sidecars under `gvisor-bin` and an installed containerd shim must be included. A legacy single-binary manifest is accepted only when no sidecar directory is present. Expected pins must come from an approved release, not from the installation under inspection.
+
+Filesystem verification walks no-follow descriptors, checks owners and permissions, hashes bounded regular files with cancellation, and rejects missing/extra entries, symlinks, hard links and special files. The trusted owner must keep the installation unchanged while it is used. This check neither freezes files against that owner nor establishes isolation. The Linux probe gate now requires this inventory check before invoking runsc and records the complete deployment digest alongside the binary checksum.
+
+TDD covered the missing manifest/verifier implementations and rejects changed sidecars, wrong architecture/owner, unsafe modes, path ambiguity, inventory/byte/depth limits, unexpected directories, links, FIFOs and cancelled verification. Final coordinated `make f`, all ten modules of `make l`, sandbox module race tests/build and Linux-targeted lint pass. The qualification suite compiles for Linux amd64 and arm64. These checks run fixtures and compilation only; live Linux qualification remains deferred by the user's worker-selection decision.
+
+The production runsc adapter, image/input staging, durable supervision of wall/output limits and crash recovery remain open. `compatibility.json` remains unqualified, with the deployment digest unset. This packet does not activate evaluation or close G2.
+
+CI `39519005197` at `908eae6` passed every job, covering the planning manifests/adapters from `1cfe5da` and the optimizer reader slice. The deployment inventory packet needs its own exact-commit CI result.

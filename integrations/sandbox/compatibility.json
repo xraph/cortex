@@ -5,6 +5,7 @@
   "runtime": "runsc",
   "runtime_version": null,
   "runtime_sha256": null,
+  "runtime_deployment_sha256": null,
   "image_digests": [],
   "host": {
     "os": "linux",

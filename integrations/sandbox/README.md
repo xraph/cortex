@@ -67,6 +67,31 @@ verify content digests, authorize destinations and approve export separately.
 
 ## Validation
 
+The `deployment` package verifies a dedicated runsc installation against a
+trusted `Manifest`. Pin every executable, including the sidecars under
+`gvisor-bin/`, by path, SHA256, byte count and mode (`493` for `0755`, or `365`
+for `0555`). Include the containerd shim if you install it. The canonical
+inventory digest also binds the architecture (`amd64` or `arm64`). It does not
+depend on the order of entries.
+
+You supply that inventory from an approved release. Computing the expected
+hashes from an unknown installation would only approve whatever is already
+there. Current releases use sidecars, as described in the
+[gVisor installation guide](https://gvisor.dev/docs/user_guide/install/).
+
+`deployment.Verify` checks ownership, permissions and content through no-follow
+file descriptors. Missing or extra files, unexpected directories, links and
+special files fail the check. The installation must contain only the pinned
+executables and their directories. Keep manifests and runtime state elsewhere.
+Use a canonical absolute installation path with no symlinked ancestors. The
+root-run worker supplies owner UID zero; tests may use their own UID.
+
+The trusted owner must keep those files unchanged while the worker uses them.
+Recheck before dispatch and stop admission during upgrades. This check does not
+freeze files against their owner, execute the runtime or issue a qualification.
+The production adapter must bind this complete inventory digest to its worker
+attestation. Its implementation remains pending.
+
 ```sh
 GOWORK=off go test -race -count=1 ./...
 GOWORK=off go build ./...
@@ -92,8 +117,9 @@ binary and its release checksum. Use a root shell on that worker:
 CORTEX_PROBE_BUILD_DIR="$(mktemp -d)"
 CGO_ENABLED=0 GOWORK=off go build -trimpath \
   -o "$CORTEX_PROBE_BUILD_DIR/probe" ./testdata/isolation-probe
-export CORTEX_QUALIFICATION_RUNSC=/usr/local/bin/runsc
+export CORTEX_QUALIFICATION_RUNSC=/opt/cortex/runsc-release/runsc
 export CORTEX_QUALIFICATION_RUNSC_SHA256="approved-runtime-sha256"
+export CORTEX_QUALIFICATION_RUNTIME_MANIFEST=/etc/cortex/runsc-release.json
 export CORTEX_QUALIFICATION_PROBE="$CORTEX_PROBE_BUILD_DIR/probe"
 export CORTEX_QUALIFICATION_PROBE_SHA256="$(sha256sum "$CORTEX_QUALIFICATION_PROBE" | cut -d ' ' -f 1)"
 GOWORK=off go test -v -tags=sandbox_qualification \
@@ -107,7 +133,15 @@ descendant termination and reopening runtime state. The redirect fixture must
 receive no connection at all. It does not contact public services or a real
 cloud metadata endpoint.
 
-Record the runtime version, checksums, host kernel, architecture and Go version
+The probe gate requires the trusted JSON deployment manifest before invoking
+runsc, and verifies its whole directory with owner UID zero. A single binary
+checksum is insufficient when sidecars are installed. The manifest has
+`schema_version: 1`, `architecture` and `files`; each file has `path`, `sha256`,
+`bytes` and numeric Unix `mode`. No manifest or runtime release is selected for
+you by this repository.
+
+Record the runtime version, deployment digest, checksums, host kernel,
+architecture and Go version
 with the test log. The fixture's binary digest is a test identity, not a
 qualification of a production OCI image. CI compiles these probes and their
 fixture; it does not execute them or turn `compatibility.json` into a qualified

@@ -27,6 +27,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/sandbox/deployment"
 	"github.com/xraph/cortex/integrations/sandbox/oci"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -42,12 +43,13 @@ func TestLiveIsolationQualification(t *testing.T) {
 		t.Fatal("qualification blocked: this profile requires a dedicated root-run Linux worker")
 	}
 	runsc := requiredBinary(t, "CORTEX_QUALIFICATION_RUNSC", "CORTEX_QUALIFICATION_RUNSC_SHA256")
+	deploymentDigest := qualifiedDeployment(t, runsc)
 	fixture := requiredBinary(t, "CORTEX_QUALIFICATION_PROBE", "CORTEX_QUALIFICATION_PROBE_SHA256")
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
 		t.Fatalf("qualification blocked: cgroup v2 required: %v", err)
 	}
 	version := command(t, runsc, "--version")
-	t.Logf("runtime SHA256=%s version=%s fixture SHA256=%s", os.Getenv("CORTEX_QUALIFICATION_RUNSC_SHA256"), bytes.TrimSpace(version), os.Getenv("CORTEX_QUALIFICATION_PROBE_SHA256"))
+	t.Logf("deployment SHA256=%s runtime SHA256=%s version=%s fixture SHA256=%s", deploymentDigest, os.Getenv("CORTEX_QUALIFICATION_RUNSC_SHA256"), bytes.TrimSpace(version), os.Getenv("CORTEX_QUALIFICATION_PROBE_SHA256"))
 	t.Run("Baseline", func(t *testing.T) {
 		h := newProbe(t, runsc, fixture, "hello")
 		h.start(t)
@@ -164,6 +166,37 @@ func TestLiveIsolationQualification(t *testing.T) {
 		reopened.kill(t)
 		h.expectExit(t, 137)
 	})
+}
+
+func qualifiedDeployment(t *testing.T, runsc string) string {
+	t.Helper()
+	manifestPath := os.Getenv("CORTEX_QUALIFICATION_RUNTIME_MANIFEST")
+	if !filepath.IsAbs(manifestPath) || filepath.Base(runsc) != "runsc" {
+		t.Fatal("qualification blocked: an absolute deployment manifest and a dedicated runsc installation are required")
+	}
+	file, err := os.Open(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+	if err != nil || len(body) > 64<<10 {
+		t.Fatalf("qualification blocked: invalid deployment manifest: %v", err)
+	}
+	var manifest deployment.Manifest
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err = decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		t.Fatal("qualification blocked: trailing deployment manifest data")
+	}
+	digest, err := deployment.Verify(t.Context(), filepath.Dir(runsc), manifest, 0)
+	if err != nil {
+		t.Fatalf("qualification blocked: runtime deployment verification: %v", err)
+	}
+	return digest
 }
 
 func requiredBinary(t *testing.T, pathKey, digestKey string) string {
