@@ -547,3 +547,44 @@ against deletion. The artifact metadata transaction, database content bridge,
 retention worker and dependent lesson revocation remain unfinished. Task 4 and
 all phases stay open. CI `39529487667` passed every job for the preceding indexed
 read commit `0e11b1c`.
+
+## Transactional artifact retention
+
+Retention metadata now shares the experiment transaction in all four stores.
+Registration requires the current worker lease, a valid experiment-bound reference
+and a finite retention interval. Its identity and dates cannot be rewritten.
+Retries preserve one record and one audit event. Raw bytes stay outside the scope
+snapshot.
+
+Deletion first commits an ineligible state and queues dependent lesson revocations.
+Only a later confirmation records physical deletion. A failed content provider can
+leave this step pending without making the evidence eligible again. Deletion is
+permanent for that reference, including retries that try to register it again.
+
+Decision commits check retained metadata before accepting a conclusive result.
+Missing evidence can still support an explicitly inconclusive decision. Activation,
+rollback and lesson recall recheck retention, while historical activation reads
+remain available for audit. The service must still verify current provider content
+and grants; metadata alone cannot detect a blob removed outside this protocol.
+
+The regression first reproduced a recommendation accepted without its required
+trace metadata. Tests now cover atomic deletion rollback, expiry, pending deletion,
+activation history, remote revocation outbox entries, paused lesson consumers and
+an unrelated deletion that leaves eligibility intact. A separate regression caught
+dependencies disappearing when a retry cleared the latest execution. Retention and
+revocation now inspect captured evidence from earlier attempts too.
+
+Full module races and build passed: memory took 65.183s, Mongo 244.133s,
+PostgreSQL 163.751s and SQLite 163.958s. The final dependency-traversal change
+passed focused races, followed by the strengthened artifact conformance cases on
+all four stores. The first PostgreSQL/Mongo follow-up failed during Testcontainers
+reaper startup before either test body; sequential retries passed in 12.045s and
+10.387s. Published Cortex v1.8.0 focused races passed on every backend, and both
+current and published-dependency builds passed.
+
+Shared formatting left optimizer source hashes unchanged. Final focused state
+races passed, and `make l` reported zero issues across all ten modules.
+
+The database content bridge, provider reconciliation, retention worker, bounded
+list reads and throughput qualification remain open. Task 4 and all phases remain
+unfinished. CI `39530942630` passed for artifact verifier commit `bd5df2b`.

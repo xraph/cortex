@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -31,11 +32,17 @@ func (b *lookupBackend) LoadRecord(_ context.Context, _ string, key RecordKey) (
 
 func TestPointReadersRequestOneIdentity(t *testing.T) {
 	entity := id.New(optimization.PrefixExperiment)
+	artifact := optimization.ArtifactRef{ExperimentID: entity, Scope: cortex.ScopeFromContext(operationContext("lookup")), Digest: strings.Repeat("a", 64), Size: 1, MediaType: "text/plain", Kind: "trace", AccessPolicy: "restricted"}
+	artifactBinding, err := artifact.BindingDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name string
 		key  RecordKey
 		read func(context.Context, *Store) error
 	}{
+		{"artifact", RecordKey{Kind: "artifacts", Key: artifactBinding}, func(ctx context.Context, s *Store) error { _, err := s.GetArtifact(ctx, artifact); return err }},
 		{"experiment", RecordKey{Kind: "experiments", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetExperiment(ctx, entity); return err }},
 		{"version", RecordKey{Kind: "versions", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetVersion(ctx, entity); return err }},
 		{"candidate", RecordKey{Kind: "candidates", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetCandidate(ctx, entity); return err }},

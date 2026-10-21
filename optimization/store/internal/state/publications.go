@@ -189,6 +189,9 @@ func (tx *transaction) validateLessonEvidence(owner optimization.Experiment, les
 		if !exists {
 			return optimization.ErrIncompleteEvidence
 		}
+		if err := checkDecisionArtifacts(tx.data, decision, tx.now); err != nil {
+			return err
+		}
 		source, exists := tx.data.Experiments[decision.ExperimentID.String()]
 		if !exists || source.DecisionID != decision.ID {
 			return optimization.ErrIncompleteEvidence
@@ -212,6 +215,9 @@ func (tx *transaction) validateLessonEvidence(owner optimization.Experiment, les
 		trial, exists := tx.data.Trials[trialID.String()]
 		if !exists || !sources[trial.ExperimentID.String()] {
 			return optimization.ErrIncompleteEvidence
+		}
+		if err := checkTrialArtifacts(tx.data, trial, tx.now); err != nil {
+			return err
 		}
 		switch trial.State {
 		case optimization.TrialCompleted, optimization.TrialFailed, optimization.TrialCancelled, optimization.TrialBlocked:

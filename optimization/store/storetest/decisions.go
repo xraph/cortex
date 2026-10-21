@@ -338,6 +338,11 @@ func decisionFixture(t *testing.T, factory Factory, configure ...func(*optimizat
 
 func decisionFixtureWithEvaluation(t *testing.T, factory Factory, evaluate func(int, *optimization.Evaluation), configure ...func(*optimization.ExperimentBundle)) (store.Store, context.Context, optimization.ExperimentBundle, optimization.WorkLease, optimization.Decision) {
 	t.Helper()
+	return decisionFixtureWithArtifacts(t, factory, evaluate, nil, configure...)
+}
+
+func decisionFixtureWithArtifacts(t *testing.T, factory Factory, evaluate func(int, *optimization.Evaluation), artifacts func(optimization.ExperimentBundle) []optimization.ArtifactRef, configure ...func(*optimization.ExperimentBundle)) (store.Store, context.Context, optimization.ExperimentBundle, optimization.WorkLease, optimization.Decision) {
+	t.Helper()
 	s := factory(t, time.Now)
 	bundle := candidateBundle(t)
 	for _, apply := range configure {
@@ -371,7 +376,11 @@ func decisionFixtureWithEvaluation(t *testing.T, factory Factory, evaluate func(
 				if arm == 1 {
 					trial.CandidateID = candidate.ID
 				}
-				value := captureFixtureTrial(ctx, t, s, bundle, lease, trial)
+				var refs []optimization.ArtifactRef
+				if artifacts != nil {
+					refs = artifacts(bundle)
+				}
+				value := captureFixtureTrial(ctx, t, s, bundle, lease, trial, refs...)
 				score := .2 + float64(arm)*.4
 				value.Score = &score
 				if evaluate != nil {

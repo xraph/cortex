@@ -64,6 +64,9 @@ func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id
 			if !found {
 				return empty, optimization.ErrIncompleteEvidence
 			}
+			if artifactErr := checkDecisionArtifacts(data, decision, s.now().UTC()); artifactErr != nil {
+				return empty, artifactErr
+			}
 			experiment, found := data.Experiments[decision.ExperimentID.String()]
 			if !found {
 				return empty, optimization.ErrIncompleteEvidence
@@ -135,6 +138,9 @@ func (tx *transaction) CompareAndSwapActivation(change optimization.ActivationCh
 	}
 	if evidenceErr := optimization.ValidateActivationEvidence(change, experiment, decision, version); evidenceErr != nil {
 		return empty, evidenceErr
+	}
+	if artifactErr := checkDecisionArtifacts(tx.data, decision, tx.now); artifactErr != nil {
+		return empty, artifactErr
 	}
 	if lessonErr := checkLessonBindings(tx.data, experiment, tx.now); lessonErr != nil {
 		return empty, lessonErr

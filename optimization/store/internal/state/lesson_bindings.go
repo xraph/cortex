@@ -63,10 +63,22 @@ func checkBoundLessons(data *scopeData, experiment optimization.Experiment, now 
 			return optimization.ErrIncompleteEvidence
 		}
 		visiting[key] = true
+		for _, trialID := range lesson.TrialIDs {
+			trial, found := data.Trials[trialID.String()]
+			if !found {
+				return optimization.ErrIncompleteEvidence
+			}
+			if err := checkTrialArtifacts(data, trial, now); err != nil {
+				return err
+			}
+		}
 		for _, decisionID := range lesson.DecisionIDs {
 			decision, found := data.Decisions[decisionID.String()]
 			if !found {
 				return optimization.ErrIncompleteEvidence
+			}
+			if err := checkDecisionArtifacts(data, decision, now); err != nil {
+				return err
 			}
 			source, found := data.Experiments[decision.ExperimentID.String()]
 			if !found || source.Failure == "lesson_revoked" {

@@ -26,6 +26,7 @@ type Store struct {
 }
 
 type scopeData struct {
+	Artifacts           map[string]optimization.ArtifactRetention      `json:"artifacts"`
 	Lessons             map[string]optimization.Lesson                 `json:"lessons"`
 	Publications        map[string]optimization.Publication            `json:"publications"`
 	PublicationRequests map[string]optimization.PublicationRequest     `json:"publication_requests"`

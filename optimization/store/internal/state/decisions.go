@@ -97,6 +97,11 @@ func (tx *transaction) prepareDecision(experiment optimization.Experiment, chang
 	if err := optimization.ValidateDecisionEvidence(experiment, value, evidence); err != nil {
 		return nil, err
 	}
+	if value.Outcome != optimization.DecisionInconclusive {
+		if err := checkDecisionArtifacts(tx.data, value, tx.now); err != nil {
+			return nil, err
+		}
+	}
 	value.CreatedAt = tx.now
 	detached, err := clone(value)
 	if err != nil {

@@ -226,6 +226,11 @@ func (tx *transaction) attachExecution(experiment optimization.Experiment, trial
 	if err != nil {
 		return err
 	}
+	for _, ref := range sealed.Artifacts {
+		if ref.ExperimentID != experiment.ID {
+			return optimization.ErrIncompleteEvidence
+		}
+	}
 	task, exists := trialTask(experiment, *trial)
 	if !exists {
 		return optimization.ErrInvalidSpec

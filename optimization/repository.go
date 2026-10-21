@@ -12,6 +12,7 @@ import (
 type Repository interface {
 	Transact(context.Context, func(Transaction) error) error
 	GetExperiment(context.Context, id.ID) (Experiment, error)
+	GetArtifact(context.Context, ArtifactRef) (ArtifactRetention, error)
 	ListExperiments(context.Context, ListQuery) (Page[Experiment], error)
 	ListEvents(context.Context, id.ID, int64, int) (Page[Event], error)
 	GetVersion(context.Context, id.ID) (HarnessVersion, error)
@@ -44,6 +45,9 @@ type Repository interface {
 // Transaction is valid only during its synchronous callback. Callers must not
 // retain it or use it from concurrent goroutines.
 type Transaction interface {
+	RegisterArtifact(ArtifactRegistration) error
+	BeginArtifactDeletion(ArtifactDeletion) error
+	CompleteArtifactDeletion(ArtifactRef, string) error
 	CreateExperiment(ExperimentBundle) error
 	CommitTransition(Transition) error
 	ClaimWork(ClaimRequest) (WorkLease, error)
