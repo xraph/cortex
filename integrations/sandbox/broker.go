@@ -350,6 +350,9 @@ func ValidateRuntimeResult(result sandbox.Result, j sandbox.Job) error {
 	if result.State == sandbox.StateExited && (result.ExitCode < 0 || result.ExitCode > 255) {
 		return fmt.Errorf("cortex: invalid sandbox exit status")
 	}
+	if result.State == sandbox.StateRunning && len(result.Artifacts) != 0 {
+		return fmt.Errorf("cortex: running sandbox cannot report captured artifacts")
+	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > 2<<20 {
 		return fmt.Errorf("cortex: sandbox result exceeds encoding bound")
@@ -367,7 +370,7 @@ func ValidateRuntimeResult(result sandbox.Result, j sandbox.Job) error {
 			return ErrDenied
 		}
 	}
-	return nil
+	return j.ValidateArtifacts(result.Artifacts, result.State == sandbox.StateExited)
 }
 
 func (b *Broker) load(ctx context.Context, key id.ID) (record, error) {

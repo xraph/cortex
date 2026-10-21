@@ -20,6 +20,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/sandbox/internal/capture"
 	"github.com/xraph/cortex/integrations/sandbox/internal/image"
 	"github.com/xraph/cortex/integrations/sandbox/internal/staging"
 	"github.com/xraph/cortex/integrations/sandbox/internal/supervisor"
@@ -89,12 +90,25 @@ func TestWorkerKernelStagesVerifiedContent(t *testing.T) {
 	}
 	s.job.Image = manifest
 	s.job.Inputs = []sandbox.Input{{Path: "/inputs/data", Ref: artifact.Ref}}
+	s.job.Outputs = []sandbox.Output{{ID: id.New(evidence.PrefixArtifact), Path: "/tmp/outputs/report", MediaType: "text/plain", MaxBytes: 1024}}
+	s.job.Limits.ArtifactBytes = 1024
+	s.cfg.Settings.CaptureRetention = time.Hour
 	s.job, err = sandbox.Seal(s.job)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sources.Images = blobs
 	sources.Inputs = fixtureEvidence{artifact: artifact}
+	repository := &captureRepository{}
+	sources.Artifacts = repository
+	sources.AuthorizeOutput = func(_ context.Context, candidate sandbox.Job, _ evidence.Action, ref evidence.Ref) error {
+		if candidate.Principal != s.job.Principal || ref.SourceURI != s.job.OutputSource(s.job.Outputs[0]) {
+			t.Fatal("capture lost signed identity")
+		}
+		candidate.Scope.Levels[0].Value = "changed"
+		ref.Scope.Levels[0].Value = "changed"
+		return nil
+	}
 	sources.AuthorizeImage = func(ctx context.Context, candidate sandbox.Job, pin string) error {
 		if candidate.Digest != s.job.Digest || candidate.Principal != s.job.Principal || pin != manifest || cortex.ScopeFromContext(ctx).Canonical() != s.job.Scope.Canonical() {
 			t.Fatal("image lost job authority")
@@ -126,6 +140,7 @@ func TestWorkerKernelStagesVerifiedContent(t *testing.T) {
 	deps.image = image.Stage
 	deps.inputs = staging.Stage
 	deps.bundle = writeBundle
+	deps.capture = capture.Collect
 	deps.driver = func(_ context.Context, cfg supervisor.RunscConfig, _ work) (supervisor.Driver, error) {
 		contents, readErr := os.ReadFile(filepath.Join(cfg.Rootfs, "check"))
 		if readErr != nil || string(contents) != "fixture" {
@@ -142,10 +157,19 @@ func TestWorkerKernelStagesVerifiedContent(t *testing.T) {
 		if writeErr := writeBundle(t.Context(), paths, s.job, cfg.Rootfs, cfg.Inputs); writeErr == nil {
 			t.Fatal("existing OCI bundle was overwritten")
 		}
+		if mkdirErr := os.Mkdir(filepath.Join(paths.Scratch, "outputs"), 0o700); mkdirErr != nil {
+			t.Fatal(mkdirErr)
+		}
+		if writeErr := os.WriteFile(filepath.Join(paths.Scratch, "outputs", "report"), []byte("untrusted captured result"), 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
 		return &fixtureDriver{calls: calls}, nil
 	}
 	receipt, err := execute(t.Context(), s, sources, deps)
 	if err != nil || receipt.JobID != s.job.ID || len(s.reports) != 1 {
 		t.Fatal("staging pipeline failed", receipt, err, *calls)
+	}
+	if string(repository.artifact.Data) != "untrusted captured result" || s.job.ValidateArtifacts(s.reports[0].Artifacts, true) != nil {
+		t.Fatal("capture lost staged output")
 	}
 }

@@ -20,14 +20,16 @@ const PrefixJob id.Prefix = "sjob"
 // NetworkDenied is the only network profile supported by schema one.
 const NetworkDenied = "denied"
 
-// Limits are hard ceilings, including combined stdout and stderr bytes.
+// Limits are hard ceilings. OutputBytes bounds combined stdout and stderr;
+// ArtifactBytes separately bounds captured files and defaults to no capture.
 type Limits struct {
-	CPUMillis    int64         `json:"cpu_millis"`
-	MemoryBytes  int64         `json:"memory_bytes"`
-	Processes    int64         `json:"processes"`
-	ScratchBytes int64         `json:"scratch_bytes"`
-	WallTime     time.Duration `json:"wall_time_ns"`
-	OutputBytes  int64         `json:"output_bytes"`
+	CPUMillis     int64         `json:"cpu_millis"`
+	MemoryBytes   int64         `json:"memory_bytes"`
+	Processes     int64         `json:"processes"`
+	ScratchBytes  int64         `json:"scratch_bytes"`
+	WallTime      time.Duration `json:"wall_time_ns"`
+	OutputBytes   int64         `json:"output_bytes"`
+	ArtifactBytes int64         `json:"artifact_bytes,omitempty"`
 }
 
 // Input mounts one immutable artifact under /inputs, read-only.
@@ -48,6 +50,7 @@ type Job struct {
 	Image         string            `json:"image"`
 	Argv          []string          `json:"argv"`
 	Inputs        []Input           `json:"inputs,omitempty"`
+	Outputs       []Output          `json:"outputs,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
 	Network       string            `json:"network"`
 	Limits        Limits            `json:"limits"`
@@ -97,6 +100,9 @@ func (j Job) validateFields() error {
 	if len(j.Argv) == 0 || len(j.Argv) > 256 || len(j.Inputs) > 256 || len(j.Env) > 64 {
 		return fmt.Errorf("cortex: sandbox collection bound exceeded")
 	}
+	if err := j.validateOutputs(); err != nil {
+		return err
+	}
 	for _, arg := range j.Argv {
 		if !text(arg, 16384) {
 			return fmt.Errorf("cortex: invalid sandbox argument")
@@ -135,10 +141,10 @@ func text(value string, maximum int) bool {
 	return strings.TrimSpace(value) != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsRune(value, 0)
 }
 func (l Limits) valid() bool {
-	return l.CPUMillis > 0 && l.MemoryBytes > 0 && l.Processes > 0 && l.ScratchBytes > 0 && l.WallTime > 0 && l.OutputBytes > 0 && l.OutputBytes <= 1<<20 && l.CPUMillis <= 1_000_000 && l.Processes <= 1_000_000
+	return l.CPUMillis > 0 && l.MemoryBytes > 0 && l.Processes > 0 && l.ScratchBytes > 0 && l.WallTime > 0 && l.OutputBytes > 0 && l.OutputBytes <= 1<<20 && l.CPUMillis <= 1_000_000 && l.Processes <= 1_000_000 && l.ArtifactBytes >= 0 && l.ArtifactBytes <= 16<<20
 }
 
 // Within reports whether every finite limit is within a host grant.
 func (l Limits) Within(maximum Limits) bool {
-	return l.valid() && maximum.valid() && l.CPUMillis <= maximum.CPUMillis && l.MemoryBytes <= maximum.MemoryBytes && l.Processes <= maximum.Processes && l.ScratchBytes <= maximum.ScratchBytes && l.WallTime <= maximum.WallTime && l.OutputBytes <= maximum.OutputBytes
+	return l.valid() && maximum.valid() && l.CPUMillis <= maximum.CPUMillis && l.MemoryBytes <= maximum.MemoryBytes && l.Processes <= maximum.Processes && l.ScratchBytes <= maximum.ScratchBytes && l.WallTime <= maximum.WallTime && l.OutputBytes <= maximum.OutputBytes && l.ArtifactBytes <= maximum.ArtifactBytes
 }

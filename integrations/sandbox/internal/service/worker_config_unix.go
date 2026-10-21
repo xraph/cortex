@@ -13,6 +13,7 @@ import (
 
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
+	"github.com/xraph/cortex/integrations/sandbox/internal/capture"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 	"github.com/xraph/cortex/integrations/sandbox/internal/image"
 	"github.com/xraph/cortex/integrations/sandbox/internal/staging"
@@ -40,15 +41,16 @@ type WorkerRuntime struct {
 // WorkerConfig is installed by the host as canonical JSON with mode 0600.
 // It contains no broker signing key, guest commands or source credentials.
 type WorkerConfig struct {
-	SchemaVersion   int               `json:"schema_version"`
-	Broker          string            `json:"broker"`
-	BrokerPublicKey ed25519.PublicKey `json:"broker_public_key"`
-	ControlSocket   string            `json:"control_socket"`
-	Service         WorkerService     `json:"service"`
-	Runtime         WorkerRuntime     `json:"runtime"`
-	Workspace       workspace.Policy  `json:"workspace"`
-	ImageStaging    image.Limits      `json:"image_staging"`
-	InputStaging    staging.Limits    `json:"input_staging"`
+	SchemaVersion    int               `json:"schema_version"`
+	Broker           string            `json:"broker"`
+	BrokerPublicKey  ed25519.PublicKey `json:"broker_public_key"`
+	ControlSocket    string            `json:"control_socket"`
+	Service          WorkerService     `json:"service"`
+	Runtime          WorkerRuntime     `json:"runtime"`
+	Workspace        workspace.Policy  `json:"workspace"`
+	ImageStaging     image.Limits      `json:"image_staging"`
+	InputStaging     staging.Limits    `json:"input_staging"`
+	CaptureRetention time.Duration     `json:"capture_retention_ns,omitempty"`
 }
 
 // WorkerConfiguration binds a parsed configuration to its installed profile.
@@ -76,6 +78,11 @@ func readWorkerConfig(ctx context.Context, name string, owner uint32) (WorkerCon
 		return WorkerConfiguration{}, fmt.Errorf("cortex: invalid worker configuration")
 	}
 	settings := cfg.Service
+	if cfg.CaptureRetention != 0 {
+		if captureErr := capture.ValidateRetention(cfg.CaptureRetention); captureErr != nil {
+			return WorkerConfiguration{}, captureErr
+		}
+	}
 	if policyErr := cfg.Workspace.Validate(); policyErr != nil {
 		return WorkerConfiguration{}, policyErr
 	}

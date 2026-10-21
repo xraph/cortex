@@ -616,12 +616,48 @@ Report submission retries only explicit backpressure, with the same payload and
 original deadline. An uncertain acknowledgement requires broker inspection.
 The worker process must exit after the coordinator returns.
 
-This entry point currently reports stdout and stderr. Artifact capture must be
-added before workspace cleanup; authorized release remains a separate host
+After runtime cleanup, the coordinator captures declared files before removing
+the workspace. You must supply an immutable evidence repository, current output
+policy and a pinned `capture_retention_ns` between zero (exclusive) and 24 hours.
+Zero disables capture. A job requesting capture is refused before execution if
+these services are unavailable. Authorized release remains a separate host
 operation. Source adapters, executable worker/daemon installation, broker runtime
-activation, retained-file recovery and live qualification remain open. The root
-staging fixture uses real image/input verification and bundle writes, with an
-explicit test executor and workspace. It does not attest to runtime isolation.
+activation, retained-file and artifact recovery, and live qualification remain
+open. The Linux staging fixture uses real image/input verification, bundle writes
+and artifact capture with an explicit test executor and workspace. It does not
+attest to runtime isolation.
+
+## Declared artifact capture
+
+Each signed `outputs` entry carries a host-allocated evidence ID, guest path
+under `/tmp/outputs/`, media type and positive `max_bytes`. The job and host grant
+must both provide `limits.artifact_bytes`; an omitted budget permits no capture.
+The current bounds are 16 files, one MiB per file and 16 MiB total. Duplicate
+identities, reused input identities, overlapping paths and traversal are refused.
+Jobs without capture retain their previous JSON representation.
+
+The reader opens every path component without following links and accepts only
+regular files with one hard link. Archives remain opaque bytes. Captures always
+use restricted sensitivity, job-bound provenance and the host retention window.
+The output policy receives a detached signed job and must check current principal,
+source grants and retention policy. The worker verifies each returned reference,
+reopens its content and checks the exact length and digest before reporting it.
+Media type describes expected content; it does not validate the bytes or make
+HTML safe to render.
+
+Every declared file is required for an exited result, including nonzero exit
+codes. Missing or invalid capture produces a failed result with a generic reason;
+previously verified captures may remain attached. Failed or interrupted execution
+does not attempt capture. The broker rejects undeclared, substituted or duplicate
+references. Captured output remains untrusted input for protected grading.
+
+Uploads are never retried automatically. A lost acknowledgement, later capture
+failure, cancellation or report loss can leave retained evidence without a final
+report. The signed job already records every allocated artifact ID so recovery
+can reconcile those objects without another execution or a new identity. That
+recovery worker and installed repository adapters are still required before
+deployment. Artifact capture does not authorize publication, deployment or a
+write to any external destination.
 
 ## Linux probe suite
 

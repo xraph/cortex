@@ -84,11 +84,15 @@ func TestWorkerConfigBindsExactBytesWithoutSelfReference(t *testing.T) {
 }
 
 func TestWorkerConfigRejectsMalformedOrChangedDeployment(t *testing.T) {
-	for _, mode := range []string{"unknown", "duplicate", "whitespace", "oversized", "key", "socket", "overlap", "architecture", "worker", "template", "runtime", "permissions", "schema", "workspace", "image-staging", "input-staging"} {
+	for _, mode := range []string{"unknown", "duplicate", "whitespace", "oversized", "key", "socket", "overlap", "architecture", "worker", "template", "runtime", "permissions", "schema", "workspace", "image-staging", "input-staging", "capture-retention", "capture-negative"} {
 		t.Run(mode, func(t *testing.T) {
 			name, cfg, _ := workerConfigFixture(t)
 			var err error
 			switch mode {
+			case "capture-retention":
+				cfg.CaptureRetention = 25 * time.Hour
+			case "capture-negative":
+				cfg.CaptureRetention = -time.Second
 			case "image-staging":
 				cfg.ImageStaging = image.Limits{}
 			case "input-staging":

@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
+	"github.com/xraph/cortex/integrations/sandbox/internal/capture"
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 	"github.com/xraph/cortex/integrations/sandbox/internal/image"
 	"github.com/xraph/cortex/integrations/sandbox/internal/service"
@@ -35,10 +36,12 @@ import (
 // never receive guest URLs or destination credentials. Providers must honor
 // cancellation and close their readers promptly.
 type Sources struct {
-	Images         image.Source
-	Inputs         staging.Source
-	AuthorizeInput func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
-	AuthorizeImage func(context.Context, sandbox.Job, string) error
+	Images          image.Source
+	Inputs          staging.Source
+	AuthorizeInput  func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
+	AuthorizeImage  func(context.Context, sandbox.Job, string) error
+	Artifacts       capture.Repository
+	AuthorizeOutput func(context.Context, sandbox.Job, evidence.Action, evidence.Ref) error
 }
 
 type inputAuthorizer func(context.Context, evidence.Action, evidence.Ref) error
@@ -66,10 +69,11 @@ type dependencies struct {
 	inputs    func(context.Context, staging.Config, sandbox.Job) (*staging.Inputs, error)
 	bundle    func(context.Context, workspace.Paths, sandbox.Job, string, map[string]string) error
 	driver    func(context.Context, supervisor.RunscConfig, work) (supervisor.Driver, error)
+	capture   func(context.Context, capture.Config, sandbox.Job) ([]evidence.Ref, error)
 }
 
 // Run stages and executes one bootstrapped job, cleans up and submits its report.
-// It currently captures bounded stdout/stderr; artifact capture remains unwired.
+// It captures bounded stdout/stderr and declared files as restricted evidence.
 // The worker process must exit after this call.
 // Failed runtime cleanup leaves storage intact for independent recovery. A report
 // acknowledgement confirms durable receipt only, never result finalization.
@@ -85,7 +89,7 @@ func Run(ctx context.Context, worker *service.WorkerSession, sources Sources) (s
 			}
 			return w, err
 		},
-		image: image.Stage, inputs: staging.Stage, bundle: writeBundle,
+		image: image.Stage, inputs: staging.Stage, bundle: writeBundle, capture: capture.Collect,
 		driver: func(ctx context.Context, cfg supervisor.RunscConfig, w work) (supervisor.Driver, error) {
 			native, ok := w.(*workspace.Workspace)
 			if !ok {
@@ -107,12 +111,15 @@ func execute(ctx context.Context, worker session, sources Sources, deps dependen
 	if validationErr := job.Validate(); validationErr != nil {
 		return service.WorkerReportReceipt{}, validationErr
 	}
+	cfg := worker.Configuration()
+	if len(job.Outputs) != 0 && (sources.Artifacts == nil || sources.AuthorizeOutput == nil || deps.capture == nil || capture.ValidateRetention(cfg.Settings.CaptureRetention) != nil) {
+		return service.WorkerReportReceipt{}, fmt.Errorf("cortex: sandbox artifact capture is unavailable")
+	}
 	if entryErr := worker.BeginExecution(ctx); entryErr != nil {
 		return service.WorkerReportReceipt{}, entryErr
 	}
 	operation, cancel := context.WithDeadline(scoped(ctx, job), worker.Deadline())
 	defer cancel()
-	cfg := worker.Configuration()
 	authorize := func(ctx context.Context, candidate sandbox.Job) error {
 		if candidate.Digest != job.Digest || candidate.Validate() != nil {
 			return broker.ErrDenied
@@ -234,7 +241,22 @@ func runPrepared(ctx context.Context, worker session, sources Sources, deps depe
 		return failure("sandbox execution authorization failed", err)
 	}
 	result, runErr := supervisor.Run(ctx, driver, job, worker.Deadline())
-	return preparedResult{result: result, failure: runErr, cleanupPending: errors.Is(runErr, supervisor.ErrCleanup)}
+	if errors.Is(runErr, supervisor.ErrCleanup) {
+		return preparedResult{failure: runErr, cleanupPending: true}
+	}
+	if result.State == sandbox.StateExited && len(job.Outputs) != 0 {
+		refs, captureErr := deps.capture(ctx, capture.Config{Root: paths.Scratch, Repository: sources.Artifacts, Retention: cfg.Settings.CaptureRetention, Authorize: authorize, Check: w.Check, Policy: sources.AuthorizeOutput}, job)
+		if validationErr := job.ValidateArtifacts(refs, captureErr == nil); validationErr != nil {
+			refs = nil
+			captureErr = errors.Join(captureErr, validationErr)
+		}
+		result.Artifacts = refs
+		if captureErr != nil {
+			result.State, result.ExitCode, result.Reason = sandbox.StateFailed, -1, "sandbox artifact capture failed"
+			runErr = errors.Join(runErr, captureErr)
+		}
+	}
+	return preparedResult{result: result, failure: runErr}
 }
 
 func scoped(ctx context.Context, job sandbox.Job) context.Context {

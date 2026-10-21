@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, containment and internal worker coordinator implemented; deployment pending | this chat | Verified staging, bounded storage, runtime/report binding and cleanup tests pass; no qualified Linux adapter |
+| S2.4 broker/runtime | broker, containment, internal worker and declared artifact capture implemented; deployment pending | this chat | Staging, bounded storage, capture and cleanup fixtures pass; repository adapters/recovery and qualified Linux deployment pending |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -567,3 +567,46 @@ suite passed twenty repetitions, including real image/input staging and bundle
 creation. The Linux private-control and worker-session suite also passed.
 Workflow validation and whitespace checks passed. These fixtures do not replace
 the deferred installed systemd/runsc qualification.
+
+## Declared output capture before workspace cleanup
+
+Signed jobs now declare output paths, preallocated evidence identities, media
+types and per-file byte ceilings. A separate artifact-byte capability grant
+defaults to zero. Capture permits at most sixteen files, one MiB per file and
+sixteen MiB total, all beneath the guest scratch output directory. Input identity
+reuse, duplicates, path overlap and traversal are refused. Jobs without outputs
+retain their earlier JSON representation.
+
+The worker checks capture services and pinned retention before execution. After
+runtime cleanup, it reads only bounded regular files without following links,
+writes restricted evidence through the host repository, verifies the returned
+binding and reopens the stored bytes to check length and digest. Current job,
+workspace and evidence policies are checked throughout. Policy callbacks receive
+detached signed identities. Archives and HTML remain opaque untrusted bytes.
+
+Capture runs before workspace removal. A missing file, denied write, changed
+stored content or uncertain upload produces a failed result with a generic
+reason. Verified earlier captures can remain attached. Capture failures cannot
+impersonate unresolved runtime cleanup and prevent workspace removal. The broker
+requires every declaration for an exited result and rejects substituted,
+duplicate, undeclared or running-job artifact references. These checks failed
+before implementation; the running-job case exposed a missing boundary and now
+passes after enforcement.
+
+There is no automatic upload replay. The signed job retains each allocated ID
+for recovery after an uncertain write, cancellation or report loss. Installed
+repository adapters and artifact reconciliation/retention workers remain open,
+along with source adapters, executable services, broker runtime activation,
+independent service discovery, retained-file recovery and Linux qualification.
+Capture does not grade output or authorize release. S2.4 and G2 remain incomplete.
+
+CI `39554176533` at `59afe2d` passed every job for the worker coordinator.
+
+After final formatting, all ten modules passed lint, including separate Linux
+tagged sandbox lint. Root sandbox/evidence race tests passed twenty repetitions;
+the complete sandbox module race suite and root/sandbox builds passed. Linux
+amd64 and arm64 pipeline binaries compiled. The Linux capture and complete
+pipeline fixtures each passed twenty repetitions, including real file capture,
+repository readback and image/input staging. Whitespace checks passed. These
+tests use explicit runtime/repository fixtures and do not establish installed
+systemd/runsc qualification or a production repository integration.
