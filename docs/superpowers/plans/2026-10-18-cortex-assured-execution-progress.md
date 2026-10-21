@@ -420,3 +420,19 @@ Tests failed before each implementation: report persistence, scanner recovery an
 CI `39540079487` at `7dd3b19` passed all jobs for the preceding private transport packet. This result-finalization packet still needs its own CI result.
 
 A regression exposed late finalization when the configured clock stopped advancing. The test failed before both report writes were bounded by the absolute signed deadline. Service and journal checks now share the earlier job/qualification deadline calculation. Final shared formatting and all ten modules of lint pass, along with the full sandbox race suite and build, twenty repetitions of proposal/report race tests, tagged Linux lint, amd64/arm64 test compilation and restricted Linux service/journal fixtures. These tests do not qualify a deployed manager or runtime.
+
+## Authenticated report transport and bounded upload capacity
+
+The private control socket now accepts version 2 report requests alongside unchanged version 1 authorization requests. A small header binds the claim, encoded length and report digest. The server verifies the live worker and current authority before accepting the larger payload, retains the process handle during upload and rechecks authority through `ProposeWorkerResult` before persistence. The exchange cannot exceed the original signed deadline.
+
+Report uploads have a separate explicit ceiling of up to four, below the accepted connection count. Zero disables report submission. A full upload queue returns a request-bound pending response before opening another peer handle or accepting payload bytes. The client distinguishes that response from denial, allowing only the same report to be retried within its original deadline. It never retries automatically or reruns execution. A lost final acknowledgement must be reconciled through broker inspection.
+
+Shared framing enforces canonical JSON, exact length, a 2 KiB header limit and a 2 MiB report limit. Client-side input bounds apply before encoding. Readiness and receipt bindings, signatures, duplicate or unknown fields, trailing bytes and partial frames are checked. Errors and claim tokens are not copied into responses. A report acknowledgement confirms durable receipt only, leaving independent cleanup and result finalization to the scanner.
+
+Tests failed before the report exchange was implemented, and a separate failing capacity test drove the distinction between backpressure and denial. Tests cover revocation or peer exit during upload, lost acknowledgement after one durable proposal, maximum output, capacity reservation, signed-deadline cancellation, shutdown, malformed frames, reply substitution and peer-handle closure. Linux fixtures exercise the report client's private endpoint checks and rejection of an unrelated root process by the public server.
+
+CI `39541860307` at `9c6fb19` passed all jobs for the preceding result-finalization packet. This transport packet still needs its own CI result. Worker and daemon startup wiring, runtime activation, disk accounting, service/orphan discovery, retained-file cleanup and live systemd/runsc qualification remain open. S2.4 and G2 remain incomplete.
+
+Final inspection found an artifact digest field that could reach JSON encoding without a length check. A failing regression drove canonical digest validation before encoding. A repeated race run also exposed the maximum-output test's one-second throughput assumption under concurrent load. That capacity test now uses a ten-second exchange allowance; the separate short-deadline tests keep their original bounds.
+
+Final `make f` and `make l` pass across all ten modules. The full sandbox race suite and build, twenty repetitions of control/report race tests, tagged Linux lint, amd64/arm64 test compilation and restricted Linux service fixtures pass. These fixtures do not qualify a deployed daemon or runtime.

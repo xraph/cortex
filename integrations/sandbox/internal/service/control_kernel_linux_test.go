@@ -38,7 +38,7 @@ func TestControlKernelPublicServerRejectsAmbientRootAndJoinsController(t *testin
 	controller, _, _ := controllerFixture(t)
 	cancelController, controllerDone := runController(t, controller)
 	awaitControllerReady(t, controller)
-	server, err := NewWorkerControl(controller, ControlLimits{Connections: 2, Timeout: time.Second})
+	server, err := NewWorkerControl(controller, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +47,9 @@ func TestControlKernelPublicServerRejectsAmbientRootAndJoinsController(t *testin
 	go func() { served <- server.Serve(t.Context(), listener) }()
 	if err = AuthorizeAt(t.Context(), path, controlClaim()); !errors.Is(err, broker.ErrDenied) {
 		t.Fatalf("ambient root result: %v", err)
+	}
+	if _, err = ReportAt(t.Context(), path, controlClaim(), testWireResult()); !errors.Is(err, broker.ErrDenied) {
+		t.Fatalf("ambient root report: %v", err)
 	}
 	cancelController()
 	if err = awaitControllerStop(t, controllerDone); !errors.Is(err, context.Canceled) {
@@ -58,4 +61,25 @@ func TestControlKernelPublicServerRejectsAmbientRootAndJoinsController(t *testin
 	if _, err = os.Lstat(path); err != nil {
 		t.Fatal("server removed host-owned socket path")
 	}
+}
+
+func TestControlKernelReportClientAuthenticatesPrivateDaemon(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("worker control kernel tests require root")
+	}
+	claim := controlClaim()
+	path, cancel, done := startReportControl(t, func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error) {
+		return &fixtureReportSession{claim: claim}, nil
+	}, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
+	if receipt, err := ReportAt(t.Context(), path, claim, testWireResult()); err != nil || receipt.JobID != claim.JobID {
+		t.Fatal("private report client failed", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReportAt(t.Context(), path, claim, testWireResult()); err == nil {
+		t.Fatal("report sent through unsafe endpoint")
+	}
+	cancel()
+	_ = awaitControllerStop(t, done)
 }

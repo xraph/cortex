@@ -357,7 +357,7 @@ checks on Linux as root. CI compiles a race-enabled test binary and runs those
 checks. They cover process capture, exit detection and rejection of a root
 process outside the job service, including descriptor cleanup. They do not
 start systemd jobs or qualify the running-service acceptance path. Worker
-startup and report transport wiring remain pending.
+startup and runtime integration remain pending.
 
 `Controller.ProposeWorkerResult` applies the same live peer, claim, deployment
 and grant checks before persisting a report. Its acknowledgement contains the
@@ -375,20 +375,21 @@ Failed cleanup leaves the report pending for another recovery attempt.
 ## Private worker control
 
 Use the internal `service.WorkerControl` to connect workers to the controller's
-authorization checks. After controller recovery, pass it a Unix listener in a
-root-owned `0700` directory with a root-owned `0600` socket. It takes ownership of
-the listener, closes it on shutdown and leaves the socket path for the host's
-fenced cleanup. Keep that directory stable and outside guest mounts. Socket
+authorization and report receipt methods. After controller recovery, pass it a
+Unix listener in a root-owned `0700` directory with a root-owned `0600` socket.
+It takes ownership of the listener, closes it on shutdown and leaves the socket
+path for the host's fenced cleanup. Keep that directory stable and outside guest mounts. Socket
 installation, restart cleanup and executable daemon wiring remain pending.
 
 Set `ControlLimits` explicitly: one to 64 accepted connections, with a total
-exchange timeout between 10ms and 30 seconds. Each connection carries one
-length-prefixed canonical JSON claim, bounded to 2 KiB, followed by a write-side
+exchange timeout between 10ms and 30 seconds. An authorization connection carries
+one length-prefixed canonical JSON claim, bounded to 2 KiB, followed by a write-side
 close. Unknown or duplicate fields, trailing bytes, oversized frames and stalled
 reads are refused. Grant callbacks must honor their contexts so shutdown can
 join them.
 
-The server opens a kernel peer handle and calls `Controller.AuthorizeWorker`.
+For authorization, the server opens a kernel peer handle and calls
+`Controller.AuthorizeWorker`.
 It returns only a denial or an authorization bound to the exact request digest.
 Internal errors and tokens are never copied into replies. This endpoint cannot
 launch, cancel or complete a job, and it does not retry an exchange.
@@ -400,8 +401,30 @@ reply, its request binding and the connection's end. Repeat authorization after
 staging, immediately before execution; success does not extend the signed
 deadline or replace independent cleanup proof.
 
+Enable report submission with `ControlLimits.Reports`: one to four concurrent
+uploads, strictly fewer than `Connections`. Zero keeps report submission
+disabled. An upload cannot consume the reserved authorization capacity. When
+report capacity is full, the server returns a request-bound pending response
+before acquiring another peer handle or receiving the report body.
+
+Call `service.ReportAt` with the same claim and the bounded execution result.
+Its version 2 header declares the report's exact encoded length and digest in
+at most 2 KiB. The server authenticates the live worker and current authority
+before acknowledging readiness. It holds that process handle while receiving
+the canonical report, capped at 2 MiB, and shortens the exchange to the original
+signed deadline. It then calls `Controller.ProposeWorkerResult`, which rechecks
+authority before persistence. Version 1 authorization clients remain compatible.
+
+The final acknowledgement binds the job, claim revision and report digest. It
+confirms receipt only; the scanner still must prove cleanup before collection.
+`ErrPending` permits a report-only retry with the same claim and original
+deadline. Other lost or uncertain acknowledgements require broker inspection.
+Never rerun the job to recover a reply. The client performs no automatic retry.
+
 Tests cover concurrency ceilings, timeouts, malformed requests and replies,
-current claim cancellation, unsafe socket paths and shutdown. The tagged Linux
+current claim cancellation, unsafe socket paths and shutdown. Report tests cover
+upload limits, readiness and receipt tampering, revocation during upload, a lost
+acknowledgement, maximum output and peer-handle cleanup. The tagged Linux
 tests also exercise daemon socket authentication and the public server's refusal
 of an unrelated root process. These checks do not qualify an installed worker,
 systemd service or runsc deployment.

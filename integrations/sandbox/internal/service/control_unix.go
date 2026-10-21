@@ -27,24 +27,29 @@ const controlFrameLimit = 2048
 // callbacks must honor their contexts for handler shutdown to remain bounded.
 type ControlLimits struct {
 	Connections int
-	Timeout     time.Duration
+	// Reports permits up to four concurrent uploads and must be less than
+	// Connections. Zero disables report submission.
+	Reports int
+	Timeout time.Duration
 }
 
 func (l ControlLimits) validate() error {
-	if l.Connections < 1 || l.Connections > 64 || l.Timeout < 10*time.Millisecond || l.Timeout > 30*time.Second {
+	if l.Connections < 1 || l.Connections > 64 || l.Reports < 0 || l.Reports > 4 || l.Reports >= l.Connections || l.Timeout < 10*time.Millisecond || l.Timeout > 30*time.Second {
 		return fmt.Errorf("cortex: invalid worker control limits")
 	}
 	return nil
 }
 
-// WorkerControl serves authorization only. It cannot launch, cancel or complete
-// jobs. Each connection carries exactly one canonical, length-prefixed request.
+// WorkerControl serves authorization and report receipt. It cannot launch,
+// cancel or complete jobs. Frames are canonical JSON with explicit byte bounds.
 type WorkerControl struct {
-	limits     ControlLimits
-	controller *Controller
-	authorize  func(context.Context, *net.UnixConn, WorkerClaim) error
-	mu         sync.Mutex
-	started    bool
+	limits      ControlLimits
+	controller  *Controller
+	authorize   func(context.Context, *net.UnixConn, WorkerClaim) error
+	beginReport func(context.Context, *net.UnixConn, WorkerClaim) (reportSession, error)
+	mu          sync.Mutex
+	started     bool
+	reports     chan struct{}
 }
 
 // NewWorkerControl binds the transport to kernel peer authentication and the
@@ -59,7 +64,7 @@ func NewWorkerControl(controller *Controller, limits ControlLimits) (*WorkerCont
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
-	return &WorkerControl{controller: controller, limits: limits, authorize: func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (err error) {
+	return &WorkerControl{controller: controller, limits: limits, beginReport: controller.openReportSession, authorize: func(ctx context.Context, conn *net.UnixConn, claim WorkerClaim) (err error) {
 		peer, err := workerpeer.Open(ctx, conn, claim.JobID)
 		if err != nil {
 			return err
@@ -96,7 +101,7 @@ func (s *WorkerControl) Serve(ctx context.Context, listener *net.UnixListener) e
 }
 
 func (s *WorkerControl) serve(ctx context.Context, listener *net.UnixListener) error {
-	if listener == nil || s.authorize == nil {
+	if listener == nil || s.authorize == nil || (s.limits.Reports > 0 && s.beginReport == nil) {
 		return fmt.Errorf("cortex: incomplete worker control transport")
 	}
 	if err := s.limits.validate(); err != nil {
@@ -108,6 +113,7 @@ func (s *WorkerControl) serve(ctx context.Context, listener *net.UnixListener) e
 		return broker.ErrConflict
 	}
 	s.started = true
+	s.reports = make(chan struct{}, s.limits.Reports)
 	s.mu.Unlock()
 	lifetime, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(lifetime, func() { _ = listener.Close() })
@@ -139,18 +145,31 @@ func (s *WorkerControl) serve(ctx context.Context, listener *net.UnixListener) e
 }
 
 func (s *WorkerControl) exchange(parent context.Context, conn *net.UnixConn) {
-	ctx, finish := context.WithTimeout(parent, s.limits.Timeout)
+	ctx, finish, err := controlConnection(parent, conn, s.limits.Timeout)
+	if err != nil {
+		return
+	}
 	defer finish()
-	defer conn.Close()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-	deadline, _ := ctx.Deadline()
-	if err := conn.SetDeadline(deadline); err != nil {
+	body, err := readBoundedFrame(conn, controlFrameLimit)
+	if err != nil {
+		return
+	}
+	var version struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err = json.Unmarshal(body, &version); err != nil {
+		return
+	}
+	if version.SchemaVersion == 2 {
+		var header reportHeader
+		if decodeCanonical(body, &header) != nil {
+			return
+		}
+		s.exchangeReport(ctx, conn, header, body)
 		return
 	}
 	var claim WorkerClaim
-	body, err := readControlFrame(conn, &claim)
-	if err != nil || requireControlEOF(conn) != nil || validateWorkerClaim(claim) != nil {
+	if decodeCanonical(body, &claim) != nil || requireControlEOF(conn) != nil || validateWorkerClaim(claim) != nil {
 		return
 	}
 	reply := controlReply{SchemaVersion: 1, Status: "denied"}
@@ -189,38 +208,25 @@ func AuthorizeAt(ctx context.Context, path string, claim WorkerClaim) error {
 }
 
 func authorizeConnection(ctx context.Context, conn *net.UnixConn, claim WorkerClaim, timeout time.Duration) error {
-	if conn == nil {
+	operation, finish, err := controlConnection(ctx, conn, timeout)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if claimErr := validateWorkerClaim(claim); claimErr != nil {
+		return claimErr
+	}
+	if writeErr := writeControlFrame(conn, claim); writeErr != nil {
 		return broker.ErrDenied
 	}
-	defer conn.Close()
-	if err := validateWorkerClaim(claim); err != nil {
-		return err
-	}
-	if err := (ControlLimits{Connections: 1, Timeout: timeout}).validate(); err != nil {
-		return err
-	}
-	operation, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	stop := context.AfterFunc(operation, func() { _ = conn.Close() })
-	defer stop()
-	deadline, _ := operation.Deadline()
-	if err := conn.SetDeadline(deadline); err != nil {
-		return err
-	}
-	if err := operation.Err(); err != nil {
-		return err
-	}
-	if err := writeControlFrame(conn, claim); err != nil {
-		return broker.ErrDenied
-	}
-	if err := conn.CloseWrite(); err != nil {
+	if closeErr := conn.CloseWrite(); closeErr != nil {
 		return broker.ErrDenied
 	}
 	var reply controlReply
-	if _, err := readControlFrame(conn, &reply); err != nil {
+	if _, readErr := readControlFrame(conn, &reply); readErr != nil {
 		return broker.ErrDenied
 	}
-	if err := requireControlEOF(conn); err != nil {
+	if eofErr := requireControlEOF(conn); eofErr != nil {
 		return broker.ErrDenied
 	}
 	body, err := json.Marshal(claim)
@@ -236,27 +242,64 @@ func authorizeConnection(ctx context.Context, conn *net.UnixConn, claim WorkerCl
 	return nil
 }
 
+func controlConnection(ctx context.Context, conn *net.UnixConn, timeout time.Duration) (context.Context, func(), error) {
+	if conn == nil {
+		return nil, nil, broker.ErrDenied
+	}
+	if err := (ControlLimits{Connections: 1, Timeout: timeout}).validate(); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	operation, cancel := context.WithTimeout(ctx, timeout)
+	stop := context.AfterFunc(operation, func() { _ = conn.Close() })
+	finish := func() { stop(); cancel(); _ = conn.Close() }
+	deadline, _ := operation.Deadline()
+	if err := errors.Join(conn.SetDeadline(deadline), operation.Err()); err != nil {
+		finish()
+		return nil, nil, err
+	}
+	return operation, finish, nil
+}
+
 func readControlFrame(reader io.Reader, target any) ([]byte, error) {
+	body, err := readBoundedFrame(reader, controlFrameLimit)
+	if err != nil {
+		return nil, err
+	}
+	if decodeErr := decodeCanonical(body, target); decodeErr != nil {
+		return nil, decodeErr
+	}
+	return body, nil
+}
+
+func readBoundedFrame(reader io.Reader, limit int) ([]byte, error) {
+	if limit < 1 || limit > reportFrameLimit {
+		return nil, broker.ErrDenied
+	}
 	var header [4]byte
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
 		return nil, broker.ErrDenied
 	}
 	size := binary.BigEndian.Uint32(header[:])
-	if size == 0 || size > controlFrameLimit {
+	if size == 0 || size > reportFrameLimit || uint64(size) > uint64(limit) {
 		return nil, broker.ErrDenied
 	}
 	body := make([]byte, int(size))
 	if _, err := io.ReadFull(reader, body); err != nil {
 		return nil, broker.ErrDenied
 	}
+	return body, nil
+}
+
+func decodeCanonical(body []byte, target any) error {
 	if err := json.Unmarshal(body, target); err != nil {
-		return nil, broker.ErrDenied
+		return broker.ErrDenied
 	}
 	canonical, err := json.Marshal(target)
 	if err != nil || !bytes.Equal(body, canonical) {
-		return nil, broker.ErrDenied
+		return broker.ErrDenied
 	}
-	return body, nil
+	return nil
 }
 
 func writeControlFrame(writer io.Writer, value any) error {
@@ -264,15 +307,25 @@ func writeControlFrame(writer io.Writer, value any) error {
 	if err != nil {
 		return broker.ErrDenied
 	}
+	return writeBoundedFrame(writer, body, controlFrameLimit)
+}
+
+func writeBoundedFrame(writer io.Writer, body []byte, limit int) error {
 	size := len(body)
-	if size < 1 || size > controlFrameLimit {
+	if size < 1 || size > reportFrameLimit || size > limit {
 		return broker.ErrDenied
 	}
 	var header [4]byte
 	binary.BigEndian.PutUint32(header[:], uint32(size))
-	frame := append(header[:], body...)
-	n, err := writer.Write(frame)
-	if err == nil && n != len(frame) {
+	n, err := writer.Write(header[:])
+	if err != nil {
+		return err
+	}
+	if n != len(header) {
+		return io.ErrShortWrite
+	}
+	n, err = writer.Write(body)
+	if err == nil && n != size {
 		return io.ErrShortWrite
 	}
 	return err
