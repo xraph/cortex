@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
+	"github.com/xraph/cortex/integrations/sandbox/internal/acceptance"
 	"github.com/xraph/cortex/integrations/sandbox/internal/journal"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -28,6 +29,9 @@ var ErrConflict = broker.ErrConflict
 
 // ErrCorrupt means persisted state cannot establish a safe ownership decision.
 var ErrCorrupt = errors.New("cortex: corrupt sandbox worker journal")
+
+// RecordVersion is the current worker record and journal format.
+const RecordVersion = 2
 
 // Phase is the durable ownership state, not a correctness verdict.
 type Phase string
@@ -63,6 +67,7 @@ type Record struct {
 	TokenHash       string          `json:"token_hash,omitempty"`
 	CancelRequested bool            `json:"cancel_requested"`
 	Result          *sandbox.Result `json:"result,omitempty"`
+	Proposal        *Proposal       `json:"proposal,omitempty"`
 }
 
 // Claim carries the single-use execution ownership grant. The caller must
@@ -115,7 +120,7 @@ func (s *Store) migrate(ctx context.Context) (err error) {
 	if queryErr := s.journal.Conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); queryErr != nil {
 		return queryErr
 	}
-	if version != 0 && version != 1 {
+	if version != 0 && version != 1 && version != RecordVersion {
 		return ErrCorrupt
 	}
 	if version == 0 {
@@ -156,6 +161,11 @@ func (s *Store) migrate(ctx context.Context) (err error) {
 	}
 	if brokerName != s.cfg.Broker || keyHash != evidence.Digest(s.cfg.PublicKey) {
 		return ErrConflict
+	}
+	if version < RecordVersion {
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -207,7 +217,7 @@ func (s *Store) Enroll(ctx context.Context, receipt sandbox.Receipt) (Record, er
 	if total >= s.cfg.MaxJobs {
 		return Record{}, fmt.Errorf("cortex: worker identity capacity reached")
 	}
-	record := Record{SchemaVersion: 1, Receipt: receipt, Phase: Accepted, Revision: 1}
+	record := Record{SchemaVersion: RecordVersion, Receipt: receipt, Phase: Accepted, Revision: 1}
 	body, err := encode(record)
 	if err != nil {
 		return Record{}, err
@@ -285,46 +295,6 @@ func matchesToken(record Record, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(hash), []byte(record.TokenHash)) == 1
 }
 
-// Complete persists a cleaned-up worker result. The caller must prove cleanup
-// before calling it. A reaping transition fences even a previously valid token.
-func (s *Store) Complete(ctx context.Context, key id.ID, token string, result sandbox.Result) (Record, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, err := s.load(ctx, key)
-	if err != nil {
-		return Record{}, err
-	}
-	if !matchesToken(record, token) {
-		return Record{}, ErrConflict
-	}
-	if operationErr := terminalResult(result, record.Receipt.Job); operationErr != nil {
-		return Record{}, operationErr
-	}
-	if record.Phase == Terminal {
-		previous, marshalErr := json.Marshal(record.Result)
-		if marshalErr != nil {
-			return Record{}, marshalErr
-		}
-		next, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			return Record{}, marshalErr
-		}
-		if !bytes.Equal(previous, next) {
-			return Record{}, ErrConflict
-		}
-		return record, nil
-	}
-	if record.Phase != Claimed {
-		return Record{}, ErrConflict
-	}
-	record.Phase = Terminal
-	record.Result = &result
-	if operationErr := s.save(ctx, &record); operationErr != nil {
-		return Record{}, operationErr
-	}
-	return s.load(ctx, key)
-}
-
 // Cancel durably prevents a future claim. Claimed work remains nonterminal
 // until the external reaper proves that every descendant has stopped.
 func (s *Store) Cancel(ctx context.Context, key id.ID) (Record, error) {
@@ -355,6 +325,9 @@ func (s *Store) requireReap(ctx context.Context, key id.ID, cancel bool) (Record
 		record.Result = &sandbox.Result{JobDigest: record.Receipt.Job.Digest, State: sandbox.StateCancelled, ExitCode: -1, Reason: "cancelled before claim"}
 	} else {
 		record.Phase = Reaping
+		if record.Proposal != nil {
+			record.Proposal.Discarded = true
+		}
 	}
 	if operationErr := s.save(ctx, &record); operationErr != nil {
 		return Record{}, operationErr
@@ -381,6 +354,9 @@ func (s *Store) Reaped(ctx context.Context, key id.ID, expected uint64) (Record,
 	}
 	record.Phase = Terminal
 	record.Result = &sandbox.Result{JobDigest: record.Receipt.Job.Digest, State: state, ExitCode: -1, Reason: "external reaper confirmed containment stopped"}
+	if record.Proposal != nil {
+		record.Proposal.Result = nil
+	}
 	if operationErr := s.save(ctx, &record); operationErr != nil {
 		return Record{}, operationErr
 	}
@@ -428,6 +404,7 @@ func (s *Store) save(ctx context.Context, record *Record) error {
 		return ErrConflict
 	}
 	record.Revision++
+	record.SchemaVersion = RecordVersion
 	if err := s.validate(*record); err != nil {
 		return err
 	}
@@ -461,37 +438,49 @@ func (s *Store) admit(receipt sandbox.Receipt) error {
 	if now.IsZero() || now.Before(receipt.AcceptedAt) {
 		return fmt.Errorf("cortex: invalid worker acceptance time")
 	}
-	if !now.Before(receipt.AcceptedAt.Add(receipt.Job.Limits.WallTime)) {
+	if !now.Before(acceptance.Deadline(receipt)) {
 		return context.DeadlineExceeded
 	}
 	return receipt.Capabilities.Supports(receipt.Job)
 }
 
 func (s *Store) validate(record Record) error {
-	if record.SchemaVersion != 1 || record.Revision == 0 || record.Revision > math.MaxInt64 {
+	if (record.SchemaVersion != 1 && record.SchemaVersion != RecordVersion) || record.Revision == 0 || record.Revision > math.MaxInt64 {
 		return ErrCorrupt
 	}
 	if err := s.receipt(record.Receipt); err != nil {
 		return err
 	}
+	if record.SchemaVersion == 1 && (record.Proposal != nil || record.Phase == Finalizing) {
+		return ErrCorrupt
+	}
 	switch record.Phase {
 	case Accepted:
-		if record.TokenHash != "" || record.CancelRequested || record.Result != nil {
+		if record.TokenHash != "" || record.CancelRequested || record.Result != nil || record.Proposal != nil {
 			return ErrCorrupt
 		}
 	case Claimed, Reaping:
-		if !evidence.ValidDigest(record.TokenHash) || record.Result != nil || (record.Phase == Claimed && record.CancelRequested) {
+		if !evidence.ValidDigest(record.TokenHash) || record.Result != nil || (record.Phase == Claimed && (record.CancelRequested || record.Proposal != nil)) {
+			return ErrCorrupt
+		}
+	case Finalizing:
+		if record.SchemaVersion != RecordVersion || !evidence.ValidDigest(record.TokenHash) || record.CancelRequested || record.Result != nil || record.Proposal == nil || record.Proposal.ClaimRevision >= record.Revision || record.Revision-record.Proposal.ClaimRevision != 1 {
 			return ErrCorrupt
 		}
 	case Terminal:
 		if record.Result == nil || (record.TokenHash != "" && !evidence.ValidDigest(record.TokenHash)) || (record.CancelRequested && record.Result.State != sandbox.StateCancelled) || (record.TokenHash == "" && !record.CancelRequested) {
 			return ErrCorrupt
 		}
-		return terminalResult(*record.Result, record.Receipt.Job)
+		if record.SchemaVersion == RecordVersion && record.Result.State == sandbox.StateExited && record.Proposal == nil {
+			return ErrCorrupt
+		}
+		if resultErr := terminalResult(*record.Result, record.Receipt.Job); resultErr != nil {
+			return resultErr
+		}
 	default:
 		return ErrCorrupt
 	}
-	return nil
+	return validateProposal(record)
 }
 
 func terminalResult(result sandbox.Result, job sandbox.Job) error {
@@ -538,7 +527,7 @@ func (s *Store) Pending(ctx context.Context, after string, limit int) ([]Pending
 			return nil, operationErr
 		}
 		entry.ID, err = id.Parse(name)
-		if err != nil || entry.ID.Prefix() != sandbox.PrefixJob || entry.Revision == 0 || entry.Revision > math.MaxInt64 || (entry.Phase != Accepted && entry.Phase != Claimed && entry.Phase != Reaping) {
+		if err != nil || entry.ID.Prefix() != sandbox.PrefixJob || entry.Revision == 0 || entry.Revision > math.MaxInt64 || (entry.Phase != Accepted && entry.Phase != Claimed && entry.Phase != Reaping && entry.Phase != Finalizing) {
 			return nil, ErrCorrupt
 		}
 		entries = append(entries, entry)

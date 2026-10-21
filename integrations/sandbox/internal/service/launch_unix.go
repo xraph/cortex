@@ -121,7 +121,7 @@ func (l *Launcher) Launch(ctx context.Context, receipt sandbox.Receipt) error {
 
 func acknowledge(record workerstore.Record) error {
 	switch record.Phase {
-	case workerstore.Claimed, workerstore.Terminal:
+	case workerstore.Claimed, workerstore.Finalizing, workerstore.Terminal:
 		return nil
 	case workerstore.Reaping:
 		return broker.ErrPending

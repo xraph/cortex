@@ -70,7 +70,7 @@ func TestRecoveryCommitsOnlyAfterDurableFenceAndCleanup(t *testing.T) {
 	if err != nil || record.Phase != workerstore.Reaping || !m.masked {
 		t.Fatalf("lost unresolved claim: %+v %v", record, err)
 	}
-	if _, err = store.Complete(t.Context(), receipt.Job.ID, claim.Token, sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited, ExitCode: 0}); !errors.Is(err, workerstore.ErrConflict) {
+	if _, err = store.Propose(t.Context(), receipt.Job.ID, claim.Token, claim.Record.Revision, sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited, ExitCode: 0}); !errors.Is(err, workerstore.ErrConflict) {
 		t.Fatalf("late worker overwrote reaping: %v", err)
 	}
 	m.fail = ""

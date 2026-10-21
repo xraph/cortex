@@ -159,8 +159,20 @@ Claimed jobs have no automatic lease takeover. Cancellation and recovery fence
 late worker results and move unresolved execution to reaping. You must stop the
 external worker and every sandbox descendant before recording `Reaped` at the
 expected revision. Missing runtime state is insufficient. The terminal state is
-failed or cancelled, with no invented successful output. Normal completion also
-requires the caller to prove cleanup before persisting the result.
+failed or cancelled, with no invented successful output.
+
+Normal completion uses `Propose` followed by `Finalized`. A proposal binds the
+report digest and receipt time to the current claim revision, removes execution
+authority and enters `finalizing`. It has no collectible result. The external
+finalizer must stop the whole service and recheck current grants before committing
+at that exact revision. Cancellation discards the proposal and advances the
+revision, so an older finalizer cannot overwrite it. Identical report retries
+return existing state; changed reports are refused.
+
+The journal upgrades its format marker to version 2 in a transaction after
+checking the broker key. Version 1 records remain readable and move to version 2
+on their next transition. Existing claims and terminal identities are retained;
+migration grants no new execution. Older binaries refuse the upgraded journal.
 
 One daemon owns the journal's exclusive SQLite connection. Workers must use that
 daemon's authenticated control path; they cannot open the database concurrently.
@@ -276,7 +288,8 @@ remain visible as scan errors.
 
 Keep admission closed while `Recover` visits every pending journal page. It
 cancels unclaimed acceptances and fences old claims, preserving any cancellation
-already recorded. A cleanup failure does not prevent later pages from running.
+already recorded. Pending reports require whole-service cleanup and current
+authorization before finalization. A cleanup failure does not prevent later pages from running.
 Open admission only after a complete pass returns no error.
 
 During operation, call `Sweep` with its returned `Next` cursor until `Done`, then
@@ -302,8 +315,8 @@ to the daemon.
 Cancelling `Run` closes admission and cancels in-flight launch and worker
 authorization contexts. The controller joins those calls before using an
 independent 30-second context to recover remaining claims. Cleanup errors stay
-visible, and unresolved journal
-entries remain available to the next controller. Host callbacks must honor
+visible, and unresolved journal entries remain available to the next controller.
+Host callbacks must honor
 their contexts. A stopped controller cannot run again.
 
 The executable daemon still needs to construct and run these components. A slow
@@ -344,7 +357,20 @@ checks on Linux as root. CI compiles a race-enabled test binary and runs those
 checks. They cover process capture, exit detection and rejection of a root
 process outside the job service, including descriptor cleanup. They do not
 start systemd jobs or qualify the running-service acceptance path. Worker
-startup and result-finalization wiring remain pending.
+startup and report transport wiring remain pending.
+
+`Controller.ProposeWorkerResult` applies the same live peer, claim, deployment
+and grant checks before persisting a report. Its acknowledgement contains the
+job, original claim revision and report digest. It cannot be used as a completed
+result. The controller remains responsible for the call through the journal
+write, so shutdown joins report submission before recovery.
+
+Startup and periodic scans retain valid reports across failed cleanup or a lost
+final write. Before committing, they independently fence and stop the service,
+then recheck grants and the original acceptance and qualification deadlines.
+Revocation or expiry discards the report and follows cancellation cleanup;
+provider failures remain visible. A report does not extend either deadline.
+Failed cleanup leaves the report pending for another recovery attempt.
 
 ## Private worker control
 

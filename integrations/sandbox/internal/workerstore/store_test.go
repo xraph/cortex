@@ -103,19 +103,23 @@ func TestConcurrentClaimHasOneDurableWinner(t *testing.T) {
 		t.Fatalf("restart claimed twice: %v", err)
 	}
 	result := sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited, ExitCode: 0, Stdout: []byte("result")}
-	if _, err := next.Complete(t.Context(), receipt.Job.ID, token, result); err != nil {
+	proposed, err := next.Propose(t.Context(), receipt.Job.ID, token, 2, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = next.Finalized(t.Context(), receipt.Job.ID, proposed.Revision); err != nil {
 		t.Fatal(err)
 	}
 	first, err := next.Load(t.Context(), receipt.Job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := next.Complete(t.Context(), receipt.Job.ID, token, result)
+	second, err := next.Propose(t.Context(), receipt.Job.ID, token, 2, result)
 	if err != nil || second.Revision != first.Revision {
 		t.Fatalf("completion replay: %+v %v", second, err)
 	}
 	result.Stdout = []byte("different")
-	if _, err = next.Complete(t.Context(), receipt.Job.ID, token, result); !errors.Is(err, ErrConflict) {
+	if _, err = next.Propose(t.Context(), receipt.Job.ID, token, 2, result); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed terminal result accepted: %v", err)
 	}
 	if _, err = next.Claim(t.Context(), receipt.Job.ID); !errors.Is(err, ErrConflict) {
@@ -152,7 +156,7 @@ func TestCancellationAndReapingFenceLateWorkers(t *testing.T) {
 					t.Fatalf("cleanup falsely complete: %+v", record)
 				}
 				result := sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited}
-				if _, err = s.Complete(t.Context(), receipt.Job.ID, claim.Token, result); !errors.Is(err, ErrConflict) {
+				if _, err = s.Propose(t.Context(), receipt.Job.ID, claim.Token, claim.Record.Revision, result); !errors.Is(err, ErrConflict) {
 					t.Fatalf("late worker unfenced: %v", err)
 				}
 				if _, err = s.Reaped(t.Context(), receipt.Job.ID, record.Revision-1); !errors.Is(err, ErrConflict) {
@@ -183,7 +187,7 @@ func TestWorkerRecoveryNeverRetriesAnAmbiguousClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Complete(t.Context(), receipt.Job.ID, claim.Token, sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited}); !errors.Is(err, ErrConflict) {
+	if _, err = s.Propose(t.Context(), receipt.Job.ID, claim.Token, claim.Record.Revision, sandbox.Result{JobDigest: receipt.Job.Digest, State: sandbox.StateExited}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("old owner accepted: %v", err)
 	}
 	record, err = s.Reaped(t.Context(), receipt.Job.ID, record.Revision)
@@ -340,7 +344,7 @@ func TestWorkerJournalRejectsCorruptionAndFutureSchema(t *testing.T) {
 	if _, err := s.Load(t.Context(), receipt.Job.ID); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("inconsistent record accepted: %v", err)
 	}
-	if _, err := s.journal.Conn.ExecContext(t.Context(), "PRAGMA user_version=2"); err != nil {
+	if _, err := s.journal.Conn.ExecContext(t.Context(), "PRAGMA user_version=3"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -379,7 +383,7 @@ func TestWorkerJournalRejectsForeignTokensAndUnboundedResults(t *testing.T) {
 			case "signature":
 				result.Signature = []byte("untrusted")
 			}
-			if _, err = s.Complete(t.Context(), receipt.Job.ID, claim.Token, result); err == nil {
+			if _, err = s.Propose(t.Context(), receipt.Job.ID, claim.Token, claim.Record.Revision, result); err == nil {
 				t.Fatal("invalid worker result accepted")
 			}
 			record, err := s.Load(t.Context(), receipt.Job.ID)

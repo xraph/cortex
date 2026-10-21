@@ -64,9 +64,10 @@ func NewRecoveryScanner(cfg RecoveryConfig) (*RecoveryScanner, error) {
 	return &RecoveryScanner{store: cfg.Store, reaper: cfg.Reaper, revalidate: cfg.Revalidate, now: cfg.Now, pageSize: cfg.PageSize}, nil
 }
 
-// Recover abandons every outstanding acceptance before the daemon admits work.
-// Unclaimed jobs are cancelled. Claims are fenced and reaped as failed unless
-// cancellation was already requested. One failure does not stop later pages;
+// Recover reconciles every outstanding acceptance before the daemon admits work.
+// Unclaimed jobs are cancelled. Claims without reports are fenced and reaped as
+// failed unless cancellation was requested. Reports require independent cleanup
+// and current authorization before finalization. One failure does not stop later pages;
 // the report retains counts and the first error without unbounded accumulation.
 func (s *RecoveryScanner) Recover(ctx context.Context) (RecoveryReport, error) {
 	var report RecoveryReport
@@ -130,6 +131,9 @@ func (s *RecoveryScanner) check(ctx context.Context, key id.ID, startup bool, re
 	if record.Phase == workerstore.Terminal {
 		return nil
 	}
+	if record.Phase == workerstore.Finalizing {
+		return s.finalize(ctx, record, report)
+	}
 	if record.Phase == workerstore.Reaping || (startup && record.Phase == workerstore.Claimed) {
 		return s.reap(ctx, key, report)
 	}
@@ -143,6 +147,10 @@ func (s *RecoveryScanner) check(ctx context.Context, key id.ID, startup bool, re
 			return ctx.Err()
 		}
 	}
+	return s.cancelAndReap(ctx, key, checkErr, report)
+}
+
+func (s *RecoveryScanner) cancelAndReap(ctx context.Context, key id.ID, checkErr error, report *RecoveryReport) error {
 	cancelled, err := s.store.Cancel(ctx, key)
 	if err != nil {
 		// Failure to persist cancellation still requires a service fence. Never
@@ -159,6 +167,30 @@ func (s *RecoveryScanner) check(ctx context.Context, key id.ID, startup bool, re
 		checkErr = nil
 	}
 	return errors.Join(checkErr, err)
+}
+
+func (s *RecoveryScanner) finalize(ctx context.Context, record workerstore.Record, report *RecoveryReport) error {
+	key := record.Receipt.Job.ID
+	if err := s.eligible(ctx, record.Receipt); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return s.cancelAndReap(ctx, key, err, report)
+	}
+	if err := s.reaper.FenceAndStop(ctx, key); err != nil {
+		return err
+	}
+	if err := s.eligible(ctx, record.Receipt); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return s.cancelAndReap(ctx, key, err, report)
+	}
+	if _, err := s.store.Finalized(ctx, key, record.Revision); err != nil {
+		return err
+	}
+	report.Reaped++
+	return nil
 }
 
 func (s *RecoveryScanner) reap(ctx context.Context, key id.ID, report *RecoveryReport) error {

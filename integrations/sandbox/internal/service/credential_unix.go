@@ -39,7 +39,7 @@ type Credential struct {
 }
 
 func (c Credential) validate() error {
-	if c.SchemaVersion != 1 || !evidence.ValidDigest(c.ProfileDigest) || c.Record.SchemaVersion != 1 || c.Record.Phase != workerstore.Claimed || c.Record.Revision < 2 || c.Record.CancelRequested || c.Record.Result != nil || !evidence.ValidDigest(c.Record.TokenHash) || len(c.Token) != 64 {
+	if c.SchemaVersion != 1 || !evidence.ValidDigest(c.ProfileDigest) || (c.Record.SchemaVersion != 1 && c.Record.SchemaVersion != workerstore.RecordVersion) || c.Record.Phase != workerstore.Claimed || c.Record.Revision < 2 || c.Record.CancelRequested || c.Record.Result != nil || c.Record.Proposal != nil || !evidence.ValidDigest(c.Record.TokenHash) || len(c.Token) != 64 {
 		return fmt.Errorf("cortex: invalid launch credential")
 	}
 	token, err := hex.DecodeString(c.Token)
