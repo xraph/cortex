@@ -622,3 +622,41 @@ left the tested source unchanged.
 
 Final shared lint passed all ten modules. Post-format root-package and artifact
 races and the optimization build passed again.
+
+## Artifact work discovery and page recovery
+
+Every backend can list pending deletions and artifacts expired at a fixed cutoff.
+The cursor binds that cutoff and the exact scope. Ordering uses immutable
+registration time and reference binding, so completing a deletion between pages
+does not skip later work. Completed deletions and artifacts with later expiry
+are omitted. Returned metadata is detached from storage.
+
+`artifacts.Recovery.RunPage` processes one page with a separate timeout for each
+item. It rereads metadata before acting, preserves a concurrent manual deletion
+request and uses the configured host retention identity only for new expiry
+requests. Failed items remain pending and appear in the returned outcomes. A
+later sweep retries them. Cancellation returns an error without advancing the
+cursor, including when discovery returned an empty page.
+
+The discovery regression failed before the store method existed. Recovery tests
+cover expiry, saved authority, provider failure followed by a new runner,
+per-item timeout, cancellation and a deletion created after listing. The empty
+page cancellation regression first reproduced a false success, then passed after
+the fix.
+
+This is a callable recovery runner. Hosts still own scheduling, authorized scope
+enumeration, continuation persistence and reporting. Provider calls per page are
+bounded; database hydration still loads the whole scope. The concrete content
+adapter, scheduled retention worker, bounded database queries and throughput
+qualification remain open. Root evidence APIs are still unreleased, so the
+optimizer retains injected provider ports and published Cortex v1.8.0 compatibility.
+Task 4 and all phases remain unfinished.
+
+Verification for this packet: the full optimization race suite passed, including
+memory (84.427s), Mongo (275.710s), PostgreSQL (198.899s) and SQLite (195.510s).
+The new recovery and discovery tests passed against published Cortex v1.8.0,
+including real PostgreSQL and Mongo containers. Shared `make f` and `make l`
+passed across all ten modules. Post-format focused races passed on the current
+checkout, and full optimization builds passed against both current and published
+root dependencies. The tested optimizer source remained unchanged through the
+final review.

@@ -33,6 +33,30 @@ followed by revocation or cancellation leaves the local deletion pending for a
 later authorized reconciliation. Completed retries still check authority, but do
 not repeat the provider operation.
 
-This package currently provides lifecycle coordination. The built-in database
-content adapter, pending-deletion scan and scheduled retention worker are not yet
-implemented. It does not import the unreleased root evidence APIs.
+Use `Recovery.RunPage` to discover pending deletions and expired artifacts in one
+exact scope. Keep the cutoff fixed while following `NextCursor`. Rows are ordered
+by their immutable registration time and reference binding, so completing a
+deletion does not shift the remaining pages. After the last page, start another
+sweep with a new cutoff and empty cursor to pick up failed work and records that
+became eligible behind the previous cursor.
+
+Configure the recovery runner with your host's retention identity. It uses that
+identity for new expiry requests and resolves the saved original actor for pending
+requests. Each item is reread before acting, then passes through `DeletionService`.
+Concurrent manual deletion requests keep their actor and request identity.
+
+A page visits at most 500 items (100 by default). Each item gets up to 30 seconds,
+or a shorter timeout you configure. Providers must honor cancellation. The runner
+does not launch a goroutine that abandons an ongoing provider operation. Check
+every `Outcomes` entry: an individual failure stays pending while later items can
+proceed. If `RunPage` returns an error, retry the same input cursor; do not advance
+from a partial result.
+
+You own scheduling, authorized scope enumeration, continuation persistence and
+failure reporting. The runner starts no background service. Page size bounds
+provider work, but the current list implementation still loads the whole scope
+from durable storage. Bounded database queries and throughput qualification
+remain open.
+
+The built-in database content adapter and scheduled retention worker are not yet
+implemented. This package does not import the unreleased root evidence APIs.

@@ -41,6 +41,7 @@ func Run(t *testing.T, factory Factory) {
 	publications(t, factory)
 	readers(t, factory)
 	artifacts(t, factory)
+	artifactWork(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
 		s := factory(t, time.Now)
 		a, b := Fixture(t, "a"), Fixture(t, "b")

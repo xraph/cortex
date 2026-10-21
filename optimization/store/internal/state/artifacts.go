@@ -3,10 +3,28 @@ package state
 import (
 	"context"
 	"strings"
+	"time"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/optimization/internal/canonical"
 )
+
+// ListArtifactWork returns pending deletions and artifacts expired at cutoff,
+// ordered by immutable registration time and binding digest. Keep cutoff fixed
+// across pages. New work behind a cursor is discovered by the next full sweep.
+// The output is bounded; durable backends currently hydrate the whole scope.
+func (s *Store) ListArtifactWork(ctx context.Context, cutoff time.Time, query optimization.PageQuery) (optimization.Page[optimization.ArtifactRetention], error) {
+	if cutoff.IsZero() || cutoff.After(s.now()) {
+		return optimization.Page[optimization.ArtifactRetention]{}, optimization.ErrInvalidSpec
+	}
+	cutoff = cutoff.UTC()
+	return readPage(ctx, s, "artifact-work", id.Nil, cutoff, query, func(data *scopeData) ([]pageRow[optimization.ArtifactRetention], error) {
+		return selectRows(data.Artifacts, func(value optimization.ArtifactRetention) bool {
+			return value.DeletedAt.IsZero() && (value.Deletion != nil || !value.ExpiresAt.After(cutoff))
+		}, func(value optimization.ArtifactRetention) time.Time { return value.RegisteredAt }), nil
+	})
+}
 
 func artifactKey(scope string, ref optimization.ArtifactRef) (string, error) {
 	key, err := ref.BindingDigest()
