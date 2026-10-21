@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker | implemented, runtime pending | this chat | Authenticated durable broker, client, export checks and OCI policy fixtures pass; no qualified Linux adapter |
+| S2.4 broker/runtime | broker and worker core implemented, external supervision pending | this chat | Authenticated broker, deployment pins, bounded worker lifecycle and OCI binding tests pass; no qualified Linux adapter |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -256,3 +256,17 @@ TDD covered the missing manifest/verifier implementations and rejects changed si
 The production runsc adapter, image/input staging, durable supervision of wall/output limits and crash recovery remain open. `compatibility.json` remains unqualified, with the deployment digest unset. This packet does not activate evaluation or close G2.
 
 CI `39519005197` at `908eae6` passed every job, covering the planning manifests/adapters from `1cfe5da` and the optimizer reader slice. The deployment inventory packet needs its own exact-commit CI result.
+
+## Bounded worker lifecycle and runsc control
+
+The internal supervisor now applies the receipt deadline and job wall limit, shares one output budget across stdout/stderr, and runs cleanup after preparation, startup, wait failures and normal exit. Cleanup uses an independent bounded context after cancellation. A cleanup failure returns no collectible terminal result. Concurrent output, late output and late cancellation cannot turn a failed execution into success.
+
+The runsc driver checks the complete deployment pin, opens private worker directories through shared no-follow helpers, and compares the bundle's OCI configuration against the policy rebuilt from the sealed job before execution. It uses fixed control verbs, argv and a minimal environment. Guest output pipes remain open after the create command exits, while a separate bounded wait response must identify the exact job and a valid exit status. Export reads and runtime bundle reads share the same regular-file checks.
+
+Two review regressions failed before their fixes: a substituted OCI command reached the runtime despite the supplied job digest, and an ambiguous create could yield a collectible failure after forced deletion. The first now fails before execution. The second remains unresolved because forced deletion succeeds even when runsc has no state record; an external reaper must establish containment cleanup before collection.
+
+Linux probes now exercise the worker path for normal exit, combined output overflow and a deadline with descendants, then check for an empty or removed job cgroup. These probes are implemented and cross-compiled only. Production image/input staging, durable worker claims, service-manager containment, orphan reconciliation, broker activation and live qualification remain open. The internal supervisor is not wired into broker admission and does not close S2.4 or G2.
+
+CI `39519889695` at `084db20` failed an existing A2A telemetry test because the short private-name marker `w1` appeared inside a generated TypeID. Local repeated runs reproduced the collision. The fixture now uses hyphenated agent names that TypeIDs cannot contain, while retaining the checks for private names and message content. Two hundred repeated race runs and the complete A2A race suite pass.
+
+Final coordinated formatting and full ten-module lint pass. Sandbox module race tests, native/Linux scoped lint, root/module builds and Linux amd64/arm64 qualification compilation pass against the final source. The trusted probe binary also builds for Linux. No live isolation result is claimed; the next exact-commit CI run remains pending.

@@ -26,6 +26,17 @@ func probe(args []string) error {
 	switch args[0] {
 	case "hello":
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "ready"})
+	case "output":
+		block := make([]byte, 4096)
+		for range 512 {
+			if _, err := os.Stdout.Write(block); err != nil {
+				return err
+			}
+			if _, err := os.Stderr.Write(block); err != nil {
+				return err
+			}
+		}
+		return fmt.Errorf("output limit was not enforced")
 	case "sleep":
 		time.Sleep(2 * time.Minute)
 		return nil

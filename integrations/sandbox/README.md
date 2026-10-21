@@ -5,10 +5,11 @@ You can embed this broker behind an authenticated HTTPS server. It accepts seale
 keeps job identity across retries and restarts. The root `sandbox` package carries
 only the contracts. This module owns HTTP, durable state and export handling.
 
-The Linux runtime is still pending. No production adapter, daemon or qualified
-worker ships in this packet. Unit tests use an explicit fixture runtime, which
-cannot establish isolation, descendant termination or resource enforcement. The
-worker will be selected separately, as agreed on October 18, 2026.
+The production runtime adapter and daemon are still pending. An internal runsc
+worker driver and lifecycle supervisor are implemented, but no qualified worker
+ships here. Unit tests use explicit fixture drivers and cannot establish live
+isolation or resource enforcement. The Linux worker will be selected separately,
+as agreed on October 18, 2026.
 
 ## Host integration
 
@@ -97,6 +98,31 @@ GOWORK=off go test -race -count=1 ./...
 GOWORK=off go build ./...
 ```
 
+## Worker supervision
+
+The internal supervisor bounds stdout and stderr together, applies the accepted
+receipt's deadline and the job's wall limit, and cleans up after preparation,
+startup, wait errors, cancellation and normal exit. Cleanup has its own bounded
+context, so cancelling the caller does not cancel the reap attempt. A cleanup
+failure returns no collectible terminal result.
+
+The runsc driver checks the complete deployment pin, private host directories
+and job binding. Before creating the sandbox, it compares `config.json` against
+the deny-all OCI specification rebuilt from the sealed job and staged paths.
+It passes control arguments directly to the approved executable with a minimal
+environment. Guest output uses separate pipes from the bounded JSON wait
+response, whose job identity and exit status are checked.
+
+Forced deletion does not prove cleanup after a lost creation acknowledgement:
+runsc also succeeds when its state record is absent. That case remains unresolved
+until the external reaper proves the worker's containment has stopped. No
+terminal result is returned merely because forced deletion succeeded.
+
+This code is not wired into broker admission. You still need durable job claims,
+verified image/input staging, external worker supervision and a reaper that can
+stop the whole workload if either the broker or worker dies. The internal driver
+does not provide those guarantees, and the runtime remains unqualified.
+
 Required live probes remain open: descendant cancellation, resource exhaustion,
 DNS and redirect denial, metadata/private-host denial, restart during execution,
 image/runtime pin validation and protected grading. `compatibility.json` records
@@ -129,7 +155,10 @@ GOWORK=off go test -v -tags=sandbox_qualification \
 The suite creates disposable OCI bundles containing that fixture. It checks
 read-only root/input mounts, denied host-file access, scratch exhaustion, denied
 TCP/DNS access to local private-address fixtures, effective cgroup limits,
-descendant termination and reopening runtime state. The redirect fixture must
+descendant termination and reopening runtime state. Supervisor probes cover
+normal exit, combined output overflow and a deadline with live descendants;
+they require the job cgroup to be empty or removed after teardown.
+The redirect fixture must
 receive no connection at all. It does not contact public services or a real
 cloud metadata endpoint.
 
@@ -145,6 +174,6 @@ architecture and Go version
 with the test log. The fixture's binary digest is a test identity, not a
 qualification of a production OCI image. CI compiles these probes and their
 fixture; it does not execute them or turn `compatibility.json` into a qualified
-manifest. Broker crash recovery, wall/output supervision, memory/CPU exhaustion,
+manifest. Broker/worker crash recovery, external wall/output supervision, memory/CPU exhaustion,
 guest process exhaustion, deployed image pins and protected grading still need
 live acceptance checks.

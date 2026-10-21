@@ -28,6 +28,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/integrations/sandbox/deployment"
+	"github.com/xraph/cortex/integrations/sandbox/internal/supervisor"
 	"github.com/xraph/cortex/integrations/sandbox/oci"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -43,13 +44,48 @@ func TestLiveIsolationQualification(t *testing.T) {
 		t.Fatal("qualification blocked: this profile requires a dedicated root-run Linux worker")
 	}
 	runsc := requiredBinary(t, "CORTEX_QUALIFICATION_RUNSC", "CORTEX_QUALIFICATION_RUNSC_SHA256")
-	deploymentDigest := qualifiedDeployment(t, runsc)
+	manifest, deploymentDigest := qualifiedDeployment(t, runsc)
 	fixture := requiredBinary(t, "CORTEX_QUALIFICATION_PROBE", "CORTEX_QUALIFICATION_PROBE_SHA256")
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
 		t.Fatalf("qualification blocked: cgroup v2 required: %v", err)
 	}
 	version := command(t, runsc, "--version")
 	t.Logf("deployment SHA256=%s runtime SHA256=%s version=%s fixture SHA256=%s", deploymentDigest, os.Getenv("CORTEX_QUALIFICATION_RUNSC_SHA256"), bytes.TrimSpace(version), os.Getenv("CORTEX_QUALIFICATION_PROBE_SHA256"))
+	for _, mode := range []string{"hello", "output", "children"} {
+		t.Run("Supervised_"+mode, func(t *testing.T) {
+			h := stageProbe(t, fixture, mode)
+			driver, err := supervisor.NewRunsc(t.Context(), supervisor.RunscConfig{Binary: runsc, StateRoot: h.root, Bundle: h.bundle, Rootfs: filepath.Join(h.bundle, "rootfs"), Inputs: map[string]string{"/inputs/protected": h.input}, JobDigest: h.job.Digest, Manifest: manifest, DeploymentDigest: deploymentDigest})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(h.job.Limits.WallTime)
+			if mode == "children" {
+				deadline = time.Now().Add(5 * time.Second)
+			}
+			result, runErr := supervisor.Run(t.Context(), driver, h.job, deadline)
+			switch mode {
+			case "hello":
+				if runErr != nil || result.State != sandbox.StateExited || result.ExitCode != 0 || !bytes.Contains(result.Stdout, []byte("ready")) {
+					t.Fatalf("supervised baseline: %+v %v", result, runErr)
+				}
+			case "output":
+				if !errors.Is(runErr, supervisor.ErrOutputLimit) || result.State != sandbox.StateFailed || int64(len(result.Stdout)+len(result.Stderr)) != h.job.Limits.OutputBytes {
+					t.Fatalf("supervised output: state=%s bytes=%d error=%v", result.State, len(result.Stdout)+len(result.Stderr), runErr)
+				}
+			case "children":
+				if !errors.Is(runErr, context.DeadlineExceeded) || result.State != sandbox.StateFailed || !bytes.Contains(result.Stdout, []byte("children")) {
+					t.Fatalf("supervised deadline: %+v %v", result, runErr)
+				}
+			}
+			events, readErr := os.ReadFile(filepath.Join("/sys/fs/cgroup/cortex-sandbox", h.key, "cgroup.events"))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatal(readErr)
+			}
+			if bytes.Contains(events, []byte("populated 1")) {
+				t.Fatal("supervised workload still has live cgroup descendants")
+			}
+		})
+	}
 	t.Run("Baseline", func(t *testing.T) {
 		h := newProbe(t, runsc, fixture, "hello")
 		h.start(t)
@@ -168,7 +204,7 @@ func TestLiveIsolationQualification(t *testing.T) {
 	})
 }
 
-func qualifiedDeployment(t *testing.T, runsc string) string {
+func qualifiedDeployment(t *testing.T, runsc string) (deployment.Manifest, string) {
 	t.Helper()
 	manifestPath := os.Getenv("CORTEX_QUALIFICATION_RUNTIME_MANIFEST")
 	if !filepath.IsAbs(manifestPath) || filepath.Base(runsc) != "runsc" {
@@ -196,7 +232,7 @@ func qualifiedDeployment(t *testing.T, runsc string) string {
 	if err != nil {
 		t.Fatalf("qualification blocked: runtime deployment verification: %v", err)
 	}
-	return digest
+	return manifest, digest
 }
 
 func requiredBinary(t *testing.T, pathKey, digestKey string) string {
@@ -242,10 +278,12 @@ func command(t *testing.T, binary string, args ...string) []byte {
 
 type liveProbe struct {
 	binary, root, key, input string
+	bundle                   string
+	job                      sandbox.Job
 	output                   *os.File
 }
 
-func newProbe(t *testing.T, binary, fixture string, args ...string) *liveProbe {
+func stageProbe(t *testing.T, fixture string, args ...string) *liveProbe {
 	t.Helper()
 	base := t.TempDir()
 	rootfs := filepath.Join(base, "rootfs")
@@ -289,6 +327,17 @@ func newProbe(t *testing.T, binary, fixture string, args ...string) *liveProbe {
 	if err = os.WriteFile(filepath.Join(base, "config.json"), encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
+	root := filepath.Join(base, "runtime")
+	if err = os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return &liveProbe{root: root, key: job.ID.String(), input: input, bundle: base, job: job}
+}
+
+func newProbe(t *testing.T, binary, fixture string, args ...string) *liveProbe {
+	h := stageProbe(t, fixture, args...)
+	h.binary = binary
+	base := h.bundle
 	out, err := os.OpenFile(filepath.Join(base, "stdout"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +347,7 @@ func newProbe(t *testing.T, binary, fixture string, args ...string) *liveProbe {
 		out.Close()
 		t.Fatal(err)
 	}
-	h := &liveProbe{binary: binary, root: filepath.Join(base, "runtime"), key: job.ID.String(), input: input, output: out}
+	h.output = out
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

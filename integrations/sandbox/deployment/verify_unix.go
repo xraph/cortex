@@ -11,11 +11,11 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"runtime"
-	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 )
 
 // Verify checks a dedicated installation against a trusted manifest without
@@ -38,7 +38,7 @@ func Verify(ctx context.Context, directory string, manifest Manifest, ownerUID u
 	if manifest.Architecture != runtime.GOARCH {
 		return "", fmt.Errorf("cortex: runtime deployment architecture mismatch")
 	}
-	root, err := openInstallation(directory, ownerUID)
+	root, err := hostfs.OpenDirectory(directory, ownerUID)
 	if err != nil {
 		return "", err
 	}
@@ -61,42 +61,6 @@ func Verify(ctx context.Context, directory string, manifest Manifest, ownerUID u
 		return "", contextErr
 	}
 	return digest, nil
-}
-
-func openInstallation(directory string, owner uint32) (*os.File, error) {
-	if directory == "/" || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
-		return nil, fmt.Errorf("cortex: runtime deployment requires a canonical absolute directory")
-	}
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	current := os.NewFile(uintptr(fd), "/")
-	parts := strings.Split(strings.TrimPrefix(directory, "/"), "/")
-	for _, part := range parts {
-		next, openErr := unix.Openat(int(current.Fd()), part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-		if closeErr := current.Close(); closeErr != nil {
-			if openErr == nil {
-				_ = unix.Close(next)
-			}
-			return nil, errors.Join(openErr, closeErr)
-		}
-		if openErr != nil {
-			return nil, openErr
-		}
-		current = os.NewFile(uintptr(next), part)
-		var stat unix.Stat_t
-		if err = unix.Fstat(next, &stat); err != nil {
-			current.Close()
-			return nil, err
-		}
-		stickyRoot := stat.Uid == 0 && stat.Mode&unix.S_ISVTX != 0
-		if (stat.Uid != 0 && stat.Uid != owner) || (stat.Mode&0o022 != 0 && !stickyRoot) {
-			current.Close()
-			return nil, fmt.Errorf("cortex: unsafe runtime deployment ancestor")
-		}
-	}
-	return current, nil
 }
 
 func verifyDirectory(ctx context.Context, directory *os.File, name string, owner uint32, files map[string]File, directories map[string]bool) error {

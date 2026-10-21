@@ -29,7 +29,10 @@
     "local-private-network-and-dns-denial",
     "effective-cgroup-limits",
     "descendant-cancellation",
-    "runtime-state-reopen"
+    "runtime-state-reopen",
+    "supervised-exit",
+    "supervised-output-limit",
+    "supervised-deadline-descendant-cleanup"
   ],
   "probe_status": "implemented and Linux-compiled; live execution blocked pending worker selection"
 }
