@@ -58,7 +58,7 @@ type Filesystem struct {
 // defaults are never returned or applied. Failed attempts remove only their
 // own temporary directory; retries create a fresh copy and reauthorize access.
 func Stage(ctx context.Context, cfg Config, image string) (result *Filesystem, err error) {
-	if cfg.Source == nil || cfg.Authorize == nil || !validDigest(image) || int64(cfg.OwnerUID) != int64(os.Geteuid()) || cfg.Architecture != runtime.GOARCH || (cfg.Architecture != "amd64" && cfg.Architecture != "arm64") {
+	if cfg.Source == nil || cfg.Authorize == nil || !ValidDigest(image) || int64(cfg.OwnerUID) != int64(os.Geteuid()) || cfg.Architecture != runtime.GOARCH || (cfg.Architecture != "amd64" && cfg.Architecture != "arm64") {
 		return nil, fmt.Errorf("cortex: invalid image staging configuration")
 	}
 	if limitErr := (Limits{CompressedBytes: cfg.CompressedBytes, ExpandedBytes: cfg.ExpandedBytes, Entries: cfg.Entries, Timeout: cfg.Timeout}).Validate(); limitErr != nil {
@@ -85,29 +85,9 @@ func Stage(ctx context.Context, cfg Config, image string) (result *Filesystem, e
 	if err != nil {
 		return nil, err
 	}
-	var manifest oci.Manifest
-	if operationErr := decode(body, &manifest); operationErr != nil {
-		return nil, operationErr
-	}
-	if manifest.SchemaVersion != 2 || manifest.MediaType != oci.MediaTypeImageManifest || manifest.ArtifactType != "" || manifest.Subject != nil || len(manifest.Layers) > 128 {
-		return nil, fmt.Errorf("cortex: expected bounded single-platform OCI image manifest")
-	}
-	if operationErr := descriptor(manifest.Config, oci.MediaTypeImageConfig); operationErr != nil {
-		return nil, operationErr
-	}
-	remaining := compressed
-	if manifest.Config.Size > remaining || manifest.Config.Size > 1<<20 {
-		return nil, fmt.Errorf("cortex: image config exceeds budget")
-	}
-	remaining -= manifest.Config.Size
-	for _, desc := range manifest.Layers {
-		if operationErr := descriptor(desc, oci.MediaTypeImageLayer, oci.MediaTypeImageLayerGzip); operationErr != nil {
-			return nil, operationErr
-		}
-		if desc.Size > remaining {
-			return nil, fmt.Errorf("cortex: image layers exceed compressed budget")
-		}
-		remaining -= desc.Size
+	manifest, err := ParseManifest(body, cfg.CompressedBytes)
+	if err != nil {
+		return nil, err
 	}
 	body, err = metadata(ctx, cfg, image, manifest.Config.Digest.String(), manifest.Config.Size, &compressed)
 	if err != nil {
@@ -121,7 +101,7 @@ func Stage(ctx context.Context, cfg Config, image string) (result *Filesystem, e
 		return nil, fmt.Errorf("cortex: unsupported image platform or rootfs")
 	}
 	for _, diffID := range config.RootFS.DiffIDs {
-		if !validDigest(diffID.String()) {
+		if !ValidDigest(diffID.String()) {
 			return nil, fmt.Errorf("cortex: unsupported layer DiffID")
 		}
 	}
@@ -160,7 +140,8 @@ func authorized(ctx context.Context, cfg Config, image string) error {
 	return ctx.Err()
 }
 
-func validDigest(value string) bool {
+// ValidDigest accepts a lowercase, explicitly prefixed SHA256 content pin.
+func ValidDigest(value string) bool {
 	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
 		return false
 	}
@@ -173,7 +154,7 @@ func validDigest(value string) bool {
 }
 
 func descriptor(desc oci.Descriptor, mediaTypes ...string) error {
-	if !validDigest(desc.Digest.String()) || desc.Size < 0 || len(desc.URLs) != 0 || len(desc.Data) != 0 || desc.Platform != nil || desc.ArtifactType != "" {
+	if !ValidDigest(desc.Digest.String()) || desc.Size < 0 || len(desc.URLs) != 0 || len(desc.Data) != 0 || desc.Platform != nil || desc.ArtifactType != "" {
 		return fmt.Errorf("cortex: unsupported image descriptor")
 	}
 	for _, mediaType := range mediaTypes {

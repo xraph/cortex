@@ -104,3 +104,19 @@ func (c *Controller) authorizeWorker(ctx context.Context, peer workerIdentity, c
 	}
 	return verified, nil
 }
+
+func (c *Controller) beginWorkerOperation(ctx context.Context, peer workerIdentity, claim WorkerClaim) (context.Context, func(), error) {
+	operation, finish, err := c.begin(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	operation, bound := context.WithTimeout(operation, 30*time.Second)
+	current, err := c.authorizeWorker(operation, peer, claim)
+	if err != nil {
+		bound()
+		finish()
+		return nil, nil, err
+	}
+	operation, deadline := context.WithDeadline(operation, acceptanceDeadline(current.Receipt))
+	return operation, func() { deadline(); bound(); finish() }, nil
+}

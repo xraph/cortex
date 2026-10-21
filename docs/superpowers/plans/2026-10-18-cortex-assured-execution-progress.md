@@ -843,3 +843,35 @@ and build. Worker and service test binaries compiled for Linux arm64 and amd64.
 Linux service/socket fixtures and the worker pipeline suite each passed ten
 repetitions without skips. Independent full-plan review, installed image/provider
 verification and live containment qualification remain outstanding.
+
+
+## S2.4 approved image-provider boundary
+
+WorkerImages now authenticates a worker claim and serves only the signed image
+manifest or a configuration/layer digest declared by it. Registry credentials stay
+in the daemon. The current image policy receives detached signed identity and
+scope. An unrelated digest cannot reach the content provider except for the
+approved manifest read needed to establish membership.
+
+Image staging and broker access share the manifest validator. It checks bounded
+metadata, supported descriptors, external/embedded content, total declared bytes
+and conflicting sizes/media types for one digest. Regressions reproduced the
+conflicting-descriptor acceptance before the shared check. Staging retains its
+platform, DiffID and archive validation. No image process defaults are applied.
+
+Reads verify exact bytes/digest and recheck current grants around provider access.
+Cancellation closes blocked readers exactly once; nil readers, readers returned
+with errors, corrupt content and close failures cannot acknowledge a transfer.
+WorkerEvidence and WorkerImages share the controller operation/deadline helper.
+
+Private image transport, worker image-source wiring, installed content services,
+daemon installation, cleanup and live qualification remain outstanding. This is
+a provider boundary, not a deployed image integration. S2.4 and G2 remain open.
+
+Final verification passed: `make f`, `make l` across all ten modules, separate
+Linux lint with qualification/kernel/mount tags, the complete sandbox race suite,
+focused image/service race tests and sandbox build. Service test binaries compile
+for Linux arm64 and amd64. Linux image-service and staging suites each passed ten
+repetitions without skips. CI `39625181051` at `f6cd5ce` passed every job, covering
+the preceding worker evidence adapters and optimizer recovery. Independent
+full-plan review and installed image-provider/runtime qualification remain open.

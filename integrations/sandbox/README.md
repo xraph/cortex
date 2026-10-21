@@ -798,6 +798,31 @@ policy. Local staging guards verify signed bindings; current repository grants
 are enforced by the daemon at the content operation. Approved image delivery,
 installed provider configuration and live qualification remain open.
 
+## Approved image access
+
+`service.WorkerImages` is the daemon-side image content boundary. Configure an
+approved digest-addressed source, current image policy and an aggregate compressed
+budget of at most four GiB. Each read authenticates the worker claim and reloads
+the exact manifest pinned by its signed job. The policy receives detached job
+identity and scope. Workers cannot select registry URLs, tags or unrelated blobs.
+
+The broker verifies the manifest digest before parsing it. Staging and broker
+access share `image.ParseManifest`, which bounds metadata to one MiB, permits up
+to 128 layers, checks the total declared size, and rejects external URLs, embedded
+content, unsupported descriptors and conflicting declarations for one digest.
+Only the manifest, its configuration and its directly declared layers may be read.
+Platform, DiffID and archive validation remain in image staging.
+
+Blob reads verify exact size and SHA256, close sources once on cancellation, and
+preserve read/close errors. Current grants are checked before opening, after
+opening and after copying. A successful size receipt follows the final authority
+check; received bytes remain provisional until then. No source failure retries.
+The caller owns destination cancellation and must unblock its writes.
+
+This boundary still needs private image transport, a worker image-source adapter
+and installed provider configuration. It does not establish live containment or
+permission to execute an image.
+
 ## Linux probe suite
 
 The `sandbox_qualification` build tag adds host-side probes. They fail when the

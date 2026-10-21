@@ -71,27 +71,11 @@ func (s *WorkerEvidence) PutArtifact(ctx context.Context, peer *workerpeer.Peer,
 	return s.put(ctx, peer, claim, a)
 }
 
-func (s *WorkerEvidence) begin(ctx context.Context, peer workerIdentity, claim WorkerClaim) (context.Context, func(), error) {
-	operation, finish, err := s.controller.begin(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	operation, bound := context.WithTimeout(operation, 30*time.Second)
-	current, err := s.controller.authorizeWorker(operation, peer, claim)
-	if err != nil {
-		bound()
-		finish()
-		return nil, nil, err
-	}
-	operation, deadline := context.WithDeadline(operation, acceptanceDeadline(current.Receipt))
-	return operation, func() { deadline(); bound(); finish() }, nil
-}
-
 func (s *WorkerEvidence) read(ctx context.Context, peer workerIdentity, claim WorkerClaim, ref evidence.Ref, artifact bool, destination io.Writer) error {
 	if destination == nil {
 		return broker.ErrDenied
 	}
-	operation, finish, err := s.begin(ctx, peer, claim)
+	operation, finish, err := s.controller.beginWorkerOperation(ctx, peer, claim)
 	if err != nil {
 		return err
 	}
@@ -140,7 +124,7 @@ func (s *WorkerEvidence) put(ctx context.Context, peer workerIdentity, claim Wor
 	if err != nil {
 		return evidence.Ref{}, err
 	}
-	operation, finish, err := s.begin(ctx, peer, claim)
+	operation, finish, err := s.controller.beginWorkerOperation(ctx, peer, claim)
 	if err != nil {
 		return evidence.Ref{}, err
 	}
