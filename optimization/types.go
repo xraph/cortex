@@ -50,6 +50,7 @@ const (
 
 // Experiment combines a frozen specification with revision-fenced work state.
 type Experiment struct {
+	DecisionID     id.ID          `json:"decision_id,omitempty"`
 	ID             id.ID          `json:"id"`
 	Spec           ExperimentSpec `json:"spec"`
 	SpecDigest     string         `json:"spec_digest"`
@@ -61,6 +62,7 @@ type Experiment struct {
 	Lease          WorkLease      `json:"lease"`
 	Plan           TrialPlan      `json:"plan"`
 	LessonIDs      []id.ID        `json:"lesson_ids"`
+	FrozenLessons  []LessonRef    `json:"frozen_lessons"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	Deadline       time.Time      `json:"deadline"`
@@ -162,6 +164,8 @@ const (
 
 // Decision binds selection policy to the exact compared evidence.
 type Decision struct {
+	AllocationID  id.ID           `json:"allocation_id"`
+	SpecDigest    string          `json:"spec_digest"`
 	ID            id.ID           `json:"id"`
 	ExperimentID  id.ID           `json:"experiment_id"`
 	Baseline      VersionRef      `json:"baseline"`
@@ -178,6 +182,7 @@ type Decision struct {
 
 // Activation is an append-only generation for an exact scope, agent and channel.
 type Activation struct {
+	RollbackTo         id.ID        `json:"rollback_to,omitempty"`
 	ID                 id.ID        `json:"id"`
 	Scope              cortex.Scope `json:"scope"`
 	AgentID            id.AgentID   `json:"agent_id"`
@@ -193,6 +198,7 @@ type Activation struct {
 
 // ValidationAllocation permanently tracks holdout exposure per scope and agent.
 type ValidationAllocation struct {
+	CreatedAt    time.Time       `json:"created_at"`
 	ID           id.ID           `json:"id"`
 	Scope        cortex.Scope    `json:"scope"`
 	AgentID      id.AgentID      `json:"agent_id"`

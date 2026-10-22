@@ -70,3 +70,19 @@ var (
 	// is a continuation nothing could have resumed.
 	ErrInvalidContinuation = errors.New("cortex: suspension continuation is unusable")
 )
+
+// Evidence and verification errors remain independent of execution outcomes.
+var (
+	ErrInvalidEvidence         = errors.New("cortex: invalid evidence")
+	ErrEvidenceDigestMismatch  = errors.New("cortex: evidence digest mismatch")
+	ErrEvidenceAccessDenied    = errors.New("cortex: evidence access denied")
+	ErrEvidenceTooLarge        = errors.New("cortex: evidence exceeds size limit")
+	ErrEvidenceNotFound        = errors.New("cortex: evidence not found")
+	ErrEvidenceDeleted         = errors.New("cortex: evidence deleted")
+	ErrEvidenceConflict        = errors.New("cortex: immutable evidence conflict")
+	ErrInvalidVerification     = errors.New("cortex: invalid verification record")
+	ErrVerificationConflict    = errors.New("cortex: immutable verification conflict")
+	ErrVerificationNotFound    = errors.New("cortex: verification record not found")
+	ErrSandboxInputsIncomplete = errors.New("cortex: sandbox input staging is incomplete")
+	ErrSandboxInputsConflict   = errors.New("cortex: sandbox input staging identity conflict")
+)

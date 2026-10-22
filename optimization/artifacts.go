@@ -10,13 +10,14 @@ import (
 
 // ArtifactStore persists content-addressed bytes under explicit access policy.
 type ArtifactStore interface {
+	ArtifactReader
 	Put(context.Context, Artifact) (ArtifactRef, error)
-	Get(context.Context, ArtifactRef) (Artifact, error)
 	Delete(context.Context, ArtifactRef) error
 }
 
 // ArtifactRef identifies protected content without embedding it in event payloads.
 type ArtifactRef struct {
+	ExperimentID id.ID        `json:"experiment_id"`
 	Scope        cortex.Scope `json:"scope"`
 	Digest       string       `json:"digest"`
 	MediaType    string       `json:"media_type"`
@@ -27,11 +28,10 @@ type ArtifactRef struct {
 
 // Artifact carries bytes and the requested retention policy to an authorized store.
 type Artifact struct {
-	Ref          ArtifactRef `json:"ref"`
-	Data         []byte      `json:"data"`
-	ExperimentID id.ID       `json:"experiment_id"`
-	CreatedAt    time.Time   `json:"created_at"`
-	ExpiresAt    time.Time   `json:"expires_at"`
+	Ref       ArtifactRef `json:"ref"`
+	Data      []byte      `json:"data"`
+	CreatedAt time.Time   `json:"created_at"`
+	ExpiresAt time.Time   `json:"expires_at"`
 }
 
 // Action names the host permission required at an operation boundary.

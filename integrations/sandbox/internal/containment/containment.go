@@ -1,0 +1,166 @@
+// Package containment binds workers and payloads to one job service cgroup.
+package containment
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/sandbox"
+)
+
+var (
+	// ErrAbsent reports an absent service cgroup, not a fence against future starts.
+	ErrAbsent = errors.New("cortex: sandbox service cgroup absent")
+	// ErrChanged reports a cgroup appearing after an absent kill target.
+	ErrChanged = errors.New("cortex: sandbox containment changed during cleanup")
+)
+
+// Layout is the fixed service hierarchy. The service manager must delegate
+// controllers and place its worker in supervisor; runsc creates payload below
+// the same parent. The outer service's kill policy must cover every descendant.
+type Layout struct{ Unit, Parent, Worker, Payload string }
+
+// ForJob never accepts a caller-selected service or cgroup path.
+func ForJob(key id.ID) (Layout, error) {
+	if key.IsNil() || key.Prefix() != sandbox.PrefixJob {
+		return Layout{}, fmt.Errorf("cortex: containment requires a sandbox job identity")
+	}
+	unit := "cortex-sandbox-worker@" + key.String() + ".service"
+	parent := "/system.slice/" + unit
+	return Layout{Unit: unit, Parent: parent, Worker: parent + "/supervisor", Payload: parent + "/payload"}, nil
+}
+
+// CheckMembership verifies the exact cgroup-v2 worker subgroup. A payload,
+// sibling job, descendant subgroup or legacy hierarchy is not equivalent.
+func CheckMembership(key id.ID, body []byte) error {
+	layout, err := ForJob(key)
+	if err != nil {
+		return err
+	}
+	current, err := membership(body)
+	if err != nil {
+		return err
+	}
+	if current != layout.Worker {
+		return fmt.Errorf("cortex: worker is outside its job service subgroup")
+	}
+	return nil
+}
+
+func membership(body []byte) (string, error) {
+	if len(body) > 8192 || !utf8.Valid(body) {
+		return "", fmt.Errorf("cortex: invalid cgroup membership")
+	}
+	line := strings.TrimSuffix(string(body), "\n")
+	if !strings.HasPrefix(line, "0::/") || strings.ContainsAny(line, "\n\r\x00") {
+		return "", fmt.Errorf("cortex: unified cgroup membership required")
+	}
+	current := strings.TrimPrefix(line, "0::")
+	if path.Clean(current) != current {
+		return "", fmt.Errorf("cortex: ambiguous cgroup membership")
+	}
+	return current, nil
+}
+
+// Observation distinguishes an empty hierarchy from an absent hierarchy.
+// Neither proves that the service manager cannot launch a queued worker later.
+// Establish a durable start fence separately before recording workerstore.Reaped.
+type Observation struct{ Empty, Absent bool }
+
+type group interface {
+	Kill(context.Context, id.ID) error
+	Events(context.Context, id.ID) ([]byte, error)
+}
+
+// KillAndWait uses cgroup.kill and waits for the complete hierarchy to empty.
+// It requires a root-run Linux reaper outside the target group. Supply an
+// independent cleanup context; waits are capped at ten seconds. No PID walk,
+// process-group fallback or cgroup deletion is performed.
+func KillAndWait(ctx context.Context, key id.ID) (Observation, error) {
+	return killAndWait(ctx, key, kernelGroup{})
+}
+
+func killAndWait(ctx context.Context, key id.ID, backend group) (Observation, error) {
+	if _, err := ForJob(key); err != nil {
+		return Observation{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return Observation{}, err
+	}
+	killErr := backend.Kill(ctx, key)
+	if killErr != nil && !errors.Is(killErr, ErrAbsent) {
+		return Observation{}, killErr
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return Observation{}, err
+		}
+		body, err := backend.Events(ctx, key)
+		if err != nil {
+			if errors.Is(err, ErrAbsent) {
+				if contextErr := ctx.Err(); contextErr != nil {
+					return Observation{}, contextErr
+				}
+				return Observation{Absent: true}, nil
+			}
+			return Observation{}, err
+		}
+		if errors.Is(killErr, ErrAbsent) {
+			return Observation{}, ErrChanged
+		}
+		empty, err := parseEvents(body)
+		if err != nil {
+			return Observation{}, err
+		}
+		if contextErr := ctx.Err(); contextErr != nil {
+			return Observation{}, contextErr
+		}
+		if empty {
+			return Observation{Empty: true}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return Observation{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func parseEvents(body []byte) (bool, error) {
+	if len(body) == 0 || len(body) > 4096 {
+		return false, fmt.Errorf("cortex: invalid cgroup event length")
+	}
+	seen := map[string]bool{}
+	empty := false
+	for _, line := range strings.Split(strings.TrimSuffix(string(body), "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || seen[fields[0]] {
+			return false, fmt.Errorf("cortex: ambiguous cgroup events")
+		}
+		seen[fields[0]] = true
+		if _, err := strconv.ParseUint(fields[1], 10, 64); err != nil {
+			return false, err
+		}
+		if fields[0] == "populated" {
+			if fields[1] != "0" && fields[1] != "1" {
+				return false, fmt.Errorf("cortex: invalid cgroup population")
+			}
+			empty = fields[1] == "0"
+		}
+	}
+	if !seen["populated"] {
+		return false, fmt.Errorf("cortex: missing cgroup population")
+	}
+	return empty, nil
+}

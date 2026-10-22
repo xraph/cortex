@@ -14,13 +14,18 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/store/internal/assurance"
 )
 
 // Compile-time interface check.
 var _ store.Store = (*Store)(nil)
 
+type assuranceStore = assurance.Repository
+
 // Store is a PostgreSQL implementation of the composite Cortex store.
 type Store struct {
+	*assuranceStore
+
 	preparationReader preparationReader
 	db                *grove.DB
 	pgdb              *pgdriver.PgDB
@@ -28,10 +33,12 @@ type Store struct {
 
 // New creates a new PostgreSQL store.
 func New(db *grove.DB) *Store {
-	return &Store{
+	s := &Store{
 		db:   db,
 		pgdb: pgdriver.Unwrap(db),
 	}
+	s.assuranceStore = assurance.New(assuranceDriver{store: s})
+	return s
 }
 
 // Migrate runs programmatic migrations via the grove orchestrator.

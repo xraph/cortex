@@ -43,6 +43,32 @@ type Lesson struct {
 	RevocationReason  string        `json:"revocation_reason,omitempty"`
 }
 
+// LessonRef freezes local eligibility and content at experiment creation.
+type LessonRef struct {
+	ID       id.ID  `json:"id"`
+	Revision int64  `json:"revision"`
+	Digest   string `json:"digest"`
+}
+
+// PublicationRequest accepts one reflection under its current worker lease.
+// The store assigns payload revision, digest and timestamps before any remote call.
+type PublicationRequest struct {
+	ExperimentID      id.ID       `json:"experiment_id"`
+	Lease             WorkLease   `json:"lease"`
+	Actor             IdentityRef `json:"actor"`
+	Lesson            Lesson      `json:"lesson"`
+	RemoteAggregateID string      `json:"remote_aggregate_id"`
+}
+
+// LessonRevocation permanently withdraws a lesson at the expected local revision.
+// Current actor authorization is checked by the service before this command.
+type LessonRevocation struct {
+	LessonID         id.ID       `json:"lesson_id"`
+	ExpectedRevision int64       `json:"expected_revision"`
+	Actor            IdentityRef `json:"actor"`
+	Reason           string      `json:"reason"`
+}
+
 // RecallQuery preserves exact scope, compatibility and a frozen time cutoff.
 type RecallQuery struct {
 	Scope         cortex.Scope `json:"scope"`
@@ -67,6 +93,9 @@ const (
 
 // Publication is the durable outbox entry committed with its local decision.
 type Publication struct {
+	CreatedAt         time.Time            `json:"created_at"`
+	ExperimentID      id.ID                `json:"experiment_id"`
+	SupersededAt      time.Time            `json:"superseded_at,omitempty"`
 	LessonID          id.ID                `json:"lesson_id"`
 	Operation         PublicationOperation `json:"operation"`
 	Payload           Lesson               `json:"payload"`

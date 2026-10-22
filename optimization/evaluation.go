@@ -62,6 +62,8 @@ type CriterionValue struct {
 
 // Evaluation identifies the durable external job, distinct from its report ID.
 type Evaluation struct {
+	// Score preserves the evaluator aggregate; nil means no complete score is available.
+	Score           *float64         `json:"score,omitempty"`
 	ID              string           `json:"id"`
 	ReportID        string           `json:"report_id"`
 	ExperimentID    id.ID            `json:"experiment_id"`

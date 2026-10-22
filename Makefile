@@ -111,7 +111,7 @@ lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
 	@status=0; for module in $(GO_MODULES); do \
 		echo "$(BLUE)Linting $$module...$(NC)"; \
-		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; \
+		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; if [ "$$module" = "./integrations/sandbox" ]; then tags=sandbox_qualification; fi; \
 		(cd "$$module" && GOWORK=off golangci-lint run --allow-serial-runners --build-tags "$$tags" --max-same-issues 0 ./...) || status=1; \
 	done; exit $$status
 	@echo "$(GREEN)✓ Linting complete$(NC)"
@@ -122,7 +122,7 @@ lint-fix:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "$(RED)golangci-lint not found. Install: https://golangci-lint.run/usage/install/$(NC)"; exit 1; }
 	@status=0; for module in $(GO_MODULES); do \
 		echo "$(BLUE)Fixing lint in $$module...$(NC)"; \
-		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; \
+		tags=; if [ "$$module" = "./inttest" ]; then tags=integration; fi; if [ "$$module" = "./integrations/sandbox" ]; then tags=sandbox_qualification; fi; \
 		(cd "$$module" && GOWORK=off golangci-lint run --allow-serial-runners --build-tags "$$tags" --max-same-issues 0 --fix ./...) || status=1; \
 	done; exit $$status
 	@echo "$(GREEN)✓ Linting with fixes complete$(NC)"

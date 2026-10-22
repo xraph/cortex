@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/xraph/cortex"
 )
 
 type hierarchical struct {
@@ -43,7 +40,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	prompt := buildPlanPrompt(workers, input)
 	var tasks []delegation
 	for attempt := 0; ; attempt++ {
-		planOut, err := o.invoke(ctx, manager, prompt)
+		planOut, err := invokeAgent(ctx, o.runner, o.settings, manager, prompt)
 		res.AgentResults = append(res.AgentResults, planOut)
 		if err != nil {
 			return fail(err)
@@ -84,7 +81,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 				return
 			}
 			bb.Handoff(ctx, manager, d.Agent, d.Task)
-			workerResult, workerErr := o.invoke(ctx, d.Agent, composeInput(d.Task, snapshot))
+			workerResult, workerErr := invokeAgent(ctx, o.runner, o.settings, d.Agent, composeInput(d.Task, snapshot))
 			if workerErr != nil {
 				workerResult.Err = workerErr
 			}
@@ -104,7 +101,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	if err := errors.Join(workerErrors...); err != nil {
 		return fail(err)
 	}
-	synth, err := o.invoke(ctx, manager, buildSynthesisPrompt(input, bb.Snapshot()))
+	synth, err := invokeAgent(ctx, o.runner, o.settings, manager, buildSynthesisPrompt(input, bb.Snapshot()))
 	res.AgentResults = append(res.AgentResults, synth)
 	if err != nil {
 		return fail(err)
@@ -129,29 +126,6 @@ func (o *hierarchical) validateRoster(manager string, workers []Participant) err
 		seen[p.AgentName] = true
 	}
 	return nil
-}
-
-// invoke preserves failed run identities and treats missing or contradictory
-// results as failures. Each invocation gets its own options and normal budget.
-func (o *hierarchical) invoke(ctx context.Context, name, input string) (AgentResult, error) {
-	out := AgentResult{AgentName: name}
-	if err := ctx.Err(); err != nil {
-		out.Err = err
-		return out, err
-	}
-	ar, err := o.runner.RunAgent(ctx, name, input, runOptsFromSettings(o.settings))
-	if ar != nil {
-		out = *ar
-		err = errors.Join(err, ar.Err)
-	}
-	if err == nil {
-		err = ctx.Err()
-	}
-	if err == nil && (ar == nil || ar.AgentName != name || strings.TrimSpace(ar.Output) == "") {
-		err = fmt.Errorf("%w: missing or inconsistent agent result", cortex.ErrRunIncomplete)
-	}
-	out.Err = err
-	return out, err
 }
 
 func (o *hierarchical) resolveManager() string {

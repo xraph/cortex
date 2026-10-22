@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 )
@@ -20,7 +21,6 @@ func (o *parallel) Strategy() string { return StrategyParallel }
 
 func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Result, error) {
 	res := &Result{OrchestrationID: bb.OrchestrationID(), Strategy: StrategyParallel}
-	opts := runOptsFromSettings(o.settings)
 	snapshot := bb.Snapshot()
 
 	results := make([]AgentResult, len(o.parts))
@@ -31,48 +31,48 @@ func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Resu
 		wg.Add(1)
 		go func(i int, p Participant) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			ar, err := o.runner.RunAgent(ctx, p.AgentName, composeInput(input, snapshot), opts)
-			if err != nil {
-				results[i] = AgentResult{AgentName: p.AgentName, Err: err}
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[i] = AgentResult{AgentName: p.AgentName, Err: ctx.Err()}
 				return
 			}
-			results[i] = *ar
+			ar, err := invokeAgent(ctx, o.runner, o.settings, p.AgentName, composeInput(input, snapshot))
+			ar.Err = err
+			results[i] = ar
 		}(i, p)
 	}
 	wg.Wait()
 
-	var firstErr error
+	var workerErrors []error
 	var parts []string
 	for _, r := range results {
 		res.AgentResults = append(res.AgentResults, r)
 		if r.Err != nil {
-			if firstErr == nil {
-				firstErr = r.Err
-			}
+			workerErrors = append(workerErrors, r.Err)
 			continue
 		}
 		bb.Append(r.AgentName, r.Output)
 		parts = append(parts, r.Output)
 	}
-
-	// Optional aggregator agent synthesizes a single answer from all outputs.
-	if o.settings.Aggregator != "" {
-		ar, err := o.runner.RunAgent(ctx, o.settings.Aggregator, composeInput(input, bb.Snapshot()), opts)
-		if err == nil {
-			res.AgentResults = append(res.AgentResults, *ar)
-			res.Output = ar.Output
-			res.Handoffs = bb.Handoffs()
-			return res, nil
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
+	res.Handoffs = bb.Handoffs()
+	if err := errors.Join(workerErrors...); err != nil {
+		res.Err = err
+		return res, err
 	}
 
-	res.Output = strings.Join(parts, "\n\n")
-	res.Handoffs = bb.Handoffs()
-	res.Err = firstErr
-	return res, firstErr
+	// Synthesis requires a valid result from every worker.
+	if o.settings.Aggregator != "" {
+		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.Aggregator, composeInput(input, bb.Snapshot()))
+		res.AgentResults = append(res.AgentResults, ar)
+		res.Err = err
+		if err != nil {
+			return res, err
+		}
+		res.Output = ar.Output
+	} else {
+		res.Output = strings.Join(parts, "\n\n")
+	}
+	return res, nil
 }

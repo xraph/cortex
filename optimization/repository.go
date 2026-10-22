@@ -12,6 +12,8 @@ import (
 type Repository interface {
 	Transact(context.Context, func(Transaction) error) error
 	GetExperiment(context.Context, id.ID) (Experiment, error)
+	GetArtifact(context.Context, ArtifactRef) (ArtifactRetention, error)
+	ListArtifactWork(context.Context, time.Time, PageQuery) (Page[ArtifactRetention], error)
 	ListExperiments(context.Context, ListQuery) (Page[Experiment], error)
 	ListEvents(context.Context, id.ID, int64, int) (Page[Event], error)
 	GetVersion(context.Context, id.ID) (HarnessVersion, error)
@@ -20,6 +22,22 @@ type Repository interface {
 	GetCandidate(context.Context, id.ID) (Candidate, error)
 	GetTrial(context.Context, id.ID) (Trial, error)
 	GetEvaluation(context.Context, string) (Evaluation, error)
+	GetDecision(context.Context, id.ID) (Decision, error)
+	GetActivation(context.Context, id.AgentID, string) (Activation, error)
+	GetActivationGeneration(context.Context, id.ID) (Activation, error)
+	GetLesson(context.Context, id.ID) (Lesson, error)
+	ResolveLesson(context.Context, LessonRef) (Lesson, error)
+	GetPublication(context.Context, id.ID, int64) (Publication, error)
+	ListVersions(context.Context, VersionQuery) (Page[HarnessVersion], error)
+	ListCandidates(context.Context, id.ID, PageQuery) (Page[Candidate], error)
+	ListTrials(context.Context, id.ID, TrialQuery) (Page[Trial], error)
+	ListEvaluations(context.Context, id.ID, PageQuery) (Page[Evaluation], error)
+	ListDecisions(context.Context, id.ID, PageQuery) (Page[Decision], error)
+	ListReservations(context.Context, id.ID, PageQuery) (Page[Reservation], error)
+	ListValidationAllocations(context.Context, id.ID, PageQuery) (Page[ValidationAllocation], error)
+	ListLessons(context.Context, LessonQuery) (Page[Lesson], error)
+	ListPublications(context.Context, PublicationQuery) (Page[Publication], error)
+	ListActivationHistory(context.Context, id.AgentID, string, PageQuery) (Page[Activation], error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error
@@ -28,15 +46,22 @@ type Repository interface {
 // Transaction is valid only during its synchronous callback. Callers must not
 // retain it or use it from concurrent goroutines.
 type Transaction interface {
+	RegisterArtifact(ArtifactRegistration) error
+	BeginArtifactDeletion(ArtifactDeletion) error
+	CompleteArtifactDeletion(ArtifactRef, string) error
 	CreateExperiment(ExperimentBundle) error
 	CommitTransition(Transition) error
 	ClaimWork(ClaimRequest) (WorkLease, error)
 	RenewLease(WorkLease) error
 	Reserve(UsageReservation) (Reservation, error)
+	BeginUsageCall(UsageReservation, string) (Reservation, error)
 	Settle(UsageSettlement) error
 	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
 	ExposeValidation(ValidationAccess) error
 	ReleaseValidation(ValidationAccess) error
+	CompareAndSwapActivation(ActivationChange) (Activation, error)
+	PutPublication(PublicationRequest) error
+	RevokeLesson(LessonRevocation) error
 }
 
 // ValidationAllocationRequest freezes one experiment or a parent's paired child
@@ -66,6 +91,7 @@ type ClaimRequest struct {
 // Transition binds a requested state change to its prior revision and actor.
 // Idempotency keys can be reused only with identical request content.
 type Transition struct {
+	Decision         *Decision        `json:"decision,omitempty"`
 	ExperimentID     id.ID            `json:"experiment_id"`
 	ExpectedRevision int64            `json:"expected_revision"`
 	NextState        State            `json:"next_state"`

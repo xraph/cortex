@@ -1,7 +1,13 @@
 package orchestration
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/xraph/cortex"
 )
 
 func nowUTC() time.Time { return time.Now().UTC() }
@@ -55,4 +61,27 @@ func boundedConcurrency(n int) int {
 		return defaultMaxConcurrency
 	}
 	return n
+}
+
+// invokeAgent preserves failed run identities and treats missing or contradictory
+// results as failures. Each invocation gets its own options and normal budget.
+func invokeAgent(ctx context.Context, runner AgentRunner, settings Settings, name, input string) (AgentResult, error) {
+	out := AgentResult{AgentName: name}
+	if err := ctx.Err(); err != nil {
+		out.Err = err
+		return out, err
+	}
+	ar, err := runner.RunAgent(ctx, name, input, runOptsFromSettings(settings))
+	if ar != nil {
+		out = *ar
+		err = errors.Join(err, ar.Err)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && (ar == nil || ar.AgentName != name || strings.TrimSpace(ar.Output) == "") {
+		err = fmt.Errorf("%w: missing or inconsistent agent result", cortex.ErrRunIncomplete)
+	}
+	out.Err = err
+	return out, err
 }

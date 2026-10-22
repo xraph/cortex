@@ -42,6 +42,7 @@ func evaluationIntegrity(t *testing.T, factory Factory) {
 		commitTrialChange(s.ctx, t, s.store, s.change(t, "capture-failure", update))
 		value := evaluationFor(s, record)
 		value.Complete = false
+		value.Score = nil
 		value.Errors = []string{"execution failed"}
 		commitTrialChange(s.ctx, t, s.store, evaluationChange(t, s, value))
 		stop := optimization.StopReceipt{EnvironmentReceiptID: s.receipt.ID, AttemptID: s.receipt.AttemptID, Fence: s.receipt.Fence, State: optimization.StopQuarantined, Evidence: s.receipt.Snapshot}

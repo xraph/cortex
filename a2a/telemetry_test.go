@@ -32,6 +32,9 @@ func recordBusSpans(t *testing.T) *tracetest.SpanRecorder {
 // no envelope content, and is counted by class, route and result. A drain
 // with nothing queued starts nothing.
 func TestDeliverySpanAndCounter(t *testing.T) {
+	// Hyphens cannot occur in TypeID values. Short markers such as "w1" can
+	// collide with random IDs and falsely report a private agent-name leak.
+	const senderName, receiverName = "private-planner", "private-worker"
 	rec := recordBusSpans(t)
 	sink := telemetrytest.NewSink()
 	b, err := NewBus(BusConfig{
@@ -52,8 +55,8 @@ func TestDeliverySpanAndCounter(t *testing.T) {
 
 	sendCtx, sender := otel.Tracer("test").Start(testCtx(), "sender")
 	if _, err := b.Send(sendCtx, SendParams{
-		Sender:       Address{Agent: "planner"},
-		Receivers:    []Address{{Agent: "w1"}},
+		Sender:       Address{Agent: senderName},
+		Receivers:    []Address{{Agent: receiverName}},
 		Performative: Inform,
 		Content:      "the build is green, tell alice@example.com",
 	}); err != nil {
@@ -83,7 +86,7 @@ func TestDeliverySpanAndCounter(t *testing.T) {
 	got := map[string]string{}
 	for _, kv := range d.Attributes() {
 		got[string(kv.Key)] = kv.Value.String()
-		if strings.Contains(kv.Value.String(), "alice@example.com") || strings.Contains(kv.Value.String(), "planner") || strings.Contains(kv.Value.String(), "w1") {
+		if strings.Contains(kv.Value.String(), "alice@example.com") || strings.Contains(kv.Value.String(), senderName) || strings.Contains(kv.Value.String(), receiverName) {
 			t.Errorf("delivery attribute %s carries envelope content or an agent name: %q", kv.Key, kv.Value.String())
 		}
 	}

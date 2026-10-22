@@ -53,7 +53,7 @@ func (plan EvaluationPlan) Validate(spec ExperimentSpec) error {
 
 // ValidateCaptured checks scoring identity and completeness without executing a target.
 func (evaluation Evaluation) ValidateCaptured(experiment Experiment, trial Trial) error {
-	if strings.TrimSpace(evaluation.ID) == "" || strings.TrimSpace(evaluation.ReportID) == "" ||
+	if !ValidOpaqueKey(evaluation.ID) || !ValidOpaqueKey(evaluation.ReportID) ||
 		evaluation.ExperimentID != experiment.ID || evaluation.TrialID != trial.ID ||
 		evaluation.CaseID != trial.CaseID || evaluation.CaseDigest != trial.CaseDigest ||
 		evaluation.Repetition != trial.Repetition || trial.Execution == nil ||
@@ -100,6 +100,14 @@ func (evaluation Evaluation) ValidateCaptured(experiment Experiment, trial Trial
 			}
 			incomplete = true
 		}
+	}
+	if evaluation.Score != nil {
+		score := *evaluation.Score
+		if !evaluation.Complete || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
+			return ErrIncompleteEvidence
+		}
+	} else if evaluation.Complete {
+		return ErrIncompleteEvidence
 	}
 	if evaluation.Complete && incomplete {
 		return ErrIncompleteEvidence

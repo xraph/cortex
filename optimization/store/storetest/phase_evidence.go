@@ -139,7 +139,7 @@ func fillVersionTrials(ctx context.Context, t *testing.T, s store.Store, bundle 
 	}
 }
 
-func captureFixtureTrial(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, lease optimization.WorkLease, trial optimization.Trial) optimization.Evaluation {
+func captureFixtureTrial(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, lease optimization.WorkLease, trial optimization.Trial, artifacts ...optimization.ArtifactRef) optimization.Evaluation {
 	t.Helper()
 	receipt := openTrial(ctx, t, s, bundle, lease, trial)
 	version, err := s.GetVersion(ctx, trial.Version.ID)
@@ -149,6 +149,7 @@ func captureFixtureTrial(ctx context.Context, t *testing.T, s store.Store, bundl
 	captureBundle := bundle
 	captureBundle.Versions = []optimization.HarnessVersion{version}
 	record := capturedExecution(t, captureBundle, receipt)
+	record.Artifacts = artifacts
 	for _, task := range bundle.Experiment.Spec.Tasks {
 		if task.ID == trial.CaseID {
 			record.InputDigest = task.InputDigest

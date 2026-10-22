@@ -13,6 +13,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/store/internal/assurance"
 )
 
 // Collection name constants.
@@ -41,18 +42,24 @@ const (
 // Compile-time interface check.
 var _ store.Store = (*Store)(nil)
 
+type assuranceStore = assurance.Repository
+
 // Store implements store.Store using MongoDB via Grove ORM.
 type Store struct {
+	*assuranceStore
+
 	db  *grove.DB
 	mdb *mongodriver.MongoDB
 }
 
 // New creates a new MongoDB store backed by Grove ORM.
 func New(db *grove.DB) *Store {
-	return &Store{
+	s := &Store{
 		db:  db,
 		mdb: mongodriver.Unwrap(db),
 	}
+	s.assuranceStore = assurance.New(assuranceDriver{store: s})
+	return s
 }
 
 // Migrate creates indexes for all cortex collections.

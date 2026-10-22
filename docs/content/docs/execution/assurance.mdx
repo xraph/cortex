@@ -52,3 +52,18 @@ Prepared snapshots and continuations use schema 2. Drain or cancel older schema-
 Scopes support at most three ordered, unique levels. Listing can use an ancestor prefix, while mutation and execution require the exact resource scope. Invalid or inconsistent historical rows fail closed. Use the administrative `store.ScopeInspector` inventory before an operator-approved migration; the engine never truncates or repairs stored identity automatically.
 
 Qualify your installed provider, scanner, authorization and storage paths before rollout. Passing fixture tests or the deterministic local demo does not establish live-model quality, effective scanning or sandbox isolation.
+
+
+## Evidence and acceptance contracts
+
+You can build independent evaluators with the `evidence` and `verification` packages. Engine verification is still disabled; saving a report does not change a run's status or authorize publication.
+
+Seal captured bytes with `evidence.Seal`. The reference binds their SHA-256 digest, exact scope, version, producer, sensitivity and retention deadline. Wrap a built-in storage capability with `evidence.NewRepository` and your host authorizer before serving content. Reads check both bytes and metadata, then recheck source access. Built-in storage limits content to one MiB; inject a separate repository for larger artifacts. The authorizer must enforce current grants, sensitivity and retention.
+
+Create an ordered `verification.Contract` with at least one required criterion. Each criterion names a verifier revision and a host-registered manifest. `verification.NewVerifier` accepts typed schema, test, state and human adapters, a host authorizer and a clock. Test adapters still need a qualified execution environment; registering one does not provide isolation.
+
+`verification.Aggregate` requires every required criterion to pass for the same run and captured context. Optional scores cannot compensate for a failed check. Missing checks are inconclusive. Expired reports, source observations or human approvals are stale. A human verdict must name its actor and decision revision and match the complete evidence binding.
+
+Before acting on a result, reauthorize the resources and compare a trusted current binding with `verification.CheckFreshness`. A report digest checks integrity, not authorship or current permission. Only trusted host paths may create or persist reports. The built-in stores expose `verification.Store` as an optional capability and retain immutable history for audit.
+
+Evidence deletion retains an audit tombstone. Set the authenticated actor with `evidence.WithDeletionActor` before deleting through the authorized repository. The first deletion records the reference, actor, time and reason; retries cannot rewrite that history or restore the bytes. Tombstone reads are a separate storage capability and require host audit authorization.

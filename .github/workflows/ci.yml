@@ -71,6 +71,7 @@ jobs:
           - sentinel
           - extension
           - integrations/fabriq
+          - integrations/sandbox
           - optimization
 
     defaults:
@@ -98,7 +99,31 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -race -count=1 ./...
+        env:
+          TEST_TIMEOUT: ${{ matrix.module == 'optimization' && '30m' || '10m' }}
+        run: go test -race -count=1 -timeout="$TEST_TIMEOUT" ./...
+
+      - name: Compile deferred Linux qualification probes
+        if: matrix.module == 'integrations/sandbox'
+        run: |
+          go test -c -tags=sandbox_qualification -o "$RUNNER_TEMP/cortex-sandbox-qualification.test" .
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/cortex-sandbox-isolation-probe" ./testdata/isolation-probe
+
+      - name: Test local worker peer authentication
+        if: matrix.module == 'integrations/sandbox'
+        run: |
+          GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-peer.test" ./internal/workerpeer
+          sudo -- "$RUNNER_TEMP/cortex-worker-peer.test" -test.v -test.timeout=60s
+          GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-control.test" ./internal/service
+          sudo -- "$RUNNER_TEMP/cortex-worker-control.test" -test.run='^TestControlKernel' -test.v -test.timeout=60s
+
+      - name: Test bounded workspace filesystems
+        if: matrix.module == 'integrations/sandbox'
+        run: |
+          GOWORK=off go test -race -c -tags=sandbox_mount_kernel -o "$RUNNER_TEMP/cortex-workspace.test" ./internal/workspace
+          sudo -- "$RUNNER_TEMP/cortex-workspace.test" -test.v -test.timeout=60s
+          GOWORK=off go test -race -c -tags=sandbox_mount_kernel -o "$RUNNER_TEMP/cortex-worker-pipeline.test" ./internal/worker
+          sudo -- "$RUNNER_TEMP/cortex-worker-pipeline.test" -test.run='^TestWorkerKernel' -test.v -test.timeout=60s
 
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:

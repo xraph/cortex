@@ -16,6 +16,56 @@ import (
 
 func evaluations(t *testing.T, factory Factory) {
 	t.Helper()
+	t.Run("EvaluationRetainsAggregateScoreIndependently", func(t *testing.T) {
+		for _, score := range []float64{0, .73} {
+			scenario, value := evaluatedTrial(t, factory)
+			aggregate := score
+			value.Score = &aggregate
+			commitTrialChange(scenario.ctx, t, scenario.store, evaluationChange(t, scenario, value))
+			aggregate = 1
+			got, err := scenario.store.GetEvaluation(scenario.ctx, value.ID)
+			if err != nil || got.Score == nil || *got.Score != score {
+				t.Fatalf("aggregate lost or recomputed from criteria: %+v %v", got, err)
+			}
+			*got.Score = 1
+			again, err := scenario.store.GetEvaluation(scenario.ctx, value.ID)
+			if err != nil || again.Score == nil || *again.Score != score {
+				t.Fatal("aggregate read aliases storage")
+			}
+		}
+	})
+	t.Run("EvaluationRejectsMissingOrInvalidAggregate", func(t *testing.T) {
+		for _, mode := range []string{"missing", "negative", "over-one", "nan", "infinity", "unscored-with-value"} {
+			t.Run(mode, func(t *testing.T) {
+				scenario, value := evaluatedTrial(t, factory)
+				aggregate := .7
+				value.Score = &aggregate
+				switch mode {
+				case "missing":
+					value.Score = nil
+				case "negative":
+					aggregate = -.1
+				case "over-one":
+					aggregate = 1.1
+				case "nan":
+					aggregate = math.NaN()
+				case "infinity":
+					aggregate = math.Inf(1)
+				case "unscored-with-value":
+					value.Complete = false
+					value.Errors = []string{"judge failed"}
+				}
+				change := evaluationChange(t, scenario, value)
+				if err := scenario.store.Transact(scenario.ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }); err == nil {
+					t.Fatalf("accepted %s aggregate", mode)
+				}
+				trial, err := scenario.store.GetTrial(scenario.ctx, scenario.trial.ID)
+				if err != nil || trial.EvaluationID != "" {
+					t.Fatal("rejected aggregate changed trial")
+				}
+			})
+		}
+	})
 	t.Run("EvaluationPlanMustMatchFrozenExperiment", func(t *testing.T) {
 		for _, mode := range []string{"missing", "reference", "case", "scorer", "criteria", "required"} {
 			t.Run(mode, func(t *testing.T) {
@@ -145,6 +195,7 @@ func evaluations(t *testing.T, factory Factory) {
 	t.Run("IncompleteEvaluationRetainsErrorsWithoutZeroScore", func(t *testing.T) {
 		scenario, value := evaluatedTrial(t, factory)
 		value.Complete = false
+		value.Score = nil
 		value.Criteria[0].Score = nil
 		value.Criteria[0].Passed = false
 		value.Criteria[0].Error = "judge unavailable"
@@ -152,7 +203,7 @@ func evaluations(t *testing.T, factory Factory) {
 		change := evaluationChange(t, scenario, value)
 		commitTrialChange(scenario.ctx, t, scenario.store, change)
 		got, err := scenario.store.GetEvaluation(scenario.ctx, value.ID)
-		if err != nil || got.Complete || got.Criteria[0].Score != nil || len(got.Errors) != 1 {
+		if err != nil || got.Complete || got.Score != nil || got.Criteria[0].Score != nil || len(got.Errors) != 1 {
 			t.Fatalf("incomplete evidence became zero: %+v %v", got, err)
 		}
 	})
@@ -196,7 +247,12 @@ func evaluatedTrial(t *testing.T, factory Factory) (trialScenario, optimization.
 func evaluationFor(scenario trialScenario, record optimization.ExecutionRecord) optimization.Evaluation {
 	zero := 0.0
 	plan := scenario.bundle.Experiment.EvaluationPlan
-	return optimization.Evaluation{ID: "job-1", ReportID: "report-1", ExperimentID: scenario.bundle.Experiment.ID, TrialID: scenario.trial.ID, CaseID: scenario.trial.CaseID, CaseDigest: scenario.trial.CaseDigest, Repetition: scenario.trial.Repetition, PlanDigest: plan.Ref.Digest, ExecutionDigest: record.Digest, Scorers: plan.Scorers, Criteria: []optimization.CriterionValue{{ID: "quality", Score: &zero}}, Complete: true, JudgeUsage: optimization.Usage{Tokens: 3, TokenQuality: optimization.UsageKnown}, StartedAt: record.CompletedAt, CompletedAt: record.CompletedAt.Add(time.Millisecond)}
+	criteria := make([]optimization.CriterionValue, 0, len(plan.Criteria))
+	for _, definition := range plan.Criteria {
+		score := 0.0
+		criteria = append(criteria, optimization.CriterionValue{ID: definition.ID, Required: definition.Required, Score: &score})
+	}
+	return optimization.Evaluation{ID: "job-1", ReportID: "report-1", ExperimentID: scenario.bundle.Experiment.ID, TrialID: scenario.trial.ID, CaseID: scenario.trial.CaseID, CaseDigest: scenario.trial.CaseDigest, Repetition: scenario.trial.Repetition, PlanDigest: plan.Ref.Digest, ExecutionDigest: record.Digest, Scorers: plan.Scorers, Score: &zero, Criteria: criteria, Complete: true, JudgeUsage: optimization.Usage{Tokens: 3, TokenQuality: optimization.UsageKnown}, StartedAt: record.CompletedAt, CompletedAt: record.CompletedAt.Add(time.Millisecond)}
 }
 
 func evaluationChange(t *testing.T, s trialScenario, value optimization.Evaluation) optimization.Transition {

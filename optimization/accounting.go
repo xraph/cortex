@@ -48,6 +48,7 @@ type UsageReservation struct {
 
 // Reservation records an upper-bound debit until authoritative settlement.
 type Reservation struct {
+	Call             *UsageCall        `json:"call,omitempty"`
 	Request          UsageReservation  `json:"request"`
 	State            ReservationState  `json:"state"`
 	Revision         int64             `json:"revision"`
@@ -56,6 +57,22 @@ type Reservation struct {
 	DebitedTokens    int64             `json:"debited_tokens"`
 	DebitedUSDMicros int64             `json:"debited_usd_micros"`
 	CreatedAt        time.Time         `json:"created_at"`
+}
+
+// UsageCall records that a provider operation may have started. It is written
+// before dispatch and never grants a second dispatch after an unknown outcome.
+type UsageCall struct {
+	RequestDigest string    `json:"request_digest"`
+	StartedAt     time.Time `json:"started_at"`
+	Lease         WorkLease `json:"lease"`
+}
+
+// Validate checks the immutable request binding and durable dispatch authority.
+func (call UsageCall) Validate() error {
+	if !validDigest(call.RequestDigest) || call.StartedAt.IsZero() || call.Lease.Generation < 1 || !ValidOpaqueKey(call.Lease.Owner) {
+		return ErrInvalidSpec
+	}
+	return nil
 }
 
 // UsageSettlement is idempotent by receipt and never hides observed overruns.

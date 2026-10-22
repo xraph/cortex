@@ -188,6 +188,12 @@ const overlayAgentScopeUniqueIndexName = "cortex_overlays_agent_scope_unique"
 // CreateMany).
 func migrationIndexes() map[string][]mongo.IndexModel {
 	return map[string][]mongo.IndexModel{
+		colAssurance: {
+			{Keys: bson.D{{Key: "kind", Value: 1}, {Key: "scope_canon", Value: 1}, {Key: "id", Value: 1}}, Options: options.Index().SetUnique(true).SetName("assurance_identity")},
+			{Keys: bson.D{{Key: "kind", Value: 1}, {Key: "scope_canon", Value: 1}, {Key: "run_id", Value: 1}, {Key: "id", Value: 1}}},
+			{Keys: bson.D{{Key: "kind", Value: 1}, {Key: "scope_canon", Value: 1}, {Key: "digest", Value: 1}}},
+			scopeIndex,
+		},
 		colAgents: {
 			// Partial (scope_canon $ne "") for the same reason as the
 			// postgres/sqlite equivalent: Store.Migrate applies this
