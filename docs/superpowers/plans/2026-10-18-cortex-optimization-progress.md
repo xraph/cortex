@@ -741,3 +741,25 @@ module builds passed with both dependencies. The scoped `make f` target and
 all-module `make l` passed, with zero lint issues across ten modules. Persistence
 implementations did not change in this packet; their database suites were not
 rerun.
+
+## Frozen token pricing
+
+`TokenPricing` implements the pricing port with host-approved input, output and
+fixed request rates. Quotes require the exact model, model revision and pricing
+revision. Each token category rounds upward to whole USD micro-units before the
+fixed charge is added. Intermediate arithmetic is exact, and an overflowing
+result returns no quote. Zero rates are explicit estimates rather than receipts.
+
+Tests first failed on the missing adapter. A separate fractional-rate regression
+then caught combined rounding that could under-reserve when input and output
+are rounded separately. Tests also cover invalid rates, mismatched revisions,
+negative counts, cancellation, large intermediate values and final overflow.
+
+The host still supplies rates that cover its provider's billable categories and
+a token estimator for the actual request. Controller integration and the remaining
+Task 5 work are unchanged. No phase is complete.
+
+Verification: scoped `make f` and all-module `make l` passed. The full optimizer
+root-package race suite passed against current Cortex (2.261s) and published
+v1.8.0 (1.940s), and both full-module builds passed. The model-wrapper commit
+`016e4ac` also passed CI. Database implementations were unchanged by pricing.

@@ -70,6 +70,16 @@ The wrapper is available for model and judge calls. Controller and judge wiring,
 the concrete estimator and pricing adapters, and tool accounting remain open.
 Late receipts after the worker loses its running lease also need a recovery path.
 
+`NewTokenPricing` supplies the `Pricing` port for a fixed model and price revision.
+You provide approved input and output rates in USD micro-units per million tokens,
+plus a fixed request charge. Each token category rounds upward independently.
+Arithmetic is exact, and a quote that exceeds the ledger's integer range fails.
+Explicit zero rates are supported. Quotes remain estimates, including zero quotes.
+
+Use rates that bound every charge your provider can incur for that request. If
+token rates and a fixed fee cannot cover its billing model, supply another
+`Pricing` implementation. This adapter does not fetch prices or count tokens.
+
 ## Artifact lifecycle
 
 See [artifact lifecycle](artifacts/README.md) for retained reads, deletion receipts
