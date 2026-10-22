@@ -80,13 +80,13 @@ func (b *Broker) Handler(authenticate Authenticator) http.Handler {
 		if err != nil {
 			status := http.StatusServiceUnavailable
 			switch {
-			case errors.Is(err, ErrNotFound):
+			case err == ErrNotFound: //nolint:errorlint // Wrapped or joined failures do not confirm absence.
 				status = http.StatusNotFound
 			case errors.Is(err, ErrDenied):
 				status = http.StatusForbidden
 			case errors.Is(err, ErrConflict):
 				status = http.StatusConflict
-			case errors.Is(err, ErrPending):
+			case err == ErrPending: //nolint:errorlint // A joined runtime failure must remain unavailable.
 				status = http.StatusAccepted
 			}
 			// Do not publish runtime paths, credentials or backend errors.

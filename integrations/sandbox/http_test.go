@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,5 +60,54 @@ func TestReceiptTamperingRejected(t *testing.T) {
 	}
 	if _, err = broker.NewClient("http://localhost", http.DefaultClient, make(ed25519.PublicKey, ed25519.PublicKeySize)); err == nil {
 		t.Fatal("plaintext transport accepted")
+	}
+}
+
+func TestHTTPPreservesUncertainRuntimeObservations(t *testing.T) {
+	for _, operation := range []string{"inspect-absent", "cancel-absent", "inspect-pending"} {
+		t.Run(operation, func(t *testing.T) {
+			previous, runtime, cfg, ctx := setup(t)
+			if err := previous.Close(); err != nil {
+				t.Fatal(err)
+			}
+			failure := errors.New("private containment failure")
+			adapter := &absenceRuntime{fixtureRuntime: runtime, inspectErr: errors.Join(broker.ErrNotFound, failure), cancelErr: broker.ErrNotFound}
+			if operation == "cancel-absent" {
+				adapter.inspectErr = broker.ErrNotFound
+				adapter.cancelErr = errors.Join(broker.ErrNotFound, failure)
+			}
+			if operation == "inspect-pending" {
+				adapter.inspectErr = errors.Join(broker.ErrPending, failure)
+			}
+			cfg.Runtime = adapter
+			instance, err := broker.Open(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer instance.Close()
+			runtime.startAbsent, runtime.startErr = true, errors.New("lost start acknowledgement")
+			task := job(t)
+			if _, err = instance.Submit(ctx, task); err == nil {
+				t.Fatal("ambiguous start acknowledged")
+			}
+			server := httptest.NewTLSServer(instance.Handler(func(*http.Request) (broker.Identity, error) { return identity(), nil }))
+			defer server.Close()
+			method, path := http.MethodGet, "/v1/jobs/"+task.ID.String()
+			if operation == "cancel-absent" {
+				method, path = http.MethodPost, path+"/cancel"
+			}
+			request, err := http.NewRequestWithContext(t.Context(), method, server.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusServiceUnavailable {
+				t.Fatal("runtime failure became an authoritative observation", response.StatusCode)
+			}
+		})
 	}
 }

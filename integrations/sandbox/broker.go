@@ -23,6 +23,8 @@ import (
 // is permitted. Start receives the signed original acceptance, including its
 // deadline and runtime binding. Verify it against the configured broker key;
 // retries must never reset AcceptedAt. Qualification belongs to the adapter.
+// Inspect and Cancel may return bare ErrNotFound only for confirmed absence;
+// wrapped or joined errors never establish a safe before-start cancellation.
 type Runtime interface {
 	Capabilities(context.Context) (sandbox.Capabilities, error)
 	Start(context.Context, sandbox.Receipt) error
@@ -492,7 +494,7 @@ func VerifyResult(result sandbox.Result, j sandbox.Job, key ed25519.PublicKey) e
 
 func (b *Broker) stop(ctx context.Context, rec *record) error {
 	err := b.cfg.Runtime.Cancel(ctx, rec.Status.Receipt.Job.ID)
-	if errors.Is(err, ErrNotFound) && rec.Status.State == sandbox.StateAccepted {
+	if err == ErrNotFound && rec.Status.State == sandbox.StateAccepted { //nolint:errorlint // Only an unqualified absence observation can acknowledge cancellation.
 		return ctx.Err()
 	}
 	return err
@@ -502,7 +504,7 @@ func (b *Broker) observe(ctx context.Context, rec *record) (*sandbox.Result, err
 	if err == ErrPending && rec.Status.State == sandbox.StateAccepted && !rec.Cancelling { //nolint:errorlint // A joined runtime failure is not a pending-only observation.
 		return nil, ctx.Err()
 	}
-	if errors.Is(err, ErrNotFound) && rec.Status.State == sandbox.StateAccepted {
+	if err == ErrNotFound && rec.Status.State == sandbox.StateAccepted { //nolint:errorlint // Joined cleanup or observation failures cannot establish absence.
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

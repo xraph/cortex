@@ -1117,3 +1117,29 @@ passed, including the full service suite in 48.572s. The arm64 Linux daemon suit
 passed ten repetitions without skips, including the production private endpoint,
 ambient-root denial, joined shutdown and endpoint ownership release. Runtime
 adapter commit 49963bc also passed CI.
+
+## S2.4 uncertain absence handling
+
+A failure-path audit found that errors.Is could turn ErrNotFound joined with a
+cleanup or observation error into confirmed absence. Four new cases failed before
+the fix: inspection, cancellation, collection after cancellation intent, and
+supervisor reconciliation. Cancellation could otherwise persist a terminal result
+without proof that containment was stopped.
+
+The broker now requires bare ErrNotFound for the special before-start absence
+path. Wrapped and joined errors remain failures. Repeated collection under the
+same fault cannot return a cached terminal result. Existing confirmed-absence
+cancellation remains supported. This does not change the outstanding deployment
+and live-qualification gates.
+
+TLS round-trip regression tests then exposed the same ambiguity in HTTP status
+mapping. Joined absence failures returned 404 and joined pending failures returned
+202. The handler now maps only bare observation sentinels to those statuses;
+uncertain wrapped/joined observations return 503 without exposing backend details.
+
+Validation: the broker and service race suites passed after the journal fix
+(service 52.407s). After the HTTP correction, focused transport/absence races
+passed three repetitions and the complete broker race suite passed in 2.207s.
+Scoped make f, final make l across all ten modules and the Linux amd64 build
+passed. Confirmed-absence cancellation and ordinary TLS client round trips
+remain covered.

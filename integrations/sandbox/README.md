@@ -996,3 +996,11 @@ behavior. Linux kernel fixtures also exercise the production endpoint and privat
 transport, including ambient-root denial. Host installation, provider assembly,
 public TLS server configuration, orphan discovery and live systemd/runsc
 qualification remain required.
+
+Runtime absence is a positive observation. Return bare `ErrNotFound` only after
+confirming that identity is absent and cannot execute later. The broker preserves
+wrapped or joined errors, including `ErrNotFound` joined with a cleanup failure.
+Those errors cannot produce a successful cancellation or a retained result.
+The HTTP adapter also preserves that distinction: wrapped or joined absence and
+pending errors return 503, rather than 404 or 202, so remote clients cannot lose
+the accompanying runtime failure.
