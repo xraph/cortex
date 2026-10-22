@@ -955,3 +955,35 @@ Scoped `make f`, final root `make l` across all ten modules and Linux tagged lin
 passed. The earlier full lint runs caught in-progress optimizer changes, which
 its owner resolved before the final pass. Independent full-plan review and live
 runtime qualification remain outstanding.
+
+
+## S2.4 worker executable
+
+The sandbox module now builds cmd/cortex-sandbox-worker for Linux arm64 and amd64.
+The entry point accepts the exact installed template arguments, validates job
+identity and canonical paths, reads systemd's credential-directory setting, and
+calls the existing bootstrap and worker coordinator once. It adds no execution
+fallback. Signals cancel the same context, and uncertain completion is not retried.
+
+Command tests first failed for the missing implementation. They cover malformed
+and duplicate arguments, extra commands, wrong ID prefixes, unsafe paths, missing
+assembly, failed bootstrap, nil sessions, cancellation before and during execution,
+and an uncertain report. The executable emits no diagnostic errors or content.
+A zero exit status means coordinator success, not task success or finalization.
+
+Linux command fixtures passed ten repetitions. The built arm64 executable refused
+missing arguments and an ambient-root launch with exit 1 and empty output. The
+previous fixture image was no longer available; these checks used the installed
+arm64 image sha256:1bcc18d81671b02906296aad470ec9778a6b71016ce953092024b680bad007b0
+with its entry point replaced, networking disabled, all capabilities dropped and
+a read-only filesystem. No database service was started.
+
+These fixtures do not exercise an installed systemd worker or runsc. Daemon
+assembly, installation, broker runtime integration, independent recovery and live
+Linux qualification remain open. S2.4 and G2 are incomplete.
+
+Validation: command and service race suites passed. An initial macOS command also
+named the Linux-only worker package and failed package selection; the corrected
+command covered the host-supported packages, while Linux command fixtures exercised
+the executable assembly. Both Linux binary builds, scoped make f, root make l
+across all ten modules and Linux lint with qualification/peer/mount tags passed.

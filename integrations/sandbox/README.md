@@ -626,9 +626,9 @@ between zero (exclusive) and 24 hours. The worker session supplies the
 authenticated capture journal through its private daemon connection.
 Zero disables capture. A job requesting capture is refused before execution if
 these services are unavailable. Authorized release remains a separate host
-operation. Source adapters, executable worker/daemon installation, broker runtime
-activation, retained-file recovery, production repository integration and live qualification remain
-open. The Linux staging fixture uses real image/input verification, bundle writes
+operation. Executable worker/daemon installation, broker runtime activation,
+retained-file recovery, production repository integration and live qualification
+remain open. The Linux staging fixture uses real image/input verification, bundle writes
 and artifact capture with an explicit test executor and workspace. It does not
 attest to runtime isolation.
 
@@ -842,6 +842,30 @@ A report or another content operation cannot overlap an active reader.
 The worker pipeline takes its image source from this session and checks the signed
 job's image pin before staging. Installed provider configuration remains open.
 These transport tests do not qualify a live systemd/runsc deployment.
+
+## Worker executable
+
+Build the worker from this module for your Linux architecture:
+
+```sh
+GOWORK=off GOOS=linux GOARCH=arm64 go build -o cortex-sandbox-worker ./cmd/cortex-sandbox-worker
+```
+
+Use `GOARCH=amd64` for an amd64 host. Pin the resulting executable in the worker
+configuration before rendering the service template. The command accepts only
+that template's `--job <id> --config <absolute-path>` invocation and obtains its
+credential directory from systemd's `CREDENTIALS_DIRECTORY` environment variable.
+It authenticates through `BootstrapWorker`, then calls `worker.Run` once.
+
+SIGTERM and interrupt cancel the existing operation. Failed startup, cancellation
+or an uncertain report returns exit code 1 without replaying execution. Exit code
+0 means the coordinator returned successfully; it does not prove result
+finalization or that the evaluated task passed. No errors or captured content are
+printed by the command. Broker state remains the inspection path.
+
+The non-Linux executable exits with code 1. Installing the pinned binary,
+configuration and service template still requires a host deployment. Daemon
+assembly and live runtime qualification remain open.
 
 ## Linux probe suite
 
