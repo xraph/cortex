@@ -1016,3 +1016,35 @@ and the Linux build passed. The complete service race suite passed in 63.443s
 under shared-host load; endpoint race tests passed ten repetitions. The final
 Linux endpoint suite also passed ten repetitions without skips, including a
 replacement-socket cleanup refusal and two normal daemon lifetimes.
+
+
+## S2.4 recorded control-socket recovery
+
+ServeAt now persists socket ownership in its protected, exclusively locked file
+before serving. The canonical record binds the path, device/inode, owner/group,
+mode, link count and change timestamp. Both record and directory are synchronized.
+Permission changes use the retained directory descriptor.
+
+On restart, the daemon accepts only an exact metadata match. It probes the Unix
+socket without sending a request and reclaims it only after an explicit kernel
+connection refusal. Identity is checked again before descriptor-relative removal.
+A live listener, uncertain liveness, replacement or malformed record blocks
+recovery. Old empty lock files remain usable when the endpoint is absent, but do
+not authorize deletion of a stale socket.
+
+The initial tests failed for the absent recovery record. A subprocess fixture now
+creates an endpoint and exits without cleanup; its parent then recovers the socket.
+Other tests preserve a retained live listener, replacement socket, changed mode,
+forged inode and malformed/duplicate/oversized/unknown record fields. Metadata
+mutation tests include nanosecond timestamp, device, ownership and link count.
+
+A crash before the ownership record reaches durable storage can leave an unknown
+socket requiring operator inspection. Automatic recovery does not infer ownership
+from a filename. Installed daemon assembly, provider configuration, broker runtime
+integration and live Linux qualification remain open. S2.4 remains incomplete.
+
+Validation: scoped make f, all-module make l, Linux tagged lint and the Linux
+amd64 build passed. The full service race suite passed in 22.280s, followed by
+focused recovery races after the portable metadata conversion. The final Linux
+arm64 recovery and endpoint suites passed ten repetitions without skips,
+including the child-process crash and retained-listener refusal cases.

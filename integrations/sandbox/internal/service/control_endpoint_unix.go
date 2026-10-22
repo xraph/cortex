@@ -28,8 +28,8 @@ type controlEndpoint struct {
 
 // ServeAt creates and owns the private worker socket for this daemon lifetime.
 // The host must precreate its root-owned 0700 directory and prevent owner mutation.
-// An existing socket, including one left by a crash, is refused for independent
-// recovery. Shutdown joins the handlers before removing only this socket's inode.
+// A stale socket is reclaimed only with matching durable identity and an explicit
+// kernel connection refusal. Shutdown joins handlers before removing its inode.
 // The persistent lock file must not be removed while any daemon may be running.
 func (s *WorkerControl) ServeAt(ctx context.Context, path string) (err error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
@@ -90,11 +90,8 @@ func openControlEndpoint(ctx context.Context, path string, owner uint32) (endpoi
 	if !sameControlInode(lock, bound) {
 		return endpoint, fmt.Errorf("cortex: worker control lock changed")
 	}
-	if err = unix.Fstatat(int(directory.Fd()), endpoint.name, &bound, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
-		if err == nil {
-			err = fmt.Errorf("cortex: worker control endpoint already exists; recovery required")
-		}
-		return endpoint, err
+	if recoveryErr := endpoint.recoverSocket(ctx, path, owner); recoveryErr != nil {
+		return endpoint, recoveryErr
 	}
 	endpoint.listener, err = net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
@@ -108,11 +105,14 @@ func openControlEndpoint(ctx context.Context, path string, owner uint32) (endpoi
 		endpoint.socket = unix.Stat_t{}
 		return endpoint, fmt.Errorf("cortex: worker control socket changed")
 	}
-	if checkErr := os.Chmod(path, 0o600); checkErr != nil {
+	if checkErr := unix.Fchmodat(int(directory.Fd()), endpoint.name, 0o600, unix.AT_SYMLINK_NOFOLLOW); checkErr != nil {
 		return endpoint, checkErr
 	}
 	if checkErr := inspectControlSocket(path, owner); checkErr != nil {
 		return endpoint, checkErr
+	}
+	if recordErr := endpoint.recordSocket(path); recordErr != nil {
+		return endpoint, recordErr
 	}
 	return endpoint, ctx.Err()
 }

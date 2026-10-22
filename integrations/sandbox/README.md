@@ -384,17 +384,26 @@ socket path for the host's cleanup. Keep the directory stable and outside guest
 mounts.
 
 You can use `ServeAt` to let the daemon create its socket in an existing private
-directory. It acquires an exclusive lock on `<socket>.lock`, refuses any existing
-endpoint, then creates the socket with mode `0600`. Shutdown joins the transport
+directory. It acquires an exclusive lock on `<socket>.lock`, checks any existing
+endpoint against its durable ownership record, then creates the socket with mode
+`0600`. Shutdown joins the transport
 handlers before removing the socket through the retained directory descriptor.
 Removal requires the same device, inode, owner and socket type. A replacement is
 left untouched and cleanup reports an error. Normal shutdown permits a later
 daemon to bind the path again.
 
 Keep the lock file in place. Removing or replacing it while a daemon runs would
-break exclusive ownership. A stale socket after a crash is refused pending
-independent recovery; the daemon does not infer ownership from its filename.
-Crash recovery and executable daemon wiring remain open.
+break exclusive ownership. Before serving, the daemon synchronizes a bounded
+canonical ownership record and its directory. The record binds the endpoint path,
+device, inode, owner/group, mode, link count and nanosecond change timestamp.
+
+After a crash, recovery requires that exact metadata and a kernel connection
+refusal. A live listener, a timeout, a changed socket or a missing/corrupt record
+prevents removal. Recovery rechecks identity after the liveness probe and unlinks
+through the retained directory descriptor. A crash before ownership persistence
+can leave an unrecorded socket requiring operator inspection. This intentionally
+blocks startup rather than deleting an unknown endpoint. Executable daemon wiring
+and live runtime qualification remain open.
 
 Set `ControlLimits` explicitly: one to 64 accepted connections, with a total
 exchange timeout between 10ms and 30 seconds. An authorization connection carries
