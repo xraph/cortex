@@ -499,6 +499,9 @@ func (b *Broker) stop(ctx context.Context, rec *record) error {
 }
 func (b *Broker) observe(ctx context.Context, rec *record) (*sandbox.Result, error) {
 	result, err := b.cfg.Runtime.Inspect(ctx, rec.Status.Receipt.Job.ID)
+	if err == ErrPending && rec.Status.State == sandbox.StateAccepted && !rec.Cancelling { //nolint:errorlint // A joined runtime failure is not a pending-only observation.
+		return nil, ctx.Err()
+	}
 	if errors.Is(err, ErrNotFound) && rec.Status.State == sandbox.StateAccepted {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

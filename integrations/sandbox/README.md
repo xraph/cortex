@@ -965,3 +965,34 @@ principal denial, missing-record cancellation, proposal withholding, journal
 failure and shutdown. These use controlled service-manager fixtures. Installed
 daemon assembly, provider configuration and live systemd/runsc qualification
 remain open.
+
+### Daemon lifecycle
+
+`service.NewDaemon` joins prepared controller and content services with the broker
+journal. Supply an unused controller and its worker control transport, a private
+socket path, current deployment attestation and broker configuration. The signing
+key must be valid and match the identity pinned in the worker journal. The daemon
+supplies the runtime adapter and refuses a separate runtime override.
+
+`Run` acquires the broker journal and socket before starting recovery. It waits
+for controller recovery and private transport readiness, reconciles retained broker
+state, then calls your public server. Use the existing TLS-only `Broker.Handler`
+with host authentication. Your server must honor its context, close its listener
+and join requests before returning. Do not retain the broker after that call.
+
+Any child exit cancels the shared lifetime immediately. Reconciliation errors
+also stop the daemon. Shutdown joins public serving, worker transport and
+controller recovery before releasing the socket and broker journal. Errors from
+cleanup remain in the returned error. You still own the worker journal, reaper
+and providers; close them after `Run` returns. A daemon cannot be restarted in
+place.
+
+An unclaimed worker acceptance remains pending during reconciliation. That state
+does not report execution or completed cancellation. A pending error joined with
+another runtime failure still fails reconciliation.
+
+The lifecycle tests use real journals and sockets with controlled service-manager
+behavior. Linux kernel fixtures also exercise the production endpoint and private
+transport, including ambient-root denial. Host installation, provider assembly,
+public TLS server configuration, orphan discovery and live systemd/runsc
+qualification remain required.

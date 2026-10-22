@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex/id"
 	broker "github.com/xraph/cortex/integrations/sandbox"
@@ -163,5 +164,28 @@ func TestRuntimeBrokerCancellationBeforeEnrollmentRequiresFence(t *testing.T) {
 	}
 	if err = broker.VerifyResult(result, job, instance.PublicKey()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRuntimeBrokerReconcilesUnclaimedAcceptanceAsPending(t *testing.T) {
+	instance, _, controller, job, ctx := runtimeBrokerFixture(t)
+	unavailable := errors.New("service admission temporarily unavailable")
+	controller.launcher.preflight = func(context.Context, LaunchProfile, id.ID) error { return unavailable }
+	if _, err := instance.Submit(ctx, job); !errors.Is(err, unavailable) {
+		t.Fatal(err)
+	}
+	if err := instance.Reconcile(t.Context(), time.Now()); err != nil {
+		t.Fatal("pending acceptance stopped reconciliation", err)
+	}
+	status, err := instance.Inspect(ctx, job.ID)
+	if err != nil || status.State != sandbox.StateAccepted {
+		t.Fatalf("unclaimed acceptance changed state: %+v %v", status, err)
+	}
+	if err = instance.Cancel(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := instance.Collect(ctx, job.ID)
+	if err != nil || result.State != sandbox.StateCancelled {
+		t.Fatal("pending cancellation failed", err)
 	}
 }

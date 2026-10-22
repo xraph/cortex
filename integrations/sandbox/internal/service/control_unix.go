@@ -119,6 +119,10 @@ func NewWorkerControl(controller *Controller, limits ControlLimits, services ...
 // recovery; shutdown closes the listener, cancels and joins every exchange.
 // The trusted directory owner must prevent replacement while serving.
 func (s *WorkerControl) Serve(ctx context.Context, listener *net.UnixListener) error {
+	return s.serveOwned(ctx, listener, nil)
+}
+
+func (s *WorkerControl) serveOwned(ctx context.Context, listener *net.UnixListener, ready func()) error {
 	if listener == nil {
 		return fmt.Errorf("cortex: missing worker control listener")
 	}
@@ -135,10 +139,14 @@ func (s *WorkerControl) Serve(ctx context.Context, listener *net.UnixListener) e
 		return err
 	}
 	defer finish()
-	return s.serve(operation, listener)
+	return s.serveWithReady(operation, listener, ready)
 }
 
 func (s *WorkerControl) serve(ctx context.Context, listener *net.UnixListener) error {
+	return s.serveWithReady(ctx, listener, nil)
+}
+
+func (s *WorkerControl) serveWithReady(ctx context.Context, listener *net.UnixListener, ready func()) error {
 	if listener == nil || s.authorize == nil || (s.limits.Reports > 0 && s.beginReport == nil) {
 		return fmt.Errorf("cortex: incomplete worker control transport")
 	}
@@ -157,6 +165,12 @@ func (s *WorkerControl) serve(ctx context.Context, listener *net.UnixListener) e
 	stop := context.AfterFunc(lifetime, func() { _ = listener.Close() })
 	var handlers sync.WaitGroup
 	defer func() { cancel(); _ = listener.Close(); stop(); handlers.Wait() }()
+	if err := lifetime.Err(); err != nil {
+		return err
+	}
+	if ready != nil {
+		ready()
+	}
 	slots := make(chan struct{}, s.limits.Connections)
 	for {
 		select {

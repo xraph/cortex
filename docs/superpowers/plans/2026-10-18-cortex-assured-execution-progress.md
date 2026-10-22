@@ -1080,3 +1080,40 @@ passed; the final service run took 33.125s. Linux tagged lint and the amd64 buil
 passed. The arm64 Linux runtime and broker fixture suite passed ten repetitions
 without skips. This validates the adapter against controlled manager behavior,
 not a live systemd/runsc worker.
+
+## S2.4 daemon lifecycle assembly
+
+The daemon now owns a broker lifetime and private worker endpoint around prepared
+controller/content services. Construction checks the signing key and worker-journal
+broker identity, binds the runtime adapter and rejects reused or mismatched
+components. Startup acquires exclusive journal and endpoint ownership, recovers
+workers, waits for private transport readiness and reconciles the broker before
+calling the public server.
+
+A child exit cancels the shared context immediately. Shutdown joins public serving,
+worker exchanges and controller recovery before releasing the socket and broker
+journal. Cleanup errors remain visible. The host owns transport authentication,
+request shutdown, prepared providers, worker journal and reaper lifetimes.
+
+Tests first failed for the missing daemon and transport readiness signal. Broker
+integration exposed a pending-acceptance mismatch: an unclaimed acceptance now
+remains pending during reconciliation, while joined runtime failures still fail.
+Additional failing tests established rejection of reused components and a broker
+identity that differs from the worker journal.
+
+Coverage includes startup failures, cancellation during private startup, old-claim
+recovery before public admission, unexpected public/private exits, unresolved
+shutdown cleanup, signed broker results and endpoint/journal release. Linux kernel
+fixtures use production endpoint and transport code with ambient-root denial.
+They do not exercise a live systemd worker or runsc.
+
+Installed configuration/provider assembly, a bounded public TLS server, independent
+orphan discovery, retained-file cleanup and live qualification remain open. The
+four-stage plan and S2.4 remain incomplete.
+
+Validation: scoped make f, final make l across all ten modules, Linux tagged lint
+and the Linux amd64 build passed. Broker, service and worker-journal race suites
+passed, including the full service suite in 48.572s. The arm64 Linux daemon suite
+passed ten repetitions without skips, including the production private endpoint,
+ambient-root denial, joined shutdown and endpoint ownership release. Runtime
+adapter commit 49963bc also passed CI.

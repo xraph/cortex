@@ -203,6 +203,15 @@ func (s *Store) Close() error {
 	return s.journal.Close()
 }
 
+// CheckBroker binds daemon assembly to the journal's pinned broker identity.
+// It reads immutable configuration and does not grant execution or user access.
+func (s *Store) CheckBroker(name string, key ed25519.PublicKey) error {
+	if s == nil || name != s.cfg.Broker || len(key) != ed25519.PublicKeySize || !bytes.Equal(key, s.cfg.PublicKey) {
+		return ErrConflict
+	}
+	return nil
+}
+
 // Enroll persists the exact signed acceptance before a worker can claim it.
 // Identical retries return the original record, including terminal tombstones.
 func (s *Store) Enroll(ctx context.Context, receipt sandbox.Receipt) (Record, error) {
