@@ -30,7 +30,7 @@ type CapturePolicy func(context.Context, sandbox.Job, evidence.Action, evidence.
 // Controller owns launch admission and recovery for one daemon lifetime. Use
 // Launch through this controller exclusively after constructing it. The host
 // must not call its underlying launcher or scanner concurrently from elsewhere.
-// It does not expose a control transport or runtime adapter, or qualify Linux.
+// WorkerControl and Runtime share this lifetime. They do not qualify Linux.
 type Controller struct {
 	capturePolicy CapturePolicy
 	launcher      *Launcher

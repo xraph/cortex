@@ -1048,3 +1048,35 @@ amd64 build passed. The full service race suite passed in 22.280s, followed by
 focused recovery races after the portable metadata conversion. The final Linux
 arm64 recovery and endpoint suites passed ten repetitions without skips,
 including the child-process crash and retained-listener refusal cases.
+
+## S2.4 broker runtime connection
+
+The service runtime adapter now connects the broker's durable acceptance journal
+to the controller's worker journal. It rechecks a trusted deployment attestation
+before enrollment and preserves the original acceptance, claim and deadline.
+A shortened qualification window that cannot cover the accepted execution
+window rejects the start.
+
+Inspection withholds proposals until independent finalization. Cancellation
+persists intent before cleanup, preserves unresolved failures, and fences unknown
+service identities before allowing the broker to record cancellation before start.
+Journal failures still trigger a containment fence. Runtime operations join the
+controller lifetime and remain bounded to 30 seconds.
+
+Tests first failed for the missing adapter. A separate regression exposed and
+then verified the shortened-qualification check. Real broker and worker journals
+now exercise signed final results, broker restart, ambiguous launch recovery,
+foreign-principal denial and cancellation before enrollment. Other tests cover
+proposal withholding, forged receipts, detached output, cancellation retries,
+journal failure, missing identity masks and controller shutdown.
+
+The attestation callback is a trusted assembly boundary, not a completed live
+qualifier. Installed daemon assembly, providers, orphan discovery, retained-file
+cleanup and live systemd/runsc qualification remain open. S2.4 is incomplete.
+
+Validation: scoped make f and final make l across all ten modules passed after
+fixing four local lint findings. Broker, service and worker-journal race suites
+passed; the final service run took 33.125s. Linux tagged lint and the amd64 build
+passed. The arm64 Linux runtime and broker fixture suite passed ten repetitions
+without skips. This validates the adapter against controlled manager behavior,
+not a live systemd/runsc worker.

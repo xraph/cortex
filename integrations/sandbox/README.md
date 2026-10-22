@@ -936,3 +936,32 @@ fixture; it does not execute them or turn `compatibility.json` into a qualified
 manifest. Broker/worker crash recovery, external wall/output supervision, memory/CPU exhaustion,
 guest process exhaustion, deployed image pins and protected grading still need
 live acceptance checks.
+
+### Broker runtime adapter
+
+Use `service.NewRuntime(controller, attest)` to connect the broker to the worker
+controller. The attestation callback must check the installed worker, configuration
+and runtime against host-owned live qualification evidence. Missing qualification
+refuses execution. The adapter does not run qualification probes for you.
+
+Start rechecks the current runtime digest, profile, qualification identity, limits
+and qualification deadline before the launcher verifies the signed acceptance.
+A shorter qualification window cannot extend an existing job beyond current
+controls. The original acceptance and claim still govern retries.
+
+Inspection returns output only from a finalized journal record. Claimed work and
+pending cleanup report running with no proposal bytes; an unclaimed acceptance
+returns pending. Cancellation records intent before reaping. For a missing worker
+record, it masks and stops that service identity before reporting absence, so a
+late launch cannot cross completed cancellation. Cleanup errors remain unresolved.
+
+All four runtime operations join the controller lifetime and use a 30-second
+operation bound. Keep the adapter private to the authenticated broker and its
+supervisor. Recovery can inspect and cancel after grants expire; the broker still
+checks caller identity and current grants before exposing results.
+
+Tests cover broker restart, uncertain starts, signed result collection, foreign
+principal denial, missing-record cancellation, proposal withholding, journal
+failure and shutdown. These use controlled service-manager fixtures. Installed
+daemon assembly, provider configuration and live systemd/runsc qualification
+remain open.
