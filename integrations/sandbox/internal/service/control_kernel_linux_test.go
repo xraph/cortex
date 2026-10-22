@@ -314,3 +314,43 @@ func TestControlKernelImageServiceBindingAndAmbientRootDenial(t *testing.T) {
 		t.Fatal("ambient root reached image source")
 	}
 }
+
+func TestControlKernelOwnedEndpointJoinsAndAllowsRestart(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("owned endpoint fixture requires root")
+	}
+	controller, _, _ := controllerFixture(t)
+	cancelController, controllerDone := runController(t, controller)
+	defer func() { cancelController(); _ = awaitControllerStop(t, controllerDone) }()
+	awaitControllerReady(t, controller)
+	path := endpointPath(t)
+	for attempt := 0; attempt < 2; attempt++ {
+		server, err := NewWorkerControl(controller, ControlLimits{Connections: 2, Reports: 1, Timeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- server.ServeAt(ctx, path) }()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			err = AuthorizeAt(t.Context(), path, controlClaim())
+			if errors.Is(err, broker.ErrDenied) {
+				break
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				_ = awaitControllerStop(t, done)
+				t.Fatal("owned endpoint unavailable", err)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+		if err = awaitControllerStop(t, done); !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("owned endpoint retained after joined shutdown", err)
+		}
+	}
+}

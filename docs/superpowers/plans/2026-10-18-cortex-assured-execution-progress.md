@@ -987,3 +987,32 @@ named the Linux-only worker package and failed package selection; the corrected
 command covered the host-supported packages, while Linux command fixtures exercised
 the executable assembly. Both Linux binary builds, scoped make f, root make l
 across all ten modules and Linux lint with qualification/peer/mount tags passed.
+
+
+## S2.4 daemon-owned control endpoint
+
+WorkerControl.ServeAt now creates the private worker socket under an existing
+protected directory. It holds an exclusive persistent lock, refuses existing
+endpoints and verifies the socket's owner and mode before serving. The socket
+remains created by the daemon, preserving the existing kernel peer identity check.
+
+After the transport joins its handlers, cleanup uses the retained directory
+handle and recorded socket identity. It removes only the matching inode. Replaced
+files or sockets survive, with a cleanup error. Normal shutdown releases the lock
+and permits restart. Lock files remain in place across daemon lifetimes.
+
+Tests first failed for the missing endpoint implementation. They cover competing
+daemons, unsafe parent and lock permissions, aliases, cancellation, stale sockets,
+replacement paths, repeated Close and descriptor release. Linux fixtures use the
+real private client/server path, reject an ambient root worker, join shutdown and
+open the endpoint again. These fixtures passed ten repetitions.
+
+A stale socket after a crash still requires independent recovery. The private
+owner must prevent directory and lock-file replacement. Daemon assembly, durable
+crash recovery and live systemd/runsc qualification remain open; S2.4 is incomplete.
+
+Validation: scoped make f, root make l across all ten modules, Linux tagged lint
+and the Linux build passed. The complete service race suite passed in 63.443s
+under shared-host load; endpoint race tests passed ten repetitions. The final
+Linux endpoint suite also passed ten repetitions without skips, including a
+replacement-socket cleanup refusal and two normal daemon lifetimes.

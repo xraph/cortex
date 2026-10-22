@@ -379,9 +379,22 @@ Failed cleanup leaves the report pending for another recovery attempt.
 Use the internal `service.WorkerControl` to connect workers to the controller's
 authorization and report receipt methods. After controller recovery, pass it a
 Unix listener in a root-owned `0700` directory with a root-owned `0600` socket.
-It takes ownership of the listener, closes it on shutdown and leaves the socket
-path for the host's fenced cleanup. Keep that directory stable and outside guest mounts. Socket
-installation, restart cleanup and executable daemon wiring remain pending.
+`Serve` takes ownership of that listener, closes it on shutdown and leaves the
+socket path for the host's cleanup. Keep the directory stable and outside guest
+mounts.
+
+You can use `ServeAt` to let the daemon create its socket in an existing private
+directory. It acquires an exclusive lock on `<socket>.lock`, refuses any existing
+endpoint, then creates the socket with mode `0600`. Shutdown joins the transport
+handlers before removing the socket through the retained directory descriptor.
+Removal requires the same device, inode, owner and socket type. A replacement is
+left untouched and cleanup reports an error. Normal shutdown permits a later
+daemon to bind the path again.
+
+Keep the lock file in place. Removing or replacing it while a daemon runs would
+break exclusive ownership. A stale socket after a crash is refused pending
+independent recovery; the daemon does not infer ownership from its filename.
+Crash recovery and executable daemon wiring remain open.
 
 Set `ControlLimits` explicitly: one to 64 accepted connections, with a total
 exchange timeout between 10ms and 30 seconds. An authorization connection carries
