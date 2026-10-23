@@ -20,7 +20,6 @@ import (
 // newTestStore opens a migrated SQLite store backed by a temporary file.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	ctx := context.Background()
 	// WAL and a busy timeout are what let the conformance suite's
 	// concurrency cases assert what they mean to assert.
 	//
@@ -37,6 +36,12 @@ func newTestStore(t *testing.T) *Store {
 	// dispatcher writes while runs write.
 	dsn := filepath.Join(t.TempDir(), "cortex_test.db") +
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	return openTestStore(t, dsn)
+}
+
+func openTestStore(t *testing.T, dsn string) *Store {
+	t.Helper()
+	ctx := context.Background()
 	drv := sqlitedriver.New()
 	if err := drv.Open(ctx, dsn); err != nil {
 		t.Fatalf("open sqlite driver: %v", err)

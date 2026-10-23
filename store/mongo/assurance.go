@@ -14,7 +14,10 @@ import (
 
 const colAssurance = "cortex_assurance_records"
 
-type assuranceDriver struct{ store *Store }
+type assuranceDriver struct {
+	store             *Store
+	resultTransaction bool
+}
 
 // Keep Mongo scope overflow in the same document form used by other collections.
 type assuranceDocument struct {
@@ -81,6 +84,22 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 			return nil, marshalErr
 		}
 		document.Record.ScopeExtra = string(extra)
+		if d.resultTransaction && query.Kind == assurance.KindEvidence {
+			// A real write makes concurrent tombstoning conflict with this transaction.
+			// Snapshot reads alone would allow a revoked artifact to be committed.
+			fence, fenceErr := assuranceFilter(ctx)
+			if fenceErr != nil {
+				return nil, fenceErr
+			}
+			fence["kind"], fence["id"], fence["body"] = assurance.KindEvidence, document.ID, document.Body
+			updated, updateErr := d.store.mdb.Collection(colAssurance).UpdateOne(ctx, fence, bson.M{"$inc": bson.M{"publication_fence": int64(1)}})
+			if updateErr != nil {
+				return nil, updateErr
+			}
+			if updated.MatchedCount != 1 {
+				return nil, assurance.ErrExists
+			}
+		}
 		records = append(records, document.Record)
 	}
 	return records, nil

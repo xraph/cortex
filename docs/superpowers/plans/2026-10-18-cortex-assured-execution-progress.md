@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Persisted run revisions, conditional writes and claim snapshots pass backend/runtime race checks; atomic result/report/event publication and verification gates remain open |
+| S2.2 | active | this chat | Run revisions and atomic result/metadata-outbox storage implemented; host authorization fencing, verification jobs, runtime gates and public event delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -1806,3 +1806,58 @@ claim-content regression also passed on all three backends after formatting.
 
 Atomic report consumption, result/outbox publication and runtime verification
 activation remain open. S2.2 and the full plan are incomplete.
+
+
+### S2.2 atomic result storage
+
+Run revision commit `6ca32fe` passed CI run `39905046212`.
+
+Built-in stores now expose optional `verification.CommitStore`. You supply a
+trusted current binding, expected run revision, saved contract ID and saved
+report IDs. The store consumes those records, validates retained evidence bytes,
+compares the candidate with saved run output and requires every required check
+to pass. The saved run must be completed with a final answer, pending verification
+and the same prepared digest and acceptance contract.
+
+The receipt, metadata-only outbox and run update share one transaction. The run
+revision advances once. Same-request retries return the original historical
+receipt and stable event ID, including after evidence is later revoked. Reusing
+the result ID with changed input fails. The outbox contains typed identifiers and
+a binding digest, with no candidate text, principal or source URI. It has no public
+stream sequence; public event replay and dispatch remain S2.6 work.
+
+SQLite acquires its write lock before reading. PostgreSQL locks the exact run and
+holds assurance row locks until commit. MongoDB uses snapshot transactions with
+majority writes and an internal evidence write fence, so revocation after the
+initial snapshot forces a retry and recheck. Standalone MongoDB returns
+`ErrResultCommitUnavailable`; there is no partial-write fallback. Request and
+receipt encodings are bounded to one MiB, with at most 256 report IDs and eight
+MiB of combined report JSON and evidence bytes processed per attempt.
+
+This is a trusted storage boundary. You must hold the host's current authorization
+and revision fence while calling it. The database cannot establish freshness in
+an external service, and `ObservedAt` records the validation observation rather
+than a promise of freshness at physical commit or later delivery. Runtime
+integration must supply that host guard before enabling verified publication.
+Existing engines and transports do not call this operation yet.
+
+TDD first failed on the missing capability, then on the absent transaction.
+Shared tests cover exact receipt identity, conflicting retries, scope and
+cancellation denial, stale authority/policy/source bindings, unknown or duplicate
+reports, failed and expired reports, changed output and run revisions, revoked
+evidence and concurrent commits with one winner. Real transaction tests inject
+failure after both writes and assert complete rollback. PostgreSQL and MongoDB
+also reject revocation between initial reads and evidence validation. A real
+standalone MongoDB fixture confirms the explicit unsupported error. SQLite
+reopen coverage checks receipt recovery and retry after a lost acknowledgement.
+
+Validation passed: scoped make f (store and verification), exact root-file
+formatting, root build, all ten modules in make l, verification race tests and
+full backend race suites. SQLite completed in 268.591s, PostgreSQL in 27.473s
+and MongoDB in 93.374s. Focused verbose runs exercised the real PostgreSQL,
+MongoDB replica-set and standalone MongoDB containers. SQLite reopen also passed
+in a separate focused run. These are storage checks, not runtime or live sandbox
+qualification.
+
+Host authorization fencing, verification job recovery, engine gates/hooks and
+public event dispatch remain open. S2.2 and the four-stage plan are incomplete.

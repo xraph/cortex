@@ -5,19 +5,36 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store/internal/assurance"
 )
 
-type assuranceDriver struct{ store *Store }
+type assuranceQueries interface {
+	NewSelect(...any) *pgdriver.SelectQuery
+	NewInsert(any) *pgdriver.InsertQuery
+	NewUpdate(any) *pgdriver.UpdateQuery
+}
+
+type assuranceDriver struct {
+	store       *Store
+	transaction *pgdriver.PgTx
+}
+
+func (d assuranceDriver) queries() assuranceQueries {
+	if d.transaction != nil {
+		return d.transaction
+	}
+	return d.store.pgdb
+}
 
 func (d assuranceDriver) Insert(ctx context.Context, row assurance.Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := d.store.pgdb.NewInsert(&row).Exec(ctx)
+	_, err := d.queries().NewInsert(&row).Exec(ctx)
 	if isUniqueViolation(err) {
 		return assurance.ErrExists
 	}
@@ -37,7 +54,7 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 	if query.Reverse {
 		order, after = "id DESC", "id < ?"
 	}
-	q := d.store.pgdb.NewSelect(&rows).Where("kind = ?", query.Kind).Where("scope_canon = ?", scope.Canonical()).Limit(query.Limit).OrderExpr(order)
+	q := d.queries().NewSelect(&rows).Where("kind = ?", query.Kind).Where("scope_canon = ?", scope.Canonical()).Limit(query.Limit).OrderExpr(order)
 	for _, predicate := range scopePredicates(scope, true) {
 		q = q.Where(predicate.Column+" = ?", predicate.Value)
 	}
@@ -53,6 +70,9 @@ func (d assuranceDriver) Select(ctx context.Context, query assurance.Query) ([]a
 	if query.After != "" {
 		q = q.Where(after, query.After)
 	}
+	if d.transaction != nil {
+		q = q.ForShare()
+	}
 	if err = q.Scan(ctx); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -67,7 +87,7 @@ func (d assuranceDriver) ReplaceEvidence(ctx context.Context, row assurance.Reco
 	if err != nil {
 		return err
 	}
-	q := d.store.pgdb.NewUpdate((*assurance.Record)(nil)).Set("body = ?", row.Body).Set("deleted = ?", true).
+	q := d.queries().NewUpdate((*assurance.Record)(nil)).Set("body = ?", row.Body).Set("deleted = ?", true).
 		Where("kind = ?", assurance.KindEvidence).Where("id = ?", row.ID).Where("scope_canon = ?", scope.Canonical()).Where("body = ?", expectedBody).Where("deleted = ?", false)
 	for _, predicate := range scopePredicates(scope, true) {
 		q = q.Where(predicate.Column+" = ?", predicate.Value)

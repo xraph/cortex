@@ -70,6 +70,8 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("VerifiedResultRevocation", func(t *testing.T) { storetest.VerifiedResultRevocation(t, s, assuranceDriver{store: s}) })
+	t.Run("VerifiedResultRollback", func(t *testing.T) { storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := truncateConformanceTables(ctx, s); err != nil {
 			t.Fatal(err)

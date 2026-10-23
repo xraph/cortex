@@ -38,56 +38,8 @@ func mongoImage() string {
 // Docker isn't available, so a plain `go test ./...` still passes on a
 // machine without it, while running for real whenever Docker is present.
 func TestConformance(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
+	s := newConformanceStore(t, true)
 	ctx := context.Background()
-	// SaveConversation/ClearConversation run their writes inside a
-	// multi-document transaction now (conversation memory maintains its
-	// owning session's counters in the same transaction as the message
-	// rows), which mongo only supports on a replica set (or sharded
-	// cluster) — never on a standalone mongod, which is what
-	// tcmongodb.Run gives by default. WithReplicaSet used to be needed
-	// only by TestRescope in this package; the conformance suite's own
-	// Conversation and SessionMessageCounters subtests now exercise the
-	// same requirement.
-	mongoContainer, err := tcmongodb.Run(ctx, mongoImage(), tcmongodb.WithReplicaSet("rs0"))
-	if err != nil {
-		t.Fatalf("start mongodb container: %v", err)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := mongoContainer.Terminate(context.Background()); cleanupErr != nil {
-			t.Logf("terminate mongodb container: %v", cleanupErr)
-		}
-	})
-
-	uri, err := mongoContainer.ConnectionString(ctx)
-	if err != nil {
-		t.Fatalf("mongodb connection string: %v", err)
-	}
-	// With replicaSet set in the URI, the driver does full topology
-	// discovery and learns the member's address from the container's own
-	// view of itself -- an internal Docker IP that's unreachable from the
-	// test process on Docker Desktop (macOS/Windows), even though the
-	// mapped host:port works fine. directConnection skips discovery and
-	// talks to the mapped address directly; the server is still a real
-	// (single-node) replica set, so transactions still work. Same fix as
-	// TestRescope in this package, now needed here too.
-	uri += "&directConnection=true"
-
-	drv := mongodriver.New()
-	if err = drv.Open(ctx, uri, mongodriver.WithDatabase("cortex_conformance")); err != nil {
-		t.Fatalf("open mongo driver: %v", err)
-	}
-	db, err := grove.Open(drv)
-	if err != nil {
-		t.Fatalf("grove open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	s := New(db)
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 
 	// One container serves the whole run: dropping collection contents
 	// between subtests is far cheaper than a fresh container or database
@@ -101,6 +53,8 @@ func TestConformance(t *testing.T) {
 		return s
 	})
 	t.Run("HistoricalRunRevision", func(t *testing.T) { testHistoricalRunRevision(t, s) })
+	t.Run("VerifiedResultRevocation", func(t *testing.T) { storetest.VerifiedResultRevocation(t, s, assuranceDriver{store: s}) })
+	t.Run("VerifiedResultRollback", func(t *testing.T) { storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := clearConformanceCollections(ctx, s); err != nil {
 			t.Fatal(err)
@@ -136,4 +90,53 @@ func clearConformanceCollections(ctx context.Context, s *Store) error {
 		}
 	}
 	return nil
+}
+
+func newConformanceStore(t *testing.T, replicaSet bool) *Store {
+	t.Helper()
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx := context.Background()
+	// Multi-document operations require a replica set. The standalone fixture
+	// verifies that result commits fail without transaction support.
+	var customizers []testcontainers.ContainerCustomizer
+	if replicaSet {
+		customizers = append(customizers, tcmongodb.WithReplicaSet("rs0"))
+	}
+	mongoContainer, err := tcmongodb.Run(ctx, mongoImage(), customizers...)
+	if err != nil {
+		t.Fatalf("start mongodb container: %v", err)
+	}
+	t.Cleanup(func() {
+		if cleanupErr := mongoContainer.Terminate(context.Background()); cleanupErr != nil {
+			t.Logf("terminate mongodb container: %v", cleanupErr)
+		}
+	})
+
+	uri, err := mongoContainer.ConnectionString(ctx)
+	if err != nil {
+		t.Fatalf("mongodb connection string: %v", err)
+	}
+	// Docker Desktop exposes a mapped host port; the replica's advertised
+	// container address is unreachable from the host. Keep a direct connection.
+	if replicaSet {
+		uri += "&directConnection=true"
+	}
+
+	drv := mongodriver.New()
+	if err = drv.Open(ctx, uri, mongodriver.WithDatabase("cortex_conformance")); err != nil {
+		t.Fatalf("open mongo driver: %v", err)
+	}
+	db, err := grove.Open(drv)
+	if err != nil {
+		t.Fatalf("grove open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := New(db)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	return s
 }

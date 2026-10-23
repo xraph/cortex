@@ -184,3 +184,32 @@ increment this field, and custom stores must implement the same conditional
 update and claim contract to provide this guarantee. Revision checks protect run
 updates; they do not yet make verification, result publication and event delivery
 one atomic operation.
+
+
+# Atomic verified-result storage
+
+SQLite, PostgreSQL and MongoDB now expose `verification.CommitStore` without
+adding methods to the legacy `store.Store` interface. You can assert this optional
+capability when configuring a host integration. `CommitVerifiedResult` consumes
+saved contracts and reports and atomically writes a historical receipt, its
+metadata-only outbox entry and the run's verification status, result reference
+and next revision. `GetCommittedResult` reads that receipt at its exact scope.
+No additional SQL table is needed; receipts use the assurance record table.
+
+Keep the same result ID and request when retrying after a lost acknowledgement.
+The original receipt and event ID survive retries. A returned historical receipt
+does not renew authorization or expired evidence. Protect these methods behind
+your trusted host policy, hold the current authorization and revision fence while
+committing, and reauthorize later delivery. Don't expose the raw commit request
+as an endpoint that accepts model-authored bindings.
+
+MongoDB requires a replica set or sharded cluster that supports transactions.
+Standalone servers return `verification.ErrCommitUnavailable`, also available as
+`cortex.ErrResultCommitUnavailable`. SQLite retains its existing WAL and busy
+timeout deployment requirements. Upgrade all run writers before relying on the
+revision comparison.
+
+This capability does not enable engine verification gates or public event
+streaming. Those integrations must supply current host authorization, durable
+verification jobs, delivery checks and public replay sequencing. Existing
+`RunCompleted` hooks keep their current meaning.

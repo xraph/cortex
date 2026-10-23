@@ -84,6 +84,7 @@ var (
 	ErrInvalidVerification     = errors.New("cortex: invalid verification record")
 	ErrVerificationConflict    = errors.New("cortex: immutable verification conflict")
 	ErrVerificationNotFound    = errors.New("cortex: verification record not found")
+	ErrResultCommitUnavailable = errors.New("cortex: atomic verified result commit unavailable")
 	ErrSandboxInputsIncomplete = errors.New("cortex: sandbox input staging is incomplete")
 	ErrSandboxInputsConflict   = errors.New("cortex: sandbox input staging identity conflict")
 )

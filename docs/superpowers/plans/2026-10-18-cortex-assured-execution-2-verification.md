@@ -43,7 +43,15 @@ Depends on S1.2/S1.3 and S2.1. Owner: runtime integrator and persistence owner.
 
 Files: create `engine/verification.go`, `engine/verification_test.go`, `engine/result_commit.go`, `engine/result_commit_test.go`, `verification/binding.go`; modify shared finalization/prepared/resume files, `run/` result references and backend atomic commit methods.
 
-Interfaces: produces `WithVerification(v verification.Verifier) Option` and engine result commit request containing expected run revision, candidate digest, contract digest, report IDs and current binding. Store method `CommitVerifiedResult(ctx context.Context, req verification.CommitRequest) (*verification.CommitReceipt, error)` atomically records result decision and durable event/outbox. It consumes a report; it cannot manufacture a passed report.
+Interfaces: produces `WithVerification(v verification.Verifier) Option` and engine result commit request containing expected run revision, candidate digest, contract digest, report IDs and current binding. Store method `CommitVerifiedResult(ctx context.Context, req verification.CommitRequest) (verification.CommitReceipt, error)` atomically records result decision and durable event/outbox. It consumes a report; it cannot manufacture a passed report.
+
+Storage foundation implemented: built-in backends expose optional
+`verification.CommitStore`, with atomic receipt/outbox/run writes and exact
+revision/report/evidence validation. The request is trusted host input; the
+runtime must supply the authorization/revision fence. Receipt retries preserve
+historical evidence and do not authorize public delivery. See the progress
+ledger for rollback, concurrency, revocation and persistence checks. The runtime
+steps below remain open.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.
