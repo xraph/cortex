@@ -39,6 +39,10 @@ import (
 // newStore must return a freshly migrated, empty store; Conformance calls
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("ConcurrentChildrenCannotOverspend", func(t *testing.T) { testConcurrentChildrenCannotOverspend(t, newStore) })
+	t.Run("BudgetSettlements", func(t *testing.T) { testBudgetSettlements(t, newStore) })
+	t.Run("BudgetDenials", func(t *testing.T) { testBudgetDenials(t, newStore) })
+	t.Run("BudgetTree", func(t *testing.T) { testBudgetTree(t, newStore) })
 	t.Run("TaskClaims", func(t *testing.T) { testTaskClaims(t, newStore) })
 	t.Run("TaskClaimConcurrent", func(t *testing.T) { testTaskClaimConcurrent(t, newStore) })
 	t.Run("AssignmentReviewPrivateOutput", func(t *testing.T) { testAssignmentReviewPrivateOutput(t, newStore) })

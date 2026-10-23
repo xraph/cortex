@@ -1475,3 +1475,51 @@ current-grant fencing, parent cancellation, runtime dispatch and recovery
 settlement still need scheduler integration. Acquiring a claim alone does not
 prove that dependencies passed, that a worker may use a tool, or that budget is
 available. No database transaction spans an agent or external tool call.
+
+### Share capacity across workers
+
+Create one `execution.ReservationPolicy` for the plan, then use the optional
+`execution.BudgetStore` to reserve capacity before dispatch. The immutable policy
+sets explicit allowances for steps, tokens, tool calls, fan-out attempts, replans
+and USD micros. A zero allowance permits no consumption in that dimension.
+This differs from the optional zero limits in a single-run `execution.Budget`.
+The existing per-run budget remains unchanged.
+
+A monetary policy needs a pinned pricing revision and requests with a trusted
+upper bound. Set `TokenOnly` when you cannot establish that bound; the account
+then advertises no money ceiling and rejects monetary allocations. A reservation
+cannot make a provider obey its estimate. Enforce limits in the adapter and retain
+reported overruns in settlement.
+
+`Reserve` pins the current plan digest, task, host-owned attempt reference, parent
+reservation, allocation and deadline. Storage checks the task's limits and the
+remaining plan capacity in one plan transaction. Replanning can narrow the
+account's effective limits but cannot reset its charges or replace its policy.
+Identical retries return the original reservation and do not allocate twice.
+Reservations grant no tool permissions and do not start a worker.
+
+Use a `leaf` reservation for execution and a `branch` to delegate capacity to
+children. Children spend from their parent's allocation without charging that
+allocation twice at the root. A branch keeps its full reservation until it
+closes. Child overruns propagate immediately through open ancestors, preventing
+new work from using capacity that has already been consumed.
+
+`Settle` records final usage once. Mark each known dimension in `ReservationUsage`
+and supply a trusted receipt reference; known zero can release unused capacity.
+Unknown dimensions keep their full allocation. A lease timeout or deadline never
+turns missing usage into zero. Changed settlement retries conflict. A branch
+closes only after all children have final accounting, and its charge is derived
+from those children rather than a caller-supplied total.
+
+Each reservation permanently consumes at least one fan-out attempt, including an
+attempt that never dispatched. Accounts support at most 1,024 retained reservations
+and 16 levels, bounding transactional reads and recursive accounting. Aggregate
+integer overflow blocks admission and reports `Overflow=true`; individual usage
+receipts retain their original amounts.
+
+`GetBudgetSnapshot` reads a consistent charge under the plan transaction and shows
+limits narrowed by the current plan. `GetReservationPolicy` returns the original
+policy. `ListReservations` provides bounded discovery, while `GetReservation`
+returns allocation and final settlement. Protect these host APIs with current
+authorization. Binding reservations to claims, provider accounting, reviewer and
+verification dispatch still requires scheduler/runtime integration.

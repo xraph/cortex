@@ -131,6 +131,11 @@ Interfaces: `Reserve(ctx, execution.ReservationRequest) (execution.Reservation, 
 - [ ] Validate model-produced plan revisions using the same deterministic graph/authority/acceptance validators. Preserve completed work, cancel superseded assignments, reconcile outstanding effects and invalidate dependent reports before continuing.
 - [ ] Run multi-worker stress, crash/recovery, budget exhaustion during verification and cancellation tests. Apply common checks and commit `feat(planning): enforce shared budgets and bounded replanning`.
 
+S3.5 progress: shared parent/child accounting, idempotent reserve/settle,
+conservative unknown usage, overrun propagation, integer monetary bounds and
+replan-safe account retention are implemented. Claim/runtime integration,
+provider usage qualification and the bounded replan policy remain open.
+
 ## S3.6: Team review UI and recovery qualification
 
 Depends on S3.1 through S3.5. Owner: integration coordinator and UI owner.

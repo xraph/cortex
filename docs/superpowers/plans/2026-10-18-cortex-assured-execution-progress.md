@@ -28,7 +28,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress, evidence-bound submissions and retained independent review findings implemented; review completion/adjudication, scheduler/grant fences and installed qualification remain open |
 | S3.2 | active | this chat | Durable ownership, renewal, dispatch intent, expiry and immutable history implemented; readiness/grant/budget admission, runtime scheduling and recovery qualification remain open |
-| S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; runtime binding and bounded replan policy remain open |
+| S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -4018,3 +4019,49 @@ checks also passed earlier in this packet, with no container skips. Documentatio
 typecheck, lint and build passed. CI 40009024187 for the preceding review commit
 was still running at this checkpoint. Worker dispatch and installed recovery are
 not qualified by these storage tests.
+
+### S3.5 shared reservation accounting
+
+Ruling: keep the existing per-run `execution.Budget` behavior while adding the
+shared `ReservationPolicy` and `BudgetStore`. Shared zero allowances mean zero
+capacity, and the immutable account adds explicit fan-out, replan and monetary
+bounds. Integrating these dimensions into prepared execution remains open; no
+new per-run field claims enforcement before that integration exists.
+
+`Reserve` and `Settle` serialize through the existing plan transaction. Requests
+pin plan/task identity, the current plan digest, a host attempt reference,
+allocation and deadline. A plan has one immutable account policy. Replanning
+narrows effective limits without clearing earlier charges. Root and parent
+capacity are checked together, including concurrent children.
+
+Branches allocate capacity to children without charging it twice. An open branch
+retains its full allocation, while child overruns propagate immediately to the
+root. Closing requires final child accounting and derives the branch charge from
+stored receipts. Known usage can refund unused capacity; unknown dimensions keep
+their allocation. Every reservation consumes at least one fan-out attempt. A
+1,024-record and 16-level ceiling bounds reads and accounting work.
+
+Money uses integer USD micros and a pinned pricing revision, matching evaluator
+accounting. Token-only policies explicitly disable a money ceiling. Estimates and
+usage receipts remain trusted host inputs, not model assertions. Aggregate
+overflow blocks further admission while preserving original receipt amounts.
+
+TDD first exposed missing shared-account APIs. Tests cover concurrent overbooking,
+settlement idempotency, partial/unknown usage, parent accounting, overrun
+propagation, immutable policies, scope, price/deadline denials, rollback, lost
+acknowledgments, expiry, replanning and overflow. Final review added red tests for
+mismatched pricing in aggregate accounting and creation-time tampering in stored
+reservations. The shared validators now reject both; the stored reservation digest
+covers the complete observation as well as retaining its separate request digest.
+
+Claim admission, runtime/provider usage, review/verification dispatch, replan
+policy and installed multi-worker qualification remain open. The four-stage goal
+remains active.
+
+Final `make f`, all-module `make l`, root build and execution/coordination/planning/
+assurance race suites passed. Backend budget, claim and planning checks passed
+on SQLite (27.939s), PostgreSQL (18.902s) and MongoDB (21.570s), with both container
+backends running and no skips. Documentation typecheck, lint and build passed.
+The preceding ownership commit's CI, 40011074055, was still running at this
+checkpoint; the review-only run 40009024187 was cancelled. These local results do
+not qualify live provider estimates or installed worker accounting.

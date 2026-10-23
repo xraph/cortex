@@ -122,6 +122,10 @@ var (
 
 // Assignment errors describe durable progress journal failures.
 var (
+	ErrInvalidReservation    = errors.New("cortex: invalid budget reservation")
+	ErrReservationConflict   = errors.New("cortex: budget reservation conflict")
+	ErrReservationNotFound   = errors.New("cortex: budget reservation not found")
+	ErrSharedBudgetExceeded  = errors.New("cortex: shared budget exceeded")
 	ErrInvalidClaim          = errors.New("cortex: invalid task claim")
 	ErrClaimConflict         = errors.New("cortex: task claim conflict")
 	ErrClaimNotFound         = errors.New("cortex: task claim not found")
