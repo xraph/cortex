@@ -562,6 +562,48 @@ The existing `runs.events` query keeps its process-local integer offsets and
 payload. You cannot reuse those offsets with `runs.replay`. Paged replay does not
 start execution, rerun evaluators or create a live subscription.
 
+#### Subscribe over SSE
+
+Use `GET /v1/runs/{id}/events/stream` with the same `after` and `limit` query
+parameters. On reconnect, `Last-Event-ID` takes precedence over `after`, so a
+browser can keep its original URL while resuming from the last received page.
+The header still has to contain a valid cursor for the requested run.
+
+| Frame | Meaning | Browser event ID |
+| --- | --- | --- |
+| `page` | One authorized metadata page | `next_cursor` |
+| `heartbeat` | An authorized empty page and current watermark | `next_cursor` |
+| `gap` | Retention removed requested history; subscription closes | None |
+| `error` | Static failure details after streaming started; subscription closes | None |
+
+On `gap`, close your EventSource, fetch a current authorized run snapshot, and
+create a new subscription using the returned `next_cursor`. Gap frames omit
+`id:` so the browser cannot advance past missing history automatically. On a
+non-retryable `error`, close the EventSource. A historical passed or committed
+event still grants no permission to fetch result content.
+
+The API admits up to 64 replay subscriptions per `API` instance. Excess requests
+receive 503 with `replay_busy`. Each subscription lasts at most five minutes,
+polls idle runs every second, bounds each read to five seconds and each write to
+ten seconds or the remaining lifetime. Writers must support response-controller
+deadlines, directly or through `Unwrap`; unsupported writers fail before SSE
+headers are sent. Socket disconnects, observable write/flush failures, revocation
+and retention gaps stop the subscription. Proxies must allow streaming and retain
+these deadline capabilities. Installed proxy and browser qualification remains
+open.
+
+Each page is read and sent synchronously, with no queue or background producer.
+`event.FollowReplay` exposes the same bounded loop for host adapters. It checks
+authority through the configured engine on every read, including idle polls;
+custom readers and consumers must honor context cancellation. It drains retained
+backlogs before polling and never treats an execution-finished event as proof that
+verification is finished. Reconnects can redeliver a page after a lost network
+acknowledgement, so deduplicate by event ID and advance the cursor after consuming
+the whole page. Browser EventSource advances its internal ID when it receives a
+frame, before asynchronous application processing finishes. Durable consumers must
+persist their own processed cursor and explicitly reconnect from it, using a new
+EventSource or a streaming HTTP client. No exactly-once network delivery is implied.
+
 Every new verified result commit writes `verification_passed` followed by
 `result_committed` in the same transaction as the receipt, job and run update.
 The committed-result event reuses the receipt's outbox ID. A crash or

@@ -49,6 +49,18 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 		return fmt.Errorf("register run replay: %w", err)
 	}
 
+	if err := g.GET("/runs/:id/events/stream", a.streamReplayRun,
+		forge.WithSummary("Subscribe to public run metadata"),
+		forge.WithDescription("Bounded SSE replay with run-bound event IDs, current subscriber authorization and explicit retention gaps."),
+		forge.WithOperationID("streamRunEvents"),
+		forge.WithResponseContentTypes("text/event-stream"),
+		forge.WithSSEMessages(map[string]any{"page": event.ReplayPage{}, "heartbeat": event.ReplayPage{}, "gap": event.ReplayPage{}, "error": event.ReplayFailure{}}),
+		forge.WithRequestSchema(ReplayStreamRequest{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register run replay stream: %w", err)
+	}
+
 	if err := g.POST("/runs/:id/cancel", a.cancelRun,
 		forge.WithSummary("Cancel run"),
 		forge.WithDescription("Cancels a running agent execution."),

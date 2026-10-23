@@ -20,11 +20,11 @@ func (a *API) replayRun(ctx forge.Context, req *ReplayRunRequest) (*event.Replay
 	ctx.SetHeader("Cache-Control", "no-store")
 	runID, err := id.ParseAgentRunID(ctx.Param("id"))
 	if err != nil {
-		return nil, replayHTTPError{event.DescribeReplayFailure(event.ErrInvalid)}
+		return nil, replyReplayFailure(ctx, event.DescribeReplayFailure(event.ErrInvalid))
 	}
 	page, err := event.ReadReplayPage(ctx.Context(), a.eng, runID, req.After, req.Limit)
 	if err != nil {
-		return nil, replayHTTPError{event.DescribeReplayFailure(err)}
+		return nil, replyReplayFailure(ctx, event.DescribeReplayFailure(err))
 	}
 	status := http.StatusOK
 	if page.Gap {
@@ -33,25 +33,21 @@ func (a *API) replayRun(ctx forge.Context, req *ReplayRunRequest) (*event.Replay
 	return &page, ctx.JSON(status, page)
 }
 
-type replayHTTPError struct{ failure event.ReplayFailure }
-
-func (e replayHTTPError) Error() string { return e.failure.Message }
-func (e replayHTTPError) StatusCode() int {
-	switch e.failure.Code {
+// replyReplayFailure writes only the static replay failure vocabulary. Forge's
+// generic 5xx sanitizer drops even safe machine codes and retryability metadata.
+func replyReplayFailure(ctx forge.Context, failure event.ReplayFailure) error {
+	status := http.StatusServiceUnavailable
+	switch failure.Code {
 	case "replay_invalid":
-		return http.StatusBadRequest
+		status = http.StatusBadRequest
 	case "replay_denied":
-		return http.StatusForbidden
+		status = http.StatusForbidden
 	case "replay_not_found":
-		return http.StatusNotFound
-	default:
-		return http.StatusServiceUnavailable
+		status = http.StatusNotFound
 	}
-}
-func (e replayHTTPError) ResponseBody() any {
-	return struct {
+	return ctx.JSON(status, struct {
 		Error   string              `json:"error"`
 		Code    int                 `json:"code"`
 		Details event.ReplayFailure `json:"details"`
-	}{Error: e.failure.Message, Code: e.StatusCode(), Details: e.failure}
+	}{Error: failure.Message, Code: status, Details: failure})
 }

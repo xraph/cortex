@@ -4,6 +4,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/xraph/forge"
 
@@ -12,8 +13,9 @@ import (
 
 // API wires all Forge-style HTTP handlers together for the Cortex system.
 type API struct {
-	eng    *engine.Engine
-	router forge.Router
+	replayStreams atomic.Int64
+	eng           *engine.Engine
+	router        forge.Router
 }
 
 // New creates an API from a Cortex Engine.

@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay and authorized REST/dashboard pages implemented; live subscriptions, ordinary run producers, approved content and remaining transports remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages and bounded SSE implemented; installed subscriptions, ordinary run producers, approved content and remote bindings remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -2769,3 +2769,56 @@ Validation for paged replay transports:
 - Lifecycle producer commit `fd0c385` has successful CI (`39947375269`).
   The new routes have local router/dispatcher evidence; deployed host grants and
   installed client behavior remain unqualified.
+
+
+### S2.6 bounded SSE metadata subscriptions
+
+Ruling: reuse the authorized page boundary and retain one page per subscriber.
+`event.FollowReplay` now drains retained pages synchronously, then polls idle runs.
+Every read passes through current subscriber authorization. Read deadlines and a
+capped lifetime bound cooperative host callbacks; consumer failure, cancellation
+or a retention gap stops the loop. No channel, detached producer or evaluator is
+started by a subscription.
+
+`GET /v1/runs/:id/events/stream` accepts the existing cursor and page size.
+`Last-Event-ID` takes precedence over the initial query cursor when browsers
+reconnect. Normal and heartbeat frames use the validated next cursor as their SSE
+ID. Gap frames expose the authorized recovery boundary but omit an ID and stop,
+so browsers cannot silently skip missing history. Error frames contain only
+static failure metadata and stop. Consumers deduplicate IDs and process a whole
+page before advancing their cursor.
+
+API instances admit at most 64 subscriptions. Lifetimes are five minutes, idle
+polls one second, read deadlines five seconds and write deadlines ten seconds or
+the remaining lifetime. Unsupported deadline control fails before SSE headers.
+The writer preserves wrapper flush behavior, then probes an error-aware inner
+writer because Forge's void `Flush` wrappers can hide socket errors. A full-router
+failure test exposed that issue before the fix. Host callbacks must cooperate
+with cancellation; middleware must preserve deadline support.
+
+The capacity test also exposed Forge's default 5xx sanitizer dropping the safe
+replay code and retryability fields. Paged and SSE preflight errors now share an
+explicit static response helper; private provider messages remain excluded.
+
+Tests cover cursor precedence, foreign cursors, failed preflight, idle revocation,
+gaps without browser cursor advancement, write and flush failures, read/lifetime
+timeouts, slow-consumer backpressure and immediate backlog draining. A real HTTP
+socket disconnect releases the slot. Concurrent admission/cancellation exercises
+all 64 slots and rejects the next subscriber before storage access.
+
+This packet does not qualify installed browsers/proxies or add answer-content,
+artifact or ordinary-run producers. A2A/gRPC integration and remaining S2.6 work
+stay open. The full four-stage goal remains active.
+
+Validation for bounded SSE replay:
+
+- Final event race suite passed (1.223s), as did focused engine replay tests
+  (8.049s), the full API race suite (1.573s), and full extension/contract race
+  suites (2.005s and 24.076s). Root, API and extension builds passed.
+- Final `make f`, lint across all ten modules, diff checks, documentation type
+  checks, lint and production build passed.
+- CI for paged replay `fd9b938` failed in the existing long-evaluation renewal
+  test (`39949024564`): concurrent SQLite writes returned `SQLITE_BUSY` and
+  safely cancelled the evaluator. The worker fixture lacks the WAL/busy-timeout
+  configuration already used by storage concurrency fixtures. This is being
+  handled separately; the CI run is not green.

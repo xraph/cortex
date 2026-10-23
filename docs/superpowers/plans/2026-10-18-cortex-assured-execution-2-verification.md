@@ -214,8 +214,16 @@ validated gap envelopes and static failure classification. REST uses HTTP 410 fo
 gaps; the dashboard preserves the recovery envelope with `gap: true`. Legacy
 `runs.events` offsets keep their existing meaning. Neither path starts execution.
 
+The SSE route `/v1/runs/:id/events/stream` now uses the same authorized pages.
+Its synchronous follow loop bounds reads, polling, lifetime and memory; the API
+also bounds concurrent subscriptions and socket writes. Browser reconnect IDs
+come from validated page cursors. Gaps omit SSE IDs and stop for snapshot recovery.
+Tests cover idle revocation, stalled writers, flush failures, real HTTP disconnects
+and admission/cancellation under load. Installed browser/proxy behavior remains
+unqualified.
+
 The remaining S2.6 work includes ordinary run lifecycle producers, artifact events,
-approved content replay, remaining transport integration, bounded live subscriptions and
+approved content replay, remaining transport integration, installed live subscriptions and
 installed reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.
 

@@ -538,3 +538,29 @@ Existing `runs.events` clients keep their current process-local offsets. Do not
 convert those offsets into durable cursors. This packet adds paged metadata
 reads; SSE subscriptions, answer-content replay and installed-client qualification
 remain open. No database migration is required.
+
+
+## Bounded SSE metadata replay
+
+`GET /v1/runs/:id/events/stream` now follows the same authorized log as paged
+replay. `Last-Event-ID` overrides the initial `after` query cursor on reconnect.
+Normal and heartbeat frames carry the next cursor as their SSE ID. Gap and error
+frames omit an ID and close the subscription. Close the client on a gap, refresh
+the run snapshot, then reconnect explicitly from the returned cursor.
+
+Each API instance admits 64 subscriptions. Lifetimes are capped at five minutes,
+idle polls run every second, reads have five-second deadlines, and writes have
+ten-second deadlines bounded by the remaining lifetime. Middleware must preserve
+response-controller write deadlines; unsupported writers return unavailable
+before streaming begins. Each subscription retains one page and has no detached
+producer goroutine. Custom host authorization/storage callbacks must honor context
+cancellation.
+
+Replay HTTP errors now write the static Cortex envelope directly. Forge's generic
+5xx sanitizer otherwise drops the safe replay code and retryability fields. The
+helper never includes provider causes. The SSE writer preserves wrapper flush
+behavior and probes an error-aware inner writer for swallowed socket errors.
+
+This is metadata replay only. Existing execution streams retain their protocol.
+Browser/proxy deployment, approved answer-content replay, artifact events and
+remote bindings still need qualification or implementation.

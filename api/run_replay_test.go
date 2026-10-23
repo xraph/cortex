@@ -85,6 +85,9 @@ func TestReplayHTTPRoutes(t *testing.T) {
 			if res.Code != tc.want {
 				t.Fatalf("status %d want %d: %s", res.Code, tc.want, res.Body)
 			}
+			if tc.want >= 400 && tc.want != 410 && !strings.Contains(res.Body.String(), `"code":"replay_`) {
+				t.Fatalf("missing static failure code: %s", res.Body)
+			}
 			if strings.Contains(res.Body.String(), "SECRET") {
 				t.Fatalf("private error: %s", res.Body)
 			}

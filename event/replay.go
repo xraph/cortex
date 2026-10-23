@@ -56,16 +56,9 @@ type ReplayPage struct {
 // Pass an engine configured with WithPublicEventReplay or an equivalent adapter
 // around Reader.Read, never a raw store. Zero limit selects MaxPageSize.
 func ReadReplayPage(ctx context.Context, authorized ReadStore, runID id.AgentRunID, token string, limit int) (ReplayPage, error) {
-	cursor, err := DecodeCursor(runID, token)
+	request, err := replayReadRequest(runID, token, limit)
 	if err != nil {
 		return ReplayPage{}, err
-	}
-	if limit == 0 {
-		limit = MaxPageSize
-	}
-	request := ReadRequest{After: cursor, Limit: limit}
-	if validationErr := request.Validate(); validationErr != nil {
-		return ReplayPage{}, validationErr
 	}
 	if nilPort(authorized) {
 		return ReplayPage{}, ErrUnavailable
@@ -86,6 +79,21 @@ func ReadReplayPage(ctx context.Context, authorized ReadStore, runID id.AgentRun
 		return ReplayPage{}, ErrUnavailable
 	}
 	return ReplayPage{Page: page, NextCursor: next, Gap: gap}, nil
+}
+
+func replayReadRequest(runID id.AgentRunID, token string, limit int) (ReadRequest, error) {
+	cursor, err := DecodeCursor(runID, token)
+	if err != nil {
+		return ReadRequest{}, err
+	}
+	if limit == 0 {
+		limit = MaxPageSize
+	}
+	request := ReadRequest{After: cursor, Limit: limit}
+	if validationErr := request.Validate(); validationErr != nil {
+		return ReadRequest{}, validationErr
+	}
+	return request, nil
 }
 
 // ReplayFailure contains static transport-safe diagnostics, never provider causes.
