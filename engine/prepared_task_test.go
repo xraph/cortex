@@ -200,7 +200,8 @@ func (a preparedTaskAuthorizer) AuthorizeTaskRun(ctx context.Context, r coordina
 	return a(ctx, r)
 }
 
-func TestPrepareTaskRunCreatesReservedChildThroughAdmitter(t *testing.T) {
+func preparedTaskRuntimeFixture(t *testing.T) (workerFixture, *engine.Engine, *requiredClient, *engine.PreparedAgent, coordination.TaskRunRequest, coordination.TaskRunAdmitter) {
+	t.Helper()
 	f := newWorkerFixture(t)
 	client := &requiredClient{}
 	var p planning.Plan
@@ -249,14 +250,19 @@ func TestPrepareTaskRunCreatesReservedChildThroughAdmitter(t *testing.T) {
 		return next(r)
 	}), preparedTaskAuthorizer(func(context.Context, coordination.TaskRunRequest) error { return nil }))
 	require.NoError(t, err)
+	return f, e, client, prepared, req, admitter
+}
+
+func TestPrepareTaskRunCreatesReservedChildThroughAdmitter(t *testing.T) {
+	f, _, client, _, req, admitter := preparedTaskRuntimeFixture(t)
 	result, err := admitter.Admit(f.ctx, req)
 	require.NoError(t, err)
 	require.True(t, result.Fresh)
 	require.NoError(t, result.Validate(req))
-	saved, err := f.storage.GetRun(f.ctx, opts.RunID)
+	saved, err := f.storage.GetRun(f.ctx, req.Run.ID)
 	require.NoError(t, err)
 	require.Equal(t, req.Run.Provenance, saved.Provenance)
-	intent, err := f.storage.GetRunCaptureIntent(f.ctx, opts.RunID)
+	intent, err := f.storage.GetRunCaptureIntent(f.ctx, req.Run.ID)
 	require.NoError(t, err)
 	require.Equal(t, req.Intent, intent)
 	replay, err := admitter.Admit(f.ctx, req)

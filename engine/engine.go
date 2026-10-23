@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
@@ -39,6 +40,7 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard
 	config                cortex.Config
 	logger                log.Logger

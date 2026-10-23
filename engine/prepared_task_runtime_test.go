@@ -1,0 +1,299 @@
+package engine_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/coordination"
+	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/memory"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/sqlite"
+	"github.com/xraph/cortex/verification"
+)
+
+type runtimeTaskGuard func(context.Context, engine.TaskCallRequest) (engine.TaskCallLease, error)
+
+func (f runtimeTaskGuard) AcquireTaskCall(ctx context.Context, req engine.TaskCallRequest) (engine.TaskCallLease, error) {
+	return f(ctx, req)
+}
+
+func TestRunPreparedTaskExecutesFreshAdmissionOnly(t *testing.T) {
+	f, e, client, prepared, req, admitter := preparedTaskRuntimeFixture(t)
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	acquired, released := 0, 0
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(func(_ context.Context, call engine.TaskCallRequest) (engine.TaskCallLease, error) {
+		acquired++
+		require.Equal(t, req.Run.ID, call.RunID)
+		require.Equal(t, req.Claim.ClaimID, call.ClaimID)
+		_, digest, err := call.Freeze()
+		require.NoError(t, err)
+		return engine.TaskCallLease{RequestDigest: digest, ExpiresAt: call.Deadline, Revoked: make(chan struct{}), Release: func() error { released++; return nil }}, nil
+	}))(e))
+	// The captured history is empty. Later conversation writes cannot change it.
+	require.NoError(t, f.storage.SaveConversation(f.ctx, req.Run.AgentID, req.Run.SessionID, []memory.Message{{Role: "user", Content: "new unrelated history"}}))
+	r, err := e.RunPreparedTask(f.ctx, prepared, req)
+	require.NoError(t, err)
+	require.Equal(t, req.Run.ID, r.ID)
+	require.Equal(t, verification.StatusPassed, r.VerificationStatus)
+	require.Equal(t, "done", r.Output)
+	require.Equal(t, 1, client.calls)
+	require.Equal(t, 1, acquired)
+	require.Equal(t, 1, released)
+	require.Len(t, client.Request(t).Messages, 1)
+	require.Equal(t, req.Run.Input, client.Request(t).Messages[0].Content)
+	r, err = e.RunPreparedTask(f.ctx, prepared, req)
+	require.ErrorIs(t, err, cortex.ErrTaskRunReconciliationRequired)
+	require.Nil(t, r)
+	require.Equal(t, 1, client.calls)
+}
+
+type runtimeTaskAdmitter func(context.Context, coordination.TaskRunRequest) (coordination.TaskRunStart, error)
+
+func (f runtimeTaskAdmitter) Admit(ctx context.Context, req coordination.TaskRunRequest) (coordination.TaskRunStart, error) {
+	return f(ctx, req)
+}
+
+func allowRuntimeTaskCall(_ context.Context, req engine.TaskCallRequest) (engine.TaskCallLease, error) {
+	_, digest, err := req.Freeze()
+	return engine.TaskCallLease{RequestDigest: digest, ExpiresAt: req.Deadline, Revoked: make(chan struct{}), Release: func() error { return nil }}, err
+}
+
+func TestRunPreparedTaskRejectsUnboundStart(t *testing.T) {
+	for _, mode := range []string{"missing_admitter", "missing_guard", "cancelled", "scope", "marker", "input", "model_revision", "sources", "budget", "deadline", "policy", "denied_input", "persona"} {
+		t.Run(mode, func(t *testing.T) {
+			f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+			admissions := 0
+			if mode != "missing_admitter" {
+				require.NoError(t, engine.WithTaskRunAdmitter(runtimeTaskAdmitter(func(ctx context.Context, r coordination.TaskRunRequest) (coordination.TaskRunStart, error) {
+					admissions++
+					return admitter.Admit(ctx, r)
+				}))(e))
+			}
+			if mode != "missing_guard" {
+				require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+			}
+			ctx := f.ctx
+			switch mode {
+			case "cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			case "scope":
+				ctx = context.Background()
+			case "marker":
+				req.Run.Provenance.TaskClaimID = ""
+			case "input":
+				req.Run.Input = "changed"
+			case "model_revision":
+				req.Run.Provenance.ModelRevision = "changed"
+			case "sources":
+				req.Run.Provenance.Sources = append(req.Run.Provenance.Sources, run.Revision{Name: "forged", Revision: "2"})
+			case "budget":
+				req.Run.Budget.MaxTokens++
+			case "deadline":
+				req.Run.Budget.Deadline = req.Run.Budget.Deadline.Add(time.Minute)
+			case "persona":
+				req.Run.PersonaRef = "changed"
+			case "policy", "denied_input":
+				cfg := requiredConfiguration(t, f)
+				if mode == "policy" {
+					cfg.Revision = "changed"
+				} else {
+					cfg.CaptureAuthorizer = captureAuthorizer(func(context.Context, evidence.Action, evidence.Ref) error { return cortex.ErrEvidenceAccessDenied })
+				}
+				require.NoError(t, engine.WithRequiredVerification(cfg)(e))
+			}
+			r, err := e.RunPreparedTask(ctx, p, req)
+			require.Error(t, err)
+			require.Nil(t, r)
+			require.Zero(t, admissions)
+			require.Zero(t, client.calls)
+			_, err = f.storage.GetRun(f.ctx, req.Run.ID)
+			require.ErrorIs(t, err, cortex.ErrRunNotFound)
+		})
+	}
+}
+
+func TestRunPreparedTaskAmbiguousStartNeverInvokes(t *testing.T) {
+	for _, mode := range []string{"denied", "lost_ack", "cancelled_after_commit", "bad_receipt", "changed_child", "mutated_request"} {
+		t.Run(mode, func(t *testing.T) {
+			f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+			ctx, cancel := context.WithCancel(f.ctx)
+			defer cancel()
+			require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+			require.NoError(t, engine.WithTaskRunAdmitter(runtimeTaskAdmitter(func(ctx context.Context, offered coordination.TaskRunRequest) (coordination.TaskRunStart, error) {
+				if mode == "denied" {
+					return coordination.TaskRunStart{}, errors.New("private authority reason")
+				}
+				start, err := admitter.Admit(ctx, offered)
+				require.NoError(t, err)
+				switch mode {
+				case "lost_ack":
+					return coordination.TaskRunStart{}, errors.New("lost acknowledgment")
+				case "cancelled_after_commit":
+					cancel()
+				case "bad_receipt":
+					start.RunDigest = evidence.Digest(nil)
+				case "changed_child":
+					child, readErr := f.storage.GetRun(ctx, offered.Run.ID)
+					require.NoError(t, readErr)
+					child.State = run.StateFailed
+					require.NoError(t, f.storage.UpdateRun(ctx, child))
+				case "mutated_request":
+					offered.Run.Scope.Levels[0].Value = "changed by host"
+				}
+				return start, nil
+			}))(e))
+			r, err := e.RunPreparedTask(ctx, p, req)
+			if mode == "mutated_request" {
+				require.NoError(t, err)
+				require.Equal(t, req.Run.Scope.Canonical(), r.Scope.Canonical())
+				require.Equal(t, 1, client.calls)
+			} else {
+				require.ErrorIs(t, err, cortex.ErrTaskRunReconciliationRequired)
+				require.NotContains(t, err.Error(), "private authority")
+				require.Nil(t, r)
+				require.Zero(t, client.calls)
+			}
+		})
+	}
+}
+
+func TestStreamPreparedTaskUsesFreshAdmission(t *testing.T) {
+	f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+	client.chunks = []llm.Chunk{{Content: "done", FinishReason: "stop"}}
+	events := make(chan engine.StreamEvent, 16)
+	require.NoError(t, e.StreamPreparedTask(f.ctx, p, req, events))
+	for event := range events {
+		require.NotEqual(t, engine.EventError, event.Type)
+	}
+	child, err := f.storage.GetRun(f.ctx, req.Run.ID)
+	require.NoError(t, err)
+	require.Equal(t, verification.StatusPassed, child.VerificationStatus)
+	require.Equal(t, 1, client.calls)
+	events = make(chan engine.StreamEvent, 16)
+	require.ErrorIs(t, e.StreamPreparedTask(f.ctx, p, req, events), cortex.ErrTaskRunReconciliationRequired)
+	_, open := <-events
+	require.False(t, open)
+	require.Equal(t, 1, client.calls)
+}
+
+func TestRunPreparedTaskGuardDenialAfterAdmissionStopsGeneration(t *testing.T) {
+	f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(func(context.Context, engine.TaskCallRequest) (engine.TaskCallLease, error) {
+		return engine.TaskCallLease{}, errors.New("authority revoked after creation")
+	}))(e))
+	r, err := e.RunPreparedTask(f.ctx, p, req)
+	require.Error(t, err)
+	require.Nil(t, r)
+	r, err = f.storage.GetRun(f.ctx, req.Run.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, run.StateCompleted, r.State)
+	require.Empty(t, r.Output)
+	require.Zero(t, client.calls)
+	require.Zero(t, f.adapter.evaluations)
+	_, err = e.RunPreparedTask(f.ctx, p, req)
+	require.ErrorIs(t, err, cortex.ErrTaskRunReconciliationRequired)
+	require.Zero(t, client.calls)
+}
+
+func TestStreamPreparedTaskRejectsUnverifiedOutput(t *testing.T) {
+	f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+	f.adapter.status = verification.StatusFailed
+	client.chunks = []llm.Chunk{{Content: "private candidate", FinishReason: "stop"}}
+	events := make(chan engine.StreamEvent, 16)
+	require.NoError(t, e.StreamPreparedTask(f.ctx, p, req, events))
+	var last engine.StreamEvent
+	for event := range events {
+		require.NotEqual(t, engine.EventToken, event.Type)
+		require.NotContains(t, event.Data, "output")
+		last = event
+	}
+	require.Equal(t, engine.EventError, last.Type)
+	require.Equal(t, "run_unverified", last.Data["code"])
+	child, err := f.storage.GetRun(f.ctx, req.Run.ID)
+	require.NoError(t, err)
+	require.Empty(t, child.Output)
+	require.Equal(t, verification.StatusFailed, child.VerificationStatus)
+}
+
+func TestTaskRunAdmitterRejectsNil(t *testing.T) {
+	var typedNil runtimeTaskAdmitter
+	_, err := engine.New(engine.WithTaskRunAdmitter(typedNil))
+	require.Error(t, err)
+	_, err = engine.New(engine.WithTaskRunAdmitter(nil))
+	require.Error(t, err)
+}
+
+type runtimeTaskInputStore struct {
+	*sqlite.Store
+	change func(*evidence.Artifact)
+}
+
+func (s runtimeTaskInputStore) LoadEvidence(ctx context.Context, ref evidence.Ref) (evidence.Artifact, error) {
+	artifact, err := s.Store.LoadEvidence(ctx, ref)
+	if err == nil {
+		artifact.Ref = ref
+		s.change(&artifact)
+	}
+	return artifact, err
+}
+
+func TestRunPreparedTaskRejectsChangedInputArtifactBinding(t *testing.T) {
+	for _, mode := range []string{"content", "scope", "producer", "retention"} {
+		t.Run(mode, func(t *testing.T) {
+			f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+			require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+			require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+			require.NoError(t, engine.WithStore(runtimeTaskInputStore{Store: f.storage, change: func(a *evidence.Artifact) {
+				switch mode {
+				case "content":
+					a.Data = []byte("changed")
+				case "scope":
+					a.Ref.Scope.Levels[0].Value = "other"
+				case "producer":
+					a.Ref.Producer = "other"
+				case "retention":
+					a.Ref.RetainUntil = a.Ref.RetainUntil.Add(time.Minute)
+				}
+			}})(e))
+			r, err := e.RunPreparedTask(f.ctx, p, req)
+			require.ErrorIs(t, err, cortex.ErrVerificationUnavailable)
+			require.Nil(t, r)
+			require.Zero(t, client.calls)
+			_, err = f.storage.GetRun(f.ctx, req.Run.ID)
+			require.ErrorIs(t, err, cortex.ErrRunNotFound)
+		})
+	}
+}
+
+func TestRequiredResumeRejectsAliasedInputScope(t *testing.T) {
+	f := newWorkerFixture(t)
+	client := &requiredToolClient{}
+	e := requiredToolEngine(t, f, client, &requiredToolAuthority{}, engine.WithExternalTool(llm.Tool{Name: "probe"}))
+	ag, overrides := requiredToolAgent(t, f)
+	r, err := e.RunAgent(f.ctx, ag.Name, "work", overrides)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, r.State)
+	require.NoError(t, engine.WithStore(runtimeTaskInputStore{Store: f.storage, change: func(a *evidence.Artifact) { a.Ref.Scope.Levels[0].Value = "other" }})(e))
+	_, err = e.Resume(f.ctx, r.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "SECRET-ID", Content: "result"}}})
+	require.ErrorIs(t, err, cortex.ErrVerificationUnavailable)
+	saved, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, r.Revision, saved.Revision)
+	require.Equal(t, run.StatePaused, saved.State)
+	require.Equal(t, 1, client.calls)
+}

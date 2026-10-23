@@ -76,10 +76,11 @@ host fencing and authorization ports and validates the original receipt on every
 retry. `Engine.PrepareTaskRun` now builds the exact creation request using the
 shared prepared-input path and reserved run identity. It preserves scanning,
 private history, capture policy and input evidence, with no execution side
-effects. Runtime invocation still needs to consume the admitted request and
-enforce authority through provider/tool calls. Concrete host grant services, runtime dispatch, cancellation after
-intent, recovery settlement and event delivery remain open. `Scheduler.Tick` still needs integration; the
-ownership store is not a completed scheduler.
+effects. The runtime entry points below consume that request under guarded
+admission and per-call authority. Concrete host grant services, scheduler
+dispatch, cancellation after intent, recovery settlement and event delivery
+remain open. `Scheduler.Tick` still needs integration; the ownership store is not
+a completed scheduler.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,
@@ -87,11 +88,13 @@ and cancels on expiry or revocation. The shared tool-dispatch path also covers
 approved resume calls. Host writer fencing, installed lease-service qualification,
 provider journaling and shared usage settlement remain integration requirements.
 
-Runtime integration must consume the admitted request's captured execution inputs
-and original prepared snapshot. Reloading current conversation history after
-admission would change the work bound by the capture policy. Before invocation,
-revalidate prepared revisions, current ownership and host authority. Historical
-creation receipts enter recovery; they must not start another ReAct pass.
+`RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
+its captured inputs through the original prepared snapshot and ReAct loop.
+They validate current preparation policy and revisions, authorize input reads,
+check the persisted child/intent and require a confirmed fresh receipt. Historical
+or ambiguous starts return a reconciliation error without invoking a provider.
+Host authority and ownership remain guarded by the admission and per-call ports.
+Scheduler wiring, installed host qualification and durable recovery remain open.
 
 ## S3.3: Structured handoffs and independent review
 

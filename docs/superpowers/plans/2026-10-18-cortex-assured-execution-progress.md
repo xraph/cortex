@@ -4591,3 +4591,53 @@ coordination, run and assurance race suites passed. Final `make f`, all-module
 
 The admitted-task runtime entry point, installed host qualification, durable
 recovery and the full scheduler remain open.
+
+### S3.2 admitted prepared task execution
+
+Ruling: admit the saved request inside the runtime entry point and execute only
+on a confirmed fresh receipt. Reconstructing a request or using a historical
+creation receipt could change inputs or duplicate a provider invocation after a
+lost acknowledgment. Ambiguous starts require reconciliation.
+
+`WithTaskRunAdmitter`, `RunPreparedTask` and `StreamPreparedTask` connect atomic
+reserved-child creation to the existing ReAct runtime. Both the admitter and
+per-call guard are mandatory. Preparation revisions, exact scope, provenance,
+persona, budgets and capture policy are checked before creation. Captured input
+reads are authorized and validated against their complete artifact binding and
+run identity. Current conversation history is never reloaded.
+
+The runtime verifies the fresh receipt, stored initial child and capture intent
+before emitting lifecycle hooks. Historical receipts, admission errors and
+post-commit ambiguity return `ErrTaskRunReconciliationRequired`. The child then
+uses ordinary prepared execution, streaming, suspension and required verification.
+Task-call leases apply through the persisted marker. Failed verification keeps
+candidate output private.
+
+Prepared provenance construction and stream launch are shared with ordinary
+prepared runs. The authorized input reader is shared with required-verification
+resume, including artifact byte and reference checks.
+
+The first test failed on the missing public entry point. SQLite fixtures now
+cover a verified fresh execution, immutable captured history, a refused second
+execution, changed bindings, missing ports, current-policy/input denial, lost
+acknowledgments, post-commit cancellation, malformed receipts, changed children,
+request detachment, per-call denial and verified/failed streaming. An additional
+regression reproduced mutation of an input reference through a storage adapter's
+shared scope slice. The reader now detaches the expected reference and hashes it
+before loading; task entry and required resume reject the changed binding.
+These fixture ports do not qualify host identity or cross-process fencing.
+
+One added test incorrectly expected a non-nil run on generation denial. The
+runtime returns an error and records failure in storage, so the assertion now
+checks that durable state. The in-flight broad run containing the old assertion
+was stopped and restarted after correction.
+
+Final checks passed: `make f`, all-module `make l`, root build, docs types/lint/build
+and diff checks. The complete engine race suite passed with a thirty-minute
+limit in 708.264s. The corrected task-runtime matrix passed in 47.446s and the
+aliased-input resume regression in 2.882s. SQLite fixtures exercised these runtime
+paths; the preceding task-creation packet separately passed SQLite, PostgreSQL
+and MongoDB transaction matrices without skips.
+
+Child completion still needs task acceptance and shared settlement. Scheduler fairness/lifecycle, ambiguous-start recovery,
+provider journaling and installed host qualification remain open.

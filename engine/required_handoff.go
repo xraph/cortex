@@ -6,12 +6,10 @@ import (
 	"slices"
 
 	"github.com/xraph/cortex"
-	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
-	"github.com/xraph/cortex/verification"
 )
 
 // ToolHandoffAuthorizer checks current access to private pending calls and
@@ -103,21 +101,8 @@ func (e *Engine) checkRequiredResume(ctx context.Context, r *run.Run, s *suspens
 	if intent.ID.String() != r.Provenance.VerificationIntentID || !requiredIntentMatchesPolicy(intent, p, r) || r.Provenance.AcceptanceRef != p.ContractID.String() || req.Deadline.After(r.Budget.Deadline) || !e.verificationWorker.config.Clock.Now().Before(req.Deadline) {
 		return cortex.ErrVerificationUnavailable
 	}
-	ref := req.Binding.Context.ExecutionInputs
-	if ref == nil {
-		return cortex.ErrVerificationUnavailable
-	}
-	detachedRef := *ref
-	detachedRef.Scope.Levels = slices.Clone(ref.Scope.Levels)
-	if authErr := e.requiredVerification.CaptureAuthorizer.AuthorizeEvidence(ctx, evidence.ActionRead, detachedRef); authErr != nil {
-		return cortex.ErrVerificationUnavailable
-	}
-	artifact, readErr := storage.LoadEvidence(ctx, *ref)
-	if readErr != nil {
-		return cortex.ErrVerificationUnavailable
-	}
-	inputs, decodeErr := verification.DecodeExecutionInputs(artifact.Data)
-	if decodeErr != nil || r.ValidateExecutionInputs(inputs) != nil || inputs.Model != snap.Config.Model || s.Cont.NewMessagesFrom != len(inputs.History) || len(s.Cont.Messages) <= len(inputs.History) {
+	inputs, decodeErr := e.loadRequiredInputs(ctx, r, intent)
+	if decodeErr != nil || inputs.Model != snap.Config.Model || s.Cont.NewMessagesFrom != len(inputs.History) || len(s.Cont.Messages) <= len(inputs.History) {
 		return cortex.ErrVerificationUnavailable
 	}
 	for i, message := range inputs.History {

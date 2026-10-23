@@ -1824,9 +1824,32 @@ original request after an ambiguous failure. A guarded receipt still does not
 start the ReAct loop or authorize a provider call, and fixture ports do not
 qualify your installed identity service.
 
-Runtime integration still needs to consume the admitted request through the
-call guard below and reconcile ambiguous starts. Creating a running row alone does not establish live execution
-or worker qualification.
+### Execute a reserved child
+
+Install `engine.WithTaskRunAdmitter(admitter)` and
+`engine.WithTaskCallGuard(guard)` on the engine. The admitter must use the same
+durable store as the engine. Pass the original prepared snapshot and the request
+returned by `PrepareTaskRun` to `RunPreparedTask(ctx, prepared, request)` or
+`StreamPreparedTask(ctx, prepared, request, events)`.
+
+These entry points admit the request themselves. Do not call `Admit` first.
+Only a confirmed fresh creation receipt can start the ReAct loop. A historical
+receipt, lost acknowledgment, changed stored child or cancellation after creation
+returns `cortex.ErrTaskRunReconciliationRequired` without calling the provider.
+Retain the request and inspect the existing child before taking another action.
+
+Before admission, Cortex checks the prepared revisions, scope, run provenance,
+budget and capture policy. It authorizes the captured input read and validates
+both the artifact bytes and complete reference binding. Execution uses that saved
+history and input. Later conversation writes cannot change the admitted work.
+After creation, the stored child and capture intent must match the receipt.
+
+The existing ReAct, streaming, suspension and required-verification paths execute
+the child. Provider and tool calls retain the task marker and require the live
+lease below. A failed verifier keeps the candidate private. Completing the child
+does not accept the task, settle shared reservations or qualify a host adapter;
+those remain separate coordination steps. Durable recovery for ambiguous starts
+and `Scheduler.Tick` integration are still required.
 
 ### Hold task authority through each call
 
@@ -1868,4 +1891,5 @@ uncertain-outcome path.
 
 This guard does not settle shared usage, journal provider dispatch or authorize a
 retry. Its fixture tests do not qualify an installed identity or lease service.
-The admitted-task runtime entry point and durable recovery still need integration.
+The admitted-task entry points above use this guard. Durable recovery and
+installed host qualification still need integration.

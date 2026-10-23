@@ -69,6 +69,11 @@ func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input str
 		close(events)
 		return err
 	}
+	e.launchPreparedStream(ctx, rz, events)
+	return nil
+}
+
+func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, events chan<- StreamEvent) {
 	rt := runTraceFrom(ctx)
 	go func() {
 		defer close(events)
@@ -85,7 +90,6 @@ func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input str
 		}
 		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
 	}()
-	return nil
 }
 
 type preparedRunDraft struct {
@@ -130,33 +134,10 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	if revisionErr := e.checkPreparedRevisions(snap); revisionErr != nil {
 		return nil, nil, revisionErr
 	}
-	provenance := snap.Provenance
-	provenance.PublicationStatus = mergePublicationStatus(provenance.PublicationStatus, sourceStatus)
-	provenance.PreparedDigest = p.Digest()
-	provenance.Purpose = opts.Purpose
-	if provenance.Purpose == "" {
-		provenance.Purpose = run.PurposeNormal
+	provenance, err := preparedRunProvenance(p, snap, opts, sourceStatus)
+	if err != nil {
+		return nil, nil, err
 	}
-	switch provenance.Purpose {
-	case run.PurposeNormal, run.PurposeEvaluation, run.PurposeOptimizationTrial, run.PurposeOptimizationController:
-	default:
-		return nil, nil, fmt.Errorf("cortex: unknown execution purpose: %w", cortex.ErrInvalidPrepared)
-	}
-	if opts.Provenance.AssignmentDigest != "" {
-		parent, parseErr := id.Parse(opts.Provenance.ParentRunID)
-		if !evidence.ValidDigest(opts.Provenance.AssignmentDigest) || parseErr != nil || parent.IsNil() || parent.Prefix() != id.PrefixAgentRun {
-			return nil, nil, cortex.ErrInvalidPrepared
-		}
-	}
-	provenance.AssignmentDigest = opts.Provenance.AssignmentDigest
-	provenance.ParentRunID = opts.Provenance.ParentRunID
-	provenance.ExperimentID = opts.Provenance.ExperimentID
-	provenance.CandidateID = opts.Provenance.CandidateID
-	provenance.EnvironmentReceiptID = opts.Provenance.EnvironmentReceiptID
-	provenance.TrialID = opts.Provenance.TrialID
-	provenance.HarnessID = opts.Provenance.HarnessID
-	provenance.HarnessVersion = opts.Provenance.HarnessVersion
-	provenance.AcceptanceRef = opts.AcceptanceRef
 	ctx = withExecutionProvenance(ctx, provenance)
 	cfg := snap.Config
 	if policyErr := e.requirePublication(cfg.Publication); policyErr != nil {
@@ -259,4 +240,35 @@ func (e *Engine) loadPreparedHistory(ctx context.Context, snap *preparedSnapshot
 		return nil, scanErr
 	}
 	return messages, nil
+}
+
+func preparedRunProvenance(p *PreparedAgent, snap *preparedSnapshot, opts PreparedRunOptions, sourceStatus safety.PublicationStatus) (run.ExecutionProvenance, error) {
+	provenance := snap.Provenance
+	provenance.PublicationStatus = mergePublicationStatus(provenance.PublicationStatus, sourceStatus)
+	provenance.PreparedDigest = p.Digest()
+	provenance.Purpose = opts.Purpose
+	if provenance.Purpose == "" {
+		provenance.Purpose = run.PurposeNormal
+	}
+	switch provenance.Purpose {
+	case run.PurposeNormal, run.PurposeEvaluation, run.PurposeOptimizationTrial, run.PurposeOptimizationController:
+	default:
+		return run.ExecutionProvenance{}, fmt.Errorf("cortex: unknown execution purpose: %w", cortex.ErrInvalidPrepared)
+	}
+	if opts.Provenance.AssignmentDigest != "" {
+		parent, parseErr := id.Parse(opts.Provenance.ParentRunID)
+		if !evidence.ValidDigest(opts.Provenance.AssignmentDigest) || parseErr != nil || parent.IsNil() || parent.Prefix() != id.PrefixAgentRun {
+			return run.ExecutionProvenance{}, cortex.ErrInvalidPrepared
+		}
+	}
+	provenance.AssignmentDigest = opts.Provenance.AssignmentDigest
+	provenance.ParentRunID = opts.Provenance.ParentRunID
+	provenance.ExperimentID = opts.Provenance.ExperimentID
+	provenance.CandidateID = opts.Provenance.CandidateID
+	provenance.EnvironmentReceiptID = opts.Provenance.EnvironmentReceiptID
+	provenance.TrialID = opts.Provenance.TrialID
+	provenance.HarnessID = opts.Provenance.HarnessID
+	provenance.HarnessVersion = opts.Provenance.HarnessVersion
+	provenance.AcceptanceRef = opts.AcceptanceRef
+	return provenance, nil
 }
