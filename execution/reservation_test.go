@@ -111,3 +111,27 @@ func TestSettlementRequiresAttributedKnownUsage(t *testing.T) {
 	_, err = execution.SettlementCharge(r, s)
 	require.Error(t, err, "an unknown dimension cannot carry a claimed actual amount")
 }
+
+func TestNestedAdmissionRejectsAncestorOverrun(t *testing.T) {
+	p := reservationPolicy()
+	now := p.Deadline.Add(-time.Hour)
+	parent := reserveRequest(p)
+	parent.Kind = execution.ReservationBranch
+	parent.Allocation = execution.Resources{Steps: 50, Tokens: 500, ToolCalls: 50, FanOut: 8, USDMicros: 8000}
+	branch := reserveRequest(p)
+	branch.Kind, branch.ParentID = execution.ReservationBranch, parent.ID
+	branch.Allocation = execution.Resources{Steps: 20, Tokens: 300, ToolCalls: 20, FanOut: 4, USDMicros: 3000}
+	sibling := reserveRequest(p)
+	sibling.ParentID = parent.ID
+	records := make([]execution.Reservation, 0, 3)
+	for _, r := range []execution.ReservationRequest{parent, branch, sibling} {
+		records = append(records, execution.Reservation{Request: r, RequestDigest: mustReservationDigest(t, r), CreatedAt: now})
+	}
+	settlement := execution.Settlement{ReservationID: sibling.ID, RequestDigest: records[2].RequestDigest, Usage: execution.ReservationUsage{Known: execution.KnownTokens, Actual: execution.Resources{Tokens: 250}}, Receipt: "sibling-overrun"}
+	_, digest, err := settlement.Freeze()
+	require.NoError(t, err)
+	records[2].Settlement = &execution.SettlementReceipt{Request: settlement, Digest: digest, At: now}
+	next := reserveRequest(p)
+	next.ParentID = branch.ID
+	require.ErrorIs(t, execution.AdmitReservation(p, records, next, now), execution.ErrBudgetExceeded)
+}

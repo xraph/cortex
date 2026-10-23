@@ -4065,3 +4065,48 @@ backends running and no skips. Documentation typecheck, lint and build passed.
 The preceding ownership commit's CI, 40011074055, was still running at this
 checkpoint; the review-only run 40009024187 was cancelled. These local results do
 not qualify live provider estimates or installed worker accounting.
+
+
+### S3.2/S3.5 atomic claim and capacity admission
+
+Ruling: expose `BudgetedClaimStore` as an optional accounting capability while
+`ClaimReadyTask` remains pending. The combined request names one claim attempt,
+plan/task and leaf reservation. It authenticates no principal and accepts no
+caller assertion that dependencies passed.
+
+`AcquireBudgetedTaskClaim` reuses the existing claim and capacity validators
+inside one plan transaction. Claim identity, allocation and the immutable
+association commit together. Separately created records cannot be adopted, and a
+claim cannot acquire another allocation through a changed retry. Confirmed first
+acquisition returns `Fresh=true`; retries and recovery lookups return retained
+snapshots with `Fresh=false`, including after a lost acknowledgment.
+
+Renewal and dispatch through the ordinary claim API check the associated
+allocation and current aggregate account. Settled allocations, expired capacity
+and overdrafts block new intent. Lease expiry remains available without a budget
+refund. Runtime accounting and authoritative readiness/grant admission still
+need integration; no database lock spans an agent or tool call.
+
+Tests first failed at the missing combined acquisition. A later red regression
+showed that time could move backward between claim and budget writes without
+rolling back. The combined operation now rejects that ordering as well as expiry
+after the association write. Tests also cover competing workers and tasks,
+rollback at each write group, lost responses, changed retries, standalone-record
+adoption, recovery lookup, scope, settlement, overrun, renewal and replanning.
+
+The four-stage goal remains active. Scheduler dispatch, task acceptance,
+cancellation, recovery settlement, provider usage and installed multi-worker
+qualification are still open.
+
+Further regressions exposed a nested-account gap: an ancestor could exceed its
+allocation while the root still had capacity. New reservation admission and
+budgeted claim renewal/dispatch now check every ancestor through the same bounded
+accounting logic. Both nested-admission and branch-overrun dispatch tests failed
+before that change and pass with it.
+
+Final `make f`, all-module `make l`, root build and complete execution,
+coordination, planning and assurance race suites passed. Budget/claim/planning
+backend checks passed on SQLite (27.339s), PostgreSQL (18.431s) and MongoDB
+(24.430s), with real containers and no skips. Documentation typecheck, lint and
+build passed. CI 40013300772 for the preceding shared-budget commit is green.
+These tests establish the storage behavior, not installed runtime accounting.

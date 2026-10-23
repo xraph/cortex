@@ -1470,8 +1470,8 @@ remain recoverable. The list is not a snapshot; restart a sweep from the beginni
 after its last page. Reads and historical retries do not establish current
 ownership or permission to execute.
 
-This is the ownership storage layer. `ClaimReadyTask`, aggregate budget admission,
-current-grant fencing, parent cancellation, runtime dispatch and recovery
+This is the ownership storage layer. `ClaimReadyTask`, current-grant fencing,
+parent cancellation, runtime dispatch and recovery
 settlement still need scheduler integration. Acquiring a claim alone does not
 prove that dependencies passed, that a worker may use a tool, or that budget is
 available. No database transaction spans an agent or external tool call.
@@ -1521,5 +1521,35 @@ receipts retain their original amounts.
 limits narrowed by the current plan. `GetReservationPolicy` returns the original
 policy. `ListReservations` provides bounded discovery, while `GetReservation`
 returns allocation and final settlement. Protect these host APIs with current
-authorization. Binding reservations to claims, provider accounting, reviewer and
-verification dispatch still requires scheduler/runtime integration.
+authorization. Provider accounting, reviewer and verification dispatch still
+require scheduler/runtime integration.
+
+### Reserve ownership and capacity together
+
+Use `coordination.BudgetedClaimStore.AcquireBudgetedTaskClaim` when a task needs
+both an exclusive owner and shared capacity. Pass its `ClaimRequest` and a leaf
+`ReservationRequest` with matching plan digest and task ID. Set the reservation's
+`OwnerRef` to the claim ID. Its deadline must cover the requested lease.
+
+The store writes the claim, allocation and their immutable association in one
+plan transaction. Capacity exhaustion or a write failure leaves neither record
+behind. Records created through the separate claim or budget APIs cannot be
+adopted by this operation. A changed retry conflicts, including a second
+reservation ID for the same claim.
+
+A confirmed first acquisition returns `Fresh=true`. Every retry returns the
+original acquisition with `Fresh=false`, even after settlement, replanning or a
+lost response. `GetBudgetedTaskClaim` lets you recover that association by claim
+ID after a restart. These are historical snapshots. Read the current claim and
+reservation before making another decision.
+
+For these claims, `RenewTaskClaim` and `BeginTaskDispatch` also check the retained
+reservation in the plan transaction. Settlement, an expired allocation or an
+overdrawn account or ancestor branch blocks new renewal and dispatch intent. A lease cannot extend
+past the allocation deadline. Expiring a claim still retains unknown budget
+charges; it does not refund them.
+
+You still need to authenticate the worker, resolve current grants and verify task
+dependencies. The combined operation does not provide `ClaimReadyTask` or invoke
+the runtime. Your adapter must enforce the reserved allowance during execution
+and account for actual usage. Storage tests do not qualify that integration.

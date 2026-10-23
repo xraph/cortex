@@ -159,26 +159,28 @@ func ClaimTransactions(t *testing.T, backend store.Store, driver assurance.Drive
 
 type claimWriteDriver struct {
 	assurance.Driver
-	plans    assurance.PlanDriver
-	clock    *jobClock
-	failKind string
+	plans       assurance.PlanDriver
+	clock       *jobClock
+	failKind    string
+	advanceKind string
 }
 
 func (d *claimWriteDriver) TransactPlan(ctx context.Context, planID id.ID, callback func(context.Context, assurance.Driver) error) error {
 	return d.plans.TransactPlan(ctx, planID, func(tc context.Context, tx assurance.Driver) error {
-		return callback(tc, claimWriteTx{Driver: tx, clock: d.clock, failKind: d.failKind})
+		return callback(tc, claimWriteTx{Driver: tx, clock: d.clock, failKind: d.failKind, advanceKind: d.advanceKind})
 	})
 }
 
 type claimWriteTx struct {
 	assurance.Driver
-	clock    *jobClock
-	failKind string
+	clock       *jobClock
+	failKind    string
+	advanceKind string
 }
 
 func (d claimWriteTx) Insert(ctx context.Context, row assurance.Record) error {
 	err := d.Driver.Insert(ctx, row)
-	if err == nil && d.clock != nil {
+	if err == nil && d.clock != nil && (d.advanceKind == "" || row.Kind == d.advanceKind) {
 		d.clock.advance(time.Minute)
 	}
 	if err == nil && row.Kind == d.failKind {

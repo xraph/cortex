@@ -57,8 +57,10 @@ Interfaces: spec's `Scheduler.Tick(ctx, planID) error`; store operations `ClaimR
 S3.2 progress: durable ownership reservations, renewal, immutable history,
 replan fencing and dispatch-intent persistence are implemented on the shared
 transaction capability. Expired unused reservations release; ambiguous dispatches
-enter recovery and cannot be reassigned. Readiness/grant/budget admission,
-runtime dispatch, cancellation, recovery settlement and events remain open.
+enter recovery and cannot be reassigned. Ownership and shared capacity can now be
+reserved together, with budget checks on renewal and dispatch intent. Readiness
+and grant admission, runtime dispatch, cancellation, recovery settlement and
+events remain open.
 `ClaimReadyTask` and `Scheduler.Tick` are still integration work; the ownership
 store is not a completed scheduler.
 
@@ -133,7 +135,8 @@ Interfaces: `Reserve(ctx, execution.ReservationRequest) (execution.Reservation, 
 
 S3.5 progress: shared parent/child accounting, idempotent reserve/settle,
 conservative unknown usage, overrun propagation, integer monetary bounds and
-replan-safe account retention are implemented. Claim/runtime integration,
+replan-safe account retention are implemented. Atomic claim/capacity acquisition
+and budget checks on claim renewal/dispatch are implemented. Runtime accounting,
 provider usage qualification and the bounded replan policy remain open.
 
 ## S3.6: Team review UI and recovery qualification

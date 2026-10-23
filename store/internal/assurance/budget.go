@@ -230,60 +230,9 @@ func (s *Repository) Reserve(ctx context.Context, request execution.ReservationR
 	}
 	var result execution.Reservation
 	err = s.planTransaction(ctx, req.PlanID, func(tc context.Context, tx *Repository) error {
-		result = execution.Reservation{}
-		cached, readErr := tx.GetReservation(tc, req.ID)
-		if readErr == nil {
-			if cached.RequestDigest != digest {
-				return execution.ErrReservationConflict
-			}
-			result = cached
-			return nil
-		}
-		if !errors.Is(readErr, execution.ErrReservationNotFound) {
-			return readErr
-		}
-		policy, p, readErr := tx.effectiveReservationPolicy(tc, req.PlanID)
-		if readErr != nil {
-			return readErr
-		}
-		if req.PlanDigest != p.Digest {
-			return execution.ErrReservationConflict
-		}
-		found := false
-		for _, task := range p.Tasks {
-			if task.ID == req.TaskID {
-				found = true
-				if req.Allocation.Steps > int64(task.Budget.MaxSteps) || req.Allocation.Tokens > int64(task.Budget.MaxTokens) || req.Allocation.ToolCalls > int64(task.Budget.MaxToolCalls) || req.Deadline.After(task.Budget.Deadline) {
-					return execution.ErrBudgetExceeded
-				}
-				break
-			}
-		}
-		if !found {
-			return execution.ErrInvalidReservation
-		}
-		reservations, readErr := tx.accountReservations(tc, req.PlanID)
-		if readErr != nil {
-			return readErr
-		}
-		at := s.clock.Now()
-		if admitErr := execution.AdmitReservation(policy, reservations, req, at); admitErr != nil {
-			return admitErr
-		}
-		next := execution.Reservation{Request: req, RequestDigest: digest, CreatedAt: at}
-		row, buildErr := reservationRecord(next)
-		if buildErr != nil {
-			return buildErr
-		}
-		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
-			return insertErr
-		}
-		observed := s.clock.Now()
-		if observed.IsZero() || observed.Before(at) || !observed.Before(req.Deadline) || !observed.Before(policy.Deadline) {
-			return execution.ErrBudgetExceeded
-		}
-		result = next
-		return nil
+		var reserveErr error
+		result, _, reserveErr = tx.reserveInTransaction(tc, req, digest)
+		return reserveErr
 	})
 	if errors.Is(err, ErrExists) {
 		err = execution.ErrReservationConflict
@@ -292,6 +241,61 @@ func (s *Repository) Reserve(ctx context.Context, request execution.ReservationR
 		return execution.Reservation{}, err
 	}
 	return result, nil
+}
+
+// reserveInTransaction requires a frozen request and an existing plan transaction.
+func (s *Repository) reserveInTransaction(ctx context.Context, req execution.ReservationRequest, digest string) (execution.Reservation, bool, error) {
+	cached, readErr := s.GetReservation(ctx, req.ID)
+	if readErr == nil {
+		if cached.RequestDigest != digest {
+			return execution.Reservation{}, false, execution.ErrReservationConflict
+		}
+		return cached, false, nil
+	}
+	if !errors.Is(readErr, execution.ErrReservationNotFound) {
+		return execution.Reservation{}, false, readErr
+	}
+	policy, p, readErr := s.effectiveReservationPolicy(ctx, req.PlanID)
+	if readErr != nil {
+		return execution.Reservation{}, false, readErr
+	}
+	if req.PlanDigest != p.Digest {
+		return execution.Reservation{}, false, execution.ErrReservationConflict
+	}
+	found := false
+	for _, task := range p.Tasks {
+		if task.ID == req.TaskID {
+			found = true
+			if req.Allocation.Steps > int64(task.Budget.MaxSteps) || req.Allocation.Tokens > int64(task.Budget.MaxTokens) || req.Allocation.ToolCalls > int64(task.Budget.MaxToolCalls) || req.Deadline.After(task.Budget.Deadline) {
+				return execution.Reservation{}, false, execution.ErrBudgetExceeded
+			}
+			break
+		}
+	}
+	if !found {
+		return execution.Reservation{}, false, execution.ErrInvalidReservation
+	}
+	reservations, readErr := s.accountReservations(ctx, req.PlanID)
+	if readErr != nil {
+		return execution.Reservation{}, false, readErr
+	}
+	at := s.clock.Now()
+	if admitErr := execution.AdmitReservation(policy, reservations, req, at); admitErr != nil {
+		return execution.Reservation{}, false, admitErr
+	}
+	next := execution.Reservation{Request: req, RequestDigest: digest, CreatedAt: at}
+	row, buildErr := reservationRecord(next)
+	if buildErr != nil {
+		return execution.Reservation{}, false, buildErr
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return execution.Reservation{}, false, insertErr
+	}
+	observed := s.clock.Now()
+	if observed.IsZero() || observed.Before(at) || !observed.Before(req.Deadline) || !observed.Before(policy.Deadline) {
+		return execution.Reservation{}, false, execution.ErrBudgetExceeded
+	}
+	return next, true, nil
 }
 
 // Settle retains final usage once. It remains available after expiry or replan so

@@ -144,6 +144,9 @@ func AdmitReservation(p ReservationPolicy, reservations []Reservation, r Reserva
 			return admitErr
 		}
 	}
+	if ancestorErr := a.checkAncestors(r.ParentID, at); ancestorErr != nil {
+		return ancestorErr
+	}
 	_, digest, err := r.Freeze()
 	if err != nil {
 		return err
@@ -155,6 +158,36 @@ func AdmitReservation(p ReservationPolicy, reservations []Reservation, r Reserva
 	}
 	if prospective.overflow || !p.Limits.Covers(prospective.total) {
 		return ErrBudgetExceeded
+	}
+	return nil
+}
+
+// CheckReservationBudget checks an existing open allocation, its ancestors and
+// the aggregate account before further work. Trusted storage must supply every
+// reservation; this check grants no permission and does not enforce runtime use.
+func CheckReservationBudget(p ReservationPolicy, reservations []Reservation, identifier id.ID, at time.Time) error {
+	a, err := accountReservations(p, reservations)
+	if err != nil {
+		return err
+	}
+	r, exists := a.byID[identifier]
+	if !exists {
+		return ErrReservationNotFound
+	}
+	if at.IsZero() || at.Before(r.CreatedAt) || !at.Before(p.Deadline) || a.overflow || !p.Limits.Covers(a.total) {
+		return ErrBudgetExceeded
+	}
+	return a.checkAncestors(identifier, at)
+}
+
+func (a *reservationAccount) checkAncestors(identifier id.ID, at time.Time) error {
+	// accountReservations has already checked every edge and bounded depth.
+	for !identifier.IsNil() {
+		r := a.byID[identifier]
+		if r.Settlement != nil || at.IsZero() || at.Before(r.CreatedAt) || !at.Before(r.Request.Deadline) || !r.Request.Allocation.Covers(a.charge[identifier]) {
+			return ErrBudgetExceeded
+		}
+		identifier = r.Request.ParentID
 	}
 	return nil
 }

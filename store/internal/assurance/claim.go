@@ -246,99 +246,9 @@ func (s *Repository) mutateClaim(ctx context.Context, planID, taskID id.ID, op c
 	var result coordination.Claim
 	fresh := false
 	err = s.planTransaction(ctx, planID, func(tc context.Context, tx *Repository) error {
-		result = coordination.Claim{}
-		fresh = false
-		cached, readErr := tx.get(tc, Query{Kind: kindTaskClaimOperation, ID: digest})
-		if readErr == nil {
-			if cached.Kind != kindTaskClaimOperation || cached.ID != digest || cached.Deleted || len(cached.Body) > coordination.MaxClaimBytes || json.Unmarshal([]byte(cached.Body), &result) != nil || result.Validate() != nil || cached.Digest != evidence.Digest([]byte(cached.Body)) || cached.RunID != claimKey(planID, taskID) || result.PlanID != planID || result.TaskID != taskID || result.Scope.Canonical() != cached.ScopeCanon {
-				return coordination.ErrInvalidClaim
-			}
-			return nil
-		}
-		if !errors.Is(readErr, ErrAbsent) {
-			return readErr
-		}
-		current, readErr := tx.GetTaskClaim(tc, planID, taskID)
-		if readErr != nil && !errors.Is(readErr, coordination.ErrClaimNotFound) {
-			return readErr
-		}
-		p, planErr := tx.GetPlan(tc, planID)
-		if planErr != nil {
-			return planErr
-		}
-		at := s.clock.Now()
-		var next coordination.Claim
 		var changeErr error
-		if op.Kind == "acquire" {
-			var previous *coordination.Claim
-			if readErr == nil {
-				previous = &current
-			}
-			next, changeErr = coordination.AcquireClaim(previous, *op.Request, p, at)
-		} else {
-			if readErr != nil {
-				return readErr
-			}
-			if op.Kind != "expire" && (current.PlanDigest != p.Digest || current.PlanRevision != p.Revision) {
-				return coordination.ErrClaimConflict
-			}
-			switch op.Kind {
-			case "renew":
-				next, changeErr = coordination.RenewClaim(current, op.Token, op.Duration, at)
-			case "dispatch":
-				next, changeErr = coordination.BeginDispatch(current, op.Token, op.RunID, at)
-			case "expire":
-				next, changeErr = coordination.ExpireClaim(current, op.Token.Revision, at)
-			default:
-				return coordination.ErrInvalidClaim
-			}
-		}
-		if changeErr != nil {
-			return changeErr
-		}
-		if op.Kind == "acquire" {
-			identity, identityErr := record(kindTaskClaimIdentity, next.ID.String(), digest, claimKey(planID, taskID), next.Scope, next)
-			if identityErr != nil {
-				return identityErr
-			}
-			if insertErr := tx.driver.Insert(tc, identity); insertErr != nil {
-				return insertErr
-			}
-		}
-		if op.Kind == "dispatch" {
-			link, linkErr := record(kindTaskDispatch, op.RunID.String(), next.Digest, claimKey(planID, taskID), next.Scope, next)
-			if linkErr != nil {
-				return linkErr
-			}
-			if insertErr := tx.driver.Insert(tc, link); insertErr != nil {
-				return insertErr
-			}
-		}
-		row, buildErr := claimRecord(next)
-		if buildErr != nil {
-			return buildErr
-		}
-		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
-			return insertErr
-		}
-		data, encodeErr := json.Marshal(next)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		acknowledgment, buildErr := record(kindTaskClaimOperation, digest, evidence.Digest(data), claimKey(planID, taskID), next.Scope, next)
-		if buildErr != nil {
-			return buildErr
-		}
-		if insertErr := tx.driver.Insert(tc, acknowledgment); insertErr != nil {
-			return insertErr
-		}
-		observed := s.clock.Now()
-		if observed.IsZero() || observed.Before(at) || (op.Kind != "expire" && !observed.Before(next.ExpiresAt)) {
-			return coordination.ErrClaimConflict
-		}
-		result = next
-		fresh = true
-		return nil
+		result, fresh, changeErr = tx.mutateClaimInTransaction(tc, planID, taskID, op, digest)
+		return changeErr
 	})
 	if errors.Is(err, ErrExists) {
 		err = coordination.ErrClaimConflict
@@ -347,4 +257,103 @@ func (s *Repository) mutateClaim(ctx context.Context, planID, taskID id.ID, op c
 		return coordination.Claim{}, false, err
 	}
 	return result, fresh, nil
+}
+
+// mutateClaimInTransaction uses the caller's plan transaction.
+func (s *Repository) mutateClaimInTransaction(ctx context.Context, planID, taskID id.ID, op claimOperation, digest string) (coordination.Claim, bool, error) {
+	var cachedClaim coordination.Claim
+	cached, readErr := s.get(ctx, Query{Kind: kindTaskClaimOperation, ID: digest})
+	if readErr == nil {
+		if cached.Kind != kindTaskClaimOperation || cached.ID != digest || cached.Deleted || len(cached.Body) > coordination.MaxClaimBytes || json.Unmarshal([]byte(cached.Body), &cachedClaim) != nil || cachedClaim.Validate() != nil || cached.Digest != evidence.Digest([]byte(cached.Body)) || cached.RunID != claimKey(planID, taskID) || cachedClaim.PlanID != planID || cachedClaim.TaskID != taskID || cachedClaim.Scope.Canonical() != cached.ScopeCanon {
+			return coordination.Claim{}, false, coordination.ErrInvalidClaim
+		}
+		return cachedClaim, false, nil
+	}
+	if !errors.Is(readErr, ErrAbsent) {
+		return coordination.Claim{}, false, readErr
+	}
+	current, readErr := s.GetTaskClaim(ctx, planID, taskID)
+	if readErr != nil && !errors.Is(readErr, coordination.ErrClaimNotFound) {
+		return coordination.Claim{}, false, readErr
+	}
+	p, planErr := s.GetPlan(ctx, planID)
+	if planErr != nil {
+		return coordination.Claim{}, false, planErr
+	}
+	at := s.clock.Now()
+	var next coordination.Claim
+	var changeErr error
+	if op.Kind == "acquire" {
+		var previous *coordination.Claim
+		if readErr == nil {
+			previous = &current
+		}
+		next, changeErr = coordination.AcquireClaim(previous, *op.Request, p, at)
+	} else {
+		if readErr != nil {
+			return coordination.Claim{}, false, readErr
+		}
+		if op.Kind != "expire" && (current.PlanDigest != p.Digest || current.PlanRevision != p.Revision) {
+			return coordination.Claim{}, false, coordination.ErrClaimConflict
+		}
+		switch op.Kind {
+		case "renew":
+			next, changeErr = coordination.RenewClaim(current, op.Token, op.Duration, at)
+		case "dispatch":
+			next, changeErr = coordination.BeginDispatch(current, op.Token, op.RunID, at)
+		case "expire":
+			next, changeErr = coordination.ExpireClaim(current, op.Token.Revision, at)
+		default:
+			return coordination.Claim{}, false, coordination.ErrInvalidClaim
+		}
+	}
+	if changeErr != nil {
+		return coordination.Claim{}, false, changeErr
+	}
+	if op.Kind == "renew" || op.Kind == "dispatch" {
+		if budgetErr := s.checkClaimBudget(ctx, next, at); budgetErr != nil {
+			return coordination.Claim{}, false, budgetErr
+		}
+	}
+	if op.Kind == "acquire" {
+		identity, identityErr := record(kindTaskClaimIdentity, next.ID.String(), digest, claimKey(planID, taskID), next.Scope, next)
+		if identityErr != nil {
+			return coordination.Claim{}, false, identityErr
+		}
+		if insertErr := s.driver.Insert(ctx, identity); insertErr != nil {
+			return coordination.Claim{}, false, insertErr
+		}
+	}
+	if op.Kind == "dispatch" {
+		link, linkErr := record(kindTaskDispatch, op.RunID.String(), next.Digest, claimKey(planID, taskID), next.Scope, next)
+		if linkErr != nil {
+			return coordination.Claim{}, false, linkErr
+		}
+		if insertErr := s.driver.Insert(ctx, link); insertErr != nil {
+			return coordination.Claim{}, false, insertErr
+		}
+	}
+	row, buildErr := claimRecord(next)
+	if buildErr != nil {
+		return coordination.Claim{}, false, buildErr
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return coordination.Claim{}, false, insertErr
+	}
+	data, encodeErr := json.Marshal(next)
+	if encodeErr != nil {
+		return coordination.Claim{}, false, encodeErr
+	}
+	acknowledgment, buildErr := record(kindTaskClaimOperation, digest, evidence.Digest(data), claimKey(planID, taskID), next.Scope, next)
+	if buildErr != nil {
+		return coordination.Claim{}, false, buildErr
+	}
+	if insertErr := s.driver.Insert(ctx, acknowledgment); insertErr != nil {
+		return coordination.Claim{}, false, insertErr
+	}
+	observed := s.clock.Now()
+	if observed.IsZero() || observed.Before(at) || (op.Kind != "expire" && !observed.Before(next.ExpiresAt)) {
+		return coordination.Claim{}, false, coordination.ErrClaimConflict
+	}
+	return next, true, nil
 }
