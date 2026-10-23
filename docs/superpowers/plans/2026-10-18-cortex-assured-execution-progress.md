@@ -2934,3 +2934,25 @@ Validation for the coverage timeout target:
 - Linux qualification remains pending. CI run 39954455702 failed earlier, in
   `TestFollowReplayDeadlineAndCancelledRead`, after an extra send at the exact
   lifetime boundary. That failure needs a separate replay deadline correction.
+
+### Replay deadline notification race
+
+CI run 39954455702 found a fourth idle replay send at a three-second lifetime
+boundary. Repeating the existing test locally reproduced it. The poll timer and
+context deadline callback can become runnable together, leaving `ctx.Err()` nil
+when the poll callback wins.
+
+The follow loop now checks the deadline timestamp as well as context cancellation
+before reads and sends. The per-read boundary also discards a page if its deadline
+has elapsed. Deterministic tests model delayed cancellation notifications both
+before the first read and while a page is being read. The existing lifetime test
+keeps its original send bound.
+
+Validation for the deadline correction:
+
+- The original lifetime test failed during 1,000 local repetitions before the
+  fix. A deterministic delayed-notification test also failed before the change.
+- All event tests passed 1,000 race-enabled repetitions after final formatting
+  (3.472s). Full API and remote race suites passed (1.700s and 8.097s).
+- Root/API builds, final lint across all ten modules and diff checks passed.
+  Fresh Linux CI must still confirm the correction and the coverage timeout.

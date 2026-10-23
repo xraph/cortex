@@ -53,14 +53,14 @@ func FollowReplay(ctx context.Context, authorized ReadStore, request FollowReque
 	ctx, cancel := context.WithTimeout(ctx, request.Lifetime)
 	defer cancel()
 	for {
-		if contextErr := ctx.Err(); contextErr != nil {
+		if contextErr := replayDeadlineError(ctx); contextErr != nil {
 			return contextErr
 		}
 		page, readErr := readFollowPage(ctx, authorized, request)
 		if readErr != nil {
 			return readErr
 		}
-		if contextErr := ctx.Err(); contextErr != nil {
+		if contextErr := replayDeadlineError(ctx); contextErr != nil {
 			return contextErr
 		}
 		if sendErr := send(ctx, page); sendErr != nil {
@@ -87,5 +87,24 @@ func FollowReplay(ctx context.Context, authorized ReadStore, request FollowReque
 func readFollowPage(ctx context.Context, authorized ReadStore, request FollowRequest) (ReplayPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, request.ReadTimeout)
 	defer cancel()
-	return ReadReplayPage(ctx, authorized, request.RunID, request.After, request.Limit)
+	if err := replayDeadlineError(ctx); err != nil {
+		return ReplayPage{}, err
+	}
+	page, err := ReadReplayPage(ctx, authorized, request.RunID, request.After, request.Limit)
+	if deadlineErr := replayDeadlineError(ctx); deadlineErr != nil {
+		return ReplayPage{}, deadlineErr
+	}
+	return page, err
+}
+
+// A context timer may become runnable alongside a poll timer. Check the clock
+// as well as Err so delivery does not depend on which callback runs first.
+func replayDeadlineError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }

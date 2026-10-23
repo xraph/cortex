@@ -144,3 +144,38 @@ func TestFollowReplayDoesNotReadAheadOfSlowConsumer(t *testing.T) {
 		require.Equal(t, 1, reads)
 	})
 }
+
+// Deadline cancellation is delivered asynchronously. This context models the
+// interval where the clock has reached the deadline but Err is still nil.
+type delayedReplayDeadline struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c delayedReplayDeadline) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestFollowReplayChecksDeadlineBeforeCancellationArrives(t *testing.T) {
+	ctx, req, page := replayFixture()
+	ctx = delayedReplayDeadline{Context: ctx, deadline: time.Now().Add(-time.Second)}
+	reads, sends := 0, 0
+	err := event.FollowReplay(ctx, replayStorage(func(context.Context, event.ReadRequest) (event.Page, error) { reads++; return page, nil }), event.FollowRequest{RunID: req.After.RunID}, func(context.Context, event.ReplayPage) error { sends++; return errors.New("sent after deadline") })
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Zero(t, reads)
+	require.Zero(t, sends)
+}
+
+func TestFollowReplayDiscardsPageWhenDeadlineNotificationIsLate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, req, page := replayFixture()
+		ctx = delayedReplayDeadline{Context: ctx, deadline: time.Now().Add(time.Second)}
+		reads, sends := 0, 0
+		err := event.FollowReplay(ctx, replayStorage(func(context.Context, event.ReadRequest) (event.Page, error) {
+			reads++
+			time.Sleep(time.Second)
+			return page, nil
+		}), event.FollowRequest{RunID: req.After.RunID}, func(context.Context, event.ReplayPage) error { sends++; return errors.New("sent late page") })
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, 1, reads)
+		require.Zero(t, sends)
+	})
+}
