@@ -25,6 +25,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
+| S3.4 | active | this chat | Durable effect reservations, immutable provider receipts and explicit recovery executor implemented; engine integration, retries, compensation, conflict handling and worker fencing remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3608,3 +3609,52 @@ Validation so far:
 - Final all-ten-module lint, root verification race tests (4.017s), grading race
   tests (1.542s), root/module builds and diff checks passed after the cancellation
   and substitution review.
+
+### S3.4 durable effect reservations and explicit recovery
+
+Added an optional `execution.EffectStore` capability to all three built-in
+backends through the shared assurance repository. The request binds the exact
+scope, run, stable operation key, original attempt ID, argument digest,
+principal, authority reference, deadline and trusted effect requirement. The
+first confirmed insert grants dispatch permission. Identical requests never
+receive that permission again, and changed requests conflict. An immutable
+terminal receipt records provider identity, version and retained evidence.
+Argument bytes are not written to this journal.
+
+`execution.NewEffectExecutor` connects that store to host-registered adapters
+and current authorization. It reserves before dispatch, reads completed receipts
+on replay and probes pending outcomes through read-only reconciliation. Unknown
+results stay reserved. A lost reservation or completion acknowledgement returns
+an uncertain outcome. Recovery remains available after the original execution
+deadline, with fresh authorization and a bounded context. Per-instance admission
+limits concurrent calls; they do not replace shared budgets or worker fencing.
+
+Ruling: implement the independent S3.4 effect foundation while G2 live deployment
+remains deferred. Keep this executor explicit and conservative: it never retries
+a mutation automatically, including a handler declared idempotent. This avoids
+inferring retry permission before provider reconciliation and scheduler fences
+are installed, at the cost of leaving retry policy execution for the runtime
+integration packet. Host adapters must enforce current grants at the external
+write boundary. This packet does not enable production task acceptance.
+
+Red tests first showed the missing executor and storage capability. A behavioral
+red test then showed that a lost reservation acknowledgement was reported as an
+ordinary database error; it now includes `ErrEffectUncertain`. Tests cover changed
+arguments and attempts, current authority, expired dispatch versus authorized
+recovery, competing reservations, immutable receipt conflicts, and missing or
+wrong scope. The process fixture performs and fsyncs an external file write,
+then gets killed before returning a receipt. A reopened SQLite store reconciles
+that write and a repeated execution leaves the external write count at one.
+The race detector caught a test stderr-buffer read before process shutdown; that
+fixture race was fixed and the killed-process suite passed again.
+
+Validation: root execution/planning/orchestration race tests passed. Shared effect
+conformance passed on SQLite, PostgreSQL 16 and the pinned MongoDB 7.0.41
+container without skips. The final backend run completed in 8.149s, 4.803s and
+6.606s respectively; the separate SQLite crash suite passed in 5.744s. Root build,
+formatting, final all-module lint and documentation typecheck/lint/build passed.
+
+Engine tool wiring, durable operation discovery, atomic task/event updates,
+automatic retries, explicit compensation, artifact conflict resolution and
+stale-worker fencing remain open. The fixture does not qualify an external
+provider or the deferred Linux sandbox. S3.4 and the four-stage goal remain active.

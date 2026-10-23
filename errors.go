@@ -105,3 +105,11 @@ var (
 	ErrPublicEventAccessDenied = errors.New("cortex: public event replay denied")
 	ErrPublicEventUnavailable  = errors.New("cortex: public event replay unavailable")
 )
+
+// Effect errors distinguish a conflicting request from an unresolved external action.
+var (
+	ErrEffectConflict    = errors.New("cortex: effect operation conflicts with retained request")
+	ErrEffectNotFound    = errors.New("cortex: effect operation not found")
+	ErrEffectUncertain   = errors.New("cortex: effect outcome requires reconciliation")
+	ErrEffectUnavailable = errors.New("cortex: effect executor unavailable")
+)

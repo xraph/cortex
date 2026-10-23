@@ -84,6 +84,15 @@ Interfaces: `execution.EffectAdapter` exposes `Execute(ctx, EffectRequest) (Effe
 - [ ] Give artifact updates expected versions and explicit ownership. Conflicting writers produce separate candidates or a conflict record; no silent last-write-wins on accepted artifacts. Shared blackboard observations include provenance and revision.
 - [ ] Run injected network ambiguity, duplicate delivery, broker restart and process-kill tests against an instrumented external-effect fixture. Count actual side effects, not tool return messages. Apply common checks and commit `feat(execution): reconcile ambiguous effects before retrying tasks`.
 
+S3.4 progress: optional effect persistence and an explicit host executor now
+reserve operations before dispatch and recover through read-only reconciliation.
+All three built-in stores share the immutable reservation/receipt implementation.
+The executor pins trusted handler metadata and rechecks current authority. It
+never automatically repeats a mutation. A killed-process fixture checks that a
+completed external file write is reconciled without a second write. Engine tool
+wiring, retry policy execution, compensation, artifact conflict handling, scheduler
+fences and durable events remain open; the full packet stays unchecked.
+
 ## S3.5: Shared budgets and bounded replanning
 
 Depends on S3.1/S3.2/S3.4. Owner: budget/planning implementer; integrator serializes shared runtime edits.
