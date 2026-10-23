@@ -45,6 +45,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevision", func(t *testing.T) { testRunRevision(t, newStore) })
 	t.Run("Planning", func(t *testing.T) { testPlanning(t, newStore) })
 	t.Run("PlanningConcurrentRevision", func(t *testing.T) { testPlanningConcurrentRevision(t, newStore) })
+	t.Run("VerifiedResultHostFence", func(t *testing.T) { testVerifiedResultHostFence(t, newStore) })
 	t.Run("VerifiedResultDenied", func(t *testing.T) { testVerifiedResultDenied(t, newStore) })
 	t.Run("VerifiedResultConcurrent", func(t *testing.T) { testVerifiedResultConcurrent(t, newStore) })
 	t.Run("VerifiedResultCommit", func(t *testing.T) { testVerifiedResultCommit(t, newStore) })

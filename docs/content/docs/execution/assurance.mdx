@@ -67,3 +67,50 @@ Create an ordered `verification.Contract` with at least one required criterion. 
 Before acting on a result, reauthorize the resources and compare a trusted current binding with `verification.CheckFreshness`. A report digest checks integrity, not authorship or current permission. Only trusted host paths may create or persist reports. The built-in stores expose `verification.Store` as an optional capability and retain immutable history for audit.
 
 Evidence deletion retains an audit tombstone. Set the authenticated actor with `evidence.WithDeletionActor` before deleting through the authorized repository. The first deletion records the reference, actor, time and reason; retries cannot rewrite that history or restore the bytes. Tombstone reads are a separate storage capability and require host audit authorization.
+
+
+## Commit a verified result
+
+Built-in stores expose optional `verification.CommitStore`. A commit consumes
+saved contracts and reports, checks the exact run revision and retained evidence,
+and saves the receipt, metadata-only outbox entry and run update in one
+transaction. The run must contain a completed final answer pending verification,
+with the same prepared digest and acceptance contract. Failed or missing required
+checks cannot pass this operation.
+
+Use `verification.NewCommitter(storage, hostFence, hostAuthorizer)` at your host
+boundary. Its `Commit(ctx, request)` method checks current grants inside the host
+fence, calls storage while that fence is held and validates the returned receipt.
+Every retry passes through the same authorization check. The request contains
+saved record IDs and a trusted binding, never model-authored evaluators or
+permission claims.
+
+Your `verification.CommitFence` must hold authorization and revision guards
+through the entire callback. Capture the current binding from authoritative
+state, invoke the callback once and synchronously, and require every relevant
+policy or revision writer to use the same guards. That includes writers in other
+processes. A permission lookup followed by an unlocked database write leaves a
+revocation gap. Cortex supplies no permissive default fence.
+
+For an external resource, use a version-conditional operation or define and
+check an observation window appropriate to the contract. A local guard cannot
+freeze a remote service. Keep captured provenance timestamps intact when
+checking that its resource versions still match; any changed binding requires
+fresh reports.
+
+Retry the same request and result ID after an ambiguous acknowledgement.
+Storage returns the original historical receipt and event ID, even if evidence
+has since expired or been deleted. The guarded API still requires current access.
+A receipt does not renew evidence freshness or grant permission to publish.
+`GetCommittedResult` is a raw storage read, so protect audit access separately.
+
+SQLite uses a write transaction; PostgreSQL locks the run and evidence records.
+MongoDB requires a transaction-capable deployment and fences evidence against
+concurrent deletion. A standalone MongoDB server returns
+`verification.ErrCommitUnavailable`. Requests and receipts are limited to one
+MiB, with at most 256 report IDs and eight MiB of report JSON and evidence bytes
+processed in one attempt.
+
+Engine verification gates, durable verification jobs and public outbox dispatch
+are not connected yet. This storage and host boundary does not change existing
+`RunCompleted` hooks or enable contextual verification in runtime capabilities.

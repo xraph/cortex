@@ -47,8 +47,9 @@ Interfaces: produces `WithVerification(v verification.Verifier) Option` and engi
 
 Storage foundation implemented: built-in backends expose optional
 `verification.CommitStore`, with atomic receipt/outbox/run writes and exact
-revision/report/evidence validation. The request is trusted host input; the
-runtime must supply the authorization/revision fence. Receipt retries preserve
+revision/report/evidence validation. The request is trusted host input. `verification.NewCommitter` now requires a
+host fence and current grant checks around the storage call; the runtime still
+needs a qualified host adapter. Receipt retries preserve
 historical evidence and do not authorize public delivery. See the progress
 ledger for rollback, concurrency, revocation and persistence checks. The runtime
 steps below remain open.

@@ -1861,3 +1861,47 @@ qualification.
 
 Host authorization fencing, verification job recovery, engine gates/hooks and
 public event dispatch remain open. S2.2 and the four-stage plan are incomplete.
+
+
+### S2.2 guarded host commit boundary
+
+Atomic storage commit `d9f29e4` passed CI run `39907241822`.
+
+Ruling: require an explicit host fence in addition to `BindingAuthorizer`.
+A standalone permission check cannot prevent a concurrent revocation before
+storage commits. The host owns grant and resource revision writers, so a generic
+process mutex in Cortex would give a false guarantee across host replicas.
+The cost is an explicit host adapter before runtime activation; there is no
+unfenced fallback.
+
+`verification.NewCommitter` now combines `CommitStore`, `CommitFence` and the
+existing `BindingAuthorizer`. It freezes caller inputs, checks exact scope and
+current binding, authorizes inside the fence and keeps that fence around the
+atomic storage call. It validates and detaches the receipt before returning it.
+Historical retries are reauthorized. Storage read access remains a separate
+host audit decision. A final fence error can follow a committed write, so callers
+must reconcile the same request and result ID after an ambiguous response.
+
+The host callback must run once and synchronously. Missing, repeated, retained
+and escaped callbacks fail; escaped work receives cancellation. Suppressed
+callback errors cannot become success. This detects adapter protocol failures
+but cannot repair a host guard that silently releases locks or excludes another
+writer. Production adapters must prove their own cross-process coverage and
+external observation or conditional-operation policy.
+
+TDD began with the missing committer API. Race tests cover guard lifetime,
+current-grant denial, changed bindings, exact scope, input ownership, cancellation,
+nil ports, invalid receipts, ambiguous fence errors and callback protocol misuse.
+Shared backend fixtures hold a host policy guard across a real commit, queue a
+revocation against that guard, and deny an idempotent retry once revocation takes
+effect while preserving the historical receipt for separately authorized audit.
+The fixture is a host policy model, not a production authorization provider.
+
+Validation passed: scoped make f, make l across all ten modules, root build,
+full verification race tests and the complete verified-result test group on
+SQLite, PostgreSQL and MongoDB. The final backend runs completed in 10.772s,
+6.845s and 6.926s respectively, with real containers and no skipped tests.
+Published documentation passed `pnpm types:check`, `pnpm lint` and `pnpm build`.
+
+Host deployment adapters, durable verification jobs, engine gates/hooks and
+public event dispatch remain open. G1 is still required before runtime activation.
