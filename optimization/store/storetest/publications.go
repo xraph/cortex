@@ -15,6 +15,43 @@ import (
 
 func publications(t *testing.T, factory Factory) {
 	t.Helper()
+	t.Run("ReflectionCompletionAtomic", func(t *testing.T) {
+		s, ctx, bundle, lease, decision := decisionFixture(t, factory)
+		commitTrialChange(ctx, t, s, decisionChange(ctx, t, s, bundle, lease, decision))
+		current, err := s.GetExperiment(ctx, bundle.Experiment.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := publicationRequest(bundle, lease, decision)
+		change := optimization.Transition{ExperimentID: current.ID, ExpectedRevision: current.Revision, NextState: optimization.StateReviewRequired, Lease: lease, IdempotencyKey: "reflection-complete", Actor: bundle.Experiment.Spec.Requester, Publications: []optimization.PublicationRequest{request}}
+		abort := errors.New("abort reflection finish")
+		if err = s.Transact(ctx, func(tx store.Tx) error {
+			if commitErr := tx.CommitTransition(change); commitErr != nil {
+				return commitErr
+			}
+			return abort
+		}); !errors.Is(err, abort) {
+			t.Fatal(err)
+		}
+		if _, err = s.GetPublication(ctx, request.Lesson.ID, 1); !errors.Is(err, optimization.ErrNotFound) {
+			t.Fatalf("aborted publication persisted: %v", err)
+		}
+		for range 2 {
+			if err = s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }); err != nil {
+				t.Fatal(err)
+			}
+		}
+		final, err := s.GetExperiment(ctx, current.ID)
+		if err != nil || final.State != optimization.StateReviewRequired {
+			t.Fatalf("reflection state: %+v %v", final, err)
+		}
+		if _, err = s.GetPublication(ctx, request.Lesson.ID, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Transact(ctx, func(tx store.Tx) error { return tx.RenewLease(lease) }); !errors.Is(err, optimization.ErrConflict) {
+			t.Fatalf("completed phase lease remained valid: %v", err)
+		}
+	})
 	t.Run("RevokedLessonInvalidatesActivation", func(t *testing.T) {
 		s, ctx, request := publishedLessonFixture(t, factory)
 		reuse := func(*testing.T, func() time.Time) store.Store { return s }

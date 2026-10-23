@@ -12,6 +12,58 @@ import (
 
 func lifecycle(t *testing.T, factory Factory) {
 	t.Helper()
+	t.Run("RunningControlTransitions", func(t *testing.T) {
+		s, ctx, experiment, lease := runningBudget(t, factory, optimization.Budget{MaxTokens: 100, TokenOnly: true})
+		before, err := s.GetExperiment(ctx, experiment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		change := optimization.Transition{ExperimentID: experiment, ExpectedRevision: before.Revision, NextState: optimization.StatePaused, IdempotencyKey: "pause", Actor: before.Spec.Requester}
+		apply := func() error { return s.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(change) }) }
+		if err = apply(); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Transact(ctx, func(tx store.Tx) error { return tx.RenewLease(lease) }); !errors.Is(err, optimization.ErrConflict) {
+			t.Fatalf("paused lease remained usable: %v", err)
+		}
+		change.ExpectedRevision++
+		change.NextState = optimization.StateQueued
+		change.IdempotencyKey = "resume"
+		if err = apply(); err != nil {
+			t.Fatal(err)
+		}
+		resumed, err := s.GetExperiment(ctx, experiment)
+		if err != nil || resumed.Deadline != before.Deadline || resumed.Phase != before.Phase {
+			t.Fatalf("resume reset frozen progress: %+v %v", resumed, err)
+		}
+		var next optimization.WorkLease
+		if err = s.Transact(ctx, func(tx store.Tx) error {
+			var claimErr error
+			next, claimErr = tx.ClaimWork(optimization.ClaimRequest{ExperimentID: experiment, Owner: "replacement", Duration: time.Minute})
+			return claimErr
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if next.Generation <= lease.Generation {
+			t.Fatal("resume reused worker generation")
+		}
+		current, err := s.GetExperiment(ctx, experiment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		change.ExpectedRevision = current.Revision
+		change.NextState = optimization.StateCancelled
+		change.IdempotencyKey = "cancel"
+		if err = apply(); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Transact(ctx, func(tx store.Tx) error {
+			_, reserveErr := tx.Reserve(reservation(experiment, next, "after-cancel", 60))
+			return reserveErr
+		}); !errors.Is(err, optimization.ErrConflict) {
+			t.Fatalf("cancel permitted dispatch: %v", err)
+		}
+	})
 	t.Run("DraftEventAtomic", func(t *testing.T) {
 		s := factory(t, time.Now)
 		bundle := Fixture(t, "draft-event")

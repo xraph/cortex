@@ -92,6 +92,10 @@ func (m *LedgerMeter) Settle(ctx context.Context, settlement UsageSettlement) er
 }
 
 func (m *LedgerMeter) authorize(ctx context.Context, experimentID id.ID) (context.Context, context.CancelFunc, error) {
+	return m.authorizeAction(ctx, experimentID, ActionStart)
+}
+
+func (m *LedgerMeter) authorizeAction(ctx context.Context, experimentID id.ID, action Action) (context.Context, context.CancelFunc, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -115,7 +119,7 @@ func (m *LedgerMeter) authorize(ctx context.Context, experimentID id.ID) (contex
 	}
 	authorize := func(current context.Context) error {
 		resource := Resource{Scope: copyScope(scope), AgentID: experiment.Spec.AgentID, ID: experimentID, Kind: "experiment"}
-		return m.authorizer.Authorize(copyScopeContext(current), ActionStart, resource)
+		return m.authorizer.Authorize(copyScopeContext(current), action, resource)
 	}
 	if authorizeErr := authorize(ctx); authorizeErr != nil {
 		return nil, nil, authorizeErr

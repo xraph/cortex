@@ -56,6 +56,7 @@ type Transaction interface {
 	Reserve(UsageReservation) (Reservation, error)
 	BeginUsageCall(UsageReservation, string) (Reservation, error)
 	Settle(UsageSettlement) error
+	ReconcileUsage(UsageReconciliation) error
 	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
 	ExposeValidation(ValidationAccess) error
 	ReleaseValidation(ValidationAccess) error
@@ -91,19 +92,20 @@ type ClaimRequest struct {
 // Transition binds a requested state change to its prior revision and actor.
 // Idempotency keys can be reused only with identical request content.
 type Transition struct {
-	Decision         *Decision        `json:"decision,omitempty"`
-	ExperimentID     id.ID            `json:"experiment_id"`
-	ExpectedRevision int64            `json:"expected_revision"`
-	NextState        State            `json:"next_state"`
-	NextPhase        Phase            `json:"next_phase"`
-	Lease            WorkLease        `json:"lease"`
-	IdempotencyKey   string           `json:"idempotency_key"`
-	Actor            IdentityRef      `json:"actor"`
-	Candidates       []Candidate      `json:"candidates,omitempty"`
-	Versions         []HarnessVersion `json:"versions,omitempty"`
-	Trials           []Trial          `json:"trials,omitempty"`
-	TrialUpdates     []TrialUpdate    `json:"trial_updates,omitempty"`
-	Evaluations      []Evaluation     `json:"evaluations,omitempty"`
+	Decision         *Decision            `json:"decision,omitempty"`
+	ExperimentID     id.ID                `json:"experiment_id"`
+	ExpectedRevision int64                `json:"expected_revision"`
+	NextState        State                `json:"next_state"`
+	NextPhase        Phase                `json:"next_phase"`
+	Lease            WorkLease            `json:"lease"`
+	IdempotencyKey   string               `json:"idempotency_key"`
+	Actor            IdentityRef          `json:"actor"`
+	Candidates       []Candidate          `json:"candidates,omitempty"`
+	Versions         []HarnessVersion     `json:"versions,omitempty"`
+	Trials           []Trial              `json:"trials,omitempty"`
+	TrialUpdates     []TrialUpdate        `json:"trial_updates,omitempty"`
+	Evaluations      []Evaluation         `json:"evaluations,omitempty"`
+	Publications     []PublicationRequest `json:"publications,omitempty"`
 }
 
 // TrialUpdate changes execution state without replacing the frozen trial identity.

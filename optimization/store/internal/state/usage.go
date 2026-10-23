@@ -129,6 +129,17 @@ func validateReservation(request optimization.UsageReservation, budget optimizat
 }
 
 func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
+	return tx.settleUsage(settlement, nil)
+}
+
+func (tx *transaction) ReconcileUsage(recovery optimization.UsageReconciliation) error {
+	if !optimization.ValidOpaqueKey(recovery.Actor.Subject) || recovery.ExpectedRevision < 1 || !recovery.Settlement.Lease.ExperimentID.IsNil() || recovery.Settlement.Lease.Generation != 0 || recovery.Settlement.Lease.Owner != "" || !recovery.Settlement.Lease.ExpiresAt.IsZero() {
+		return optimization.ErrInvalidSpec
+	}
+	return tx.settleUsage(recovery.Settlement, &recovery)
+}
+
+func (tx *transaction) settleUsage(settlement optimization.UsageSettlement, recovery *optimization.UsageReconciliation) error {
 	if !tx.active {
 		return optimization.ErrConflict
 	}
@@ -140,7 +151,7 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 	if !exists {
 		return optimization.ErrNotFound
 	}
-	if !tx.validLease(experiment, settlement.Lease) {
+	if recovery == nil && !tx.validLease(experiment, settlement.Lease) {
 		return optimization.ErrConflict
 	}
 	if !optimization.ValidOpaqueKey(settlement.Receipt) || !optimization.ValidOpaqueKey(settlement.CallKey) {
@@ -159,6 +170,11 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 	}
 	if settlement.AttemptID != reserved.Request.AttemptID {
 		return optimization.ErrConflict
+	}
+	if recovery != nil {
+		if reserved.Call == nil || reserved.Call.RequestDigest != recovery.RequestDigest || !settlement.Complete || settlement.Usage.TokenQuality != optimization.UsageKnown || (!experiment.Spec.Budget.TokenOnly && settlement.Usage.MoneyQuality != optimization.UsageKnown) {
+			return optimization.ErrIncompleteEvidence
+		}
 	}
 	budget := experiment.Spec.Budget
 	priced := settlement.Usage.MoneyQuality == optimization.UsageKnown || settlement.Usage.MoneyQuality == optimization.UsageEstimated
@@ -182,6 +198,9 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 		return nil
 	}
 	if reserved.State == optimization.ReservationSettled {
+		return optimization.ErrConflict
+	}
+	if recovery != nil && reserved.Revision != recovery.ExpectedRevision {
 		return optimization.ErrConflict
 	}
 	knownTokens := settlement.Complete && settlement.Usage.TokenQuality == optimization.UsageKnown
@@ -214,7 +233,12 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 		tx.data.Receipts[key] = receipts
 	}
 	receipts[settlement.Receipt] = settlement.CallKey
-	if err := tx.appendUsageEvent(experiment, "usage_"+string(reserved.State), detached, settlement.Lease.Owner); err != nil {
+	owner := settlement.Lease.Owner
+	eventType := "usage_" + string(reserved.State)
+	if recovery != nil {
+		owner, eventType = recovery.Actor.Subject, "usage_reconciled"
+	}
+	if err := tx.appendUsageEvent(experiment, eventType, detached, owner); err != nil {
 		return err
 	}
 	// Retain overruns in full. The worker handles stopping active environments;

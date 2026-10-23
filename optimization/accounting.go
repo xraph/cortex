@@ -87,6 +87,15 @@ type UsageSettlement struct {
 	ObservedAt   time.Time `json:"observed_at"`
 }
 
+// UsageReconciliation applies a verified late receipt without granting dispatch.
+// ExpectedRevision fences concurrent observations; Actor is the recovery caller.
+type UsageReconciliation struct {
+	Settlement       UsageSettlement `json:"settlement"`
+	RequestDigest    string          `json:"request_digest"`
+	ExpectedRevision int64           `json:"expected_revision"`
+	Actor            IdentityRef     `json:"actor"`
+}
+
 // Meter reserves before external dispatch and settles each receipt once.
 type Meter interface {
 	Reserve(context.Context, UsageReservation) (Reservation, error)

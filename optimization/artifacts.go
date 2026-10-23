@@ -38,17 +38,18 @@ type Artifact struct {
 type Action string
 
 const (
-	ActionRead          Action = "optimization.read"
-	ActionCreate        Action = "optimization.create"
-	ActionStart         Action = "optimization.start"
-	ActionCancel        Action = "optimization.cancel"
-	ActionResume        Action = "optimization.resume"
-	ActionActivate      Action = "optimization.activate"
-	ActionRollback      Action = "optimization.rollback"
-	ActionPublishLesson Action = "optimization.lesson.publish"
-	ActionRevokeLesson  Action = "optimization.lesson.revoke"
-	ActionReadArtifact  Action = "optimization.artifact.read"
-	ActionDelete        Action = "optimization.delete"
+	ActionRead           Action = "optimization.read"
+	ActionCreate         Action = "optimization.create"
+	ActionStart          Action = "optimization.start"
+	ActionCancel         Action = "optimization.cancel"
+	ActionResume         Action = "optimization.resume"
+	ActionReconcileUsage Action = "optimization.usage.reconcile"
+	ActionActivate       Action = "optimization.activate"
+	ActionRollback       Action = "optimization.rollback"
+	ActionPublishLesson  Action = "optimization.lesson.publish"
+	ActionRevokeLesson   Action = "optimization.lesson.revoke"
+	ActionReadArtifact   Action = "optimization.artifact.read"
+	ActionDelete         Action = "optimization.delete"
 )
 
 // Resource carries exact scope and resource identity to host authorization.

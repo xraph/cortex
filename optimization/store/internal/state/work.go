@@ -46,7 +46,7 @@ func (tx *transaction) ClaimWork(request optimization.ClaimRequest) (optimizatio
 		expires = experiment.Deadline
 	}
 	lease := optimization.WorkLease{ExperimentID: experiment.ID, Owner: request.Owner, Generation: experiment.Lease.Generation + 1, ExpiresAt: expires}
-	if experiment.State == optimization.StateQueued {
+	if experiment.State == optimization.StateQueued && experiment.Phase == "" {
 		experiment.Phase = optimization.PhaseBaseline
 	}
 	experiment.State = optimization.StateRunning

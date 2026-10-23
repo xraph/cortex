@@ -1,8 +1,9 @@
 # Cortex optimization foundations
 
-This module contains experiment contracts, scoped persistence, artifact lifecycle
-coordination and usage accounting. The optimizer controller, worker lifecycle and
-application integrations are still being built.
+This module provides scoped experiment storage, metered model controllers, a
+host-started worker, artifact lifecycle coordination and usage recovery. You supply
+the host authority, model bindings and trial/evaluation handler. The complete
+optimization loop and application integrations are still being built.
 
 ## Usage accounting
 
@@ -66,9 +67,8 @@ settlement error remains an error when Cortex consumes the stream; it cannot
 be mistaken for EOF. Settlement uses the original caller context, so caller
 cancellation may leave the durable dispatch debit awaiting later reconciliation.
 
-The wrapper is available for model and judge calls. Controller and judge wiring,
-the concrete estimator and pricing adapters, and tool accounting remain open.
-Late receipts after the worker loses its running lease also need a recovery path.
+The wrapper is available for model and judge calls. The controller factory below
+uses it directly. Judge integration and tool accounting remain open.
 
 `NewTokenPricing` supplies the `Pricing` port for a fixed model and price revision.
 You provide approved input and output rates in USD micro-units per million tokens,
@@ -85,3 +85,77 @@ token rates and a fixed fee cannot cover its billing model, supply another
 See [artifact lifecycle](artifacts/README.md) for retained reads, deletion receipts
 and recovery scans. Artifact recovery and metering share the identity-resolution
 helper so both preserve the caller's scope, cancellation and deadline.
+
+## Request estimation
+
+`NewRequestEstimator` computes a reservation from the actual request, including
+its messages, tools and positive output cap. Supply a local `InputTokenCounter`
+that covers the exact model revision, tokenizer and provider framing. Its `Bounded`
+flag is a host assertion that the result is an upper bound. An approximate token
+count or unknown model revision cannot authorize dispatch. The module does not
+bundle a provider tokenizer or use a generic characters-per-token heuristic.
+
+The estimator checks scope, detaches the input, rejects negative or overflowing
+bounds, adds the output cap and quotes frozen pricing. Token-only experiments
+omit pricing. For priced experiments, the quote must identify the experiment's
+pricing revision and cover every billable category. Counting cannot make an
+unmetered charged request.
+
+## Controller and worker wiring
+
+Construct these pieces in your host:
+
+1. Build `NewControllerFactory` with the repository, authorizer, identity resolver,
+   model bindings and explicit input/output limits. Each `ModelBinding` supplies
+   a provider, model revision, token counter, optional pricing and receipt reporter.
+2. Pass that factory to `NewControllerPhaseHandler`. It handles proposal,
+   composition and reflection. Supply your existing trial/evaluation `PhaseHandler`
+   for baseline, probe, validation and decision work. A missing handler returns
+   `ErrUnavailable` for those phases.
+3. Build `NewUsageRecovery` with an authoritative receipt lookup provider, then
+   supply it with the handler and host `CallerIdentity` to `NewOptimizer`.
+4. Use `Create` with a host-frozen `ExperimentBundle`, then `Start`. The host owns
+   evaluator freezing before creation. Run `Work` with an exact scoped context,
+   or call `WorkOnce` to execute one phase step. Cancel the context on shutdown.
+
+The model controller resolves immutable controller content and exact model
+bindings. It checks the baseline, round, edit policy and frozen lessons. Discovery
+trials, evaluations and candidates must match stored records. Artifacts from every
+execution attempt must remain eligible. Held-out evidence is refused before a
+model call. Returned JSON is strict and bounded, and accepted edits pass the
+existing edit-policy validator. Controller versions with tools return
+`ErrUnavailable` until a metered tool executor exists.
+
+The worker claims one experiment at a time per instance, renews its lease and
+rechecks current authority during execution. Different instances receive unique
+owners. `Pause`, `Resume` and `Cancel` use revision checks; resume preserves the
+original phase and deadline. Persisted pause or cancellation invalidates the
+lease immediately, and the next heartbeat cancels active work. Handlers and
+providers must honor context cancellation and perform their own environment
+cleanup. A budget error commits `budget_exhausted`. Other execution errors leave
+durable state for recovery and return to the host supervisor.
+
+Candidate versions and phase advancement commit together. Reflection queues
+lesson publications in the same transaction as completion or review. The worker
+does not publish to Fabriq or activate a winner. Those adapters remain separate.
+
+## Late receipts and takeover
+
+`UsageRecovery.Recover` checks the caller and original requester's current
+`optimization.usage.reconcile` grant before and after receipt retrieval. Your
+`UsageReceiptProvider` must verify provenance and return the exact durable request
+digest, experiment, attempt, call key, receipt and authoritative usage. It looks
+up an existing operation; it cannot execute another one. Supply an actor obtained
+from host authentication, never from model output.
+
+Recovery uses `Transaction.ReconcileUsage` without an execution lease. It works
+after cancellation or lease expiry, uses the reservation revision to fence races,
+and cannot change experiment state or execution authority. Repeating an identical
+receipt cannot refund twice. Unknown evidence retains the conservative debit.
+
+Before takeover or resumption, the worker scans bounded reservation pages and
+reconciles unresolved dispatches, with a thirty-second lookup deadline per receipt.
+Missing verification stops the worker before another phase runs. Accounting
+recovery does not recover a lost model response: a saved dispatch marker still
+returns `ErrUnknownAttempt` if the controller would repeat the call. Such cases
+need host reconciliation of the original output before the phase can advance.

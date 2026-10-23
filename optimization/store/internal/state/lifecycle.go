@@ -49,6 +49,42 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	}
 	allowed := experiment.State == optimization.StateDraft && change.NextState == optimization.StateQueued
 	allowed = allowed || (experiment.State == optimization.StateDraft || experiment.State == optimization.StateQueued) && change.NextState == optimization.StateCancelled
+	finishing := experiment.State == optimization.StateRunning && experiment.Phase == optimization.PhaseReflect && (change.NextState == optimization.StateReviewRequired || change.NextState == optimization.StateCompleted)
+	if finishing {
+		if !tx.validLease(experiment, change.Lease) || change.NextPhase != "" || change.Decision != nil || len(change.Candidates)+len(change.Versions)+len(change.Trials)+len(change.TrialUpdates)+len(change.Evaluations) > 0 {
+			return optimization.ErrConflict
+		}
+		if (experiment.Spec.Mode == optimization.ModeTaskLocal) != (change.NextState == optimization.StateCompleted) {
+			return optimization.ErrInvalidSpec
+		}
+		decision, exists := tx.data.Decisions[experiment.DecisionID.String()]
+		if !exists {
+			return optimization.ErrIncompleteEvidence
+		}
+		if artifactErr := checkDecisionArtifacts(tx.data, decision, tx.now); artifactErr != nil {
+			return artifactErr
+		}
+		allowed = true
+	} else if len(change.Publications) > 0 {
+		return optimization.ErrInvalidSpec
+	}
+	control := (experiment.State == optimization.StateRunning && (change.NextState == optimization.StatePaused || change.NextState == optimization.StateCancelled)) || (experiment.State == optimization.StatePaused && (change.NextState == optimization.StateQueued || change.NextState == optimization.StateCancelled))
+	if control {
+		if change.NextPhase != "" || change.Lease != (optimization.WorkLease{}) || change.Decision != nil || len(change.Candidates)+len(change.Versions)+len(change.Trials)+len(change.TrialUpdates)+len(change.Evaluations) > 0 {
+			return optimization.ErrInvalidSpec
+		}
+		if change.NextState == optimization.StateQueued && !tx.now.Before(experiment.Deadline) {
+			return optimization.ErrBudgetExceeded
+		}
+		allowed = true
+	}
+	exhausted := experiment.State == optimization.StateRunning && change.NextState == optimization.StateBudgetExhausted
+	if exhausted {
+		if !tx.validLease(experiment, change.Lease) || change.NextPhase != "" || change.Decision != nil || len(change.Candidates)+len(change.Versions)+len(change.Trials)+len(change.TrialUpdates)+len(change.Evaluations) > 0 {
+			return optimization.ErrConflict
+		}
+		allowed = true
+	}
 	if experiment.State == optimization.StateRunning && change.NextState == optimization.StateRunning {
 		if !tx.validLease(experiment, change.Lease) {
 			return optimization.ErrConflict
@@ -60,7 +96,7 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 				return optimization.ErrConflict
 			}
 		}
-	} else if change.NextPhase != "" || change.Lease.Generation != 0 {
+	} else if !finishing && !exhausted && (change.NextPhase != "" || change.Lease.Generation != 0) {
 		return optimization.ErrConflict
 	}
 	if !allowed {
@@ -85,6 +121,14 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if phaseErr := tx.validatePhaseEvidence(experiment, change, resources, trialResources); phaseErr != nil {
 		return phaseErr
 	}
+	for _, publication := range change.Publications {
+		if publication.ExperimentID != experiment.ID || publication.Lease != change.Lease || publication.Actor != change.Actor {
+			return optimization.ErrInvalidSpec
+		}
+		if publicationErr := tx.PutPublication(publication); publicationErr != nil {
+			return publicationErr
+		}
+	}
 	if experiment.Phase != change.NextPhase && change.NextPhase == optimization.PhasePropose {
 		experiment.Round++
 	}
@@ -99,11 +143,14 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return err
 		}
 	}
+	previousState := experiment.State
 	experiment.State = change.NextState
-	experiment.Phase = change.NextPhase
+	if !control {
+		experiment.Phase = change.NextPhase
+	}
 	experiment.Revision++
 	experiment.UpdatedAt = tx.now
-	if change.NextState == optimization.StateQueued {
+	if change.NextState == optimization.StateQueued && previousState == optimization.StateDraft {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
 	}
 	if decision != nil {

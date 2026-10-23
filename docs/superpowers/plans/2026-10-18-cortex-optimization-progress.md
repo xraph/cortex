@@ -23,7 +23,7 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 | 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
 | 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
 | 4: durable persistence | Durable backends, concurrent database operations and indexed resource reads verified | Artifact storage, database pagination, selective transaction loading and throughput qualification |
-| 5: durable worker recovery | Pending | Complete Task 4 and service contracts |
+| 5: durable worker recovery | Metered controller, scoped service, worker leases and late receipts implemented | Complete trial/evaluator adapters, output recovery and end-to-end qualification |
 | 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
 
 ## Sentinel evidence
@@ -763,3 +763,56 @@ Verification: scoped `make f` and all-module `make l` passed. The full optimizer
 root-package race suite passed against current Cortex (2.261s) and published
 v1.8.0 (1.940s), and both full-module builds passed. The model-wrapper commit
 `016e4ac` also passed CI. Database implementations were unchanged by pricing.
+
+
+## Request estimation, controller execution and late receipts
+
+`RequestEstimator` now computes reservations from detached model requests. It
+combines a host-qualified input bound with the actual output cap and frozen
+pricing, rejects unknown model revisions and checks integer overflow. The host
+supplies the provider-specific tokenizer/framing counter. No heuristic estimate
+is treated as a guaranteed bound.
+
+`ControllerFactory` resolves frozen instructions and model bindings, then meters
+proposal, composition and reflection calls. Inputs must match stored discovery
+trials, evaluations and candidates, the frozen baseline, policy, round and lesson
+set. Artifact retention covers all prior attempts. The controller refuses held-out
+evidence, unsupported tool execution and replay after a durable dispatch marker.
+`ControllerPhaseHandler` validates candidate edits and returns atomic transition
+resources. Reflection publications commit with review or task-local completion.
+
+`Optimizer` now supports create, get, list, start, pause, resume and cancel, plus
+host-started `Work` and `WorkOnce`. Workers renew leases and current authority,
+preserve deadlines across resume, stop on persisted cancellation and commit budget
+exhaustion. Each instance runs one phase at a time. The host supplies the remaining
+trial/evaluation phase handler and owns supervision and environment cleanup.
+
+`UsageRecovery` retrieves verified existing receipts without dispatching work. It
+rechecks caller and original requester grants, then uses a reservation revision
+and exact request digest to reconcile accounting after lease expiry or experiment
+cancellation. Duplicate receipts cannot refund twice or restore execution
+permission. Takeover and resume reconcile unresolved calls before another phase.
+An unavailable receipt stops that worker. Recovering accounting does not recover
+a lost model output or authorize repeating the call.
+
+Regression tests reproduced altered discovery evidence reaching the provider and
+budget failures leaving experiments running. Shared conformance tests cover late
+receipts after expiry and cancellation, paused/resumed generation fencing, metered
+candidate commits and reflection publication rollback. Root worker tests exercise
+shutdown, current-grant revocation and verified versus unknown takeover receipts.
+Two final regressions caught requester resolution masking the calling worker
+identity during heartbeat and receipt recovery. Phase execution now preserves
+the caller context so each operation can check both principals.
+
+Remaining work includes concrete trial/evaluator phase adapters, judge and tool
+accounting, lost model-output reconciliation, Fabriq publication, activation,
+dashboard integration and full-loop qualification. Task 5 and the overall plan
+remain open; these tests do not establish a complete deployed optimizer.
+
+Verification: scoped `make f`, all-module `make l` and the optimization module
+build passed. Root and artifact race suites passed against both the current
+checkout and published Cortex v1.8.0. Full memory, SQLite, PostgreSQL and MongoDB
+store race suites passed. The final controller, reflection, lifecycle and receipt
+checks were rerun across all four backends after the worker authority fix, with
+real database containers and no skips. No hosted model or complete optimizer
+application flow was exercised.
