@@ -1399,3 +1399,38 @@ explicitly. The production cleanup policy remains mode 0400.
 Installed providers, credential provisioning, live evidence verification,
 standalone installation and live systemd/runsc qualification remain open. The
 four-stage plan remains incomplete.
+
+### S2.4 installed local image source
+
+Launch-credential recovery commit `38a2edc` passed every remote CI job in run
+`39887615295`.
+
+The sandbox module now has a protected local image source for preinstalled
+`blobs/sha256` content. Its constructor pins root-owned mode-0700 directories.
+Each open checks directory identity, rejects aliases and unsafe metadata, and
+verifies a mode-0400 single-link blob before returning an in-memory snapshot.
+The existing hostfs pin checks and verifiedio hashing are shared with deployment
+verification. WorkerImages still enforces current access and signed manifest
+membership, and staging still verifies content and layer DiffIDs.
+
+Each blob is limited to 64 MiB. Reader capacity is 1 through 32 with at most
+256 MiB of reserved snapshots; readers hold their slots until close. Capacity
+waits and snapshot reads honor cancellation. Concurrent closes release a slot
+once. The source requires responsive local storage because cancellation cannot
+forcibly interrupt a stalled kernel file call. Larger blobs need another source.
+
+Tests started with missing APIs and cover content substitution, unsafe links,
+special files, wrong permissions, directory replacement, invalid limits,
+cancelled capacity waits, concurrent access and actual OCI layer staging. The
+first fixture run exposed a nonprivate temporary directory; the fixture now sets
+mode 0700 explicitly. Production permission checks were kept intact.
+
+Validation passed: scoped make f, final make l across all ten modules, Linux
+tagged lint, the Linux amd64 sandbox build and the full sandbox race suite.
+Final image and hostfs race tests passed in 1.609s and 1.143s. Linux source tests
+passed ten repetitions, 50 top-level test runs, without skips. Two lint findings
+were fixed by using separate error variables.
+
+Installed provider configuration, credential provisioning, live evidence
+verification, standalone broker installation and live systemd/runsc qualification
+remain open. S2.4 and the four-stage plan remain incomplete.

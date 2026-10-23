@@ -71,6 +71,23 @@ func TestFilePinRejectsSubstitutionAndUnsafeMetadata(t *testing.T) {
 			if scenario == "cancelled" && !errors.Is(err, context.Canceled) {
 				t.Fatal(err)
 			}
+			body, readErr := ReadPin(ctx, pin, uint32(os.Geteuid()))
+			if scenario == "valid" {
+				if readErr != nil || string(body) != "trusted" {
+					t.Fatal("pinned snapshot mismatch", readErr)
+				}
+			} else if readErr == nil || body != nil {
+				t.Fatal("unsafe pin returned a snapshot", readErr)
+			}
 		})
+	}
+}
+
+func TestReadPinBoundsAllocation(t *testing.T) {
+	for _, size := range []int64{-1, 0, (64 << 20) + 1, 1 << 62} {
+		body, err := ReadPin(t.Context(), Pin{Bytes: size}, uint32(os.Geteuid()))
+		if err == nil || body != nil {
+			t.Fatal("invalid snapshot size accepted", size)
+		}
 	}
 }

@@ -1118,7 +1118,7 @@ remain independent of the expired execution grant.
 
 Pass the resulting daemon to the bounded TLS serving pattern above. The assembler
 accepts trusted host providers; it does not provision certificates, credentials,
-source adapters or a live qualification-evidence service. A standalone installed
+provider configuration or a live qualification-evidence service. A standalone installed
 broker command and live systemd/runsc qualification remain open.
 
 Root Linux fixtures cover lifecycle, missing services, identity mismatches,
@@ -1205,3 +1205,34 @@ recovery. Each has its own periodic cursor, and an unresolved scan closes
 admission. Startup and shutdown run all three through the same journal eligibility
 rules. A replacement controller must retain the launcher's matching credential
 gate; it cannot silently discard or replace that coordination boundary.
+
+### Installed local image content
+
+Within the sandbox module, use `image.NewLocalSource(root, maximum, readers)`
+as `HostConfig.Images` to serve preinstalled content. Provision the root,
+`blobs` and `blobs/sha256` directories with root ownership and mode 0700.
+Each blob must be a root-owned, single-link regular file with mode 0400.
+The filename is its lowercase SHA256 without the `sha256:` prefix, following
+the [OCI blob layout](https://github.com/opencontainers/image-spec/blob/v1.1.1/image-layout.md#blobs).
+The source resolves only explicit digests. It does not resolve index tags,
+fetch missing content or accept registry URLs.
+
+Set a per-blob maximum of at most 64 MiB and 1 through 32 simultaneous readers.
+Their combined reserved snapshot capacity cannot exceed 256 MiB. Budget daemon
+memory for those snapshots plus its other services. Capacity waits honor the
+request context, and every returned reader must be closed, including after EOF.
+Closing releases its bytes and slot; repeated or concurrent closes are safe.
+Choose another `image.Source` when your approved image has larger blobs.
+
+The source checks directory identity before and after loading each blob, verifies
+file metadata through no-follow descriptors and hashes the complete content
+before returning a snapshot. Worker reads then use memory, so a later host file
+replacement cannot change their bytes. Keep provisioning separate from active
+reads and use a responsive local filesystem. Cancellation is checked between
+file calls, but cannot forcibly interrupt a stalled kernel filesystem call.
+
+You still supply `ImagePolicy`. `WorkerImages` checks current authorization,
+the signed job's manifest and membership of each requested blob; image staging
+also verifies hashes and layer DiffIDs. Local content is neither execution
+authority nor runtime qualification. Installed provider configuration,
+credential provisioning and live Linux qualification remain separate work.
