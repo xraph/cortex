@@ -239,9 +239,15 @@ Rollback, concurrent commit, restart and retention tests preserve this ordering
 and the original event identities. This is an additive schema-1 event type;
 readers must support it before writers begin emitting it.
 
-The remaining S2.6 work includes arbitrary artifact producers, approved content replay,
-remote durable subscriptions, installed live subscriptions and installed
-reconnect/revocation checks. The packet checkboxes stay open until
+Remote subscriptions now follow the shared log through A2A status metadata on
+REST, JSON-RPC and gRPC. Each page rechecks the original peer identity and current
+subscriber grant. Terminal status follows backlog delivery; already terminal
+tasks recover through GetTask. Service admission, read/lifetime limits, HTTP write
+deadlines and required gRPC client deadlines bound transport work. Local transport
+and engine tests cover reconnect, gaps, revocation, cancellation and completion.
+
+The remaining S2.6 work includes arbitrary artifact producers, approved content
+replay, installed live subscriptions and installed reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.
 
 ## S2.7: Installed integration, evidence review and release qualification

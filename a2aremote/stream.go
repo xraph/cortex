@@ -40,6 +40,8 @@ type TaskArtifactUpdate struct {
 
 // Emit is how a binding receives events. Returning an error stops the
 // stream, which is how a disconnected client ends its own subscription.
+// Custom emitters must bound writes and honor their transport context; the
+// service cannot interrupt a callback that blocks without returning.
 type Emit func(StreamEvent) error
 
 // StreamMessage sends a message and then follows the work it started.
@@ -73,8 +75,12 @@ func (s *Service) StreamMessage(ctx context.Context, cred Credentials, req SendM
 
 // SubscribeTask follows a task that is already running.
 func (s *Service) SubscribeTask(ctx context.Context, cred Credentials, tenant, taskID string, emit Emit) error {
-	if err := rejectReplay(cred); err != nil {
+	replay, err := parseReplayRequest(cred)
+	if err != nil {
 		return err
+	}
+	if replay.active {
+		return s.subscribeReplay(ctx, cred, tenant, taskID, replay, emit)
 	}
 	task, err := s.GetTask(ctx, cred, GetTaskRequest{Tenant: tenant, ID: taskID})
 	if err != nil {

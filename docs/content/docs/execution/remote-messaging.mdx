@@ -255,10 +255,64 @@ A changed node or scope, revoked credentials or expired deadline discards it.
 Failures carry static replay codes and retryability in A2A error data; gRPC exposes
 that data in a `google.protobuf.Struct` status detail under `a2a_error_data`.
 
-Replay activation applies only to `GetTask`. Sending it with a mutation, task
-list or subscription returns an error before that operation acts. Without
-activation, existing task projections and task streaming retain their behavior.
-Durable remote subscriptions and approved-content replay remain unimplemented.
+Replay activation supports `GetTask` and, when `Options.Streaming` is enabled,
+`SubscribeToTask`. Sending it with a mutation or task list returns an error before
+that operation acts. Without activation, existing task projections and task
+streaming retain their behavior. Approved-content replay remains unimplemented.
+
+### Follow durable metadata
+
+Enable both service options to subscribe:
+
+```go
+a2aremote.Options{PublicEventReplay: true, Streaming: true}
+```
+
+Use `POST /{tenant}/tasks/{id}:subscribe`, JSON-RPC `SubscribeToTask`, or the gRPC
+method with the same extension, cursor and limit headers. The older REST GET
+subscription route also works. The card lists `SubscribeToTask` in the extension's
+methods only when streaming is enabled.
+
+The opening frame is an authorized Task snapshot with its first replay page in
+`metadata["cortex.replay"]`. Later `TaskStatusUpdateEvent` frames carry the next
+pages in the same metadata field, including empty pages during idle polling.
+Only metadata is sent. An `artifact_created` observation does not fetch or include
+artifact content. The task's terminal status follows the entire retained backlog;
+while those pages drain, updates retain the last observed nonterminal state.
+
+As required by the [pinned A2A subscription contract](https://github.com/a2aproject/A2A/blob/v1.0.0/docs/specification.md#316-subscribe-to-task),
+a task that is already terminal refuses subscription. Use `GetTask` to recover
+any remaining pages after a disconnect. A subscription gap carries `gap: true`
+and closes without claiming terminal completion. Refresh the authorized snapshot
+before resuming. Revocation or transport failure closes an established stream
+without inventing a task failure or advancing its cursor.
+
+HTTP frames include an SSE `id` with the page cursor, except for gaps.
+`Last-Event-ID` overrides the initial `Cortex-Replay-Cursor` on reconnect. You must
+still persist your processed cursor; automatic browser reconnect records receipt,
+which can happen before your application finishes handling a page. JSON-RPC keeps
+its normal response envelope around each frame. The successful opening response
+acknowledges the extension, and HTTP disables caching. Denied requests receive an
+ordinary protocol error before streaming headers are sent.
+
+Each service admits at most 64 replay subscriptions. Reads have five-second
+deadlines, idle polls run every second, and the subscription lasts at most five
+minutes. Retained pages drain immediately. Every read resolves the peer, verifies
+its original node and scope, checks route ownership and invokes the authorized
+reader; the peer is checked again before delivery. A changed grant or identity
+discards the page.
+
+HTTP writes have a ten-second deadline, capped by the subscription deadline.
+The response writer must support deadline control and flushing. gRPC subscriptions
+require a client deadline within five minutes, which also bounds a stalled
+`Send`; choose a shorter deadline when your consumer needs faster recovery. Custom
+Go emitters must bound their own writes and honor their transport context. The
+service cannot interrupt a callback that never returns. No detached producer or
+unbounded delivery queue is started.
+
+Tests cover local HTTP disconnects, stalled writers, gRPC negotiation, ordered
+completion, retention gaps, revocation and replay of an engine commit. Installed
+proxy behavior and external-client reconnects still need qualification.
 
 This extension uses the activation and metadata mechanisms in the pinned
 [A2A 1.0 extension specification](https://github.com/a2aproject/A2A/blob/v1.0.0/docs/topics/extensions.md).

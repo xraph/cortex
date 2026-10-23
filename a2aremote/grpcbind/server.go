@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -292,8 +293,33 @@ func (s *Server) SendStreamingMessage(req *a2apb.SendMessageRequest, stream a2ap
 
 // SubscribeToTask streams the progress of a task already running.
 func (s *Server) SubscribeToTask(req *a2apb.SubscribeToTaskRequest, stream a2apb.A2AService_SubscribeToTaskServer) error {
-	return s.svc.SubscribeTask(stream.Context(), credentialsOf(stream.Context()),
-		req.GetTenant(), req.GetId(), emitTo(stream))
+	cred := credentialsOf(stream.Context())
+	active, err := a2aremote.ReplayRequested(cred)
+	if err != nil {
+		return statusOf(err)
+	}
+	emit := emitTo(stream)
+	if active {
+		deadline, ok := stream.Context().Deadline()
+		if !ok || time.Until(deadline) > 5*time.Minute {
+			return statusOf(a2aremote.ErrInvalidParams("replay subscriptions require a client deadline within five minutes"))
+		}
+		sentHeader := false
+		emit = func(ev a2aremote.StreamEvent) error {
+			if !sentHeader {
+				if headerErr := stream.SendHeader(metadata.Pairs("a2a-extensions", a2aremote.ReplayExtensionURI)); headerErr != nil {
+					return headerErr
+				}
+				sentHeader = true
+			}
+			return stream.Send(streamResponseOf(ev))
+		}
+	}
+	err = s.svc.SubscribeTask(stream.Context(), cred, req.GetTenant(), req.GetId(), emit)
+	if err != nil && active {
+		return statusOf(err)
+	}
+	return err
 }
 
 // streamSender is the half of a generated server stream this package

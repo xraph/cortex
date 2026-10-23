@@ -44,12 +44,7 @@ func (s *Service) RESTHandler() http.Handler {
 				writeREST(w, nil, ErrUnsupportedOperation("SubscribeToTask"))
 				return
 			}
-			stream, err := newSSEWriter(w, nil)
-			if err != nil {
-				writeSSEError(w, ErrInternal("this server cannot stream"))
-				return
-			}
-			endStream(s.SubscribeTask(r.Context(), credentialsOf(r), r.PathValue("tenant"), id, stream.emit))
+			s.serveSubscription(w, r, r.PathValue("tenant"), id, nil, func(err error) { writeREST(w, nil, err) })
 		default:
 			writeREST(w, nil, ErrMethodNotFound(verb))
 		}
@@ -64,6 +59,14 @@ func (s *Service) RESTHandler() http.Handler {
 
 	mux.HandleFunc("POST /{tenant}/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, verb := splitVerb(r.PathValue("id"))
+		if verb == "subscribe" {
+			if !s.opts.Streaming {
+				writeREST(w, nil, ErrUnsupportedOperation("SubscribeToTask"))
+				return
+			}
+			s.serveSubscription(w, r, r.PathValue("tenant"), id, nil, func(err error) { writeREST(w, nil, err) })
+			return
+		}
 		if verb != "cancel" {
 			writeREST(w, nil, ErrMethodNotFound(verb))
 			return

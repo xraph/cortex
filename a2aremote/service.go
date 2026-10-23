@@ -3,6 +3,7 @@ package a2aremote
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/xraph/cortex"
@@ -41,7 +42,7 @@ type Options struct {
 	// makes the card advertise them. Off by default: a card that offers
 	// a stream nobody serves is a promise the server cannot keep.
 	Streaming bool
-	// PublicEventReplay enables authorized metadata pages on GetTask.
+	// PublicEventReplay enables metadata pages and, with Streaming, subscriptions.
 	PublicEventReplay bool
 	// StreamPoll is how often a subscription re-reads its task. It
 	// bounds how stale an update can be and nothing else.
@@ -55,9 +56,10 @@ type Options struct {
 // of security rules: a rule enforced here cannot be forgotten by the
 // gRPC handler.
 type Service struct {
-	gw       Gateway
-	resolver PeerResolver
-	opts     Options
+	replayStreams atomic.Int32
+	gw            Gateway
+	resolver      PeerResolver
+	opts          Options
 }
 
 // NewService builds a Service, or returns nil when it cannot.

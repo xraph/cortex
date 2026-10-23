@@ -170,10 +170,14 @@ func BuildCard(a *agent.Config, skills []*skill.Skill, opts CardOptions) AgentCa
 		Skills:             cardSkills(a, skills),
 	}
 	if opts.PublicEventReplay {
+		methods := []string{MethodGetTask}
+		if opts.Streaming {
+			methods = append(methods, MethodSubscribeToTask)
+		}
 		card.Capabilities.Extensions = append(card.Capabilities.Extensions, AgentExtension{
 			URI:         ReplayExtensionURI,
-			Description: "Authorized metadata replay through GetTask. Sequence and revision fields are decimal strings.",
-			Params: map[string]any{"methods": []string{MethodGetTask}, "metadataKey": ReplayMetadataKey,
+			Description: "Authorized metadata replay. Sequence and revision fields are decimal strings.",
+			Params: map[string]any{"methods": methods, "metadataKey": ReplayMetadataKey,
 				"cursorHeader": ReplayCursorHeader, "limitHeader": ReplayLimitHeader, "maxPageSize": event.MaxPageSize},
 		})
 	}

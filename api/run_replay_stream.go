@@ -11,6 +11,7 @@ import (
 
 	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/streamhttp"
 )
 
 const maxReplayStreams = 64
@@ -80,6 +81,10 @@ type replaySSEWriter struct {
 }
 
 func (s *replaySSEWriter) send(ctx context.Context, name, token string, payload any) error {
+	if !streamhttp.CanFlush(s.writer) {
+		s.failed = true
+		return event.ErrUnavailable
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -122,28 +127,4 @@ func (s *replaySSEWriter) send(ctx context.Context, name, token string, payload 
 	return nil
 }
 
-// flush preserves wrapper flush behavior, then checks an error-aware inner writer.
-// Forge's http.Flusher wrappers cannot return socket errors to ResponseController.
-// A second flush of the inner writer is empty on success and observes sticky I/O
-// failures without bypassing compression or before-write callbacks.
-func (s *replaySSEWriter) flush() error {
-	if err := s.controller.Flush(); err != nil {
-		return err
-	}
-	type errorFlusher interface{ FlushError() error }
-	if _, ok := s.writer.(errorFlusher); ok {
-		return nil
-	}
-	current := s.writer
-	for range 32 {
-		wrapper, ok := current.(interface{ Unwrap() http.ResponseWriter })
-		if !ok {
-			return nil
-		}
-		current = wrapper.Unwrap()
-		if flusher, ok := current.(errorFlusher); ok {
-			return flusher.FlushError()
-		}
-	}
-	return event.ErrUnavailable
-}
+func (s *replaySSEWriter) flush() error { return streamhttp.Flush(s.writer) }

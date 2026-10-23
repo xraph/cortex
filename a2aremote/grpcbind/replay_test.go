@@ -3,16 +3,20 @@ package grpcbind_test
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/xraph/cortex/a2aremote"
+	"github.com/xraph/cortex/a2aremote/grpcbind"
 	"github.com/xraph/cortex/a2aremote/grpcbind/a2apb"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/event"
@@ -93,4 +97,91 @@ func TestGRPCReplayPreservesPrecisionAndActivation(t *testing.T) {
 	if !ok || !strings.Contains(detail.String(), "replay_denied") {
 		t.Fatalf("bad details: %v", details)
 	}
+}
+
+type replaySubscriptionGateway struct {
+	*replayGateway
+	reads int
+}
+
+func (g *replaySubscriptionGateway) ReadPublicEvents(ctx context.Context, r event.ReadRequest) (event.Page, error) {
+	g.reads++
+	if g.reads == 2 {
+		g.runs[g.runID.String()].State = run.StateCompleted
+	}
+	return g.replayGateway.ReadPublicEvents(ctx, r)
+}
+
+func TestGRPCReplaySubscriptionAndDeadline(t *testing.T) {
+	for _, mode := range []string{"bounded", "missing", "long"} {
+		t.Run(mode, func(t *testing.T) {
+			base := &replayGateway{gateway: newGateway(), owner: id.NewAgentID(), runID: id.NewAgentRunID()}
+			base.runs[base.runID.String()] = &run.Run{ID: base.runID, AgentID: base.owner, State: run.StateRunning, Revision: 9007199254740993, Output: "SECRET candidate"}
+			gw := &replaySubscriptionGateway{replayGateway: base}
+			client := dialWith(t, gw, okResolver(), a2aremote.Options{PublicEventReplay: true, Streaming: true})
+			ctx := metadata.AppendToOutgoingContext(authed(t.Context()), "a2a-extensions", a2aremote.ReplayExtensionURI, "cortex-replay-cursor", "1."+base.runID.String()+".9007199254740992")
+			if mode != "missing" {
+				duration := 30 * time.Second
+				if mode == "long" {
+					duration = 6 * time.Minute
+				}
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, duration)
+				defer cancel()
+			}
+			stream, err := client.SubscribeToTask(ctx, &a2apb.SubscribeToTaskRequest{Tenant: "worker", Id: base.runID.String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, err := stream.Recv()
+			if mode != "bounded" {
+				if status.Code(err) != codes.InvalidArgument || first != nil {
+					t.Fatalf("unbounded subscription accepted: %v %v", first, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			headers, err := stream.Header()
+			if err != nil || len(headers.Get("a2a-extensions")) != 1 {
+				t.Fatalf("missing negotiation: %v %v", headers, err)
+			}
+			if first.GetTask() == nil || len(first.GetTask().Artifacts) != 0 || strings.Contains(first.String(), "SECRET") {
+				t.Fatalf("bad snapshot: %v", first)
+			}
+			next, err := stream.Recv()
+			if err != nil || next.GetStatusUpdate() == nil || next.GetStatusUpdate().Status.State != a2apb.TaskState_TASK_STATE_COMPLETED || strings.Contains(next.String(), "SECRET") {
+				t.Fatalf("bad completion: %v %v", next, err)
+			}
+			if _, err = stream.Recv(); !errors.Is(err, io.EOF) {
+				t.Fatalf("stream did not close: %v", err)
+			}
+		})
+	}
+}
+
+type stalledReplayStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *stalledReplayStream) Context() context.Context         { return s.ctx }
+func (s *stalledReplayStream) SendHeader(metadata.MD) error     { return nil }
+func (s *stalledReplayStream) Send(*a2apb.StreamResponse) error { <-s.ctx.Done(); return s.ctx.Err() }
+
+func TestGRPCReplayStalledSendHonorsClientDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gw := &replayGateway{gateway: newGateway(), owner: id.NewAgentID(), runID: id.NewAgentRunID()}
+		gw.runs[gw.runID.String()] = &run.Run{ID: gw.runID, AgentID: gw.owner, State: run.StateRunning, Revision: 9007199254740993}
+		svc := a2aremote.NewService(gw, okResolver(), a2aremote.Options{PublicEventReplay: true, Streaming: true})
+		ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer ok", "a2a-extensions", a2aremote.ReplayExtensionURI, "cortex-replay-cursor", "1."+gw.runID.String()+".9007199254740992"))
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		start := time.Now()
+		err := grpcbind.NewServer(svc).SubscribeToTask(&a2apb.SubscribeToTaskRequest{Tenant: "worker", Id: gw.runID.String()}, &stalledReplayStream{ctx: ctx})
+		if err == nil || time.Since(start) != 5*time.Second {
+			t.Fatalf("unbounded send: %v elapsed=%v", err, time.Since(start))
+		}
+	})
 }

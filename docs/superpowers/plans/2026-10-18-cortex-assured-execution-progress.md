@@ -3039,3 +3039,53 @@ Validation for verified artifact announcements:
 
 These checks qualify the metadata path locally. They do not qualify installed
 subscribers or a Linux sandbox worker.
+
+
+### S2.6 remote durable metadata subscriptions
+
+A2A SubscribeToTask now accepts the public-events extension when replay and
+streaming are enabled. The opening Task and later status updates carry authorized
+metadata pages from the shared log. Backlogs drain before terminal status; an
+already terminal task refuses subscription and recovers through GetTask. This
+preserves the pinned protocol and leaves the vendored protobuf unchanged.
+
+Every read binds to the initial run, peer node and scope, rechecks route ownership
+and invokes the host-authorized reader. Changed credentials or grants discard the
+page. Gaps close with recovery metadata and no final status. The service admits
+64 replay subscriptions, polls idle readers once a second, and bounds reads to
+five seconds and lifetime to five minutes. Custom emitters must bound their own
+writes. No detached producer is started.
+
+REST POST and the existing GET subscription route, JSON-RPC SSE and gRPC share the
+service implementation. HTTP waits for an authorized snapshot before sending
+stream headers, writes bounded frames, propagates flush errors and carries cursor
+IDs except on gaps. Last-Event-ID takes precedence on reconnect. gRPC requires a
+client deadline within five minutes to bound blocked Send calls and acknowledges
+activation only after authorization. The API and remote adapters share the HTTP
+flush helper, including error-aware inner writers behind wrappers.
+
+The new tests first failed because replay subscriptions were unsupported. Added
+coverage exercises ordered completion, pinned identity, current-grant revocation,
+consumer failure, capacity, lifetime, retention gaps, HTTP framing and preflight,
+stalled writes, live HTTP disconnects, gRPC deadlines and negotiation. A real
+SQLite engine test commits an ordinary terminal event during subscription and
+recovers the missed final frame through GetTask. Installed proxy/client behavior,
+approved content replay and broader plan qualification remain open.
+
+Validation for remote durable subscriptions:
+
+- Red phase confirmed that replay subscriptions were refused before implementation.
+  A separate HTTP preflight test exposed metadata being written by a writer with
+  deadline support but no flush capability; the shared capability check fixes it.
+- `GOWORK=off make f`, followed by `GOWORK=off make l`: all ten modules passed.
+- Full race suites passed for A2A (7.881s), gRPC (1.276s) and API (1.527s).
+  The event race suite and root build passed too.
+- The 64-stream cancellation test fills admission slots, rejects overflow and
+  verifies all slots are released. HTTP and gRPC stalled-send tests establish
+  their configured bounds; live HTTP disconnect and in-process gRPC tests passed.
+- Docs type check, lint and production build passed. `git diff --check` passed.
+- Prior artifact commit `5e0fc22` passed Linux CI run `39959920033`.
+
+These are local and CI results. Installed client/proxy qualification, arbitrary
+artifact producers, approved content replay and the remaining four-stage scope
+are still open.

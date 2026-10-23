@@ -12,7 +12,7 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// ReplayExtensionURI identifies opt-in metadata replay on GetTask only.
+// ReplayExtensionURI identifies opt-in metadata replay on GetTask and SubscribeToTask.
 const ReplayExtensionURI = "https://cortex.xraph.dev/a2a/extensions/public-events/v1"
 
 // ReplayMetadataKey contains the versioned replay envelope in Task.Metadata.
@@ -157,51 +157,71 @@ func rejectReplay(cred Credentials) error {
 		return err
 	}
 	if req.active {
-		return ErrUnsupportedOperation("public event replay requires GetTask")
+		return ErrUnsupportedOperation("public event replay requires GetTask or SubscribeToTask")
 	}
 	return nil
 }
 
+type replaySnapshot struct {
+	task *Task
+	page event.ReplayPage
+	peer Peer
+}
+
 func (s *Service) getReplayTask(ctx context.Context, cred Credentials, req GetTaskRequest, replay replayRequest) (*Task, error) {
+	snapshot, err := s.readReplaySnapshot(ctx, cred, req, replay, nil)
+	if err != nil {
+		return nil, replayError(err)
+	}
+	return snapshot.task, nil
+}
+
+func (s *Service) readReplaySnapshot(ctx context.Context, cred Credentials, req GetTaskRequest, replay replayRequest, expected *Peer) (replaySnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	ctx, peer, err := s.authenticate(ctx, cred)
 	if err != nil {
-		return nil, replayError(event.ErrAccessDenied)
+		return replaySnapshot{}, event.ErrAccessDenied
+	}
+	if expected != nil && (expected.Node != peer.Node || expected.Scope.Canonical() != peer.Scope.Canonical()) {
+		return replaySnapshot{}, event.ErrAccessDenied
 	}
 	gw, ok := s.gw.(PublicEventGateway)
 	if !s.opts.PublicEventReplay || !ok || !gw.PublicEventReplayAvailable() {
-		return nil, replayError(event.ErrUnavailable)
+		return replaySnapshot{}, event.ErrUnavailable
 	}
 	r, err := s.loadRun(ctx, req.ID)
 	if err != nil {
-		return nil, replayError(cortex.ErrRunNotFound)
+		return replaySnapshot{}, cortex.ErrRunNotFound
 	}
 	if r.ID.Prefix() != id.PrefixAgentRun {
-		return nil, replayError(event.ErrUnavailable)
+		return replaySnapshot{}, event.ErrUnavailable
 	}
 	owner, err := s.gw.GetAgentByName(ctx, req.Tenant)
 	if err != nil || owner == nil || owner.ID != r.AgentID {
-		return nil, replayError(cortex.ErrRunNotFound)
+		return replaySnapshot{}, cortex.ErrRunNotFound
 	}
 	page, err := event.ReadReplayPage(ctx, gw, r.ID, replay.cursor, replay.limit)
 	if err != nil {
-		return nil, replayError(err)
+		return replaySnapshot{}, err
 	}
 	if r.Revision != page.Page.Watermark.RunRevision {
-		return nil, replayError(event.ErrUnavailable)
+		return replaySnapshot{}, event.ErrUnavailable
 	}
 	_, current, err := s.authenticate(ctx, cred)
 	if err != nil || current.Node != peer.Node || current.Scope.Canonical() != peer.Scope.Canonical() {
-		return nil, replayError(event.ErrAccessDenied)
+		return replaySnapshot{}, event.ErrAccessDenied
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, replayError(err)
+		return replaySnapshot{}, err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return replaySnapshot{}, context.DeadlineExceeded
 	}
 	task := TaskFromRun(r, "")
 	task.Artifacts, task.History, task.Status.Message = nil, nil, nil
 	task.Metadata = map[string]any{ReplayMetadataKey: replayMetadata(page)}
-	return &task, nil
+	return replaySnapshot{task: &task, page: page, peer: peer}, nil
 }
 
 func replayMetadata(page event.ReplayPage) ReplayPageMetadata {

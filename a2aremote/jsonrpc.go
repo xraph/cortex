@@ -319,6 +319,11 @@ func (s *Service) serveRPCStream(w http.ResponseWriter, r *http.Request, req rpc
 		tenant, taskID = sub.Tenant, sub.ID
 	}
 
+	if req.Method == MethodSubscribeToTask {
+		s.serveSubscription(w, r, tenant, taskID, func(ev StreamEvent) any { return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: ev} }, func(err error) { writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: asProtocolError(err)}) })
+		return
+	}
+
 	stream, err := newSSEWriter(w, func(ev StreamEvent) any {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: ev}
 	})
@@ -331,11 +336,7 @@ func (s *Service) serveRPCStream(w http.ResponseWriter, r *http.Request, req rpc
 	// failure with, so the error ends the stream and the client sees the
 	// connection close without a final event. That is the protocol's own
 	// answer to a mid-stream failure.
-	if req.Method == MethodSendStreamingMessage {
-		endStream(s.StreamMessage(r.Context(), cred, send, stream.emit))
-		return
-	}
-	endStream(s.SubscribeTask(r.Context(), cred, tenant, taskID, stream.emit))
+	endStream(s.StreamMessage(r.Context(), cred, send, stream.emit))
 }
 
 // endStream is where a stream's error goes.

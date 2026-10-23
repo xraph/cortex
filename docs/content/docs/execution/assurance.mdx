@@ -699,8 +699,9 @@ a new verdict for its replacement run. Retried capture, enqueue, cancellation
 and result commits preserve the recorded IDs and sequence; failed transactions
 leave neither state changes nor events behind.
 
-Approved answer-content replay, arbitrary artifact producers, remote durable
-subscriptions and durable completion-hook delivery remain open. Installed
+Approved answer-content replay, arbitrary artifact producers and durable
+completion-hook delivery remain open. Remote subscriptions use the same log; see
+[remote messaging](/docs/execution/remote-messaging#follow-durable-metadata). Installed
 browser/proxy reconnect and revocation checks also remain unqualified.
 
 
