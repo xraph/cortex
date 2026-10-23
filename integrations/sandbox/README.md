@@ -1581,3 +1581,52 @@ Linux fixtures execute the built command, verify identical retries and preserve
 installed data after a conflicting request. Publication tests cover concurrent
 writers, policy changes, unsafe metadata and process exit before and after commit.
 Host installation and live systemd/runsc qualification remain separate work.
+
+
+## Protected test evaluation
+
+Use `verification.NewSandboxTestVerifier` to connect a registered evaluation
+manifest to separate candidate and grader jobs. Register the verifier with
+`verification.RegisterTests` and supply it to your verification host through
+that existing typed registration.
+
+You provide the sealed manifest registry, reserved job plans, runner, evidence
+repository, current binding authorizer, clock and external supervisor. Set
+`MaxConcurrent` between 1 and 64 and `PollInterval` between 10 milliseconds and
+one second. Overflow returns `cortex.ErrVerificationUnavailable` immediately.
+Every evaluation has a deadline of at most five minutes, shortened by the
+request and caller deadlines. Your ports must honor cancellation.
+
+Pin the broker name and Ed25519 public key with
+`grading.NewAuthenticity(name, publicKey)`. This adapter reuses the broker's
+receipt and result signature verification. Configure the identity independently
+of responses; accepting a key from a workload would let that workload sign its
+own evidence.
+
+Reserve job IDs, keys and output IDs durably before you register a plan. The
+candidate gets only `/inputs/candidate`. The grader template gets `/inputs/tests`,
+`/inputs/fixtures` and `/inputs/result-schema`. After authenticating the completed
+candidate job and digest-checking its captured output, the verifier adds that
+output at `/inputs/candidate-export` and seals the final grader job. Both plans
+require an empty environment, one declared output and the sandbox's deny-all
+network profile. Mounted inputs follow the runner's read-only input contract.
+
+The supervisor receives job identities and captured references. It receives no
+stdout, stderr, production credentials or effect tools through this interface.
+Its assessment must match the manifest, supervisor revision and both job digests;
+unknown, duplicate or malformed checks are rejected, while a missing required
+check produces an inconclusive result. Tests that import candidate code need
+independent corroboration because the candidate can manipulate their process.
+
+Your supervisor must retain authenticated observations and reconcile retries
+against the same manifest and job digests. The verifier does not implement that
+supervisor or attach its new artifacts to the verification report's captured
+binding. You also own total evaluation cost accounting and durable phase recovery.
+An uncertain submission keeps its reserved identity and returns `ErrCallUncertain`.
+The verifier attempts bounded cancellation; failed cancellation remains uncertain.
+Do not allocate replacement identities to hide that outcome.
+
+Fixture tests cover tampered exports, forged stdout, revoked authority, signature
+failure, missing checks, timeout and bounded admission. They do not qualify
+runsc isolation or an installed supervisor. Live Linux qualification and a
+separate authorized export command remain required before deployment.

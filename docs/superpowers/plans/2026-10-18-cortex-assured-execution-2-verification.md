@@ -176,9 +176,17 @@ Interfaces: `sandbox_test_verifier` consumes `sandbox.Runner` and `evidence.Repo
 The captured grading manifest and immutable host registry are implemented.
 They bind the exact execution/criterion to protected tests, fixture data, expected
 schema and permitted source probes, with scoped selection and retention checks.
-They execute no commands and establish no isolation. Separate candidate/grader
-job orchestration, protected supervisor verdicts and live qualification remain
-open; the full packet checkboxes above are unchanged.
+`SandboxTestVerifier` executes registered candidate and grader plans through the
+runner port. It verifies captured bytes and pinned broker signatures, rechecks
+authority around external calls, and requires an external supervisor's named
+assessment bound to both jobs. Candidate stdout supplies no verdict. Admission,
+evidence reads, polling and cancellation are bounded.
+
+The sandbox module's `grading.NewAuthenticity` supplies broker authentication.
+You still need a qualified runner, a concrete supervisor with durable observations
+and retry reconciliation, total evaluation accounting, durable phase recovery,
+contextual adapters and the separate export command. The full packet checkboxes
+above stay open until those paths and Linux adversarial qualification pass.
 
 ## S2.6: Durable safe event replay
 

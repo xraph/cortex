@@ -24,7 +24,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
-| S2.5 | active | this chat | Sealed grading manifests and exact host registration implemented; separate job orchestration and protected supervisor verdicts remain open |
+| S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch and pinned broker authentication implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3448,3 +3448,57 @@ Validation for the grading manifest foundation:
 - Cortex CI `39978966777` passed on prior commit `8ef97e1`, independently
   confirming the sandbox cleanup fix on Linux. Dashboard CI `39979911379` is
   running on the approved and pushed `2ea7eff`; no success is claimed yet.
+
+
+### S2.5 authenticated candidate and grader orchestration
+
+`SandboxTestVerifier` now dispatches host-registered plans through the root
+`sandbox.Runner` port. The candidate receives only its captured input; the grader
+receives protected tests, fixtures, the result schema and a digest-checked
+candidate export. Job IDs, idempotency keys and output IDs are distinct and must
+be reserved durably before registration. No environment variables pass through.
+
+Receipts and terminal results must match the expected jobs and pass an explicit
+authenticity port. The sandbox module's `grading.NewAuthenticity` pins the broker
+name and key and reuses the existing Ed25519 verification helpers. Evidence reads
+check exact byte counts, SHA-256, scope and retention. Current authority is checked
+around external calls, including after the supervisor returns.
+
+The external supervisor receives detached job and artifact bindings without
+stdout or stderr. Its implementation revision and named observations must match
+the registered manifest and both exact job digests. Missing checks are
+inconclusive; forged stdout cannot override a failed assessment. The supervisor
+must retain authenticated evidence and independently corroborate tests that run
+candidate code. This packet defines and checks that port, not its concrete
+implementation or deployment.
+
+Admission is bounded to the configured one through 64 concurrent evaluations.
+Reads accept at most 32 MiB of original evidence and 16 MiB per reference; output
+artifacts also retain the sandbox's tighter declared limits. Each evaluation has
+a maximum five-minute deadline. Unfinished jobs receive a two-second cancellation
+attempt using only the expected reserved ID. An uncertain submission or failed
+cleanup remains uncertain and never creates a replacement job.
+
+Ruling: reuse the typed test evaluator registration and existing broker signature
+helpers. Keep the root module independent of the heavy sandbox adapter. Hosts
+still own total evaluation accounting, durable phase recovery and supervisor
+retry reconciliation. New supervisor artifacts are not yet attached to the
+captured verification report binding. These gaps, contextual adapters, approved
+export and Linux adversarial qualification keep S2.5 open.
+
+Validation:
+
+- Separate-job execution, forged verdicts and invalid broker identity failed
+  against the initial implementations, then passed after the checks were wired.
+  Admission overflow also failed before the bound was added.
+- Root verification and the full sandbox module pass with the race detector;
+  both modules build. Regression cases also cover malformed supervisor outcomes
+  and cancellation failure, which preserves `ErrCallUncertain`.
+- Initial all-module lint found redundant error assignments and formatting.
+  After correction, formatting and all ten module lint checks passed.
+- Cortex CI `39980617720` passed on `ccf1724`. Dashboard CI `39979911379` passed
+  on the approved eight-commit push through `2ea7eff`. These supersede the pending
+  CI notes above and do not establish live sandbox qualification.
+- After the cleanup review, the verification race suite passed in 3.652s;
+  grading authentication passed in 1.206s. Root and sandbox builds passed.
+  Docs type checking, lint and production build also passed.
