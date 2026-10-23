@@ -341,6 +341,6 @@ Only `make lint` walks every module. Test a sub-module from its own directory. T
 
 ## License
 
-See the [Cortex repository](https://github.com/xraph/cortex) for license terms.
+MIT. See [LICENSE](LICENSE).
 
 Cortex is part of the [forgery stack](https://github.com/xraph/forge#the-forgery-stack) built on [Forge](https://github.com/xraph/forge), by [Rex Raphael](https://github.com/juicycleff) and [contributors](https://github.com/xraph/cortex/graphs/contributors).
