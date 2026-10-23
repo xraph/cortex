@@ -454,5 +454,24 @@ reconciles saved evaluator calls after expiry. Jobs without an intent remain
 explicit host work. Use the metadata observer to surface unavailable, uncertain,
 busy and terminal outcomes. Cancel and join the loop before closing its store.
 
-This does not add lease renewal, public result delivery or completion-hook replay.
+This does not add public result delivery or completion-hook replay.
 Keep the required runtime's production qualification gates in place.
+
+## Evaluator lease renewal
+
+Set `LeaseRenewal` on `verification.ExecutorConfig` or
+`engine.VerificationWorkerConfig` to keep long evaluator callbacks owned.
+`Duration` must be positive and at most one hour. Set a positive `Interval` no
+greater than half that duration. A nil policy preserves fixed-lease behavior.
+
+Custom stores must implement `verification.LeaseRenewer` for this option. The
+built-in stores already support it; no schema or migration changes are needed.
+Your authorizer, clock and store must support concurrent access, and all host
+callbacks must honor cancellation. Renewal preserves the claim generation and
+stops at the job deadline, caller cancellation or last acknowledged lease expiry.
+The callback context's deadline no longer includes the initial lease expiry;
+the watchdog enforces the latest acknowledged expiry separately.
+
+Uncertain renewal leaves a recorded paid call unresolved. Recovery must reconcile
+that original call, including when a renewal committed but its reply was lost.
+This does not qualify a production evaluator, fence or worker deployment.

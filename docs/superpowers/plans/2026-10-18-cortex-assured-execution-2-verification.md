@@ -102,8 +102,8 @@ Failed or inconclusive checks cannot emit done or successful A2A artifacts.
 Checked-segment policies fail closed; tools and resume require host authorities. Lost evaluator
 reply recovery uses the saved job without another generation call. This option is
 off by default; G1 qualification is still required before production rollout.
-New durable result hooks, history publication, scheduler,
-lease renewal, bounded repair and pre-capture recovery remain open.
+New durable result hooks, history publication, bounded repair and pre-capture
+recovery remain open. Scoped scheduling and callback renewal are described below.
 
 
 The required runtime now supports tool execution, authorized external handoffs,
@@ -112,8 +112,8 @@ policy and capture intent before claim and again before effects. The authorized
 `PendingVerificationTools` reader replaces public pending bodies; public tool
 rows/hooks also omit private content. Evaluator reservation survives restart.
 The tests cover ordinary continuation without repeated completed effects;
-crash-atomic effect receipts, durable result hooks, history publication, scheduling,
-lease renewal, repairs and production G1 qualification remain open.
+crash-atomic effect receipts, durable result hooks, history publication, repairs
+and production G1 qualification remain open.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.
@@ -247,8 +247,8 @@ usage and final candidate must agree before evaluation or commit. Rescanning a
 retained conversation cannot silently change it during required resume.
 
 This supplies dynamic tool-result evidence. External results still depend on
-the authorized host, and durable effect receipts, worker scheduling, lease
-renewal, repair and public delivery remain open. G1/G2 qualification is unchanged.
+the authorized host, and durable effect receipts, repair and public delivery
+remain open. G1/G2 qualification is unchanged.
 
 
 ### S2.2 scoped recovery scheduling
@@ -260,6 +260,26 @@ Live leases remain untouched. Intents supply stable result identities; missing
 intents stay explicit host work. Expired or exhausted jobs retire through the
 existing atomic store operation, without refunding unknown charges.
 
-The runner is opt-in host lifecycle code. Multi-scope deployment, lease renewal,
+The runner is opt-in host lifecycle code. Multi-scope deployment,
 durable hooks/public delivery, pre-capture recovery and qualified host ports
 remain open, so this does not close the full runtime-gate checkbox.
+
+### S2.2 evaluator lease renewal
+
+The executor and engine worker accept an optional `LeaseRenewalPolicy`. It renews
+ownership during estimation, evaluation and reconciliation, preserves the claim
+generation and stops at the job deadline or caller cancellation. A separate
+watchdog cancels the callback at the last acknowledged expiry when renewal stalls.
+The default remains fixed-lease behavior.
+
+Every renewal checks current authority and validates the stored ownership reply.
+Malformed, late and lost acknowledgements fail closed. A recorded paid call stays
+unresolved for reconciliation; a late provider result cannot settle it after
+cancellation. The executor joins renewal before returning to storage transitions,
+which retain their own lease fences. Host ports must support concurrent access
+and honor cancellation.
+
+This closes callback renewal within the existing captured-job worker. Idle-job
+renewal, host deployment, pre-capture recovery, durable effects, public delivery,
+bounded repair and production qualification are outside this packet. The full
+runtime-gate checkbox remains open.

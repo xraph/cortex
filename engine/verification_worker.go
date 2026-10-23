@@ -15,10 +15,11 @@ import (
 // of saved candidates. The host reserves the job budget and captures evidence
 // before calling VerifyRun. This does not gate ordinary run publication.
 type VerificationWorkerConfig struct {
-	Adapter    verification.EvaluationAdapter
-	Authorizer verification.BindingAuthorizer
-	Fence      verification.CommitFence
-	Clock      verification.Clock
+	LeaseRenewal *verification.LeaseRenewalPolicy
+	Adapter      verification.EvaluationAdapter
+	Authorizer   verification.BindingAuthorizer
+	Fence        verification.CommitFence
+	Clock        verification.Clock
 }
 
 // WithVerificationWorker installs an explicit saved-candidate worker. All ports
@@ -26,6 +27,10 @@ type VerificationWorkerConfig struct {
 func WithVerificationWorker(config VerificationWorkerConfig) Option {
 	return func(e *Engine) error {
 		copied := config
+		if config.LeaseRenewal != nil {
+			policy := *config.LeaseRenewal
+			copied.LeaseRenewal = &policy
+		}
 		e.verificationConfig = &copied
 		return nil
 	}
@@ -53,7 +58,7 @@ func (e *Engine) configureVerificationWorker() error {
 		return cortex.ErrVerificationUnavailable
 	}
 	config := *e.verificationConfig
-	executor, err := verification.NewExecutor(verification.ExecutorConfig{Store: storage, Adapter: config.Adapter, Authorizer: config.Authorizer, Clock: config.Clock})
+	executor, err := verification.NewExecutor(verification.ExecutorConfig{Store: storage, Adapter: config.Adapter, Authorizer: config.Authorizer, Clock: config.Clock, LeaseRenewal: config.LeaseRenewal})
 	if err != nil {
 		return fmt.Errorf("cortex: configure verification worker: %w", err)
 	}
@@ -85,7 +90,8 @@ type VerificationRunResult struct {
 
 // VerifyRun enqueues, claims, evaluates and commits a saved candidate. It never
 // invokes generation or tools. Groups run in contract order until required checks
-// settle; optional groups after readiness are skipped. It does not renew leases.
+// settle; optional groups after readiness are skipped. Configured renewal keeps
+// evaluator callbacks owned; claim and commit still enforce stored lease expiry.
 // An error may follow durable work: retry the same identities to reconcile it.
 // Normal sync, stream and resume publication is unaffected by this explicit API.
 func (e *Engine) VerifyRun(ctx context.Context, request VerifyRunRequest) (VerificationRunResult, error) {

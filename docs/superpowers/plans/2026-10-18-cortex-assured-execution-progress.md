@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; qualified host adapters, durable effect recovery, multi-scope worker deployment, lease renewal and durable public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; scoped recovery and callback renewal implemented; qualified host adapters, durable effect recovery, multi-scope worker deployment and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -2584,3 +2584,47 @@ Validation for scoped recovery:
   verify. Its root test job was still active at this packet's last CI inspection.
 - No dependency or database schema changes were needed. Production evaluator,
   fence, worker deployment and Linux sandbox qualification remain unverified.
+
+
+### S2.2 evaluator lease renewal
+
+Ruling: renew only while an evaluator callback runs, under an explicit host
+policy. Reuse the existing atomic store renewal and ownership generation. A
+separate watchdog enforces the last acknowledged expiry, so a blocked renewal
+cannot silently extend the worker's authority. A lost acknowledgement may stop
+work despite a committed renewal; recovery retains the original paid call ID.
+
+`LeaseRenewalPolicy` is optional on both the executor and engine worker. It bounds
+lease duration to one hour and interval to half that duration. The executor copies
+the policy, renews during estimation, evaluation and reconciliation, and joins the
+renewal goroutine before storage transitions. Nil preserves fixed-lease behavior.
+Job and caller deadlines still bound the operation. Current authority, request
+binding and exact claim ownership are checked around renewal. Custom stores must
+implement `LeaseRenewer`; the built-in stores already do.
+
+The initial API tests failed before implementation. Long-callback tests now cover
+estimation, evaluation and reconciliation across their starting lease expiry,
+competing claims, stable generations and one-time settlement. Failure fixtures
+cover revoked authority, blocked renewal, malformed ownership, regressed expiry,
+lost and late acknowledgements, deadline expiry, caller cancellation and a provider
+that returns a report after cancellation. Recorded calls remain unresolved in
+these cases. No background renewal survives callback return.
+
+Host callbacks must honor cancellation, and host ports must support concurrent
+access. This packet does not supply idle-job renewal, pre-capture recovery,
+durable effect recovery, public delivery, repair or production qualification.
+The full four-stage goal remains active.
+
+
+Validation for evaluator renewal:
+
+- Full engine and verification race suites passed (286.887s and 1.247s).
+  The final focused race run, including late renewal acknowledgements, passed
+  after formatting (24.731s and 1.178s).
+- The shared executor race suites passed on SQLite (34.921s), PostgreSQL
+  (12.006s) and MongoDB (14.070s). Docker-backed tests ran without skips.
+  The renewal case crosses lease expiry in both estimation and evaluation.
+- Final `make f`, all ten module lint checks, root build and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- CI for the preceding recovery commit `5a090dd` completed successfully
+  (`39942247964`). No dependency or database schema changes were required.

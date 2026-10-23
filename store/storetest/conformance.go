@@ -63,6 +63,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("VerificationJobs", func(t *testing.T) { testVerificationJobs(t, newStore) })
 	t.Run("VerificationCalls", func(t *testing.T) { testVerificationCalls(t, newStore) })
 	t.Run("VerificationExecutor", func(t *testing.T) { testVerificationExecutor(t, newStore) })
+	t.Run("VerificationExecutorRenewal", func(t *testing.T) { testVerificationExecutorRenewal(t, newStore) })
 	t.Run("VerificationExecutorDenials", func(t *testing.T) { testVerificationExecutorDenials(t, newStore) })
 	t.Run("VerificationExecutorLostAcknowledgements", func(t *testing.T) { testVerificationExecutorLostAcknowledgements(t, newStore) })
 	t.Run("VerificationExecutorCallbackIsolation", func(t *testing.T) { testVerificationExecutorCallbackIsolation(t, newStore) })

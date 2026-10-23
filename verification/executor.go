@@ -19,7 +19,8 @@ type ExecutorStore interface {
 
 // EvaluationInput pins the captured candidate and host accounting policy.
 // Request.Deadline remains the job deadline across recovery; each operation's
-// context is additionally bounded by the current lease and caller deadline.
+// context also respects the caller deadline. Without renewal its deadline includes
+// lease expiry; with renewal a watchdog cancels at the last acknowledged expiry.
 type EvaluationInput struct {
 	JobID   id.ID
 	Request Request
@@ -58,10 +59,11 @@ type EvaluationAdapter interface {
 
 // ExecutorConfig requires durable storage and explicit trusted host services.
 type ExecutorConfig struct {
-	Store      ExecutorStore
-	Adapter    EvaluationAdapter
-	Authorizer BindingAuthorizer
-	Clock      Clock
+	LeaseRenewal *LeaseRenewalPolicy
+	Store        ExecutorStore
+	Adapter      EvaluationAdapter
+	Authorizer   BindingAuthorizer
+	Clock        Clock
 }
 
 // Executor advances one verifier group under an existing lease. It neither
@@ -81,6 +83,16 @@ func NewExecutor(config ExecutorConfig) (*Executor, error) {
 	if nilHostPort(config.Store) || nilHostPort(config.Adapter) || nilHostPort(config.Authorizer) || nilHostPort(config.Clock) {
 		return nil, ErrInvalid
 	}
+	if config.LeaseRenewal != nil {
+		policy := *config.LeaseRenewal
+		if policy.validate() != nil {
+			return nil, ErrInvalid
+		}
+		if _, ok := config.Store.(LeaseRenewer); !ok {
+			return nil, ErrInvalid
+		}
+		config.LeaseRenewal = &policy
+	}
 	return &Executor{config: config}, nil
 }
 
@@ -97,7 +109,7 @@ func (e *Executor) Execute(ctx context.Context, request ExecutorRequest) (Job, e
 		return Job{}, err
 	}
 	deadline := job.Request.Deadline
-	if job.Lease.ExpiresAt.Before(deadline) {
+	if e.config.LeaseRenewal == nil && job.Lease.ExpiresAt.Before(deadline) {
 		deadline = job.Lease.ExpiresAt
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
@@ -162,11 +174,15 @@ func (e *Executor) Execute(ctx context.Context, request ExecutorRequest) (Job, e
 	call.CriterionIDs = append([]string(nil), call.CriterionIDs...)
 	dispatch := EvaluationDispatch{Input: detached, Call: call}
 	var result CallResult
-	if recovering {
-		result, err = e.config.Adapter.Reconcile(ctx, dispatch)
-	} else {
-		result, err = e.config.Adapter.Evaluate(ctx, dispatch)
-	}
+	err = e.withLeaseRenewal(ctx, request.Lease, job, func(callbackCtx context.Context) error {
+		var callbackErr error
+		if recovering {
+			result, callbackErr = e.config.Adapter.Reconcile(callbackCtx, dispatch)
+		} else {
+			result, callbackErr = e.config.Adapter.Evaluate(callbackCtx, dispatch)
+		}
+		return callbackErr
+	})
 	if err != nil {
 		return Job{}, fmt.Errorf("%w: %w", ErrCallUncertain, err)
 	}
@@ -204,6 +220,13 @@ func (e *Executor) authorizeLease(ctx context.Context, job Job, lease JobLease) 
 	if err := e.authorize(ctx, job.Request.Binding); err != nil {
 		return err
 	}
+	if e.config.LeaseRenewal != nil {
+		refreshed, readErr := e.load(ctx, lease, job.RequestDigest)
+		if readErr != nil {
+			return readErr
+		}
+		job = refreshed
+	}
 	return job.CheckLease(lease, e.config.Clock.Now().UTC())
 }
 
@@ -226,7 +249,12 @@ func (e *Executor) begin(ctx context.Context, lease JobLease, job Job, input Eva
 	if err != nil {
 		return Job{}, 0, err
 	}
-	allowance, err := e.config.Adapter.Estimate(ctx, detached)
+	var allowance EvaluationAllowance
+	err = e.withLeaseRenewal(ctx, lease, job, func(callbackCtx context.Context) error {
+		var estimateErr error
+		allowance, estimateErr = e.config.Adapter.Estimate(callbackCtx, detached)
+		return estimateErr
+	})
 	if err != nil {
 		return Job{}, 0, err
 	}

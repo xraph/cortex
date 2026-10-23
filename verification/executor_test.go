@@ -31,3 +31,8 @@ func TestExecutorRequiresEveryHostPort(t *testing.T) {
 		require.Nil(t, executor)
 	}
 }
+
+func TestExecutorRenewalRequiresRenewableStore(t *testing.T) {
+	_, err := verification.NewExecutor(verification.ExecutorConfig{Store: executorStoreStub{}, Adapter: evaluationAdapterStub{}, Authorizer: verificationAuthorizer{}, Clock: fixedClock{time.Now()}, LeaseRenewal: &verification.LeaseRenewalPolicy{Duration: time.Second, Interval: time.Millisecond}})
+	require.ErrorIs(t, err, verification.ErrInvalid)
+}

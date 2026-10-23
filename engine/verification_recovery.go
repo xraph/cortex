@@ -191,7 +191,8 @@ func (w *verificationWorker) recoverJob(ctx context.Context, intents verificatio
 // cancellation or a discovery failure. It retains the cursor between pages and
 // wraps after reaching the end. Restart starts from the supplied cursor; durable
 // job leases and call IDs prevent repeating paid evaluation after uncertainty.
-// This loop does not renew leases, publish history or replay completion hooks.
+// Callback lease renewal follows the worker configuration. This loop does not
+// renew idle leases, publish history or replay completion hooks.
 func (e *Engine) RunVerificationRecovery(ctx context.Context, config VerificationRecoveryLoop) error {
 	if config.Interval <= 0 || config.Interval > time.Hour {
 		return verification.ErrInvalid

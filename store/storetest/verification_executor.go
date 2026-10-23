@@ -88,6 +88,66 @@ func testVerificationExecutor(t *testing.T, newStore func(*testing.T) store.Stor
 	require.Equal(t, before, after)
 }
 
+func testVerificationExecutorRenewal(t *testing.T, newStore func(*testing.T) store.Store) {
+	s := newStore(t)
+	ctx, req, reports := verificationCallFixture(t, s, false)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	js := resultCapability[verification.JobStore](t, s)
+	_, err := js.EnqueueVerificationJob(ctx, req)
+	require.NoError(t, err)
+	job, err := js.ClaimVerificationJob(ctx, verification.JobClaim{JobID: req.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "worker", Duration: 2 * time.Second})
+	require.NoError(t, err)
+	// Each callback crosses its entry snapshot's expiry while the executor renews.
+	// Concurrent reads and competing claims exercise the actual backend fences.
+	waitOwned := func(callctx context.Context, pendingCalls int) {
+		t.Helper()
+		before, readErr := js.GetVerificationJob(callctx, req.ID)
+		require.NoError(t, readErr)
+		require.Len(t, before.Calls, pendingCalls)
+		timer := time.NewTimer(time.Until(before.Lease.ExpiresAt) + 20*time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-callctx.Done():
+			t.Fatalf("callback lost ownership: %v", context.Cause(callctx))
+		}
+		_, claimErr := js.ClaimVerificationJob(callctx, verification.JobClaim{JobID: req.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "competitor", Duration: time.Second})
+		require.ErrorIs(t, claimErr, verification.ErrJobConflict)
+		after, readErr := js.GetVerificationJob(callctx, req.ID)
+		require.NoError(t, readErr)
+		require.Equal(t, job.Generation, after.Generation)
+		require.True(t, after.Lease.ExpiresAt.After(before.Lease.ExpiresAt))
+	}
+	adapter := evaluatorAdapter{
+		estimate: func(callctx context.Context, input verification.EvaluationInput) (verification.EvaluationAllowance, error) {
+			waitOwned(callctx, 0)
+			return verification.EvaluationAllowance{MaxTokens: 40, MaxUSDMicros: 40, PricingRevision: input.Budget.PricingRevision}, nil
+		},
+		evaluate: func(callctx context.Context, dispatch verification.EvaluationDispatch) (verification.CallResult, error) {
+			waitOwned(callctx, 1)
+			return verification.CallResult{CallID: dispatch.Call.Request.ID, Report: &reports[0], Usage: verification.EvaluationUsage{Tokens: 20, TokensKnown: true, USDMicros: 20, MoneyKnown: true, Receipt: "renewal-meter"}}, nil
+		},
+		reconcile: func(context.Context, verification.EvaluationDispatch) (verification.CallResult, error) {
+			t.Fatal("fresh evaluation must not reconcile")
+			return verification.CallResult{}, nil
+		},
+	}
+	executor, err := verification.NewExecutor(verification.ExecutorConfig{
+		Store: resultCapability[verification.ExecutorStore](t, s), Adapter: adapter,
+		Authorizer:   evaluatorAuthorizer(func(context.Context, verification.Binding) error { return nil }),
+		Clock:        &jobClock{at: time.Now().UTC()},
+		LeaseRenewal: &verification.LeaseRenewalPolicy{Duration: 2 * time.Second, Interval: 100 * time.Millisecond},
+	})
+	require.NoError(t, err)
+	saved, err := executor.Execute(ctx, executorSelection(job, reports[0]))
+	require.NoError(t, err)
+	require.Equal(t, job.Generation, saved.Generation)
+	require.Len(t, saved.Calls, 1)
+	require.NotNil(t, saved.Calls[0].Completion)
+	require.Equal(t, verification.EvaluationDebit{Calls: 1, Tokens: 20, USDMicros: 20}, verification.DebitCalls(saved.Calls))
+}
+
 type executorStorage struct {
 	verification.ExecutorStore
 	contract func(context.Context, id.ID) (verification.Contract, error)

@@ -351,13 +351,41 @@ with usage in one transaction. A storage acknowledgement can be lost after that
 transaction commits, so retry through the executor or inspect the saved job.
 
 The executor detaches callback inputs, rechecks authority around adapter access,
-and checks lease expiry after host callbacks. Its context deadline is the earliest
-of the caller deadline, lease expiry and job deadline. The immutable request keeps
-the original job deadline for recovery. Adapters must honor cancellation and
-reauthorize their actual resource reads; an in-process callback cannot forcibly
-stop a remote effect or uncooperative code. The scoped recovery loop below
-schedules saved jobs through this executor. Lease renewal and production provider
-qualification remain open.
+and checks lease expiry after host callbacks. Without renewal, its context deadline
+is the earliest of the caller deadline, lease expiry and job deadline. The immutable
+request keeps the original job deadline for recovery. Adapters must honor
+cancellation and reauthorize their actual resource reads; an in-process callback
+cannot forcibly stop a remote effect or uncooperative code. The scoped recovery
+loop below schedules saved jobs through this executor. Production provider
+qualification remains required.
+
+For checks that may outlast their initial lease, set `LeaseRenewal` on
+`ExecutorConfig` or `engine.VerificationWorkerConfig`:
+
+```go
+LeaseRenewal: &verification.LeaseRenewalPolicy{
+    Duration: 30 * time.Second,
+    Interval: 10 * time.Second,
+},
+```
+
+Both durations must be positive. `Duration` cannot exceed one hour and `Interval`
+cannot exceed half that duration. Leave the policy nil to retain fixed-lease
+behavior. Your store must implement `verification.LeaseRenewer`; built-in stores
+already do. The worker also applies this policy during required verification and
+scoped recovery.
+
+Renewal runs during `Estimate`, `Evaluate` and `Reconcile`. It checks current
+authority, preserves the claim generation and cannot extend the job or caller
+deadline. The callback context carries those deadlines; a separate watchdog
+cancels it at the last acknowledged lease expiry. Your host ports must support
+concurrent authorization, reads and renewal, and honor context cancellation.
+
+A failed, malformed, late or lost renewal reply stops the callback. A paid call
+already recorded remains unresolved for reconciliation, even if the provider
+returns a report after cancellation. The executor stops and joins renewal before
+advancing storage state. Each storage transition still checks live ownership.
+This policy does not renew idle jobs or grant permission to repeat an effect.
 
 Passing every required criterion makes the job ready. It does not publish a
 result. Build `verification.CommitRequest` from the saved job's run revision,
@@ -418,7 +446,8 @@ worker never calls generation or tools, including during database restart recove
 
 A claim can only be recovered while its stored lease is live. After expiry, use
 a new claim ID to take over eligible work, keeping the job and result IDs stable.
-This worker does not renew leases, sweep expired jobs or discover other scopes.
+The worker renews evaluator callbacks only when configured. It does not sweep
+expired jobs or discover other scopes.
 
 This is an explicit host operation. It does not change synchronous, streaming,
 prepared or resumed run publication, install completion hooks or deliver outbox
@@ -473,8 +502,9 @@ provider charges stay reserved.
 A lost claim acknowledgement waits for lease expiry. A lost commit
 acknowledgement is observed as terminal on a later scan. `terminal` does not
 promise a passed result or authorize delivery, and `unavailable` can follow a
-durable write. Inspect saved state before taking any manual action. This loop
-neither renews leases nor publishes history, completion hooks or outbox events.
+durable write. Inspect saved state before taking any manual action. Callback
+renewal follows the worker policy. This loop does not renew idle leases or publish
+history, completion hooks or outbox events.
 Production evaluator/fence qualification and host deployment remain required.
 
 
@@ -599,7 +629,7 @@ undo an external effect or guarantee that a provider honors cancellation.
 Checked-segment publication remains unsupported: required answers must wait for
 whole-result verification. Tool-free snapshots reject unexpected tool calls;
 tool-enabled snapshots enforce their frozen allowlist and current tool authority.
-History publication, durable completion-hook replay, lease renewal, repairs and
+History publication, durable completion-hook replay, repairs and
 recovery before candidate capture remain open. The scoped recovery loop can
 schedule jobs after capture.
 After a lost evaluator response, recover the saved intent/job through `VerifyRun`
