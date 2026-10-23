@@ -58,9 +58,10 @@ S3.2 progress: durable ownership reservations, renewal, immutable history,
 replan fencing and dispatch-intent persistence are implemented on the shared
 transaction capability. Expired unused reservations release; ambiguous dispatches
 enter recovery and cannot be reassigned. Ownership and shared capacity can now be
-reserved together, with budget checks on renewal and dispatch intent. Readiness
-and grant admission, runtime dispatch, cancellation, recovery settlement and
-events remain open.
+reserved together, with budget checks on renewal and dispatch intent. Verified
+task acceptance now atomically completes ownership and retains the receipt with
+a metadata outbox intent. Readiness and grant admission, runtime dispatch,
+cancellation, recovery settlement and event delivery remain open.
 `ClaimReadyTask` and `Scheduler.Tick` are still integration work; the ownership
 store is not a completed scheduler.
 
@@ -88,7 +89,9 @@ stores retain progress and evidence-bound submissions with immutable history,
 exact-scope reads, idempotent replay and plan/run/evidence transactions. Prepared
 execution retains handoff lineage through resume. Immutable review observations
 now bind separate reviewer execution to submitted evidence, preserve contradictions
-and leave verifier verdicts unchanged. Review completion/adjudication, atomic
+and leave verifier verdicts unchanged. Task acceptance now checks committed
+verification and the complete prerequisite chain under the plan/run/evidence
+transaction. Review completion/adjudication, atomic
 current-grant and scheduler-ownership fences, stronger producer independence and
 installed qualification remain open.
 The packet and its acceptance checklist remain incomplete.

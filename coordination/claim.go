@@ -31,6 +31,7 @@ const (
 	ClaimDispatching ClaimState = "dispatching"
 	ClaimRecovering  ClaimState = "recovering"
 	ClaimReleased    ClaimState = "released"
+	ClaimCompleted   ClaimState = "completed"
 )
 
 // ClaimRequest reserves exclusive ownership. It does not prove readiness, grant
@@ -98,6 +99,7 @@ type Claim struct {
 	Deadline       time.Time     `json:"deadline"`
 	PreviousDigest string        `json:"previous_digest,omitempty"`
 	Digest         string        `json:"digest"`
+	AcceptanceID   *id.ID        `json:"acceptance_id,omitempty"`
 }
 
 // Token identifies this exact immutable observation of ownership.
@@ -113,12 +115,19 @@ func sealClaim(c Claim) (Claim, error) {
 	if (c.Revision == 1 && (c.PreviousDigest != "" || c.Fence != 1)) || (c.Revision > 1 && !evidence.ValidDigest(c.PreviousDigest)) {
 		return Claim{}, ErrInvalidClaim
 	}
+	if c.State == ClaimCompleted {
+		if c.AcceptanceID == nil || c.AcceptanceID.IsNil() || c.AcceptanceID.Prefix() != PrefixTaskAcceptance {
+			return Claim{}, ErrInvalidClaim
+		}
+	} else if c.AcceptanceID != nil {
+		return Claim{}, ErrInvalidClaim
+	}
 	switch c.State {
 	case ClaimHeld:
 		if !c.RunID.IsNil() || !c.At.Before(c.ExpiresAt) {
 			return Claim{}, ErrInvalidClaim
 		}
-	case ClaimDispatching:
+	case ClaimDispatching, ClaimCompleted:
 		if c.RunID.IsNil() || c.RunID.Prefix() != id.PrefixAgentRun || !c.At.Before(c.ExpiresAt) {
 			return Claim{}, ErrInvalidClaim
 		}
@@ -154,7 +163,8 @@ func (c Claim) Validate() error {
 	return nil
 }
 
-// AcquireClaim starts an attempt only when the prior reservation is released.
+// AcquireClaim starts an attempt after release, or after a completed task moves
+// to a newer plan revision. Success cannot be overwritten within the same plan.
 // An expired dispatch remains unavailable until a separate recovery protocol
 // proves its effects and run are settled. This function cannot waive recovery.
 func AcquireClaim(previous *Claim, request ClaimRequest, p planning.Plan, at time.Time) (Claim, error) {
@@ -183,7 +193,7 @@ func AcquireClaim(previous *Claim, request ClaimRequest, p planning.Plan, at tim
 		if previous.Validate() != nil {
 			return Claim{}, ErrInvalidClaim
 		}
-		if previous.State != ClaimReleased || req.PlanRevision < previous.PlanRevision || previous.ID == req.ID || previous.PlanID != req.PlanID || previous.TaskID != req.TaskID || previous.Scope.Canonical() != p.Scope.Canonical() || previous.Revision != req.ExpectedRevision || previous.Revision == math.MaxInt64 || previous.Fence == math.MaxUint64 || at.Before(previous.At) {
+		if (previous.State != ClaimReleased && (previous.State != ClaimCompleted || req.PlanRevision <= previous.PlanRevision)) || req.PlanRevision < previous.PlanRevision || previous.ID == req.ID || previous.PlanID != req.PlanID || previous.TaskID != req.TaskID || previous.Scope.Canonical() != p.Scope.Canonical() || previous.Revision != req.ExpectedRevision || previous.Revision == math.MaxInt64 || previous.Fence == math.MaxUint64 || at.Before(previous.At) {
 			return Claim{}, ErrClaimConflict
 		}
 		c.Fence, c.Revision, c.PreviousDigest = previous.Fence+1, previous.Revision+1, previous.Digest
@@ -272,4 +282,21 @@ func (t ClaimToken) Validate() error {
 		return ErrInvalidClaim
 	}
 	return nil
+}
+
+// CompleteClaim closes a live dispatched claim after storage validates evidence.
+// The pure transition alone does not establish verifier trust or task acceptance.
+func CompleteClaim(c Claim, token ClaimToken, acceptanceID id.ID, at time.Time) (Claim, error) {
+	if acceptanceID.IsNil() || acceptanceID.Prefix() != PrefixTaskAcceptance {
+		return Claim{}, ErrInvalidClaim
+	}
+	if err := liveClaim(c, token, at); err != nil {
+		return Claim{}, err
+	}
+	if c.State != ClaimDispatching {
+		return Claim{}, ErrClaimConflict
+	}
+	c = nextClaim(c, at)
+	c.State, c.AcceptanceID = ClaimCompleted, &acceptanceID
+	return sealClaim(c)
 }

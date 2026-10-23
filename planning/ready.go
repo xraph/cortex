@@ -45,48 +45,12 @@ type TaskState struct {
 // Any revision requires explicitly refreshed states; evidence is never reused
 // solely because a task ID survived the revision.
 func Ready(p Plan, states []TaskState, at time.Time) ([]id.ID, error) {
-	if err := Validate(p, Limits{}); err != nil {
+	snapshots, accepts, err := taskAcceptanceSnapshot(p, states, at)
+	if err != nil {
 		return nil, err
-	}
-	if at.IsZero() || len(states) > len(p.Tasks) {
-		return nil, invalid("readiness snapshot")
-	}
-	definitions := make(map[id.ID]Task, len(p.Tasks))
-	for _, task := range p.Tasks {
-		definitions[task.ID] = task
-	}
-	snapshots := make(map[id.ID]TaskState, len(states))
-	for _, state := range states {
-		_, known := definitions[state.TaskID]
-		_, duplicate := snapshots[state.TaskID]
-		if !known || duplicate || state.PlanDigest != p.Digest || !validStatus(state.Status) {
-			return nil, invalid("task state binding")
-		}
-		snapshots[state.TaskID] = state
 	}
 	if !at.Before(p.Budget.Deadline) {
 		return nil, nil
-	}
-	accepted := make(map[id.ID]bool, len(states))
-	checked := make(map[id.ID]bool, len(states))
-	var accepts func(id.ID) bool
-	accepts = func(taskID id.ID) bool {
-		if checked[taskID] {
-			return accepted[taskID]
-		}
-		checked[taskID] = true
-		task := definitions[taskID]
-		state, ok := snapshots[taskID]
-		if !ok || state.Status != StatusSucceeded || !taskAccepted(p, task, state, at) {
-			return false
-		}
-		for _, dependency := range task.DependsOn {
-			if !accepts(dependency) || !containsRef(state.Current.Evidence, snapshots[dependency].Current.Candidate) {
-				return false
-			}
-		}
-		accepted[taskID] = true
-		return true
 	}
 	var ready []id.ID
 	for _, task := range p.Tasks {
@@ -109,6 +73,68 @@ func Ready(p Plan, states []TaskState, at time.Time) ([]id.ID, error) {
 		}
 	}
 	return ready, nil
+}
+
+func taskAcceptanceSnapshot(p Plan, states []TaskState, at time.Time) (statesByTask map[id.ID]TaskState, isAccepted func(id.ID) bool, err error) {
+	if err := Validate(p, Limits{}); err != nil {
+		return nil, nil, err
+	}
+	if at.IsZero() || len(states) > len(p.Tasks) {
+		return nil, nil, invalid("readiness snapshot")
+	}
+	definitions := make(map[id.ID]Task, len(p.Tasks))
+	for _, task := range p.Tasks {
+		definitions[task.ID] = task
+	}
+	snapshots := make(map[id.ID]TaskState, len(states))
+	for _, state := range states {
+		_, known := definitions[state.TaskID]
+		_, duplicate := snapshots[state.TaskID]
+		if !known || duplicate || state.PlanDigest != p.Digest || !validStatus(state.Status) {
+			return nil, nil, invalid("task state binding")
+		}
+		snapshots[state.TaskID] = state
+	}
+	accepted := make(map[id.ID]bool, len(states))
+	checked := make(map[id.ID]bool, len(states))
+	var accepts func(id.ID) bool
+	accepts = func(taskID id.ID) bool {
+		if checked[taskID] {
+			return accepted[taskID]
+		}
+		checked[taskID] = true
+		task := definitions[taskID]
+		state, ok := snapshots[taskID]
+		if !ok || state.Status != StatusSucceeded || !taskAccepted(p, task, state, at) {
+			return false
+		}
+		for _, dependency := range task.DependsOn {
+			if !accepts(dependency) || !containsRef(state.Current.Evidence, snapshots[dependency].Current.Candidate) {
+				return false
+			}
+		}
+		accepted[taskID] = true
+		return true
+	}
+	return snapshots, accepts, nil
+}
+
+// ValidateTaskAcceptance checks verified output and its complete prerequisite
+// chain. The host must supply trusted reports and current authorized bindings.
+func ValidateTaskAcceptance(p Plan, taskID id.ID, states []TaskState, at time.Time) error {
+	_, accepts, err := taskAcceptanceSnapshot(p, states, at)
+	if err != nil {
+		return err
+	}
+	if !at.Before(p.Budget.Deadline) || !accepts(taskID) {
+		return ErrInvalid
+	}
+	for _, task := range p.Tasks {
+		if task.ID == taskID && at.Before(task.Budget.Deadline) {
+			return nil
+		}
+	}
+	return ErrInvalid
 }
 
 func taskAccepted(p Plan, task Task, state TaskState, at time.Time) bool {

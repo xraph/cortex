@@ -1,6 +1,7 @@
 package coordination_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -106,4 +107,52 @@ func TestClaimCannotMoveBackToOlderPlan(t *testing.T) {
 	request.ID, request.PlanRevision, request.PlanDigest, request.ExpectedRevision = id.New(coordination.PrefixClaim), p.Revision, p.Digest, released.Revision
 	_, err = coordination.AcquireClaim(&released, request, p, released.At)
 	require.ErrorIs(t, err, coordination.ErrClaimConflict)
+}
+
+func TestVerifiedClaimCompletionFencesFurtherWork(t *testing.T) {
+	h, p, _, now := handoffFixture(t)
+	request := coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: time.Minute}
+	held, err := coordination.AcquireClaim(nil, request, p, now)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(held)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "acceptance_id", "new completion metadata must preserve existing claim digests")
+	acceptanceID := id.New(coordination.PrefixTaskAcceptance)
+	_, err = coordination.CompleteClaim(held, held.Token(), acceptanceID, now)
+	require.Error(t, err)
+	dispatched, err := coordination.BeginDispatch(held, held.Token(), id.NewAgentRunID(), now)
+	require.NoError(t, err)
+	completed, err := coordination.CompleteClaim(dispatched, dispatched.Token(), acceptanceID, now.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, coordination.ClaimCompleted, completed.State)
+	require.NoError(t, coordination.ValidateClaimSuccessor(dispatched, completed))
+	_, err = coordination.RenewClaim(completed, completed.Token(), time.Minute, now.Add(2*time.Second))
+	require.Error(t, err)
+	_, err = coordination.ExpireClaim(completed, completed.Revision, completed.ExpiresAt)
+	require.Error(t, err)
+	_, err = coordination.CompleteClaim(dispatched, held.Token(), acceptanceID, now.Add(time.Second))
+	require.Error(t, err)
+	_, err = coordination.CompleteClaim(dispatched, dispatched.Token(), acceptanceID, dispatched.ExpiresAt)
+	require.Error(t, err)
+}
+
+func TestCompletedClaimNeedsNewPlanBeforeReassignment(t *testing.T) {
+	h, p, _, now := handoffFixture(t)
+	req := coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: time.Minute}
+	held, err := coordination.AcquireClaim(nil, req, p, now)
+	require.NoError(t, err)
+	dispatched, err := coordination.BeginDispatch(held, held.Token(), id.NewAgentRunID(), now)
+	require.NoError(t, err)
+	completed, err := coordination.CompleteClaim(dispatched, dispatched.Token(), id.New(coordination.PrefixTaskAcceptance), now)
+	require.NoError(t, err)
+	req.ID, req.ExpectedRevision = id.New(coordination.PrefixClaim), completed.Revision
+	_, err = coordination.AcquireClaim(&completed, req, p, now)
+	require.Error(t, err)
+	next, err := planning.ApplyRevision(p, planning.Revision{Plan: p, Actor: "host", Reason: "new evidence required"}, p.Revision, planning.Limits{})
+	require.NoError(t, err)
+	req.PlanRevision, req.PlanDigest = next.Revision, next.Digest
+	reassigned, err := coordination.AcquireClaim(&completed, req, next, now)
+	require.NoError(t, err)
+	require.Greater(t, reassigned.Fence, completed.Fence)
+	require.NoError(t, coordination.ValidateClaimSuccessor(completed, reassigned))
 }

@@ -53,6 +53,7 @@ func TestConformance(t *testing.T) {
 		return s
 	})
 	t.Run("HistoricalRunRevision", func(t *testing.T) { testHistoricalRunRevision(t, s) })
+	t.Run("TaskAcceptanceTransactions", func(t *testing.T) { storetest.TaskAcceptanceTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("BudgetedClaimTransactions", func(t *testing.T) { storetest.BudgetedClaimTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("BudgetTransactions", func(t *testing.T) { storetest.BudgetTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("ClaimTransactions", func(t *testing.T) { storetest.ClaimTransactions(t, s, assuranceDriver{store: s}) })

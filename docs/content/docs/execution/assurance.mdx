@@ -1378,8 +1378,8 @@ the retained projection and supply trusted reports with a freshly resolved
 existing callers. A task can now verify its own output without satisfying checks
 assigned only to other outputs. Its pass does not satisfy the whole plan contract.
 
-This supplies the contract and evidence checks. Durable task acceptance,
-authoritative grant checks and scheduler dispatch still need integration.
+Use `TaskAcceptanceStore` below to persist verified task success. Authoritative
+grant checks and scheduler dispatch still need host integration.
 
 ### Submit retained task evidence
 
@@ -1471,6 +1471,45 @@ You still need current host authorization, scheduler ownership checks and a
 review completion policy. The storage capability does not dispatch the reviewer,
 close its assignment or grant access to artifact content. Human adjudication and
 verified task acceptance remain separate operations.
+
+### Accept a verified task result
+
+Call `coordination.TaskAcceptanceStore.AcceptTaskResult` after the assigned run's
+verification job commits a passing result. Supply the exact live dispatch claim,
+submitted assignment revision/digest, committed result receipt and a freshly
+resolved `Current` binding. Your host authenticates `Actor` as the handoff sender
+and fences external grants and source revisions during the call. A stored
+principal string or digest cannot authenticate that caller.
+
+Include an `AcceptedDependency` for every task in the complete prerequisite
+chain. Each entry pins its acceptance ID/digest and carries its own current
+binding. The store reloads those accepted results, checks every assigned
+criterion and requires each child's supporting evidence to contain the exact
+candidate from each direct prerequisite. A previous pass cannot hide a cancelled
+run, cancelled assignment, superseded plan, deleted artifact or expired report.
+
+The plan transaction fences the affected runs and retained evidence. It writes
+the completed claim, immutable acceptance receipt and per-task uniqueness index
+together, including a metadata-only `task_result_accepted` outbox intent. Expiry
+is checked again after the final write. Own claim and handoff deadlines remain
+binding; accepted prerequisites use current evidence freshness without extending
+their old execution leases. Each result read is limited to 8 MiB, with 32 MiB for
+the complete acceptance operation and at most 255 prerequisite entries.
+
+A confirmed first commit returns `Fresh: true`. An identical retry returns the
+original receipt with `Fresh: false`, including after a lost response or later
+evidence deletion. Changed retries conflict. Use `GetTaskAcceptance` and bounded
+`ListTaskAcceptances` for historical recovery and outbox discovery. These reads
+return metadata, so you still authorize access before exposing them. They do not
+restore evidence access or establish continuing freshness.
+
+A completed claim cannot renew, expire into recovery or be reassigned within the
+same plan revision. A newer plan can acquire a new attempt with an incremented
+fence and fresh verification. Acceptance leaves budget usage reserved until a
+separate settlement establishes actual consumption. It does not dispatch agents,
+deliver public events or implement review adjudication. Required review checks
+belong in the verification contract; advisory agreement cannot supply a pass.
+Production scheduling remains gated by G2 and installed worker qualification.
 
 ### Reserve durable task ownership
 

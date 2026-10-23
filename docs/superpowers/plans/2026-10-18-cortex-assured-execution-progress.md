@@ -4153,3 +4153,56 @@ Task-contract, submission, review, transaction and planning backend checks passe
 on SQLite (68.046s), PostgreSQL (83.373s) and MongoDB (107.827s), with real containers
 and no skips. Documentation typecheck, lint and build passed. CI 40015814552 for
 the preceding atomic claim/budget commit was still running at this checkpoint.
+
+
+### S3.2/S3.3 durable verified task acceptance
+
+`TaskAcceptanceStore` now commits a completed claim and an immutable acceptance
+receipt with metadata outbox intent under the plan transaction. Admission pins
+the submitted assignment, exact dispatch claim, verification job/result receipt
+and current binding. It reloads retained bytes and reports for the task and the
+complete accepted prerequisite chain, validates task-specific contracts and
+requires direct prerequisite candidates in the child's supporting evidence.
+
+The claim revision, receipt and per-task uniqueness index roll back together.
+Identical retries return historical receipts with `Fresh: false`; changed retries
+conflict. Completed ownership cannot be renewed or reassigned within the same
+plan revision. A newer plan can create a fresh attempt with a larger fence.
+Unknown budget usage stays reserved.
+
+TDD exposed a compatibility error when an optional value ID added an empty field
+to old claim encodings. The acceptance ID now uses an omitted pointer, preserving
+old digests. Further regressions caught renewal changing the dispatch timestamp,
+a handoff deadline being extended by a longer claim lease, and completed claims
+being unavailable after a new plan revision. The implementation now uses the
+original durable dispatch record and checks the handoff deadline independently.
+A final pure-validator regression also caught acceptance after the task deadline;
+the shared validator now rejects that boundary even without the store claim check.
+
+Tests cover conflicting and identical concurrent acceptance, rollback at all
+three writes, lost acknowledgment, stale claims, wrong actors, changed context,
+cancelled assignments/runs, replanning, deleted evidence, expired reports and
+expiry during reads or after the final write. Dependency tests include a
+three-task chain, missing transitive acceptance, missing supporting artifacts,
+changed dependency pins and revoked parent evidence.
+
+Host authorization and external revision fences remain required. The fixtures
+exercise real storage, but create generation runs before dispatch and do not
+qualify an installed scheduler. This packet does not implement runtime dispatch,
+review adjudication, budget settlement or public event delivery. G2, live Linux
+sandbox qualification and the four-stage implementation goal remain open.
+
+Final local formatting, all-module lint, root build, documentation typecheck/lint/
+build and the complete planning/coordination/assurance race suites passed. The
+final SQLite task-acceptance race suite passed (34.782s), followed by the added
+replan, parent-deletion and pagination checks (7.438s). The broader regression
+run passed on SQLite (113.545s) and PostgreSQL (194.920s). Result-commit and review
+regressions passed on all three backends, including MongoDB (85.847s).
+
+The broader MongoDB run failed one `transitive_valid` case with an immutable
+verification conflict after 122.23s, beyond the fixture's two-minute report
+lifetime. That timing suggests expiry, but the rerun must confirm it. Follow-up
+PostgreSQL/MongoDB runs then stalled during Docker container creation; an
+independent container listing also exceeded an eight-second timeout. Final
+backend confirmation and push are pending. No Docker services were restarted.
+CI 40017715698 for the preceding task-contract commit passed.

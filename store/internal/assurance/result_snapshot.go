@@ -19,7 +19,7 @@ func (s *Repository) ReadResultSnapshot(ctx context.Context, request verificatio
 	if err := request.Validate(); err != nil {
 		return verification.ResultSnapshot{}, err
 	}
-	scope, err := cortex.RequireScope(ctx)
+	_, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return verification.ResultSnapshot{}, err
 	}
@@ -31,36 +31,16 @@ func (s *Repository) ReadResultSnapshot(ctx context.Context, request verificatio
 	err = driver.TransactRun(ctx, request.RunID, func(txctx context.Context, tx RunTransaction) error {
 		snapshot = verification.ResultSnapshot{}
 		repository := s.inTransaction(tx)
-		receipt, readErr := repository.GetCommittedResult(txctx, request.ResultID)
-		if readErr != nil {
-			return readErr
-		}
-		binding := receipt.Request.Current
-		if receipt.Digest != request.ReceiptDigest || binding.RunID != request.RunID || binding.Scope.Canonical() != scope.Canonical() {
-			return verification.ErrConflict
-		}
 		current, readErr := tx.GetRun(txctx, request.RunID)
 		if readErr != nil {
 			return readErr
 		}
-		if current.Scope.Canonical() != scope.Canonical() || current.ID != request.RunID || current.Revision != receipt.RunRevision || current.State != run.StateCompleted || current.StopReason != run.StopFinalAnswer || current.VerificationStatus != verification.StatusPassed || current.ResultRef != request.ResultID.String() || current.Provenance.PreparedDigest != binding.Context.PreparedDigest || current.Provenance.AcceptanceRef != receipt.Request.ContractID.String() {
-			return cortex.ErrRunConflict
+		var snapshotErr error
+		snapshot, _, snapshotErr = repository.resultSnapshotForRun(txctx, request, current, 8<<20)
+		if snapshotErr != nil {
+			return snapshotErr
 		}
-		if inputErr := repository.validateExecutionInputs(txctx, current, binding); inputErr != nil {
-			return inputErr
-		}
-		material, readErr := repository.loadResultMaterial(txctx, receipt.Request)
-		if readErr != nil {
-			return readErr
-		}
-		if current.Output != material.output {
-			return cortex.ErrRunConflict
-		}
-		candidate := material.snapshot(receipt, s.clock.Now().UTC())
-		if validateErr := candidate.Validate(request, candidate.ObservedAt); validateErr != nil {
-			return validateErr
-		}
-		snapshot = candidate
+
 		return txctx.Err()
 	})
 	if err != nil {
@@ -75,4 +55,34 @@ func (s *Repository) ReadResultSnapshot(ctx context.Context, request verificatio
 		return verification.ResultSnapshot{}, validateErr
 	}
 	return snapshot, nil
+}
+
+// resultSnapshotForRun uses a run already fenced by the caller's transaction.
+func (s *Repository) resultSnapshotForRun(ctx context.Context, request verification.ResultReadRequest, current *run.Run, limit int) (verification.ResultSnapshot, int, error) {
+	receipt, err := s.GetCommittedResult(ctx, request.ResultID)
+	if err != nil {
+		return verification.ResultSnapshot{}, 0, err
+	}
+	binding := receipt.Request.Current
+	if request.Validate() != nil || receipt.Digest != request.ReceiptDigest || binding.RunID != request.RunID || require(ctx, binding.Scope) != nil {
+		return verification.ResultSnapshot{}, 0, verification.ErrConflict
+	}
+	if current == nil || current.Scope.Canonical() != binding.Scope.Canonical() || current.ID != request.RunID || current.Revision != receipt.RunRevision || current.State != run.StateCompleted || current.StopReason != run.StopFinalAnswer || current.VerificationStatus != verification.StatusPassed || current.ResultRef != request.ResultID.String() || current.Provenance.PreparedDigest != binding.Context.PreparedDigest || current.Provenance.AcceptanceRef != receipt.Request.ContractID.String() {
+		return verification.ResultSnapshot{}, 0, cortex.ErrRunConflict
+	}
+	if checkErr := s.validateExecutionInputs(ctx, current, binding); checkErr != nil {
+		return verification.ResultSnapshot{}, 0, checkErr
+	}
+	material, err := s.loadResultMaterialBounded(ctx, receipt.Request, limit)
+	if err != nil {
+		return verification.ResultSnapshot{}, 0, err
+	}
+	if current.Output != material.output {
+		return verification.ResultSnapshot{}, 0, cortex.ErrRunConflict
+	}
+	snapshot := material.snapshot(receipt, s.clock.Now().UTC())
+	if checkErr := snapshot.Validate(request, snapshot.ObservedAt); checkErr != nil {
+		return verification.ResultSnapshot{}, 0, checkErr
+	}
+	return snapshot, material.bytes, nil
 }

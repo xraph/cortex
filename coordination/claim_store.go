@@ -51,7 +51,7 @@ func ValidateClaimSuccessor(previous, next Claim) error {
 		return ErrInvalidClaim
 	}
 	if next.ID != previous.ID {
-		if previous.State != ClaimReleased || next.State != ClaimHeld || next.Fence != previous.Fence+1 || !next.AcquiredAt.Equal(next.At) || next.PlanRevision < previous.PlanRevision {
+		if (previous.State != ClaimReleased && (previous.State != ClaimCompleted || next.PlanRevision <= previous.PlanRevision)) || next.State != ClaimHeld || next.Fence != previous.Fence+1 || !next.AcquiredAt.Equal(next.At) || next.PlanRevision < previous.PlanRevision {
 			return ErrInvalidClaim
 		}
 		return nil
@@ -63,6 +63,8 @@ func ValidateClaimSuccessor(previous, next Claim) error {
 		rebuilt, err = RenewClaim(previous, previous.Token(), next.ExpiresAt.Sub(next.At), next.At)
 	case ClaimDispatching:
 		rebuilt, err = BeginDispatch(previous, previous.Token(), next.RunID, next.At)
+	case ClaimCompleted:
+		rebuilt, err = CompleteClaim(previous, previous.Token(), *next.AcceptanceID, next.At)
 	case ClaimReleased, ClaimRecovering:
 		rebuilt, err = ExpireClaim(previous, previous.Revision, next.At)
 	default:

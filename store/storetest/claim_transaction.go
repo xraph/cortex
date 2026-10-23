@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/planning"
+	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/internal/assurance"
 )
@@ -187,4 +188,12 @@ func (d claimWriteTx) Insert(ctx context.Context, row assurance.Record) error {
 		return errAssignmentInjected
 	}
 	return err
+}
+
+func (d claimWriteTx) LockSubmissionRun(ctx context.Context, identifier id.AgentRunID) (*run.Run, error) {
+	reader, ok := d.Driver.(assurance.SubmissionRunReader)
+	if !ok {
+		return nil, coordination.ErrAssignmentUnavailable
+	}
+	return reader.LockSubmissionRun(ctx, identifier)
 }

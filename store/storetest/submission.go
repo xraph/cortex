@@ -38,6 +38,11 @@ func configuredSubmissionFixture(t *testing.T, s store.Store, config submissionF
 	if config.Contract != nil {
 		contract = config.Contract(p)
 	}
+	return submissionFixtureForHandoff(ctx, t, s, p, h, contract, alter...)
+}
+
+func submissionFixtureForHandoff(ctx context.Context, t *testing.T, s store.Store, p planning.Plan, h coordination.Handoff, contract verification.Contract, alter ...func(*run.Run, *verification.Binding)) (context.Context, coordination.Assignment, coordination.AssignmentChange, verification.Job) {
+	t.Helper()
 	journal := resultCapability[coordination.AssignmentStore](t, s)
 	current, err := journal.ProposeAssignment(ctx, h)
 	require.NoError(t, err)

@@ -183,3 +183,21 @@ func TestRevisionCannotRelabelOldEvidenceAsCurrent(t *testing.T) {
 		t.Fatalf("old evidence relabeled as current: %v", ready)
 	}
 }
+
+func TestTaskAcceptanceHonorsOwnDeadline(t *testing.T) {
+	p := fixturePlan(t)
+	at := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	p.Tasks[0].Budget.Deadline = at.Add(time.Second)
+	var err error
+	p, err = Seal(p, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := acceptedState(t, p, p.Tasks[0], at)
+	if err = ValidateTaskAcceptance(p, p.Tasks[0].ID, []TaskState{state}, at); err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateTaskAcceptance(p, p.Tasks[0].ID, []TaskState{state}, at.Add(time.Second)); err == nil {
+		t.Fatal("fresh reports cannot extend the task deadline")
+	}
+}

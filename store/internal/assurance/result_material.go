@@ -13,12 +13,20 @@ type resultMaterial struct {
 	contract verification.Contract
 	reports  []verification.Report
 	digests  []string
+	bytes    int
 	output   string
 }
 
 // loadResultMaterial shares bounded evidence loading between initial commit and
 // later reads. Callers validate the entire snapshot at trusted observation time.
 func (s *Repository) loadResultMaterial(ctx context.Context, req verification.CommitRequest) (resultMaterial, error) {
+	return s.loadResultMaterialBounded(ctx, req, 8<<20)
+}
+
+func (s *Repository) loadResultMaterialBounded(ctx context.Context, req verification.CommitRequest, limit int) (resultMaterial, error) {
+	if limit < 1 || limit > 8<<20 {
+		return resultMaterial{}, verification.ErrInvalid
+	}
 	contract, err := s.GetContract(ctx, req.ContractID)
 	if err != nil {
 		return resultMaterial{}, err
@@ -30,7 +38,14 @@ func (s *Repository) loadResultMaterial(ctx context.Context, req verification.Co
 	digests := make([]string, 0, len(req.ReportIDs))
 	// Bound total material processed while locks are held, in addition to each
 	// record's one MiB limit. Artifact bytes are released between loads.
-	total := 0
+	contractBytes, err := json.Marshal(contract)
+	if err != nil {
+		return resultMaterial{}, err
+	}
+	total := len(contractBytes)
+	if total > limit {
+		return resultMaterial{}, verification.ErrInvalid
+	}
 	for _, reportID := range req.ReportIDs {
 		report, readErr := s.GetReport(ctx, reportID)
 		if readErr != nil {
@@ -41,7 +56,7 @@ func (s *Repository) loadResultMaterial(ctx context.Context, req verification.Co
 			return resultMaterial{}, marshalErr
 		}
 		total += len(body)
-		if total > 8<<20 {
+		if total > limit {
 			return resultMaterial{}, verification.ErrInvalid
 		}
 		reports = append(reports, report)
@@ -54,14 +69,14 @@ func (s *Repository) loadResultMaterial(ctx context.Context, req verification.Co
 			return resultMaterial{}, readErr
 		}
 		total += len(artifact.Data)
-		if total > 8<<20 {
+		if total > limit {
 			return resultMaterial{}, verification.ErrInvalid
 		}
 		if index == 0 {
 			candidateOutput = string(artifact.Data)
 		}
 	}
-	return resultMaterial{contract: contract, reports: reports, digests: digests, output: candidateOutput}, nil
+	return resultMaterial{contract: contract, reports: reports, digests: digests, bytes: total, output: candidateOutput}, nil
 }
 
 func (m resultMaterial) snapshot(receipt verification.CommitReceipt, at time.Time) verification.ResultSnapshot {

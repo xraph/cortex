@@ -168,6 +168,8 @@ A task may use `planning.TaskContract` to derive an immutable verification contr
 
 A `Handoff` references plan/task revision, assignment ID, sender/receiver identities, authority attenuation, artifact digests, acceptance criteria and deadline. Acceptance does not mean success. Worker success requires verified task outputs. Existing A2A envelopes carry a versioned structured content type; retain legacy text support. Untrusted remote claims require local verification or an explicitly trusted verifier identity.
 
+`coordination.TaskAcceptanceStore` records verified task success under the plan transaction. It binds the current dispatch claim, submitted assignment, committed result and complete accepted prerequisite chain, reloads retained verification material and fences run/evidence mutations. The completed claim and immutable receipt with metadata outbox intent commit together. Identical retries acknowledge history with `Fresh: false`; accepted dependencies still require current authorized bindings and retained evidence. The host authenticates the sender and fences external grant/source revisions. Budget settlement, scheduler dispatch, public delivery and review adjudication remain separate integrations.
+
 Effects have a logical operation key that survives retries. Read-only and declared idempotent effects may retry under policy. An unknown result from a non-idempotent external action enters reconciliation; do not promise universal exactly-once execution. Compensation is an explicit authorized action, not automatic reversal of any tool call.
 
 ### Adaptive behavior and learning
