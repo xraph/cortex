@@ -119,15 +119,7 @@ func TestDaemonCredentialsServeSignedBrokerOverMTLS(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- loaded.Server.Serve(ctx, listener, instance) }()
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(f.ca) {
-		t.Fatal("fixture CA missing")
-	}
-	certificate, err := tls.X509KeyPair(f.clientCertificate, f.clientKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: "localhost", Certificates: []tls.Certificate{certificate}}}
+	transport := credentialTransport(t, f)
 	defer transport.CloseIdleConnections()
 	client, err := broker.NewClient("https://"+listener.Addr().String(), &http.Client{Transport: transport, Timeout: 3 * time.Second}, instance.PublicKey())
 	if err != nil {
@@ -281,4 +273,17 @@ func TestDaemonCredentialsRejectPartialAndUnsafeConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func credentialTransport(t *testing.T, f daemonCredentialFixture) *http.Transport {
+	t.Helper()
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(f.ca) {
+		t.Fatal("fixture CA missing")
+	}
+	certificate, err := tls.X509KeyPair(f.clientCertificate, f.clientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: "localhost", Certificates: []tls.Certificate{certificate}}}
 }

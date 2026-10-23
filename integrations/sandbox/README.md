@@ -1277,3 +1277,48 @@ TLS rotation requires a new server lifetime. Receipt-key changes also require
 matching worker configuration and journal identity. Certificate issuance,
 credential installation, host identity policy and standalone broker configuration
 remain host responsibilities; this loader only reads an approved installation.
+
+### Current host grants
+
+`service.NewHostPolicy(ctx, path)` loads a root-owned, single-link mode-0600
+policy file. Encode `HostPolicyDocument` with `json.Marshal`; the loader requires
+canonical JSON without extra fields or trailing whitespace and limits the file
+to one MiB. Keep its parent protected. Publish updates by atomic replacement.
+
+The document has a finite validity interval and at most 512 subjects. Each
+`HostSubjectGrant` binds an exact principal and ordered scope to a validity
+interval, 1 through 256 manifest digests and a `sandbox.Limits` ceiling.
+The grant interval must fit inside the document's interval. All resource limits
+must be explicit. An ancestor scope does not grant access to descendant scopes.
+The broker's static image allowlist remains an independent requirement.
+
+A subject can map up to 16 client-certificate fingerprints. Use the lowercase
+SHA256 of the leaf certificate's DER bytes, as produced by
+`evidence.Digest(certificate.Raw)`. Fingerprints must be unique across the whole
+document, and each principal/scope pair can appear once. Authentication requires
+TLS 1.3, a completed handshake and a verified chain of at most 16 certificates.
+Certificate validity is checked again on every request, including requests on
+an existing connection. Names and headers do not select an identity or scope.
+
+Wire the policy methods into the installed services:
+
+| Configuration | Method |
+|---|---|
+| `ReadDaemonCredentials` authenticator | `policy.Authenticate` |
+| `HostConfig.Broker.Authorize` | `policy.Authorize` |
+| `HostConfig.AuthorizeLaunch` | `policy.Revalidate` |
+| `HostConfig.Revalidate` | `policy.Revalidate` |
+| `HostConfig.ImagePolicy` | `policy.AuthorizeImage` |
+
+Every method rereads the protected file. A missing, malformed or expired document
+denies access without falling back to earlier grants. Empty `Subjects` revokes
+all policy access. Removing a fingerprint revokes that transport identity on its
+next authentication check while retaining the subject's separate execution
+grant. Remove the subject, expire it or reduce its limits to revoke execution.
+The existing recovery scanner then fences work that no longer has a valid grant.
+The active request remains subject to its own current authorization checks.
+
+Evidence access, capture cleanup and runtime qualification still require their
+own policies. This host policy grants bounded sandbox execution and image access;
+it does not grant artifact access or publication. Supply those services when
+assembling the broker. Standalone configuration and installation remain open.

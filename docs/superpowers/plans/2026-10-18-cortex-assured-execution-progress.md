@@ -1470,3 +1470,42 @@ Certificate issuance and installation, host identity policy, installed provider
 configuration, live evidence verification, standalone broker installation and
 live systemd/runsc qualification remain open. S2.4 and the four-stage plan remain
 incomplete.
+
+### S2.4 current host policy
+
+Pinned daemon credential commit `43acbe9` passed every remote CI job in run
+`39890422072`.
+
+The host policy loader now binds verified mTLS leaf fingerprints to exact
+principal/scope identities and applies current image, resource and validity
+limits to broker operations, launches and recovery. The policy is a root-owned,
+single-link mode-0600 canonical JSON file, bounded to one MiB and 512 subjects.
+Every check rereads it. Invalid, missing or expired policy denies access without
+retaining an earlier grant snapshot.
+
+Certificate fingerprints are globally unique. Authentication checks the current
+validity of a verified chain on every request, including reused connections.
+Removing a certificate revokes transport access; removing or expiring the subject
+also revokes execution. Each job must retain its sealed digest, exact subject,
+allowlisted manifest and every resource ceiling. Image access shares that grant
+check. Input evidence, capture cleanup, publication and runtime qualification
+remain independently authorized.
+
+TDD covered the missing policy API, revocation, invalid documents, ambiguous
+mappings, scope widening, stale TLS state, time boundaries and each resource
+limit. A loopback test wires the loaded credentials, policy and broker together,
+submits a signed job, reduces its grant, rejects a retry and confirms recovery
+cancels and reaps the accepted job. Service-manager behavior remains a controlled
+fixture; this is not live systemd/runsc qualification. The credential tests share
+the same TLS client fixture.
+
+Validation passed: scoped make f, final make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The final service
+race run passed in 22.305s. Linux policy tests passed ten repetitions, 60 top-level
+tests, without skips. The local lint assignment was corrected; the optimizer
+owner separately corrected an assignment in its concurrent work before the final
+all-module lint passed.
+
+Installed policy/provider configuration, live evidence verification, certificate
+provisioning, standalone broker installation and live systemd/runsc qualification
+remain open. S2.4 and the four-stage plan remain incomplete.
