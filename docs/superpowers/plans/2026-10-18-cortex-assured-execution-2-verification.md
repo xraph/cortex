@@ -94,7 +94,7 @@ as the receipt and passed status. This reuses existing jobs and leases. Automati
 registration and withholding are now connected for the experimental tool-free
 runtime path described below. The complete runtime gate checkboxes stay unchecked.
 
-`WithRequiredVerification` freezes a schema-5 policy and evaluator token
+`WithRequiredVerification` freezes a schema-6 policy and evaluator token
 reservation, registers host-built intent before generation, captures privately
 and invokes the guarded worker from shared finalization. Sync/prepared and
 streaming paths withhold candidate text from steps, history and completion hooks.
@@ -107,7 +107,7 @@ lease renewal, bounded repair and pre-capture recovery remain open.
 
 
 The required runtime now supports tool execution, authorized external handoffs,
-approval checkpoints and sync/stream resume through schema 5. It validates frozen
+approval checkpoints and sync/stream resume through schema 6. It validates frozen
 policy and capture intent before claim and again before effects. The authorized
 `PendingVerificationTools` reader replaces public pending bodies; public tool
 rows/hooks also omit private content. Evaluator reservation survives restart.
@@ -235,3 +235,17 @@ recovery metadata across REST, dashboard commands and SSE. Automatic retry is
 not advertised, and available run IDs survive failed command dispatch. REST
 stream startup errors preserve normal HTTP headers; a failed SSE write cancels
 the owned execution context. Durable public delivery is still open.
+
+
+### S2.2 execution-transcript binding follow-up
+
+Required schema 6 retains checked assistant/tool messages and host-recorded
+outcomes across local execution, streaming and resume. Schema-2 capture intents
+reserve the transcript identity before generation; private candidate capture
+saves both artifacts and the verification job atomically. Inputs, cumulative
+usage and final candidate must agree before evaluation or commit. Rescanning a
+retained conversation cannot silently change it during required resume.
+
+This supplies dynamic tool-result evidence. External results still depend on
+the authorized host, and durable effect receipts, worker scheduling, lease
+renewal, repair and public delivery remain open. G1/G2 qualification is unchanged.

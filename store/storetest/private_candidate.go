@@ -242,6 +242,7 @@ func testPrivateCandidateCannotPublish(t *testing.T, newStore func(*testing.T) s
 
 // PrivateCandidateRollback verifies capture and publication using real transactions.
 func PrivateCandidateRollback(t *testing.T, s store.Store, driver assurance.Driver) {
+	t.Run("transcript", func(t *testing.T) { transcriptCaptureRollback(t, s, driver) })
 	t.Helper()
 	transaction, ok := driver.(assurance.RunDriver)
 	require.True(t, ok)

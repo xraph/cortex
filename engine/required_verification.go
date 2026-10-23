@@ -15,7 +15,7 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-const requiredPreparedSchemaVersion = 5
+const requiredPreparedSchemaVersion = 6
 
 // VerificationIntentInput supplies trusted identity before generation. Deadline
 // includes the caller's narrower deadline. Inputs and Scope are detached.
@@ -172,10 +172,13 @@ func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg 
 		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
 	req := intent.Template
-	if !requiredIntentMatchesPolicy(intent, policy, r) || req.Deadline.After(cfg.Budget.Deadline) || !req.Deadline.After(e.verificationWorker.config.Clock.Now()) || intent.MaxCandidateBytes > 1<<20 || intent.MaxCandidateBytes > int64(cfg.Publication.MaxOutputBytes) {
+	if !requiredIntentMatchesPolicy(intent, policy, r) || req.Deadline.After(cfg.Budget.Deadline) || !req.Deadline.After(e.verificationWorker.config.Clock.Now()) || intent.MaxTranscriptBytes > 1<<20 || intent.MaxCandidateBytes > 1<<20 || intent.MaxCandidateBytes > int64(cfg.Publication.MaxOutputBytes) {
 		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
 	if authErr := e.authorizeCandidate(ctx, req.Binding.Candidate); authErr != nil {
+		return verification.CaptureIntent{}, authErr
+	}
+	if authErr := e.authorizeCandidate(ctx, *intent.Transcript); authErr != nil {
 		return verification.CaptureIntent{}, authErr
 	}
 	ref := req.Binding.Context.ExecutionInputs
@@ -223,14 +226,24 @@ func (e *Engine) finalizeRequiredCandidate(ctx context.Context, r *run.Run, outc
 	if err = e.store.UpdateRun(ctx, r); err != nil {
 		return cortex.ErrVerificationUnavailable
 	}
-	request, err := intent.JobFor(r.Revision+1, outcome.Output)
+	if outcome.Transcript == nil {
+		return cortex.ErrVerificationUnavailable
+	}
+	transcript, err := outcome.Transcript.Encode()
+	if err != nil {
+		return cortex.ErrVerificationUnavailable
+	}
+	request, err := intent.JobFor(r.Revision+1, outcome.Output, transcript)
 	if err != nil {
 		return cortex.ErrVerificationUnavailable
 	}
 	if authErr := e.authorizeCandidate(ctx, request.Binding.Candidate); authErr != nil {
 		return authErr
 	}
-	job, err := storage.CaptureCandidate(ctx, run.CandidateCapture{SchemaVersion: 1, IntentID: intent.ID, ExpectedRunRevision: r.Revision, Output: outcome.Output, FinishReason: outcome.FinishReason, Usage: r.Usage})
+	if authErr := e.authorizeCandidate(ctx, *request.Binding.Context.ExecutionTranscript); authErr != nil {
+		return authErr
+	}
+	job, err := storage.CaptureCandidate(ctx, run.CandidateCapture{SchemaVersion: 2, Transcript: transcript, IntentID: intent.ID, ExpectedRunRevision: r.Revision, Output: outcome.Output, FinishReason: outcome.FinishReason, Usage: r.Usage})
 	if err != nil {
 		return cortex.ErrVerificationUnavailable
 	}
@@ -286,5 +299,5 @@ func requiredCompletionError(r *run.Run) error {
 // Registration and resume must agree on the same immutable policy binding.
 func requiredIntentMatchesPolicy(intent verification.CaptureIntent, policy *requiredPolicy, r *run.Run) bool {
 	req := intent.Template
-	return policy != nil && req.EvaluationBudget != nil && req.ExpectedRunRevision == 1 && req.Binding.RunID == r.ID && req.Binding.Scope.Canonical() == r.Scope.Canonical() && req.Binding.Context.PreparedDigest == r.Provenance.PreparedDigest && req.Binding.Context.PolicyRevision == policy.Revision && req.ContractID == policy.ContractID && req.Binding.ContractDigest == policy.ContractDigest && *req.EvaluationBudget == policy.EvaluationBudget
+	return intent.SchemaVersion == 2 && intent.Transcript != nil && policy != nil && req.EvaluationBudget != nil && req.ExpectedRunRevision == 1 && req.Binding.RunID == r.ID && req.Binding.Scope.Canonical() == r.Scope.Canonical() && req.Binding.Context.PreparedDigest == r.Provenance.PreparedDigest && req.Binding.Context.PolicyRevision == policy.Revision && req.ContractID == policy.ContractID && req.Binding.ContractDigest == policy.ContractDigest && *req.EvaluationBudget == policy.EvaluationBudget
 }

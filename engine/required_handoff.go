@@ -128,6 +128,9 @@ func (e *Engine) checkRequiredResume(ctx context.Context, r *run.Run, s *suspens
 	if !reflect.DeepEqual(s.Cont.Messages[len(inputs.History)], llm.Message{Role: "user", Content: inputs.Input}) {
 		return cortex.ErrVerificationUnavailable
 	}
+	if authErr := e.authorizeCandidate(ctx, *intent.Transcript); authErr != nil {
+		return authErr
+	}
 	return e.authorizeCandidate(ctx, req.Binding.Candidate)
 }
 

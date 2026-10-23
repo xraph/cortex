@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/suspension"
+	"github.com/xraph/cortex/verification"
 )
 
 // reactState is the mutable state one pass of the ReAct loop carries
@@ -32,6 +33,7 @@ type reactState struct {
 	provenance       run.ExecutionProvenance
 	usage            execution.Usage
 	messages         []llm.Message
+	toolResults      []verification.ToolResult
 	systemPrompt     string
 	stepIndex        int
 	tokensUsed       int
@@ -65,6 +67,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 	return suspension.Continuation{
 		SchemaVersion: schema, Prepared: preparedBytes(s.prepared), Provenance: s.provenance, Usage: s.usage,
 		Messages:        s.messages,
+		ToolResults:     s.toolResults,
 		SystemPrompt:    s.systemPrompt,
 		StepIndex:       s.stepIndex,
 		TokensUsed:      s.tokensUsed,
@@ -106,6 +109,7 @@ func stateFromContinuation(cont suspension.Continuation) *reactState {
 	return &reactState{
 		provenance: cont.Provenance, usage: cont.Usage,
 		messages:        cont.Messages,
+		toolResults:     cont.ToolResults,
 		systemPrompt:    cont.SystemPrompt,
 		stepIndex:       cont.StepIndex,
 		tokensUsed:      cont.TokensUsed,
@@ -347,6 +351,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				}
 
 				// Append tool result message.
+				st.recordToolResult(tc.ID, outcome, verification.ToolLocal)
 				st.messages = append(st.messages, llm.Message{
 					Role:       "tool",
 					Content:    result,
@@ -384,7 +389,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
-	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
+	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt, Transcript: st.executionTranscript(r)}); err != nil {
 		return r, err
 	}
 	return r, nil
@@ -736,6 +741,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					e.emitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
 				}
 
+				st.recordToolResult(tc.ID, outcome, verification.ToolLocal)
 				st.messages = append(st.messages, llm.Message{
 					Role:       "tool",
 					Content:    result,
@@ -785,7 +791,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 	// Complete the run.
 	completedAt := time.Now().UTC()
-	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
+	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt, Transcript: st.executionTranscript(r)}); err != nil {
 		sendEvent(ctx, events, runErrorEvent(r, err))
 		return
 	}
@@ -1192,4 +1198,29 @@ func mergeToolCallDeltas(existing, deltas []llm.ToolCall) []llm.ToolCall {
 		}
 	}
 	return existing
+}
+
+func (s *reactState) recordToolResult(callID string, outcome toolOutcome, source verification.ToolSource) {
+	if !s.provenance.VerificationRequired {
+		return
+	}
+	var status verification.ToolOutcome
+	switch outcome {
+	case outcomeCompleted:
+		status = verification.ToolCompleted
+	case outcomeFailed:
+		status = verification.ToolFailed
+	case outcomeDenied:
+		status = verification.ToolDenied
+	default:
+		return
+	}
+	s.toolResults = append(s.toolResults, verification.ToolResult{CallID: callID, Outcome: status, Source: source})
+}
+
+func (s *reactState) executionTranscript(r *run.Run) *verification.ExecutionTranscript {
+	if !r.Provenance.VerificationRequired || s.newMessagesFrom < 0 || s.newMessagesFrom >= len(s.messages) {
+		return nil
+	}
+	return &verification.ExecutionTranscript{SchemaVersion: 1, RunID: r.ID, InputsDigest: r.Provenance.ExecutionInputsDigest, Messages: cloneExecutionMessages(s.messages[s.newMessagesFrom+1:]), Tools: append([]verification.ToolResult(nil), s.toolResults...), Usage: s.usage}
 }

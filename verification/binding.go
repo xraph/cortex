@@ -29,6 +29,7 @@ type ToolRevision struct {
 // AuthorityRevision must change when grants are revoked. Verifiers cannot
 // establish current authorization by inspecting this snapshot alone.
 type ContextSnapshot struct {
+	ExecutionTranscript *evidence.Ref  `json:"execution_transcript,omitempty"`
 	ExecutionInputs     *evidence.Ref  `json:"execution_inputs,omitempty"`
 	PrincipalRef        string         `json:"principal_ref"`
 	AuthorityRevision   string         `json:"authority_revision"`
@@ -77,7 +78,10 @@ func (b Binding) Validate() error {
 	if err := ValidateSources(b.Context.Sources); err != nil {
 		return err
 	}
-	if ref := b.Context.ExecutionInputs; ref != nil {
+	for _, ref := range []*evidence.Ref{b.Context.ExecutionInputs, b.Context.ExecutionTranscript} {
+		if ref == nil {
+			continue
+		}
 		found := false
 		for _, supporting := range b.Evidence {
 			if reflect.DeepEqual(*ref, supporting) {
@@ -89,6 +93,10 @@ func (b Binding) Validate() error {
 			return ErrInvalid
 		}
 	}
+	if b.Context.ExecutionTranscript != nil && (b.Context.ExecutionInputs == nil || b.Context.ExecutionTranscript.ID == b.Context.ExecutionInputs.ID) {
+		return ErrInvalid
+	}
+
 	return validateToolRevisions(b.Context.Tools)
 }
 

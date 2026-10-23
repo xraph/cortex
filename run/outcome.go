@@ -30,6 +30,7 @@ const (
 
 // Outcome is an execution result, not a verification claim.
 type Outcome struct {
+	Transcript   *verification.ExecutionTranscript `json:"-"`
 	StopReason   StopReason
 	Output       string
 	FinishReason string

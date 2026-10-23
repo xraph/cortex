@@ -84,7 +84,9 @@ func requiredConfiguration(t *testing.T, f workerFixture) engine.RequiredVerific
 			require.NoError(t, err)
 			req.Binding.Context.ExecutionInputs = &artifact.Ref
 			req.Binding.Evidence = append(req.Binding.Evidence, artifact.Ref)
-			return verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: req, ResultID: id.New(verification.PrefixResult), MaxCandidateBytes: 4096})
+			trace := req.Binding.Candidate
+			trace.ID, trace.MediaType = id.New(evidence.PrefixArtifact), "application/json"
+			return verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 2, Transcript: &trace, MaxTranscriptBytes: 1 << 20, ID: id.New(verification.PrefixCaptureIntent), Template: req, ResultID: id.New(verification.PrefixResult), MaxCandidateBytes: 4096})
 		}),
 	}
 }
@@ -575,7 +577,10 @@ func TestRequiredVerificationConcurrentCaptureCannotImplySuccess(t *testing.T) {
 		require.Len(t, rows, 1)
 		intent, err := f.storage.GetRunCaptureIntent(f.ctx, rows[0].ID)
 		require.NoError(t, err)
-		_, err = f.storage.CaptureCandidate(f.ctx, run.CandidateCapture{SchemaVersion: 1, IntentID: intent.ID, ExpectedRunRevision: rows[0].Revision, Output: "other candidate", FinishReason: "stop"})
+		trace := verification.ExecutionTranscript{SchemaVersion: 1, RunID: rows[0].ID, InputsDigest: rows[0].Provenance.ExecutionInputsDigest, Messages: []llm.Message{{Role: "assistant", Content: "other candidate"}}, Usage: execution.Usage{Steps: 1}}
+		data, err := trace.Encode()
+		require.NoError(t, err)
+		_, err = f.storage.CaptureCandidate(f.ctx, run.CandidateCapture{SchemaVersion: 2, Transcript: data, Usage: trace.Usage, IntentID: intent.ID, ExpectedRunRevision: rows[0].Revision, Output: "other candidate", FinishReason: "stop"})
 		require.NoError(t, err)
 	}
 	r, err := e.RunAgent(f.ctx, ag.Name, "work", overrides)

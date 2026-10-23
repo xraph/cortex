@@ -20,7 +20,12 @@ func (s *Repository) CaptureVerificationJob(ctx context.Context, request verific
 // output against the requested reference. Check existing identity first so an
 // idempotent upload does not abort a PostgreSQL transaction on a unique key.
 func (s *Repository) captureCandidate(ctx context.Context, ref evidence.Ref, output string) error {
-	if len(output) > MaxEvidenceBytes {
+	return s.captureEvidence(ctx, ref, []byte(output))
+}
+
+// captureEvidence shares candidate and transcript identity checks inside a run transaction.
+func (s *Repository) captureEvidence(ctx context.Context, ref evidence.Ref, data []byte) error {
+	if len(data) > MaxEvidenceBytes {
 		return evidence.ErrTooLarge
 	}
 	_, err := s.LoadEvidence(ctx, ref)
@@ -30,5 +35,5 @@ func (s *Repository) captureCandidate(ctx context.Context, ref evidence.Ref, out
 	if !errors.Is(err, evidence.ErrNotFound) {
 		return err
 	}
-	return s.SaveEvidence(ctx, evidence.Artifact{Ref: ref, Data: []byte(output)})
+	return s.SaveEvidence(ctx, evidence.Artifact{Ref: ref, Data: data})
 }

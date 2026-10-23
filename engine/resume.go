@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -17,6 +18,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
+	"github.com/xraph/cortex/verification"
 )
 
 // ErrNotAgentReplyResumable is returned when something other than the
@@ -329,8 +331,15 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, e.failResume(ctx, r, ag.ID, safeErr)
 	}
 
+	var retained []llm.Message
+	if r.Provenance.VerificationRequired {
+		retained = cloneExecutionMessages(st.messages)
+	}
 	if checkErr := e.checkMessages(ctx, ag, r, resumeConfig.Publication, st.messages); checkErr != nil {
 		return nil, nil, e.stopPublication(ctx, r, st, checkErr)
+	}
+	if r.Provenance.VerificationRequired && !reflect.DeepEqual(retained, st.messages) {
+		return nil, nil, e.failResume(ctx, r, ag.ID, cortex.ErrVerificationUnavailable)
 	}
 	for _, pending := range susp.Pending {
 		if checkErr := e.checkToolCalls(ctx, ag, r, resumeConfig.Publication, []llm.ToolCall{{ID: pending.ID, Name: pending.Name, Arguments: pending.Arguments}}); checkErr != nil {
@@ -468,7 +477,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 		// validateResults has already proven there is exactly one result
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
-		content, errText := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
+		content, errText, outcome := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
 		approved, checkErr := e.checkToolResult(ctx, ag, r, cfg.Publication, content, "tool_result")
 		if checkErr != nil {
 			return checkErr
@@ -513,6 +522,11 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			e.emitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
 		}
 
+		source := verification.ToolExternal
+		if res.Execute {
+			source = verification.ToolLocal
+		}
+		st.recordToolResult(p.ID, outcome, source)
 		st.messages = append(st.messages, llm.Message{
 			Role:       "tool",
 			Content:    content,
@@ -522,9 +536,8 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 	return nil
 }
 
-// resumedCallResult turns one caller-supplied result into the pair the
-// model and the audit trail need: what the tool said, and whether it
-// failed. It is also where an approved call is finally executed.
+// resumedCallResult returns checked-call content, error text and host outcome.
+// It is also where an approved call is finally executed.
 //
 // Approval does not produce a result. The call was stopped before
 // dispatch, so there is nothing for whoever approved it to hand back:
@@ -535,27 +548,27 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 // Current authorization is checked for the whole pending batch before this
 // function runs. The claimed checkpoint satisfies another approval request,
 // while a revoked grant prevents every pending dispatch.
-func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p suspension.PendingCall, res ToolResult, approved bool) (content, errText string) {
+func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p suspension.PendingCall, res ToolResult, approved bool) (content, errText string, outcome toolOutcome) {
 	if !res.Execute {
 		if res.Error != "" {
 			// The same payload shape an engine-side failure feeds back,
 			// so the model cannot tell where the tool ran from how its
 			// failure is phrased.
-			return jsonResult("error", res.Error), res.Error
+			return jsonResult("error", res.Error), res.Error, outcomeFailed
 		}
-		return res.Content, ""
+		return res.Content, "", outcomeCompleted
 	}
 
 	if err := ctx.Err(); err != nil {
-		return jsonResult("error", err.Error()), err.Error()
+		return jsonResult("error", err.Error()), err.Error(), outcomeFailed
 	}
 
 	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments}
-	content, _, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
-		out, outcome := e.runResumedTool(ctx, s, call, approved, &errText)
-		return out, outcome, ""
+	content, outcome, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+		out, callOutcome := e.runResumedTool(ctx, s, call, approved, &errText)
+		return out, callOutcome, ""
 	})
-	return content, errText
+	return content, errText, outcome
 }
 
 // runResumedTool authorizes and dispatches one approved call, reporting the

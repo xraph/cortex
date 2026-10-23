@@ -452,7 +452,7 @@ Your builder implements `BuildVerificationIntent(ctx, input)`. It receives the
 reserved run ID, exact scope, prepared digest, effective deadline and detached
 `verification.ExecutionInputs`. These inputs contain the scanned task, initial
 conversation, session and host model/tool revision pins. Return a
-sealed `verification.CaptureIntent` for run revision 1 with the configured
+sealed schema-2 `verification.CaptureIntent` for run revision 1 with the configured
 contract, policy revision and evaluation budget. Bind current host context and
 allocate stable evidence, job and result IDs. The builder must not dispatch
 billable work.
@@ -465,11 +465,32 @@ Cortex checks the digest and size against its original inputs, authorizes
 intent. The artifact is limited to one MiB and 100 initial messages. A failed
 start can leave an authorized artifact for your retention cleanup to remove.
 
-The evidence authorizer also receives `ActionPut` for the empty candidate
-reservation and again for the actual candidate before capture. Resume requires
+Reserve a separate empty-content `CaptureIntent.Transcript` reference with zero
+bytes and `evidence.Digest(nil)`, plus a positive `MaxTranscriptBytes` no greater
+than one MiB. Keep this reservation outside `Template.Binding.Evidence`; capture
+appends the final reference there and sets `Binding.Context.ExecutionTranscript`.
+Its ID must differ from the candidate and supporting evidence IDs, and its
+retention must cover the verification deadline.
+
+The evidence authorizer receives `ActionPut` for both empty reservations before
+generation and again for their final references before capture. Resume requires
 `ActionRead` on input evidence. Missing history, deleted input evidence or a
 changed initial conversation prevents required execution. Capture, evaluator
 claims and result commit recheck the saved run against the input artifact.
+
+The private `verification.ExecutionTranscript` records this run's checked
+assistant/tool messages, cumulative usage and one host outcome per tool call.
+It links to the initial inputs by digest. `completed`, `failed` and `denied`
+come from runtime dispatch, with `local` or `external` recording who supplied
+the result. External results are assertions by the authorized resumer. They do
+not prove that an effect happened exactly once.
+
+Candidate bytes, transcript bytes, completion metadata and the verification job
+share one transaction. Capture rejects missing or duplicate results, mismatched
+usage, changed inputs and a final message that differs from the candidate.
+Deleting either artifact prevents later evaluator claims and result commit.
+Resume retains prior outcomes across restart; if rescanning changes any retained
+message, the required run stops before further effects or generation.
 
 Pin the model with `WithModelRevision` and every available tool with
 `WithToolRevision`. Required preparation rejects missing pins. These are your
@@ -482,8 +503,8 @@ verification allowance gives generation 970 tokens. Evaluation money limits
 remain separate from generation pricing. Provider-reported usage is never
 clamped; an overrun prevents evaluation.
 
-Required snapshots and continuations use schema 5. Re-prepare earlier required
-snapshots; changing their schema number cannot supply missing input evidence.
+Required snapshots and continuations use schema 6. Re-prepare earlier required
+snapshots; changing their schema number cannot supply missing evidence.
 Schema 2 remains unchanged for ordinary runs.
 A worker without the matching required configuration rejects required execution;
 a required worker also rejects ordinary prepared snapshots. Contract, revision,
@@ -542,7 +563,7 @@ principal's permission to inspect pending calls and supply their outcomes, using
 the exact scope and run identity. It is a separate decision from permission to
 execute a tool.
 
-Preparation freezes schema 5 for required runs. Resume restores the
+Preparation freezes schema 6 for required runs. Resume restores the
 verification policy from that prepared payload rather than maintaining a second
 policy copy in continuation configuration. Before claiming a suspension, Cortex
 checks the saved budget, provenance, capture intent, policy revision, host ports,

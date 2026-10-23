@@ -35,15 +35,11 @@ func (v ExecutionInputs) Encode() ([]byte, error) {
 		return nil, err
 	}
 	for _, msg := range v.History {
-		if !validText(msg.Role, msg.Content, msg.ToolCallID) {
+		if !validMessageText(msg) {
 			return nil, ErrInvalid
 		}
-		for _, call := range msg.ToolCalls {
-			if !validText(call.ID, call.Name, call.Arguments) {
-				return nil, ErrInvalid
-			}
-		}
 	}
+
 	data, err := json.Marshal(v)
 	if err != nil || len(data) > 1<<20 {
 		return nil, ErrInvalid

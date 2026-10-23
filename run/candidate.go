@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -16,6 +17,7 @@ import (
 // candidate material, not an authorized public answer. The trusted runtime
 // supplies cumulative usage and the saved running revision before finalization.
 type CandidateCapture struct {
+	Transcript          []byte          `json:"transcript,omitempty"`
 	SchemaVersion       int             `json:"schema_version"`
 	IntentID            id.ID           `json:"intent_id"`
 	ExpectedRunRevision int64           `json:"expected_run_revision"`
@@ -28,13 +30,24 @@ type CandidateCapture struct {
 // and accounting. It leaves room for capture, enqueue and commit revisions.
 func (c CandidateCapture) Freeze() (CandidateCapture, string, error) {
 	u := c.Usage
-	if c.SchemaVersion != 1 || c.IntentID.IsNil() || c.IntentID.Prefix() != verification.PrefixCaptureIntent || c.ExpectedRunRevision < 1 || c.ExpectedRunRevision >= math.MaxInt64-2 || !utf8.ValidString(c.Output) || u.Steps < 0 || u.Tokens < 0 || u.ReportedTokens < 0 || u.ReportedTokens > u.Tokens || u.ToolCalls < 0 {
+	if (c.SchemaVersion != 1 && c.SchemaVersion != 2) || c.IntentID.IsNil() || c.IntentID.Prefix() != verification.PrefixCaptureIntent || c.ExpectedRunRevision < 1 || c.ExpectedRunRevision >= math.MaxInt64-2 || !utf8.ValidString(c.Output) || u.Steps < 0 || u.Tokens < 0 || u.ReportedTokens < 0 || u.ReportedTokens > u.Tokens || u.ToolCalls < 0 {
 		return CandidateCapture{}, "", verification.ErrInvalid
 	}
 	switch c.FinishReason {
 	case "", "stop", "end_turn":
 	default:
 		return CandidateCapture{}, "", verification.ErrInvalid
+	}
+	if c.SchemaVersion == 1 {
+		if len(c.Transcript) != 0 {
+			return CandidateCapture{}, "", verification.ErrInvalid
+		}
+	} else {
+		trace, err := verification.DecodeExecutionTranscript(c.Transcript)
+		if err != nil || trace.Usage != c.Usage || trace.Messages[len(trace.Messages)-1].Content != c.Output {
+			return CandidateCapture{}, "", verification.ErrInvalid
+		}
+		c.Transcript = bytes.Clone(c.Transcript)
 	}
 	data, err := json.Marshal(c)
 	if err != nil {

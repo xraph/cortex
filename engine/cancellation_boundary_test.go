@@ -69,7 +69,7 @@ func TestCancellationDuringAuthorizationPreventsToolDispatch(t *testing.T) {
 			}
 			subject := cortex.Subject{Scope: scopeA(), AgentID: id.NewAgentID(), RunID: id.NewAgentRunID()}
 			if resumed {
-				_, errText := e.resumedCallResult(ctx, subject, suspension.PendingCall{ID: "call", Name: "effect"}, ToolResult{Execute: true}, true)
+				_, errText, _ := e.resumedCallResult(ctx, subject, suspension.PendingCall{ID: "call", Name: "effect"}, ToolResult{Execute: true}, true)
 				if errText == "" {
 					t.Error("cancelled tool reported success")
 				}

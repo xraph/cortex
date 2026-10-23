@@ -18,6 +18,7 @@ import (
 const kindPrivateCandidate = "private_candidate"
 
 type privateCandidate struct {
+	Transcript        *evidence.Ref   `json:"transcript,omitempty"`
 	SchemaVersion     int             `json:"schema_version"`
 	IntentID          id.ID           `json:"intent_id"`
 	RequestDigest     string          `json:"request_digest"`
@@ -41,9 +42,15 @@ func (s *Repository) loadPrivateCandidate(ctx context.Context, runID id.AgentRun
 	if row.Deleted || len(row.Body) > 1<<20 || row.Kind != kindPrivateCandidate || row.ID != runID.String() || row.RunID != runID.String() || evidence.Digest([]byte(row.Body)) != row.Digest || json.Unmarshal([]byte(row.Body), &c) != nil || c.Candidate.Validate() != nil || c.Candidate.Scope.Canonical() != row.ScopeCanon || !evidence.ValidDigest(c.RequestDigest) {
 		return privateCandidate{}, false, verification.ErrInvalid
 	}
-	shape := run.CandidateCapture{SchemaVersion: c.SchemaVersion, IntentID: c.IntentID, ExpectedRunRevision: c.CompletedRevision - 1, FinishReason: c.FinishReason, Usage: c.Usage}
+	shape := run.CandidateCapture{SchemaVersion: 1, IntentID: c.IntentID, ExpectedRunRevision: c.CompletedRevision - 1, FinishReason: c.FinishReason, Usage: c.Usage}
 	if _, _, err = shape.Freeze(); err != nil {
 		return privateCandidate{}, false, err
+	}
+	if c.SchemaVersion != 1 && c.SchemaVersion != 2 {
+		return privateCandidate{}, false, verification.ErrInvalid
+	}
+	if (c.SchemaVersion == 1 && c.Transcript != nil) || (c.SchemaVersion == 2 && (c.Transcript == nil || c.Transcript.Validate() != nil || c.Transcript.Scope.Canonical() != row.ScopeCanon || c.Transcript.ID == c.Candidate.ID)) {
+		return privateCandidate{}, false, verification.ErrInvalid
 	}
 	return c, true, nil
 }
@@ -51,7 +58,7 @@ func (s *Repository) loadPrivateCandidate(ctx context.Context, runID id.AgentRun
 // CaptureCandidate finishes generation without putting its text in the run row.
 // Evidence, completion metadata, job and pending status share one transaction.
 func (s *Repository) CaptureCandidate(ctx context.Context, request run.CandidateCapture) (verification.Job, error) {
-	if len(request.Output) > MaxEvidenceBytes {
+	if len(request.Output) > MaxEvidenceBytes || len(request.Transcript) > MaxEvidenceBytes {
 		return verification.Job{}, evidence.ErrTooLarge
 	}
 	req, digest, err := request.Freeze()
@@ -61,6 +68,9 @@ func (s *Repository) CaptureCandidate(ctx context.Context, request run.Candidate
 	initial, err := s.GetCaptureIntent(ctx, req.IntentID)
 	if err != nil {
 		return verification.Job{}, err
+	}
+	if req.SchemaVersion != initial.SchemaVersion {
+		return verification.Job{}, verification.ErrInvalid
 	}
 	driver, ok := s.driver.(RunDriver)
 	if !ok {
@@ -92,7 +102,7 @@ func (s *Repository) CaptureCandidate(ctx context.Context, request run.Candidate
 			if matchErr := matchIntentJob(intent, job); matchErr != nil {
 				return matchErr
 			}
-			if !reflect.DeepEqual(previous.Candidate, job.Request.Binding.Candidate) || previous.CompletedRevision != job.Request.ExpectedRunRevision {
+			if !reflect.DeepEqual(previous.Transcript, job.Request.Binding.Context.ExecutionTranscript) || !reflect.DeepEqual(previous.Candidate, job.Request.Binding.Candidate) || previous.CompletedRevision != job.Request.ExpectedRunRevision {
 				return verification.ErrConflict
 			}
 			result = job
@@ -118,7 +128,11 @@ func (s *Repository) captureNewCandidate(ctx context.Context, tx RunTransaction,
 	if inputErr := s.validateExecutionInputs(ctx, current, intent.Template.Binding); inputErr != nil {
 		return verification.Job{}, inputErr
 	}
-	jobRequest, err := intent.JobFor(current.Revision+1, capture.Output)
+	var transcript [][]byte
+	if intent.Transcript != nil {
+		transcript = append(transcript, capture.Transcript)
+	}
+	jobRequest, err := intent.JobFor(current.Revision+1, capture.Output, transcript...)
 	if err != nil {
 		return verification.Job{}, err
 	}
@@ -126,10 +140,30 @@ func (s *Repository) captureNewCandidate(ctx context.Context, tx RunTransaction,
 	if err != nil {
 		return verification.Job{}, err
 	}
+	if ref := jobRequest.Binding.Context.ExecutionTranscript; ref != nil {
+		trace, decodeErr := verification.DecodeExecutionTranscript(capture.Transcript)
+		if decodeErr != nil {
+			return verification.Job{}, decodeErr
+		}
+		artifact, readErr := s.LoadEvidence(ctx, *jobRequest.Binding.Context.ExecutionInputs)
+		if readErr != nil {
+			return verification.Job{}, readErr
+		}
+		inputs, decodeErr := verification.DecodeExecutionInputs(artifact.Data)
+		if decodeErr != nil {
+			return verification.Job{}, decodeErr
+		}
+		if validateErr := trace.ValidateFor(inputs, capture.Output, capture.Usage); validateErr != nil {
+			return verification.Job{}, validateErr
+		}
+		if saveErr := s.captureEvidence(ctx, *ref, capture.Transcript); saveErr != nil {
+			return verification.Job{}, saveErr
+		}
+	}
 	if captureErr := s.captureCandidate(ctx, jobRequest.Binding.Candidate, capture.Output); captureErr != nil {
 		return verification.Job{}, captureErr
 	}
-	metadata := privateCandidate{SchemaVersion: 1, IntentID: intent.ID, RequestDigest: digest, CompletedRevision: current.Revision + 1, Candidate: jobRequest.Binding.Candidate, FinishReason: capture.FinishReason, Usage: capture.Usage}
+	metadata := privateCandidate{SchemaVersion: capture.SchemaVersion, Transcript: jobRequest.Binding.Context.ExecutionTranscript, IntentID: intent.ID, RequestDigest: digest, CompletedRevision: current.Revision + 1, Candidate: jobRequest.Binding.Candidate, FinishReason: capture.FinishReason, Usage: capture.Usage}
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return verification.Job{}, err
@@ -162,7 +196,7 @@ func (s *Repository) validateCapturedOutput(ctx context.Context, r *run.Run, bin
 		return err
 	}
 	if exists {
-		if r.Output != "" || r.CompletedAt == nil || r.Revision < candidate.CompletedRevision || r.FinishReason != candidate.FinishReason || r.Usage != candidate.Usage || r.StepCount != candidate.Usage.Steps || r.TokensUsed != candidate.Usage.Tokens || !reflect.DeepEqual(candidate.Candidate, binding.Candidate) {
+		if !reflect.DeepEqual(candidate.Transcript, binding.Context.ExecutionTranscript) || r.Output != "" || r.CompletedAt == nil || r.Revision < candidate.CompletedRevision || r.FinishReason != candidate.FinishReason || r.Usage != candidate.Usage || r.StepCount != candidate.Usage.Steps || r.TokensUsed != candidate.Usage.Tokens || !reflect.DeepEqual(candidate.Candidate, binding.Candidate) {
 			return verification.ErrConflict
 		}
 		return nil

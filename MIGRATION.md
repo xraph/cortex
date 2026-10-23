@@ -419,3 +419,23 @@ stable intent/job identities for recovery. Wrapped private diagnostics are no
 longer forwarded by these mappings. The REST stream handler also waits for
 successful startup before setting SSE headers and cancels its execution context
 when writing to the client fails. Cancellation does not roll back tool effects.
+
+
+## Required execution transcripts (schema 6)
+
+Update required intent builders to return schema 2. Reserve a distinct empty
+`Transcript` evidence reference and set `MaxTranscriptBytes` to a positive limit
+up to one MiB. Leave the reservation outside the job template. The engine asks
+your evidence authorizer to approve it before generation and approve the final
+reference before atomic candidate capture.
+
+Required prepared snapshots and continuations now use schema 6. Drain or cancel
+schema-3/4/5 pauses on compatible workers, then prepare fresh snapshots. Do not
+rewrite their schema numbers. Ordinary schema 2 and legacy explicit schema-1
+capture intents remain supported. Upgrade all storage writers together.
+
+`CandidateCapture` schema 2 requires canonical `ExecutionTranscript` bytes.
+Retries must supply identical bytes. The store saves the transcript and candidate
+in the same transaction and binds both to the job. No database migration is
+needed. Captured tool messages remain private; external results are authorized
+host assertions, and crash-safe external effect recovery remains open.

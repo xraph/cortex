@@ -104,7 +104,7 @@ func (s *Repository) CreateCaptureIntent(ctx context.Context, intent verificatio
 	if err != nil {
 		return err
 	}
-	if frozen.MaxCandidateBytes > MaxEvidenceBytes {
+	if frozen.MaxCandidateBytes > MaxEvidenceBytes || frozen.MaxTranscriptBytes > MaxEvidenceBytes {
 		return evidence.ErrTooLarge
 	}
 	driver, ok := s.driver.(RunDriver)
@@ -185,15 +185,24 @@ func (s *Repository) checkNewCaptureIntent(ctx context.Context, tx RunTransactio
 		}
 		return verification.ErrConflict
 	}
-	candidateRow, candidateErr := s.get(ctx, Query{Kind: KindEvidence, ID: req.Binding.Candidate.ID.String()})
-	if candidateErr == nil {
-		if candidateRow.Deleted {
-			return evidence.ErrDeleted
-		}
-		return evidence.ErrConflict
+	reservations := []evidence.Ref{req.Binding.Candidate}
+	if intent.Transcript != nil {
+		reservations = append(reservations, *intent.Transcript)
 	}
-	if !errors.Is(candidateErr, ErrAbsent) {
-		return candidateErr
+	for _, ref := range reservations {
+		if ref.CreatedAt.After(now) || req.Deadline.After(ref.RetainUntil) {
+			return verification.ErrJobExpired
+		}
+		row, readErr := s.get(ctx, Query{Kind: KindEvidence, ID: ref.ID.String()})
+		if readErr == nil {
+			if row.Deleted {
+				return evidence.ErrDeleted
+			}
+			return evidence.ErrConflict
+		}
+		if !errors.Is(readErr, ErrAbsent) {
+			return readErr
+		}
 	}
 	total := int64(0)
 	for _, ref := range req.Binding.Evidence {
@@ -280,6 +289,16 @@ func matchIntentRequest(intent verification.CaptureIntent, request verification.
 	req.ExpectedRunRevision = request.ExpectedRunRevision
 	req.Binding.Candidate.SHA256 = request.Binding.Candidate.SHA256
 	req.Binding.Candidate.Bytes = request.Binding.Candidate.Bytes
+	if intent.Transcript != nil {
+		actual := request.Binding.Context.ExecutionTranscript
+		if actual == nil || actual.Bytes > intent.MaxTranscriptBytes {
+			return verification.ErrConflict
+		}
+		ref := *intent.Transcript
+		ref.SHA256, ref.Bytes = actual.SHA256, actual.Bytes
+		req.Binding.Context.ExecutionTranscript = &ref
+		req.Binding.Evidence = append(req.Binding.Evidence, ref)
+	}
 	_, digest, err := req.Freeze()
 	if err != nil {
 		return err

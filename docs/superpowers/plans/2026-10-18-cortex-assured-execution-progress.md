@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate includes tools and resume; qualified host adapters, durable effect recovery, scheduling and durable public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; qualified host adapters, durable effect recovery, scheduling and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -2484,3 +2484,55 @@ Validation for transport semantics:
   type/lint/build checks passed. No dependency changes were needed.
 - CI for `914de4d` has passed docs, format, submodules, lint, security and verify;
   its root test job was still running at this packet's final check.
+
+
+### S2.2 private execution transcript evidence
+
+Required schema 6 captures a canonical `verification.ExecutionTranscript` with
+checked model/tool messages, cumulative usage and host-recorded call outcomes.
+The trace links to the initial input digest and distinguishes local dispatch from
+an authorized external result. It is bounded to one MiB, 4,096 messages and 4,096
+calls; each requested call needs one result and one outcome. Unknown tool names
+are permitted only as locally denied calls without a tool charge.
+
+Schema-2 capture intents reserve the transcript identity and retention before
+generation. Capture derives only its content hash and byte count, adds the exact
+reference to the verification binding, and saves it with candidate bytes, private
+completion metadata and the queued job in one transaction. Retry identity includes
+the transcript bytes. Claims and commit validate the input, usage and final
+candidate again; deletion tombstones prevent publication.
+
+Both ReAct loops record outcomes through the same helper. Suspensions retain
+completed outcomes, so a reopened run can combine local and external results
+without losing earlier work. Required resume rejects a scanner that changes
+retained messages before further execution. Public rows, hooks and streams keep
+the existing private-content boundary. Ordinary schema 2 and explicit schema-1
+capture intents remain compatible; required schema-3/4/5 pauses must be drained
+or cancelled on compatible workers before preparing fresh snapshots.
+
+The first runtime regressions failed because no transcript was retained. A
+second regression demonstrated silent task rewriting during resumed scanning.
+Backend tests found that directly inserting over a tombstone aborted PostgreSQL
+and MongoDB transactions before returning the deletion error. Candidate and
+transcript capture now share the existing identity precheck.
+
+External results still assert what the authorized host reports. This evidence
+does not establish exactly-once effects, recover a crash before capture or supply
+durable result delivery. Those remain open with worker scheduling, lease renewal,
+repair and G1/G2 qualification. The four-stage plan is incomplete.
+
+Validation for transcript capture:
+
+- Full engine, verification, run and suspension race suites passed (235.080s,
+  1.664s, 1.146s and 1.118s). Runtime fixtures cover local and external results,
+  failures, denials, unknown tools, approval, streaming, reservation permissions,
+  transcript limits and mixed local/external results across a SQLite reopen.
+- The final required-execution and verification-worker race checks passed
+  after sharing the capture helper (144.241s).
+- Final shared storage race suites passed on SQLite (96.685s), PostgreSQL
+  (19.624s) and MongoDB (26.136s). Docker-backed checks ran without skips and
+  include transcript tombstones, changed retries, atomic rollback and the
+  surrounding intent, candidate, job and result contracts.
+- Final `make f`, all ten module lint checks, root build and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- The previous commit `e5d9962` has successful CI (`39937788414`).

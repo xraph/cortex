@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
+	"github.com/xraph/cortex/verification"
 )
 
 // SuspendReason says why a run stopped. Both reasons share one mechanism
@@ -110,14 +111,15 @@ type RunConfig struct {
 // with. Consistency within one run beats picking up a mid-run change to
 // the agent's identity.
 type Continuation struct {
-	SchemaVersion int                     `json:"schema_version,omitempty"`
-	Prepared      []byte                  `json:"prepared,omitempty"`
-	Provenance    run.ExecutionProvenance `json:"provenance,omitempty"`
-	Usage         execution.Usage         `json:"usage,omitempty"`
-	Messages      []llm.Message           `json:"messages"`
-	SystemPrompt  string                  `json:"system_prompt"`
-	StepIndex     int                     `json:"step_index"`
-	TokensUsed    int                     `json:"tokens_used"`
+	ToolResults   []verification.ToolResult `json:"tool_results,omitempty"`
+	SchemaVersion int                       `json:"schema_version,omitempty"`
+	Prepared      []byte                    `json:"prepared,omitempty"`
+	Provenance    run.ExecutionProvenance   `json:"provenance,omitempty"`
+	Usage         execution.Usage           `json:"usage,omitempty"`
+	Messages      []llm.Message             `json:"messages"`
+	SystemPrompt  string                    `json:"system_prompt"`
+	StepIndex     int                       `json:"step_index"`
+	TokensUsed    int                       `json:"tokens_used"`
 
 	// NewMessagesFrom is the index in Messages where this run's own
 	// messages begin. Everything before it is conversation history the
