@@ -125,7 +125,8 @@ Do not expose the snapshot directly. You must enforce current content access,
 check current external source revisions and apply the current publication policy
 before returning any bytes. `snapshot.Validate(request, now)` lets you recheck
 integrity and time-based freshness after I/O; it cannot discover deleted evidence
-or changed grants and resources. Approved-content replay remains unimplemented.
+or changed grants and resources. Use the guarded content reader below when you
+need a screened answer for the current reader.
 
 SQLite uses a write transaction; PostgreSQL locks the run and evidence records.
 MongoDB requires a transaction-capable deployment and fences evidence against
@@ -137,6 +138,51 @@ processed in one attempt.
 The required runtime gate and scoped recovery loop below consume this storage
 boundary. Durable public outbox dispatch remains open. Storage alone does not
 change `RunCompleted` hooks or enable contextual verification in capabilities.
+
+
+## Read screened result content
+
+Configure `engine.WithResultContent` with a `ResultContentAuthorizer`, a
+`verification.CommitFence` and a trusted clock. You also need a snapshot-capable
+store and an enabled publication gate, supplied with `WithPublicationGate` or
+`WithSafety`. Missing services and typed-nil ports are refused at construction.
+Metadata replay permission does not grant content access.
+
+Call `Engine.ReadResultContent` with a `verification.ResultContentRequest`
+containing schema version 1 and the exact run and result IDs. The result ID is
+available in the durable `result_committed` event. The engine resolves the private
+receipt itself, so your client does not need its digest or evidence references.
+
+The reader checks content permission before storage, then enters the host fence
+with the committed binding. That fence must capture current authoritative state
+and guard relevant source, grant and policy writers, including the current
+agent safety profile. A changed binding refuses the read. The reader checks
+permission again, loads a fresh snapshot and screens the entire answer through
+the engine's current publication policy. Screening holds no database transaction.
+Before returning, it reads another fresh snapshot, rechecks permission and checks
+freshness again after the fence returns. Deletion, expiry or a run change during
+screening discards the answer.
+
+`verification.PublishedResult` contains the screened content, identities and
+observation times. It excludes private receipts, contracts, reports and bindings.
+`VerificationStatus` and `VerifiedAt` describe the original committed candidate.
+If screening changes the text, `ContentChanged` is true and that projection has
+not itself been verified. Empty redactions are valid. A checker must explicitly
+mark changed text as `redacted`; approved or flagged decisions cannot silently
+rewrite the answer. Unscanned or unknown decisions and invalid UTF-8 output are
+refused, so JSON encoding cannot silently replace bytes after screening.
+
+Reads have a five-second deadline and a one-MiB output ceiling. Host callbacks
+must honor cancellation. Calls return only static error categories, never private
+provider diagnostics, and do not regenerate, reevaluate or update the stored run.
+The existing publication hooks and metrics observe screening with source
+`result_replay`.
+
+This is a host API. HTTP, dashboard and remote content adapters still need to use
+it, and metadata SSE continues to carry no answer text. A returned observation is
+not a permission lease: reauthorize each subsequent read and bound delivery in
+your transport. Existing administrative store and run APIs still require host
+access controls; configuring this reader does not replace them.
 
 
 ## Durable verification work

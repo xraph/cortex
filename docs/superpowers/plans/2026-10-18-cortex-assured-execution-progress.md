@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements and fresh result snapshot storage implemented; approved content, arbitrary artifact producers and installed qualification remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots and guarded host content reads implemented; content transports, arbitrary artifact producers and installed qualification remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3135,3 +3135,63 @@ Validation for fresh result snapshots:
 Public content authorization, current-resource fencing and publication screening
 are the next integration work. Linux sandbox qualification remains deferred by
 the user; this packet does not close the four-stage plan.
+
+
+### S2.6 guarded content reads
+
+`verification.ResultReader` checks explicit current content permission before
+resolving a private receipt, then reads and screens the result under the host's
+current binding fence. A second snapshot after screening catches evidence deletion,
+expiry or run changes. A final permission check occurs inside the fence, and
+freshness is checked again after it returns. Each call has a five-second deadline;
+trusted host ports must honor cancellation.
+
+`engine.WithResultContent` and `ReadResultContent` wire the reader to the existing
+publication policy, gate, hooks and metrics. Reads require an enabled gate and
+use the current agent safety profile. The host fence must guard that profile as
+well as source and grant revisions. Database locks are held only for snapshot
+reads, never for the publication callback. Metadata replay permission and worker
+verification authority do not grant content access.
+
+The public projection contains screened content and minimal result metadata.
+Changed text must carry a redacted decision and sets `ContentChanged`; its
+verification fields still describe the original candidate. Unscanned, unknown,
+oversized or silently rewritten decisions return no content. Private diagnostics,
+receipts, reports and bindings are excluded. Reads preserve the stored run and
+never regenerate or reevaluate the answer.
+
+Commits and reads share one callback-lifetime guard, retaining the existing
+missing, repeated, retained and escaped-callback checks. Typed-nil publication
+checkers and scanners are rejected by engine configuration using the same host
+port test as verification constructors.
+
+The TDD checks began with missing reader and engine APIs. A separate behavioral
+regression exposed the typed-nil publication gate before its configuration fix.
+Root tests cover permission ordering, denial before storage, stale bindings,
+redaction semantics, cancellation, five-second screening deadlines, expired
+fence returns, changed material and callback protocol errors. SQLite engine tests
+cover reopened committed results, unchanged stored runs and refusal after deletion,
+revocation or run updates during screening.
+
+HTTP, dashboard and remote content transports remain open. Their existing run and
+store APIs retain host access controls and are not implicitly replaced by this
+reader. Metadata SSE carries no answer content. Installed screening and resource
+fences still need qualification; the Linux worker remains deferred by the user.
+
+Validation for guarded content reads:
+
+- Full verification, safety and engine race suites passed; the engine suite took
+  342.397s. Final verification/safety race suites and focused engine publication
+  and content-read regressions passed after the last changes.
+- Snapshot and verified-commit conformance passed with race detection on SQLite
+  (31.773s), PostgreSQL (14.892s) and MongoDB (17.641s). The latter two ran against
+  Docker without skipped cases.
+- A new red test showed that invalid UTF-8 could reach the result projection.
+  The reader now rejects it before JSON encoding can change screened bytes.
+- `GOWORK=off make f`, final `GOWORK=off make l` across all ten modules, root build
+  and `git diff --check` passed. Scope checks reuse the existing engine helper.
+- Docs type check, lint and production build passed.
+- Snapshot commit `21f7cfb` passed Linux CI run `39965570894`.
+
+This completes the host reader, not the transport or installed qualification
+work. The four-stage goal remains active.

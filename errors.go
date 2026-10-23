@@ -92,6 +92,7 @@ var (
 	ErrRunUnverified             = errors.New("cortex: run did not pass required verification")
 	ErrVerificationUnavailable   = errors.New("cortex: verification worker unavailable")
 	ErrResultCommitUnavailable   = errors.New("cortex: atomic verified result commit unavailable")
+	ErrResultAccessDenied        = errors.New("cortex: result content access denied")
 	ErrSandboxInputsIncomplete   = errors.New("cortex: sandbox input staging is incomplete")
 	ErrSandboxInputsConflict     = errors.New("cortex: sandbox input staging identity conflict")
 )

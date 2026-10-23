@@ -3,10 +3,9 @@ package verification
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"sync"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/internal/hostport"
 )
 
 // CommitFence holds the host's authorization and revision guards while commit
@@ -47,18 +46,7 @@ func NewCommitter(storage CommitStore, fence CommitFence, authorizer BindingAuth
 	return &guardedCommitter{storage: storage, fence: fence, authorizer: authorizer}, nil
 }
 
-func nilHostPort(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
-}
+func nilHostPort(value any) bool { return hostport.IsNil(value) }
 
 func (c *guardedCommitter) Commit(ctx context.Context, request CommitRequest) (CommitReceipt, error) {
 	if err := ctx.Err(); err != nil {
@@ -75,61 +63,9 @@ func (c *guardedCommitter) Commit(ctx context.Context, request CommitRequest) (C
 	if frozen.Current.Scope.Canonical() != scope.Canonical() {
 		return CommitReceipt{}, ErrInvalid
 	}
-	expected, err := cloneBinding(frozen.Current)
-	if err != nil {
-		return CommitReceipt{}, err
-	}
-	attemptCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	// The fence is trusted host code. Reject missing, repeated or retained calls,
-	// and cancel escaped work if an adapter returns before its callback finishes.
-	var mu sync.Mutex
-	active, started, finished := true, false, false
-	var receipt CommitReceipt
-	var callbackErr, protocolErr error
-	fenceErr := c.fence.WithCommitFence(attemptCtx, expected, func(current Binding) error {
-		mu.Lock()
-		if !active || started {
-			protocolErr = ErrInvalid
-			mu.Unlock()
-			return ErrInvalid
-		}
-		started = true
-		mu.Unlock()
-		result, commitErr := c.commitUnderFence(attemptCtx, frozen, digest, current)
-		mu.Lock()
-		if !active {
-			result = CommitReceipt{}
-			if commitErr == nil {
-				commitErr = ErrInvalid
-			}
-		}
-		receipt, callbackErr, finished = result, commitErr, true
-		mu.Unlock()
-		return commitErr
+	return withBindingFence(ctx, c.fence, frozen.Current, func(attemptCtx context.Context, current Binding) (CommitReceipt, error) {
+		return c.commitUnderFence(attemptCtx, frozen, digest, current)
 	})
-	mu.Lock()
-	active = false
-	done := started && finished
-	result, resultErr, invalid := receipt, callbackErr, protocolErr
-	mu.Unlock()
-	cancel()
-	if fenceErr != nil {
-		return CommitReceipt{}, fmt.Errorf("cortex: result commit fence: %w", fenceErr)
-	}
-	if invalid != nil {
-		return CommitReceipt{}, invalid
-	}
-	if !done {
-		return CommitReceipt{}, ErrInvalid
-	}
-	if resultErr != nil {
-		return CommitReceipt{}, resultErr
-	}
-	if err := ctx.Err(); err != nil {
-		return CommitReceipt{}, err
-	}
-	return result, nil
 }
 
 func (c *guardedCommitter) commitUnderFence(ctx context.Context, req CommitRequest, digest string, current Binding) (CommitReceipt, error) {

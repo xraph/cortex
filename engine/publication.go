@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
@@ -21,6 +22,9 @@ type approvedText string
 const publicationToolOverhead = 64
 
 func (e *Engine) configurePublication() error {
+	if (e.publicationGate != nil && hostport.IsNil(e.publicationGate)) || (e.safety != nil && hostport.IsNil(e.safety)) {
+		return safety.ErrUnavailable
+	}
 	p, err := e.publicationPolicy.Resolve()
 	if err != nil {
 		return err

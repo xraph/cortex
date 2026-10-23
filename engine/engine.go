@@ -28,6 +28,7 @@ import (
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/trait"
+	"github.com/xraph/cortex/verification"
 )
 
 // registeredTool pairs an externally-registered tool definition with its handler.
@@ -50,6 +51,8 @@ type Engine struct {
 	publicEventConfigured bool
 	publicEventAuthorizer event.Authorizer
 	publicEventReader     *event.Reader
+	resultContentConfig   *ResultContentConfig
+	resultContentReader   *verification.ResultReader
 	verificationConfig    *VerificationWorkerConfig
 	verificationWorker    *verificationWorker
 	requiredVerification  *RequiredVerificationConfig
@@ -136,6 +139,9 @@ func New(opts ...Option) (*Engine, error) {
 	}
 
 	if err := e.configurePublicEventReplay(); err != nil {
+		return nil, err
+	}
+	if err := e.configureResultContent(); err != nil {
 		return nil, err
 	}
 
