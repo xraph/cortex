@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic committed-result metadata replay, scoped readers and retention gaps implemented; lifecycle producers, approved content and transport integration remain open |
+| S2.6 | active | this chat | Atomic verification lifecycle replay, scoped readers and retention gaps implemented; ordinary run producers, approved content and transport integration remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -2682,3 +2682,47 @@ Validation for metadata replay:
   Documentation type checks, lint and production build passed.
 - CI for lease renewal commit `5b23804` completed successfully (`39944141714`).
   Replay transport and deployed subscriber policy remain unverified.
+
+
+### S2.6 verification lifecycle producers
+
+Ruling: record metadata where the run verdict changes, inside the existing
+transaction. Private capture writes execution-finished at its completed revision
+and pending at the enqueue revision. Reports, provider failures, cancellation and
+expiry write terminal verdict events only when they update the current run.
+A superseded job cannot publish a verdict over its replacement.
+
+The shared append helper now serves lifecycle transitions and result commit.
+Commit writes verification-passed immediately before result-committed, with the
+same committed run revision and result identity. Becoming ready emits no pass:
+current authority and freshness still need the guarded commit. Existing IDs and
+sequences survive retries; a rolled-back transaction exposes no event or identity
+tombstone. Unknown provider charges remain reserved after failure.
+
+Tests first showed the missing private-capture and pending/terminal events.
+They now cover ordered revisions, idempotent retry, verdict failure, cancellation,
+expiry, stale accepted reports, private diagnostic redaction and superseded jobs.
+Fault injection after event identity and stream writes checks private capture and
+final commit rollback. Additional failures after report settlement, provider
+failure and cancellation preserve the pending log and original job until retry.
+
+The new passed/stale event types require readers and writers to upgrade together.
+Historical events and receipts keep their original shape; there is no backfill or
+database migration. Ordinary run producers, artifact events, approved content,
+transport subscriptions and installed qualification remain open. The full goal
+and S2.6 stay active.
+
+
+Validation for verification lifecycle producers:
+
+- Full engine, event and verification race suites passed (300.727s, 1.122s and
+  1.239s). Focused engine/event regressions passed (74.501s and 1.180s), and final
+  replay/type tests passed after formatting (7.482s and 1.099s).
+- Expanded storage race suites passed on SQLite (138.267s), PostgreSQL (18.177s)
+  and MongoDB (22.220s), with no Docker-backed skips. These cover lifecycle
+  ordering, terminal verdicts, jobs/calls, private capture, result commits,
+  rollback and SQLite restart.
+- Final `make f`, all ten module lint checks, root build and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- The metadata replay foundation `e351e09` has successful CI (`39946067588`).
+  Transport and deployed subscriber-policy qualification remain open.

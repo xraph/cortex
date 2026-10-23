@@ -39,3 +39,15 @@ func TestPublicCursorBindsRunAndSchema(t *testing.T) {
 	c.SchemaVersion = 1
 	require.Error(t, (event.ReadRequest{After: c, Limit: event.MaxPageSize + 1}).Validate())
 }
+
+func TestVerificationPassedEventRequiresCommittedResultIdentity(t *testing.T) {
+	e := event.Event{SchemaVersion: 1, Input: event.Input{ID: id.New(event.PrefixEvent), Type: event.VerificationPassed, ResultID: id.New(verification.PrefixResult)}, RunID: id.NewAgentRunID(), Sequence: 1, RunRevision: 2, ObservedAt: time.Now().UTC()}
+	require.NoError(t, e.Validate())
+	e.ResultID = id.ID{}
+	require.Error(t, e.Validate())
+	e.ResultID = id.New(verification.PrefixResult)
+	e.Type = event.VerificationStale
+	require.Error(t, e.Validate())
+	e.ResultID = id.ID{}
+	require.NoError(t, e.Validate())
+}

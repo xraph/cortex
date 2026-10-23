@@ -113,7 +113,7 @@ func (s *Repository) acceptJobReport(txctx context.Context, tx RunTransaction, j
 			job.State = verification.JobFailed
 		}
 		job.Lease = nil
-		return tx.SetRunVerification(txctx, job.Request.Binding.RunID, job.RunRevision, status, id.ID{}, now)
+		return s.setVerificationWithEvent(txctx, tx, job.Request.Binding.RunID, job.RunRevision, status, now)
 	}
 	if decision.Status == verification.StatusPassed && !slices.ContainsFunc(job.Calls, func(call verification.EvaluationCall) bool { return call.Completion == nil }) {
 		job.State = verification.JobReady
@@ -173,7 +173,7 @@ func (s *Repository) CancelVerificationJob(ctx context.Context, jobID id.ID) (ve
 }
 
 func (s *Repository) finishJob(ctx context.Context, jobID id.ID, cancel bool) (verification.Job, error) {
-	return s.mutateJob(ctx, jobID, func(txctx context.Context, _ *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+	return s.mutateJob(ctx, jobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
 		target := verification.JobInconclusive
 		if cancel {
 			target = verification.JobCancelled
@@ -193,7 +193,7 @@ func (s *Repository) finishJob(ctx context.Context, jobID id.ID, cancel bool) (v
 		}
 		// Retire stale jobs without changing a newer candidate or verification attempt.
 		if current.Revision == job.RunRevision && current.VerificationStatus == verification.StatusPending {
-			if updateErr := tx.SetRunVerification(txctx, current.ID, current.Revision, verification.StatusInconclusive, id.ID{}, now); updateErr != nil {
+			if updateErr := repository.setVerificationWithEvent(txctx, tx, current.ID, current.Revision, verification.StatusInconclusive, now); updateErr != nil {
 				return updateErr
 			}
 		}

@@ -321,3 +321,13 @@ func VerificationCaptureRestart(t *testing.T, s store.Store, reopen func() store
 	require.NoError(t, err)
 	require.Equal(t, saved.Output, string(artifact.Data))
 }
+
+func (tx captureFailTransaction) ReplaceEventStream(ctx context.Context, row assurance.Record, body string) error {
+	if err := tx.RunTransaction.ReplaceEventStream(ctx, row, body); err != nil {
+		return err
+	}
+	if tx.kind == assurance.KindEventStream {
+		return tx.failure
+	}
+	return nil
+}

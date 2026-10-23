@@ -36,6 +36,8 @@ const (
 	VerificationPending      Type = "verification_pending"
 	VerificationFailed       Type = "verification_failed"
 	VerificationInconclusive Type = "verification_inconclusive"
+	VerificationStale        Type = "verification_stale"
+	VerificationPassed       Type = "verification_passed"
 	ResultCommitted          Type = "result_committed"
 )
 
@@ -52,8 +54,12 @@ func (i Input) validate() error {
 		return ErrInvalid
 	}
 	switch i.Type {
-	case ExecutionFinished, VerificationPending, VerificationFailed, VerificationInconclusive:
+	case ExecutionFinished, VerificationPending, VerificationFailed, VerificationInconclusive, VerificationStale:
 		if i.ID.Prefix() != PrefixEvent || !i.ResultID.IsNil() {
+			return ErrInvalid
+		}
+	case VerificationPassed:
+		if i.ID.Prefix() != PrefixEvent || i.ResultID.IsNil() || i.ResultID.Prefix() != verification.PrefixResult {
 			return ErrInvalid
 		}
 	case ResultCommitted:

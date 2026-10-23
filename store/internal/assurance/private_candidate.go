@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
@@ -181,6 +182,9 @@ func (s *Repository) captureNewCandidate(ctx context.Context, tx RunTransaction,
 	current.CompletedAt = &now
 	if updateErr := tx.SetRunCandidate(ctx, current, now); updateErr != nil {
 		return verification.Job{}, updateErr
+	}
+	if eventErr := s.appendRunEvents(ctx, tx, current.ID, event.Input{ID: id.New(event.PrefixEvent), Type: event.ExecutionFinished}); eventErr != nil {
+		return verification.Job{}, eventErr
 	}
 	return s.enqueueJob(ctx, tx, jobRequest, jobDigest, false)
 }

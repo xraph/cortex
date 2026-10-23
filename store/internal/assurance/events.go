@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/event"
@@ -188,12 +189,16 @@ func (s *Repository) checkPublicEvent(ctx context.Context, current *run.Run, inp
 		if current.VerificationStatus != verification.StatusInconclusive {
 			return event.ErrConflict
 		}
-	case event.ResultCommitted:
+	case event.VerificationStale:
+		if current.VerificationStatus != verification.StatusStale {
+			return event.ErrConflict
+		}
+	case event.VerificationPassed, event.ResultCommitted:
 		receipt, err := s.GetCommittedResult(ctx, input.ResultID)
 		if err != nil {
 			return err
 		}
-		if current.VerificationStatus != verification.StatusPassed || current.ResultRef != input.ResultID.String() || receipt.RunRevision != current.Revision || receipt.Outbox.EventID != input.ID || receipt.Outbox.RunID != current.ID {
+		if current.VerificationStatus != verification.StatusPassed || current.ResultRef != input.ResultID.String() || receipt.RunRevision != current.Revision || (input.Type == event.ResultCommitted && receipt.Outbox.EventID != input.ID) || receipt.Outbox.RunID != current.ID {
 			return event.ErrConflict
 		}
 	default:
@@ -302,7 +307,13 @@ func (s *Repository) PrunePublicEvents(ctx context.Context, through event.Cursor
 }
 
 func (s *Repository) appendCommittedEvent(ctx context.Context, tx RunTransaction, receipt verification.CommitReceipt) error {
-	current, err := tx.GetRun(ctx, receipt.Outbox.RunID)
+	return s.appendRunEvents(ctx, tx, receipt.Outbox.RunID,
+		event.Input{ID: id.New(event.PrefixEvent), Type: event.VerificationPassed, ResultID: receipt.Request.ResultID},
+		event.Input{ID: receipt.Outbox.EventID, Type: event.ResultCommitted, ResultID: receipt.Request.ResultID})
+}
+
+func (s *Repository) appendRunEvents(ctx context.Context, tx RunTransaction, runID id.AgentRunID, inputs ...event.Input) error {
+	current, err := tx.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
@@ -310,10 +321,32 @@ func (s *Repository) appendCommittedEvent(ctx context.Context, tx RunTransaction
 	if err != nil {
 		return err
 	}
-	request, digest, err := (event.AppendRequest{SchemaVersion: 1, RunID: current.ID, ExpectedRunRevision: current.Revision, AfterSequence: stream.Last, Events: []event.Input{{ID: receipt.Outbox.EventID, Type: event.ResultCommitted, ResultID: receipt.Request.ResultID}}}).Freeze()
+	request, digest, err := (event.AppendRequest{SchemaVersion: 1, RunID: current.ID, ExpectedRunRevision: current.Revision, AfterSequence: stream.Last, Events: inputs}).Freeze()
 	if err != nil {
 		return err
 	}
 	_, err = s.appendPublicEvents(ctx, tx, current, request, digest)
 	return err
+}
+
+// setVerificationWithEvent keeps the current run verdict and its observation in
+// one transaction. Passed events belong exclusively to the guarded result commit.
+func (s *Repository) setVerificationWithEvent(ctx context.Context, tx RunTransaction, runID id.AgentRunID, revision int64, status verification.Status, at time.Time) error {
+	var kind event.Type
+	switch status {
+	case verification.StatusPending:
+		kind = event.VerificationPending
+	case verification.StatusFailed:
+		kind = event.VerificationFailed
+	case verification.StatusInconclusive:
+		kind = event.VerificationInconclusive
+	case verification.StatusStale:
+		kind = event.VerificationStale
+	default:
+		return event.ErrInvalid
+	}
+	if err := tx.SetRunVerification(ctx, runID, revision, status, id.ID{}, at); err != nil {
+		return err
+	}
+	return s.appendRunEvents(ctx, tx, runID, event.Input{ID: id.New(event.PrefixEvent), Type: kind})
 }

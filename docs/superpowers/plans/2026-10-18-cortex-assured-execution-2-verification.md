@@ -203,7 +203,12 @@ revocation, cancellation or malformed storage output. Restart, concurrent append
 rollback, scope and retention tests cover the storage boundary. The metadata
 reader does not publish candidate bodies or start a subscription goroutine.
 
-The remaining S2.6 work includes automatic lifecycle ordering, artifact events,
+Verification storage now writes execution-finished/pending during private capture,
+terminal verdicts during settlement or retirement, and passed/result-committed at
+guarded commit. Each event shares its state transaction; a ready job emits no
+premature pass, and a superseded job cannot publish its verdict over a replacement.
+
+The remaining S2.6 work includes ordinary run lifecycle producers, artifact events,
 approved content replay, transport integration, bounded live subscriptions and
 installed reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.

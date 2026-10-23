@@ -39,6 +39,10 @@ import (
 // newStore must return a freshly migrated, empty store; Conformance calls
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("VerificationProviderFailureLifecycle", func(t *testing.T) { testVerificationProviderFailureLifecycle(t, newStore) })
+	t.Run("PrivateCaptureLifecycle", func(t *testing.T) { testPrivateCaptureLifecycle(t, newStore) })
+	t.Run("VerificationLifecycleOutcomes", func(t *testing.T) { testVerificationLifecycleOutcomes(t, newStore) })
+	t.Run("VerificationCancellationLifecycle", func(t *testing.T) { testVerificationCancellationLifecycle(t, newStore) })
 	t.Run("PublicEventsRetention", func(t *testing.T) { testPublicEventsRetention(t, newStore) })
 	t.Run("PublicEventsDenials", func(t *testing.T) { testPublicEventsDenials(t, newStore) })
 	t.Run("PublicEvents", func(t *testing.T) { testPublicEvents(t, newStore) })

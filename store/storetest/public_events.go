@@ -28,11 +28,11 @@ func testPublicEvents(t *testing.T, newStore func(*testing.T) store.Store) {
 	replay := event.ReadRequest{After: event.Cursor{SchemaVersion: 1, RunID: req.Current.RunID}, Limit: 10}
 	page, err := es.ReadPublicEvents(ctx, replay)
 	require.NoError(t, err)
-	require.Len(t, page.Events, 3)
-	require.Equal(t, []event.Type{event.ExecutionFinished, event.VerificationPending, event.ResultCommitted}, []event.Type{page.Events[0].Type, page.Events[1].Type, page.Events[2].Type})
-	require.Equal(t, receipt.Outbox.EventID, page.Events[2].ID)
-	require.Equal(t, receipt.RunRevision, page.Events[2].RunRevision)
-	require.Equal(t, uint64(3), page.Next.Sequence)
+	require.Len(t, page.Events, 4)
+	requireLifecycle(t, page, event.ExecutionFinished, event.VerificationPending, event.VerificationPassed, event.ResultCommitted)
+	require.Equal(t, receipt.Outbox.EventID, page.Events[3].ID)
+	require.Equal(t, receipt.RunRevision, page.Events[3].RunRevision)
+	require.Equal(t, uint64(4), page.Next.Sequence)
 	body, err := json.Marshal(page)
 	require.NoError(t, err)
 	require.NotContains(t, string(body), "private candidate text")
@@ -44,7 +44,7 @@ func testPublicEvents(t *testing.T, newStore func(*testing.T) store.Store) {
 	require.NoError(t, err)
 	watermark, err := es.ReadEventWatermark(ctx, req.Current.RunID)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), watermark.LastSequence)
+	require.Equal(t, uint64(4), watermark.LastSequence)
 	_, err = es.ReadPublicEvents(ctxWithScope("other"), replay)
 	require.ErrorIs(t, err, cortex.ErrRunNotFound)
 	_, err = es.ReadPublicEvents(context.Background(), replay)
@@ -60,8 +60,8 @@ func testPublicEvents(t *testing.T, newStore func(*testing.T) store.Store) {
 	replay.After.Sequence = 2
 	page, err = es.ReadPublicEvents(ctx, replay)
 	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Equal(t, receipt.Outbox.EventID, page.Events[0].ID)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, receipt.Outbox.EventID, page.Events[1].ID)
 }
 
 func testPublicEventsConcurrent(t *testing.T, newStore func(*testing.T) store.Store) {

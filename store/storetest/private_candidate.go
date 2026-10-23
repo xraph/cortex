@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
@@ -273,7 +274,7 @@ func PrivateCandidateRollback(t *testing.T, s store.Store, driver assurance.Driv
 		require.NoError(t, err)
 		require.Equal(t, capture.Output, saved.Output)
 	})
-	for _, kind := range []string{assurance.KindEvidence, "private_candidate", "candidate_run", assurance.KindJob, "verification_job_binding", "run"} {
+	for _, kind := range []string{assurance.KindEvidence, "private_candidate", "candidate_run", assurance.KindJob, "verification_job_binding", "run", assurance.KindEventStream, "public_event_identity"} {
 		t.Run("capture/"+kind, func(t *testing.T) {
 			ctx, intent, capture := privateCandidateFixture(t, s)
 			require.NoError(t, resultCapability[verification.CaptureIntentStore](t, s).CreateCaptureIntent(ctx, intent))
@@ -286,6 +287,7 @@ func PrivateCandidateRollback(t *testing.T, s store.Store, driver assurance.Driv
 			after, err := s.GetRun(ctx, intent.Template.Binding.RunID)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			require.Empty(t, readLifecycle(ctx, t, s, intent.Template.Binding.RunID).Events)
 			_, err = resultCapability[verification.JobStore](t, s).GetVerificationJob(ctx, intent.Template.ID)
 			require.ErrorIs(t, err, verification.ErrJobNotFound)
 			req, err := intent.JobFor(capture.ExpectedRunRevision+1, capture.Output)
@@ -296,7 +298,7 @@ func PrivateCandidateRollback(t *testing.T, s store.Store, driver assurance.Driv
 			require.NoError(t, err)
 		})
 	}
-	for _, kind := range []string{"result", "candidate_run", "commit_job"} {
+	for _, kind := range []string{"result", "candidate_run", "commit_job", assurance.KindEventStream, "public_event_identity"} {
 		t.Run("commit/"+kind, func(t *testing.T) {
 			ctx, intent, capture := privateCandidateFixture(t, s)
 			require.NoError(t, resultCapability[verification.CaptureIntentStore](t, s).CreateCaptureIntent(ctx, intent))
@@ -314,6 +316,7 @@ func PrivateCandidateRollback(t *testing.T, s store.Store, driver assurance.Driv
 			after, err := s.GetRun(ctx, intent.Template.Binding.RunID)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			requireLifecycle(t, readLifecycle(ctx, t, s, intent.Template.Binding.RunID), event.ExecutionFinished, event.VerificationPending)
 			require.Empty(t, after.Output)
 			_, err = resultCapability[verification.CommitStore](t, s).GetCommittedResult(ctx, intent.ResultID)
 			require.ErrorIs(t, err, verification.ErrNotFound)

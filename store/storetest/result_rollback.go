@@ -131,7 +131,7 @@ func VerifiedResultRestart(t *testing.T, s store.Store, reopen func() store.Stor
 	require.Equal(t, receipt.RunRevision, current.Revision)
 	page, err := resultCapability[event.Store](t, restored).ReadPublicEvents(ctx, event.ReadRequest{After: event.Cursor{SchemaVersion: 1, RunID: req.Current.RunID}, Limit: 10})
 	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Equal(t, receipt.Outbox.EventID, page.Events[0].ID)
-	require.Equal(t, uint64(1), page.Events[0].Sequence)
+	requireLifecycle(t, page, event.VerificationPassed, event.ResultCommitted)
+	require.Equal(t, receipt.Outbox.EventID, page.Events[1].ID)
+	require.Equal(t, uint64(2), page.Events[1].Sequence)
 }

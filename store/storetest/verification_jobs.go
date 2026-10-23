@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/internal/assurance"
@@ -289,6 +290,9 @@ func VerificationJobTermination(t *testing.T, s store.Store, driver assurance.Dr
 				require.Equal(t, verification.StatusInconclusive, current.VerificationStatus)
 			}
 			require.Equal(t, job.RunRevision+1, current.Revision)
+			page := readLifecycle(ctx, t, s, req.Binding.RunID)
+			requireLifecycle(t, page, event.VerificationPending, event.Type("verification_"+string(current.VerificationStatus)))
+			require.Equal(t, current.Revision, page.Events[1].RunRevision)
 		})
 	}
 }
@@ -341,6 +345,7 @@ func VerificationJobConcurrentClaims(t *testing.T, s store.Store) {
 // VerificationJobRollback injects failure after enqueue, report and final commit
 // writes, then proves each operation can be retried without partial progress.
 func VerificationJobRollback(t *testing.T, s store.Store, driver assurance.Driver) {
+	verificationLifecycleRollback(t, s, driver)
 	t.Helper()
 	transaction, ok := driver.(assurance.RunDriver)
 	require.True(t, ok)
@@ -357,6 +362,7 @@ func VerificationJobRollback(t *testing.T, s store.Store, driver assurance.Drive
 	after, err := s.GetRun(ctx, req.Binding.RunID)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+	require.Empty(t, readLifecycle(ctx, t, s, req.Binding.RunID).Events)
 	_, err = repository.EnqueueVerificationJob(ctx, req)
 	require.NoError(t, err)
 	job, err := repository.ClaimVerificationJob(ctx, verification.JobClaim{JobID: req.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "worker", Duration: time.Minute})
@@ -386,6 +392,7 @@ func VerificationJobRollback(t *testing.T, s store.Store, driver assurance.Drive
 	after, err = s.GetRun(ctx, req.Binding.RunID)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+	requireLifecycle(t, readLifecycle(ctx, t, s, req.Binding.RunID), event.VerificationPending)
 	_, err = repository.CommitVerifiedResult(ctx, commit)
 	require.NoError(t, err)
 }

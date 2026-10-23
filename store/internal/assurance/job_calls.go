@@ -5,7 +5,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/verification"
 )
 
@@ -96,7 +95,7 @@ func (s *Repository) CompleteVerificationCall(ctx context.Context, lease verific
 		call.Completion, call.CompletedAt = &completion, now
 		if frozen.Report == nil {
 			job.State, job.Lease = verification.JobInconclusive, nil
-			return tx.SetRunVerification(txctx, job.Request.Binding.RunID, job.RunRevision, verification.StatusInconclusive, id.ID{}, now)
+			return repository.setVerificationWithEvent(txctx, tx, job.Request.Binding.RunID, job.RunRevision, verification.StatusInconclusive, now)
 		}
 		return repository.acceptJobReport(txctx, tx, job, *frozen.Report, now)
 	})

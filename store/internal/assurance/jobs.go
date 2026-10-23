@@ -208,7 +208,7 @@ func (s *Repository) enqueueJob(ctx context.Context, tx RunTransaction, req veri
 	if insertErr := tx.Insert(ctx, index); insertErr != nil {
 		return verification.Job{}, insertErr
 	}
-	if updateErr := tx.SetRunVerification(ctx, current.ID, current.Revision, verification.StatusPending, id.ID{}, now); updateErr != nil {
+	if updateErr := s.setVerificationWithEvent(ctx, tx, current.ID, current.Revision, verification.StatusPending, now); updateErr != nil {
 		return verification.Job{}, updateErr
 	}
 	return job, nil

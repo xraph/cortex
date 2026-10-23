@@ -500,3 +500,21 @@ append cannot reuse an old identity.
 The existing live stream protocols are unchanged. This API replays typed metadata;
 answer text, tool results, history, hooks and transport subscriptions still need
 separate publication integration.
+
+
+## Verification lifecycle events
+
+Built-in verification transactions now record pending and terminal verdicts in
+the public metadata log. Private candidate capture records execution-finished
+before pending. Final commit records verification-passed before result-committed;
+a job becoming ready does not publish a passed event.
+
+Update replay readers and writers together. The closed event vocabulary now
+includes `verification_passed` and `verification_stale`; older readers reject
+those types. Existing historical logs and receipts keep their original sequences
+and are not backfilled. No schema migration is needed.
+
+Cancellation and expiry produce an inconclusive event only when they change the
+current run's verdict. Retiring a superseded job leaves its replacement's event
+history unchanged. The live transport APIs and ordinary run lifecycle producers
+remain separate work.
