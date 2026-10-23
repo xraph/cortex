@@ -1548,3 +1548,44 @@ Module tidy reported no diff.
 Installed database provisioning, source grants, live evidence verification,
 standalone broker installation and live systemd/runsc qualification remain open.
 S2.4 and the four-stage plan remain incomplete.
+
+### S2.4 installed evidence permissions
+
+The installed evidence policy now reads a protected canonical JSON file on every
+check. Exact input binding digests approve content and its provenance, sensitivity
+and retention together. Capture grants bound each declared output's bytes and
+retention. Independent cleanup grants bind an actor to the signed job's original
+subject and exact scope, so revoking content access does not prevent recovery of
+abandoned captures. Cleanup grants must themselves remain current.
+
+Policy files are root-owned, single-link mode-0600 files capped at one MiB.
+Subject and cleanup lists each allow at most 512 entries, with finite validity
+windows inside the document lifetime. Duplicate or invalid grants reject the
+whole document. Missing, unsafe, malformed and expired files deny access without
+falling back to a prior snapshot. Host execution and evidence policy share the
+protected reader, identity and interval validators. Their tests share one atomic
+policy-file writer.
+
+TDD reproduced a missing context at capture intent: that path supplied scope
+alone, so the installed policy correctly refused it. Intent and confirmation now
+use the same validated job context as evidence transfer. A real SQLite fixture
+checks installed input access, intent, upload, readback and confirmation, revokes
+the subject grant, then cleans the abandoned capture through the independent
+cleanup grant. Delayed uploads remain fenced by the repository tombstone.
+
+Regressions cover wrong operation, actor, subject, scope and job binding; revoked
+input/capture/cleanup grants; byte and retention ceilings; future or expired
+evidence; cancellation; expiry during authorization; invalid documents; duplicate
+grants; oversized files; wrong ownership; unsafe permissions; symlinks and hard
+links. The production constructor accepts only root-owned files. Expired evidence
+can be cleaned after content authority is revoked, but cleanup revocation denies
+that access too.
+
+Validation passed: scoped make f, final make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The service race
+suite passed in 37.599s. Evidence and host policy tests passed ten Linux
+repetitions, 120 top-level tests, without skips.
+
+Database and policy provisioning, live evidence verification, standalone broker
+installation and live systemd/runsc qualification remain open. S2.4 and the full
+four-stage plan remain incomplete. Linux worker selection remains deferred.

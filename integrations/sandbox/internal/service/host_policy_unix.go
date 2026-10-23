@@ -10,14 +10,11 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
-	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 	"github.com/xraph/cortex/integrations/sandbox/internal/image"
 	"github.com/xraph/cortex/sandbox"
 )
@@ -77,19 +74,18 @@ func (p *HostPolicy) load(ctx context.Context) (HostPolicyDocument, time.Time, e
 	if p == nil || p.now == nil {
 		return doc, time.Time{}, broker.ErrDenied
 	}
-	body, err := hostfs.ReadOwned(ctx, p.path, p.owner, 0o600, 1<<20)
-	if err != nil {
-		return doc, time.Time{}, errors.Join(broker.ErrDenied, err)
+	if err := readPolicyDocument(ctx, p.path, p.owner, &doc); err != nil {
+		return HostPolicyDocument{}, time.Time{}, errors.Join(broker.ErrDenied, err)
 	}
 	now := p.now()
-	if decodeCanonical(body, &doc) != nil || !validHostPolicy(doc) || !policyActive(doc.NotBefore, doc.NotAfter, now) {
+	if !validHostPolicy(doc) || !policyActive(doc.NotBefore, doc.NotAfter, now) {
 		return HostPolicyDocument{}, now, broker.ErrDenied
 	}
 	return doc, now, ctx.Err()
 }
 
 func validHostPolicy(doc HostPolicyDocument) bool {
-	if doc.SchemaVersion != 1 || doc.NotBefore.IsZero() || !doc.NotAfter.After(doc.NotBefore) || len(doc.Subjects) > 512 {
+	if doc.SchemaVersion != 1 || !validPolicyInterval(doc.NotBefore, doc.NotAfter) || len(doc.Subjects) > 512 {
 		return false
 	}
 	type subjectKey struct{ principal, scope string }
@@ -97,7 +93,7 @@ func validHostPolicy(doc HostPolicyDocument) bool {
 	certificates := make(map[string]bool)
 	for _, grant := range doc.Subjects {
 		key := subjectKey{grant.Principal, grant.Scope.Canonical()}
-		if strings.TrimSpace(grant.Principal) == "" || len(grant.Principal) > 512 || !utf8.ValidString(grant.Principal) || strings.ContainsRune(grant.Principal, 0) || cortex.ValidateScope(grant.Scope) != nil || subjects[key] || grant.NotBefore.IsZero() || !grant.NotAfter.After(grant.NotBefore) || grant.NotBefore.Before(doc.NotBefore) || grant.NotAfter.After(doc.NotAfter) || len(grant.Certificates) > 16 || len(grant.Images) == 0 || len(grant.Images) > 256 || !grant.Limits.Within(grant.Limits) {
+		if !validPolicySubject(grant.Principal, grant.Scope) || subjects[key] || !policyIntervalWithin(grant.NotBefore, grant.NotAfter, doc.NotBefore, doc.NotAfter) || len(grant.Certificates) > 16 || len(grant.Images) == 0 || len(grant.Images) > 256 || !grant.Limits.Within(grant.Limits) {
 			return false
 		}
 		subjects[key] = true

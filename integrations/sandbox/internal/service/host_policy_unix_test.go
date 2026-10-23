@@ -50,7 +50,7 @@ func policyFixture(t *testing.T, provided ...daemonCredentialFixture) (*HostPoli
 	}
 	document := HostPolicyDocument{SchemaVersion: 1, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), Subjects: []HostSubjectGrant{{Principal: job.Principal, Scope: job.Scope, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), Certificates: []string{evidence.Digest(leaf.Raw)}, Images: []string{job.Image}, Limits: job.Limits}}}
 	name := filepath.Join(filepath.Dir(f.files.SigningKey.Path), "policy.json")
-	writeHostPolicy(t, name, document)
+	writeInstalledPolicy(t, name, document)
 	policy, err := newHostPolicy(t.Context(), name, uint32(os.Geteuid()), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func policyFixture(t *testing.T, provided ...daemonCredentialFixture) (*HostPoli
 	return policy, document, job, request
 }
 
-func writeHostPolicy(t *testing.T, name string, document HostPolicyDocument) {
+func writeInstalledPolicy(t *testing.T, name string, document any) {
 	t.Helper()
 	body, err := json.Marshal(document)
 	if err != nil {
@@ -86,7 +86,7 @@ func TestHostPolicyRevocationThroughMTLSAndRecovery(t *testing.T) {
 	p, doc, _, _ := policyFixture(t, f)
 	doc.Subjects[0].Principal, doc.Subjects[0].Scope = job.Principal, job.Scope
 	doc.Subjects[0].Images, doc.Subjects[0].Limits = []string{job.Image}, job.Limits
-	writeHostPolicy(t, p.path, doc)
+	writeInstalledPolicy(t, p.path, doc)
 	f.files.SigningKey = credentialPin(t, f.files.SigningKey.Path, credentialPEM(t, config.SigningKey))
 	loaded, err := readDaemonCredentials(t.Context(), f.files, original.PublicKey(), p.Authenticate, credentialLimits(), uint32(os.Geteuid()))
 	if err != nil {
@@ -123,7 +123,7 @@ func TestHostPolicyRevocationThroughMTLSAndRecovery(t *testing.T) {
 	}
 	// Keep transport identity valid but revoke this job's execution capacity.
 	doc.Subjects[0].Limits.MemoryBytes--
-	writeHostPolicy(t, p.path, doc)
+	writeInstalledPolicy(t, p.path, doc)
 	if _, err = client.Submit(t.Context(), job); !errors.Is(err, broker.ErrDenied) {
 		t.Fatal("changed grant allowed a retry", err)
 	}
@@ -154,7 +154,7 @@ func TestHostPolicyCurrentGrantsAndCertificateRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	document.Subjects[0].Certificates = nil
-	writeHostPolicy(t, p.path, document)
+	writeInstalledPolicy(t, p.path, document)
 	if _, err = p.Authenticate(request); !errors.Is(err, broker.ErrDenied) {
 		t.Fatal("revoked certificate accepted", err)
 	}
@@ -162,7 +162,7 @@ func TestHostPolicyCurrentGrantsAndCertificateRevocation(t *testing.T) {
 		t.Fatal("transport revocation removed separate execution grant", err)
 	}
 	document.Subjects = nil
-	writeHostPolicy(t, p.path, document)
+	writeInstalledPolicy(t, p.path, document)
 	if err = p.Authorize(t.Context(), who, job); !errors.Is(err, broker.ErrDenied) {
 		t.Fatal("removed grant accepted", err)
 	}
@@ -176,7 +176,7 @@ func TestHostPolicyGrantWindowAndDetachedIdentity(t *testing.T) {
 	start := p.now()
 	doc.Subjects[0].NotBefore = start.Add(time.Second)
 	doc.Subjects[0].NotAfter = start.Add(2 * time.Second)
-	writeHostPolicy(t, p.path, doc)
+	writeInstalledPolicy(t, p.path, doc)
 	if _, err := p.Authenticate(r); !errors.Is(err, broker.ErrDenied) {
 		t.Fatal("future grant accepted", err)
 	}
@@ -271,7 +271,7 @@ func TestHostPolicyFailsClosedOnInvalidOrUnavailableDocument(t *testing.T) {
 			case "too many subjects":
 				doc.Subjects = make([]HostSubjectGrant, 513)
 			}
-			writeHostPolicy(t, p.path, doc)
+			writeInstalledPolicy(t, p.path, doc)
 			switch kind {
 			case "missing":
 				if err := os.Remove(p.path); err != nil {

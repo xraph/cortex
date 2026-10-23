@@ -1355,3 +1355,55 @@ SQLite integration fixtures exercise worker input, intent, upload, readback and
 confirmation, plus cleanup of stored and absent captures. They also cover revoked
 policy, cancellation, altered authority and mismatched audit records. Database
 provisioning, installed source grants and live runtime qualification remain open.
+
+### Installed evidence grants
+
+`service.NewEvidencePolicy(ctx, path)` loads an `EvidencePolicyDocument` from a
+root-owned, single-link mode-0600 file. Encode it with `json.Marshal`, keep the
+parent directory protected and publish changes by atomic replacement. The loader
+requires canonical JSON and caps the file at one MiB. Every operation rereads it;
+a missing, invalid or expired file denies access without using an older snapshot.
+
+The document has separate `Subjects` and `Cleanup` lists, each limited to 512
+entries. Every grant has a finite validity interval inside the document's
+interval. Principal and actor names are nonempty UTF-8 strings of at most 512
+bytes, without NUL. Scope matching is exact, including level order and depth.
+Duplicate subject/scope pairs or cleanup actor/subject/scope triples are invalid.
+
+For input access, place each approved `Ref.BindingDigest()` in the subject's
+`InputBindings`, up to 256 unique digests. This approves the complete reference,
+including its content hash, provenance, sensitivity and retention. The reference
+must also be a signed job input. Reads reject future creation times and expired
+retention. Changing any reference field requires a new approval.
+
+A subject's optional `Captures` grant allows declared output reads and writes.
+Set explicit `MaxBytes` (1 through 1,048,576) and `MaxRetention` (positive, at most
+24 hours, encoded as nanoseconds). These ceilings apply to each output and its
+full creation-to-retention interval. The job's signed output declarations and
+resource budget still apply. Nil `Captures` revokes capture access.
+
+Cleanup grants identify an actor, the job's original principal and its exact
+scope. They authorize deletion and tombstone audit only. Removing a subject's
+input or capture grant does not revoke cleanup, and expired evidence remains
+eligible for cleanup. Keep cleanup grants current until recovery has finished;
+an expired cleanup grant leaves the capture unresolved.
+
+Wire one policy into both service and repository checks:
+
+| Configuration | Method |
+|---|---|
+| `HostConfig.InputPolicy`, `EvidenceRepositoryConfig.Inputs` | `policy.AuthorizeInput` |
+| `HostConfig.CapturePolicy`, `EvidenceRepositoryConfig.Captures` | `policy.AuthorizeCapture` |
+| `HostConfig.Captures.Authorize`, `EvidenceRepositoryConfig.Cleanup` | `policy.AuthorizeCleanup` |
+
+Leave `HostConfig.CapturePolicy` nil when the deployment disables capture.
+Capture intent and confirmation use the same validated job context as content
+transfer. The repository adds its own checks; current worker claims and terminal
+recovery state remain the controller's responsibility. These grants cannot publish
+artifacts, qualify a runtime or authorize sandbox execution.
+
+The SQLite fixture exercises installed input grants, intent, upload, readback and
+confirmation, then revokes content access and cleans the abandoned capture through
+its independent grant. File, policy and revocation tests run on macOS and Linux.
+You still need to provision the database and policy files, install the broker and
+qualify its live systemd/runsc environment.

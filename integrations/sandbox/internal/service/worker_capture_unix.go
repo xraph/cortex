@@ -7,7 +7,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerpeer"
@@ -59,7 +58,7 @@ func (c *Controller) captureWorker(ctx context.Context, peer workerIdentity, cla
 	if confirm {
 		action = evidence.ActionRead
 	}
-	policyContext := cortex.WithScope(operation, cortex.Scope{Levels: slices.Clone(job.Scope.Levels)})
+	policyContext := evidenceContext(operation, job)
 	if policyErr := c.capturePolicy(policyContext, candidate, action, policyRef); policyErr != nil {
 		return WorkerCaptureReceipt{}, policyErr
 	}
