@@ -518,3 +518,23 @@ Cancellation and expiry produce an inconclusive event only when they change the
 current run's verdict. Retiring a superseded job leaves its replacement's event
 history unchanged. The live transport APIs and ordinary run lifecycle producers
 remain separate work.
+
+
+## Paged replay transports
+
+Configure `engine.WithPublicEventReplay(authorizer)` to enable the new
+`GET /v1/runs/:id/events` route and dashboard `runs.replay` version 1 query.
+Both accept `after` and `limit` and return `{page, next_cursor, gap}`. Save the
+opaque `next_cursor` after consuming each page; its string representation avoids
+JSON integer rounding. A cursor from another run is rejected.
+
+REST returns HTTP 410 for a retention gap. The dashboard returns `gap: true`
+without a query error so clients retain the authorized recovery cursor. Refresh
+the current run snapshot before continuing. Missing configuration remains
+unavailable, and each page checks the subscriber before and after storage.
+Provider error text is never part of the replay error response.
+
+Existing `runs.events` clients keep their current process-local offsets. Do not
+convert those offsets into durable cursors. This packet adds paged metadata
+reads; SSE subscriptions, answer-content replay and installed-client qualification
+remain open. No database migration is required.

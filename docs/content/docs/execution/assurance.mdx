@@ -533,6 +533,35 @@ stable identifiers, without candidate text, tool arguments, principal references
 or provider errors. A historical `result_committed` event does not prove that
 the result is still fresh or authorize access to its content.
 
+For HTTP clients, use `GET /v1/runs/{id}/events?limit=64`. Pass the returned
+`next_cursor` unchanged as `after` on the next request. The dashboard exposes the
+same envelope through the `runs.replay` version 1 query:
+
+```json
+{"id": "<run-id>", "after": "<next_cursor>", "limit": 64}
+```
+
+Both transports return `{page, next_cursor, gap}`. Limits are 1 through 128;
+omitting the limit or setting it to zero selects 128. Cursors are versioned,
+run-bound strings. Use `next_cursor` instead of rebuilding a cursor from JSON
+sequence numbers, which can exceed JavaScript's exact integer range. A cursor
+never grants access, and every request rechecks the current subscriber.
+
+REST returns HTTP 410 with `gap: true` and the authorized retained boundary when
+history has expired. The dashboard returns that envelope as a successful query
+so the dispatcher preserves the recovery cursor. In either case, fetch a current
+authorized run snapshot before resuming. No event bodies accompany a gap.
+
+Invalid cursors and limits return 400, denied access returns 403, a missing run in
+the authorized scope returns 404, and unavailable replay returns 503. Errors use
+static diagnostics rather than storage or authorization-provider messages. The
+dashboard maps these to its corresponding typed errors. A malformed storage page
+is unavailable, not an invalid client request. HTTP replay pages disable caching.
+
+The existing `runs.events` query keeps its process-local integer offsets and
+payload. You cannot reuse those offsets with `runs.replay`. Paged replay does not
+start execution, rerun evaluators or create a live subscription.
+
 Every new verified result commit writes `verification_passed` followed by
 `result_committed` in the same transaction as the receipt, job and run update.
 The committed-result event reuses the receipt's outbox ID. A crash or

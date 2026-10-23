@@ -69,6 +69,7 @@ intents:
 
   - {name: runs.start, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, sessions.list, memory.detail, overview.stats]}
   - {name: runs.events, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+  - {name: runs.replay, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
 
   - {name: runs.resume, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.run]}, invalidates: [runs.list, runs.detail, agents.stats, tools.usage, sessions.list, memory.detail, checkpoints.list, overview.stats]}
   - {name: overlays.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}

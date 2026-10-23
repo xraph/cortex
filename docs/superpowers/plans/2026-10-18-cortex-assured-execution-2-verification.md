@@ -208,8 +208,14 @@ terminal verdicts during settlement or retirement, and passed/result-committed a
 guarded commit. Each event shares its state transaction; a ready job emits no
 premature pass, and a superseded job cannot publish its verdict over a replacement.
 
+REST and dashboard now expose paged metadata through `GET /v1/runs/:id/events`
+and `runs.replay` v1. They share strict run-bound cursor encoding, bounded reads,
+validated gap envelopes and static failure classification. REST uses HTTP 410 for
+gaps; the dashboard preserves the recovery envelope with `gap: true`. Legacy
+`runs.events` offsets keep their existing meaning. Neither path starts execution.
+
 The remaining S2.6 work includes ordinary run lifecycle producers, artifact events,
-approved content replay, transport integration, bounded live subscriptions and
+approved content replay, remaining transport integration, bounded live subscriptions and
 installed reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.
 

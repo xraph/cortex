@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic verification lifecycle replay, scoped readers and retention gaps implemented; ordinary run producers, approved content and transport integration remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay and authorized REST/dashboard pages implemented; live subscriptions, ordinary run producers, approved content and remaining transports remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -2726,3 +2726,46 @@ Validation for verification lifecycle producers:
   Documentation type checks, lint and production build passed.
 - The metadata replay foundation `e351e09` has successful CI (`39946067588`).
   Transport and deployed subscriber-policy qualification remain open.
+
+
+### S2.6 authorized paged replay transports
+
+Ruling: durable cursors get their own protocol. `GET /v1/runs/:id/events` and
+`runs.replay` v1 share one bounded replay adapter, canonical run-bound cursor
+codec and static failure classifier. Existing `runs.events` offsets retain their
+process-local meaning. No evaluator or execution path runs during replay.
+
+The response includes the validated metadata page, an opaque next cursor and a
+gap flag. REST uses HTTP 410 for a gap; the dashboard returns the typed envelope
+without an error so its dispatcher preserves the recovery boundary. Both require
+a fresh authorized snapshot before resuming. JSON sequence numbers can exceed
+JavaScript precision, so transports provide a string cursor for continuation.
+
+The reader labels authorization denial explicitly while preserving wrapped causes
+for trusted Go callers. Public errors contain only static diagnostics. Corrupt
+storage pages classify as unavailable, not a client input error. Authorization
+still runs before and after each storage read, and failed checks discard all
+metadata, including retention watermarks. REST disables response caching.
+
+Tests first failed for the missing cursor API, REST route and dashboard intent.
+They cover cursor canonicalization and overflow, cross-run rejection, resume,
+retention gaps, malformed pages, revoked grants, scope isolation and private error
+redaction. HTTP tests exercise the assembled Forge router; dashboard tests use
+persisted SQLite events through the registered dispatcher. A private run output
+is absent from replay. Forge optional binding tags are verified by requests that
+omit the cursor and page size.
+
+Paged replay is implemented. Live subscriptions, approved content, artifact events,
+ordinary run producers, A2A/gRPC replay and installed reconnect/revocation checks
+remain open. S2.6 and the full goal stay active.
+
+Validation for paged replay transports:
+
+- Final event race suite passed (1.169s), with focused engine replay regressions
+  (7.625s). Full API race tests passed (1.542s); full extension and contract race
+  tests passed (1.803s and 21.014s). Root, API and extension builds passed.
+- Final `make f`, all ten module lint checks and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- Lifecycle producer commit `fd0c385` has successful CI (`39947375269`).
+  The new routes have local router/dispatcher evidence; deployed host grants and
+  installed client behavior remain unqualified.

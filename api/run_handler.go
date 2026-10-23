@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 )
@@ -34,6 +35,18 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register run routes: %w", err)
+	}
+
+	if err := g.GET("/runs/:id/events", a.replayRun,
+		forge.WithSummary("Replay public run metadata"),
+		forge.WithDescription("Reads authorized durable events. A 410 page identifies a retention gap and requires a refreshed run snapshot."),
+		forge.WithOperationID("replayRunEvents"),
+		forge.WithRequestSchema(ReplayRunRequest{}),
+		forge.WithResponseSchema(http.StatusOK, "Public event page", event.ReplayPage{}),
+		forge.WithResponseSchema(http.StatusGone, "Retention gap", event.ReplayPage{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register run replay: %w", err)
 	}
 
 	if err := g.POST("/runs/:id/cancel", a.cancelRun,

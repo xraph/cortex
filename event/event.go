@@ -22,10 +22,11 @@ const (
 )
 
 var (
-	ErrInvalid     = cortex.ErrInvalidPublicEvent
-	ErrConflict    = cortex.ErrPublicEventConflict
-	ErrCursorGap   = cortex.ErrPublicEventCursorGap
-	ErrUnavailable = cortex.ErrPublicEventUnavailable
+	ErrAccessDenied = cortex.ErrPublicEventAccessDenied
+	ErrInvalid      = cortex.ErrInvalidPublicEvent
+	ErrConflict     = cortex.ErrPublicEventConflict
+	ErrCursorGap    = cortex.ErrPublicEventCursorGap
+	ErrUnavailable  = cortex.ErrPublicEventUnavailable
 )
 
 // Type identifies a public lifecycle observation, never candidate content.

@@ -98,8 +98,9 @@ var (
 
 // Public replay errors distinguish unsupported requests, gaps and unavailable storage.
 var (
-	ErrInvalidPublicEvent     = errors.New("cortex: invalid public event")
-	ErrPublicEventConflict    = errors.New("cortex: public event identity or sequence conflict")
-	ErrPublicEventCursorGap   = errors.New("cortex: public event cursor expired")
-	ErrPublicEventUnavailable = errors.New("cortex: public event replay unavailable")
+	ErrInvalidPublicEvent      = errors.New("cortex: invalid public event")
+	ErrPublicEventConflict     = errors.New("cortex: public event identity or sequence conflict")
+	ErrPublicEventCursorGap    = errors.New("cortex: public event cursor expired")
+	ErrPublicEventAccessDenied = errors.New("cortex: public event replay denied")
+	ErrPublicEventUnavailable  = errors.New("cortex: public event replay unavailable")
 )

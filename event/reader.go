@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -67,7 +68,7 @@ func (r *Reader) Read(ctx context.Context, request ReadRequest) (Page, error) {
 	}
 	page.Events = slices.Clone(page.Events)
 	if err := page.Validate(request, errors.Is(readErr, ErrCursorGap)); err != nil {
-		return Page{}, err
+		return Page{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if err := r.authorize(ctx, request.After.RunID); err != nil {
 		return Page{}, err
@@ -80,7 +81,10 @@ func (r *Reader) authorize(ctx context.Context, runID id.AgentRunID) error {
 		return err
 	}
 	if err := r.authorizer.AuthorizePublicReplay(ctx, runID); err != nil {
-		return err
+		if errors.Is(err, ErrUnavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: %w", ErrAccessDenied, err)
 	}
 	return ctx.Err()
 }
