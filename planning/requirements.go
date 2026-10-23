@@ -9,15 +9,9 @@ func validateRequirements(p Plan) error {
 	if len(p.Effects) > 256 || verification.ValidateSources(p.Sources) != nil {
 		return invalid("effect or source manifest")
 	}
-	effects := make(map[string]execution.EffectRequirement, len(p.Effects))
-	for _, effect := range p.Effects {
-		if effect.Validate() != nil {
-			return invalid("effect declaration")
-		}
-		if _, exists := effects[effect.Tool]; exists {
-			return invalid("duplicate effect")
-		}
-		effects[effect.Tool] = effect
+	effects, err := effectManifest(p.Effects)
+	if err != nil {
+		return err
 	}
 	sources := make(map[string]verification.Source, len(p.Sources))
 	resources := resourceMap(p.Resources)
@@ -41,14 +35,8 @@ func validateRequirements(p Plan) error {
 				return invalid("unknown or repeated task effect")
 			}
 			seen[name] = true
-			if effect.Class != execution.EffectReadOnly {
-				writable := false
-				for _, grant := range grants {
-					writable = writable || grant.Access == AccessWrite
-				}
-				if !writable {
-					return invalid("mutation requires a writable resource")
-				}
+			if !effectResourcesGranted(effect, task.Resources) {
+				return invalid("mutation requires a writable resource")
 			}
 		}
 		seen = make(map[string]bool, len(task.Sources))
@@ -135,4 +123,32 @@ func taskContextMatches(p Plan, task Task, current verification.ContextSnapshot)
 		}
 	}
 	return true
+}
+
+func effectManifest(declarations []execution.EffectRequirement) (map[string]execution.EffectRequirement, error) {
+	if len(declarations) > 256 {
+		return nil, invalid("effect manifest size")
+	}
+	effects := make(map[string]execution.EffectRequirement, len(declarations))
+	for _, effect := range declarations {
+		if effect.Validate() != nil {
+			return nil, invalid("effect declaration")
+		}
+		if _, exists := effects[effect.Tool]; exists {
+			return nil, invalid("duplicate effect")
+		}
+		effects[effect.Tool] = effect
+	}
+	return effects, nil
+}
+func effectResourcesGranted(effect execution.EffectRequirement, resources []ResourceGrant) bool {
+	if effect.Class == execution.EffectReadOnly {
+		return true
+	}
+	for _, grant := range resources {
+		if grant.Access == AccessWrite {
+			return true
+		}
+	}
+	return false
 }

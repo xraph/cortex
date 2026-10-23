@@ -82,10 +82,11 @@ type Engine struct {
 	// a2a is the agent-to-agent message bus, nil unless a host asked for
 	// messaging with WithA2A. Its nil-ness is what gates the three
 	// messaging tools out of the list a model ever sees.
-	a2a            *a2a.Bus
-	a2aCfg         *a2aConfig
-	a2aSweepCancel context.CancelFunc
-	a2aSweepDone   chan struct{}
+	a2a               *a2a.Bus
+	a2aCfg            *a2aConfig
+	a2aHandoffHandler a2a.HandoffHandler
+	a2aSweepCancel    context.CancelFunc
+	a2aSweepDone      chan struct{}
 }
 
 // LLM returns the configured LLM client, or nil if none is set.

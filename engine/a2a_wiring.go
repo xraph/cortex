@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/internal/telemetry"
 )
 
@@ -34,25 +35,41 @@ func WithA2A(opts a2a.Options) Option {
 	}
 }
 
+// WithA2AHandoffHandler installs explicit structured assignment admission. Use
+// WithA2A as well; this option never enables messaging or effect tools by itself.
+func WithA2AHandoffHandler(handler a2a.HandoffHandler) Option {
+	return func(e *Engine) error {
+		if hostport.IsNil(handler) {
+			return cortex.ErrHandoffUnavailable
+		}
+		e.a2aHandoffHandler = handler
+		return nil
+	}
+}
+
 // buildA2A constructs the bus once every option has run. It is called from
 // New rather than from WithA2A, because the bus needs the store and the
 // plugin registry and an option cannot know what order the caller put
 // them in.
 func (e *Engine) buildA2A() error {
 	if e.a2aCfg == nil {
+		if e.a2aHandoffHandler != nil {
+			return cortex.ErrHandoffUnavailable
+		}
 		return nil
 	}
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
 	bus, err := a2a.NewBus(a2a.BusConfig{
-		Store:    e.store,
-		Runner:   agentRunnerAdapter{eng: e},
-		Resumer:  a2aResumer{eng: e},
-		Resolver: a2aResolver{eng: e},
-		Hooks:    a2aHooks{eng: e},
-		Options:  e.a2aCfg.opts,
-		Metrics:  e.metrics,
+		HandoffHandler: e.a2aHandoffHandler,
+		Store:          e.store,
+		Runner:         agentRunnerAdapter{eng: e},
+		Resumer:        a2aResumer{eng: e},
+		Resolver:       a2aResolver{eng: e},
+		Hooks:          a2aHooks{eng: e},
+		Options:        e.a2aCfg.opts,
+		Metrics:        e.metrics,
 	})
 	if err != nil {
 		return err

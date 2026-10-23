@@ -69,6 +69,15 @@ Interfaces: versioned structured handoff content contains assignment/task/plan I
 - [ ] Retain contradictions as explicit findings. A coordinator can request additional evidence or human adjudication; majority voting cannot override deterministic failure, missing evidence or authority denial.
 - [ ] Run in-process and real HTTP/SSE loopback workflows, malformed/duplicate/late replies, cancellation, deadline expiry and transport restart. Apply common checks and commit `feat(a2a): carry accountable task handoffs and review evidence`.
 
+S3.3 progress: sealed handoff proposals, current host authority validation,
+restricted review grants and bounded host admission are implemented. A2A uses a
+leaf-package handler port, with no fallback to ordinary agent execution. Remote
+mapping preserves parent runs and exact deadlines; HTTP/SSE loopback tests use
+SQLite messages/plans and fixture authorization/acceptance callbacks. Durable
+assignment lifecycle, review submissions, trusted evidence acceptance, producer
+independence beyond principal identity and installed qualification remain open.
+The packet and its acceptance checklist remain incomplete.
+
 ## S3.4: Effect reconciliation and artifact conflict handling
 
 Depends on S1.2/S2.1. Owner: execution/effects implementer; runtime integrator wires tools.
@@ -90,8 +99,8 @@ All three built-in stores share the immutable reservation/receipt implementation
 The executor pins trusted handler metadata and rechecks current authority. It
 never automatically repeats a mutation. A killed-process fixture checks that a
 completed external file write is reconciled without a second write. Explicit engine tool handlers now use that executor, and uncertainty stops normal,
-streamed and approved execution. Durable operation discovery, governed continuation,
-retry policy execution, compensation, artifact conflict handling, scheduler fences
+streamed and approved execution. Bounded exact-scope operation discovery and reconciliation are implemented.
+Governed continuation, retry policy execution, compensation, artifact conflict handling, scheduler fences
 and durable events remain open; the full packet stays unchecked.
 
 ## S3.5: Shared budgets and bounded replanning

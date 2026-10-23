@@ -26,7 +26,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission and A2A/HTTP/SSE transport bindings implemented; durable assignment lifecycle, review evidence acceptance and installed qualification remain open |
+| S3.2, S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -3775,3 +3776,58 @@ real containers, with no skipped conformance cases. The first combined backend
 run exposed shared fixture scope across cases, corrected by giving discovery its
 own scope before rerunning. `make f`, `make l` across all ten modules, root
 `GOWORK=off go build ./...`, docs typecheck/lint/build and diff checks passed.
+
+
+### S3.3 structured assignment proposals and host admission
+
+CI 39997280007 passed for effect discovery commit `281f768`. The superseded
+engine commit's CI run was cancelled when the newer push replaced it.
+
+`coordination.Handoff` seals exact plan/task/parent-run and assignment/fence
+bindings, endpoint/principal claims, criteria, artifact refs, deadline and a
+bounded authority declaration. `ValidateHandoff` checks those claims against
+current local plan and host-resolved ownership/grants. `planning.Authority`
+reuses budget, resource and effect-manifest checks. A child cannot retain mutation
+tools after removing every writable resource. Review proposals allow no effect
+tools or writable resources and require a host-resolved producer principal that
+differs from the receiver's principal.
+
+`HandoffReceiver` validates and detaches before invoking bounded host resolution
+and acceptance. The acceptance port must atomically check current ownership,
+plan revision and grants, and durably deduplicate assignment/fence/digest. This
+packet supplies the admission boundary, not that scheduler transaction.
+
+The bus retains its leaf-package dependency boundary through `HandoffHandler`.
+The typed adapter lives in `coordination`; `WithA2AHandoffHandler` connects it to
+an explicitly enabled engine bus. Unsupported versions, malformed or conflicting
+transport identity/deadline/run fields and missing handlers fail before message
+storage. Delivery rechecks scope, identity, deadline and conversation state.
+A cancelled conversation cannot pass a queued assignment to host admission.
+Structured proposals never start an ordinary agent run or use text-reply tokens.
+
+Remote mapping preserves fractional-second deadlines and parent run IDs. Service
+acknowledgements say `queued` without creating a task-success claim. REST and SSE
+loopback tests use actual HTTP and SQLite plan/message storage; repeated proposals
+reach fixture host deduplication, while denied credentials and changed sender
+names fail without a model call. Legacy messaging and the existing transports
+remain covered by their suites.
+
+Behavioral red tests reproduced missing handoff validation, dropped parent IDs,
+ordinary task acknowledgement, delivery after conversation closure and a mutation
+tool retained under read-only resources. The A2A import test also caught a direct
+coordination dependency; moving typed validation behind the handler port preserved
+the existing architectural boundary rather than widening its allowlist.
+
+Durable assignment transitions, submission/review evidence, contradiction handling,
+verified task acceptance, shared reservations, scheduler fencing and installed
+multi-agent qualification remain open. The four-stage goal remains active.
+
+Validation: the full engine race suite passed (340.643s). Final coordination,
+planning and A2A race suites passed after the authority correction, including the
+new cancellation and mutation-grant tests; coordination passed again after final
+import formatting (14.146s). The complete remote suite passed with `-race`
+(16.750s), including actual HTTP/SSE handoffs, and the gRPC suite passed (1.287s).
+`make f`, `make l` across all ten modules, root build, documentation
+typecheck/lint/build and diff checks passed. Tests keep the A2A import allowlist
+intact. The host acceptance callback and grant resolver remain fixtures, so these
+results do not establish durable scheduler or installed-worker qualification.

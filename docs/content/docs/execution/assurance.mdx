@@ -1234,3 +1234,73 @@ Page items contain the operation digest, run ID and one of `terminal`,
 references, provider evidence or private errors. These are trusted worker
 observations, not task acceptance or permission to publish a result. Recovery
 cannot reserve another attempt, retry a mutation, compensate or resume a run.
+
+
+### Carry structured task handoffs
+
+Use `coordination.Handoff` for an assignment proposal. It binds the exact scope,
+plan revision and digest, task, parent run, assignment ID, fence generation,
+sender and receiver identities, grant reference, criteria, input artifact refs
+and deadline. Seal it with `coordination.SealHandoff` before sending. The digest
+protects the proposal's contents; it does not authenticate its sender or grant
+permission to execute.
+
+The receiving host supplies two callbacks to `NewHandoffReceiver`. `Resolve`
+loads the current local plan, authenticated endpoint/principal mappings, parent
+run and assignment ownership, and current grant ceiling. `Accept` records the
+assignment with conditional ownership and grant checks. It must deduplicate the
+assignment/fence/digest and preserve uncertainty after a lost database response.
+Do not start an agent directly from this callback before reserving its work.
+
+```go
+receiver, err := coordination.NewHandoffReceiver(coordination.HandoffReceiverConfig{
+    Resolve:       host.ResolveHandoff,
+    Accept:        host.AcceptAssignment,
+    MaxConcurrent: 8,
+})
+// Check err before constructing the transport handler.
+handler, err := coordination.NewA2AHandoffHandler("worker-cluster", receiver, nil)
+// Check err, then pass handler through engine.WithA2AHandoffHandler(handler).
+// Configure engine.WithA2A separately to enable messaging.
+```
+
+`ValidateHandoff` compares the proposal with that current local context.
+`planning.Authority.Within` checks resource revisions, access levels, complete
+handler declarations, finite budgets and deadlines using the planner's existing
+rules. A child cannot broaden the plan's task authority or its current host grant.
+A mutation declaration requires a writable resource. The receiver detaches the
+proposal before calling the resolver and bounds resolution plus acceptance to
+30 seconds or the proposal's remaining lifetime, whichever is shorter.
+
+For review assignments, set `Purpose` to `HandoffReview`. These grants allow read
+access and no effect tools. The host must resolve `ProducerPrincipal` from local
+provenance; a receiver with that same principal is rejected. This prepares a
+restricted review context. It does not evaluate the artifact, establish reviewer
+independence beyond principal identity or accept a peer's success claim. Input
+refs still need authorized reads and current trusted verification before they
+can satisfy dependencies.
+
+`coordination.HandoffSendParams` encodes the sealed proposal for the existing A2A
+bus. The host's canonical node name maps to empty local routing; remote names
+must match the authenticated peer resolver's configured aliases. The bus's
+`HandoffHandler` interface keeps assignment policy in `coordination`. Configure
+its typed adapter on both sending and receiving hosts. A nil receiver in that
+adapter permits outbound validation only.
+
+The bus rejects unknown handoff versions, changed transport bindings and missing
+handlers before persistence. It rechecks the proposal and conversation before
+delivery. Structured handoffs never fall through to ordinary agent execution,
+including when admission fails or the conversation has closed. Legacy text
+messages keep their existing behavior. Handoffs use explicit host sends, with no
+`ReplyWith` or `InReplyTo` token for an ordinary agent question.
+
+The remote REST, JSON-RPC and SSE paths retain the body, parent run and full
+fractional-second deadline. They derive the sender's node from authentication.
+Their `queued` acknowledgement means that the bus retained the proposal, not
+that the host accepted the assignment or that a task succeeded. Host errors are
+reported without private provider details.
+
+Durable assignment transitions, submission and review evidence, task acceptance,
+shared reservations and scheduler fencing still need their runtime integration.
+The HTTP/SSE tests use SQLite plan/message storage and fixture grant resolution
+and acceptance callbacks. They do not qualify an installed multi-agent worker.

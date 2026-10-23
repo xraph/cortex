@@ -39,6 +39,12 @@ func (b *Bus) carry(ctx context.Context, d *Delivery, tr *deliveryTrace) error {
 		return b.failDelivery(ctx, d, err)
 	}
 	tr.envelope(e)
+	if IsHandoffProtocol(e.Protocol, e.Language) {
+		if handoffErr := b.handoff(ctx, e); handoffErr != nil {
+			return b.failDelivery(ctx, d, handoffErr)
+		}
+		return b.carryHandoff(ctx, d, e)
+	}
 
 	// A remote receiver is carried by a transport, whatever the
 	// performative says. Routing by class first would run a LOCAL agent

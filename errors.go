@@ -113,3 +113,9 @@ var (
 	ErrEffectUncertain   = errors.New("cortex: effect outcome requires reconciliation")
 	ErrEffectUnavailable = errors.New("cortex: effect executor unavailable")
 )
+
+// Handoff errors distinguish invalid proposals from unavailable host admission.
+var (
+	ErrInvalidHandoff     = errors.New("cortex: invalid task handoff")
+	ErrHandoffUnavailable = errors.New("cortex: task handoff unavailable")
+)

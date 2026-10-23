@@ -143,15 +143,19 @@ func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMes
 		return nil, mapBusError(err)
 	}
 
-	// An informative was filed, so there is nothing to follow. A
-	// directive is work, and the peer gets a task to poll and cancel.
+	// Structured handoffs acknowledge queued proposals without claiming agent
+	// execution or task success. Ordinary directives retain their task handle.
 	class, _ := params.Performative.Class()
-	if class != a2a.ClassDirective {
+	if class != a2a.ClassDirective || a2a.IsHandoffProtocol(params.Protocol, params.Language) {
+		acknowledgement := "received"
+		if a2a.IsHandoffProtocol(params.Protocol, params.Language) {
+			acknowledgement = "queued"
+		}
 		return &SendMessageResult{Message: &Message{
 			MessageID: sent.MessageID.String(),
 			ContextID: sent.ConversationID.String(),
 			Role:      RoleAgent,
-			Parts:     []Part{{Text: "received"}},
+			Parts:     []Part{{Text: acknowledgement}},
 		}}, nil
 	}
 
@@ -380,6 +384,10 @@ func deliveryIDOf(res *a2a.SendResult) string {
 // understand, so they keep their meaning; anything else is internal.
 func mapBusError(err error) *Error {
 	switch {
+	case errors.Is(err, cortex.ErrInvalidHandoff):
+		return ErrInvalidParams("invalid task handoff")
+	case errors.Is(err, cortex.ErrHandoffUnavailable):
+		return ErrUnsupportedOperation("task handoff")
 	case errors.Is(err, a2a.ErrHopCeiling):
 		return ErrInvalidRequest("this conversation has used up its message budget")
 	case errors.Is(err, a2a.ErrConversationClosed):

@@ -46,6 +46,9 @@ func MessageFromEnvelope(e *a2a.Envelope) Message {
 	}
 	if e.ReplyBy != nil {
 		meta.ReplyBy = timestamp(*e.ReplyBy)
+		if a2a.IsHandoffProtocol(e.Protocol, e.Language) {
+			meta.ReplyBy = e.ReplyBy.UTC().Format(time.RFC3339Nano)
+		}
 	}
 
 	m := Message{
@@ -127,6 +130,13 @@ func EnvelopeParamsFromMessage(m Message, sender, receiver a2a.Address) (a2a.Sen
 			return a2a.SendParams{}, ErrInvalidParams("replyBy is not an RFC3339 timestamp")
 		}
 		params.ReplyBy = &by
+	}
+	if a2a.IsHandoffProtocol(params.Protocol, params.Language) {
+		parent, parseErr := id.ParseWithPrefix(m.TaskID, id.PrefixAgentRun)
+		if parseErr != nil {
+			return a2a.SendParams{}, ErrInvalidParams("handoff taskId must name its parent run")
+		}
+		params.OriginRunID = parent
 	}
 	return params, nil
 }

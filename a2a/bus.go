@@ -35,16 +35,19 @@ var (
 )
 
 // BusConfig builds a Bus. Store and Runner are required; everything else
-// has a working default.
+// has a working default. Structured handoffs require HandoffHandler explicitly.
 type BusConfig struct {
-	Store      Store
-	Runner     cortex.AgentRunner
-	Resumer    Resumer
-	Resolver   Resolver
-	Hooks      HookEmitter
-	Clock      Clock
-	Transports []Transport
-	Options    Options
+	// HandoffHandler is required for structured assignments. No ordinary agent
+	// fallback is permitted. The host owns current authority and durable intake.
+	HandoffHandler HandoffHandler
+	Store          Store
+	Runner         cortex.AgentRunner
+	Resumer        Resumer
+	Resolver       Resolver
+	Hooks          HookEmitter
+	Clock          Clock
+	Transports     []Transport
+	Options        Options
 
 	// Metrics records the bus's delivery counter. Nil, the default,
 	// records nothing; the engine passes whatever WithMetrics gave it.
@@ -57,15 +60,16 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
-	store    Store
-	runner   cortex.AgentRunner
-	resumer  Resumer
-	resolver Resolver
-	hooks    HookEmitter
-	clock    Clock
-	opts     Options
-	dispatch *dispatcher
-	metrics  busMetrics
+	handoffHandler HandoffHandler
+	store          Store
+	runner         cortex.AgentRunner
+	resumer        Resumer
+	resolver       Resolver
+	hooks          HookEmitter
+	clock          Clock
+	opts           Options
+	dispatch       *dispatcher
+	metrics        busMetrics
 
 	// mu guards transports, which AddTransport appends to after the bus
 	// exists. Registration happens at startup and reads happen once per
@@ -114,15 +118,16 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		cfg.Clock = systemClock{}
 	}
 	b := &Bus{
-		store:      cfg.Store,
-		runner:     cfg.Runner,
-		resumer:    cfg.Resumer,
-		resolver:   cfg.Resolver,
-		hooks:      cfg.Hooks,
-		clock:      cfg.Clock,
-		transports: cfg.Transports,
-		opts:       cfg.Options.withDefaults(),
-		metrics:    newBusMetrics(cfg.Metrics),
+		handoffHandler: cfg.HandoffHandler,
+		store:          cfg.Store,
+		runner:         cfg.Runner,
+		resumer:        cfg.Resumer,
+		resolver:       cfg.Resolver,
+		hooks:          cfg.Hooks,
+		clock:          cfg.Clock,
+		transports:     cfg.Transports,
+		opts:           cfg.Options.withDefaults(),
+		metrics:        newBusMetrics(cfg.Metrics),
 	}
 	if len(b.transports) == 0 {
 		b.transports = []Transport{inProcess{}}
@@ -222,6 +227,9 @@ func (b *Bus) prepare(ctx context.Context, p SendParams) (*Envelope, *Conversati
 	}
 	if err := e.Validate(); err != nil {
 		return nil, nil, err
+	}
+	if handoffErr := b.handoff(ctx, e); handoffErr != nil {
+		return nil, nil, handoffErr
 	}
 	for _, r := range e.Receivers {
 		if !b.routable(r) {
