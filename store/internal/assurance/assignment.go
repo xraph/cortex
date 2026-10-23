@@ -115,7 +115,8 @@ func (s *Repository) ProposeAssignment(ctx context.Context, h coordination.Hando
 
 // AdvanceAssignment appends progress and its audit fields in a single row.
 func (s *Repository) AdvanceAssignment(ctx context.Context, change coordination.AssignmentChange) (coordination.Assignment, error) {
-	digest, err := change.BindingDigest()
+	frozen, digest, err := change.Freeze()
+	change = frozen
 	if err != nil {
 		return coordination.Assignment{}, err
 	}
@@ -152,6 +153,11 @@ func (s *Repository) AdvanceAssignment(ctx context.Context, change coordination.
 			}
 			if checkErr := coordination.ValidateHandoffPlan(next.Handoff, p, at); checkErr != nil {
 				return checkErr
+			}
+		}
+		if next.State == coordination.AssignmentSubmitted {
+			if submissionErr := tx.validateAssignmentSubmission(tc, next, at); submissionErr != nil {
+				return submissionErr
 			}
 		}
 		row, buildErr := assignmentRecord(next)
@@ -205,6 +211,9 @@ func (s *Repository) GetAssignment(ctx context.Context, identifier id.ID) (coord
 }
 func validateAssignmentEdge(previous, next coordination.Assignment) error {
 	change := coordination.AssignmentChange{AssignmentID: next.Handoff.AssignmentID, ExpectedRevision: next.Revision - 1, HandoffDigest: next.Handoff.Digest, Fence: next.Handoff.Fence, State: next.State, Actor: next.Actor, Reason: next.Reason}
+	if next.State == coordination.AssignmentSubmitted {
+		change.Submission = next.Submission
+	}
 	rebuilt, err := coordination.Advance(previous, change, next.At)
 	if err != nil || rebuilt.Digest != next.Digest {
 		return coordination.ErrInvalidAssignment

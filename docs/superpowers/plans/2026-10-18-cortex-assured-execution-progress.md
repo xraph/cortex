@@ -26,7 +26,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings and durable progress journal implemented; submission/review evidence, scheduler/grant fences and installed qualification remain open |
+| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress journal and evidence-bound submissions implemented; independent review, scheduler/grant fences and installed qualification remain open |
 | S3.2, S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3878,3 +3878,46 @@ tests passed in the broad run. The complete remote transport race suite passed
 (19.662s). Final `make f`, all-module `make l`, root build, documentation
 typecheck/lint/build and diff checks passed. No installed-worker qualification is
 claimed.
+
+
+### S3.3 retained submission evidence and execution lineage
+
+CI 40004979616 passed for journal commit `274f75d`.
+
+Working assignments can transition to submitted only with a stored verification
+job, exact request/binding digests and a pinned child run revision. Prepared runs
+retain the trusted host's handoff digest and parent run through persistence and
+resume. Submission checks that lineage against the complete sealed proposal,
+then checks the task's candidate shape, source pins, tool revisions and principal.
+The task-binding helper is shared with readiness without revalidating the entire
+plan for each dependency.
+
+Storage acquires locks in plan, run, evidence order. It validates current job/run
+state and captured output, or the matching committed result receipt, and loads
+all candidate/supporting bytes under deletion fences. Reference count, per-object
+size, total bytes, expiry and the post-read deadline check bound admission.
+Failed/inconclusive verifier verdicts stay unchanged, and submitted never means
+verified task success. Cancellation and rejection retain the submission pins.
+Historical retries acknowledge the original transition after later deletion.
+
+Red tests first failed for missing submission and assignment-provenance APIs.
+Backend fixtures reject wrong lineage, principal, producer, media, sources/tools,
+revision, binding, job, scope, stale plans, changed runs and deleted evidence.
+Transaction tests cover rollback, lost acknowledgments, expiry during reads and
+concurrent run mutation/deletion. The initial PostgreSQL concurrency assertion
+incorrectly assumed a client timeout meant the write could never happen. The
+corrected test validates both rows while the transaction still holds its locks;
+a timed-out statement may execute after commit. This preserves the existing
+uncertain-outcome rule instead of claiming cancellation guarantees.
+
+Independent review admission, contradictions, verified task acceptance,
+scheduler/authority integration, shared reservations and installed qualification
+remain open. The full four-stage goal remains active.
+
+Final validation passed: complete coordination, planning, A2A and run race tests;
+focused prepared-run, resume, provenance and assignment runtime race tests; and
+assignment, submission, planning and transaction checks on SQLite (33.571s),
+PostgreSQL (19.331s) and MongoDB (24.018s). Both container backends ran without
+skips. After the final Go edits, `make f`, all-module `make l` and the root build
+passed. Documentation typecheck, lint and build passed too. Live worker and
+installed host qualification remain deferred.

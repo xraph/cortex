@@ -37,24 +37,26 @@ type ExecutionProvenance struct {
 	VerificationIntentID  string `json:"verification_intent_id,omitempty"`
 	// SourceValidation distinguishes read-set checks from atomic store capture.
 	// read_set_checked detects observed changes but is not an atomic snapshot.
-	SourceSnapshot       SourceSnapshot           `json:"source_snapshot,omitzero"`
-	SourceValidation     string                   `json:"source_validation,omitempty"`
-	SourceReads          []Revision               `json:"source_reads,omitempty"`
-	PublicationStatus    safety.PublicationStatus `json:"publication_status,omitempty"`
-	SchemaVersion        int                      `json:"schema_version"`
-	PreparedDigest       string                   `json:"prepared_digest"`
-	DerivedFrom          string                   `json:"derived_from,omitempty"`
-	Purpose              ExecutionPurpose         `json:"purpose"`
-	ParentRunID          string                   `json:"parent_run_id,omitempty"`
-	ExperimentID         string                   `json:"experiment_id,omitempty"`
-	CandidateID          string                   `json:"candidate_id,omitempty"`
-	EnvironmentReceiptID string                   `json:"environment_receipt_id,omitempty"`
-	TrialID              string                   `json:"trial_id,omitempty"`
-	HarnessID            string                   `json:"harness_id,omitempty"`
-	HarnessVersion       string                   `json:"harness_version,omitempty"`
-	AcceptanceRef        string                   `json:"acceptance_ref,omitempty"`
-	ModelRevision        string                   `json:"model_revision,omitempty"`
-	Sources              []Revision               `json:"sources,omitempty"`
-	Tools                []Revision               `json:"tools,omitempty"`
-	Diagnostics          []string                 `json:"diagnostics,omitempty"`
+	SourceSnapshot    SourceSnapshot           `json:"source_snapshot,omitzero"`
+	SourceValidation  string                   `json:"source_validation,omitempty"`
+	SourceReads       []Revision               `json:"source_reads,omitempty"`
+	PublicationStatus safety.PublicationStatus `json:"publication_status,omitempty"`
+	SchemaVersion     int                      `json:"schema_version"`
+	PreparedDigest    string                   `json:"prepared_digest"`
+	DerivedFrom       string                   `json:"derived_from,omitempty"`
+	Purpose           ExecutionPurpose         `json:"purpose"`
+	// AssignmentDigest binds a trusted host execution to its sealed handoff.
+	AssignmentDigest     string     `json:"assignment_digest,omitempty"`
+	ParentRunID          string     `json:"parent_run_id,omitempty"`
+	ExperimentID         string     `json:"experiment_id,omitempty"`
+	CandidateID          string     `json:"candidate_id,omitempty"`
+	EnvironmentReceiptID string     `json:"environment_receipt_id,omitempty"`
+	TrialID              string     `json:"trial_id,omitempty"`
+	HarnessID            string     `json:"harness_id,omitempty"`
+	HarnessVersion       string     `json:"harness_version,omitempty"`
+	AcceptanceRef        string     `json:"acceptance_ref,omitempty"`
+	ModelRevision        string     `json:"model_revision,omitempty"`
+	Sources              []Revision `json:"sources,omitempty"`
+	Tools                []Revision `json:"tools,omitempty"`
+	Diagnostics          []string   `json:"diagnostics,omitempty"`
 }

@@ -1315,12 +1315,12 @@ latest observation with `GetAssignment`, page a plan's assignments with
 `ListAssignments`, or inspect immutable revisions with `AssignmentHistory`.
 All methods use the exact context scope.
 
-The journal supports `proposed`, `accepted`, `working`, `blocked`, `rejected` and
-`cancelled`. The receiver principal records progress; either endpoint principal
+The journal supports `proposed`, `accepted`, `working`, `blocked`, `submitted`,
+`rejected` and `cancelled`. The receiver principal records progress; either endpoint principal
 can record cancellation. Your host must authenticate that principal and authorize
 the call. These methods preserve observations without reserving a worker,
-authorizing dispatch or establishing task success. They do not yet accept
-`submitted` or `reviewed`; those transitions need evidence admission.
+authorizing dispatch or establishing task success. A `submitted` transition requires the stored evidence checks below. Independent
+review admission remains separate.
 
 A new proposal or progress transition checks the current sealed plan while
 holding the same database lock used by `CommitRevision`. SQLite and PostgreSQL
@@ -1346,3 +1346,50 @@ across concurrent updates.
 The journal alone does not satisfy `HandoffReceiverConfig.Accept`. Your host still
 needs atomic current-grant and scheduler-ownership fences, work reservations and
 verified evidence acceptance. Keep those checks in the acceptance integration.
+
+### Submit retained task evidence
+
+Before you execute an assigned child, pass the sealed handoff digest and parent
+run ID through `PreparedRunOptions.Provenance.AssignmentDigest` and `ParentRunID`.
+The engine validates their shape, stores them with the execution and preserves
+them through prepared suspension and resume. The host supplies these fields;
+model output cannot choose them. The digest binds the plan, task, assignment,
+fence and identities already sealed into the handoff.
+
+Capture the candidate through the existing verification job path. Its producer
+must be `planning.ArtifactProducer(plan, taskID)`, with the task's output media
+type and byte limit. The binding must use the task's pinned sources and tool
+revisions. `planning.ValidateTaskBinding` shares those checks with dependency
+readiness; passing it establishes structure, not verifier approval.
+
+To move a working assignment to `submitted`, attach a `coordination.Submission`
+to `AssignmentChange`. It pins the verification job ID and request digest, child
+run ID and revision, and complete verification binding digest. A text answer or
+peer success flag cannot substitute for these references. Submission adds no
+public output and does not change the run's verification status.
+
+Storage locks the current plan, then the child run, then reads the retained
+evidence under transaction fences. It checks the handoff lineage, exact scope,
+principal, prepared digest, contract, task sources/tools and candidate shape.
+The job and run must agree on their current state and revision. Committed jobs
+also need the matching stored result receipt. Failed and inconclusive jobs can
+be submitted for review while retaining their actual verdicts.
+
+Every referenced artifact must still exist and match its complete metadata and
+bytes. Submission admits at most 64 references, including the candidate, with
+at most 1 MiB per artifact and 8 MiB in total. It checks deadlines and retention
+again after the reads. Missing, revoked, expired or oversized evidence rejects
+the transition. PostgreSQL holds row locks, MongoDB performs transactional fence
+writes, and SQLite retains its write transaction. No remote call runs under
+these locks.
+
+The journal preserves submission pins through later rejection or cancellation.
+Identical retries acknowledge the original observation even if evidence was
+subsequently removed; they never restore bytes or authorize a content read.
+A database client timeout can leave a write that executes after a held lock is
+released, so reconcile uncertain outcomes by reading retained state.
+
+You still need current host authorization, scheduler ownership and grant fences.
+Submission storage does not provide those external checks, establish reviewer
+independence or mark a task successful. Dependent tasks continue to require fresh
+trusted verification through the planning acceptance rules.

@@ -226,7 +226,7 @@ func TestPreparedResumeAfterStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := e.RunPrepared(ctx, p, "work", engine.PreparedRunOptions{Provenance: run.ExecutionProvenance{CandidateID: "candidate-1", EnvironmentReceiptID: "environment-1"}})
+	r, err := e.RunPrepared(ctx, p, "work", engine.PreparedRunOptions{Provenance: run.ExecutionProvenance{CandidateID: "candidate-1", EnvironmentReceiptID: "environment-1", ParentRunID: id.NewAgentRunID().String(), AssignmentDigest: strings.Repeat("a", 64)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +252,12 @@ func TestPreparedResumeAfterStoreReopen(t *testing.T) {
 	}
 	if recorder.Request(t).System != "original" || recorder.Request(t).MaxTokens != 4 {
 		t.Fatalf("resume lost frozen prompt or remaining budget: %+v", recorder.Request(t))
+	}
+	if recorder.provenance.AssignmentDigest != r.Provenance.AssignmentDigest || recorder.provenance.ParentRunID != r.Provenance.ParentRunID {
+		t.Fatal("resume context lost assignment lineage")
+	}
+	if resumed.Provenance.AssignmentDigest != r.Provenance.AssignmentDigest || resumed.Provenance.ParentRunID != r.Provenance.ParentRunID {
+		t.Fatal("resumed run lost assignment lineage")
 	}
 	if recorder.provenance.CandidateID != "candidate-1" || recorder.provenance.EnvironmentReceiptID != "environment-1" {
 		t.Fatalf("resume context lost correlation: %+v", recorder.provenance)

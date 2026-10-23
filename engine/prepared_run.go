@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
@@ -129,6 +130,13 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	default:
 		return nil, nil, fmt.Errorf("cortex: unknown execution purpose: %w", cortex.ErrInvalidPrepared)
 	}
+	if opts.Provenance.AssignmentDigest != "" {
+		parent, parseErr := id.Parse(opts.Provenance.ParentRunID)
+		if !evidence.ValidDigest(opts.Provenance.AssignmentDigest) || parseErr != nil || parent.IsNil() || parent.Prefix() != id.PrefixAgentRun {
+			return nil, nil, cortex.ErrInvalidPrepared
+		}
+	}
+	provenance.AssignmentDigest = opts.Provenance.AssignmentDigest
 	provenance.ParentRunID = opts.Provenance.ParentRunID
 	provenance.ExperimentID = opts.Provenance.ExperimentID
 	provenance.CandidateID = opts.Provenance.CandidateID

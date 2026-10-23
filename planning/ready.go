@@ -111,10 +111,7 @@ func Ready(p Plan, states []TaskState, at time.Time) ([]id.ID, error) {
 
 func taskAccepted(p Plan, task Task, state TaskState, at time.Time) bool {
 	binding := state.Current
-	if !taskContextMatches(p, task, binding.Context) {
-		return false
-	}
-	if binding.Validate() != nil || binding.Scope.Canonical() != p.Scope.Canonical() || binding.ContractDigest != p.Contract.Digest || binding.Candidate.Producer != ArtifactProducer(p, task.ID) || binding.Candidate.MediaType != task.Output.MediaType || binding.Candidate.Bytes > task.Output.MaxBytes {
+	if !taskBindingValid(p, task, binding) {
 		return false
 	}
 	if len(state.Reports) == 0 || len(state.Reports) > 256 {
@@ -169,4 +166,22 @@ func validStatus(status Status) bool {
 // A new plan revision requires new verification even when bytes are unchanged.
 func ArtifactProducer(p Plan, taskID id.ID) string {
 	return p.Digest + ":" + taskID.String()
+}
+
+// ValidateTaskBinding checks candidate shape and frozen task sources/tools. It
+// does not establish provenance authenticity, current access or a verifier pass.
+func ValidateTaskBinding(p Plan, taskID id.ID, binding verification.Binding) error {
+	if Validate(p, Limits{}) != nil {
+		return ErrInvalid
+	}
+	for _, task := range p.Tasks {
+		if task.ID == taskID && taskBindingValid(p, task, binding) {
+			return nil
+		}
+	}
+	return ErrInvalid
+}
+
+func taskBindingValid(p Plan, task Task, binding verification.Binding) bool {
+	return binding.Validate() == nil && binding.Scope.Canonical() == p.Scope.Canonical() && binding.ContractDigest == p.Contract.Digest && taskContextMatches(p, task, binding.Context) && binding.Candidate.Producer == ArtifactProducer(p, task.ID) && binding.Candidate.MediaType == task.Output.MediaType && binding.Candidate.Bytes <= task.Output.MaxBytes
 }

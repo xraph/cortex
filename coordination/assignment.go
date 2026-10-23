@@ -27,14 +27,15 @@ const (
 	AssignmentAccepted  AssignmentState = "accepted"
 	AssignmentWorking   AssignmentState = "working"
 	AssignmentBlocked   AssignmentState = "blocked"
+	AssignmentSubmitted AssignmentState = "submitted"
 	AssignmentRejected  AssignmentState = "rejected"
 	AssignmentCancelled AssignmentState = "cancelled"
 	MaxAssignmentBytes                  = MaxHandoffBytes + 16<<10
 )
 
 // Assignment is one immutable journal revision, including its original proposal.
-// Submission and review require separate evidence admission and are not accepted
-// by this progress journal. Cancellation does not prove external effects stopped.
+// Submissions require retained evidence admission. Cancellation does not prove
+// external effects stopped, and a submission never establishes task success.
 type Assignment struct {
 	SchemaVersion  int             `json:"schema_version"`
 	Handoff        Handoff         `json:"handoff"`
@@ -45,6 +46,7 @@ type Assignment struct {
 	At             time.Time       `json:"at"`
 	PreviousDigest string          `json:"previous_digest,omitempty"`
 	RequestDigest  string          `json:"request_digest"`
+	Submission     *Submission     `json:"submission,omitempty"`
 	Digest         string          `json:"digest"`
 }
 
@@ -58,23 +60,41 @@ type AssignmentChange struct {
 	State            AssignmentState `json:"state"`
 	Actor            string          `json:"actor"`
 	Reason           string          `json:"reason"`
+	Submission       *Submission     `json:"submission,omitempty"`
 }
 
 // BindingDigest validates and hashes every caller-controlled transition field.
 func (c AssignmentChange) BindingDigest() (string, error) {
+	_, digest, err := c.Freeze()
+	return digest, err
+}
+
+// Freeze detaches every transition field before host storage callbacks.
+func (c AssignmentChange) Freeze() (AssignmentChange, string, error) {
 	if c.AssignmentID.IsNil() || c.AssignmentID.Prefix() != PrefixAssignment || c.ExpectedRevision < 1 || c.ExpectedRevision == math.MaxInt64 || !evidence.ValidDigest(c.HandoffDigest) || c.Fence == 0 || !c.State.valid() || c.State == AssignmentProposed || !handoffText(c.Actor, 512) || !handoffText(c.Reason, 4096) {
-		return "", ErrInvalidAssignment
+		return AssignmentChange{}, "", ErrInvalidAssignment
+	}
+	if c.State == AssignmentSubmitted {
+		if c.Submission == nil || c.Submission.Validate() != nil {
+			return AssignmentChange{}, "", ErrInvalidAssignment
+		}
+	} else if c.Submission != nil {
+		return AssignmentChange{}, "", ErrInvalidAssignment
 	}
 	data, err := json.Marshal(c)
 	if err != nil {
-		return "", ErrInvalidAssignment
+		return AssignmentChange{}, "", ErrInvalidAssignment
 	}
-	return evidence.Digest(data), nil
+	var frozen AssignmentChange
+	if json.Unmarshal(data, &frozen) != nil {
+		return AssignmentChange{}, "", ErrInvalidAssignment
+	}
+	return frozen, evidence.Digest(data), nil
 }
 
 func (s AssignmentState) valid() bool {
 	switch s {
-	case AssignmentProposed, AssignmentAccepted, AssignmentWorking, AssignmentBlocked, AssignmentRejected, AssignmentCancelled:
+	case AssignmentProposed, AssignmentAccepted, AssignmentWorking, AssignmentBlocked, AssignmentSubmitted, AssignmentRejected, AssignmentCancelled:
 		return true
 	}
 	return false
@@ -88,6 +108,13 @@ func sealAssignment(a Assignment) (Assignment, error) {
 	if a.SchemaVersion != 1 || a.Handoff.Validate() != nil || a.Revision < 1 || !a.State.valid() || !handoffText(a.Actor, 512) || !handoffText(a.Reason, 4096) || a.At.IsZero() || !evidence.ValidDigest(a.RequestDigest) {
 		return Assignment{}, ErrInvalidAssignment
 	}
+	if a.Submission != nil {
+		if a.Submission.Validate() != nil || a.Handoff.Purpose != HandoffWork || a.Submission.RunID == a.Handoff.ParentRunID || (a.State != AssignmentSubmitted && !a.State.Terminal()) {
+			return Assignment{}, ErrInvalidAssignment
+		}
+	} else if a.State == AssignmentSubmitted {
+		return Assignment{}, ErrInvalidAssignment
+	}
 	switch {
 	case a.Revision == 1:
 		if a.State != AssignmentProposed || a.PreviousDigest != "" || a.RequestDigest != a.Handoff.Digest || a.Actor != a.Handoff.Sender.Principal || a.Reason != "proposed" || !a.At.Before(a.Handoff.Deadline) {
@@ -97,6 +124,9 @@ func sealAssignment(a Assignment) (Assignment, error) {
 		return Assignment{}, ErrInvalidAssignment
 	default:
 		c := AssignmentChange{AssignmentID: a.Handoff.AssignmentID, ExpectedRevision: a.Revision - 1, HandoffDigest: a.Handoff.Digest, Fence: a.Handoff.Fence, State: a.State, Actor: a.Actor, Reason: a.Reason}
+		if a.State == AssignmentSubmitted {
+			c.Submission = a.Submission
+		}
 		digest, err := c.BindingDigest()
 		if err != nil || digest != a.RequestDigest || !a.actorAllowed() || (!a.State.Terminal() && !a.At.Before(a.Handoff.Deadline)) {
 			return Assignment{}, ErrInvalidAssignment
@@ -134,7 +164,8 @@ func Propose(h Handoff, at time.Time) (Assignment, error) {
 
 // Advance records one legal observation without changing authority or ownership.
 func Advance(previous Assignment, change AssignmentChange, at time.Time) (Assignment, error) {
-	requestDigest, err := change.BindingDigest()
+	frozen, requestDigest, err := change.Freeze()
+	change = frozen
 	if err != nil || previous.Validate() != nil || at.IsZero() || at.Before(previous.At) {
 		return Assignment{}, ErrInvalidAssignment
 	}
@@ -145,6 +176,9 @@ func Advance(previous Assignment, change AssignmentChange, at time.Time) (Assign
 	next.Revision++
 	next.State, next.Actor, next.Reason, next.At = change.State, change.Actor, change.Reason, at
 	next.PreviousDigest, next.RequestDigest = previous.Digest, requestDigest
+	if change.Submission != nil {
+		next.Submission = change.Submission
+	}
 	return sealAssignment(next)
 }
 func transitionAllowed(from, to AssignmentState) bool {
@@ -160,7 +194,9 @@ func transitionAllowed(from, to AssignmentState) bool {
 	case AssignmentAccepted:
 		return to == AssignmentWorking || to == AssignmentBlocked || to == AssignmentRejected
 	case AssignmentWorking:
-		return to == AssignmentBlocked
+		return to == AssignmentBlocked || to == AssignmentSubmitted
+	case AssignmentSubmitted:
+		return to == AssignmentRejected
 	case AssignmentBlocked:
 		return to == AssignmentWorking || to == AssignmentRejected
 	}
