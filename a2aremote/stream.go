@@ -46,8 +46,7 @@ type Emit func(StreamEvent) error
 //
 // The first event is the task as it exists the moment the message is
 // accepted, so a client has something to hold on to immediately. After
-// that come status transitions, and the last event carries the artifacts
-// with Final set.
+// that come status transitions. Output artifacts precede the final status update.
 //
 // What this is not is token-level streaming. A2A's streaming is about a
 // task's progress, and that is what this reports: cortex learns of a
@@ -119,6 +118,18 @@ func (s *Service) follow(ctx context.Context, cred Credentials, tenant, taskID s
 		last = task.Status.State
 
 		final := task.Status.State.Terminal()
+		if final {
+			// Clients may close as soon as they see a terminal status.
+			for i := range task.Artifacts {
+				if err := emit(StreamEvent{ArtifactUpdate: &TaskArtifactUpdate{
+					TaskID:    task.ID,
+					ContextID: task.ContextID,
+					Artifact:  task.Artifacts[i],
+				}}); err != nil {
+					return err
+				}
+			}
+		}
 		if err := emit(StreamEvent{StatusUpdate: &TaskStatusUpdateEvent{
 			TaskID:    task.ID,
 			Metadata:  task.Metadata,
@@ -128,21 +139,8 @@ func (s *Service) follow(ctx context.Context, cred Credentials, tenant, taskID s
 		}}); err != nil {
 			return err
 		}
-		if !final {
-			continue
+		if final {
+			return nil
 		}
-
-		// The output arrives with the last transition rather than after
-		// it, so a client that stops reading on Final has everything.
-		for i := range task.Artifacts {
-			if err := emit(StreamEvent{ArtifactUpdate: &TaskArtifactUpdate{
-				TaskID:    task.ID,
-				ContextID: task.ContextID,
-				Artifact:  task.Artifacts[i],
-			}}); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
 }

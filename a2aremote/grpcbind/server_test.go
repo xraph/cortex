@@ -269,6 +269,9 @@ func TestGRPCSendStreamingMessage(t *testing.T) {
 		case resp.GetStatusUpdate() != nil:
 			if resp.GetStatusUpdate().GetStatus().GetState() == a2apb.TaskState_TASK_STATE_COMPLETED {
 				sawFinal = true
+				if !sawArtifact {
+					t.Error("terminal status arrived before the output artifact")
+				}
 			}
 		case resp.GetArtifactUpdate() != nil:
 			sawArtifact = true

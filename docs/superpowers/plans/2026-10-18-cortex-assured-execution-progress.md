@@ -2849,3 +2849,26 @@ Validation for the SQLite worker fixture correction:
   documentation type checks, lint and production build passed.
 - The original CI failure remains recorded. A fresh CI run must verify the
   corrected fixture on Linux before this is treated as CI-qualified.
+
+
+### A2A terminal delivery ordering
+
+The shared remote stream emitted its final status before output artifacts. A
+consumer that stopped on the terminal status could therefore miss the output.
+The service now emits artifacts first and the terminal status last. A failed
+artifact write stops without publishing final. HTTP and gRPC schemas are unchanged.
+
+Regression tests first reproduced the missing output in a real SSE consumer that
+closes on final, in the native gRPC binding, and in the shared service. A separate
+failure test verifies that artifact-write failure never sends final. All bindings
+use the same ordering implementation. This fixes current task-stream delivery;
+durable A2A event-log replay remains open.
+
+Validation for A2A terminal ordering:
+
+- Full remote-module race tests passed (4.591s), as did the separate gRPC module
+  (1.277s). Both modules built successfully. The gRPC module was checked
+  explicitly because root CI does not run it.
+- Final formatting, lint across all ten modules, diff checks and documentation
+  type checks, lint and production build passed.
+- Installed peer/proxy behavior and durable remote replay remain unqualified.

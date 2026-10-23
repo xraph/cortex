@@ -116,7 +116,7 @@ func TestStreamMessageReportsTransitionsAndEndsFinal(t *testing.T) {
 	if last.Status.State != TaskStateCompleted {
 		t.Errorf("last state = %s, want completed", last.Status.State)
 	}
-	// The output arrives with the last transition rather than after it,
+	// The output arrives before the last transition,
 	// so a client that stops on Final still has everything.
 	if len(artifacts) != 1 || artifacts[0].Artifact.Parts[0].Text != "the work is done" {
 		t.Fatalf("artifacts = %+v", artifacts)
@@ -253,6 +253,9 @@ func TestSSEFramesArriveAsEvents(t *testing.T) {
 			t.Fatalf("frame is not an event: %q", line)
 		}
 		frames = append(frames, ev)
+		if ev.StatusUpdate != nil && ev.StatusUpdate.Final {
+			break
+		}
 	}
 
 	if len(frames) < 2 {
@@ -261,13 +264,55 @@ func TestSSEFramesArriveAsEvents(t *testing.T) {
 	if frames[0].Task == nil {
 		t.Errorf("the first frame must be the task: %+v", frames[0])
 	}
-	var sawFinal bool
+	var sawFinal, sawArtifact bool
 	for _, f := range frames {
+		if f.ArtifactUpdate != nil {
+			sawArtifact = true
+		}
 		if f.StatusUpdate != nil && f.StatusUpdate.Final {
 			sawFinal = true
 		}
 	}
 	if !sawFinal {
 		t.Error("the stream never said it was finished")
+	}
+	if !sawArtifact {
+		t.Error("output was missing when the SSE client stopped at final")
+	}
+}
+
+func TestStreamDeliversArtifactsBeforeClientStopsAtFinal(t *testing.T) {
+	gw := newMovingGateway(run.StateRunning, run.StateCompleted)
+	receivedArtifact := false
+	stopped := errors.New("client stops at final")
+	err := streamingService(t, gw).StreamMessage(context.Background(), Credentials{}, plainRequest("work"), func(ev StreamEvent) error {
+		if ev.ArtifactUpdate != nil {
+			receivedArtifact = true
+		}
+		if ev.StatusUpdate != nil && ev.StatusUpdate.Final {
+			return stopped
+		}
+		return nil
+	})
+	if !errors.Is(err, stopped) || !receivedArtifact {
+		t.Fatalf("final preceded artifact: received=%v err=%v", receivedArtifact, err)
+	}
+}
+
+func TestStreamArtifactWriteFailureDoesNotSendFinal(t *testing.T) {
+	gw := newMovingGateway(run.StateRunning, run.StateCompleted)
+	final := false
+	disconnected := errors.New("artifact write failed")
+	err := streamingService(t, gw).StreamMessage(context.Background(), Credentials{}, plainRequest("work"), func(ev StreamEvent) error {
+		if ev.StatusUpdate != nil && ev.StatusUpdate.Final {
+			final = true
+		}
+		if ev.ArtifactUpdate != nil {
+			return disconnected
+		}
+		return nil
+	})
+	if !errors.Is(err, disconnected) || final {
+		t.Fatalf("final escaped failed delivery: final=%v err=%v", final, err)
 	}
 }

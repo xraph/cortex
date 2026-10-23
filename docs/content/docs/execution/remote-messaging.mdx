@@ -183,8 +183,12 @@ Service: a2aremote.Options{
 
 `SendStreamingMessage` and `SubscribeToTask` then work on every binding, over
 server-sent events for the two HTTP ones and native server streaming for gRPC.
-A subscriber gets the task immediately, then each status transition, and the
-last one carries the output with `final` set so a client knows to stop reading.
+A subscriber gets the task immediately, then each status transition. Output
+artifacts arrive before the terminal status, so a client that stops at that status
+has already received them. HTTP status events set `final`; gRPC clients use the
+terminal task state. If artifact delivery fails, Cortex stops the subscription
+without sending a final status. Fetch the current task to recover its output
+after a disconnect.
 
 This is task-level streaming, which is what A2A's streaming is: the events are
 `TaskStatusUpdateEvent` and `TaskArtifactUpdateEvent`, not tokens. Cortex learns
