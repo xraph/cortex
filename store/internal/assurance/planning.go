@@ -116,9 +116,8 @@ func (s *Repository) GetPlan(ctx context.Context, identifier id.ID) (planning.Pl
 	return latest, nil
 }
 
-// CommitRevision appends a validated successor. The existing unique key on
-// (kind, scope, ID) serializes competing proposals for the same successor.
-// There is no mutable head or second write to lose after a process crash.
+// CommitRevision appends a successor while holding the same plan lock as
+// assignment observations. Identical historical retries preserve their revision.
 func (s *Repository) CommitRevision(ctx context.Context, proposal planning.Revision, expected int64) (planning.Plan, error) {
 	if err := require(ctx, proposal.Plan.Scope); err != nil {
 		return planning.Plan{}, err
@@ -126,6 +125,22 @@ func (s *Repository) CommitRevision(ctx context.Context, proposal planning.Revis
 	if expected < 1 {
 		return planning.Plan{}, planning.ErrConflict
 	}
+	var accepted planning.Plan
+	err := s.planTransaction(ctx, proposal.Plan.ID, func(tc context.Context, tx *Repository) error {
+		var commitErr error
+		accepted, commitErr = tx.commitRevision(tc, proposal, expected)
+		return commitErr
+	})
+	if errors.Is(err, planning.ErrNotFound) {
+		err = planning.ErrConflict
+	}
+	if err != nil {
+		return planning.Plan{}, err
+	}
+	return accepted, nil
+}
+
+func (s *Repository) commitRevision(ctx context.Context, proposal planning.Revision, expected int64) (planning.Plan, error) {
 	previous, err := s.GetPlanRevision(ctx, proposal.Plan.ID, expected)
 	if errors.Is(err, planning.ErrNotFound) {
 		return planning.Plan{}, planning.ErrConflict
@@ -140,6 +155,16 @@ func (s *Repository) CommitRevision(ctx context.Context, proposal planning.Revis
 	row, err := planRecord(next)
 	if err != nil {
 		return planning.Plan{}, err
+	}
+	existing, readErr := s.get(ctx, Query{Kind: row.Kind, ID: row.ID})
+	if readErr == nil {
+		if existing.Deleted || existing.Digest != row.Digest || existing.Body != row.Body {
+			return planning.Plan{}, planning.ErrConflict
+		}
+		return next, nil
+	}
+	if !errors.Is(readErr, ErrAbsent) {
+		return planning.Plan{}, readErr
 	}
 	if err = s.insert(ctx, row); errors.Is(err, ErrExists) {
 		return planning.Plan{}, planning.ErrConflict

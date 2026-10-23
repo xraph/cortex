@@ -73,9 +73,12 @@ S3.3 progress: sealed handoff proposals, current host authority validation,
 restricted review grants and bounded host admission are implemented. A2A uses a
 leaf-package handler port, with no fallback to ordinary agent execution. Remote
 mapping preserves parent runs and exact deadlines; HTTP/SSE loopback tests use
-SQLite messages/plans and fixture authorization/acceptance callbacks. Durable
-assignment lifecycle, review submissions, trusted evidence acceptance, producer
-independence beyond principal identity and installed qualification remain open.
+SQLite messages/plans and fixture authorization/acceptance callbacks. The built-in
+stores now retain proposed, accepted, working, blocked, rejected and cancelled
+observations with immutable history, exact-scope reads, idempotent replay and a
+shared plan-revision transaction. Submission/review evidence, atomic current-grant
+and scheduler-ownership fences, producer independence beyond principal identity
+and installed qualification remain open.
 The packet and its acceptance checklist remain incomplete.
 
 ## S3.4: Effect reconciliation and artifact conflict handling

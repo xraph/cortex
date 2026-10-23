@@ -1304,3 +1304,45 @@ Durable assignment transitions, submission and review evidence, task acceptance,
 shared reservations and scheduler fencing still need their runtime integration.
 The HTTP/SSE tests use SQLite plan/message storage and fixture grant resolution
 and acceptance callbacks. They do not qualify an installed multi-agent worker.
+
+### Retain assignment progress
+
+The built-in stores implement `coordination.AssignmentStore`. Use
+`ProposeAssignment` to retain a sealed handoff, then `AdvanceAssignment` to append
+host-observed progress. Every change carries the expected journal revision,
+original handoff digest, fence generation, actor and reason. You can read the
+latest observation with `GetAssignment`, page a plan's assignments with
+`ListAssignments`, or inspect immutable revisions with `AssignmentHistory`.
+All methods use the exact context scope.
+
+The journal supports `proposed`, `accepted`, `working`, `blocked`, `rejected` and
+`cancelled`. The receiver principal records progress; either endpoint principal
+can record cancellation. Your host must authenticate that principal and authorize
+the call. These methods preserve observations without reserving a worker,
+authorizing dispatch or establishing task success. They do not yet accept
+`submitted` or `reviewed`; those transitions need evidence admission.
+
+A new proposal or progress transition checks the current sealed plan while
+holding the same database lock used by `CommitRevision`. SQLite and PostgreSQL
+lock the initial plan row. MongoDB performs a real write on that document inside
+a transaction, so a concurrent replan conflicts even though revisions live in
+separate documents. MongoDB requires transaction support. No fallback uses
+unprotected reads.
+
+Identical retries return the original immutable observation, including after a
+later transition, expiry or replan. A changed request for an occupied revision
+fails. This lets you recover a lost commit response without appending duplicate
+history. A historical acknowledgment gives you no permission to run the task.
+Fresh progress against a superseded plan fails; rejection and cancellation remain
+available after expiry or replan. Cancellation records intent and does not prove
+an external effect stopped. Reconcile retained effects separately.
+
+Each revision stores its audit fields and predecessor digest in the same row.
+Failed transactions leave no partial observation. Reads validate snapshot digests
+and adjacent history bindings. History pages contain at most 256 revisions;
+assignment lists return each identity's latest observation and are not a snapshot
+across concurrent updates.
+
+The journal alone does not satisfy `HandoffReceiverConfig.Accept`. Your host still
+needs atomic current-grant and scheduler-ownership fences, work reservations and
+verified evidence acceptance. Keep those checks in the acceptance integration.

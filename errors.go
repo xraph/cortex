@@ -119,3 +119,11 @@ var (
 	ErrInvalidHandoff     = errors.New("cortex: invalid task handoff")
 	ErrHandoffUnavailable = errors.New("cortex: task handoff unavailable")
 )
+
+// Assignment errors describe durable progress journal failures.
+var (
+	ErrInvalidAssignment     = errors.New("cortex: invalid assignment")
+	ErrAssignmentConflict    = errors.New("cortex: assignment conflict")
+	ErrAssignmentNotFound    = errors.New("cortex: assignment not found")
+	ErrAssignmentUnavailable = errors.New("cortex: assignment transaction unavailable")
+)

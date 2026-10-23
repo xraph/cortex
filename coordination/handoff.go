@@ -158,7 +158,19 @@ type HandoffAuthority struct {
 // Inputs still require authorized content reads and trusted verification before
 // they can satisfy task dependencies. This method performs no I/O.
 func ValidateHandoff(h Handoff, p planning.Plan, current HandoffAuthority, at time.Time) error {
-	if h.Validate() != nil || planning.Validate(p, planning.Limits{}) != nil || at.IsZero() || !at.Before(h.Deadline) || h.Scope.Canonical() != p.Scope.Canonical() || h.PlanID != p.ID || h.PlanRevision != p.Revision || h.PlanDigest != p.Digest || h.ContractDigest != p.Contract.Digest || h.Sender != current.Sender || h.Receiver != current.Receiver || h.AssignmentID != current.AssignmentID || h.ParentRunID != current.ParentRunID || h.Fence != current.Fence || h.GrantRef != current.GrantRef || !h.Authority.Within(current.Ceiling) {
+	if ValidateHandoffPlan(h, p, at) != nil || h.Sender != current.Sender || h.Receiver != current.Receiver || h.AssignmentID != current.AssignmentID || h.ParentRunID != current.ParentRunID || h.Fence != current.Fence || h.GrantRef != current.GrantRef || !h.Authority.Within(current.Ceiling) {
+		return ErrInvalidHandoff
+	}
+	if h.Purpose == HandoffReview && (!handoffText(current.ProducerPrincipal, 512) || h.Receiver.Principal == current.ProducerPrincipal) {
+		return ErrInvalidHandoff
+	}
+	return nil
+}
+
+// ValidateHandoffPlan checks the proposal against sealed plan definitions and
+// time. It does not authenticate a principal, grant or scheduler generation.
+func ValidateHandoffPlan(h Handoff, p planning.Plan, at time.Time) error {
+	if h.Validate() != nil || planning.Validate(p, planning.Limits{}) != nil || at.IsZero() || !at.Before(h.Deadline) || h.Scope.Canonical() != p.Scope.Canonical() || h.PlanID != p.ID || h.PlanRevision != p.Revision || h.PlanDigest != p.Digest || h.ContractDigest != p.Contract.Digest {
 		return ErrInvalidHandoff
 	}
 	ceiling, err := planning.TaskAuthority(p, h.TaskID)
@@ -169,9 +181,6 @@ func ValidateHandoff(h Handoff, p planning.Plan, current HandoffAuthority, at ti
 		if task.ID == h.TaskID && !slices.Equal(h.Criteria, task.Criteria) {
 			return ErrInvalidHandoff
 		}
-	}
-	if h.Purpose == HandoffReview && (!handoffText(current.ProducerPrincipal, 512) || h.Receiver.Principal == current.ProducerPrincipal) {
-		return ErrInvalidHandoff
 	}
 	for _, ref := range h.Inputs {
 		if ref.CreatedAt.After(at) {

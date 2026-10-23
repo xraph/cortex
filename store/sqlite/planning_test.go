@@ -22,14 +22,11 @@ type lostPlanAckDriver struct {
 	assuranceDriver
 }
 
-func (d lostPlanAckDriver) Insert(ctx context.Context, row assurance.Record) error {
-	if err := d.assuranceDriver.Insert(ctx, row); err != nil {
+func (d lostPlanAckDriver) TransactPlan(ctx context.Context, identifier id.ID, callback func(context.Context, assurance.Driver) error) error {
+	if err := d.assuranceDriver.TransactPlan(ctx, identifier, callback); err != nil {
 		return err
 	}
-	if row.Kind == "plan_revision" {
-		return errPlanAcknowledgementLost
-	}
-	return nil
+	return errPlanAcknowledgementLost
 }
 
 func TestPlanRevisionRetriesAfterLostAcknowledgement(t *testing.T) {
@@ -44,8 +41,9 @@ func TestPlanRevisionRetriesAfterLostAcknowledgement(t *testing.T) {
 	require.NoError(t, s.CreatePlan(ctx, p))
 	s.assuranceStore = assurance.New(lostPlanAckDriver{assuranceDriver{store: s}})
 	proposal := planning.Revision{Plan: p, Actor: "host", Reason: "refine"}
-	_, err = s.CommitRevision(ctx, proposal, 1)
+	uncertain, err := s.CommitRevision(ctx, proposal, 1)
 	require.ErrorIs(t, err, errPlanAcknowledgementLost)
+	require.Zero(t, uncertain)
 	// A fresh repository resolves the uncertain result from the persisted row.
 	s.assuranceStore = assurance.New(assuranceDriver{store: s})
 	accepted, err := s.GetPlan(ctx, p.ID)

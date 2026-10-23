@@ -26,7 +26,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission and A2A/HTTP/SSE transport bindings implemented; durable assignment lifecycle, review evidence acceptance and installed qualification remain open |
+| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings and durable progress journal implemented; submission/review evidence, scheduler/grant fences and installed qualification remain open |
 | S3.2, S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3831,3 +3831,50 @@ import formatting (14.146s). The complete remote suite passed with `-race`
 typecheck/lint/build and diff checks passed. Tests keep the A2A import allowlist
 intact. The host acceptance callback and grant resolver remain fixtures, so these
 results do not establish durable scheduler or installed-worker qualification.
+
+
+### S3.3 durable assignment progress and plan serialization
+
+CI 40001111614 passed for handoff admission commit `375ba9e`.
+
+`coordination.AssignmentStore` retains sealed proposals and immutable lifecycle
+observations in SQLite, PostgreSQL and MongoDB. Changes bind the expected revision,
+handoff digest, fence, actor and reason. The journal supports proposed, accepted,
+working, blocked, rejected and cancelled states. It rejects submitted, reviewed
+and succeeded claims until their separate evidence admission is implemented.
+
+Plan revisions and assignment writes serialize on the same initial plan row or
+MongoDB document. MongoDB uses a real transactional write to fence concurrent
+snapshots. The shared repository validates current plan bindings before new
+progress, while permitting terminal observations after expiry or replan. Identical
+historical retries return the original observation and cannot authorize dispatch.
+A changed retry conflicts. Each revision and its audit fields occupy one immutable
+row; paginated history validates predecessor links.
+
+The first assignment lifecycle test run failed for the absent API. Unit tests
+cover skipped states, stale revisions, changed digests/fences, actor restrictions,
+expiry and unsupported success/submission/review claims. Backend conformance adds
+exact scope, detached reads, historical replay, concurrent proposals/transitions,
+replanning, cancellation and bounded history. Transaction fault tests exercise
+rollback after insert, lost commit acknowledgments, expiry and a concurrent plan
+writer blocked by assignment persistence. The PostgreSQL and MongoDB tests use
+real containers.
+
+This is a progress journal, not a scheduler claim or authorization boundary.
+Hosts must authenticate actors and fence live grants and ownership separately.
+The journal alone does not fulfill the receiver acceptance port. Evidence-backed
+submission/review, verified task acceptance, contradiction handling, shared
+reservations, scheduler integration and installed qualification remain open.
+The full four-stage goal remains active.
+
+Validation: full coordination (38.326s), planning (2.328s), A2A (1.213s),
+PostgreSQL (102.418s) and MongoDB (122.170s) race suites passed. The full SQLite
+race run completed in 550.714s with one failure: its previous lost-plan-response
+fixture injected after a row insert, which the new transaction no longer used.
+The fixture now injects after the transaction commits and asserts that the failed
+response exposes no accepted revision. The final SQLite assignment, plan,
+transaction and lost-acknowledgment race checks passed (14.997s). All other SQLite
+tests passed in the broad run. The complete remote transport race suite passed
+(19.662s). Final `make f`, all-module `make l`, root build, documentation
+typecheck/lint/build and diff checks passed. No installed-worker qualification is
+claimed.
