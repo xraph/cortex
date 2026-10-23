@@ -1185,3 +1185,38 @@ endpoint suite each passed ten repetitions without skips. The closed-pipe fixtur
 sets its read deadline before shutdown, since net.Pipe rejects deadline changes
 after closure. These tests establish transport/lifecycle behavior with controlled
 worker-manager fixtures, not live sandbox isolation.
+
+### S2.4 installed-deployment attestation binding
+
+Added `service.NewDeploymentAttestation` for installed Linux daemon assembly.
+Construction verifies protected worker configuration and retains the broker,
+profile digest and runtime inventory digest. Each observation verifies the
+installation before and after a current host qualification lookup. A changed
+installation requires new assembly; returned evidence must name the expected
+deployment and runtime. Qualification is never cached.
+
+The trusted host verifier still owns live probe evidence, host/kernel/control
+matching, revocation and freshness. Neither this constructor nor its fixtures
+qualifies a Linux worker. Capability shape and expiry checks now live in
+`sandbox.Capabilities.Validate`, shared with job admission. Observations preserve
+caller cancellation, use a 30-second ceiling and support concurrent verification.
+
+TDD started with missing-API failures. Tests cover configuration, binary,
+template, runtime and directory-permission changes before and during verification;
+identity mismatch; malformed or expired capabilities; verifier errors;
+revocation; cancellation; concurrent calls; and the production Linux constructor.
+A fixture name containing `=` initially violated the protected path policy and
+was corrected without weakening that policy.
+
+Scoped make f and exact-file root formatting passed, followed by make l across
+all ten modules, Linux tagged lint and the Linux amd64 build. Root sandbox race
+tests passed in 2.840s, focused attestation race tests in 1.715s, and Linux fixtures
+passed ten repetitions without skips. Under host load above 770, the first broad
+race run had deadline failures and a ten-minute service-suite timeout. All named
+failures passed on a constrained rerun (service 3.044s, broker 1.702s).
+The final full service and broker race suites also passed with `GOMAXPROCS=2`
+and serial package execution, in 26.774s and 3.865s respectively.
+
+Host provider assembly, the concrete live-evidence verifier, installation,
+orphan recovery and live systemd/runsc qualification remain open. S2.4 and the
+four-stage plan are incomplete.

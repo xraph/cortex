@@ -1053,3 +1053,35 @@ handler admission, request deadlines, slow bodies, oversized headers, certificat
 copying and listener failure. A daemon fixture submits a signed job through this
 server and verifies joined shutdown. Host certificate provisioning, credential
 validation, installed providers and live sandbox qualification remain required.
+
+### Installation-bound qualification
+
+Use `service.NewDeploymentAttestation` when assembling the installed daemon on
+Linux. It loads the protected worker configuration and pins its profile digest,
+runtime inventory digest and broker identity for that lifetime. Construction
+checks installed files; it does not grant qualification.
+
+Each observation reloads and verifies the installation before calling your
+`QualificationVerifier`, then checks it again before returning capabilities.
+Changing the configuration, worker binary, service template, runtime inventory
+or protected directory permissions fails the observation. Reassemble after an
+approved installation change. An old qualification cannot silently follow it.
+
+Your verifier receives the expected `DeploymentIdentity` and returns a
+`DeploymentQualification` bound to that same identity. It must verify retained
+live probe evidence against the current host, kernel and effective controls,
+including revocation and expiry. The attestor checks the returned identity,
+runtime digest and capability validity. It cannot establish the authenticity of
+evidence supplied by a dishonest verifier. Fixture results never qualify a host.
+
+Observations have a 30-second deadline, preserve shorter caller deadlines and do
+not cache qualification. The verifier must honor cancellation and support
+concurrent calls. Launch and worker admission still perform their own checks.
+`sandbox.Capabilities.Validate` shares shape and expiry checks with job admission;
+validation alone grants no execution authority.
+
+Tests cover installation changes before and during verification, mismatched
+identities, revoked or expired qualification, malformed capabilities, concurrent
+observations and cancellation. A Linux fixture exercises protected configuration
+loading through the production constructor. Host evidence-provider assembly and
+live Linux qualification remain open.

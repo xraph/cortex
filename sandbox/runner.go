@@ -26,12 +26,24 @@ type Capabilities struct {
 	Limits         Limits    `json:"limits"`
 }
 
+// Validate checks capability shape and qualification expiry. It does not prove
+// the attestation's origin or establish that live isolation probes passed.
+func (c Capabilities) Validate() error {
+	if c.SchemaVersion != 1 || c.Runtime != "runsc" || !evidence.ValidDigest(c.RuntimeDigest) || c.Profile != ProfileDenyAll || !text(c.Qualification, 512) || !time.Now().Before(c.QualifiedUntil) || !c.Limits.valid() {
+		return fmt.Errorf("cortex: sandbox controls unavailable or unqualified")
+	}
+	return nil
+}
+
 // Supports fails closed for missing or expired qualification and excess limits.
 func (c Capabilities) Supports(j Job) error {
 	if err := j.Validate(); err != nil {
 		return err
 	}
-	if c.SchemaVersion != 1 || c.Runtime != "runsc" || !evidence.ValidDigest(c.RuntimeDigest) || c.Profile != ProfileDenyAll || !text(c.Qualification, 512) || !time.Now().Before(c.QualifiedUntil) || !j.Limits.Within(c.Limits) {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if !j.Limits.Within(c.Limits) {
 		return fmt.Errorf("cortex: sandbox controls unavailable or unqualified")
 	}
 	return nil
