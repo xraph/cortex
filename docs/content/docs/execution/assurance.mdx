@@ -1695,3 +1695,37 @@ The host ports have no default implementation. Their guards must cover other
 processes too; use conditional operations or a declared bounded observation
 window for external services. Passing port fixtures does not qualify a deployed
 grant service or worker.
+
+### Recheck readiness at dispatch
+
+Use `coordination.TaskDispatchStore.DispatchReadyTask` to retain dispatch intent
+and move an accepted assignment to working in one transaction. Pass the ready
+admission digest, current claim token and digest, assignment revision and digest,
+parent run revision, a reserved child run ID and the complete current prerequisite
+chain. The request also records your authenticated actor and reason.
+
+The parent must be running or paused at that revision. Storage fences its row
+through commit, so a concurrent cancellation cannot slip between the state check
+and the dispatch write. The claim must still be held on the current plan, its
+reservation must remain available, and the work handoff must match the plan,
+task, worker, grant and ownership fence. Its lease cannot outlive the handoff or
+an explicit parent deadline. A paused parent may coordinate children; a terminal
+parent cannot start new dispatch intent.
+
+Prerequisites are loaded again. Admission does not preserve their validity for
+later execution. The same retained result and evidence checks used by admission
+apply here, including the 32 MiB total read bound and 8 MiB per-result bound, with
+freshness checked after the final write. Failures roll back the claim transition,
+assignment revision, run association and metadata event intent together.
+
+`TaskDispatch.Fresh` identifies a confirmed first commit. Identical retries and
+`GetTaskDispatch(claimID)` return the original historical receipt, including after
+parent cancellation. Changing the request conflicts. You cannot upgrade a raw
+`BeginTaskDispatch` operation or an already-working assignment into this receipt.
+
+This operation creates no child run. Your host still needs current grant and
+external revision guards through dispatch, followed by a runtime adapter that
+creates the reserved child once, rejects an existing unrelated run and checks
+current authority through execution. A historical receipt grants no permission
+to retry effects. Runtime integration, cancellation after intent, recovery,
+public event delivery and installed worker qualification remain open.

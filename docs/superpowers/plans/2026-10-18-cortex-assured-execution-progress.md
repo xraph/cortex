@@ -4334,3 +4334,50 @@ Prepared execution still generates its own run ID. Scheduler integration must
 bind the child run reserved by dispatch intent to that existing runtime and
 preserve claim/authority checks through execution and recovery. Dispatch and
 lifecycle integration remain open; the full four-stage goal is active.
+
+
+### S3.2 readiness-aware dispatch intent
+
+Ruling: retain dispatch intent and the accepted-to-working assignment transition
+inside the same plan transaction. Reuse the claim mutation and prerequisite
+validators. Lock the handoff's parent run through commit and require its expected
+revision in a running or paused state. A paused coordinator may await children;
+a terminal coordinator cannot begin new dispatch intent. Current host grants and
+external revisions still need host guards.
+
+`TaskDispatchRequest` binds the ready admission, current claim token and digest,
+accepted assignment, parent revision, child run ID, complete prerequisite chain,
+actor and reason. Dispatch rechecks the current plan, assignment, parent, shared
+reservation and retained prerequisite material before writing ownership, the run
+association, working assignment and metadata event intent together. It checks
+freshness again after the last write. Read bounds remain 32 MiB total and 8 MiB
+per result.
+
+Historical receipts validate their retained claim and assignment journal links.
+Identical retries recover the original receipt with `Fresh=false`; changed
+requests conflict. Independently retained raw dispatches and already-working
+assignments cannot be adopted. An intent does not create or adopt a child run.
+The prepared runtime still needs to consume the reserved ID through guarded,
+unique creation and recovery. No external call occurs in this transaction.
+
+The new store tests first failed for the missing dispatch APIs. Initial SQLite
+and domain checks then passed. Coverage includes cancellation, stale revisions,
+changed plans and prerequisites, write rollback, lost acknowledgment, concurrent
+identical and conflicting requests, expiry after writes and historical recovery.
+Final `make f`, all-module `make l`, root build and documentation typecheck,
+lint and build passed. Initial lint reported formatting in the four new Go
+files; formatting cleared those errors. Complete coordination and assurance race
+suites passed (65.321s and 1.230s).
+
+The final dispatch race suite passed on SQLite (30.304s), PostgreSQL (43.531s)
+and MongoDB (24.777s), with 37 passing test entries per backend, including the
+suite wrappers, and no skips. These tests used real database containers.
+CI 40026796716 for the preceding `52de39c` commit completed successfully.
+The broader backend race matrix also passed, with 119 passing test entries per
+backend and no skips: SQLite 102.372s, PostgreSQL 110.611s and MongoDB 60.868s.
+It covers claim, budget, assignment, submission, acceptance, readiness and
+dispatch regressions. The final dispatch run additionally covers the strengthened
+historical journal checks and dispatch after renewal with a paused parent.
+
+Host dispatch guards, prepared-runtime binding, lifecycle integration and live
+qualification remain open. The four-stage goal remains active.
