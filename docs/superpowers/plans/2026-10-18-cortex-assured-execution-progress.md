@@ -4540,3 +4540,54 @@ projection constructed and checked through the planning API, passed in 21.917s.
 After final formatting, all-module `make l` passed. The root build and docs
 typecheck, lint and build also passed. Runtime invocation, per-call guards,
 recovery and the complete scheduler remain open.
+
+### S3.2 task invocation leases
+
+Ruling: hold a host-issued authority lease through the complete external call,
+including streamed response consumption. Carry the task claim marker in run
+provenance so resume does not silently revert to ordinary dispatch authorization.
+
+`WithTaskCallGuard` installs an explicit lease provider. `TaskCallRequest` binds
+scope, agent/run/parent/claim identities, handoff and prepared digests, operation,
+deadline and exact private payload. Requests are bounded and detached before the
+host sees them. The host must authenticate the context principal, resolve current
+ownership and parent state, verify grants/prerequisites/capacity and fence every
+relevant writer. Cortex checks the returned digest, expiry and revocation channel.
+It narrows call context lifetime and releases the lease once. Invalid grants are
+released when possible. Host errors do not expose private policy details.
+
+Sync and streaming generation use the guard, as does shared tool dispatch after
+ordinary authorization, including approved resume dispatch. Stream ownership
+lasts through consumption and close. Cancellation overrides late provider success
+or EOF. Release failures are uncertain outcomes and never successful EOF; usage
+remains available. Panics during provider opening, stream consumption or scanner
+setup still release the lease. Synchronous return-boundary checks observe the
+revocation channel before accepting success, including late EOF. The
+existing uncertain tool path stops subsequent effect dispatch.
+
+`PrepareTaskRun` sets `TaskClaimID`; creation rejects a conflicting marker and
+retains the field through backend run mapping. Empty legacy markers retain the
+existing execution path. This is cooperative cancellation, not hard isolation.
+The host must implement conditional external fencing or declare an observation
+window, and must not hold database transactions across calls. This guard does not
+settle shared accounting or replace durable provider dispatch/recovery records.
+
+Tests began with missing guard APIs. They cover missing/revoked/malformed grants,
+expired or widened deadlines, detached payloads, cancellation during generation
+and stream consumption, duplicate close, uncertain release, provider panic and
+shared tool dispatch. Real sync and streaming loops reject task-marked calls
+without a guard. Claim-marker conflicts and backend round-trips are covered.
+Two further regressions reproduced a provider-consumption panic leaking its
+lease and synchronous revocation returning success before the watcher ran.
+Legacy continuation checks also reject task markers that would be discarded.
+
+The final SQLite, PostgreSQL and MongoDB task-run transaction matrices passed
+under the race detector with no skipped tests. The full engine suite reached its
+default ten-minute timeout in a verification fixture. The thirty-minute retry
+passed in 450.384s; the final task-call race regressions passed in 1.358s.
+Resume, required-verification and preparation tests passed in 179.314s, and
+coordination, run and assurance race suites passed. Final `make f`, all-module
+`make l`, root build, docs types/lint/build and diff checks passed.
+
+The admitted-task runtime entry point, installed host qualification, durable
+recovery and the full scheduler remain open.

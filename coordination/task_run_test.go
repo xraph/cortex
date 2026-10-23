@@ -38,7 +38,10 @@ func taskRunRequestFixture(t *testing.T) coordination.TaskRunRequest {
 
 func TestTaskRunRequiresPristineBoundedChild(t *testing.T) {
 	for name, mutate := range map[string]func(*coordination.TaskRunRequest){
-		"schema":          func(r *coordination.TaskRunRequest) { r.SchemaVersion++ },
+		"schema": func(r *coordination.TaskRunRequest) { r.SchemaVersion++ },
+		"claim_provenance": func(r *coordination.TaskRunRequest) {
+			r.Run.Provenance.TaskClaimID = id.New(coordination.PrefixClaim).String()
+		},
 		"claim":           func(r *coordination.TaskRunRequest) { r.Claim.Fence = 0 },
 		"dispatch":        func(r *coordination.TaskRunRequest) { r.DispatchDigest = "" },
 		"assignment":      func(r *coordination.TaskRunRequest) { r.AssignmentRevision = 0 },

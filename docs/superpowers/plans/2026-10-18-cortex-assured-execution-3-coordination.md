@@ -81,6 +81,12 @@ enforce authority through provider/tool calls. Concrete host grant services, run
 intent, recovery settlement and event delivery remain open. `Scheduler.Tick` still needs integration; the
 ownership store is not a completed scheduler.
 
+Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
+The lease binds the exact private invocation, lasts through stream consumption,
+and cancels on expiry or revocation. The shared tool-dispatch path also covers
+approved resume calls. Host writer fencing, installed lease-service qualification,
+provider journaling and shared usage settlement remain integration requirements.
+
 Runtime integration must consume the admitted request's captured execution inputs
 and original prepared snapshot. Reloading current conversation history after
 admission would change the work bound by the capture policy. Before invocation,

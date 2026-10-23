@@ -39,6 +39,7 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	taskCallGuard         TaskCallGuard
 	config                cortex.Config
 	logger                log.Logger
 	metrics               gometrics.Metrics

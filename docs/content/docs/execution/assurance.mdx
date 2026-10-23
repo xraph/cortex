@@ -1824,7 +1824,48 @@ original request after an ambiguous failure. A guarded receipt still does not
 start the ReAct loop or authorize a provider call, and fixture ports do not
 qualify your installed identity service.
 
-Runtime integration still needs to enforce ownership, parent
-cancellation and current authority before provider/tool calls, and reconcile
-ambiguous starts. Creating a running row alone does not establish live execution
+Runtime integration still needs to consume the admitted request through the
+call guard below and reconcile ambiguous starts. Creating a running row alone does not establish live execution
 or worker qualification.
+
+### Hold task authority through each call
+
+Install `engine.WithTaskCallGuard(guard)` for task execution. Requests produced
+by `PrepareTaskRun` retain `Provenance.TaskClaimID`. The generation and shared
+tool-dispatch paths require a lease when this marker is present, including tool
+dispatch after approval on resume. A missing guard fails closed. Legacy runs
+without the marker keep their existing authorization path.
+Task-marked runs reject legacy continuations that could discard the marker.
+
+`TaskCallGuard.AcquireTaskCall` receives a detached `TaskCallRequest` with exact
+scope, run and agent IDs, claim and parent identities, handoff and prepared
+digests, operation kind, deadline and the private invocation payload. Authenticate
+the context principal, resolve the current durable records and check ownership,
+parent state, grants, prerequisites and reserved capacity. The payload is the
+exact LLM request or tool call. Do not log it.
+
+Return a `TaskCallLease` whose request digest comes from `request.Freeze()`, with
+an expiry, revocation channel and release function. The expiry must fit the live
+claim, parent, grant and evidence bounds as well as the request deadline. Cortex
+checks the request binding and deadline, rejects an already revoked lease and
+releases rejected grants when a release function is available.
+
+Every relevant writer must participate in the host's lease discipline. Do not
+hold database transactions across provider or tool calls. External operations
+need conditional fencing or a declared observation window. Closing the revocation
+channel cancels the call context; it cannot forcibly stop code that ignores
+cancellation. Process isolation belongs to the sandbox boundary.
+
+The lease lasts through a synchronous call or stream consumption. EOF closes the
+stream and releases its lease exactly once. Cancellation overrides a provider's
+late success or EOF, and release failure cannot masquerade as successful EOF.
+Return-boundary checks observe the revocation channel directly, so a delayed
+cancellation goroutine cannot turn a revoked call into success. Provider and
+scanner panics also release the lease before propagating.
+Reported usage remains available for conservative accounting. A tool whose call
+or release becomes uncertain stops further effect execution through the existing
+uncertain-outcome path.
+
+This guard does not settle shared usage, journal provider dispatch or authorize a
+retry. Its fixture tests do not qualify an installed identity or lease service.
+The admitted-task runtime entry point and durable recovery still need integration.

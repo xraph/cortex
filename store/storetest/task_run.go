@@ -71,6 +71,7 @@ func TaskRunTransactions(t *testing.T, backend store.Store, driver assurance.Dri
 	}
 	t.Run("host_guarded_creation", func(t *testing.T) {
 		ctx, repo, req, _ := fixture(t)
+		req.Run.Provenance.TaskClaimID = req.Claim.ClaimID.String()
 		req, _, err := req.Freeze()
 		require.NoError(t, err)
 		held, allowed := false, true
@@ -107,6 +108,7 @@ func TaskRunTransactions(t *testing.T, backend store.Store, driver assurance.Dri
 		current, err := backend.GetRun(ctx, req.Run.ID)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, current.Revision)
+		require.Equal(t, req.Claim.ClaimID.String(), current.Provenance.TaskClaimID)
 	})
 	t.Run("create_retry_scope", func(t *testing.T) {
 		ctx, repo, req, parent := fixture(t)

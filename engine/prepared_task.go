@@ -69,6 +69,7 @@ func (e *Engine) PrepareTaskRun(ctx context.Context, p *PreparedAgent, input str
 		return coordination.TaskRunRequest{}, err
 	}
 	child := *draft.run
+	child.Provenance.TaskClaimID = opts.Claim.ClaimID.String()
 	child.Entity, child.StartedAt = cortex.Entity{}, nil
 	req := coordination.TaskRunRequest{SchemaVersion: 1, Claim: opts.Claim, DispatchDigest: opts.DispatchDigest, AssignmentRevision: opts.Assignment.Revision, AssignmentDigest: opts.Assignment.Digest, ParentRunRevision: opts.ParentRunRevision, Dependencies: opts.Dependencies, Run: child, Intent: draft.intent, Actor: opts.Claim.Worker.Principal, Reason: opts.Reason}
 	result, _, err := req.Freeze()

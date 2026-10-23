@@ -32,6 +32,10 @@ var (
 	// ErrPreparationConflict requires fresh preparation after an observed source change.
 	ErrPreparationConflict = errors.New("cortex: preparation source changed or unavailable")
 
+	// Task call errors.
+	ErrTaskCallUnavailable = errors.New("cortex: task call authority unavailable")
+	ErrTaskCallUncertain   = errors.New("cortex: task call outcome uncertain")
+
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")
 	ErrRunCancelled     = errors.New("cortex: run cancelled")

@@ -200,7 +200,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			stepSpan.finish(stepStopped, nil)
 			break
 		}
-		resp, err := e.llm.Complete(ctx, req)
+		resp, err := e.completeTaskCall(ctx, r, req)
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			reported := 0
@@ -414,6 +414,12 @@ func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string
 // same reason for existing, over the streaming loop instead. It does not
 // close events, because the goroutine that calls it owns the channel.
 func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg resolvedConfig, r *run.Run, st *reactState, startedAt time.Time, events chan<- StreamEvent) {
+	var taskStream llm.Stream
+	defer func() {
+		if taskStream != nil {
+			_ = taskStream.Close()
+		}
+	}()
 	if cfg.Publication.Mode == "" {
 		cfg.Publication = e.frozenPublication()
 	}
@@ -481,7 +487,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			stepSpan.finish(stepStopped, nil)
 			return
 		}
-		stream, err := e.llm.CompleteStream(ctx, req)
+		stream, err := e.streamTaskCall(ctx, r, req)
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			st.failedAttempt(0, cfg, r)
@@ -502,6 +508,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			return
 		}
 
+		if r.Provenance.TaskClaimID != "" {
+			taskStream = stream
+		}
 		segments, segmentErr := e.newSegmentPublication(ctx, ag, r, cfg.Publication)
 		if segmentErr != nil {
 			_ = stream.Close()
@@ -1080,7 +1089,7 @@ func pendingReason(toolName string) suspension.SuspendReason {
 // failure as it happens; a resume dispatching a call a human just
 // approved reports it with the timings of the whole pause, and two
 // emitters for one call is how a subscriber ends up counting it twice.
-func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, error) {
+func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return jsonResult("error", err.Error()), outcomeFailed, err
 	}
