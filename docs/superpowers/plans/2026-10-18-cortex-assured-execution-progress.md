@@ -4381,3 +4381,40 @@ historical journal checks and dispatch after renewal with a paused parent.
 
 Host dispatch guards, prepared-runtime binding, lifecycle integration and live
 qualification remain open. The four-stage goal remains active.
+
+
+### S3.2 guarded dispatch admission
+
+`NewTaskDispatchAdmitter` now wraps dispatch storage with explicit host fencing
+and authorization. It uses the same request freezing, exact-scope checks and
+synchronous callback guard as claim admission and task acceptance. The host
+resolves the retained admission, assignment and parent, authenticates the worker
+and actor, and authorizes the allocation and complete prerequisite chain.
+Every retry repeats that check.
+
+The wrapper validates the full dispatch receipt, detaches its data and preserves
+only the trusted storage Fresh flag. Changed requests, cancellation, callback
+misuse and invalid associations return zero results. A lost acknowledgment may
+follow commit; recovery preserves the original request. This operation still
+admits intent without invoking a worker.
+
+Tests first failed for the missing API, then passed the focused domain and
+SQLite fixture checks. They cover fence ordering, request and receipt mutation,
+revocation on historical retry, changed prerequisite revisions, parent and run
+bindings, malformed receipts, missing ports and lost acknowledgments. The shared
+callback guard retains its existing escaped and unfinished callback coverage.
+The database fixture checks fresh admission, historical retry and revocation.
+It is not installed identity qualification.
+
+Final `make f`, all-module `make l`, root build and documentation typecheck,
+lint and build passed. Initial lint found formatting in the new wrapper, its
+tests and the database fixture; formatting cleared those errors. Full coordination
+and assurance race suites passed (35.690s and 1.176s). The dispatch backend race
+suite passed on SQLite (18.928s), PostgreSQL (18.553s) and MongoDB (16.424s), with
+real containers and no skips. CI 40028631395 for `cc7e36b` was still running at
+this checkpoint.
+
+Prepared execution needs atomic reserved-child creation and verification-intent
+registration under the live claim, assignment and parent guards. Adding only a
+run-ID option would leave a check/create race and cannot establish safe dispatch.
+Runtime integration and the full four-stage goal remain open.

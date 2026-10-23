@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -55,6 +56,40 @@ func TaskDispatchTransactions(t *testing.T, backend store.Store, driver assuranc
 		req, parent := dispatchFixture(ctx, t, backend, repo, admission)
 		return ctx, repo, req, parent
 	}
+	t.Run("host_guarded_dispatch", func(t *testing.T) {
+		ctx, repo, req, _ := fixture(t)
+		held, allowed := false, true
+		authorizations := 0
+		fence := dispatchFenceFixture(func(_ context.Context, current coordination.TaskDispatchRequest, next func(coordination.TaskDispatchRequest) error) error {
+			held = true
+			defer func() { held = false }()
+			return next(current)
+		})
+		authorizer := dispatchAuthorizerFixture(func(_ context.Context, current coordination.TaskDispatchRequest) error {
+			require.True(t, held)
+			require.Equal(t, req, current)
+			authorizations++
+			if !allowed {
+				return errors.New("revoked worker")
+			}
+			return nil
+		})
+		admitter, err := coordination.NewTaskDispatchAdmitter(repo, fence, authorizer)
+		require.NoError(t, err)
+		result, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		require.True(t, result.Fresh)
+		require.NoError(t, result.Validate(req))
+		retry, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		result.Fresh = false
+		require.Equal(t, result, retry)
+		allowed = false
+		denied, err := admitter.Admit(ctx, req)
+		require.Error(t, err)
+		require.Zero(t, denied)
+		require.Equal(t, 3, authorizations)
+	})
 	t.Run("dispatch_retry_scope", func(t *testing.T) {
 		ctx, repo, req, parent := fixture(t)
 		require.NotNil(t, resultCapability[coordination.TaskDispatchStore](t, backend))
@@ -272,4 +307,16 @@ func TaskDispatchTransactions(t *testing.T, backend store.Store, driver assuranc
 			}
 		})
 	}
+}
+
+type dispatchFenceFixture func(context.Context, coordination.TaskDispatchRequest, func(coordination.TaskDispatchRequest) error) error
+
+func (f dispatchFenceFixture) WithTaskDispatchFence(ctx context.Context, req coordination.TaskDispatchRequest, next func(coordination.TaskDispatchRequest) error) error {
+	return f(ctx, req, next)
+}
+
+type dispatchAuthorizerFixture func(context.Context, coordination.TaskDispatchRequest) error
+
+func (f dispatchAuthorizerFixture) AuthorizeTaskDispatch(ctx context.Context, req coordination.TaskDispatchRequest) error {
+	return f(ctx, req)
 }

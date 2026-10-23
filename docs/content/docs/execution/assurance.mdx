@@ -1729,3 +1729,19 @@ creates the reserved child once, rejects an existing unrelated run and checks
 current authority through execution. A historical receipt grants no permission
 to retry effects. Runtime integration, cancellation after intent, recovery,
 public event delivery and installed worker qualification remain open.
+
+Wrap dispatch storage with `coordination.NewTaskDispatchAdmitter`. Supply a
+`TaskDispatchFence` and `TaskDispatchAuthorizer`; there are no permissive defaults.
+The fence resolves current prerequisite bindings and holds your grant and
+external revision guards through storage. The authorizer authenticates the
+worker and actor, resolves the retained admission, assignment and parent, then
+checks the requested allocation and complete prerequisite chain against current
+policy. Tokens and digests are references, not credentials.
+
+The admitter checks exact scope and the full request digest before authorization.
+It validates and detaches the returned receipt, and rejects changed bindings,
+missing or duplicate callbacks, cancellation and invalid receipt associations.
+Retries repeat authorization even when storage returns a historical receipt.
+A lost acknowledgment may follow a committed intent, so recover with the same
+request. This guard admits intent only; execution still needs a guarded runtime
+adapter, and fixture ports do not qualify your installed identity service.
