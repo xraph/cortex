@@ -179,6 +179,12 @@ func fipaFrom(metadata map[string]any) fipaMeta {
 // run it describes, which is the failure mode a stored task table would
 // have made possible.
 func TaskFromRun(r *run.Run, contextID string) Task {
+	return taskFromRun(r, contextID, false)
+}
+
+func taskFromRun(r *run.Run, contextID string, readerConfigured bool) Task {
+	protected := run.ContentProtected(r, readerConfigured)
+	r = run.PublicView(r, readerConfigured)
 	state := taskState(r.State)
 	if r.State == run.StateCompleted && r.Provenance.VerificationRequired && (r.VerificationStatus != verification.StatusPassed || r.ResultRef == "") {
 		state = TaskStateFailed
@@ -191,6 +197,14 @@ func TaskFromRun(r *run.Run, contextID string) Task {
 		ContextID: contextID,
 		Metadata:  map[string]any{"cortex.assurance": r.TerminalSummary()},
 		Status:    TaskStatus{State: state, Timestamp: timestamp(time.Now())},
+	}
+
+	if protected {
+		task.Metadata["cortex.content_withheld"] = true
+		if r.ResultRef != "" {
+			task.Metadata["cortex.result_ref"] = r.ResultRef
+		}
+		return task
 	}
 
 	switch {

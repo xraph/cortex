@@ -11,6 +11,7 @@ import (
 
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/run"
 )
 
 // Stream events are a bounded, short-lived view of a live engine execution.
@@ -131,8 +132,12 @@ func (s *service) bindStream(d *dispatcher.Dispatcher) error {
 		if in.After < 0 {
 			return out, bad("Invalid stream cursor")
 		}
-		if _, err = s.deps.Engine.GetRun(ctx, v); err != nil {
+		current, err := s.deps.Engine.GetRun(ctx, v)
+		if err != nil {
 			return out, err
+		}
+		if run.ContentProtected(current, s.deps.Engine.ResultContentAvailable()) {
+			return out, &dc.Error{Code: dc.CodeConflict, Message: "Use runs.replay for protected metadata and runs.result for current-authorized content", Details: map[string]any{"code": "protected_replay_requires_guarded_reads"}}
 		}
 		s.streamMu.Lock()
 		r := s.streams[in.ID]

@@ -14,9 +14,17 @@ import (
 
 type runResponseContext struct {
 	unimplementedContext
-	ctx  context.Context
-	id   string
-	body []byte
+	ctx     context.Context
+	id      string
+	body    []byte
+	headers map[string]string
+}
+
+func (c *runResponseContext) SetHeader(name, value string) {
+	if c.headers == nil {
+		c.headers = map[string]string{}
+	}
+	c.headers[name] = value
 }
 
 func (c *runResponseContext) Context() context.Context { return c.ctx }
@@ -45,6 +53,9 @@ func TestRunResponsePreservesAssuranceAndLegacyUnchecked(t *testing.T) {
 		response := &runResponseContext{ctx: ctx, id: r.ID.String()}
 		if _, err = (&API{eng: eng}).getRun(response, &GetRunRequest{}); err != nil {
 			t.Fatal(err)
+		}
+		if response.headers["Cache-Control"] != "no-store" {
+			t.Fatal("run response can be cached")
 		}
 		var wire map[string]any
 		if err = json.Unmarshal(response.body, &wire); err != nil {

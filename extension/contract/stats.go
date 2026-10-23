@@ -43,7 +43,7 @@ func (s *service) bindStats(d *dispatcher.Dispatcher) error {
 		}
 		out := map[string]any{"total": total, "completed": completed, "success_rate": rate}
 		if len(latest) > 0 {
-			out["last_run"] = latest[0]
+			out["last_run"] = run.PublicView(latest[0], s.deps.Engine.ResultContentAvailable())
 		}
 		return out, nil
 	})

@@ -224,3 +224,65 @@ func TestRemoteContentRequiresGatewayAndCardOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyRemoteReadsCannotBypassGuardedContent(t *testing.T) {
+	svc, _, _, req := contentFixture(t)
+	task, err := svc.GetTask(t.Context(), Credentials{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(task)
+	if strings.Contains(string(body), "SECRET") {
+		t.Fatalf("unguarded task read: %s", body)
+	}
+	tasks, err := svc.ListTasks(t.Context(), Credentials{}, ListTasksRequest{Tenant: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(tasks)
+	if strings.Contains(string(body), "SECRET") {
+		t.Fatalf("unguarded task list: %s", body)
+	}
+}
+
+type protectedMovingGateway struct {
+	*movingGateway
+	resultID id.ID
+}
+
+func (g *protectedMovingGateway) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	current, err := g.movingGateway.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	current.Provenance.VerificationRequired = true
+	current.Output, current.Error = "SECRET candidate", "SECRET diagnostic"
+	if current.State == run.StateCompleted {
+		current.VerificationStatus = verification.StatusPassed
+		current.ResultRef = g.resultID.String()
+	}
+	return current, nil
+}
+
+func TestLegacySubscriptionWithholdsRequiredResult(t *testing.T) {
+	gw := &protectedMovingGateway{movingGateway: newMovingGateway(run.StateRunning, run.StateCompleted), resultID: id.New(verification.PrefixResult)}
+	svc := streamingService(t, gw)
+	var events []StreamEvent
+	err := svc.SubscribeTask(t.Context(), Credentials{}, "worker", gw.runID.String(), func(e StreamEvent) error { events = append(events, e); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(events)
+	if strings.Contains(string(body), "SECRET") {
+		t.Fatalf("private stream output: %s", body)
+	}
+	for _, e := range events {
+		if e.ArtifactUpdate != nil {
+			t.Fatal("unguarded artifact update")
+		}
+	}
+	last := events[len(events)-1].StatusUpdate
+	if last == nil || !last.Final || last.Status.State != TaskStateCompleted || last.Metadata["cortex.result_ref"] != gw.resultID.String() {
+		t.Fatalf("missing terminal metadata: %s", body)
+	}
+}

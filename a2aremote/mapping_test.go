@@ -272,9 +272,9 @@ func TestRequiredVerificationTaskProjection(t *testing.T) {
 			}
 		})
 	}
-	r := &run.Run{ID: id.NewAgentRunID(), State: run.StateCompleted, Output: "answer", VerificationStatus: verification.StatusPassed, ResultRef: "result", Provenance: run.ExecutionProvenance{VerificationRequired: true}}
+	r := &run.Run{ID: id.NewAgentRunID(), State: run.StateCompleted, Output: "answer", VerificationStatus: verification.StatusPassed, ResultRef: id.New(verification.PrefixResult).String(), Provenance: run.ExecutionProvenance{VerificationRequired: true}}
 	task := TaskFromRun(r, "")
-	if task.Status.State != TaskStateCompleted || len(task.Artifacts) != 1 {
-		t.Fatalf("committed answer missing: %+v", task)
+	if task.Status.State != TaskStateCompleted || len(task.Artifacts) != 0 || task.Metadata["cortex.result_ref"] != r.ResultRef || task.Metadata["cortex.content_withheld"] != true {
+		t.Fatalf("committed result must use guarded content access: %+v", task)
 	}
 }

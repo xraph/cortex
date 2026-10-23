@@ -87,6 +87,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 }
 
 func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
+	ctx.SetHeader("Cache-Control", "no-store")
 	runID, err := id.ParseAgentRunID(ctx.Param("id"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid run ID: %v", err))
@@ -96,10 +97,12 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
+	r = run.PublicView(r, a.eng.ResultContentAvailable())
 	return r, ctx.JSON(http.StatusOK, r)
 }
 
 func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
+	ctx.SetHeader("Cache-Control", "no-store")
 	runs, err := a.eng.ListRuns(ctx.Context(), &run.ListFilter{
 		Limit:  defaultLimit(req.Limit),
 		Offset: req.Offset,
@@ -107,7 +110,11 @@ func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsRespon
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
-	resp := &ListRunsResponse{Items: runs}
+	publicRuns := make([]*run.Run, len(runs))
+	for i, current := range runs {
+		publicRuns[i] = run.PublicView(current, a.eng.ResultContentAvailable())
+	}
+	resp := &ListRunsResponse{Items: publicRuns}
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 

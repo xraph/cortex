@@ -194,7 +194,7 @@ func (s *Service) GetTask(ctx context.Context, cred Credentials, req GetTaskRequ
 	if err != nil {
 		return nil, err
 	}
-	task := TaskFromRun(r, "")
+	task := s.publicTask(r)
 	return &task, nil
 }
 
@@ -217,7 +217,7 @@ func (s *Service) ListTasks(ctx context.Context, cred Credentials, req ListTasks
 	}
 	out := make([]Task, 0, len(runs))
 	for _, r := range runs {
-		out = append(out, TaskFromRun(r, ""))
+		out = append(out, s.publicTask(r))
 	}
 	return &ListTasksResult{Tasks: out}, nil
 }
@@ -393,4 +393,12 @@ func mapBusError(err error) *Error {
 	default:
 		return ErrInternal("the message could not be delivered")
 	}
+}
+
+func (s *Service) publicTask(r *run.Run) Task {
+	guarded := s.opts.ResultContent
+	if reader, ok := s.gw.(ResultContentGateway); ok && reader.ResultContentAvailable() {
+		guarded = true
+	}
+	return taskFromRun(r, "", guarded)
 }

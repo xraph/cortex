@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters implemented; legacy public projection policy, arbitrary artifact producers and installed qualification remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3304,3 +3304,50 @@ Validation for guarded A2A content access:
   had passed docs, formatting, security, lint and all submodules, with the root
   Linux test job still running at this checkpoint. Neither run is recorded as
   fully passed here.
+
+
+### S2.6 protected historical projections
+
+The historical transport audit found raw stored answers in legacy A2A tasks,
+HTTP run reads, dashboard details/lists and `agents.stats.last_run`. A new A2A
+regression test reproduced the raw answer without content-extension negotiation.
+These paths now withhold protected content and direct clients to the guarded
+reader. Ordinary legacy runs keep their existing behavior.
+
+`run.ContentProtected` protects saved verification requirements, any saved result
+reference and hosts with a configured reader. `run.PublicView` copies an explicit
+metadata allowlist into a detached record. It preserves identity, state, counts,
+assurance and valid result identity while dropping input/output, diagnostics,
+arbitrary metadata and private provenance. A missing current reader cannot
+remove protection recorded on the run. Direct engine/store APIs remain trusted
+host capabilities and are unchanged.
+
+A2A's pure mapping protects required/committed runs; service polling and listing
+also protect configured-reader runs. Subscriptions inherit that projection and
+send terminal metadata with the result reference, without answer artifacts.
+The old mapping test now uses a valid result ID and expects this guarded-read
+handoff. HTTP run reads set no-store. Dashboard protected detail omits private
+step/tool bodies and pending calls, while cached `runs.events` refuses protected
+reads with a typed conflict pointing to `runs.replay` and `runs.result`.
+
+Tests cover preserved ordinary behavior, detached scope/time/metadata, invalid
+result references, unchanged stored answers, HTTP lists/details, dashboard
+lists/details/statistics, cached replay refusal and terminal A2A subscriptions.
+The metadata endpoints retain their existing host authorization; this packet does
+not turn those endpoints into the separate replay-authorizer API. Installed
+client adaptation and the broader live qualification matrix remain open.
+
+Validation for protected historical projections:
+
+- Final race suites passed for root `run` (1.183s), full API (36.047s), dashboard
+  contract (36.417s), full remote module (17.990s) and full gRPC binding (1.285s).
+  Root and all four affected nested-module builds passed.
+- The first full API run found its old response test double did not implement
+  `SetHeader`. The test double now records headers and asserts no-store; the
+  final full suite passed without weakening the handler's cache policy.
+- Final `GOWORK=off make f`, all-ten-module `GOWORK=off make l`, docs type check,
+  lint and production build, and `git diff --check` passed. No dependency files
+  changed in this packet.
+- The new shared projection leaves trusted stored data intact. The dashboard
+  cache refusal and A2A terminal subscription are tested separately from the
+  guarded content reads. Installed client migration is still unverified.

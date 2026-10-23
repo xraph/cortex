@@ -202,11 +202,12 @@ private responses.
 | `result_limit` | 413 | Publication size limit exceeded |
 | `result_unavailable`, `result_interrupted`, `result_busy` | 503 | Unavailable service, interrupted read or exhausted HTTP capacity |
 
-Metadata SSE continues to carry no answer text. A returned observation is not a permission lease: reauthorize each
-subsequent read and bound delivery in your transport. Existing administrative
-store and run APIs still require host access controls; configuring this reader
-does not replace them. Installed browser, proxy and dashboard-host behavior still
-needs qualification.
+Metadata SSE continues to carry no answer text. A returned observation is not a
+permission lease: reauthorize each subsequent read and bound delivery in your
+transport. Direct engine and store access remains a trusted host capability and
+requires separate authorization. Historical transport reads use the protection
+rules below. Installed browser, proxy and dashboard-host behavior still needs
+qualification.
 
 ### Read content through A2A
 
@@ -247,11 +248,39 @@ acknowledges private-cache metadata and uses that deadline to bound delivery.
 Host callbacks must honor cancellation, and your gRPC server still needs its
 own connection and stream limits.
 
-Requests that do not activate this extension retain their existing behavior.
-Keep legacy task/list/send/stream projections and administrative APIs behind
-separate host access controls. Enabling the reader does not make those paths
-subject to current content authorization. Installed proxies, clients and host
-policy fences still need qualification.
+For protected runs, requests without this extension return task metadata only.
+The terminal update includes `cortex.content_withheld` and, when one exists, a
+valid `cortex.result_ref` for your client to request guarded content separately.
+Historical projections do not return answer artifacts or private diagnostics.
+Installed proxies, clients and host policy fences still need qualification.
+
+### Protected historical reads
+
+A historical run is protected when it requires verification, has a saved result
+reference, or its transport has a guarded reader configured. The saved requirement
+and result reference keep it protected even if the current host removes that
+reader. No content-read grant means no answer bytes.
+
+HTTP run detail/list, dashboard run detail/list and agent statistics use
+`run.PublicView` for protected runs. It copies an explicit metadata allowlist:
+identities, scope, revision, state, assurance statuses, budget/usage and timestamps.
+Input, output, errors, arbitrary metadata and private provenance are withheld.
+The returned metadata marks `content_withheld: true` and retains a valid committed
+result reference. Stored records remain unchanged, and direct engine/store calls
+still expose trusted host data.
+
+Protected dashboard detail omits step and tool-call bodies and private pending
+calls. Its cached `runs.events` query returns a conflict with code
+`protected_replay_requires_guarded_reads`; use `runs.replay` for durable metadata
+and `runs.result` for screened content. This prevents an older live-cache entry
+from bypassing current grants. Host access controls still govern metadata reads,
+configuration and private administrative operations.
+
+Ordinary historical runs without a saved result, verification requirement or
+configured guarded reader retain their legacy projections. First delivery from
+an executing engine remains governed by its execution publication policy.
+Consumers of protected historical views must fetch content through the guarded
+reader instead of expecting the old inline answer or cached token stream.
 
 
 

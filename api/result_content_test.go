@@ -250,3 +250,22 @@ func TestResultContentOpenAPIRevisionIsString(t *testing.T) {
 	}
 	require.True(t, found, "content response schema missing")
 }
+
+func TestHistoricalRunRoutesWithholdCommittedContent(t *testing.T) {
+	st := contentStore(t)
+	ctx := cortex.WithScope(t.Context(), cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "one"}}})
+	receipt := resulttest.Commit(ctx, t, st)
+	eng, err := engine.New(engine.WithStore(st))
+	require.NoError(t, err)
+	for _, path := range []string{"/v1/runs?limit=10&offset=0", "/v1/runs/" + receipt.Request.Current.RunID.String()} {
+		recorder := httptest.NewRecorder()
+		New(eng, nil).Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+		require.Equal(t, 200, recorder.Code, recorder.Body.String())
+		require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+		require.NotContains(t, recorder.Body.String(), "SECRET")
+		require.Contains(t, recorder.Body.String(), receipt.Request.ResultID.String())
+	}
+	saved, err := st.GetRun(ctx, receipt.Request.Current.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "SECRET candidate", saved.Output)
+}

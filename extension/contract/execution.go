@@ -211,7 +211,11 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if rows == nil {
 					rows = []*run.Run{}
 				}
-				return ListOutput[run.Run]{rows, n, in.Limit, in.Offset}, err
+				publicRows := make([]*run.Run, len(rows))
+				for i, current := range rows {
+					publicRows[i] = run.PublicView(current, s.deps.Engine.ResultContentAvailable())
+				}
+				return ListOutput[run.Run]{publicRows, n, in.Limit, in.Offset}, err
 			})
 		},
 		func() error {
@@ -232,11 +236,15 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 					}
 					if sus != nil {
 						pending := sus.Pending
-						if out.Run.Provenance.VerificationRequired {
+						if run.ContentProtected(out.Run, s.deps.Engine.ResultContentAvailable()) {
 							pending = nil
 						}
 						out.Suspension = &SuspensionView{sus.Reason, pending}
 					}
+				}
+				if run.ContentProtected(out.Run, s.deps.Engine.ResultContentAvailable()) {
+					out.Run = run.PublicView(out.Run, s.deps.Engine.ResultContentAvailable())
+					return out, nil
 				}
 				out.Steps, err = s.deps.Engine.ListSteps(ctx, v)
 				if err != nil {
