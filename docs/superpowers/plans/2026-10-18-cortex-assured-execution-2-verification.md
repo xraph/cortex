@@ -74,6 +74,12 @@ worker scheduling, capture recovery and allocation from the remaining run budget
 still need integration. This explicit API does not satisfy the automatic
 sync/stream/prepared/resume publication gate or hook checkboxes below.
 
+Built-in `verification.CaptureStore` now copies a saved candidate and enqueues
+its job in one transaction. Capture reads output from the saved run, validates
+its requested digest and revision, preserves tombstones and rolls back evidence
+with the job/run update. This closes the separate artifact/enqueue write window.
+Pre-generation capture intent and automatic finalizer recovery are still open.
+
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.
 - [ ] Build the verification request from trusted runtime records. Persist candidate/contract/report bindings and transition to pending verification. On failure allow a bounded repair under the remaining budget, explicit human review, or a committed explanation of incomplete work. None yields `ResultSucceeded` without all required checks passing.

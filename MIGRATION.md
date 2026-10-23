@@ -275,3 +275,17 @@ recovery still checks current authority; a receipt does not authorize later publ
 access. Ordinary execution and publication behavior are unchanged. Automatic
 required verification, capture recovery, lease renewal and event delivery remain
 separate integrations, and the contextual-verification capability stays false.
+
+Built-in stores now implement optional `verification.CaptureStore`.
+`CaptureVerificationJob` copies a saved final-answer run's output into bounded
+candidate evidence and enqueues verification in the same transaction. It takes
+the existing `JobRequest`; contract and supporting evidence must already exist.
+No migration or composite `store.Store` change is required.
+
+Authorize capture separately from later evaluation: the host must check the run
+read, evidence write, sensitivity, retention and current binding. Capture accepts
+no caller-provided candidate bytes and rejects changed run revisions or digests.
+Retries reuse the original job identity without resurrecting deleted evidence.
+The operation requires a transaction-capable MongoDB deployment and provides no
+fallback to separate writes. Automatic finalizer capture and pre-generation
+capture-intent recovery remain open.

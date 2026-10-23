@@ -2146,3 +2146,40 @@ scanner or Linux sandbox.
 Automatic candidate capture/enqueue recovery, shared run budgets, scheduling,
 sync/stream/prepared/resume publication gating, completion hooks and public event
 delivery remain open. The contextual-verification capability remains false.
+
+## Atomic saved-candidate capture
+
+S2.2 now exposes optional `verification.CaptureStore` on all built-in stores.
+`CaptureVerificationJob` reads the completed run's output inside the same
+transaction that creates candidate evidence, the job/revision binding and the
+pending run update. It consumes the existing job request and shares enqueue's
+validation and idempotency path. No candidate bytes come from the caller.
+
+Capture requires matching run revision, prepared digest, contract and output
+digest/length. The candidate is bounded to one MiB. Existing identical evidence
+is reused; conflicting metadata and durable deletion tombstones reject new
+capture. Historical retries return the saved job without reconstructing removed
+bytes. The raw store capability requires the host to authorize the run read,
+evidence write, retention, sensitivity and current verification binding.
+
+TDD evidence: the first conformance test failed on the absent capability, then
+passed through capture and idempotent enqueue. Shared backend cases cover scope,
+cancellation, changed output/revision, incomplete runs, missing contract or
+supporting evidence, expired retention/deadline, oversized candidates, tombstones,
+conflicting/preexisting artifacts, repeated capture and competing jobs. Failure
+injection after each evidence, job, revision-index and run write proves atomic
+rollback; retries reuse the same identities. SQLite reopen preserves the capture
+and candidate bytes. Drivers without a real run transaction fail closed.
+
+This operation closes the separate evidence-upload/enqueue write gap for an
+already saved candidate. It does not persist intent before generation or connect
+automatic finalization, publication, shared budgets or scheduling. Those S2.2
+requirements remain open. No schema migration or composite store widening is
+needed.
+
+Final checks passed: scoped `make f`, all ten modules through `make l`, root
+build and diff checks. Full race suites passed for verification and all three
+backends: SQLite in 246 seconds, PostgreSQL in 27 seconds and MongoDB in 34
+seconds. Verbose focused capture race tests passed against real PostgreSQL and
+MongoDB with no skipped cases. Docs type generation, type checking, lint and
+production build passed after the final content edit.

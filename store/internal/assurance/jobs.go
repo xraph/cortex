@@ -103,12 +103,19 @@ func validateCapturedRun(r *run.Run, expected int64, contractID id.ID, binding v
 
 // EnqueueVerificationJob saves the job, revision binding and pending run together.
 func (s *Repository) EnqueueVerificationJob(ctx context.Context, request verification.JobRequest) (verification.Job, error) {
+	return s.enqueueVerificationJob(ctx, request, false)
+}
+
+func (s *Repository) enqueueVerificationJob(ctx context.Context, request verification.JobRequest, capture bool) (verification.Job, error) {
 	if err := require(ctx, request.Binding.Scope); err != nil {
 		return verification.Job{}, err
 	}
 	req, digest, err := request.Freeze()
 	if err != nil {
 		return verification.Job{}, err
+	}
+	if capture && req.Binding.Candidate.Bytes > MaxEvidenceBytes {
+		return verification.Job{}, evidence.ErrTooLarge
 	}
 	driver, ok := s.driver.(RunDriver)
 	if !ok {
@@ -151,6 +158,11 @@ func (s *Repository) EnqueueVerificationJob(ctx context.Context, request verific
 		now := s.clock.Now().UTC()
 		if now.IsZero() || !req.Deadline.After(now) {
 			return verification.ErrJobExpired
+		}
+		if capture {
+			if captureErr := repository.captureCandidate(txctx, req.Binding.Candidate, current.Output); captureErr != nil {
+				return captureErr
+			}
 		}
 		total := int64(0)
 		for _, ref := range append([]evidence.Ref{req.Binding.Candidate}, req.Binding.Evidence...) {

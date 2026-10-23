@@ -185,6 +185,33 @@ terminal job; host accounting reconciliation still needs integration. Keep those
 charges when allocating budgets to later jobs. Concrete provider reconciliation
 adapters and cross-job budget reservations remain separate work.
 
+### Capture a saved candidate atomically
+
+Use the optional `verification.CaptureStore` when candidate evidence has not yet
+been saved. Its `CaptureVerificationJob(ctx, request)` takes the same `JobRequest`
+as enqueue. It copies bytes from the completed run's saved output and creates the
+candidate artifact, job and pending run update in one transaction. The reference
+must match that output's digest and byte count. Caller-supplied bytes are never
+used by this operation.
+
+Authorize the run read, evidence write and verification binding before capture.
+Evidence policy must cover the requested sensitivity and retention. This is a
+raw storage capability, so it cannot infer your host's grants. Supporting evidence
+and the acceptance contract must already exist. The built-in stores limit the
+candidate to one MiB and require real transactions, including on MongoDB.
+
+Persist the request identity before calling capture. A failed transaction leaves
+no new candidate artifact or job and does not change the run. After an ambiguous
+acknowledgement, retry the same request. An identical existing artifact is reused;
+a different reference under its ID or a deletion tombstone rejects capture. Once
+a job exists, a same-request retry returns its historical snapshot without
+restoring subsequently deleted bytes. Reauthorize any later use of that snapshot.
+
+You can pass the same request to `Engine.VerifyRun` after capture; its enqueue
+step recovers the existing job. This closes the artifact/enqueue write gap for a
+saved run. Automatic finalization, durable capture intent before generation and
+recovery of a crash before capture is requested remain separate integration work.
+
 ### Execute or recover a verifier group
 
 Use `verification.NewExecutor` to connect budgeted jobs to a host evaluator. It
