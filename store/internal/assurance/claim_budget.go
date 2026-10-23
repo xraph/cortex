@@ -31,10 +31,9 @@ func (s *Repository) getClaimBudget(ctx context.Context, claimID id.ID) (claimBu
 	if row.Deleted || len(row.Body) > 64<<10 || json.Unmarshal([]byte(row.Body), &binding) != nil {
 		return claimBudgetRecord{}, coordination.ErrInvalidClaim
 	}
-	req, digest, err := binding.Request.Freeze()
-	c, r := binding.Result.Claim, binding.Result.Reservation
-	_, reservationDigest, reservationErr := req.Reservation.Freeze()
-	if err != nil || reservationErr != nil || digest != binding.RequestDigest || c.Validate() != nil || r.Validate() != nil || c.ID != claimID || c.ID != req.Claim.ID || c.PlanID != req.Claim.PlanID || c.PlanRevision != req.Claim.PlanRevision || c.PlanDigest != req.Claim.PlanDigest || c.TaskID != req.Claim.TaskID || c.Worker != req.Claim.Worker || c.GrantRef != req.Claim.GrantRef || c.Revision != req.Claim.ExpectedRevision+1 || c.State != coordination.ClaimHeld || !c.At.Equal(c.AcquiredAt) || r.RequestDigest != reservationDigest || r.Settlement != nil || r.CreatedAt.Before(c.At) || !r.CreatedAt.Before(c.ExpiresAt) || c.ExpiresAt.After(r.Request.Deadline) || c.Scope.Canonical() != r.Request.Scope.Canonical() || row.Kind != kindTaskClaimBudget || row.ID != claimID.String() || row.RunID != claimKey(c.PlanID, c.TaskID) || row.ScopeCanon != c.Scope.Canonical() || row.Digest != evidence.Digest([]byte(row.Body)) {
+	_, digest, err := binding.Request.Freeze()
+	c := binding.Result.Claim
+	if err != nil || digest != binding.RequestDigest || binding.Result.Validate(binding.Request) != nil || c.ID != claimID || row.Kind != kindTaskClaimBudget || row.ID != claimID.String() || row.RunID != claimKey(c.PlanID, c.TaskID) || row.ScopeCanon != c.Scope.Canonical() || row.Digest != evidence.Digest([]byte(row.Body)) {
 		return claimBudgetRecord{}, coordination.ErrInvalidClaim
 	}
 	return binding, nil

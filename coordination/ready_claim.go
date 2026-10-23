@@ -78,3 +78,17 @@ func validAcceptedDependencies(deps []AcceptedDependency, scope cortex.Scope, se
 	}
 	return true
 }
+
+// Validate checks the original request, allocation and outbox association. The
+// Fresh flag comes from trusted storage; this method cannot prove a first write.
+func (r ReadyTaskClaim) Validate(request ReadyTaskClaimRequest) error {
+	req, digest, err := request.Freeze()
+	if err != nil || r.RequestDigest != digest || r.Acquisition.Fresh || r.Acquisition.Validate(req.Acquisition) != nil {
+		return ErrInvalidClaim
+	}
+	out := r.Outbox
+	if out.EventID.IsNil() || out.EventID.Prefix() != PrefixTaskClaimedEvent || out.Type != "task_claimed" || out.ClaimID != req.Acquisition.Claim.ID || out.PlanID != req.Acquisition.Claim.PlanID || out.TaskID != req.Acquisition.Claim.TaskID {
+		return ErrInvalidClaim
+	}
+	return nil
+}

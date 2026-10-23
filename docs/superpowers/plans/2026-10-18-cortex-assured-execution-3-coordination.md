@@ -62,8 +62,10 @@ reserved together, with budget checks on renewal and dispatch intent. Verified
 task acceptance now atomically completes ownership and retains the receipt with
 a metadata outbox intent. `ClaimReadyTask` now reloads the complete accepted
 prerequisite chain and atomically reserves ownership, capacity and event intent.
-Current grant admission, runtime dispatch, cancellation, recovery settlement and
-event delivery remain open. `Scheduler.Tick` still needs integration; the
+An explicit host admitter fences current requests and authorizes workers,
+allocations and prerequisites before storage, including retries. Concrete host
+grant services, runtime dispatch, cancellation, recovery settlement and event
+delivery remain open. `Scheduler.Tick` still needs integration; the
 ownership store is not a completed scheduler.
 
 ## S3.3: Structured handoffs and independent review

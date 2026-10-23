@@ -53,3 +53,18 @@ type BudgetedClaimStore interface {
 	AcquireBudgetedTaskClaim(context.Context, BudgetedClaimRequest) (BudgetedClaim, error)
 	GetBudgetedTaskClaim(context.Context, id.ID) (BudgetedClaim, error)
 }
+
+// Validate checks that the retained acquisition matches its original request.
+// This proves neither current ownership nor permission to spend the allocation.
+func (a BudgetedClaim) Validate(request BudgetedClaimRequest) error {
+	req, _, err := request.Freeze()
+	if err != nil {
+		return ErrInvalidClaim
+	}
+	c, r := a.Claim, a.Reservation
+	_, reservationDigest, err := req.Reservation.Freeze()
+	if err != nil || c.Validate() != nil || r.Validate() != nil || c.ID != req.Claim.ID || c.PlanID != req.Claim.PlanID || c.PlanRevision != req.Claim.PlanRevision || c.PlanDigest != req.Claim.PlanDigest || c.TaskID != req.Claim.TaskID || c.Worker != req.Claim.Worker || c.GrantRef != req.Claim.GrantRef || c.Revision != req.Claim.ExpectedRevision+1 || c.State != ClaimHeld || !c.At.Equal(c.AcquiredAt) || !c.ExpiresAt.Equal(minTime(c.At.Add(req.Claim.Duration), c.Deadline)) || r.RequestDigest != reservationDigest || r.Settlement != nil || r.CreatedAt.Before(c.At) || !r.CreatedAt.Before(c.ExpiresAt) || c.ExpiresAt.After(r.Request.Deadline) || c.Scope.Canonical() != r.Request.Scope.Canonical() {
+		return ErrInvalidClaim
+	}
+	return nil
+}

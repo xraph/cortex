@@ -27,7 +27,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
-| S3.2 | active | this chat | Durable ownership, atomic readiness/capacity admission, renewal, dispatch intent, expiry, verified completion and immutable history implemented; current-grant admission, runtime scheduling, event delivery and recovery qualification remain open |
+| S3.2 | active | this chat | Durable ownership, atomic readiness/capacity admission, guarded host admission, renewal, dispatch intent, expiry, verified completion and immutable history implemented; concrete grant providers, runtime scheduling, event delivery and recovery qualification remain open |
 | S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; runtime binding and bounded replan policy remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
@@ -4287,3 +4287,50 @@ and MongoDB (111.602s), with real containers and no skips. Each backend passed
 and task-acceptance regressions. CI 40023614073 for the preceding host-acceptance
 commit was still running its coverage job at this checkpoint. Guarded host
 admission and scheduler dispatch are next. The four-stage goal remains active.
+
+
+### S3.2 guarded host admission
+
+Ruling: use the same request freezing, exact-scope check, guarded callback and
+current-authorization sequence for task admission and acceptance. The shared
+helper owns that sequence; each operation keeps its typed host ports and receipt
+checks. This avoids separate authorization paths drifting as the scheduler grows.
+Concrete host guards still have to cover all writers and external revisions.
+
+`NewTaskClaimAdmitter` requires storage, `TaskClaimFence` and
+`TaskClaimAuthorizer`. It authenticates the caller/worker and authorizes the
+requested allocation and complete prerequisite chain inside the host guard.
+Every retry repeats authorization. Changed bindings, callback misuse and
+unrelated or invalid receipts return zero results. A lost fence acknowledgment
+may follow a durable commit, so recovery preserves the original request ID.
+
+`BudgetedClaim.Validate` and `ReadyTaskClaim.Validate` now check request identity,
+claim/lease bounds, allocation and event associations. Storage reads reuse those
+validators and still compare admissions with the retained budget record. The
+admitter detaches returned data and preserves only the trusted outer `Fresh`
+flag. It does not invoke the runtime, and historical receipts do not grant
+permission to dispatch.
+
+Tests first failed for the missing admitter and receipt methods. The new suites
+exercise revocation, changed worker/grant/budget/prerequisite context, cancellation
+inside authorization, missing and duplicate callbacks, escaped and unfinished
+callbacks, typed-nil ports, lost acknowledgment, value mutation and forged
+request digests on unrelated valid acquisitions. A database fixture composes the
+host ports with actual storage and checks retry authorization after revocation.
+These are port fixtures, not installed identity qualification.
+
+Final `make f`, all-module `make l`, root build and documentation typecheck,
+lint and build passed. Initial lint caught a test channel shadowing the newly
+imported errors package; renaming that channel cleared the check. Full
+coordination and assurance race suites passed (48.470s and 1.210s).
+
+The affected backend race matrix passed on SQLite (67.169s), PostgreSQL (51.916s)
+and MongoDB (72.911s), with real containers and no skips. Each backend exercised
+host admission, historical retry and revoked authorization alongside the claim,
+budget, readiness and acceptance regressions. CI 40025353483 for `1b7e881` was
+running at this checkpoint; the older 40023614073 run was cancelled.
+
+Prepared execution still generates its own run ID. Scheduler integration must
+bind the child run reserved by dispatch intent to that existing runtime and
+preserve claim/authority checks through execution and recovery. Dispatch and
+lifecycle integration remain open; the full four-stage goal is active.

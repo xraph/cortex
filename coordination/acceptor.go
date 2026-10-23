@@ -2,7 +2,6 @@ package coordination
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/internal/hostport"
@@ -48,46 +47,12 @@ func NewTaskAcceptor(storage TaskAcceptanceStore, fence TaskAcceptanceFence, aut
 }
 
 func (a *guardedTaskAcceptor) Accept(ctx context.Context, request TaskAcceptanceRequest) (TaskAcceptance, error) {
-	if err := ctx.Err(); err != nil {
-		return TaskAcceptance{}, err
+	guard := taskAuthority[TaskAcceptanceRequest]{
+		operation: "task acceptance", invalid: ErrInvalidTaskAcceptance, conflict: ErrTaskAcceptanceConflict,
+		scope: func(req TaskAcceptanceRequest) cortex.Scope { return req.Current.Scope },
+		fence: a.fence.WithTaskAcceptanceFence, authorize: a.authorizer.AuthorizeTaskAcceptance,
 	}
-	scope, err := cortex.RequireScope(ctx)
-	if err != nil {
-		return TaskAcceptance{}, err
-	}
-	frozen, digest, err := request.Freeze()
-	if err != nil {
-		return TaskAcceptance{}, err
-	}
-	if frozen.Current.Scope.Canonical() != scope.Canonical() {
-		return TaskAcceptance{}, ErrInvalidTaskAcceptance
-	}
-	fenceInput, _, err := frozen.Freeze()
-	if err != nil {
-		return TaskAcceptance{}, err
-	}
-	return hostport.WithSynchronousFence(ctx, ErrInvalidTaskAcceptance, func(attemptCtx context.Context, next func(TaskAcceptanceRequest) error) error {
-		if fenceErr := a.fence.WithTaskAcceptanceFence(attemptCtx, fenceInput, next); fenceErr != nil {
-			return fmt.Errorf("cortex: task acceptance fence: %w", fenceErr)
-		}
-		return nil
-	}, func(attemptCtx context.Context, current TaskAcceptanceRequest) (TaskAcceptance, error) {
-		if contextErr := attemptCtx.Err(); contextErr != nil {
-			return TaskAcceptance{}, contextErr
-		}
-		authorized, currentDigest, freezeErr := current.Freeze()
-		if freezeErr != nil {
-			return TaskAcceptance{}, freezeErr
-		}
-		if currentDigest != digest {
-			return TaskAcceptance{}, ErrTaskAcceptanceConflict
-		}
-		if authorizeErr := a.authorizer.AuthorizeTaskAcceptance(attemptCtx, authorized); authorizeErr != nil {
-			return TaskAcceptance{}, fmt.Errorf("cortex: authorize task acceptance: %w", authorizeErr)
-		}
-		if contextErr := attemptCtx.Err(); contextErr != nil {
-			return TaskAcceptance{}, contextErr
-		}
+	return withTaskAuthority(ctx, request, guard, func(attemptCtx context.Context, frozen TaskAcceptanceRequest, digest string) (TaskAcceptance, error) {
 		receipt, acceptErr := a.storage.AcceptTaskResult(attemptCtx, frozen)
 		if acceptErr != nil {
 			return TaskAcceptance{}, acceptErr

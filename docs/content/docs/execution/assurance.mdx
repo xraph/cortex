@@ -1656,6 +1656,21 @@ include an `AcceptedDependency` for every prerequisite in the complete chain,
 with its acceptance ID, receipt digest and freshly resolved current binding.
 Root tasks have no dependencies.
 
+At the host boundary, use `coordination.NewTaskClaimAdmitter(store, hostFence,
+hostAuthorizer)` and call `Admit(ctx, request)`. Both host ports are required.
+`TaskClaimFence` resolves current prerequisite bindings and holds grant and
+external revision guards through storage. Inside that guard,
+`TaskClaimAuthorizer` authenticates the caller and worker, checks the attenuated
+grant and requested allocation, and authorizes the complete prerequisite chain.
+Historical retries repeat authorization.
+
+The admitter rejects changed request bindings, invalid callback lifetimes and
+storage receipts that name another request, ownership attempt, allocation or
+event. It checks the original lease against the requested duration and detaches
+host and storage values. Missing, duplicate, escaped or unfinished callbacks
+cannot produce a successful admission response. A failed fence acknowledgment
+can follow a committed claim, so recover with the same request identity.
+
 The store reloads accepted assignments, completed claims, committed verification
 results and retained evidence under the plan transaction. It checks the graph
 with `planning.Ready`, acquires ownership and capacity through the shared budget
@@ -1676,3 +1691,7 @@ revision guards across storage. Before dispatch, recheck ownership, authority,
 budget and prerequisites. This admission does not invoke an agent or publish the
 event intent, and a historical receipt grants neither permission. Scheduler
 lifecycle, parent cancellation and recovery remain separate integration work.
+The host ports have no default implementation. Their guards must cover other
+processes too; use conditional operations or a declared bounded observation
+window for external services. Passing port fixtures does not qualify a deployed
+grant service or worker.

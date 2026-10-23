@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,40 @@ func readyClaimFixture(t *testing.T, backend store.Store) (context.Context, coor
 func ReadyClaimTransactions(t *testing.T, backend store.Store, driver assurance.Driver) {
 	plans, ok := driver.(assurance.PlanDriver)
 	require.True(t, ok)
+	t.Run("host_guarded_admission", func(t *testing.T) {
+		ctx, req := readyClaimFixture(t, backend)
+		held, allowed := false, true
+		authorizations := 0
+		fence := readyClaimFenceFixture(func(_ context.Context, current coordination.ReadyTaskClaimRequest, next func(coordination.ReadyTaskClaimRequest) error) error {
+			held = true
+			defer func() { held = false }()
+			return next(current)
+		})
+		authorizer := readyClaimAuthorizerFixture(func(_ context.Context, current coordination.ReadyTaskClaimRequest) error {
+			require.True(t, held)
+			require.Equal(t, req, current)
+			authorizations++
+			if !allowed {
+				return errors.New("revoked worker")
+			}
+			return nil
+		})
+		admitter, err := coordination.NewTaskClaimAdmitter(resultCapability[coordination.ReadyTaskClaimStore](t, backend), fence, authorizer)
+		require.NoError(t, err)
+		result, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		require.True(t, result.Fresh)
+		require.NoError(t, result.Validate(req))
+		retry, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		result.Fresh = false
+		require.Equal(t, result, retry)
+		allowed = false
+		denied, err := admitter.Admit(ctx, req)
+		require.Error(t, err)
+		require.Zero(t, denied)
+		require.Equal(t, 3, authorizations)
+	})
 	t.Run("acquire_retry_scope", func(t *testing.T) {
 		ctx, req := readyClaimFixture(t, backend)
 		repo := assurance.New(driver)
@@ -99,7 +134,7 @@ func ReadyClaimTransactions(t *testing.T, backend store.Store, driver assurance.
 			repo := assurance.New(driver)
 			var wg sync.WaitGroup
 			results := make(chan coordination.ReadyTaskClaim, 2)
-			errors := make(chan error, 2)
+			failures := make(chan error, 2)
 			for i := 0; i < 2; i++ {
 				next, _, err := req.Freeze()
 				require.NoError(t, err)
@@ -108,18 +143,18 @@ func ReadyClaimTransactions(t *testing.T, backend store.Store, driver assurance.
 					next.Acquisition.Reservation.ID = id.New(execution.PrefixReservation)
 					next.Acquisition.Reservation.OwnerRef = next.Acquisition.Claim.ID.String()
 				}
-				wg.Go(func() { value, err := repo.ClaimReadyTask(ctx, next); results <- value; errors <- err })
+				wg.Go(func() { value, err := repo.ClaimReadyTask(ctx, next); results <- value; failures <- err })
 			}
 			wg.Wait()
 			close(results)
-			close(errors)
+			close(failures)
 			fresh, success := 0, 0
 			for value := range results {
 				if value.Fresh {
 					fresh++
 				}
 			}
-			for err := range errors {
+			for err := range failures {
 				if err == nil {
 					success++
 				} else {
@@ -274,4 +309,17 @@ func readyClaimForTask(ctx context.Context, t *testing.T, repo *assurance.Reposi
 	claim := coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: taskID, Worker: worker, GrantRef: "grant", Duration: time.Minute}
 	req := coordination.ReadyTaskClaimRequest{SchemaVersion: 1, Acquisition: coordination.BudgetedClaimRequest{Claim: claim, Reservation: execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), PlanID: p.ID, PlanDigest: p.Digest, Scope: p.Scope, TaskID: claim.TaskID, OwnerRef: claim.ID.String(), Kind: execution.ReservationLeaf, Allocation: execution.Resources{Tokens: 10, FanOut: 1}, Deadline: p.Budget.Deadline}}, Dependencies: deps}
 	return req
+}
+
+// These guards exercise port composition, not deployed identity or grant services.
+type readyClaimFenceFixture func(context.Context, coordination.ReadyTaskClaimRequest, func(coordination.ReadyTaskClaimRequest) error) error
+
+func (f readyClaimFenceFixture) WithTaskClaimFence(ctx context.Context, req coordination.ReadyTaskClaimRequest, next func(coordination.ReadyTaskClaimRequest) error) error {
+	return f(ctx, req, next)
+}
+
+type readyClaimAuthorizerFixture func(context.Context, coordination.ReadyTaskClaimRequest) error
+
+func (f readyClaimAuthorizerFixture) AuthorizeTaskClaim(ctx context.Context, req coordination.ReadyTaskClaimRequest) error {
+	return f(ctx, req)
 }

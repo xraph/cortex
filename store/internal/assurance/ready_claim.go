@@ -34,7 +34,7 @@ func (s *Repository) getReadyClaim(ctx context.Context, claimID id.ID) (readyCla
 	}
 	req, digest, err := retained.Request.Freeze()
 	result := retained.Result
-	if err != nil || result.RequestDigest != digest || req.Acquisition.Claim.ID != claimID || row.Kind != kindReadyTaskClaim || row.ID != claimID.String() || row.RunID != req.Acquisition.Claim.PlanID.String() || row.ScopeCanon != req.Acquisition.Reservation.Scope.Canonical() || row.Digest != evidence.Digest([]byte(row.Body)) {
+	if err != nil || result.RequestDigest != digest || result.Validate(req) != nil || req.Acquisition.Claim.ID != claimID || row.Kind != kindReadyTaskClaim || row.ID != claimID.String() || row.RunID != req.Acquisition.Claim.PlanID.String() || row.ScopeCanon != req.Acquisition.Reservation.Scope.Canonical() || row.Digest != evidence.Digest([]byte(row.Body)) {
 		return readyClaimRecord{}, coordination.ErrInvalidClaim
 	}
 	budget, err := s.getClaimBudget(ctx, claimID)
@@ -53,8 +53,7 @@ func (s *Repository) getReadyClaim(ctx context.Context, claimID id.ID) (readyCla
 	if err != nil {
 		return readyClaimRecord{}, err
 	}
-	out := result.Outbox
-	if !bytes.Equal(actual, expected) || out.EventID.IsNil() || out.EventID.Prefix() != coordination.PrefixTaskClaimedEvent || out.Type != "task_claimed" || out.ClaimID != claimID || out.PlanID != req.Acquisition.Claim.PlanID || out.TaskID != req.Acquisition.Claim.TaskID {
+	if !bytes.Equal(actual, expected) {
 		return readyClaimRecord{}, coordination.ErrInvalidClaim
 	}
 	return retained, nil
