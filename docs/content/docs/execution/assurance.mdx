@@ -1436,3 +1436,42 @@ You still need current host authorization, scheduler ownership checks and a
 review completion policy. The storage capability does not dispatch the reviewer,
 close its assignment or grant access to artifact content. Human adjudication and
 verified task acceptance remain separate operations.
+
+### Reserve durable task ownership
+
+`coordination.ClaimStore` retains one owner for a task under the plan transaction.
+A `ClaimRequest` pins the plan revision and digest, task, worker identity, grant
+reference and expected ownership revision. Lease duration is positive and at most
+30 minutes, capped by both plan and task deadlines. The store authenticates
+neither the worker nor the grant; your scheduler must do that before admission.
+
+Use `AcquireTaskClaim` to reserve ownership and `RenewTaskClaim` to extend a live
+lease. Tokens include the claim ID, plan, task, worker, generation fence and
+revision. A renewal advances the revision while keeping the fence. A new attempt
+increments the fence. Stale tokens cannot renew or begin dispatch, and a plan
+revision blocks both operations until the scheduler reassesses the work.
+
+Before invoking an agent, reserve its child run ID with `BeginTaskDispatch`.
+The same run cannot belong to another dispatch in the scope. Only a confirmed
+first write returns `Fresh=true`. An identical retry returns the historical claim
+with `Fresh=false`, including after a lost response. Never invoke the runtime from
+that historical acknowledgment. Check the lease is still live when acting on a
+fresh result, and retain ambiguous outcomes for reconciliation.
+
+`ExpireTaskClaim` handles two different cases. An expired `held` reservation
+becomes `released`, allowing a new attempt. An expired `dispatching` claim becomes
+`recovering` and retains its child run and fence. It cannot be reacquired or
+renewed. Recovery must establish what the run and its effects did before a later
+protocol can release it; this capability provides no force-release shortcut.
+
+Use `ListTaskClaims` for bounded discovery and `TaskClaimHistory` for immutable
+revisions. Discovery includes tasks removed by replanning so their dispatches
+remain recoverable. The list is not a snapshot; restart a sweep from the beginning
+after its last page. Reads and historical retries do not establish current
+ownership or permission to execute.
+
+This is the ownership storage layer. `ClaimReadyTask`, aggregate budget admission,
+current-grant fencing, parent cancellation, runtime dispatch and recovery
+settlement still need scheduler integration. Acquiring a claim alone does not
+prove that dependencies passed, that a worker may use a tool, or that budget is
+available. No database transaction spans an agent or external tool call.

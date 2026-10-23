@@ -122,6 +122,9 @@ var (
 
 // Assignment errors describe durable progress journal failures.
 var (
+	ErrInvalidClaim          = errors.New("cortex: invalid task claim")
+	ErrClaimConflict         = errors.New("cortex: task claim conflict")
+	ErrClaimNotFound         = errors.New("cortex: task claim not found")
 	ErrInvalidReview         = errors.New("cortex: invalid assignment review")
 	ErrReviewConflict        = errors.New("cortex: assignment review conflict")
 	ErrReviewNotFound        = errors.New("cortex: assignment review not found")

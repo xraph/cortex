@@ -54,6 +54,14 @@ Interfaces: spec's `Scheduler.Tick(ctx, planID) error`; store operations `ClaimR
 - [ ] Integrate with existing sweeper and host lifecycle. Shutdown stops new claims, drains bounded work, preserves resumable state and cancels owned jobs. A crashed process does not own an immortal lease.
 - [ ] Run race/conformance tests on all backends and kill/restart a real worker at claim, dispatch and completion boundaries. Apply common checks and commit `feat(coordination): schedule durable tasks with fenced claims`.
 
+S3.2 progress: durable ownership reservations, renewal, immutable history,
+replan fencing and dispatch-intent persistence are implemented on the shared
+transaction capability. Expired unused reservations release; ambiguous dispatches
+enter recovery and cannot be reassigned. Readiness/grant/budget admission,
+runtime dispatch, cancellation, recovery settlement and events remain open.
+`ClaimReadyTask` and `Scheduler.Tick` are still integration work; the ownership
+store is not a completed scheduler.
+
 ## S3.3: Structured handoffs and independent review
 
 Depends on S2.1 and S3.1 contract. Owner: A2A/remote protocol implementer.

@@ -27,7 +27,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress, evidence-bound submissions and retained independent review findings implemented; review completion/adjudication, scheduler/grant fences and installed qualification remain open |
-| S3.2, S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S3.2 | active | this chat | Durable ownership, renewal, dispatch intent, expiry and immutable history implemented; readiness/grant/budget admission, runtime scheduling and recovery qualification remain open |
+| S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -3966,3 +3967,54 @@ backends ran without skips. Documentation typecheck, lint and build passed.
 CI 40007588094 for the preceding submission commit still has coverage running;
 all its other jobs passed at this checkpoint. No live reviewer qualification
 or full-plan completion is claimed.
+
+### S3.2 durable ownership and dispatch uncertainty
+
+Ruling: implement ownership storage before the readiness-aware scheduler entry
+point. `ClaimStore` provides acquire, renew, dispatch-intent and expiry primitives;
+the planned `ClaimReadyTask` must compose current verified dependencies, grants
+and budget reservations with them before runtime dispatch. A reservation alone
+never grants execution permission. This leaves the scheduler packet open.
+
+Claims pin exact scope, plan revision, task, worker, grant, deadline and expected
+revision. Leases are capped at 30 minutes and the task/plan deadline. Immutable
+history and operation acknowledgments share a plan transaction; attempt IDs and
+child run bindings cannot be reused elsewhere in the same scope. Renewal keeps
+the fence and advances the revision; replacement increments the fence. Replanning
+blocks new renewal and dispatch while retaining old claims for discovery.
+
+Ruling: an expired reservation can be released only if dispatch never began.
+Dispatch intent is durable before an external call. Once it exists, expiry enters
+recovery and cannot be reclaimed through this API. Identical dispatch retries
+return `Fresh=false`; after an uncertain commit, a historical acknowledgment
+cannot authorize another runtime call. Freshness is checked again after storage
+writes, and any failed transaction returns no ownership or dispatch result.
+
+TDD first failed on missing claim APIs, followed by pure lease/fence/state tests
+and backend persistence tests. The conformance cases exercise eight competing
+claimants, stale revisions, historical retries, immutable history, exact scope,
+lease expiry across repository recreation, recovery after dispatch, rollback,
+lost dispatch acknowledgments, replanning, removed-task discovery, attempt/run
+uniqueness and expiry before commit. No agent or external effect is dispatched by
+these tests.
+
+Readiness-aware atomic admission, scheduler fairness/concurrency, parent
+cancellation, current-grant rechecks, shared budgets, recovery settlement, task
+transitions/events and installed worker crash qualification remain open. The
+four-stage goal remains active.
+
+Final review added a fault after the dispatch acknowledgment write. The test
+confirms rollback removes the run binding and ownership revision together, so a
+retry can still be a fresh first dispatch. A separate red test exposed plan
+regression in the pure acquisition function: it accepted a released claim against
+an older plan, although storage already prevented that path. Acquisition now
+rejects the older plan directly.
+
+After final formatting, all-module `make l`, the root build and complete
+coordination/planning race suites passed. Final claim/transaction race checks
+passed on SQLite (12.034s), PostgreSQL (15.192s) and MongoDB (17.491s), including
+the last-write rollback case. The broader submission/review/planning backend
+checks also passed earlier in this packet, with no container skips. Documentation
+typecheck, lint and build passed. CI 40009024187 for the preceding review commit
+was still running at this checkpoint. Worker dispatch and installed recovery are
+not qualified by these storage tests.
