@@ -4418,3 +4418,53 @@ Prepared execution needs atomic reserved-child creation and verification-intent
 registration under the live claim, assignment and parent guards. Adding only a
 run-ID option would leave a check/create race and cannot establish safe dispatch.
 Runtime integration and the full four-stage goal remain open.
+
+
+### S3.2 atomic reserved child creation
+
+Ruling: create a child and its required verification policy under the plan
+transaction before invoking the runtime. Reuse capture-intent registration,
+active-parent validation and each backend's run insertion mapping. Mongo's
+transactional insert uses Grove's document builder and the session context,
+without invoking mutation hooks inside a replayable transaction. Ordinary
+CreateRun retains its existing hook path.
+
+`TaskRunRequest` binds current dispatched ownership, dispatch intent, working
+assignment, parent revision, complete prerequisites, pristine run configuration
+and schema-2 capture intent. Local agent identity must match the claimed worker.
+The store reloads current retained materials, checks the handoff and reservation
+bounds, validates task contract and input provenance, then writes the child,
+capture intent, identity indexes and creation receipt atomically. Lease, deadline
+and prerequisite freshness checks repeat after the final write. No provider,
+tool or agent lifecycle callback runs in this transaction.
+
+The creation receipt retains metadata and the initial run digest, without
+copying private input into another journal. Original requests can reconstruct
+the initial snapshot using its creation time. Creation timestamps use milliseconds
+for consistent storage round-trips; fences and full clock observations determine
+admission. Identical retries acknowledge history with `Fresh=false`; changed
+requests conflict, and existing child rows cannot be adopted. Historical recovery
+does not restore deleted input evidence or change the child's current state.
+
+The store tests first failed for the missing APIs. Initial SQLite and domain
+checks passed, including stale ownership, cancellation, changed plans and input,
+budget/output bounds, rollback at each write, concurrent requests, lost response,
+current prerequisites and expiry after the final write. Review removed a draft
+receipt shape that duplicated private input. The receipt privacy regression now
+checks the retained database row. The first backend matrix exposed a PostgreSQL
+comparison failure: the driver returned identical timestamps in the connection's
+local zone. The regression now checks the instants and normalizes only those
+three timestamp fields before comparing every remaining run field.
+
+After final formatting, all-module `make l`, the root build and the complete
+coordination, engine, run and assurance race suites passed. The engine suite took
+384.094s. The corrected child-creation race suite passed on SQLite (12.425s),
+PostgreSQL (10.055s) and MongoDB (11.864s), with no skips. The broader matrix also
+covered dispatch, capture intents, execution inputs, transcripts, run revisions,
+budgets and outcomes; its only failure was the corrected timestamp assertion.
+Run scope checks passed on all three backends, and docs typecheck, lint and build
+passed. Docker-backed PostgreSQL and MongoDB checks ran against real containers.
+
+Prepared-runtime startup, per-call authority and lease enforcement, cancellation,
+recovery settlement and installed worker qualification remain open. The full
+four-stage goal remains active.

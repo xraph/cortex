@@ -15,18 +15,34 @@ import (
 
 // CreateRun persists a new run.
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
+	return (assuranceDriver{store: s}).insertRun(ctx, r, time.Now().UTC())
+}
+
+func (d assuranceDriver) insertRun(ctx context.Context, r *run.Run, at time.Time) error {
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return scopeErr
 	}
-	t := now()
-	r.CreatedAt = t
-	r.UpdatedAt = t
+	r.CreatedAt = at
+	r.UpdatedAt = at
+	scope.Levels = append([]cortex.Level(nil), scope.Levels...)
 	r.Scope = scope
 	m := runToModel(r)
 	m.Revision = 1
 
-	_, err := s.mdb.NewInsert(m).Exec(ctx)
+	query := d.store.mdb.NewInsert(m)
+	var err error
+	if d.resultTransaction {
+		// Keep Grove's stored field mapping without running mutation hooks inside
+		// a replayable transaction.
+		var document bson.M
+		document, err = query.BuildDoc()
+		if err == nil {
+			_, err = d.store.mdb.Collection(colRuns).InsertOne(ctx, document)
+		}
+	} else {
+		_, err = query.Exec(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: create run: %w", err)
 	}

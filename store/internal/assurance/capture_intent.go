@@ -113,36 +113,7 @@ func (s *Repository) CreateCaptureIntent(ctx context.Context, intent verificatio
 	}
 	err = driver.TransactRun(ctx, frozen.Template.Binding.RunID, func(txctx context.Context, tx RunTransaction) error {
 		repository := s.inTransaction(tx)
-		existing, readErr := repository.GetCaptureIntent(txctx, frozen.ID)
-		if readErr == nil {
-			if existing.Digest != frozen.Digest {
-				return verification.ErrConflict
-			}
-			return nil
-		}
-		if !errors.Is(readErr, verification.ErrNotFound) {
-			return readErr
-		}
-		if checkErr := repository.checkNewCaptureIntent(txctx, tx, frozen); checkErr != nil {
-			return checkErr
-		}
-		row, recordErr := record(kindCaptureIntent, frozen.ID.String(), frozen.Digest, frozen.Template.Binding.RunID.String(), frozen.Template.Binding.Scope, frozen)
-		if recordErr != nil {
-			return recordErr
-		}
-		if insertErr := tx.Insert(txctx, row); insertErr != nil {
-			return insertErr
-		}
-		for _, index := range []struct{ kind, key string }{{kindIntentRun, frozen.Template.Binding.RunID.String()}, {kindIntentJob, frozen.Template.ID.String()}, {kindIntentResult, frozen.ResultID.String()}} {
-			row, recordErr = record(index.kind, index.key, frozen.Digest, frozen.Template.Binding.RunID.String(), frozen.Template.Binding.Scope, frozen.ID)
-			if recordErr != nil {
-				return recordErr
-			}
-			if insertErr := tx.Insert(txctx, row); insertErr != nil {
-				return insertErr
-			}
-		}
-		return nil
+		return repository.createCaptureIntentInTransaction(txctx, tx, frozen)
 	})
 	if errors.Is(err, ErrExists) {
 		return verification.ErrConflict
@@ -150,9 +121,47 @@ func (s *Repository) CreateCaptureIntent(ctx context.Context, intent verificatio
 	return err
 }
 
-func (s *Repository) checkNewCaptureIntent(ctx context.Context, tx RunTransaction, intent verification.CaptureIntent) error {
+type captureRunReader interface {
+	GetRun(context.Context, id.AgentRunID) (*run.Run, error)
+}
+
+// createCaptureIntentInTransaction shares policy registration with atomic child creation.
+func (s *Repository) createCaptureIntentInTransaction(ctx context.Context, reader captureRunReader, intent verification.CaptureIntent) error {
+	existing, readErr := s.GetCaptureIntent(ctx, intent.ID)
+	if readErr == nil {
+		if existing.Digest != intent.Digest {
+			return verification.ErrConflict
+		}
+		return nil
+	}
+	if !errors.Is(readErr, verification.ErrNotFound) {
+		return readErr
+	}
+	if checkErr := s.checkNewCaptureIntent(ctx, reader, intent); checkErr != nil {
+		return checkErr
+	}
+	row, recordErr := record(kindCaptureIntent, intent.ID.String(), intent.Digest, intent.Template.Binding.RunID.String(), intent.Template.Binding.Scope, intent)
+	if recordErr != nil {
+		return recordErr
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return insertErr
+	}
+	for _, index := range []struct{ kind, key string }{{kindIntentRun, intent.Template.Binding.RunID.String()}, {kindIntentJob, intent.Template.ID.String()}, {kindIntentResult, intent.ResultID.String()}} {
+		row, recordErr = record(index.kind, index.key, intent.Digest, intent.Template.Binding.RunID.String(), intent.Template.Binding.Scope, intent.ID)
+		if recordErr != nil {
+			return recordErr
+		}
+		if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+			return insertErr
+		}
+	}
+	return nil
+}
+
+func (s *Repository) checkNewCaptureIntent(ctx context.Context, reader captureRunReader, intent verification.CaptureIntent) error {
 	req := intent.Template
-	current, err := tx.GetRun(ctx, req.Binding.RunID)
+	current, err := reader.GetRun(ctx, req.Binding.RunID)
 	if err != nil {
 		return err
 	}

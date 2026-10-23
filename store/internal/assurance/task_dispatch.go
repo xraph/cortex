@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
@@ -129,15 +130,11 @@ func (s *Repository) DispatchReadyTask(ctx context.Context, request coordination
 		if previous.State != coordination.AssignmentAccepted || previous.Revision != req.AssignmentRevision || previous.Digest != req.AssignmentDigest || h.Purpose != coordination.HandoffWork || h.PlanID != current.PlanID || h.PlanRevision != current.PlanRevision || h.PlanDigest != current.PlanDigest || h.TaskID != current.TaskID || h.Scope.Canonical() != current.Scope.Canonical() || h.Receiver != current.Worker || h.GrantRef != current.GrantRef || h.Fence != current.Fence || h.ParentRunID == req.RunID || current.ExpiresAt.After(h.Deadline) {
 			return coordination.ErrClaimConflict
 		}
-		reader, ok := tx.driver.(SubmissionRunReader)
-		if !ok {
-			return coordination.ErrAssignmentUnavailable
-		}
-		parent, readErr := reader.LockSubmissionRun(tc, h.ParentRunID)
+		parent, readErr := tx.lockTaskParent(tc, h.ParentRunID, req.ParentRunRevision, req.Scope)
 		if readErr != nil {
 			return readErr
 		}
-		if parent == nil || parent.ID != h.ParentRunID || parent.Revision != req.ParentRunRevision || parent.Scope.Canonical() != req.Scope.Canonical() || (parent.State != run.StateRunning && parent.State != run.StatePaused) || (!parent.Budget.Deadline.IsZero() && current.ExpiresAt.After(parent.Budget.Deadline)) {
+		if !parent.Budget.Deadline.IsZero() && current.ExpiresAt.After(parent.Budget.Deadline) {
 			return coordination.ErrClaimConflict
 		}
 		started := s.clock.Now()
@@ -235,4 +232,20 @@ func (s *Repository) GetTaskDispatch(ctx context.Context, claimID id.ID) (coordi
 		return coordination.TaskDispatch{}, err
 	}
 	return retained.Result, nil
+}
+
+// lockTaskParent shares active-parent checks across dispatch and child creation.
+func (s *Repository) lockTaskParent(ctx context.Context, identifier id.AgentRunID, revision int64, scope cortex.Scope) (*run.Run, error) {
+	reader, ok := s.driver.(SubmissionRunReader)
+	if !ok {
+		return nil, coordination.ErrAssignmentUnavailable
+	}
+	parent, err := reader.LockSubmissionRun(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil || parent.ID != identifier || parent.Revision != revision || parent.Scope.Canonical() != scope.Canonical() || (parent.State != run.StateRunning && parent.State != run.StatePaused) {
+		return nil, coordination.ErrClaimConflict
+	}
+	return parent, nil
 }

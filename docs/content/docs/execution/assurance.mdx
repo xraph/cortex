@@ -1745,3 +1745,46 @@ Retries repeat authorization even when storage returns a historical receipt.
 A lost acknowledgment may follow a committed intent, so recover with the same
 request. This guard admits intent only; execution still needs a guarded runtime
 adapter, and fixture ports do not qualify your installed identity service.
+
+### Create the reserved child atomically
+
+Use `coordination.TaskRunStore.CreateTaskRun` after guarded dispatch admission.
+Your `TaskRunRequest` supplies the current dispatched claim token, dispatch digest,
+working assignment revision and digest, parent revision and complete current
+prerequisite chain. For local execution, the run's agent ID must match the claimed
+worker's agent ID. Resolve aliases before claiming work.
+
+Supply a pristine running `Run`: revision zero, no timestamps, output, usage,
+terminal fields or metadata, and explicit positive step, token and tool-call
+limits. Its scope and reserved run ID must match dispatch. Its provenance binds
+the prepared configuration, handoff, parent, task contract and execution-input
+artifact. Persist the input artifact and contract first. The capture intent must
+use schema 2, reserve the transcript, bind revision 1 and include a separate
+evaluation budget. Evaluation capacity still needs its own reservation.
+
+Storage locks the plan and active parent, rechecks the live claim, working
+assignment, shared capacity and prerequisites, and bounds the child budget by
+its handoff and allocation. It validates the task contract, artifact producer,
+output limit and retained execution inputs. The child, capture intent and its
+identity indexes, creation receipt and metadata event intent then commit together.
+Any failure rolls back those writes. An existing child is rejected even when its
+fields match the request.
+
+`TaskRunStart` contains IDs, digests and creation time. It does not copy private
+input into the journal. `Validate(request)` checks the complete original request
+and initial run digest. `request.InitialRun(receipt.CreatedAt)` reconstructs that
+initial snapshot when you still hold the request. Creation timestamps use
+milliseconds so all three databases round-trip them; lease and freshness checks
+use the trusted clock before and after the writes.
+
+Identical retries return the original metadata with `Fresh=false`. Changed
+requests conflict. `GetTaskRunStart(claimID)` recovers the receipt without
+restoring deleted evidence or changing the current child. After a lost response,
+read and reconcile that child. Do not invoke it again from a historical receipt.
+
+The store does not start the ReAct loop. Your host must authorize the prepared
+configuration and hold current grant and external revision guards through
+creation. Runtime integration still needs to enforce ownership, parent
+cancellation and current authority before provider/tool calls, and reconcile
+ambiguous starts. Creating a running row alone does not establish live execution
+or worker qualification.

@@ -68,8 +68,11 @@ allocations and prerequisites before storage, including retries.
 the accepted assignment and current claim, then retains dispatch intent and the
 working assignment together. `NewTaskDispatchAdmitter` applies current host
 authorization under explicit guards and validates the returned receipt, including
-on historical retries. Its reserved child ID is not yet wired into prepared
-execution. Concrete host grant services, runtime dispatch, cancellation after
+on historical retries. `CreateTaskRun` atomically creates the reserved child,
+required capture policy and metadata receipt after revalidating live ownership,
+the parent, assignment, budget and prerequisites. The creation receipt contains
+no duplicate private input. Prepared execution still needs to consume this
+capability and enforce authority through provider/tool calls. Concrete host grant services, runtime dispatch, cancellation after
 intent, recovery settlement and event delivery remain open. `Scheduler.Tick` still needs integration; the
 ownership store is not a completed scheduler.
 

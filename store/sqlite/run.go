@@ -38,17 +38,21 @@ var mutableRunColumns = []string{
 }
 
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
+	return (assuranceDriver{store: s}).insertRun(ctx, r, time.Now().UTC())
+}
+
+func (d assuranceDriver) insertRun(ctx context.Context, r *run.Run, at time.Time) error {
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return scopeErr
 	}
-	now := time.Now().UTC()
-	r.CreatedAt = now
-	r.UpdatedAt = now
+	r.CreatedAt = at
+	r.UpdatedAt = at
+	scope.Levels = append([]cortex.Level(nil), scope.Levels...)
 	r.Scope = scope
 	m := runToModel(r)
 	m.Revision = 1
-	_, err := s.sdb.NewInsert(m).Exec(ctx)
+	_, err := d.queries().NewInsert(m).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: create run: %w", err)
 	}

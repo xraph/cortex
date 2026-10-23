@@ -197,3 +197,22 @@ func (d claimWriteTx) LockSubmissionRun(ctx context.Context, identifier id.Agent
 	}
 	return reader.LockSubmissionRun(ctx, identifier)
 }
+
+func (d claimWriteTx) GetRun(ctx context.Context, identifier id.AgentRunID) (*run.Run, error) {
+	reader, ok := d.Driver.(assurance.TaskRunTransaction)
+	if !ok {
+		return nil, coordination.ErrAssignmentUnavailable
+	}
+	return reader.GetRun(ctx, identifier)
+}
+func (d claimWriteTx) InsertTaskRun(ctx context.Context, child *run.Run) error {
+	writer, ok := d.Driver.(assurance.TaskRunTransaction)
+	if !ok {
+		return coordination.ErrAssignmentUnavailable
+	}
+	err := writer.InsertTaskRun(ctx, child)
+	if err == nil && d.failKind == "task_child_run" {
+		return errAssignmentInjected
+	}
+	return err
+}
