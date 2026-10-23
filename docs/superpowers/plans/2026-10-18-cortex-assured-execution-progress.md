@@ -24,7 +24,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
-| S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication and bounded contextual state observations implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
+| S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3551,3 +3551,60 @@ Validation so far:
 - CI `39983797018` passed on sandbox orchestration commit `ace6674`.
 - The broader engine race suite passed in 371.019s, including its SQLite-backed
   verification recovery tests. Its build also passed.
+
+
+### S2.5 separate approved artifact export command
+
+`ArtifactExporter` accepts a host-reserved operation ID, committed result,
+exact artifact reference, actor, approval and logical destination revision.
+It requires current export authorization, an explicit export fence, evidence
+access, content screening and an idempotent sink. Fresh result snapshots share
+the guarded content reader's validation helper. Candidate and supporting refs
+must match the captured binding completely.
+
+The command checks stored result freshness, reads and hashes bounded artifact
+bytes, screens a detached copy, and rechecks stored material and current approval
+before delivery. Screening must approve the original digest. No redaction or
+rewritten artifact is silently exported. Callback inputs are detached and the
+existing fence lifetime guard prevents repeated or escaped callbacks from
+starting a second delivery. Errors after delivery starts preserve an uncertain
+outcome and never authorize a replacement operation ID.
+
+The sandbox module's `grading.NewFileExporter` composes this command with a
+local file adapter. A global private journal reserves the full request before
+artifact publication. Logical destination mappings hold verified directory
+identities; requests supply no paths. The adapter reuses `hostfs.PublishPin` for
+bounded, synced, exclusive publication and current approval checks. Identical
+retries verify existing files, while changed requests conflict across all
+registered destinations. Links, special files and replaced directories fail.
+
+Ruling: local file export is an explicit host command, separate from sandbox
+execution and result viewing. Reuse the current snapshot validator, fence lifetime
+guard and protected filesystem publication primitive. Exporting supporting
+evidence does not relabel it as a verified candidate. Concrete API/dashboard
+commands, production approval and screening, external sinks, audit reconciliation
+for expired approvals and installed qualification remain open.
+
+Validation so far:
+
+- Root export tests first failed because approval was bypassed and no delivery
+  occurred. They now cover revoked approval, scanner outage, changed bytes,
+  changed snapshots and uncertainty after delivery starts.
+- Local adapter tests first failed on missing files and accepted unsafe paths.
+  They now pass under the race detector, including composed command checks,
+  restart, concurrent identical writes, interrupted delivery after reservation,
+  changed destinations and link/directory rejection.
+- An authorization-cancellation regression exposed an incorrect access-denied
+  classification. The command now preserves cancellation while keeping provider
+  diagnostics out of its public error path.
+- CI `39986200222` passed on contextual-state commit `566c319`.
+- Admission tests also exposed a cancelled caller receiving an unavailable error
+  when all slots were occupied. Entry now checks cancellation before admission;
+  normal overflow remains bounded and completed attempts release their slots.
+- Initial all-module lint reported formatting only. The final format pass touched
+  owned files. Full sandbox race tests and builds passed, including grading,
+  protected file publication and the service lifecycle suite. Docs type checking,
+  lint and production build passed.
+- Final all-ten-module lint, root verification race tests (4.017s), grading race
+  tests (1.542s), root/module builds and diff checks passed after the cancellation
+  and substitution review.

@@ -103,6 +103,42 @@ within the recorded windows. It does not establish objective coverage, schema or
 unit correctness, lock a remote resource, or authorize an export. Register those
 acceptance checks separately and retain the publication fence below.
 
+### Export an approved artifact
+
+`verification.ArtifactExporter` is a separate host command. Reserve an operation
+ID with `PrefixExport` durably, then submit the exact artifact reference, committed
+result identity, actor, approval reference and logical destination revision.
+The artifact must belong to that result's captured binding. A sandbox job cannot
+grant export permission or select a filesystem path through this request.
+
+Configure current export authorization, an `ArtifactExportFence`, content
+screening, an authorized evidence repository, result storage and an idempotent
+sink. The fence must hold approval, destination, policy, evidence and run-revision
+guards through delivery. Every relevant writer must participate. External
+destinations need conditional writes or a qualified observation window.
+
+The command checks a fresh result snapshot, reads and hashes at most one MiB,
+screens the complete bytes, and checks freshness and authority again before
+delivery. Screening must approve the exact digest. Changed or redacted bytes need
+a new artifact and approval. Successful export of supporting evidence does not
+assert that it was the verified candidate. Admission is bounded by `MaxConcurrent`
+(one through 64), and each attempt has a 30-second context deadline.
+
+On Linux and macOS, `grading.NewFileExporter` in the sandbox module supplies a
+local file sink. You provision a private operation journal and private destination
+directories, each mode 0700. The adapter reserves the full request before writing
+an artifact, uses operation IDs as filenames, rejects links and directory changes,
+and never replaces existing content. Identical retries verify the same files.
+
+`ErrExportUncertain` means delivery may have occurred. Preserve the operation ID
+and complete request. An identical retry rechecks current approval and result
+freshness; it cannot move to another destination or use a renewed approval under
+the old ID. If those checks have expired, inspect the retained journal through
+your host's authorized audit process before taking another action.
+
+This command does not install API routes, dashboard actions or a production
+deployment target. Configure and qualify those integrations separately.
+
 ## Commit a verified result
 
 Built-in stores expose optional `verification.CommitStore`. A commit consumes

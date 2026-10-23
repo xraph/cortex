@@ -199,14 +199,18 @@ func (r *ResultReader) Read(ctx context.Context, request ResultContentRequest) (
 }
 
 func (r *ResultReader) readSnapshot(ctx context.Context, request ResultReadRequest) (ResultSnapshot, error) {
+	return readCurrentResultSnapshot(ctx, r.config.Store, r.config.Clock, request)
+}
+
+func readCurrentResultSnapshot(ctx context.Context, store ResultSnapshotStore, clock Clock, request ResultReadRequest) (ResultSnapshot, error) {
 	if err := resultReadContextError(ctx); err != nil {
 		return ResultSnapshot{}, err
 	}
-	snapshot, err := r.config.Store.ReadResultSnapshot(ctx, request)
+	snapshot, err := store.ReadResultSnapshot(ctx, request)
 	if err != nil {
 		return ResultSnapshot{}, resultReadError(err)
 	}
-	if err := snapshot.Validate(request, r.config.Clock.Now().UTC()); err != nil {
+	if err := snapshot.Validate(request, clock.Now().UTC()); err != nil {
 		return ResultSnapshot{}, resultReadError(err)
 	}
 	if snapshot.Receipt.Request.Current.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {

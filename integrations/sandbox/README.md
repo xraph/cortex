@@ -1628,5 +1628,56 @@ Do not allocate replacement identities to hide that outcome.
 
 Fixture tests cover tampered exports, forged stdout, revoked authority, signature
 failure, missing checks, timeout and bounded admission. They do not qualify
-runsc isolation or an installed supervisor. Live Linux qualification and a
-separate authorized export command remain required before deployment.
+runsc isolation or an installed supervisor. Live Linux qualification and installed export wiring remain required before
+deployment. The separate local export command is described below.
+
+
+## Approved local artifact export
+
+Use `grading.NewFileExporter` to construct the separate
+`verification.ArtifactExporter` host command on Linux or macOS. It accepts
+`FileExportConfig` with your root command ports, an owner UID, one journal
+directory and registered `FileExportDestination` values. Leave `Command.Sink`
+unset; the factory installs the protected file adapter.
+
+Each destination maps a logical name and revision to a canonical absolute
+directory. Provision the journal and destination directories with mode 0700,
+owned by the configured UID, under protected ancestors. They must be distinct
+and cannot contain one another. Construction verifies and remembers directory
+identities. It opens no listener and creates no directories or files.
+
+Your command configuration supplies committed-result storage, an authorized
+evidence repository, current export authorization, an export fence, a content
+screener, a clock and bounded admission. The authorizer must authenticate the
+request's actor and check the exact approval, artifact and destination. The fence
+covers relevant grant, approval, policy, evidence-deletion and run-revision
+writers through delivery. Configure a binary-capable screener for binary media.
+There is no permissive default or conversion through a text scanner.
+
+Reserve the export operation ID durably before calling `Export`. The local
+adapter first publishes `<operation-id>.json` in the private journal, binding the
+full request. It then publishes the artifact as `<operation-id>` in the selected
+directory. Both files are mode 0400, synced and installed with exclusive rename.
+The shared host filesystem helper rejects traversal, symlinks, hard links and
+special files. Archives remain opaque bytes.
+
+An identical retry verifies the reservation and artifact. A changed approval,
+actor, artifact or destination conflicts with the original reservation. The
+journal is shared across all registered destinations, so the same operation
+cannot move to a second destination. Keep that journal stable across restarts
+and destination changes. Retain operation history and provision filesystem quotas;
+the command bounds individual artifacts and concurrency, not total retained disk.
+
+An interrupted attempt can leave a reservation without an artifact. A partial
+file is never the destination. Retry the same request while its approval and
+verification remain current; failed calls after publication remain uncertain.
+For expired or revoked requests, use an authorized host audit process to inspect
+retained state before issuing any new operation. A crash may leave a private
+`.cortex-publish-*.tmp` file. Remove it only after confirming its publisher has
+stopped, following the input-provisioning cleanup rules above.
+
+Fixture tests cover the composed command, denied approval, blocked screening,
+interruption between reservation and delivery, restart, conflicting retries,
+concurrent publication, directory replacement and unsafe file types. These tests
+do not qualify a production approval service, screener, external deployment
+sink or installed API/dashboard export flow.
