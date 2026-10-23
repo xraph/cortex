@@ -58,6 +58,9 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 	if s.prepared != nil {
 		publication = cfg.Publication
 		schema = preparedSchemaVersion
+		if s.preparedSnapshot != nil {
+			schema = s.preparedSnapshot.SchemaVersion
+		}
 	}
 	return suspension.Continuation{
 		SchemaVersion: schema, Prepared: preparedBytes(s.prepared), Provenance: s.provenance, Usage: s.usage,
@@ -214,7 +217,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		}
 		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
 		stepSpan.toolCalls = len(resp.ToolCalls)
-		if r.Provenance.VerificationRequired && len(resp.ToolCalls) > 0 {
+		if r.Provenance.VerificationRequired && st.preparedSnapshot.SchemaVersion != requiredToolsSchemaVersion && len(resp.ToolCalls) > 0 {
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
 			r.Usage = st.usage
@@ -297,7 +300,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range resp.ToolCalls {
 				tcStart := time.Now().UTC()
-				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
+				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomePending {
@@ -325,9 +328,10 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					ID:          id.NewToolCallID(),
 					StepID:      step.ID,
 					RunID:       r.ID,
-					ToolName:    tc.Name,
-					Arguments:   tc.Arguments,
-					Result:      result,
+					ToolName:    publicToolName(ctx, tc.Name),
+					Arguments:   publicGenerationText(r, tc.Arguments),
+					Result:      publicGenerationText(r, result),
+					Error:       publicToolFailure(ctx, outcome),
 					StartedAt:   &tcStart,
 					CompletedAt: &tcEnd,
 				}
@@ -339,7 +343,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				// or a failure. Emitting completed here too would report the
 				// same call twice, with the second one calling it a success.
 				if outcome == outcomeCompleted {
-					e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+					e.emitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
 				}
 
 				// Append tool result message.
@@ -596,7 +600,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 		_ = stream.Close()
 		stepSpan.toolCalls = len(toolCalls)
-		if r.Provenance.VerificationRequired && len(toolCalls) > 0 {
+		if r.Provenance.VerificationRequired && st.preparedSnapshot.SchemaVersion != requiredToolsSchemaVersion && len(toolCalls) > 0 {
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
 			r.Usage = st.usage
@@ -690,12 +694,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range toolCalls {
 				tcStart := time.Now().UTC()
-				e.extensions.EmitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
+				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
-					"tool_name": tc.Name,
-					"arguments": tc.Arguments,
-					"tool_id":   tc.ID,
+					"tool_name": publicToolName(ctx, tc.Name),
+					"arguments": publicGenerationText(r, tc.Arguments),
+					"tool_id":   publicGenerationText(r, tc.ID),
 				}})
 
 				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
@@ -718,9 +722,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					ID:          id.NewToolCallID(),
 					StepID:      step.ID,
 					RunID:       r.ID,
-					ToolName:    tc.Name,
-					Arguments:   tc.Arguments,
-					Result:      result,
+					ToolName:    publicToolName(ctx, tc.Name),
+					Arguments:   publicGenerationText(r, tc.Arguments),
+					Result:      publicGenerationText(r, result),
+					Error:       publicToolFailure(ctx, outcome),
 					StartedAt:   &tcStart,
 					CompletedAt: &tcEnd,
 				}
@@ -732,7 +737,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				// call, and executeTool already emitted it for a denial
 				// or a failure.
 				if outcome == outcomeCompleted {
-					e.extensions.EmitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
+					e.emitToolCompleted(ctx, r.ID, tc.Name, result, tcEnd.Sub(tcStart))
 				}
 
 				st.messages = append(st.messages, llm.Message{
@@ -763,7 +768,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				sendEvent(ctx, events, StreamEvent{Type: EventSuspended, Data: map[string]any{
 					"run_id":  r.ID.String(),
 					"reason":  string(reason),
-					"pending": pending.calls,
+					"pending": publicPendingCalls(r, pending.calls),
 				}})
 				return
 			}
@@ -842,6 +847,9 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 // The RunFailed hook fires after persistence, so observers never treat an
 // uncommitted failure as a durable outcome.
 func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
+	if r.Provenance.VerificationRequired {
+		runErr = closedRequiredError(runErr)
+	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	completedAt := time.Now().UTC()
@@ -1020,7 +1028,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 			if errors.Is(err, cortex.ErrRequiresApproval) {
 				return "", outcomePending, suspension.ReasonApproval
 			}
-			e.extensions.EmitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, err).Error())
+			e.emitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, err).Error())
 			return jsonResult("error", err.Error()), outcomeDenied, ""
 		}
 	}
@@ -1028,7 +1036,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
 	if outcome == outcomeFailed {
 		noteToolFailure(ctx, failErr)
-		e.extensions.EmitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
+		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
 	if outcome == outcomePending {
 		return result, outcome, pendingReason(tc.Name)

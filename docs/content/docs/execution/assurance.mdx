@@ -232,7 +232,7 @@ optional capability retain the explicit worker API; commit-time identity checks
 remain necessary in every store that supports intents.
 
 The storage interfaces alone do not gate execution. The experimental runtime
-option below connects them for tool-free runs. It is off by default.
+option below connects them for supported prepared and resumed runs. It is off by default.
 
 ### Capture privately before publication
 
@@ -426,10 +426,11 @@ below. `RuntimeCapabilities.ContextualVerification` remains false: tests use hos
 doubles and do not qualify a production evaluator or commit fence.
 
 
-### Require verification for a tool-free run
+### Require verification before publishing an answer
 
 `engine.WithRequiredVerification` connects preparation, generation, private
-capture and the explicit worker for tool-free runs. This experimental option is
+capture and the explicit worker, including authorized tools and suspension/resume.
+This experimental option is
 off by default. Complete the roadmap's G1 qualification before a production
 rollout; the tests do not qualify a live provider, scanner or sandbox.
 
@@ -462,8 +463,9 @@ verification allowance gives generation 970 tokens. Evaluation money limits
 remain separate from generation pricing. Provider-reported usage is never
 clamped; an overrun prevents evaluation.
 
-Required snapshots use schema 3. Schema 2 remains unchanged for ordinary runs.
-A worker without the matching required configuration rejects schema 3 execution;
+Required snapshots without tools use schema 3; snapshots with tools use schema 4.
+Schema 2 remains unchanged for ordinary runs.
+A worker without the matching required configuration rejects required execution;
 a required worker also rejects ordinary prepared snapshots. Contract, revision,
 allowance and prepared identity cannot be replaced through run options. The
 engine registers the intent before invoking the model.
@@ -483,11 +485,48 @@ Neither path releases an answer or a `done` event. The saved run can be executio
 A2A projects pending required verification as working and rejects unverified
 completion artifacts.
 
-Tools, external-tool suspensions, resume and checked-segment publication are
-currently unsupported with this option. Preparation or resume rejects them before
-dispatch or claim. Unexpected provider tool calls also stop without execution.
+Checked-segment publication remains unsupported: required answers must wait for
+whole-result verification. Tool-free snapshots reject unexpected tool calls;
+tool-enabled snapshots enforce their frozen allowlist and current tool authority.
 History publication, durable completion-hook replay, automatic job scheduling,
 lease renewal, repairs and recovery before candidate capture remain open.
 After a lost evaluator response, recover the saved intent/job through `VerifyRun`
 with its stable identities and lease rules. That operation reconciles the
 recorded call without generating again; it does not replay completion hooks.
+
+
+### Authorize private tool handoffs
+
+For required runs with tools, supply both `WithToolAuthorizer` and
+`RequiredVerificationConfig.HandoffAuthorizer`. The latter implements
+`AuthorizeToolHandoff(context.Context, cortex.Subject) error`. Check the current
+principal's permission to inspect pending calls and supply their outcomes, using
+the exact scope and run identity. It is a separate decision from permission to
+execute a tool.
+
+Preparation freezes schema 4 for tool-enabled required runs. Resume restores the
+verification policy from that prepared payload rather than maintaining a second
+policy copy in continuation configuration. Before claiming a suspension, Cortex
+checks the saved budget, provenance, capture intent, policy revision, host ports,
+current handoff grant and evidence-write grant. It repeats the checks after claim
+and rechecks tool dispatch authority before effects. An older worker rejects the
+new schema instead of resuming without the verification requirement.
+
+Ordinary stream and dashboard responses omit private pending call IDs and
+arguments. Use `Engine.PendingVerificationTools(ctx, runID)` from an authorized
+host path to obtain them. That read does not claim the suspension or authorize
+executing the tool. Pass the returned call IDs into the existing `Resume` or
+`ResumeStream` API; approval checkpoints still use `ResolveCheckpoint`.
+
+Tool arguments and results remain available to the authorized handler and model.
+Public tool rows and lifecycle hooks omit their bodies; unknown model-supplied
+tool names and private failure details are replaced with fixed metadata. Required
+runs still do not publish conversation history. The continuation retains private
+messages under the store's existing scope boundary until resume or cleanup.
+Direct `Store()` access is a trusted host capability, so authorize it separately.
+
+Result verification does not undo tool effects. Your tool authorizer must govern
+writes, messages and other effects before dispatch. Verification controls whether
+the final answer can be published. The restart tests prove that completed tool
+steps are not replayed by normal continuation; a crash during an external effect
+still needs the planned durable effect-receipt protocol.

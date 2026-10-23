@@ -354,3 +354,26 @@ completed task with an output artifact.
 Tools, resume and checked-segment streaming fail closed in this initial path.
 G1 production qualification, durable delivery and the remaining S2.2 paths are
 still open. Runtime contextual-verification capability remains false.
+
+
+## Required verification with tools and suspension
+
+Schema 4 extends required verification to local tools, external handoffs, approval
+checkpoints and sync/stream resume. Tool-free required snapshots retain schema 3,
+and ordinary snapshots retain schema 2. Upgrade workers before dispatching
+schema-4 snapshots; older workers reject them. No database migration is needed.
+
+Required tool runs need `WithToolAuthorizer` and a
+`RequiredVerificationConfig.HandoffAuthorizer`. The new
+`PendingVerificationTools` method returns pending calls after current exact-scope
+host authorization. Ordinary streaming and dashboard responses omit private
+pending call IDs and arguments. Public tool rows and hooks omit argument/result
+bodies and private failure details. Hosts that previously consumed pending calls
+from public stream events must use the authorized reader for required runs.
+
+Resume validates the frozen requirement and capture intent before claiming and
+again before continuing. It keeps the reserved evaluator budget and rejects policy
+downgrades. Tool authorization remains live and governs effects before execution;
+final-result verification does not roll effects back. Recovery across a crash
+inside a tool effect still requires durable effect receipts. Production G1
+qualification and contextual-verification capability advertising remain open.

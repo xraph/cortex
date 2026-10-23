@@ -68,7 +68,7 @@ func (e *Engine) executePreparedTool(ctx context.Context, subject cortex.Subject
 
 func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, suspension.SuspendReason) {
 	if err := ctx.Err(); err != nil {
-		e.extensions.EmitToolDenied(ctx, subject.RunID, tc.Name, err.Error())
+		e.emitToolDenied(ctx, subject.RunID, tc.Name, err.Error())
 		return jsonResult("error", err.Error()), outcomeDenied, ""
 	}
 	if st.preparedSnapshot != nil {
@@ -81,7 +81,7 @@ func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject,
 		}
 		if !allowed {
 			message := "tool is outside the prepared allowlist: " + tc.Name
-			e.extensions.EmitToolDenied(ctx, subject.RunID, tc.Name, message)
+			e.emitToolDenied(ctx, subject.RunID, tc.Name, message)
 			return jsonResult("error", message), outcomeDenied, ""
 		}
 	}

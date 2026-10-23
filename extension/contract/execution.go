@@ -224,7 +224,11 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 						return out, susErr
 					}
 					if sus != nil {
-						out.Suspension = &SuspensionView{sus.Reason, sus.Pending}
+						pending := sus.Pending
+						if out.Run.Provenance.VerificationRequired {
+							pending = nil
+						}
+						out.Suspension = &SuspensionView{sus.Reason, pending}
 					}
 				}
 				out.Steps, err = s.deps.Engine.ListSteps(ctx, v)

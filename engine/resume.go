@@ -210,7 +210,8 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// malformed request, which is a cliff external-tool integrations
 	// would fall off constantly. The authoritative check is the one
 	// below, against the suspension the claim actually returned.
-	if susp, err := e.store.GetSuspension(ctx, runID); err == nil {
+	preview, previewErr := e.store.GetSuspension(ctx, runID)
+	if susp := preview; previewErr == nil {
 		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
 			return nil, nil, decodeErr
 		} else if snap != nil {
@@ -219,6 +220,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 			}
 		}
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
+			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredToolsSchemaVersion {
+				vErr = cortex.ErrResultsMismatch
+			}
 			return nil, nil, vErr
 		}
 		if aErr := checkResumeAuthority(susp.Reason, source); aErr != nil {
@@ -240,7 +244,11 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, fmt.Errorf("load run to resume: %w", err)
 	}
 
-	if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
+	if previewErr == nil {
+		if policyErr := e.checkRequiredResume(ctx, snapshot, preview); policyErr != nil {
+			return nil, nil, policyErr
+		}
+	} else if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
 		return nil, nil, cortex.ErrVerificationUnavailable
 	}
 	susp, err := e.store.ClaimSuspension(ctx, runID)
@@ -267,6 +275,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
 	}
 
+	if policyErr := e.checkRequiredResume(ctx, r, susp); policyErr != nil {
+		return nil, nil, e.failResume(ctx, r, ag.ID, policyErr)
+	}
 	prepared, snap, decodeErr := decodeContinuation(susp.Cont)
 	if decodeErr != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, decodeErr)
@@ -299,6 +310,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		r.Provenance.PublicationStatus = mergePublicationStatus(r.Provenance.PublicationStatus, sourceStatus)
 	}
 	resumeConfig := configFromContinuation(susp.Cont.Config)
+	if snap != nil {
+		resumeConfig.Verification = snap.Config.Verification
+	}
 	if resumeConfig.Publication.Mode == "" {
 		resumeConfig.Publication = e.frozenPublication()
 	}
@@ -348,6 +362,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// the authority widening this whole path exists to refuse. A rebuilt
 	// MaxSteps misfires the guard just below it, too.
 	cfg := configFromContinuation(susp.Cont.Config)
+	if snap != nil {
+		cfg.Verification = snap.Config.Verification
+	}
 	// A continuation with no config at all is unusable, and it has to say
 	// so in its own words. MaxSteps reads as 0, the guard just below
 	// fires, and the run fails with ErrMaxStepsReached: an error that
@@ -405,6 +422,9 @@ func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot, 
 // failResume marks a claimed run failed and hands the reason back
 // unwrapped, so callers can still match it with errors.Is.
 func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID, err error) error {
+	if r.Provenance.VerificationRequired {
+		err = closedRequiredError(err)
+	}
 	e.failRun(ctx, r, agentID, err, time.Time{})
 	return err
 }
@@ -472,10 +492,10 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 				ID:        id.NewToolCallID(),
 				StepID:    stepID,
 				RunID:     r.ID,
-				ToolName:  p.Name,
-				Arguments: p.Arguments,
-				Result:    content,
-				Error:     errText,
+				ToolName:  publicToolName(ctx, p.Name),
+				Arguments: publicGenerationText(r, p.Arguments),
+				Result:    publicGenerationText(r, content),
+				Error:     publicToolErrorText(ctx, errText),
 				// The call really was outstanding from the moment the run
 				// paused until now. Stamping it as instantaneous would
 				// hide exactly the latency an external tool introduces.
@@ -488,9 +508,9 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 		}
 
 		if errText != "" {
-			e.extensions.EmitToolFailed(ctx, r.ID, p.Name, errors.New(errText))
+			e.emitToolFailed(ctx, r.ID, p.Name, errors.New(errText))
 		} else {
-			e.extensions.EmitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
+			e.emitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
 		}
 
 		st.messages = append(st.messages, llm.Message{

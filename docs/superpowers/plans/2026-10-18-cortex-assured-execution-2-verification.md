@@ -102,8 +102,18 @@ Failed or inconclusive checks cannot emit done or successful A2A artifacts.
 Unsupported tools, resume and checked-segment policies fail closed. Lost evaluator
 reply recovery uses the saved job without another generation call. This option is
 off by default; G1 qualification is still required before production rollout.
-Tool/resume support, new durable result hooks, history publication, scheduler,
+New durable result hooks, history publication, scheduler,
 lease renewal, bounded repair and pre-capture recovery remain open.
+
+
+The required runtime now supports tool execution, authorized external handoffs,
+approval checkpoints and sync/stream resume through schema 4. It validates frozen
+policy and capture intent before claim and again before effects. The authorized
+`PendingVerificationTools` reader replaces public pending bodies; public tool
+rows/hooks also omit private content. Evaluator reservation survives restart.
+The tests cover ordinary continuation without repeated completed effects;
+crash-atomic effect receipts, durable result hooks, history publication, scheduling,
+lease renewal, repairs and production G1 qualification remain open.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

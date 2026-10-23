@@ -287,6 +287,9 @@ func (e *Engine) checkPreparedSources(ctx context.Context, ag *agent.Config, sna
 }
 
 func (e *Engine) checkedToolError(ctx context.Context, subject cortex.Subject, err error) error {
+	if privateToolContext(ctx) {
+		return errPrivateTool
+	}
 	ag := &agent.Config{ID: subject.AgentID}
 	r := &run.Run{ID: subject.RunID}
 	p := e.frozenPublication()

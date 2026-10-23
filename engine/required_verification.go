@@ -16,6 +16,7 @@ import (
 )
 
 const requiredPreparedSchemaVersion = 3
+const requiredToolsSchemaVersion = 4
 
 // VerificationIntentInput supplies trusted identity before generation. Deadline
 // includes the caller's narrower deadline. Scope is detached from engine state.
@@ -33,13 +34,14 @@ type VerificationIntentBuilder interface {
 	BuildVerificationIntent(context.Context, VerificationIntentInput) (verification.CaptureIntent, error)
 }
 
-// RequiredVerificationConfig gates tool-free prepared, sync and stream runs.
+// RequiredVerificationConfig gates prepared, sync, stream and resumed runs.
 // Evaluator tokens are reserved from the total run token budget at preparation.
 // Money limits cover evaluation only. The builder owns context provenance; the
 // capture authorizer checks artifact creation both before generation and capture.
-// Tools, suspension/resume and checked-segment publication are not supported by
-// this first runtime gate and are rejected before dispatch. All fields are required.
+// Tools require both a ToolAuthorizer and HandoffAuthorizer. Checked-segment
+// publication remains unsupported. Other ports and worker settings are required.
 type RequiredVerificationConfig struct {
+	HandoffAuthorizer ToolHandoffAuthorizer
 	Revision          string
 	ContractID        id.ID
 	EvaluationBudget  verification.EvaluationBudget
@@ -87,8 +89,15 @@ func (e *Engine) prepareRequiredVerification(ctx context.Context, cfg *resolvedC
 	if c == nil {
 		return nil
 	}
-	if len(defs) != 0 || len(cfg.Tools) != 0 || cfg.Publication.Mode == safety.ModeCheckedSegments || cfg.Budget.MaxTokens <= 0 || c.EvaluationBudget.MaxTokens >= int64(cfg.Budget.MaxTokens) || cfg.Budget.Deadline.IsZero() {
+	if cfg.Publication.Mode == safety.ModeCheckedSegments || cfg.Budget.MaxTokens <= 0 || c.EvaluationBudget.MaxTokens >= int64(cfg.Budget.MaxTokens) || cfg.Budget.Deadline.IsZero() {
 		return cortex.ErrVerificationUnavailable
+	}
+	if len(defs) > 0 && (c.HandoffAuthorizer == nil || e.authorizer == nil) {
+		return cortex.ErrVerificationUnavailable
+	}
+	cfg.Tools = nil
+	for _, def := range defs {
+		cfg.Tools = append(cfg.Tools, def.Name)
 	}
 	contract, err := e.verificationWorker.storage.GetContract(ctx, c.ContractID)
 	if err != nil || contract.Validate() != nil || contract.ID != c.ContractID || contract.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
@@ -106,7 +115,7 @@ func validRequiredSnapshot(s *preparedSnapshot) bool {
 	if p == nil {
 		return s.SchemaVersion == preparedSchemaVersion
 	}
-	return s.SchemaVersion == requiredPreparedSchemaVersion && utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && len(s.Tools) == 0 && len(s.Config.Tools) == 0 && s.Config.Publication.Mode != safety.ModeCheckedSegments
+	return (s.SchemaVersion == requiredToolsSchemaVersion || (s.SchemaVersion == requiredPreparedSchemaVersion && len(s.Tools) == 0 && len(s.Config.Tools) == 0)) && utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && s.Config.Publication.Mode != safety.ModeCheckedSegments
 }
 
 func (e *Engine) requireVerification(s *preparedSnapshot) error {
@@ -117,7 +126,7 @@ func (e *Engine) requireVerification(s *preparedSnapshot) error {
 	if p == nil && c == nil {
 		return nil
 	}
-	if p == nil || c == nil || e.verificationWorker == nil || p.Revision != c.Revision || p.ContractID != c.ContractID || p.EvaluationBudget != c.EvaluationBudget {
+	if p == nil || c == nil || e.verificationWorker == nil || (s.SchemaVersion == requiredToolsSchemaVersion && (c.HandoffAuthorizer == nil || e.authorizer == nil)) || p.Revision != c.Revision || p.ContractID != c.ContractID || p.EvaluationBudget != c.EvaluationBudget {
 		return cortex.ErrVerificationUnavailable
 	}
 	return nil
@@ -139,7 +148,7 @@ func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg 
 		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
 	req := intent.Template
-	if req.ExpectedRunRevision != 1 || req.Binding.RunID != r.ID || req.Binding.Scope.Canonical() != r.Scope.Canonical() || req.Binding.Context.PreparedDigest != p.Digest() || req.Binding.Context.PolicyRevision != policy.Revision || req.ContractID != policy.ContractID || req.Binding.ContractDigest != policy.ContractDigest || *req.EvaluationBudget != policy.EvaluationBudget || req.Deadline.After(cfg.Budget.Deadline) || !req.Deadline.After(e.verificationWorker.config.Clock.Now()) || intent.MaxCandidateBytes > 1<<20 || intent.MaxCandidateBytes > int64(cfg.Publication.MaxOutputBytes) {
+	if !requiredIntentMatchesPolicy(intent, policy, r) || req.Deadline.After(cfg.Budget.Deadline) || !req.Deadline.After(e.verificationWorker.config.Clock.Now()) || intent.MaxCandidateBytes > 1<<20 || intent.MaxCandidateBytes > int64(cfg.Publication.MaxOutputBytes) {
 		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
 	if authErr := e.authorizeCandidate(ctx, req.Binding.Candidate); authErr != nil {
@@ -236,4 +245,10 @@ func requiredCompletionError(r *run.Run) error {
 		return cortex.ErrRunUnverified
 	}
 	return nil
+}
+
+// Registration and resume must agree on the same immutable policy binding.
+func requiredIntentMatchesPolicy(intent verification.CaptureIntent, policy *requiredPolicy, r *run.Run) bool {
+	req := intent.Template
+	return policy != nil && req.EvaluationBudget != nil && req.ExpectedRunRevision == 1 && req.Binding.RunID == r.ID && req.Binding.Scope.Canonical() == r.Scope.Canonical() && req.Binding.Context.PreparedDigest == r.Provenance.PreparedDigest && req.Binding.Context.PolicyRevision == policy.Revision && req.ContractID == policy.ContractID && req.Binding.ContractDigest == policy.ContractDigest && *req.EvaluationBudget == policy.EvaluationBudget
 }

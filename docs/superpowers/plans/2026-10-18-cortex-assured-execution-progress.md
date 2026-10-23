@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental tool-free runtime gate implemented; qualified host adapters, tools/resume, scheduling and durable public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate includes tools and resume; qualified host adapters, durable effect recovery, scheduling and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -2362,3 +2362,48 @@ Validation for this packet:
 
 These checks qualify the local implementation and fixtures only. Live provider,
 scanner, sandbox and installed-host qualification remain open.
+
+
+## Required tool execution and private handoffs
+
+Schema 4 now carries required verification through tools, external suspension,
+approval checkpoints and sync/stream resume. The prepared payload remains the
+single source of verification policy. Before a claim, the engine checks frozen
+inputs/accounting, capture intent, current handoff/evidence grants and matching
+host configuration. It checks again after claim and keeps live tool authorization.
+
+`PendingVerificationTools` gives authorized hosts a private handoff read. Ordinary
+streams and dashboard detail omit pending IDs/arguments. Public tool rows/hooks
+omit arguments, results and private errors; unknown provider-supplied tool names
+use fixed metadata. The authorized handler and model retain the full inputs.
+Malformed resume errors cannot disclose private missing-call IDs.
+
+Focused tests cover local sync/stream tools, external sync/stream resume, SQLite
+reopen, handoff revocation, approval exactly once under repeated resolution,
+changed policy, missing authority, budget alteration, schema downgrade and public
+hook/row/dashboard privacy. The first test run failed for the absent handoff port
+and reader. Existing required tool-free behavior stays covered.
+
+This does not promise crash-atomic tool effects. Durable effect receipts, qualified
+host adapters, result delivery/history, scheduler, lease renewal, repairs and G1
+production qualification remain open. Checked-segment publication stays rejected.
+
+
+Validation for the tool/resume packet:
+
+- The full engine/run/verification race suites passed (engine: 200.603s).
+  Required-verification race tests passed again after the final error-marker
+  change in 59.298s. A new behavioral regression first failed because redaction
+  left failed/denied tool rows without an error marker; they now retain a fixed
+  failure or denial message without private content.
+- Extension and dashboard-contract race suites passed (1.921s and 17.471s).
+  SQLite/PostgreSQL/Mongo private-capture and prepared-state race checks passed
+  (41.694s, 13.920s and 16.990s); container tests ran without skips.
+- Final formatting, all ten module lint checks, root build, diff checks and docs
+  type/lint/build checks passed. CI for the preceding commit `4322520` is green.
+
+Next runtime audit: bind per-run input/session/history evidence and exact
+model/tool revision records into verification context, and check host transport
+error semantics. The current host builder owns context provenance; passing
+fixture checks does not qualify those host integrations. These items remain open
+alongside crash-atomic tool effects and durable result publication.

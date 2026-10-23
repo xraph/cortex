@@ -23,7 +23,7 @@ func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *prepared
 		}
 		return nil, nil, nil
 	}
-	if cont.SchemaVersion != preparedSchemaVersion {
+	if cont.SchemaVersion != preparedSchemaVersion && cont.SchemaVersion != requiredToolsSchemaVersion {
 		return nil, nil, fmt.Errorf("cortex: continuation schema %d: %w", cont.SchemaVersion, cortex.ErrInvalidContinuation)
 	}
 	var prepared PreparedAgent
@@ -34,6 +34,9 @@ func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *prepared
 		return nil, nil, fmt.Errorf("cortex: continuation identity mismatch: %w", cortex.ErrInvalidContinuation)
 	}
 	snap, err := prepared.snapshot()
+	if err == nil && snap.SchemaVersion != cont.SchemaVersion {
+		return nil, nil, cortex.ErrInvalidContinuation
+	}
 	return &prepared, snap, err
 }
 
@@ -49,6 +52,8 @@ func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnap
 	}
 	cfg := configFromContinuation(cont.Config)
 	frozen := snap.Config
+	// The prepared payload is the single source of required-verification policy.
+	cfg.Verification = frozen.Verification
 	// A caller deadline may narrow a frozen deadline when the run starts.
 	if !frozen.Budget.Deadline.IsZero() && (cfg.Budget.Deadline.IsZero() || cfg.Budget.Deadline.After(frozen.Budget.Deadline)) {
 		return cortex.ErrInvalidContinuation

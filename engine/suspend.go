@@ -159,6 +159,9 @@ func (e *Engine) suspend(ctx context.Context, r *run.Run, pend pendingCalls, con
 		attribute.Int(attrSuspensionPending, len(pend.calls)),
 	))
 	reason, err := e.suspendRun(ctx, r, pend, cont)
+	if err != nil && r.Provenance.VerificationRequired {
+		err = closedRequiredError(err)
+	}
 	// The label comes from the pending calls, not from what suspendRun
 	// returned: a store failure returns no reason, and it must not read as
 	// calls that disagreed.

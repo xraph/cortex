@@ -195,6 +195,9 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
 	if cfg.Verification != nil {
 		snap.SchemaVersion = requiredPreparedSchemaVersion
+		if len(defs) > 0 {
+			snap.SchemaVersion = requiredToolsSchemaVersion
+		}
 	}
 	if !isAtomicPreparation(ctx) {
 		if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {

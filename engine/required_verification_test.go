@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xraph/cortex"
-
 	"github.com/stretchr/testify/require"
+
+	"github.com/xraph/cortex"
 
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
@@ -388,7 +388,7 @@ func TestRequiredVerificationConfiguration(t *testing.T) {
 	}
 }
 
-func TestRequiredVerificationRejectsToolsAndSegmentPolicy(t *testing.T) {
+func TestRequiredVerificationRejectsToolsWithoutAuthoritiesAndSegments(t *testing.T) {
 	for _, mode := range []string{"tool", "segments"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newWorkerFixture(t)
