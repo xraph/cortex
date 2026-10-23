@@ -94,15 +94,7 @@ func (c Contract) validateFields() error {
 	seen := make(map[string]bool, len(c.Criteria))
 	required := false
 	for _, criterion := range c.Criteria {
-		if !validText(criterion.ID, criterion.Verifier, criterion.VerifierRevision, criterion.Parameters.ManifestRevision) || criterion.MaxSourceAge < 0 {
-			return ErrInvalid
-		}
-		if strings.TrimSpace(criterion.ID) == "" || seen[criterion.ID] || strings.TrimSpace(criterion.Verifier) == "" || strings.TrimSpace(criterion.VerifierRevision) == "" || strings.TrimSpace(criterion.Parameters.ManifestRevision) == "" || criterion.MaxAge <= 0 || criterion.MinEvidence < 0 || criterion.MinEvidence > 256 {
-			return ErrInvalid
-		}
-		switch criterion.Kind {
-		case KindSchema, KindTest, KindState, KindSemantic, KindHuman, KindPolicy:
-		default:
+		if criterion.validate() != nil || seen[criterion.ID] {
 			return ErrInvalid
 		}
 		seen[criterion.ID] = true
@@ -112,6 +104,21 @@ func (c Contract) validateFields() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+func (c Criterion) validate() error {
+	if !validText(c.ID, c.Verifier, c.VerifierRevision, c.Parameters.ManifestRevision) || c.MaxSourceAge < 0 {
+		return ErrInvalid
+	}
+	if strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Verifier) == "" || strings.TrimSpace(c.VerifierRevision) == "" || strings.TrimSpace(c.Parameters.ManifestRevision) == "" || c.MaxAge <= 0 || c.MinEvidence < 0 || c.MinEvidence > 256 {
+		return ErrInvalid
+	}
+	switch c.Kind {
+	case KindSchema, KindTest, KindState, KindSemantic, KindHuman, KindPolicy:
+		return nil
+	default:
+		return ErrInvalid
+	}
 }
 
 // Validate rejects a changed or unsupported contract rather than resealing it.

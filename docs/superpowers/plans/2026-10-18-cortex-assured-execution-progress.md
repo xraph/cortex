@@ -24,7 +24,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
-| S2.5 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S2.5 | active | this chat | Sealed grading manifests and exact host registration implemented; separate job orchestration and protected supervisor verdicts remain open |
+| S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -3358,9 +3359,9 @@ Validation for protected historical projections:
 
 The React client in `forge-dashboard/packages/plugin-cortex` now uses durable
 metadata replay for protected live runs and the guarded `runs.result` query for
-committed text. Local dashboard commit `2ea7eff` contains this packet. Publishing
-it is pending a decision because that checkout already had seven unrelated
-Tether commits ahead of remote main; pushing it would publish all eight.
+committed text. Dashboard commit `2ea7eff` contains this packet. The user approved publishing
+the seven earlier Tether commits with it, and all eight are now on remote main.
+The checkout's unrelated untracked files were preserved.
 
 The result view bypasses the shared query cache, validates run/result identity,
 version, publication state and the decimal revision string, and renders literal
@@ -3396,3 +3397,54 @@ Its assertion raced deferred peer cleanup after the socket closed. Commit
 `fc59e50` joins the server before inspecting cleanup; 100 focused race runs and
 the full sandbox race suite passed, followed by all-module lint and formatting.
 The fix is pushed. Linux CI must confirm it independently.
+
+
+### S2.5 captured grading manifests and host registration
+
+`verification.EvaluationManifest` seals the captured binding, exact test criterion,
+protected test bundle, fixture dataset, result schema, supervisor implementation
+digest, required check names and permitted state probes. Protected references must
+be distinct supporting artifacts in the same binding; candidate content cannot
+be substituted for authoritative tests. Permitted probes must exactly match
+captured source references. This is metadata validation, not runtime isolation.
+
+`ValidateRequest` rejects a changed candidate, run, requirement, tenant, dataset,
+environment, authority or criterion. It uses a host-supplied observation time,
+requires a live deadline strictly inside every artifact's retention interval and
+rejects future or stale source observations. Current grants and external source
+state still require independent host checks.
+
+The immutable host registry selects by exact execution binding, criterion and
+manifest revision. It refuses ambiguous entries, caps registration at 256
+manifests and sixteen MiB, checks context scope, and returns detached values.
+Sealing JSON does not register it. Criterion validation is shared with acceptance
+contracts, preserving their existing digest and validation rules.
+
+Ruling: the manifest binds a captured check through the existing `Binding` and
+`Criterion` contracts rather than introducing another objective or tenant model.
+This keeps candidate and acceptance identities identical across grading and
+commit. It also means hosts register the captured manifest before dispatch;
+template expansion and durable registration remain orchestration work.
+
+These APIs do not submit a job, parse candidate stdout, grant export or publish a
+verdict. Separate candidate/grader jobs, authenticated protected-supervisor
+observations, contextual adapters and Linux adversarial qualification remain
+required before S2.5 can pass its gate.
+
+
+Validation for the grading manifest foundation:
+
+- Manifest and registry behavior first failed against placeholder implementations;
+  the implemented checks then passed the full verification package.
+- The final verification race suite passed in 4.450s, including concurrent
+  detached registry reads and the combined registration byte limit. Root build
+  passed. Existing contract digest fixtures still pass after sharing criterion
+  validation.
+- Initial all-module lint found formatting and one redundant error assignment.
+  After those fixes, `GOWORK=off make f`, final all-ten-module `make l` and
+  `git diff --check` passed. Formatting touched only owned verification files.
+- Docs type check, lint and production build passed. The progress table now
+  records S2.5 as active, not accepted.
+- Cortex CI `39978966777` passed on prior commit `8ef97e1`, independently
+  confirming the sandbox cleanup fix on Linux. Dashboard CI `39979911379` is
+  running on the approved and pushed `2ea7eff`; no success is claimed yet.

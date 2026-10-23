@@ -173,6 +173,13 @@ Interfaces: `sandbox_test_verifier` consumes `sandbox.Runner` and `evidence.Repo
 - [ ] Export approved artifacts through a separate host command that rechecks digest, destination, permissions and safety. A sandbox result alone cannot deploy, publish or mutate production state. Record observation windows for external state checks.
 - [ ] Run real failure, timeout, resource-limit, stale-source, artifact-swap, scanner-outage and replay cases. Apply common checks and commit `feat(verification): run protected contextual evaluation in isolated jobs`.
 
+The captured grading manifest and immutable host registry are implemented.
+They bind the exact execution/criterion to protected tests, fixture data, expected
+schema and permitted source probes, with scoped selection and retention checks.
+They execute no commands and establish no isolation. Separate candidate/grader
+job orchestration, protected supervisor verdicts and live qualification remain
+open; the full packet checkboxes above are unchanged.
+
 ## S2.6: Durable safe event replay
 
 Depends on S1.3/S2.1/S2.2. Owner: event adapter implementer, with runtime and persistence owners handling shared files.
