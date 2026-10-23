@@ -1633,3 +1633,40 @@ Standalone configuration, directory/policy provisioning, input-provider assembly
 live evidence verification and live systemd/runsc qualification remain open.
 The factory does not install or start the broker. S2.4 and the four-stage plan
 remain incomplete.
+
+### S2.4 installed broker configuration and lifetime
+
+Protected evidence database commit `c43fee7` passed CI run `39896489072`.
+
+The installed broker configuration binds explicit transport, controller, image,
+evidence and capacity limits to protected credential references, current policy
+files and the installed worker. Reading it verifies canonical JSON and the worker
+installation without opening storage or services. Database roles, sidecars and
+ownership files must remain distinct; image storage cannot overlap runtime or
+worker state. A regression caught database names colliding with the reserved
+workspaces and launch directories. Both now fail configuration validation.
+
+`RunInstalledDaemon` loads those settings, policies and credentials, opens local
+providers and databases, connects to systemd and assembles the existing daemon.
+It checks broker configuration bytes and worker profile identity again before
+recovery. Public mTLS serving starts only after recovery and a fresh qualification
+check. Missing verifier, rejected qualification, configuration changes and
+service/listener failures return errors and release owned resources. Partial
+service and listener results are closed too. The daemon joins its workers before
+the runner closes storage and systemd.
+
+Linux fixtures exercise the installed path with real protected files, SQLite,
+sockets and mTLS. They verify revocation on a reused connection, startup failure
+cleanup and database ownership release. Their controlled service manager and
+fixture verifier provide no live systemd/runsc qualification. CI includes the
+new installed broker tests in its root Linux race fixture step.
+
+Final validation passed: scoped make f, make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The service race
+suite passed in 87.463s. Final configuration and installed startup tests passed
+ten Linux repetitions, 50 top-level tests, without skips.
+
+The service package remains internal. A standalone executable, concrete live
+qualification verifier, installation/provisioning flow and input ingestion are
+still open. Linux worker selection remains deferred. S2.4 and the four-stage
+plan remain incomplete.

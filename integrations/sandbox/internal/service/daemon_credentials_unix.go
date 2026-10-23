@@ -17,6 +17,13 @@ import (
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 )
 
+const (
+	daemonSigningPEMBytes     = 4 << 10
+	daemonCertificatePEMBytes = 192 << 10
+	daemonTLSKeyPEMBytes      = 24 << 10
+	daemonClientCAPEMBytes    = 256 << 10
+)
+
 // DaemonCredentialFiles pins PEM files from protected daemon configuration.
 // All four files must have mode 0600 and one link. Private keys use unencrypted
 // PKCS8 PRIVATE KEY blocks; certificates use CERTIFICATE blocks. These pins and
@@ -48,7 +55,7 @@ func readDaemonCredentials(ctx context.Context, files DaemonCredentialFiles, exp
 	if len(expected) != ed25519.PublicKeySize || authenticate == nil {
 		return nil, fmt.Errorf("cortex: missing daemon credential identity or authentication")
 	}
-	signingPEM, err := readDaemonPEM(ctx, files.SigningKey, 4<<10, owner)
+	signingPEM, err := readDaemonPEM(ctx, files.SigningKey, daemonSigningPEMBytes, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +82,7 @@ func readDaemonCredentials(ctx context.Context, files DaemonCredentialFiles, exp
 	if !bytes.Equal(signing[ed25519.SeedSize:], expected) {
 		return nil, broker.ErrConflict
 	}
-	certificatePEM, err := readDaemonPEM(ctx, files.Certificate, 192<<10, owner)
+	certificatePEM, err := readDaemonPEM(ctx, files.Certificate, daemonCertificatePEMBytes, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +90,7 @@ func readDaemonCredentials(ctx context.Context, files DaemonCredentialFiles, exp
 	if err != nil {
 		return nil, err
 	}
-	tlsPEM, err := readDaemonPEM(ctx, files.TLSKey, 24<<10, owner)
+	tlsPEM, err := readDaemonPEM(ctx, files.TLSKey, daemonTLSKeyPEMBytes, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +104,7 @@ func readDaemonCredentials(ctx context.Context, files DaemonCredentialFiles, exp
 	if err != nil {
 		return nil, fmt.Errorf("cortex: invalid TLS private key: %w", err)
 	}
-	caPEM, err := readDaemonPEM(ctx, files.ClientCAs, 256<<10, owner)
+	caPEM, err := readDaemonPEM(ctx, files.ClientCAs, daemonClientCAPEMBytes, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +135,14 @@ func readDaemonCredentials(ctx context.Context, files DaemonCredentialFiles, exp
 }
 
 func readDaemonPEM(ctx context.Context, pin hostfs.Pin, maximum int64, owner uint32) ([]byte, error) {
-	if pin.Mode != 0o600 || pin.Bytes <= 0 || pin.Bytes > maximum {
+	if !validDaemonPin(pin, maximum) {
 		return nil, fmt.Errorf("cortex: invalid daemon credential pin")
 	}
 	return hostfs.ReadPin(ctx, pin, owner)
+}
+
+func validDaemonPin(pin hostfs.Pin, maximum int64) bool {
+	return pin.Mode == 0o600 && pin.Bytes > 0 && pin.Bytes <= maximum && evidence.ValidDigest(pin.SHA256)
 }
 
 func parseCredentialKey(der []byte) (any, error) {

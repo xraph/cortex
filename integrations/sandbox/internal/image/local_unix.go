@@ -37,8 +37,22 @@ func NewLocalSource(root string, maximum int64, readers int) (*LocalSource, erro
 	return newLocalSource(root, maximum, readers, 0)
 }
 
+// LocalLimits bounds verified image snapshots and aggregate reader capacity.
+type LocalLimits struct {
+	MaxBytes int64 `json:"max_bytes"`
+	Readers  int   `json:"readers"`
+}
+
+// Validate checks per-blob, reader and aggregate snapshot bounds.
+func (l LocalLimits) Validate() error {
+	if l.MaxBytes <= 0 || l.MaxBytes > 64<<20 || l.Readers < 1 || l.Readers > 32 || l.MaxBytes*int64(l.Readers) > 256<<20 {
+		return fmt.Errorf("cortex: invalid local image source limits")
+	}
+	return nil
+}
+
 func newLocalSource(root string, maximum int64, readers int, owner uint32) (*LocalSource, error) {
-	if !filepath.IsAbs(root) || filepath.Clean(root) != root || maximum <= 0 || maximum > 64<<20 || readers < 1 || readers > 32 || maximum*int64(readers) > 256<<20 {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || (LocalLimits{MaxBytes: maximum, Readers: readers}).Validate() != nil {
 		return nil, fmt.Errorf("cortex: invalid local image source configuration")
 	}
 	source := &LocalSource{root: root, maximum: maximum, owner: owner, slots: make(chan struct{}, readers)}

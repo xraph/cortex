@@ -21,7 +21,8 @@ type ServerLimits struct {
 	HeaderTimeout, RequestTimeout, IdleTimeout time.Duration
 }
 
-func (l ServerLimits) validate() error {
+// Validate checks explicit bounds for every public transport phase.
+func (l ServerLimits) Validate() error {
 	if l.Connections < 1 || l.Connections > 256 || l.HeaderBytes < 1024 || l.HeaderBytes > 32<<10 || l.HeaderTimeout < 10*time.Millisecond || l.HeaderTimeout > 10*time.Second || l.RequestTimeout < 50*time.Millisecond || l.RequestTimeout > 30*time.Second || l.HeaderTimeout > l.RequestTimeout || l.IdleTimeout < 10*time.Millisecond || l.IdleTimeout > 30*time.Second {
 		return fmt.Errorf("cortex: invalid sandbox HTTP limits")
 	}
@@ -53,7 +54,7 @@ type Server struct {
 // NewServer requires explicit finite limits, a static certificate and host
 // authentication. TLS 1.3 is required; dynamic TLS policy callbacks are not used.
 func NewServer(cfg ServerConfig) (*Server, error) {
-	if err := cfg.Limits.validate(); err != nil {
+	if err := cfg.Limits.Validate(); err != nil {
 		return nil, err
 	}
 	if cfg.Authenticate == nil {

@@ -1437,6 +1437,63 @@ evidence policy; the private worker and recovery boundaries still apply. Tests
 verify content and tombstones across clean restarts and process exits with a
 committed WAL, plus late-upload fences and exclusion of other SQLite processes.
 
-Standalone command configuration, directory/policy provisioning, input-provider
-assembly and live systemd/runsc qualification remain open. This factory does not
-install or start the broker.
+`RunInstalledDaemon` below owns this database through the daemon lifetime.
+Directory/policy provisioning, input ingestion and live systemd/runsc
+qualification remain host responsibilities. This factory does not install or
+start the broker.
+
+### Installed broker configuration and startup
+
+Use `service.RunInstalledDaemon(ctx, configPath, verifier)` inside the sandbox
+module to run a configured Linux broker as root. You must supply a trusted
+`QualificationVerifier` that checks current deployment evidence. The runner
+rejects a missing verifier before opening storage. The service package remains
+internal; a standalone command and a concrete live verifier are still pending.
+
+Write `service.BrokerConfig` as canonical JSON in a root-owned, single-link
+mode-0600 file, at most one MiB. `ReadBrokerConfig` validates that document and
+the worker installation without opening databases, reading private keys or
+starting services. The returned SHA256 identifies the exact broker settings;
+the worker keeps its own deployment identity.
+
+| Setting | Required value |
+| --- | --- |
+| `schema_version`, `worker_config` | Version 1 and an absolute installed worker configuration path |
+| `credentials` | Pinned receipt key, server certificate, TLS key and client CA files |
+| `host_policy`, `evidence_policy` | Distinct protected policy files, evaluated on each authorization check |
+| `listen` | Canonical literal IP and nonzero port, such as `127.0.0.1:8443` or `[::1]:8443` |
+| `storage` | Distinct `broker_journal`, `worker_journal` and `evidence` files directly inside the worker state directory |
+| `images`, `image_root` | One to 256 unique immutable digests and the private local content tree |
+| `image_limits` | Explicit `max_bytes` and `readers` within local-source and worker staging ceilings |
+| `evidence_bytes` | One byte to one MiB, within the worker's per-input ceiling |
+| `max_jobs`, `max_active` | One to 100,000 retained jobs; one to 256 active jobs, no more than retained capacity |
+| `cleanup_actor` | Principal for independent evidence cleanup grants |
+| `public_limits`, `control` | Explicit existing server and control limits, with at least one private report slot |
+| `interval_ns`, `page_size`, `discovery_limit` | 10 ms to one second; one to 256 items; one to 10,000 discovered workers |
+
+Marshal the Go types to produce canonical field names and duration values.
+The document contains credential pins, not key bytes. The loader reserves all
+database sidecar and lock names, worker state subdirectories, configuration,
+credentials, policies, worker executable, service template and control socket.
+Image storage must be separate from runtime and worker state storage. Unsafe
+paths, overlapping roles and implicit limits fail startup.
+
+The runner loads current policies, pinned credentials and local image storage,
+opens the evidence and worker databases, connects to systemd and assembles the
+daemon. It rechecks broker configuration bytes and worker profile identity before
+starting recovery. Once private control and recovery are ready, it requests fresh
+qualification and opens the public mTLS listener. Startup failure or cancellation
+joins the daemon and closes owned resources, including a partially opened service
+or listener. Cleanup errors are returned with the original failure.
+
+Provision directories, policy grants, credentials and input evidence before you
+start the broker. Host and evidence grants remain current during its lifetime;
+other configuration changes require a restart. Keep the installed files protected
+while it runs. The runner's bounded preparation phase does not replace your
+verifier's cancellation handling or the daemon's shutdown supervision.
+
+Linux tests use real protected files, SQLite databases, sockets and mTLS with a
+controlled service manager and fixture qualification. They check authenticated
+serving, revocation on a reused connection, changed startup files, failed
+qualification, partial service/listener failures and released database ownership.
+Those fixtures do not qualify a live systemd/runsc installation.
