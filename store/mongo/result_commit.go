@@ -19,27 +19,33 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-func (d assuranceDriver) TransactResult(ctx context.Context, _ id.AgentRunID, callback func(context.Context, assurance.ResultTransaction) (verification.CommitReceipt, error)) (verification.CommitReceipt, error) {
+func (d assuranceDriver) TransactRun(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.RunTransaction) error) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
 	session, err := d.store.mdb.Client().StartSession()
 	if err != nil {
-		return verification.CommitReceipt{}, err
+		return err
 	}
 	defer session.EndSession(ctx)
-	var receipt verification.CommitReceipt
 	_, err = session.WithTransaction(ctx, func(sc context.Context) (any, error) {
-		receipt = verification.CommitReceipt{}
-		var callbackErr error
-		receipt, callbackErr = callback(sc, assuranceDriver{store: d.store, resultTransaction: true})
-		return receipt, callbackErr
+		// A real write serializes run changes with job claims and result commits.
+		// Snapshot reads alone do not fence a concurrent update in another document.
+		filter := scopeFilter(scope, true)
+		filter["_id"], filter["scope_canon"] = runID.String(), scope.Canonical()
+		if _, lockErr := d.store.mdb.Collection(colRuns).UpdateOne(sc, filter, bson.M{"$inc": bson.M{"assurance_fence": int64(1)}}); lockErr != nil {
+			return nil, lockErr
+		}
+		return true, callback(sc, assuranceDriver{store: d.store, resultTransaction: true})
 	}, options.Transaction().SetReadConcern(readconcern.Snapshot()).SetWriteConcern(writeconcern.Majority()))
 	if err != nil {
 		var commandErr mongo.CommandError
 		if errors.As(err, &commandErr) && commandErr.Code == 20 {
-			return verification.CommitReceipt{}, fmt.Errorf("%w: %w", verification.ErrCommitUnavailable, err)
+			return fmt.Errorf("%w: %w", verification.ErrCommitUnavailable, err)
 		}
-		return verification.CommitReceipt{}, err
 	}
-	return receipt, nil
+	return err
 }
 
 func (d assuranceDriver) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
@@ -59,19 +65,38 @@ func (d assuranceDriver) GetRun(ctx context.Context, runID id.AgentRunID) (*run.
 	return runFromModel(&m)
 }
 
-func (d assuranceDriver) CommitRun(ctx context.Context, runID id.AgentRunID, revision int64, resultID id.ID, at time.Time) error {
+func (d assuranceDriver) SetRunVerification(ctx context.Context, runID id.AgentRunID, revision int64, status verification.Status, resultID id.ID, at time.Time) error {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return err
 	}
 	filter := scopeFilter(scope, true)
 	filter["_id"], filter["scope_canon"], filter["revision"] = runID.String(), scope.Canonical(), revision
-	result, err := d.store.mdb.NewUpdate((*runModel)(nil)).Filter(filter).SetUpdate(bson.M{"$set": bson.M{"revision": revision + 1, "verification_status": string(verification.StatusPassed), "result_ref": resultID.String(), "updated_at": at}}).Exec(ctx)
+	result, err := d.store.mdb.NewUpdate((*runModel)(nil)).Filter(filter).SetUpdate(bson.M{"$set": bson.M{"revision": revision + 1, "verification_status": string(status), "result_ref": resultID.String(), "updated_at": at}}).Exec(ctx)
 	if err != nil {
 		return err
 	}
 	if result.MatchedCount() != 1 {
 		return cortex.ErrRunConflict
+	}
+	return nil
+}
+
+func (d assuranceDriver) ReplaceJob(ctx context.Context, row assurance.Record, expectedBody string) error {
+	if row.Kind != assurance.KindJob {
+		return verification.ErrInvalid
+	}
+	filter, err := assuranceFilter(ctx)
+	if err != nil {
+		return err
+	}
+	filter["kind"], filter["id"], filter["body"], filter["deleted"] = assurance.KindJob, row.ID, expectedBody, false
+	result, err := d.store.mdb.Collection(colAssurance).UpdateOne(ctx, filter, bson.M{"$set": bson.M{"body": row.Body, "digest": row.Digest}})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount != 1 {
+		return verification.ErrJobConflict
 	}
 	return nil
 }

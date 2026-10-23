@@ -54,6 +54,12 @@ historical evidence and do not authorize public delivery. See the progress
 ledger for rollback, concurrency, revocation and persistence checks. The runtime
 steps below remain open.
 
+Durable job storage now atomically enqueues pending verification, leases work,
+records partial reports and commits ready jobs with results. Claim history fences
+replayed ownership requests. Runtime scheduling, evaluator dispatch and the
+captured-output recovery window remain open, so the job/lease runtime checkbox
+below stays unchecked.
+
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.
 - [ ] Build the verification request from trusted runtime records. Persist candidate/contract/report bindings and transition to pending verification. On failure allow a bounded repair under the remaining budget, explicit human review, or a committed explanation of incomplete work. None yields `ResultSucceeded` without all required checks passing.

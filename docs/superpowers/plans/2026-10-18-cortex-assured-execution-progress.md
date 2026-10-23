@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Run revisions and atomic result/metadata-outbox storage implemented; host authorization fencing, verification jobs, runtime gates and public event delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API and leased verification-job storage implemented; host deployment adapters, evaluator scheduling, runtime gates and public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -1905,3 +1905,79 @@ Published documentation passed `pnpm types:check`, `pnpm lint` and `pnpm build`.
 
 Host deployment adapters, durable verification jobs, engine gates/hooks and
 public event dispatch remain open. G1 is still required before runtime activation.
+
+
+### S2.2 durable verification jobs
+
+Guarded commit change `235a6ec` passed CI run `39908257458`.
+
+Ruling: persist one job per captured candidate/contract attempt and bind it to the
+pending run revision. Keep reports as they finish, and require the current job
+lease at result commit. A worker replacement can recover accepted checks without
+regenerating the candidate; a stale worker cannot add reports or commit success.
+The cost is a host-approved new job when accepted checks need to be repeated.
+Ownership attempts are bounded separately from evaluator budgets, which the
+runtime still needs to enforce.
+
+`verification.JobStore` now provides exact-scope enqueue, lookup, bounded listing,
+claim, renewal, report acceptance, expiry and cancellation. Enqueue checks the
+saved completed final answer, prepared digest, acceptance contract, candidate
+bytes and retained evidence. It saves the job, run-revision binding and pending
+run update together. An identical enqueue is idempotent. Deadline and ownership
+attempt limits are explicit; lease durations are capped at one hour and the job
+deadline.
+
+Claims use unique IDs and increasing generations. Same-claim retries recover a
+live lease without spending another attempt. An initial regression showed that
+replaying an older claim after a replacement lease expired could consume another
+generation. Persisted consumed claim IDs now reject that replay. Renewal cannot
+revive an expired lease or exceed the deadline. Storage checks its saved expiry,
+owner and generation rather than trusting worker token fields.
+
+Report acceptance checks the live lease, current run revision, immutable binding,
+contract and freshness. The report and job progress share a transaction. Accepted
+criteria cannot be overwritten by a favorable report. Required failure or
+inconclusive verdicts end the job and update run verification; completed execution
+keeps its original meaning. All required passes make the job ready. Result commit
+then requires that job's exact accepted reports and live lease, and saves the
+committed job with the result, outbox and run update. Manual commits remain
+available only when that run revision has no job binding.
+
+Result and job operations share one run transaction adapter. SQLite acquires its
+write lock first; PostgreSQL holds the run and assurance row locks. MongoDB writes
+an internal run fence so a snapshot-based job claim conflicts with concurrent run
+updates, in addition to its evidence fence. Multi-document transactions remain
+mandatory. Failed transactions return no snapshot or receipt.
+
+Tests cover enqueue and claim retries, scope and cancellation denial, partial
+report recovery, ownership takeover, renewal, stale report/result rejection,
+missing commit leases, ready/committed transitions, deadlines, exhausted attempts,
+failed and inconclusive checks, cancellation and four competing claimants. Real
+transaction fixtures inject failure after enqueue, report acceptance and final
+commit, verify complete rollback, then retry successfully. SQLite closes and
+reopens its database after a partial report and resumes the same claim without
+spending another attempt. Pure value tests check request bounds, detached data,
+snapshot integrity, claim history and impossible ready states.
+
+Review regressions reproduced two jobs waiting until deadline unnecessarily:
+a verifier reported a pass without contract-required proof, and an accepted
+report expired while another check was running. Report acceptance now applies
+the aggregate contract verdict to all accepted required criteria. Missing proof,
+human decisions or required source observations end verification as inconclusive;
+expired reports record stale verification. Criteria still awaiting their first
+report keep the job running.
+
+Full verification, SQLite, PostgreSQL and MongoDB race suites passed. Database
+suites took 221, 61 and 23 seconds respectively. Docs types, lint and production
+build passed, along with root build and the ten-module lint gate. After the policy
+fix, affected result/job race checks passed on SQLite, PostgreSQL and MongoDB
+without skips, including missing proof, missing human decisions, missing sources
+and expired accepted reports. Final scoped formatting, root build, ten-module
+lint and diff checks passed.
+
+Upgrade every writer before activation. Older binaries do not enforce job
+ownership. These are trusted storage APIs, not public queue routes; production
+host authorization, clock configuration, evaluator dispatch, budget accounting,
+atomic engine finalization and public event delivery remain open. The scheduler
+must recover the window between captured output and job enqueue without rerunning
+generation or tools. G1 still gates runtime activation, and S2.2 remains active.

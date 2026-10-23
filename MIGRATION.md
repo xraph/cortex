@@ -213,3 +213,28 @@ This capability does not enable engine verification gates or public event
 streaming. Those integrations must supply current host authorization, durable
 verification jobs, delivery checks and public replay sequencing. Existing
 `RunCompleted` hooks keep their current meaning.
+
+
+# Leased verification jobs
+
+Built-in stores now expose optional `verification.JobStore`. Jobs and their
+run-revision bindings use the assurance table, so you need no new SQL table.
+Enqueue atomically advances a captured run into pending verification. Reports
+and job progress are saved under a bounded lease; a replacement worker retains
+accepted reports and receives a new ownership generation.
+
+Include the current `JobLease` and exact accepted report IDs when committing a
+job-bound result. Its receipt, outbox, run update and committed job are saved in
+the same transaction. A missing or stale lease fails. Existing manual result
+commits still work for run revisions without a job binding, and the optional
+lease field is omitted from those request encodings.
+
+Upgrade all writers before enabling this capability. Older binaries do not
+check job ownership. Keep queue methods behind host authorization and use trusted,
+consistent storage-adapter clocks. An expired or cancelled worker cannot resume
+through renewal; it must obtain a new claim where the deadline and attempt limit
+permit one. Retry the same claim ID only to recover its original live lease.
+
+This adds durable work storage, not automatic evaluation. Runtime scheduling,
+remaining-budget enforcement and recovery between captured output and enqueue
+still need integration. Existing completion hooks keep their meaning.

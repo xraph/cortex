@@ -16,10 +16,9 @@ func TestVerifiedResultStandaloneUnavailable(t *testing.T) {
 	s := newConformanceStore(t, false)
 	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "org", Value: "standalone"}}})
 	driver := assuranceDriver{store: s}
-	receipt, err := driver.TransactResult(ctx, id.NewAgentRunID(), func(txctx context.Context, tx assurance.ResultTransaction) (verification.CommitReceipt, error) {
+	err := driver.TransactRun(ctx, id.NewAgentRunID(), func(txctx context.Context, tx assurance.RunTransaction) error {
 		_, readErr := tx.GetRun(txctx, id.NewAgentRunID())
-		return verification.CommitReceipt{}, readErr
+		return readErr
 	})
 	require.ErrorIs(t, err, verification.ErrCommitUnavailable)
-	require.Zero(t, receipt)
 }

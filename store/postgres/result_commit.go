@@ -13,14 +13,14 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-func (d assuranceDriver) TransactResult(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.ResultTransaction) (verification.CommitReceipt, error)) (verification.CommitReceipt, error) {
+func (d assuranceDriver) TransactRun(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.RunTransaction) error) error {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
-		return verification.CommitReceipt{}, err
+		return err
 	}
 	tx, err := d.store.pgdb.BeginTxQuery(ctx, nil)
 	if err != nil {
-		return verification.CommitReceipt{}, err
+		return err
 	}
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // Rollback after commit is harmless.
 	// Acquire the write lock before any read. SQLite must not upgrade a deferred
@@ -30,16 +30,12 @@ func (d assuranceDriver) TransactResult(ctx context.Context, runID id.AgentRunID
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if _, err = q.Exec(ctx); err != nil {
-		return verification.CommitReceipt{}, err
+		return err
 	}
-	receipt, err := callback(ctx, assuranceDriver{store: d.store, transaction: tx})
-	if err != nil {
-		return verification.CommitReceipt{}, err
+	if callbackErr := callback(ctx, assuranceDriver{store: d.store, transaction: tx}); callbackErr != nil {
+		return callbackErr
 	}
-	if commitErr := tx.Commit(); commitErr != nil {
-		return verification.CommitReceipt{}, commitErr
-	}
-	return receipt, nil
+	return tx.Commit()
 }
 
 func (d assuranceDriver) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
@@ -61,12 +57,12 @@ func (d assuranceDriver) GetRun(ctx context.Context, runID id.AgentRunID) (*run.
 	return runFromModel(m)
 }
 
-func (d assuranceDriver) CommitRun(ctx context.Context, runID id.AgentRunID, revision int64, resultID id.ID, at time.Time) error {
+func (d assuranceDriver) SetRunVerification(ctx context.Context, runID id.AgentRunID, revision int64, status verification.Status, resultID id.ID, at time.Time) error {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return err
 	}
-	q := d.queries().NewUpdate((*runModel)(nil)).Set("revision = ?", revision+1).Set("verification_status = ?", string(verification.StatusPassed)).Set("result_ref = ?", resultID.String()).Set("updated_at = ?", at).Where("id = ?", runID.String()).Where("revision = ?", revision).Where("scope_canon = ?", scope.Canonical())
+	q := d.queries().NewUpdate((*runModel)(nil)).Set("revision = ?", revision+1).Set("verification_status = ?", string(status)).Set("result_ref = ?", resultID.String()).Set("updated_at = ?", at).Where("id = ?", runID.String()).Where("revision = ?", revision).Where("scope_canon = ?", scope.Canonical())
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -80,6 +76,32 @@ func (d assuranceDriver) CommitRun(ctx context.Context, runID id.AgentRunID, rev
 	}
 	if n != 1 {
 		return cortex.ErrRunConflict
+	}
+	return nil
+}
+
+func (d assuranceDriver) ReplaceJob(ctx context.Context, row assurance.Record, expectedBody string) error {
+	if row.Kind != assurance.KindJob {
+		return verification.ErrInvalid
+	}
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	q := d.queries().NewUpdate((*assurance.Record)(nil)).Set("body = ?", row.Body).Set("digest = ?", row.Digest).Where("kind = ?", assurance.KindJob).Where("id = ?", row.ID).Where("scope_canon = ?", scope.Canonical()).Where("body = ?", expectedBody).Where("deleted = ?", false)
+	for _, p := range scopePredicates(scope, true) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	result, err := q.Exec(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return verification.ErrJobConflict
 	}
 	return nil
 }

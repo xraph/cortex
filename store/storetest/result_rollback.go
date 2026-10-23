@@ -14,19 +14,18 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-type failingResultDriver struct {
+type failingRunDriver struct {
 	assurance.Driver
-	transaction assurance.ResultDriver
+	transaction assurance.RunDriver
 	failure     error
 }
 
-func (d failingResultDriver) TransactResult(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.ResultTransaction) (verification.CommitReceipt, error)) (verification.CommitReceipt, error) {
-	return d.transaction.TransactResult(ctx, runID, func(txctx context.Context, tx assurance.ResultTransaction) (verification.CommitReceipt, error) {
-		receipt, err := callback(txctx, tx)
-		if err != nil {
-			return verification.CommitReceipt{}, err
+func (d failingRunDriver) TransactRun(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.RunTransaction) error) error {
+	return d.transaction.TransactRun(ctx, runID, func(txctx context.Context, tx assurance.RunTransaction) error {
+		if err := callback(txctx, tx); err != nil {
+			return err
 		}
-		return receipt, d.failure
+		return d.failure
 	})
 }
 
@@ -34,10 +33,10 @@ func (d failingResultDriver) TransactResult(ctx context.Context, runID id.AgentR
 // It also proves a retry can succeed without an orphan result or advanced run.
 func VerifiedResultRollback(t *testing.T, s store.Store, driver assurance.Driver) {
 	t.Helper()
-	transaction, ok := driver.(assurance.ResultDriver)
+	transaction, ok := driver.(assurance.RunDriver)
 	require.True(t, ok)
 	failure := errors.New("injected after result and run writes")
-	repository := assurance.New(failingResultDriver{Driver: driver, transaction: transaction, failure: failure})
+	repository := assurance.New(failingRunDriver{Driver: driver, transaction: transaction, failure: failure})
 	ctx, req := resultFixture(t, s)
 	before, err := s.GetRun(ctx, req.Current.RunID)
 	require.NoError(t, err)
@@ -55,7 +54,7 @@ func VerifiedResultRollback(t *testing.T, s store.Store, driver assurance.Driver
 }
 
 type revokeBeforeEvidence struct {
-	assurance.ResultTransaction
+	assurance.RunTransaction
 	revoke func() error
 }
 
@@ -65,18 +64,18 @@ func (d revokeBeforeEvidence) Select(ctx context.Context, query assurance.Query)
 			return nil, err
 		}
 	}
-	return d.ResultTransaction.Select(ctx, query)
+	return d.RunTransaction.Select(ctx, query)
 }
 
-type revokingResultDriver struct {
+type revokingRunDriver struct {
 	assurance.Driver
-	transaction assurance.ResultDriver
+	transaction assurance.RunDriver
 	revoke      func() error
 }
 
-func (d revokingResultDriver) TransactResult(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.ResultTransaction) (verification.CommitReceipt, error)) (verification.CommitReceipt, error) {
-	return d.transaction.TransactResult(ctx, runID, func(txctx context.Context, tx assurance.ResultTransaction) (verification.CommitReceipt, error) {
-		return callback(txctx, revokeBeforeEvidence{ResultTransaction: tx, revoke: d.revoke})
+func (d revokingRunDriver) TransactRun(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.RunTransaction) error) error {
+	return d.transaction.TransactRun(ctx, runID, func(txctx context.Context, tx assurance.RunTransaction) error {
+		return callback(txctx, revokeBeforeEvidence{RunTransaction: tx, revoke: d.revoke})
 	})
 }
 
@@ -85,11 +84,11 @@ func (d revokingResultDriver) TransactResult(ctx context.Context, runID id.Agent
 // lock from the start, so a competing delete cannot reach this window there.
 func VerifiedResultRevocation(t *testing.T, s store.Store, driver assurance.Driver) {
 	t.Helper()
-	transaction, ok := driver.(assurance.ResultDriver)
+	transaction, ok := driver.(assurance.RunDriver)
 	require.True(t, ok)
 	ctx, req := resultFixture(t, s)
 	revoked := false
-	repository := assurance.New(revokingResultDriver{Driver: driver, transaction: transaction, revoke: func() error {
+	repository := assurance.New(revokingRunDriver{Driver: driver, transaction: transaction, revoke: func() error {
 		if revoked {
 			return nil
 		}

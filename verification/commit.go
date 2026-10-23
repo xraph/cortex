@@ -24,18 +24,24 @@ var ErrCommitUnavailable = cortex.ErrResultCommitUnavailable
 // it cannot discover changes in external services or authorize public delivery.
 // Report order is significant for idempotency. Candidate text is never accepted here.
 type CommitRequest struct {
-	SchemaVersion       int     `json:"schema_version"`
-	ResultID            id.ID   `json:"result_id"`
-	ExpectedRunRevision int64   `json:"expected_run_revision"`
-	ContractID          id.ID   `json:"contract_id"`
-	ReportIDs           []id.ID `json:"report_ids"`
-	Current             Binding `json:"current"`
+	SchemaVersion       int       `json:"schema_version"`
+	ResultID            id.ID     `json:"result_id"`
+	ExpectedRunRevision int64     `json:"expected_run_revision"`
+	ContractID          id.ID     `json:"contract_id"`
+	ReportIDs           []id.ID   `json:"report_ids"`
+	Current             Binding   `json:"current"`
+	JobLease            *JobLease `json:"job_lease,omitempty"`
 }
 
 // Freeze validates, bounds and detaches the request before a transaction starts.
 func (r CommitRequest) Freeze() (CommitRequest, string, error) {
 	if r.SchemaVersion != 1 || r.ResultID.Prefix() != PrefixResult || r.ResultID.IsNil() || r.ContractID.Prefix() != PrefixContract || r.ContractID.IsNil() || r.ExpectedRunRevision <= 0 || r.ExpectedRunRevision == math.MaxInt64 || len(r.ReportIDs) == 0 || len(r.ReportIDs) > 256 {
 		return CommitRequest{}, "", ErrInvalid
+	}
+	if r.JobLease != nil {
+		if err := r.JobLease.Validate(); err != nil {
+			return CommitRequest{}, "", err
+		}
 	}
 	if err := r.Current.Validate(); err != nil {
 		return CommitRequest{}, "", err

@@ -15,18 +15,19 @@ import (
 
 const kindResult = "result"
 
-// ResultTransaction fences the run and all evidence reads until commit.
+// RunTransaction fences the run and all evidence reads until commit.
 // Implementations must roll back both the result record and run update on error.
-type ResultTransaction interface {
+type RunTransaction interface {
 	Driver
 	GetRun(context.Context, id.AgentRunID) (*run.Run, error)
-	CommitRun(context.Context, id.AgentRunID, int64, id.ID, time.Time) error
+	SetRunVerification(context.Context, id.AgentRunID, int64, verification.Status, id.ID, time.Time) error
+	ReplaceJob(context.Context, Record, string) error
 }
 
-// ResultDriver supplies a database transaction; callbacks contain no remote I/O.
+// RunDriver supplies a database transaction; callbacks contain no remote I/O.
 // Mongo callbacks may repeat after transaction conflicts and receive session context.
-type ResultDriver interface {
-	TransactResult(context.Context, id.AgentRunID, func(context.Context, ResultTransaction) (verification.CommitReceipt, error)) (verification.CommitReceipt, error)
+type RunDriver interface {
+	TransactRun(context.Context, id.AgentRunID, func(context.Context, RunTransaction) error) error
 }
 
 // CommitVerifiedResult atomically saves a checked result, its outbox and run revision.
@@ -38,23 +39,28 @@ func (s *Repository) CommitVerifiedResult(ctx context.Context, request verificat
 	if err != nil {
 		return verification.CommitReceipt{}, err
 	}
-	driver, ok := s.driver.(ResultDriver)
+	driver, ok := s.driver.(RunDriver)
 	if !ok {
 		return verification.CommitReceipt{}, verification.ErrCommitUnavailable
 	}
-	receipt, err := driver.TransactResult(ctx, frozen.Current.RunID, func(txctx context.Context, tx ResultTransaction) (verification.CommitReceipt, error) {
-		repository := New(tx)
+	var receipt verification.CommitReceipt
+	err = driver.TransactRun(ctx, frozen.Current.RunID, func(txctx context.Context, tx RunTransaction) error {
+		receipt = verification.CommitReceipt{}
+		repository := s.inTransaction(tx)
 		existing, readErr := repository.GetCommittedResult(txctx, frozen.ResultID)
 		if readErr == nil {
 			if existing.RequestDigest != digest {
-				return verification.CommitReceipt{}, verification.ErrConflict
+				return verification.ErrConflict
 			}
-			return existing, nil
+			receipt = existing
+			return nil
 		}
 		if !errors.Is(readErr, verification.ErrNotFound) {
-			return verification.CommitReceipt{}, readErr
+			return readErr
 		}
-		return repository.commitResult(txctx, tx, frozen, digest)
+		var commitErr error
+		receipt, commitErr = repository.commitResult(txctx, tx, frozen, digest)
+		return commitErr
 	})
 	if err != nil {
 		return verification.CommitReceipt{}, err
@@ -62,19 +68,16 @@ func (s *Repository) CommitVerifiedResult(ctx context.Context, request verificat
 	return receipt, nil
 }
 
-func (s *Repository) commitResult(ctx context.Context, tx ResultTransaction, req verification.CommitRequest, digest string) (verification.CommitReceipt, error) {
+func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req verification.CommitRequest, digest string) (verification.CommitReceipt, error) {
 	r, err := tx.GetRun(ctx, req.Current.RunID)
 	if err != nil {
 		return verification.CommitReceipt{}, err
 	}
-	if r.Scope.Canonical() != req.Current.Scope.Canonical() {
-		return verification.CommitReceipt{}, cortex.ErrRunNotFound
+	if checkErr := validateCapturedRun(r, req.ExpectedRunRevision, req.ContractID, req.Current); checkErr != nil {
+		return verification.CommitReceipt{}, checkErr
 	}
-	if r.Revision != req.ExpectedRunRevision || r.State != run.StateCompleted || r.StopReason != run.StopFinalAnswer || r.VerificationStatus != verification.StatusPending || r.ResultRef != "" || r.Provenance.PreparedDigest != req.Current.Context.PreparedDigest || r.Provenance.AcceptanceRef != req.ContractID.String() {
+	if r.VerificationStatus != verification.StatusPending {
 		return verification.CommitReceipt{}, cortex.ErrRunConflict
-	}
-	if int64(len(r.Output)) != req.Current.Candidate.Bytes || evidence.Digest([]byte(r.Output)) != req.Current.Candidate.SHA256 {
-		return verification.CommitReceipt{}, verification.ErrConflict
 	}
 	contract, err := s.GetContract(ctx, req.ContractID)
 	if err != nil {
@@ -114,7 +117,11 @@ func (s *Repository) commitResult(ctx context.Context, tx ResultTransaction, req
 			return verification.CommitReceipt{}, verification.ErrInvalid
 		}
 	}
-	observed := time.Now().UTC()
+	observed := s.clock.Now().UTC()
+	job, jobRow, jobErr := s.jobForCommit(ctx, req, observed)
+	if jobErr != nil {
+		return verification.CommitReceipt{}, jobErr
+	}
 	for _, report := range reports {
 		if verification.CheckFreshness(report, req.Current, observed) != verification.StatusPassed {
 			return verification.CommitReceipt{}, verification.ErrConflict
@@ -138,8 +145,11 @@ func (s *Repository) commitResult(ctx context.Context, tx ResultTransaction, req
 	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
 		return verification.CommitReceipt{}, insertErr
 	}
-	if commitErr := tx.CommitRun(ctx, r.ID, r.Revision, req.ResultID, observed); commitErr != nil {
+	if commitErr := tx.SetRunVerification(ctx, r.ID, r.Revision, verification.StatusPassed, req.ResultID, observed); commitErr != nil {
 		return verification.CommitReceipt{}, commitErr
+	}
+	if jobErr := commitJob(ctx, tx, job, jobRow, req.ResultID, observed); jobErr != nil {
+		return verification.CommitReceipt{}, jobErr
 	}
 	return receipt, nil
 }

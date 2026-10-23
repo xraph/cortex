@@ -111,6 +111,59 @@ concurrent deletion. A standalone MongoDB server returns
 MiB, with at most 256 report IDs and eight MiB of report JSON and evidence bytes
 processed in one attempt.
 
-Engine verification gates, durable verification jobs and public outbox dispatch
+Engine verification gates, verification-job scheduling and public outbox dispatch
 are not connected yet. This storage and host boundary does not change existing
 `RunCompleted` hooks or enable contextual verification in runtime capabilities.
+
+
+## Durable verification work
+
+Built-in stores expose `verification.JobStore` for checks on a saved candidate.
+`EnqueueVerificationJob` validates the captured run, contract and retained
+evidence, then saves the job and moves the run to pending verification in one
+transaction. Supply the exact run revision. A retry with the same job ID and
+request returns the saved job; changed input under that ID conflicts.
+
+A job pins the candidate binding, contract, deadline and ownership-attempt limit.
+It does not run generation or tools. Each claim has an owner, unique claim ID,
+expiry and increasing generation. Retry the same claim ID after a lost
+acknowledgement to recover its current lease. An expired lease needs a new claim
+ID. Previously consumed claim IDs cannot acquire later generations.
+
+| Operation | Storage behavior |
+| --- | --- |
+| `GetVerificationJob`, `ListVerificationJobs` | Read exact-scope snapshots with bounded ID pagination |
+| `ClaimVerificationJob` | Acquire unclaimed work or replace an expired lease, subject to deadline and attempt limits |
+| `RenewVerificationJob` | Extend a live lease, capped by the job deadline; never revive expired ownership |
+| `SaveVerificationJobReport` | Save the report and accepted progress together under the current lease |
+| `ExpireVerificationJob` | Finish overdue work or work with exhausted ownership attempts as inconclusive |
+| `CancelVerificationJob` | Retire unfinished verification and clear its lease without retracting a committed result |
+
+Accepted reports survive takeover and database restart. Workers inspect those
+report IDs before dispatching another check. A later report cannot replace an
+accepted criterion with a more favorable verdict. Failed or inconclusive
+required outcomes finish the job and update the run's verification status; the
+execution state still describes the original generation. Contract requirements
+apply even when a verifier reports a pass: missing proof or a required human
+verdict makes the check inconclusive. Expired accepted reports end the job as
+inconclusive and record stale verification on the run. A retry of those checks
+needs a new host-approved job under the current run revision and remaining budget.
+`MaxAttempts` limits ownership generations, not individual evaluator calls.
+
+Passing every required criterion makes the job ready. It does not publish a
+result. Build `verification.CommitRequest` from the saved job's run revision,
+binding, contract, accepted report IDs and current `JobLease`, then use the guarded
+committer. The result receipt, outbox, run update and committed job state share
+one transaction. Job-bound runs reject commits with missing or stale leases.
+Historical result retries retain the same receipt and do not revive the lease.
+
+Leases use trusted storage-adapter time. Workers cannot extend ownership by
+changing a token's expiry. Configure host clocks consistently across writers and
+keep every writer upgraded before enabling jobs; older binaries do not enforce
+this protocol. Queue access also needs host authorization. There is no implicit
+cross-scope worker discovery.
+
+The scheduler, evaluator dispatch, budget accounting and engine finalization
+still need to be connected. In particular, scheduling must recover a captured
+candidate without repeating its generation or tool effects. These storage tests
+do not qualify that runtime path or a production host fence.

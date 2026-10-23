@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/xraph/grove"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/verification"
 )
 
 const (
@@ -56,10 +58,29 @@ type Driver interface {
 }
 
 // Repository implements optional store capabilities without widening Store.
-type Repository struct{ driver Driver }
+type Repository struct {
+	driver Driver
+	clock  verification.Clock
+}
 
 // New creates a shared persistence adapter for a backend driver.
-func New(driver Driver) *Repository { return &Repository{driver: driver} }
+func New(driver Driver) *Repository { return &Repository{driver: driver, clock: wallClock{}} }
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time { return time.Now().UTC() }
+
+// WithClock returns an adapter with trusted host time, for deterministic lease tests.
+// Nil clocks leave the default clock in place.
+func (s *Repository) WithClock(clock verification.Clock) *Repository {
+	if clock == nil {
+		return s
+	}
+	return &Repository{driver: s.driver, clock: clock}
+}
+func (s *Repository) inTransaction(tx RunTransaction) *Repository {
+	return &Repository{driver: tx, clock: s.clock}
+}
 
 // Columns returns the exact indexed identity, including empty trailing levels.
 func Columns(scope cortex.Scope) [3]string {
