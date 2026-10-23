@@ -1893,3 +1893,33 @@ This guard does not settle shared usage, journal provider dispatch or authorize 
 retry. Its fixture tests do not qualify an installed identity or lease service.
 The admitted-task entry points above use this guard. Durable recovery and
 installed host qualification still need integration.
+
+### Retain call observations for recovery
+
+`execution.RunCallStore` is an optional durable journal, implemented by SQLite,
+PostgreSQL and MongoDB. It stores invocation metadata and local return digests
+without retaining prompts, tool arguments or output bytes. Runtime wiring is
+still required before this journal protects task execution.
+
+`BeginRunCall` returns `true` only for a confirmed first insert. The exact scope,
+run ID and logical operation digest identify the slot. An identical replay
+returns `false`; a different attempt in that slot returns `ErrRunCallConflict`.
+Neither a completed record nor an expired deadline permits another invocation.
+Treat an ambiguous insert acknowledgment as unresolved.
+
+Use `CompleteRunCall` to retain a normal local return, bound to the full journal
+request digest. Identical completions are idempotent and preserve the first
+observation time. Conflicting observations fail. A return digest and reported
+token count do not establish provider billing, external effects, current
+authority or task acceptance. You still need the corresponding evidence and
+settlement steps.
+
+`GetRunCall` reads one logical slot. `ListRunCalls` returns at most 256 records
+for one run in exact scope, including unresolved calls. Start a fresh scan when
+reconciling again: concurrent inserts can precede a saved lexical cursor. Keep
+journal rows for as long as provider effects or retries could arrive. Expiry
+must not delete an unresolved reservation.
+
+`WithRunCallContext` and `RunCallFromContext` carry detached correlation metadata
+for provider adapters. These values are neither credentials nor proof that a
+provider supports idempotency.

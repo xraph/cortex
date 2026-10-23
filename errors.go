@@ -36,6 +36,9 @@ var (
 	ErrTaskRunReconciliationRequired = errors.New("cortex: task run start requires reconciliation")
 	ErrTaskCallUnavailable           = errors.New("cortex: task call authority unavailable")
 	ErrTaskCallUncertain             = errors.New("cortex: task call outcome uncertain")
+	ErrInvalidRunCall                = errors.New("cortex: invalid run call")
+	ErrRunCallConflict               = errors.New("cortex: run call conflict")
+	ErrRunCallNotFound               = errors.New("cortex: run call not found")
 
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")

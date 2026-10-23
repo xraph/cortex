@@ -4641,3 +4641,36 @@ and MongoDB transaction matrices without skips.
 
 Child completion still needs task acceptance and shared settlement. Scheduler fairness/lifecycle, ambiguous-start recovery,
 provider journaling and installed host qualification remain open.
+
+### S3.2 durable call journal storage
+
+Ruling: retain each logical invocation slot before dispatch, and record a normal
+local return separately. A missing completion is unresolved. Changing the attempt
+ID, waiting for expiry or finding a completed record cannot grant a fresh call.
+Provider effects and shared usage require their own evidence and settlement.
+
+`execution.RunCallStore` now has bounded metadata contracts, exact request and
+result digests, immutable return observations and paged discovery for one run.
+SQLite, PostgreSQL and MongoDB expose the capability through the shared assurance
+repository. No migration is needed: records use distinct kinds in the existing
+assurance table. Context helpers detach correlation metadata for provider adapters.
+Prompts, arguments and output bytes are excluded from journal rows.
+
+The initial domain test failed to compile on the missing API; SQLite conformance
+then failed because the journal capability was absent. Both passed after
+implementation. An expanded scope test initially used four levels, which current
+Cortex rejects. It now checks valid scopes that differ at the third level.
+
+The race conformance tests passed against SQLite (8.487s), PostgreSQL (13.286s)
+and MongoDB (19.289s), with real containers and no skips. They cover competing
+starts, replay, changed attempts, conflicting returns, concurrent identical
+completions, stable observation times, exact scope, cancellation and bounded
+pages. Domain and shared-repository race tests passed, including detached context
+metadata and lost insert/return acknowledgments. A committed insert with a lost
+acknowledgment never grants a fresh retry.
+
+Runtime invocation wiring, qualified provider recovery and scheduler integration
+remain open. The storage capability alone does not protect provider calls.
+
+Final `make f`, all-module `make l`, root build, docs types/lint/build and
+diff checks passed. The storage packet is complete; runtime wiring remains next.
