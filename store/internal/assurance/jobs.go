@@ -169,7 +169,7 @@ func (s *Repository) enqueueJob(ctx context.Context, tx RunTransaction, req veri
 		return verification.Job{}, verification.ErrConflict
 	}
 	now := s.clock.Now().UTC()
-	if now.IsZero() || !req.Deadline.After(now) {
+	if now.IsZero() || !req.Deadline.After(now) || (!current.Budget.Deadline.IsZero() && req.Deadline.After(current.Budget.Deadline)) {
 		return verification.Job{}, verification.ErrJobExpired
 	}
 	if capture {

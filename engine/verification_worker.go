@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -114,6 +115,9 @@ func (w *verificationWorker) verify(ctx context.Context, request VerifyRunReques
 	if authErr := w.authorize(ctx, frozen); authErr != nil {
 		return VerificationRunResult{}, authErr
 	}
+	if intentErr := w.checkIntent(ctx, frozen, request.ResultID); intentErr != nil {
+		return VerificationRunResult{}, intentErr
+	}
 	job, err := w.storage.EnqueueVerificationJob(ctx, frozen)
 	if err != nil {
 		return VerificationRunResult{}, err
@@ -150,6 +154,29 @@ func (w *verificationWorker) verify(ctx context.Context, request VerifyRunReques
 	default:
 		return VerificationRunResult{}, verification.ErrJobConflict
 	}
+}
+
+func (w *verificationWorker) checkIntent(ctx context.Context, request verification.JobRequest, resultID id.ID) error {
+	reader, ok := w.storage.(interface {
+		GetRunCaptureIntent(context.Context, id.AgentRunID) (verification.CaptureIntent, error)
+	})
+	if !ok {
+		return nil
+	}
+	intent, err := reader.GetRunCaptureIntent(ctx, request.Binding.RunID)
+	if errors.Is(err, verification.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if intent.Validate() != nil || intent.Template.Binding.Scope.Canonical() != request.Binding.Scope.Canonical() || intent.Template.Binding.RunID != request.Binding.RunID {
+		return verification.ErrInvalid
+	}
+	if intent.ResultID != resultID {
+		return verification.ErrConflict
+	}
+	return nil
 }
 
 func checkedWorkerJob(job verification.Job, digest string) (verification.Job, error) {

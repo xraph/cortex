@@ -49,6 +49,8 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("CaptureIntentDenied", func(t *testing.T) { testCaptureIntentDenied(t, newStore) })
 	t.Run("CaptureIntentPolicy", func(t *testing.T) { testCaptureIntentCannotChangeCapturePolicy(t, newStore) })
 	t.Run("CaptureIntentRecovery", func(t *testing.T) { testCaptureIntentRecovery(t, newStore) })
+	t.Run("VerificationRunDeadline", func(t *testing.T) { testVerificationRunDeadline(t, newStore) })
+	t.Run("RunBudgetDeadline", func(t *testing.T) { testRunBudgetDeadline(t, newStore) })
 	t.Run("VerificationCaptureDenied", func(t *testing.T) { testVerificationCaptureDenied(t, newStore) })
 	t.Run("VerificationCaptureConcurrent", func(t *testing.T) { testVerificationCaptureConcurrent(t, newStore) })
 	t.Run("VerificationCapture", func(t *testing.T) { testVerificationCapture(t, newStore) })

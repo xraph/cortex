@@ -167,12 +167,16 @@ type runModel struct {
 	Provenance         run.ExecutionProvenance `grove:"provenance" bson:"provenance,omitempty"`
 	Budget             execution.Budget        `grove:"budget" bson:"budget,omitempty"`
 	Usage              execution.Usage         `grove:"usage" bson:"usage,omitempty"`
+
+	BudgetDeadlineExact string `grove:"budget_deadline_exact" bson:"budget_deadline_exact,omitempty"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &runModel{
 		Provenance: r.Provenance, Usage: r.Usage, Budget: r.Budget,
+		BudgetDeadlineExact: exactBudgetDeadline(r.Budget.Deadline),
+
 		ID:                 r.ID.String(),
 		AgentID:            r.AgentID.String(),
 		SessionID:          r.SessionID.String(),
@@ -202,6 +206,10 @@ func runToModel(r *run.Run) *runModel {
 }
 
 func runFromModel(m *runModel) (*run.Run, error) {
+	budget, err := restoreBudgetDeadline(m.Budget, m.BudgetDeadlineExact)
+	if err != nil {
+		return nil, err
+	}
 	runID, err := id.ParseAgentRunID(m.ID)
 	if err != nil {
 		return nil, err
@@ -219,7 +227,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
 	return &run.Run{
-		Provenance: m.Provenance, Usage: m.Usage, Budget: m.Budget,
+		Provenance: m.Provenance, Usage: m.Usage, Budget: budget,
 		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                 runID,
 		AgentID:            agentID,
@@ -1085,6 +1093,8 @@ type suspensionModel struct {
 	ScopeCanon      string                   `grove:"scope_canon"  bson:"scope_canon"`
 	CreatedAt       time.Time                `grove:"created_at"   bson:"created_at"`
 	UpdatedAt       time.Time                `grove:"updated_at"   bson:"updated_at"`
+
+	BudgetDeadlineExact string `grove:"budget_deadline_exact" bson:"budget_deadline_exact,omitempty"`
 }
 
 func suspensionToModel(s *suspension.Suspension) *suspensionModel {
@@ -1097,6 +1107,8 @@ func suspensionToModel(s *suspension.Suspension) *suspensionModel {
 		pending = []suspension.PendingCall{}
 	}
 	return &suspensionModel{
+		BudgetDeadlineExact: exactBudgetDeadline(s.Cont.Config.Budget.Deadline),
+
 		ID:           s.ID.String(),
 		RunID:        s.RunID.String(),
 		Reason:       string(s.Reason),
@@ -1114,6 +1126,12 @@ func suspensionToModel(s *suspension.Suspension) *suspensionModel {
 }
 
 func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
+	cont := m.Continuation
+	budget, err := restoreBudgetDeadline(cont.Config.Budget, m.BudgetDeadlineExact)
+	if err != nil {
+		return nil, err
+	}
+	cont.Config.Budget = budget
 	suspensionID, err := id.ParseSuspensionID(m.ID)
 	if err != nil {
 		return nil, err
@@ -1133,7 +1151,7 @@ func suspensionFromModel(m *suspensionModel) (*suspension.Suspension, error) {
 		Scope:     scope,
 		Reason:    suspension.SuspendReason(m.Reason),
 		Pending:   m.Pending,
-		Cont:      m.Continuation,
+		Cont:      cont,
 		ExpiresAt: m.ExpiresAt,
 	}, nil
 }

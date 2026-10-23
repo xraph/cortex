@@ -99,6 +99,8 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 		"session_id": m.SessionID,
 		"state":      m.State,
 		"provenance": m.Provenance, "usage": m.Usage, "budget": m.Budget,
+		"budget_deadline_exact": m.BudgetDeadlineExact,
+
 		"stop_reason":         m.StopReason,
 		"finish_reason":       m.FinishReason,
 		"verification_status": m.VerificationStatus,

@@ -2229,3 +2229,41 @@ in 282 seconds, PostgreSQL in 29 seconds and MongoDB in 39 seconds. Final focuse
 intent and exact-scope recovery race suites passed on all three backends with
 no skips. The existing engine-worker recovery race suite passed in 45 seconds.
 Docs type generation, type checking, lint and production build passed.
+
+## Verification admission checks
+
+Ruling: close two admission gaps before connecting required execution gates.
+The intent fixes a result identity and deadline before generation, but capture
+must still respect a subsequently shortened run deadline, and a worker should
+reject the wrong reserved result identity before it spends evaluator budget.
+Commit checks remain necessary for concurrent changes and custom stores.
+
+TDD reproduced both gaps. Direct enqueue, atomic capture and intent recovery
+accepted deadlines beyond the current saved run limit. The worker estimated and
+evaluated absent, queued and running jobs with a wrong reserved result ID before
+commit rejected them. The shared enqueue transaction now checks the deadline
+before evidence or job writes. The explicit worker reads a supported store's
+intent after authorization and rejects invalid scope, run or result identity
+before enqueue or dispatch. Intent read errors stop processing.
+
+Regression coverage includes equal, later and unlimited run deadlines, unchanged
+run revision and absent evidence/job writes after denial, valid result recovery,
+historical committed retries, corrupted intent reads, authorization before reads
+and custom stores without the optional intent reader. Automatic required gates,
+private candidate storage and safe public delivery remain open.
+
+The real MongoDB run exposed a related precision bug: BSON dates rounded the run
+deadline to milliseconds while the sealed intent retained nanoseconds. Equal
+deadlines then failed admission. A prepared-budget round-trip regression also
+failed. Run and suspension models now preserve an exact deadline alongside the
+native date and validate agreement when reading. Legacy documents retain their
+existing precision, malformed or inconsistent companions reject, and update can
+narrow or clear both values. This requires every writer to understand the new
+companion field before relying on exact policy restoration.
+
+Final checks passed: scoped `make f`, ten-module `make l`, root build and diff
+checks. Full engine and verification race suites passed; the final worker suite
+passed again in 57 seconds. Selected capture, job, call, deadline and prepared
+conformance races passed on SQLite in 80 seconds and PostgreSQL in 17 seconds.
+The full MongoDB race suite passed in 33 seconds. Verbose database logs contained
+no skips. Docs type generation, type checking, lint and production build passed.

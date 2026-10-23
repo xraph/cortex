@@ -143,6 +143,147 @@ func (f workerFixture) engine(t *testing.T, s store.Store) *engine.Engine {
 	return e
 }
 
+func (f *workerFixture) registerIntent(t *testing.T) verification.CaptureIntent {
+	t.Helper()
+	source, err := f.storage.GetRun(f.ctx, f.request.Job.Binding.RunID)
+	require.NoError(t, err)
+	// A fresh run reserves its policy before the fixture supplies its output.
+	current := &run.Run{Entity: cortex.NewEntity(), ID: id.NewAgentRunID(), AgentID: source.AgentID, SessionID: source.SessionID, Scope: source.Scope, State: run.StateRunning, Provenance: source.Provenance}
+	require.NoError(t, f.storage.CreateRun(f.ctx, current))
+	template, _, err := f.request.Job.Freeze()
+	require.NoError(t, err)
+	template.ExpectedRunRevision = current.Revision
+	template.Binding.RunID = current.ID
+	template.Binding.Candidate.ID = id.New(evidence.PrefixArtifact)
+	template.Binding.Candidate.SHA256 = evidence.Digest(nil)
+	template.Binding.Candidate.Bytes = 0
+	intent, err := verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: template, ResultID: f.request.ResultID, MaxCandidateBytes: 1 << 20})
+	require.NoError(t, err)
+	require.NoError(t, f.storage.CreateCaptureIntent(f.ctx, intent))
+	current.State, current.StopReason, current.Output = run.StateCompleted, run.StopFinalAnswer, source.Output
+	require.NoError(t, f.storage.UpdateRun(f.ctx, current))
+	f.request.Job, err = intent.JobFor(current.Revision, current.Output)
+	require.NoError(t, err)
+	require.NoError(t, f.storage.SaveEvidence(f.ctx, evidence.Artifact{Ref: f.request.Job.Binding.Candidate, Data: []byte(source.Output)}))
+	return intent
+}
+
+func TestVerificationWorkerChecksIntentBeforeDispatch(t *testing.T) {
+	for _, state := range []string{"absent", "queued", "running", "committed"} {
+		t.Run(state, func(t *testing.T) {
+			f := newWorkerFixture(t)
+			intent := f.registerIntent(t)
+			e := f.engine(t, f.storage)
+			var before verification.Job
+			var err error
+			switch state {
+			case "queued", "running":
+				before, err = f.storage.EnqueueVerificationJob(f.ctx, f.request.Job)
+				require.NoError(t, err)
+				if state == "running" {
+					before, err = f.storage.ClaimVerificationJob(f.ctx, f.request.Claim)
+					require.NoError(t, err)
+				}
+			case "committed":
+				result, verifyErr := e.VerifyRun(f.ctx, f.request)
+				require.NoError(t, verifyErr)
+				before = result.Job
+			}
+			estimates, evaluations := f.adapter.estimates, f.adapter.evaluations
+			wrong := f.request
+			wrong.ResultID = id.New(verification.PrefixResult)
+			_, err = e.VerifyRun(f.ctx, wrong)
+			require.ErrorIs(t, err, verification.ErrConflict)
+			require.Equal(t, estimates, f.adapter.estimates, "identity must be checked before estimation")
+			require.Equal(t, evaluations, f.adapter.evaluations, "identity must be checked before paid evaluation")
+			after, err := f.storage.GetVerificationJob(f.ctx, f.request.Job.ID)
+			if state == "absent" {
+				require.ErrorIs(t, err, verification.ErrJobNotFound)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+			}
+			result, err := e.VerifyRun(f.ctx, f.request)
+			require.NoError(t, err)
+			require.Equal(t, intent.ResultID, result.Receipt.Request.ResultID)
+			require.Equal(t, 1, f.adapter.evaluations)
+		})
+	}
+}
+
+type workerIntentStore struct {
+	*sqlite.Store
+	read func(context.Context, id.AgentRunID) (verification.CaptureIntent, error)
+}
+
+func (s workerIntentStore) GetRunCaptureIntent(ctx context.Context, runID id.AgentRunID) (verification.CaptureIntent, error) {
+	return s.read(ctx, runID)
+}
+
+func TestVerificationWorkerRejectsUnreadableIntent(t *testing.T) {
+	for _, mode := range []string{"unavailable", "tampered", "wrong scope", "wrong run", "unauthorized"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWorkerFixture(t)
+			intent := f.registerIntent(t)
+			failure := errors.New("intent storage unavailable")
+			expected := verification.ErrInvalid
+			if mode == "unavailable" || mode == "unauthorized" {
+				expected = failure
+			}
+			if mode == "unauthorized" {
+				f.config.Authorizer = workerAuthorizer(func(context.Context, verification.Binding) error { return failure })
+			}
+			reads := 0
+			s := workerIntentStore{Store: f.storage, read: func(context.Context, id.AgentRunID) (verification.CaptureIntent, error) {
+				reads++
+				switch mode {
+				case "unavailable":
+					return verification.CaptureIntent{}, failure
+				case "tampered":
+					intent.Digest = evidence.Digest([]byte("tampered"))
+					return intent, nil
+				case "wrong scope":
+					intent.Template.Binding.Scope = cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "other"}}}
+					intent.Template.Binding.Candidate.Scope = intent.Template.Binding.Scope
+				case "wrong run":
+					intent.Template.Binding.RunID = id.NewAgentRunID()
+				}
+				sealed, err := verification.SealCaptureIntent(intent)
+				require.NoError(t, err)
+				return sealed, nil
+			}}
+			_, err := f.engine(t, s).VerifyRun(f.ctx, f.request)
+			require.ErrorIs(t, err, expected)
+			if mode == "unauthorized" {
+				require.Zero(t, reads)
+			} else {
+				require.Equal(t, 1, reads)
+			}
+			require.Zero(t, f.adapter.estimates)
+			require.Zero(t, f.adapter.evaluations)
+			_, err = f.storage.GetVerificationJob(f.ctx, f.request.Job.ID)
+			require.ErrorIs(t, err, verification.ErrJobNotFound)
+		})
+	}
+}
+
+type workerRequiredStore interface {
+	store.Store
+	verification.JobStore
+	verification.ExecutorStore
+	verification.CommitStore
+}
+
+func TestVerificationWorkerWithoutIntentCapability(t *testing.T) {
+	f := newWorkerFixture(t)
+	s := struct{ workerRequiredStore }{f.storage}
+	_, hasIntents := any(s).(verification.CaptureIntentStore)
+	require.False(t, hasIntents)
+	result, err := f.engine(t, s).VerifyRun(f.ctx, f.request)
+	require.NoError(t, err)
+	require.Equal(t, verification.JobCommitted, result.Job.State)
+}
+
 func TestVerificationWorkerCommitsSavedRun(t *testing.T) {
 	f := newWorkerFixture(t)
 	e := f.engine(t, f.storage)

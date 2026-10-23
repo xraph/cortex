@@ -82,6 +82,9 @@ Immutable pre-generation capture intent is now stored with exact run/job/result
 identity indexes. `CaptureFromIntent` recovers the saved contract, context and
 budget policy and derives candidate bytes from the completed run. Runtime
 registration ordering and automatic finalizer recovery remain open.
+Admission now rechecks a shortened saved run deadline inside enqueue. The explicit
+worker also reads a supported store's intent before enqueue or evaluation and
+rejects a mismatched reserved result ID without consuming evaluator budget.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

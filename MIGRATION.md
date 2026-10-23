@@ -307,3 +307,15 @@ The host owns that ordering, current authorization and budget reservation.
 Automatic preparation/finalization integration and required publication gating
 remain open. An idempotent registration response is not permission to run the
 agent again.
+
+Verification enqueue now rejects a job deadline beyond the saved run deadline,
+including deadlines shortened after capture-intent registration. The explicit
+worker checks a supported store's reserved result identity before evaluation.
+
+MongoDB now writes `budget_deadline_exact` alongside the native BSON date on run
+and suspension documents. This preserves nanoseconds for frozen policy checks.
+No backfill is needed. Old documents retain their stored millisecond precision;
+the original fractional value cannot be recovered. New readers reject malformed
+values or values inconsistent with the native date. Upgrade every writer before
+relying on exact deadlines, since an older writer can leave an inconsistent
+companion value when changing a budget. New writers update or clear both values.

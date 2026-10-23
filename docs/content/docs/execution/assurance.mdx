@@ -214,12 +214,22 @@ the current saved run revision and output. Only the candidate hash, byte count
 and completed run revision replace template values. Capture and enqueue happen
 in one transaction. Pass the returned job request and the intent's result ID to
 `Engine.VerifyRun`; use a fresh claim ID only when acquiring new ownership.
+Capture rechecks the saved run deadline. If you shortened it after registration,
+an intent with a later deadline cannot enqueue work or create candidate evidence.
+MongoDB stores an exact deadline alongside its millisecond BSON date so equal
+run and job deadlines remain equal after a read. Existing documents keep their
+stored precision; see the writer-upgrade notes in `MIGRATION.md`.
 
 Normal enqueue and result commit also check saved intents. They reject a changed
 job policy or result identity. A same-request registration retry remains valid
 after execution, but it does not authorize another generation call. Capture
 retries return the saved job, including terminal states, without recreating
 removed evidence. Authorize every read and capture through your host policy.
+When your store exposes `GetRunCaptureIntent`, the engine checks its sealed
+scope, run and result identity after authorization and before enqueue, estimation
+or evaluation. A read failure stops the worker. Custom stores without that
+optional capability retain the explicit worker API; commit-time identity checks
+remain necessary in every store that supports intents.
 
 These storage primitives do not yet run inside the engine's preparation or
 finalization paths. They do not reserve a shared run budget, gate model dispatch
@@ -250,7 +260,7 @@ restoring subsequently deleted bytes. Reauthorize any later use of that snapshot
 
 You can pass the same request to `Engine.VerifyRun` after capture; its enqueue
 step recovers the existing job. This closes the artifact/enqueue write gap for a
-saved run. Automatic finalization, durable capture intent before generation and
+saved run. Automatic finalization, intent registration before generation and
 recovery of a crash before capture is requested remain separate integration work.
 
 ### Execute or recover a verifier group
