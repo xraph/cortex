@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
+	"github.com/xraph/cortex/verification"
 )
 
 // PreparedRunOptions contains trusted per-execution identity. It cannot replace
@@ -87,7 +88,18 @@ func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input str
 	return nil
 }
 
-func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (context.Context, *resumption, error) {
+type preparedRunDraft struct {
+	run      *run.Run
+	snapshot *preparedSnapshot
+	cfg      resolvedConfig
+	messages []llm.Message
+	intent   verification.CaptureIntent
+}
+
+func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, runID id.AgentRunID) (context.Context, *preparedRunDraft, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if e.store == nil {
 		return nil, nil, cortex.ErrNoStore
 	}
@@ -158,7 +170,7 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 		return nil, nil, fmt.Errorf("cortex: prepared session: %w", err)
 	}
 	now := time.Now().UTC()
-	r := &run.Run{Entity: cortex.NewEntity(), ID: id.NewAgentRunID(), AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget}
+	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget}
 	safeInput, scanErr := e.checkPublication(ctx, &snap.Agent, r, cfg.Publication, input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
 		return nil, nil, scanErr
@@ -177,6 +189,17 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 		return nil, nil, intentErr
 	}
 	ctx = withExecutionProvenance(ctx, r.Provenance)
+	return ctx, &preparedRunDraft{run: r, snapshot: snap, cfg: cfg, messages: messages, intent: intent}, nil
+}
+
+func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (context.Context, *resumption, error) {
+	ctx, draft, err := e.prepareRun(ctx, p, input, opts, id.NewAgentRunID())
+	if err != nil {
+		return nil, nil, err
+	}
+	r, snap, cfg, messages, intent := draft.run, draft.snapshot, draft.cfg, draft.messages, draft.intent
+	now := *r.StartedAt
+	input = r.Input
 	if err = e.store.CreateRun(ctx, r); err != nil {
 		return nil, nil, fmt.Errorf("cortex: create prepared run: %w", err)
 	}
@@ -198,7 +221,7 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 			return nil, nil, e.stopPublication(ctx, r, &reactState{}, err)
 		}
 	}
-	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: sessionID, newMessagesFrom: len(messages), prepared: &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}, preparedSnapshot: snap, provenance: r.Provenance}
+	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: r.SessionID, newMessagesFrom: len(messages), prepared: &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 	return ctx, &resumption{ag: &snap.Agent, cfg: cfg, run: r, state: st, startedAt: now}, nil
 }

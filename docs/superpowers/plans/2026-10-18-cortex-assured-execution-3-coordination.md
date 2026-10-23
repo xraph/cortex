@@ -73,10 +73,19 @@ required capture policy and metadata receipt after revalidating live ownership,
 the parent, assignment, budget and prerequisites. The creation receipt contains
 no duplicate private input. `NewTaskRunAdmitter` now guards creation with explicit
 host fencing and authorization ports and validates the original receipt on every
-retry. Prepared execution still needs to consume this
-capability and enforce authority through provider/tool calls. Concrete host grant services, runtime dispatch, cancellation after
+retry. `Engine.PrepareTaskRun` now builds the exact creation request using the
+shared prepared-input path and reserved run identity. It preserves scanning,
+private history, capture policy and input evidence, with no execution side
+effects. Runtime invocation still needs to consume the admitted request and
+enforce authority through provider/tool calls. Concrete host grant services, runtime dispatch, cancellation after
 intent, recovery settlement and event delivery remain open. `Scheduler.Tick` still needs integration; the
 ownership store is not a completed scheduler.
+
+Runtime integration must consume the admitted request's captured execution inputs
+and original prepared snapshot. Reloading current conversation history after
+admission would change the work bound by the capture policy. Before invocation,
+revalidate prepared revisions, current ownership and host authority. Historical
+creation receipts enter recovery; they must not start another ReAct pass.
 
 ## S3.3: Structured handoffs and independent review
 

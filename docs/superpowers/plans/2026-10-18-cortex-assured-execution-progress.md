@@ -4503,3 +4503,40 @@ and the complete coordination (22.166s) and assurance (1.120s) race suites passe
 The child-creation race suite passed all 40 test entries on each backend:
 SQLite (16.367s), PostgreSQL (8.903s) and MongoDB (11.433s), with no skips.
 Prepared execution, per-call guards and the full scheduler remain open.
+
+### S3.2 prepared task request construction
+
+Ruling: assign the reserved child ID before scanning or building verification
+inputs, and reuse the ordinary prepared-run construction path. Keep preparation
+separate from creation and external execution so callers can retain one exact
+request across ambiguous acknowledgments.
+
+`Engine.PrepareTaskRun` accepts current claim and dispatch references, the sealed
+working assignment, parent revision, reserved child ID, session, prerequisites
+and reason. It checks structural associations, local agent identity, required
+verification and the prepared budget ceiling. The shared preparation helper
+validates frozen policy and revisions, scans input and private history, builds
+the capture policy and persists authorized execution-input bytes. It returns a
+pristine detached `TaskRunRequest`, without a child row, capture-intent
+registration, lifecycle events or model/evaluator calls. Session resolution and
+input-evidence retention remain real storage operations.
+
+Task contract projections remain supported. Preparation must not compare their
+digest with the full plan contract. Atomic creation validates the exact assigned
+checks and artifact binding under current storage guards. A host builder still
+supplies producer and context provenance; preparation is not authorization.
+
+Tests began with the missing preparation API. They cover reserved identity,
+pristine output, private input evidence, scanned history, detached options,
+invalid ownership/assignment/budget/scope, absent required verification, changed
+builder input, denied evidence access and cancellation. A projection regression
+covers differing task and plan contract digests. The SQLite integration fixture
+creates a plan, reserves capacity and ownership, records dispatch, prepares the
+child and admits its creation with the actual engine and store. It checks atomic
+capture-policy registration and idempotent replay without invoking a provider.
+The complete engine (371.504s), coordination (18.947s), run (1.117s) and assurance
+(1.134s) race suites passed. The final task-preparation race tests, including the
+projection constructed and checked through the planning API, passed in 21.917s.
+After final formatting, all-module `make l` passed. The root build and docs
+typecheck, lint and build also passed. Runtime invocation, per-call guards,
+recovery and the complete scheduler remain open.

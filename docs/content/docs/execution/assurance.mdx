@@ -1748,6 +1748,32 @@ adapter, and fixture ports do not qualify your installed identity service.
 
 ### Create the reserved child atomically
 
+Build the request with `Engine.PrepareTaskRun(ctx, prepared, input, options)`.
+`PreparedTaskRunOptions` takes the current claim token, dispatch digest, working
+assignment, parent revision, reserved run ID, session, complete prerequisite chain
+and reason. It checks their structural bindings, the local agent identity and the
+prepared budget against the handoff ceiling. Required verification must be
+configured.
+
+Preparation shares the ordinary prepared-run path: validate frozen policy and
+provider/tool revisions, scan input, load and scan private history, then build
+and authorize the capture policy and save its exact execution-input artifact.
+The reserved ID is used from the start, including in the scanner context and
+input artifact. The returned `TaskRunRequest` is detached and pristine. No child
+row, capture-intent registration, lifecycle event or model/evaluator call occurs.
+Session resolution and authorized evidence storage may write records.
+
+Your intent builder still supplies the task's artifact producer and current
+context. It can read the handoff digest and parent identity through
+`engine.ExecutionProvenanceFromContext`. A task may use a projected contract;
+the store validates that contract against the assigned checks during creation.
+Preparation alone does not prove current ownership or permission.
+
+Keep the returned request for retries. Repeating preparation may allocate a new
+session or new evidence and intent identities. After an ambiguous creation,
+reuse the original request and inspect the existing child. Input artifacts from
+an abandoned preparation remain subject to their retention policy.
+
 Use `coordination.TaskRunStore.CreateTaskRun` after guarded dispatch admission.
 Your `TaskRunRequest` supplies the current dispatched claim token, dispatch digest,
 working assignment revision and digest, parent revision and complete current
