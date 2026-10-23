@@ -1,4 +1,4 @@
-// Package hostport checks trusted interface ports without invoking their methods.
+// Package hostport validates trusted host interfaces and bounds callback lifetimes.
 package hostport
 
 import "reflect"

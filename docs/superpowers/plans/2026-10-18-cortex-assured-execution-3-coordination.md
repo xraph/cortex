@@ -91,9 +91,10 @@ execution retains handoff lineage through resume. Immutable review observations
 now bind separate reviewer execution to submitted evidence, preserve contradictions
 and leave verifier verdicts unchanged. Task acceptance now checks committed
 verification and the complete prerequisite chain under the plan/run/evidence
-transaction. Review completion/adjudication, atomic
-current-grant and scheduler-ownership fences, stronger producer independence and
-installed qualification remain open.
+transaction. An explicit host acceptor now keeps authorization and current
+request checks inside a host-supplied fence for the full prerequisite chain.
+Review completion/adjudication, concrete grant and scheduler-ownership fences,
+stronger producer independence and installed qualification remain open.
 The packet and its acceptance checklist remain incomplete.
 
 ## S3.4: Effect reconciliation and artifact conflict handling

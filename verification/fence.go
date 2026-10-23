@@ -3,7 +3,8 @@ package verification
 import (
 	"context"
 	"fmt"
-	"sync"
+
+	"github.com/xraph/cortex/internal/hostport"
 )
 
 // withBindingFence owns callback lifetime for commits and content reads. A broken
@@ -14,53 +15,10 @@ func withBindingFence[T any](ctx context.Context, fence CommitFence, binding Bin
 	if err != nil {
 		return zero, err
 	}
-	attemptCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var mu sync.Mutex
-	active, started, finished := true, false, false
-	var result T
-	var callbackErr, protocolErr error
-	fenceErr := fence.WithCommitFence(attemptCtx, expected, func(current Binding) error {
-		mu.Lock()
-		if !active || started {
-			protocolErr = ErrInvalid
-			mu.Unlock()
-			return ErrInvalid
+	return hostport.WithSynchronousFence(ctx, ErrInvalid, func(attemptCtx context.Context, next func(Binding) error) error {
+		if fenceErr := fence.WithCommitFence(attemptCtx, expected, next); fenceErr != nil {
+			return fmt.Errorf("cortex: result fence: %w", fenceErr)
 		}
-		started = true
-		mu.Unlock()
-		value, actionErr := action(attemptCtx, current)
-		mu.Lock()
-		if !active {
-			value = zero
-			if actionErr == nil {
-				actionErr = ErrInvalid
-			}
-		}
-		result, callbackErr, finished = value, actionErr, true
-		mu.Unlock()
-		return actionErr
-	})
-	mu.Lock()
-	active = false
-	done := started && finished
-	value, resultErr, invalid := result, callbackErr, protocolErr
-	mu.Unlock()
-	cancel()
-	if fenceErr != nil {
-		return zero, fmt.Errorf("cortex: result fence: %w", fenceErr)
-	}
-	if invalid != nil {
-		return zero, invalid
-	}
-	if !done {
-		return zero, ErrInvalid
-	}
-	if resultErr != nil {
-		return zero, resultErr
-	}
-	if err := ctx.Err(); err != nil {
-		return zero, err
-	}
-	return value, nil
+		return nil
+	}, action)
 }

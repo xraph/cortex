@@ -1481,6 +1481,26 @@ resolved `Current` binding. Your host authenticates `Actor` as the handoff sende
 and fences external grants and source revisions during the call. A stored
 principal string or digest cannot authenticate that caller.
 
+Use `coordination.NewTaskAcceptor(store, hostFence, hostAuthorizer)` at the host
+boundary and call `Accept(ctx, request)`. Both host ports are required. The fence
+resolves current bindings for the complete request and holds the relevant grant
+and revision guards through storage; the authorizer authenticates the sender and
+checks access to the claim, assignment and every prerequisite inside that fence.
+Every retry repeats those authorization checks, even when storage returns a
+historical receipt.
+
+The wrapper rejects changed bindings, altered request identity, missing or
+repeated callbacks, callbacks invoked after the fence returns, and invalid or
+unrelated storage receipts. Unfinished callbacks receive cancellation. Host and
+storage values are detached so a callback cannot mutate the retained request.
+A lost fence acknowledgment can follow a durable commit: retry the same request
+ID. It does not justify another acceptance or publication.
+
+Your fence must guard mutations from other processes too. For external services,
+use version-conditional operations or an explicitly bounded observation window;
+an unlocked read followed by a callback is insufficient. Cortex supplies no
+default grant resolver, and this wrapper does not qualify an installed host.
+
 Include an `AcceptedDependency` for every task in the complete prerequisite
 chain. Each entry pins its acceptance ID/digest and carries its own current
 binding. The store reloads those accepted results, checks every assigned

@@ -20,14 +20,14 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
 | S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; scoped recovery and callback renewal implemented; qualified host adapters, durable effect recovery, multi-scope worker deployment and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
-| S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
+| S3.1 | active | this chat | Bounded graphs, immutable backend revisions, task contract projections, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress, evidence-bound submissions and retained independent review findings implemented; review completion/adjudication, scheduler/grant fences and installed qualification remain open |
-| S3.2 | active | this chat | Durable ownership, renewal, dispatch intent, expiry and immutable history implemented; readiness/grant/budget admission, runtime scheduling and recovery qualification remain open |
+| S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
+| S3.2 | active | this chat | Durable ownership, atomic capacity reservation, renewal, dispatch intent, expiry, verified completion and immutable history implemented; atomic readiness/grant admission, runtime scheduling, event delivery and recovery qualification remain open |
 | S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; runtime binding and bounded replan policy remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
@@ -4206,3 +4206,40 @@ PostgreSQL/MongoDB runs then stalled during Docker container creation; an
 independent container listing also exceeded an eight-second timeout. Final
 backend confirmation and push are pending. No Docker services were restarted.
 CI 40017715698 for the preceding task-contract commit passed.
+
+
+### S3.3 host authorization for task acceptance
+
+Ruling: use an explicit host fence for the whole acceptance request, including
+all prerequisite bindings, then authenticate and authorize inside that fence
+before entering storage. Separate per-artifact reads cannot establish one guarded
+observation of the complete dependency chain. Concrete host integration still
+has to supply the current grant/revision guards.
+
+`NewTaskAcceptor` requires storage, `TaskAcceptanceFence` and
+`TaskAcceptanceAuthorizer`. It detaches the request, checks exact scope and current
+request digest, authorizes every call including historical retries, then validates
+and detaches the returned receipt. It preserves the store's confirmed `Fresh`
+value. Lost acknowledgment remains ambiguous and requires the same request ID.
+
+The callback lifetime guard now lives in `internal/hostport` and is shared with
+verification commits, result reads and exports. Existing verification behavior
+and errors remain intact. Tests cover missing, duplicate, escaped and unfinished
+callbacks, cancellation, stale dependency bindings, changed actors, authorizer
+mutation, typed-nil ports, changed receipts and authorization on historical
+retries. This adds a guarded host entry point, not a concrete grant provider,
+scheduler or production qualification.
+
+Docker restart was approved and completed after the stalled database runs.
+The complete affected backend matrix then passed serially on SQLite (138.387s),
+PostgreSQL (273.828s) and MongoDB (144.688s), with real containers and no skips.
+The unchanged MongoDB `transitive_valid` case passed in 5.36s. The earlier failure
+and container startup timeouts remain recorded above; this rerun clears the
+backend verification blocker.
+
+Final `make f`, all-module `make l`, root build and documentation typecheck, lint
+and build passed. Complete coordination and verification race suites passed
+(29.424s and 5.050s), covering both users of the shared callback guard. Durable
+acceptance is committed as `3ae6eec`; both packets are ready for publication.
+Atomic readiness and budgeted claiming, scheduler integration, concrete host
+grants and live qualification remain open. The four-stage goal is still active.
