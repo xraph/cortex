@@ -204,9 +204,10 @@ rollback, scope and retention tests cover the storage boundary. The metadata
 reader does not publish candidate bodies or start a subscription goroutine.
 
 Verification storage now writes execution-finished/pending during private capture,
-terminal verdicts during settlement or retirement, and passed/result-committed at
-guarded commit. Each event shares its state transaction; a ready job emits no
-premature pass, and a superseded job cannot publish its verdict over a replacement.
+terminal verdicts during settlement or retirement, and passed/artifact-created/
+result-committed at guarded commit. Each event shares its state transaction; a
+ready job emits no premature pass, and a superseded job cannot publish its verdict
+over a replacement.
 
 REST and dashboard now expose paged metadata through `GET /v1/runs/:id/events`
 and `runs.replay` v1. They share strict run-bound cursor encoding, bounded reads,
@@ -232,7 +233,13 @@ Remote `GetTask` also exposes opt-in metadata pages through the A2A public-event
 extension on REST, JSON-RPC and gRPC. Sequence and revision fields use decimal
 strings, and reads recheck the resolved peer and current subscriber grant.
 
-The remaining S2.6 work includes artifact events, approved content replay,
+Verified result artifacts now announce only the committed result ID between
+passed and result-committed. Private capture emits no artifact announcement.
+Rollback, concurrent commit, restart and retention tests preserve this ordering
+and the original event identities. This is an additive schema-1 event type;
+readers must support it before writers begin emitting it.
+
+The remaining S2.6 work includes arbitrary artifact producers, approved content replay,
 remote durable subscriptions, installed live subscriptions and installed
 reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.

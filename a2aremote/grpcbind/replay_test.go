@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 type replayGateway struct {
@@ -41,7 +42,7 @@ func (g *replayGateway) ReadPublicEvents(ctx context.Context, r event.ReadReques
 	const seq = 9007199254740993
 	page := event.Page{Watermark: event.Watermark{SchemaVersion: 1, RunID: g.runID, FirstSequence: seq, LastSequence: seq, RunRevision: seq}, Next: event.Cursor{SchemaVersion: 1, RunID: g.runID, Sequence: seq}}
 	if r.After.Sequence == seq-1 {
-		page.Events = []event.Event{{SchemaVersion: 1, Input: event.Input{ID: id.New(event.PrefixEvent), Type: event.ExecutionFinished}, RunID: g.runID, Sequence: seq, RunRevision: seq, ObservedAt: time.Now().UTC()}}
+		page.Events = []event.Event{{SchemaVersion: 1, Input: event.Input{ID: id.New(event.PrefixEvent), Type: event.ArtifactCreated, ResultID: id.New(verification.PrefixResult)}, RunID: g.runID, Sequence: seq, RunRevision: seq, ObservedAt: time.Now().UTC()}}
 	}
 	return page, nil
 }
@@ -66,6 +67,9 @@ func TestGRPCReplayPreservesPrecisionAndActivation(t *testing.T) {
 	observation := page.Fields["events"].GetListValue().Values[0].GetStructValue()
 	if observation.Fields["sequence"].GetStringValue() != "9007199254740993" || observation.Fields["run_revision"].GetStringValue() != "9007199254740993" {
 		t.Fatalf("precision lost: %v", observation)
+	}
+	if observation.Fields["type"].GetStringValue() != "artifact_created" || !strings.HasPrefix(observation.Fields["result_id"].GetStringValue(), "vresult_") {
+		t.Fatalf("artifact metadata lost: %v", observation)
 	}
 	next := page.Fields["next_cursor"].GetStringValue()
 	ctx = metadata.AppendToOutgoingContext(authed(t.Context()), "a2a-extensions", a2aremote.ReplayExtensionURI, "cortex-replay-cursor", next)

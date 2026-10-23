@@ -643,12 +643,27 @@ frame, before asynchronous application processing finishes. Durable consumers mu
 persist their own processed cursor and explicitly reconnect from it, using a new
 EventSource or a streaming HTTP client. No exactly-once network delivery is implied.
 
-Every new verified result commit writes `verification_passed` followed by
-`result_committed` in the same transaction as the receipt, job and run update.
+Every new verified result commit writes `verification_passed`, `artifact_created`
+and `result_committed`, in that order, in the same transaction as the receipt,
+job and run update.
 The committed-result event reuses the receipt's outbox ID. A crash or
 lost acknowledgement cannot leave a committed result without this event, and
 retrying the commit preserves its sequence. Existing historical receipts are
 not backfilled automatically.
+
+`artifact_created` announces the logical verified result artifact using only
+`result_id`. You still need current authorization to read its content. Private
+candidate and transcript capture do not emit artifact announcements, and the
+public event contains no evidence ID, digest, filename, media type or bytes.
+Storage checks that the receipt belongs to the exact run and current revision.
+Ordinary terminal recording emits only `execution_finished`; arbitrary tool files
+and external artifacts have no public artifact producer yet.
+
+This adds an event type to schema 1 without changing its envelope or cursor.
+Upgrade replay readers before enabling writers that emit it. If the same
+deployment serves both, pause result commits until every reader has been upgraded.
+Older readers reject unknown event types and cannot read a page containing the
+new announcement. Keep compatible readers available if you roll back the writers.
 
 Built-in stores expose optional `event.Store` operations for trusted host code:
 `AppendPublicEvents`, `ReadPublicEvents`, `ReadEventWatermark` and
@@ -676,7 +691,7 @@ Verification storage produces these events inside its state-change transactions:
 | A required check fails or cannot establish a verdict | `verification_failed` or `verification_inconclusive` |
 | Accepted report evidence expires before the remaining checks settle | `verification_stale` |
 | Expire or cancel the current verification job | `verification_inconclusive` |
-| Guarded verified result commit | `verification_passed`, `result_committed` |
+| Guarded verified result commit | `verification_passed`, `artifact_created`, `result_committed` |
 
 Passing evaluator checks only makes a job ready. It emits no passed event until
 commit rechecks authority and freshness. Retiring a superseded job does not emit
@@ -684,9 +699,9 @@ a new verdict for its replacement run. Retried capture, enqueue, cancellation
 and result commits preserve the recorded IDs and sequence; failed transactions
 leave neither state changes nor events behind.
 
-Ordinary run lifecycle producers, artifact events, approved answer-content replay,
-SSE/dashboard/A2A transport wiring and completion-hook delivery remain open. This
-reader does not start background polling or claim exactly-once network delivery.
+Approved answer-content replay, arbitrary artifact producers, remote durable
+subscriptions and durable completion-hook delivery remain open. Installed
+browser/proxy reconnect and revocation checks also remain unqualified.
 
 
 ### Require verification before publishing an answer

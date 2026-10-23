@@ -17,6 +17,7 @@ import (
 	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 type replayGateway struct {
@@ -315,5 +316,33 @@ func TestRemoteReplayCardReflectsService(t *testing.T) {
 		if recorder.Code != 200 || strings.Contains(recorder.Body.String(), ReplayExtensionURI) != enabled {
 			t.Fatalf("misleading capability: %s", recorder.Body.String())
 		}
+	}
+}
+
+func TestRemoteReplayArtifactIsMetadataOnly(t *testing.T) {
+	svc, gw, runID := replayServiceFixture(t)
+	resultID := id.New(verification.PrefixResult)
+	original := gw.read
+	gw.read = func(ctx context.Context, r event.ReadRequest) (event.Page, error) {
+		page, err := original(ctx, r)
+		for i := range page.Events {
+			page.Events[i].Type, page.Events[i].ResultID = event.ArtifactCreated, resultID
+		}
+		return page, err
+	}
+	task, err := svc.GetTask(context.Background(), replayCredentials(), GetTaskRequest{Tenant: "worker", ID: runID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "SECRET") || len(task.Artifacts) != 0 || task.Status.Message != nil {
+		t.Fatalf("content leaked: %s", body)
+	}
+	page := task.Metadata[ReplayMetadataKey].(ReplayPageMetadata)
+	if len(page.Events) != 1 || page.Events[0].Type != event.ArtifactCreated || page.Events[0].ResultID != resultID {
+		t.Fatalf("artifact metadata lost: %s", body)
 	}
 }

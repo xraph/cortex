@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
@@ -203,6 +204,9 @@ func testVerifiedResultConcurrent(t *testing.T, newStore func(*testing.T) store.
 	current, err := s.GetRun(ctx, req.Current.RunID)
 	require.NoError(t, err)
 	require.Equal(t, req.ExpectedRunRevision+1, current.Revision)
+	page := readLifecycle(ctx, t, s, current.ID)
+	requireLifecycle(t, page, event.VerificationPassed, event.ArtifactCreated, event.ResultCommitted)
+	require.Equal(t, current.ResultRef, page.Events[1].ResultID.String())
 }
 
 func resultCapability[T any](t *testing.T, s store.Store) T {

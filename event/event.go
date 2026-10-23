@@ -39,7 +39,10 @@ const (
 	VerificationInconclusive Type = "verification_inconclusive"
 	VerificationStale        Type = "verification_stale"
 	VerificationPassed       Type = "verification_passed"
-	ResultCommitted          Type = "result_committed"
+	// ArtifactCreated announces the verified result artifact by ResultID. It
+	// never identifies private evidence or grants access to result content.
+	ArtifactCreated Type = "artifact_created"
+	ResultCommitted Type = "result_committed"
 )
 
 // Input contains only stable identifiers and a closed event type.
@@ -59,7 +62,7 @@ func (i Input) validate() error {
 		if i.ID.Prefix() != PrefixEvent || !i.ResultID.IsNil() {
 			return ErrInvalid
 		}
-	case VerificationPassed:
+	case VerificationPassed, ArtifactCreated:
 		if i.ID.Prefix() != PrefixEvent || i.ResultID.IsNil() || i.ResultID.Prefix() != verification.PrefixResult {
 			return ErrInvalid
 		}

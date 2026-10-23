@@ -2999,3 +2999,43 @@ Validation for ordinary terminal recording:
 - Previous baseline `aad1305` passed Linux CI run 39955834822, confirming the
   replay deadline and race-coverage timeout corrections. This packet still needs
   its own post-push CI result.
+
+
+### S2.6 verified artifact announcements
+
+Guarded result commit now appends `verification_passed`, `artifact_created` and
+`result_committed` in one transaction. The artifact event names the logical result
+with its result ID. It carries no private evidence identity, digest or content,
+and it grants no authority to fetch the result. Candidate and transcript capture
+remain private. Ordinary terminal recording still emits only execution-finished.
+
+The event validator accepts the new closed type only with a result ID and a public
+event ID. Storage checks the committed receipt against the exact run, revision
+and passed state. Shared backend tests cover pre-commit denial, sibling-run
+rejection, stale revisions, transaction rollback, concurrent commits, restart and
+retry after retention. Engine restart coverage verifies replay through subscriber
+authorization. HTTP and A2A/gRPC tests preserve artifact metadata without returning
+candidate content.
+
+The new type uses the existing schema-1 envelope. Older readers reject unknown
+types, so upgrade readers before enabling these writers. Historical receipts are
+not backfilled. Arbitrary artifact producers, approved content replay, remote
+durable subscriptions and installed qualification remain open. S2.6 and the full
+four-stage plan remain active.
+
+
+Validation for verified artifact announcements:
+
+- Red phase: the new event validation test rejected `artifact_created`, and the
+  SQLite lifecycle tests showed the missing event before implementation.
+- `GOWORK=off make f`, then `GOWORK=off make l`: all ten modules passed lint.
+- Focused race tests passed for event, engine, SQLite, PostgreSQL and MongoDB,
+  covering commit lifecycle, rollback, replay, concurrent writes and binding
+  rejection. A verbose repeat confirmed both container-backed artifact-binding
+  cases ran without skips. The full event race suite also passed.
+- Full API, A2A and gRPC race suites passed, along with the dashboard contract
+  race suite and the root build.
+- Docs type check, lint and production build passed. `git diff --check` passed.
+
+These checks qualify the metadata path locally. They do not qualify installed
+subscribers or a Linux sandbox worker.

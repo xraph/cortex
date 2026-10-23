@@ -193,7 +193,7 @@ func (s *Repository) checkPublicEvent(ctx context.Context, current *run.Run, inp
 		if current.VerificationStatus != verification.StatusStale {
 			return event.ErrConflict
 		}
-	case event.VerificationPassed, event.ResultCommitted:
+	case event.VerificationPassed, event.ArtifactCreated, event.ResultCommitted:
 		receipt, err := s.GetCommittedResult(ctx, input.ResultID)
 		if err != nil {
 			return err
@@ -309,6 +309,7 @@ func (s *Repository) PrunePublicEvents(ctx context.Context, through event.Cursor
 func (s *Repository) appendCommittedEvent(ctx context.Context, tx RunTransaction, receipt verification.CommitReceipt) error {
 	return s.appendRunEvents(ctx, tx, receipt.Outbox.RunID,
 		event.Input{ID: id.New(event.PrefixEvent), Type: event.VerificationPassed, ResultID: receipt.Request.ResultID},
+		event.Input{ID: id.New(event.PrefixEvent), Type: event.ArtifactCreated, ResultID: receipt.Request.ResultID},
 		event.Input{ID: receipt.Outbox.EventID, Type: event.ResultCommitted, ResultID: receipt.Request.ResultID})
 }
 

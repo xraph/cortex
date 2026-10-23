@@ -131,7 +131,7 @@ func TestOrdinaryRecordingKeepsRequiredVerificationTransaction(t *testing.T) {
 	for _, item := range page.Events {
 		kinds = append(kinds, item.Type)
 	}
-	require.Equal(t, []event.Type{event.ExecutionFinished, event.VerificationPending, event.VerificationPassed, event.ResultCommitted}, kinds)
+	require.Equal(t, []event.Type{event.ExecutionFinished, event.VerificationPending, event.VerificationPassed, event.ArtifactCreated, event.ResultCommitted}, kinds)
 }
 
 type terminalHooks struct{ completed int }

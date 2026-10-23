@@ -15,6 +15,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/scopespy"
+	"github.com/xraph/cortex/verification"
 )
 
 type replayTestStore struct {
@@ -40,7 +41,7 @@ func TestReplayHTTPRoutes(t *testing.T) {
 		gap, corrupt, noScope, unconfigured bool
 		want                                int
 	}{
-		{name: "page", want: 200}, {name: "resume", query: "?after=1." + runID.String() + ".1", want: 200},
+		{name: "page", want: 200}, {name: "artifact", want: 200}, {name: "resume", query: "?after=1." + runID.String() + ".1", want: 200},
 		{name: "gap", gap: true, want: 410}, {name: "bad cursor", query: "?after=bad", want: 400},
 		{name: "negative limit", query: "?limit=-1", want: 400}, {name: "oversized", query: "?limit=129", want: 400},
 		{name: "foreign cursor", query: "?after=1." + id.NewAgentRunID().String() + ".0", want: 400},
@@ -56,6 +57,10 @@ func TestReplayHTTPRoutes(t *testing.T) {
 				page := event.Page{Watermark: event.Watermark{SchemaVersion: 1, RunID: runID, FirstSequence: 1, LastSequence: 1, RunRevision: 2}, Next: event.Cursor{SchemaVersion: 1, RunID: runID, Sequence: 1}}
 				if r.After.Sequence == 0 {
 					page.Events = []event.Event{{SchemaVersion: 1, RunID: runID, Sequence: 1, RunRevision: 2, ObservedAt: time.Now().UTC(), Input: event.Input{ID: id.New(event.PrefixEvent), Type: event.ExecutionFinished}}}
+				}
+				if tc.name == "artifact" {
+					page.Events[0].Type = event.ArtifactCreated
+					page.Events[0].ResultID = id.New(verification.PrefixResult)
 				}
 				if tc.gap {
 					page.Events = nil
@@ -82,6 +87,9 @@ func TestReplayHTTPRoutes(t *testing.T) {
 			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/runs/"+runID.String()+"/events"+tc.query, nil)
 			res := httptest.NewRecorder()
 			New(eng, nil).Handler().ServeHTTP(res, req)
+			if tc.name == "artifact" && (!strings.Contains(res.Body.String(), `"type":"artifact_created"`) || !strings.Contains(res.Body.String(), `"result_id":"vresult_`)) {
+				t.Fatalf("artifact metadata lost: %s", res.Body)
+			}
 			if res.Code != tc.want {
 				t.Fatalf("status %d want %d: %s", res.Code, tc.want, res.Body)
 			}

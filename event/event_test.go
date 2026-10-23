@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex/event"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/verification"
 )
@@ -50,4 +51,18 @@ func TestVerificationPassedEventRequiresCommittedResultIdentity(t *testing.T) {
 	require.Error(t, e.Validate())
 	e.ResultID = id.ID{}
 	require.NoError(t, e.Validate())
+}
+
+func TestArtifactCreatedRequiresResultIdentity(t *testing.T) {
+	e := event.Event{SchemaVersion: 1, Input: event.Input{ID: id.New(event.PrefixEvent), Type: event.ArtifactCreated, ResultID: id.New(verification.PrefixResult)}, RunID: id.NewAgentRunID(), Sequence: 1, RunRevision: 2, ObservedAt: time.Now().UTC()}
+	require.NoError(t, e.Validate())
+	for _, mutate := range []func(*event.Event){
+		func(e *event.Event) { e.ResultID = id.ID{} },
+		func(e *event.Event) { e.ResultID = id.New(evidence.PrefixArtifact) },
+		func(e *event.Event) { e.ID = id.New(verification.PrefixCommitEvent) },
+	} {
+		changed := e
+		mutate(&changed)
+		require.ErrorIs(t, changed.Validate(), event.ErrInvalid)
+	}
 }
