@@ -76,9 +76,11 @@ mapping preserves parent runs and exact deadlines; HTTP/SSE loopback tests use
 SQLite messages/plans and fixture authorization/acceptance callbacks. The built-in
 stores retain progress and evidence-bound submissions with immutable history,
 exact-scope reads, idempotent replay and plan/run/evidence transactions. Prepared
-execution retains handoff lineage through resume. Independent review evidence,
-atomic current-grant and scheduler-ownership fences, producer independence beyond
-principal identity and installed qualification remain open.
+execution retains handoff lineage through resume. Immutable review observations
+now bind separate reviewer execution to submitted evidence, preserve contradictions
+and leave verifier verdicts unchanged. Review completion/adjudication, atomic
+current-grant and scheduler-ownership fences, stronger producer independence and
+installed qualification remain open.
 The packet and its acceptance checklist remain incomplete.
 
 ## S3.4: Effect reconciliation and artifact conflict handling

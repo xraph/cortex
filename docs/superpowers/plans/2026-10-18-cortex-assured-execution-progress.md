@@ -26,7 +26,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress journal and evidence-bound submissions implemented; independent review, scheduler/grant fences and installed qualification remain open |
+| S3.3 | active | this chat | Sealed handoffs, attenuated grants, host admission, transport bindings, durable progress, evidence-bound submissions and retained independent review findings implemented; review completion/adjudication, scheduler/grant fences and installed qualification remain open |
 | S3.2, S3.5, S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3921,3 +3921,48 @@ PostgreSQL (19.331s) and MongoDB (24.018s). Both container backends ran without
 skips. After the final Go edits, `make f`, all-module `make l` and the root build
 passed. Documentation typecheck, lint and build passed too. Live worker and
 installed host qualification remain deferred.
+
+### S3.3 independent review observations
+
+Ruling: retain review findings as immutable observations separate from assignment
+success. A review may support, contradict or lack evidence for a criterion, but
+only the verification contract can establish acceptance. This preserves competing
+findings without a majority-vote path around a failed check. Assignment closure
+and human adjudication remain scheduler/policy work.
+
+Review records bind the exact submitted revision, complete verification binding,
+a separate read-only handoff and a distinct prepared reviewer run. Principal and
+agent endpoint must differ from the producer. Every criterion has a finding with
+a reason; support and contradiction require known input references. Review JSON
+must match the completed run output, including when the output is retained in
+protected candidate storage. No candidate is published by recording a review.
+
+The shared repository implements exact-scope immutable create/get/list on every
+backend. It fences the plan and both runs before checking jobs and retained
+bytes, preserves historical idempotent acknowledgments, and rejects changed
+retries. Reference, byte and deadline limits apply to evidence reads. Review
+storage leaves the producer assignment and verifier status unchanged.
+
+Ruling: verification can advance the producer run revision while its submission
+is under review. Admission rechecks that current revision against the same
+immutable job and binding. Tests first rejected legitimate failed, inconclusive
+and committed verification outcomes; they now preserve all three without
+altering the original submission pins.
+
+Red tests established missing review domain and storage APIs. Domain tests cover
+self-review, copied context, changed subject/binding/plan, unknown or missing
+findings, effect grants, expiry and malformed output. Backend tests cover ordinary
+and protected output, changed runs, deleted evidence, cancellation, scope,
+rollback, lost acknowledgments and expiry during transactional reads.
+
+Current-grant enforcement, scheduler completion, human adjudication, verified
+task acceptance and installed reviewer qualification remain open. A different
+prepared digest does not prove model independence or the quality of a review.
+
+Final checks passed after formatting: all-module `make l`, root build, complete
+coordination/planning/run race suites and review/submission transaction race
+checks on SQLite (33.133s), PostgreSQL (29.671s) and MongoDB (33.980s). Both container
+backends ran without skips. Documentation typecheck, lint and build passed.
+CI 40007588094 for the preceding submission commit still has coverage running;
+all its other jobs passed at this checkpoint. No live reviewer qualification
+or full-plan completion is claimed.

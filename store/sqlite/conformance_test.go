@@ -11,6 +11,10 @@ import (
 // against sqlite. No docker involved: newTestStore opens a fresh
 // temp-file-backed database per subtest via the existing harness.
 func TestConformance(t *testing.T) {
+	t.Run("ReviewTransactions", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.ReviewTransactions(t, s, assuranceDriver{store: s})
+	})
 	t.Run("SubmissionTransactions", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.SubmissionTransactions(t, s, assuranceDriver{store: s})

@@ -1393,3 +1393,46 @@ You still need current host authorization, scheduler ownership and grant fences.
 Submission storage does not provide those external checks, establish reviewer
 independence or mark a task successful. Dependent tasks continue to require fresh
 trusted verification through the planning acceptance rules.
+
+### Retain independent review findings
+
+Use `coordination.ReviewStore` to record a review of an exact submitted assignment.
+Prepare a separate reviewer run with its own handoff digest and prepared context.
+Its handoff must use `HandoffReview`, cover the task's criteria, include the complete
+submitted candidate and supporting references, and declare read-only resource
+access with no effects. The reviewer must have a different principal and agent
+endpoint from the producer. The host still authenticates those identities and
+enforces the grant when executing tools.
+
+The reviewer produces a `coordination.ReviewOutput` JSON document containing the
+review handoff digest, subject assignment digest, binding digest and findings.
+Each assigned criterion needs one finding: `supported`, `contradicted` or
+`missing_evidence`. Include a reason and cite input artifact IDs for support or a
+contradiction. Missing evidence may have no references. These findings are
+advisory; they cannot replace a deterministic verifier result or satisfy the
+acceptance contract by themselves.
+
+`RecordAssignmentReview` requires the review assignment to be working and the
+producer assignment to remain submitted. It checks the current plan, fences both
+runs and verifies the review output against the completed reviewer run. Ordinary
+run output and protected candidate storage are supported. Recording a review
+leaves protected run output empty; authorize review queries separately because
+findings can contain sensitive content. Unknown JSON fields, trailing documents
+and changed findings are rejected.
+
+The store reloads retained evidence under deletion fences, with at most 64 input
+references, 1 MiB per input and 8 MiB total. The complete review record is bounded
+to 384 KiB. Expiry and deadlines are checked after reads too. A producer's
+verification may finish during review: admission checks the newer run revision
+against the original job and binding, and preserves the resulting verdict.
+
+Reviews are immutable observations. Use `GetAssignmentReview` or bounded
+`ListAssignmentReviews` to inspect every finding, including contradictions.
+An identical retry acknowledges the stored observation even after evidence is
+removed; it does not restore access to those bytes. A changed retry conflicts.
+No review count or majority vote marks a task successful.
+
+You still need current host authorization, scheduler ownership checks and a
+review completion policy. The storage capability does not dispatch the reviewer,
+close its assignment or grant access to artifact content. Human adjudication and
+verified task acceptance remain separate operations.
