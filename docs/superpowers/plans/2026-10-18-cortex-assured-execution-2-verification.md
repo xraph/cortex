@@ -249,3 +249,17 @@ retained conversation cannot silently change it during required resume.
 This supplies dynamic tool-result evidence. External results still depend on
 the authorized host, and durable effect receipts, worker scheduling, lease
 renewal, repair and public delivery remain open. G1/G2 qualification is unchanged.
+
+
+### S2.2 scoped recovery scheduling
+
+`RecoverVerificationPage` and `RunVerificationRecovery` now discover captured
+jobs in an explicitly authorized exact scope, preserve cursors across bounded
+pages and reuse the existing worker for claims, reconciliation and guarded commit.
+Live leases remain untouched. Intents supply stable result identities; missing
+intents stay explicit host work. Expired or exhausted jobs retire through the
+existing atomic store operation, without refunding unknown charges.
+
+The runner is opt-in host lifecycle code. Multi-scope deployment, lease renewal,
+durable hooks/public delivery, pre-capture recovery and qualified host ports
+remain open, so this does not close the full runtime-gate checkbox.

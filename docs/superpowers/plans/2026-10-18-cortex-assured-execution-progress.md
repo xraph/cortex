@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; qualified host adapters, durable effect recovery, scheduling and durable public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; qualified host adapters, durable effect recovery, multi-scope worker deployment, lease renewal and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -2536,3 +2536,51 @@ Validation for transcript capture:
 - Final `make f`, all ten module lint checks, root build and diff checks passed.
   Documentation type checks, lint and production build passed.
 - The previous commit `e5d9962` has successful CI (`39937788414`).
+
+
+### S2.2 scoped verification recovery loop
+
+Ruling: schedule saved jobs through the existing `VerifyRun` worker in an explicit
+host scope. Do not infer tenant enumeration or a replacement result ID. The host
+supplies a supervised service context; intent-less jobs remain explicit work.
+This preserves the authorization and stable-identity boundary while adding
+restart recovery after capture.
+
+`RecoverVerificationPage` validates and detaches a bounded page before any paid
+work. Each job passes current binding authorization. The cursor advances past
+terminal, denied and busy jobs, so older terminal rows cannot trap the scan on
+its first page. Cancellation during a partial page preserves the processed cursor.
+`RunVerificationRecovery` carries that cursor between sequential scans, wraps at
+the end and exits on cancellation or a discovery failure. Its optional observer
+receives safe metadata, without candidate bodies or wrapped diagnostics.
+
+Live leases remain busy even for a matching owner name. Recovery waits for expiry
+before claiming a new generation, then reuses saved evaluator call IDs and the
+intent's result ID. Tests reopen SQLite after a lost provider response and prove
+that reconciliation does not repeat generation, tool execution or evaluation.
+Lost claim acknowledgements wait for the existing lease; lost commit
+acknowledgements are observed as terminal without another commit. Expired and
+exhausted work becomes inconclusive without refunding unknown provider charges.
+
+The API-absence test failed first. Behavioral regressions then caught cancellation
+being lost during discovery, an incorrect partial-page cursor, and mutation of a
+store-owned page by a callback. Each regression passed after its fix. Tests also
+cover current authority denial, cross-scope reads, malformed and oversized pages,
+missing capabilities, unmanaged jobs and cancellation while polling.
+
+The loop is opt-in and is not launched by `Engine.Start`. It supplies single-scope
+scheduling after capture. Host deployment, multi-scope supervision, lease renewal,
+pre-capture recovery, durable effects, completion hooks/public delivery, repair and
+production qualification remain open. The full four-stage goal remains active.
+
+
+Validation for scoped recovery:
+
+- Focused recovery tests passed (11.794s). The final focused race run passed
+  (34.624s), and the full engine race suite passed (255.087s).
+- Final `make f`, all ten module lint checks, root build and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- CI for `99c9364` has passed docs, format, all submodules, lint, security and
+  verify. Its root test job was still active at this packet's last CI inspection.
+- No dependency or database schema changes were needed. Production evaluator,
+  fence, worker deployment and Linux sandbox qualification remain unverified.

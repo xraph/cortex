@@ -439,3 +439,20 @@ Retries must supply identical bytes. The store saves the transcript and candidat
 in the same transaction and binds both to the job. No database migration is
 needed. Captured tool messages remain private; external results are authorized
 host assertions, and crash-safe external effect recovery remains open.
+
+
+## Scoped verification recovery
+
+You can opt into `Engine.RunVerificationRecovery` after configuring
+`WithVerificationWorker`. Run it with your supervised worker's authorized exact
+scope and principal; it is not started by `Engine.Start`. `RecoverVerificationPage`
+provides the same bounded pass for a scheduler you already operate.
+
+No schema or store migration is needed. Recovery requires the existing capture
+intent capability to recover stable result IDs, respects active leases and
+reconciles saved evaluator calls after expiry. Jobs without an intent remain
+explicit host work. Use the metadata observer to surface unavailable, uncertain,
+busy and terminal outcomes. Cancel and join the loop before closing its store.
+
+This does not add lease renewal, public result delivery or completion-hook replay.
+Keep the required runtime's production qualification gates in place.

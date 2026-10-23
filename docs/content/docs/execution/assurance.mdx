@@ -112,9 +112,9 @@ concurrent deletion. A standalone MongoDB server returns
 MiB, with at most 256 report IDs and eight MiB of report JSON and evidence bytes
 processed in one attempt.
 
-Engine verification gates, verification-job scheduling and public outbox dispatch
-are not connected yet. This storage and host boundary does not change existing
-`RunCompleted` hooks or enable contextual verification in runtime capabilities.
+The required runtime gate and scoped recovery loop below consume this storage
+boundary. Durable public outbox dispatch remains open. Storage alone does not
+change `RunCompleted` hooks or enable contextual verification in capabilities.
 
 
 ## Durable verification work
@@ -355,8 +355,9 @@ and checks lease expiry after host callbacks. Its context deadline is the earlie
 of the caller deadline, lease expiry and job deadline. The immutable request keeps
 the original job deadline for recovery. Adapters must honor cancellation and
 reauthorize their actual resource reads; an in-process callback cannot forcibly
-stop a remote effect or uncooperative code. Lease renewal, worker scheduling,
-provider qualification and engine finalization remain separate integration work.
+stop a remote effect or uncooperative code. The scoped recovery loop below
+schedules saved jobs through this executor. Lease renewal and production provider
+qualification remain open.
 
 Passing every required criterion makes the job ready. It does not publish a
 result. Build `verification.CommitRequest` from the saved job's run revision,
@@ -424,6 +425,57 @@ prepared or resumed run publication, install completion hooks or deliver outbox
 events. `WithRequiredVerification` separately installs the limited runtime gate
 below. `RuntimeCapabilities.ContextualVerification` remains false: tests use host
 doubles and do not qualify a production evaluator or commit fence.
+
+
+### Recover captured jobs in a scoped worker
+
+Run `Engine.RunVerificationRecovery` from your host's supervised worker with an
+authorized service context containing one exact scope and principal. The loop
+uses the existing verification worker, capture intents and stored leases. It
+doesn't start from `Engine.Start`, enumerate tenants or infer their grants.
+
+```go
+err := e.RunVerificationRecovery(ctx, engine.VerificationRecoveryLoop{
+    Request: engine.VerificationRecoveryRequest{
+        Owner:         "verification-recovery-1",
+        LeaseDuration: time.Minute,
+        Limit:         32,
+    },
+    Interval: 5 * time.Second,
+    Observe: func(page engine.VerificationRecoveryPage) {
+        // Send safe status metadata to your worker monitor.
+    },
+})
+```
+
+The first scan runs immediately. Later scans advance by job ID, including past
+terminal, busy and unavailable jobs, and wrap after the last page. Each page has
+at most 256 records and runs sequentially. Set a positive interval up to one
+hour. `Observe` runs synchronously and must return promptly; it receives IDs,
+observed states and recovery statuses without candidate text or private errors.
+A discovery failure stops the loop so your supervisor can report it and back off.
+Cancellation stops the loop and reaches active evaluator contexts.
+
+For a host scheduler that already controls polling, call
+`RecoverVerificationPage(ctx, request)` and retain its `NextAfter`. Zero means
+start another scan. If cancellation interrupts a page, its cursor covers only
+the processed records. Discovery validates and detaches the entire page before
+any paid work, and each job passes current binding authorization.
+
+A live lease is busy even when its owner string matches this worker. After
+expiry, recovery claims a new generation and reconciles any saved evaluator call
+under its original call ID. It never repeats agent generation or tool effects.
+The capture intent supplies the result ID; jobs without one report `unmanaged`
+and need explicit `VerifyRun` recovery. Overdue or exhausted work becomes
+inconclusive through the store's existing atomic expiry operation. Unknown
+provider charges stay reserved.
+
+A lost claim acknowledgement waits for lease expiry. A lost commit
+acknowledgement is observed as terminal on a later scan. `terminal` does not
+promise a passed result or authorize delivery, and `unavailable` can follow a
+durable write. Inspect saved state before taking any manual action. This loop
+neither renews leases nor publishes history, completion hooks or outbox events.
+Production evaluator/fence qualification and host deployment remain required.
 
 
 ### Require verification before publishing an answer
@@ -547,8 +599,9 @@ undo an external effect or guarantee that a provider honors cancellation.
 Checked-segment publication remains unsupported: required answers must wait for
 whole-result verification. Tool-free snapshots reject unexpected tool calls;
 tool-enabled snapshots enforce their frozen allowlist and current tool authority.
-History publication, durable completion-hook replay, automatic job scheduling,
-lease renewal, repairs and recovery before candidate capture remain open.
+History publication, durable completion-hook replay, lease renewal, repairs and
+recovery before candidate capture remain open. The scoped recovery loop can
+schedule jobs after capture.
 After a lost evaluator response, recover the saved intent/job through `VerifyRun`
 with its stable identities and lease rules. That operation reconciles the
 recorded call without generating again; it does not replay completion hooks.
