@@ -181,6 +181,7 @@ func asProtocolError(err error) *Error {
 }
 
 func writeRPC(w http.ResponseWriter, resp rpcResponse) {
+	writeReplayHeaders(w, resp.Result)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(versionHeader, ProtocolVersion)
 	// The status stays 200 even for an error: a JSON-RPC error is a
@@ -246,6 +247,7 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 
 	opts := s.opts.Card
 	opts.Streaming = s.opts.Streaming
+	opts.PublicEventReplay = s.opts.PublicEventReplay
 	card := BuildCard(a, s.skillsOf(ctx, a), opts)
 
 	w.Header().Set("Content-Type", "application/json")

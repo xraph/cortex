@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages and bounded SSE implemented; installed subscriptions, ordinary run producers, approved content and remote bindings remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE and A2A metadata pages implemented; installed subscriptions, ordinary run producers, approved content and remote subscriptions remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -2872,3 +2872,41 @@ Validation for A2A terminal ordering:
 - Final formatting, lint across all ten modules, diff checks and documentation
   type checks, lint and production build passed.
 - Installed peer/proxy behavior and durable remote replay remain unqualified.
+
+
+### A2A authorized metadata pages
+
+The opt-in public-events extension serves bounded replay through `GetTask` on
+REST, JSON-RPC and gRPC. Hosts must configure engine replay authorization and
+explicitly enable the service capability. Policy receives a detached authenticated
+peer and its scope. The service checks route ownership, the run/watermark revision,
+and the peer's current identity after the authorized read. Changed credentials,
+scope, identity or revision discard the page.
+
+Replay responses contain task status and closed metadata only. Candidate output,
+artifacts, history and provider failures are excluded. Sequence and revision
+fields are decimal strings so protobuf Struct cannot round them. The shared
+cursor remains run-bound, retention gaps remain explicit, and clients receive
+static retry diagnostics. Replay headers on mutations, lists and subscriptions
+are refused before the operation acts. Existing task projections remain unchanged
+when the extension is inactive.
+
+The request deadline is five seconds; host ports must honor cancellation. This
+packet adds paged remote replay only. Durable remote subscriptions, approved
+content delivery, ordinary-run event producers and installed peer/proxy
+qualification remain open. S2.6 and the four-stage plan remain active.
+
+Validation for A2A metadata pages:
+
+- Regression tests reproduced missing extension acknowledgements in both HTTP
+  bindings and native gRPC before the binding changes. All now pass.
+- Full remote-module race tests passed (9.154s), including SQLite-backed engine
+  authorization, cross-scope denial, revocation, retention gaps, invalid headers,
+  deadlines and operation isolation. The gRPC race suite passed (1.293s),
+  including exact resume beyond 2^53 and static error details.
+- Focused engine replay race tests passed (8.607s). Root and both remote modules
+  built. Final formatting, lint across all ten modules, diff checks and docs
+  type checks, lint and production build passed.
+- Prior commit CI run 39952169782 failed when the SQLite race conformance suite
+  reached its ten-minute package timeout during fixture migration. This packet's
+  local checks do not qualify that full Linux suite or installed remote peers.

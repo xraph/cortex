@@ -41,6 +41,8 @@ type Options struct {
 	// makes the card advertise them. Off by default: a card that offers
 	// a stream nobody serves is a promise the server cannot keep.
 	Streaming bool
+	// PublicEventReplay enables authorized metadata pages on GetTask.
+	PublicEventReplay bool
 	// StreamPoll is how often a subscription re-reads its task. It
 	// bounds how stale an update can be and nothing else.
 	StreamPoll time.Duration
@@ -68,11 +70,20 @@ func NewService(gw Gateway, resolver PeerResolver, opts Options) *Service {
 	if gw == nil || resolver == nil || (!opts.Scope.IsZero() && cortex.ValidateScope(opts.Scope) != nil) {
 		return nil
 	}
+	if opts.PublicEventReplay {
+		replay, ok := gw.(PublicEventGateway)
+		if !ok || !replay.PublicEventReplayAvailable() {
+			return nil
+		}
+	}
 	return &Service{gw: gw, resolver: resolver, opts: opts}
 }
 
 // SendMessage carries an inbound message to the agent named by tenant.
 func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMessageRequest) (*SendMessageResult, error) {
+	if err := rejectReplay(cred); err != nil {
+		return nil, err
+	}
 	ctx, peer, err := s.authenticate(ctx, cred)
 	if err != nil {
 		return nil, err
@@ -148,7 +159,14 @@ func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMes
 
 // GetTask projects a run as a task.
 func (s *Service) GetTask(ctx context.Context, cred Credentials, req GetTaskRequest) (*Task, error) {
-	ctx, _, err := s.authenticate(ctx, cred)
+	replay, err := parseReplayRequest(cred)
+	if err != nil {
+		return nil, err
+	}
+	if replay.active {
+		return s.getReplayTask(ctx, cred, req, replay)
+	}
+	ctx, _, err = s.authenticate(ctx, cred)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +180,9 @@ func (s *Service) GetTask(ctx context.Context, cred Credentials, req GetTaskRequ
 
 // ListTasks projects this scope's runs as tasks.
 func (s *Service) ListTasks(ctx context.Context, cred Credentials, req ListTasksRequest) (*ListTasksResult, error) {
+	if err := rejectReplay(cred); err != nil {
+		return nil, err
+	}
 	ctx, _, err := s.authenticate(ctx, cred)
 	if err != nil {
 		return nil, err
@@ -183,6 +204,9 @@ func (s *Service) ListTasks(ctx context.Context, cred Credentials, req ListTasks
 
 // CancelTask stops a running task.
 func (s *Service) CancelTask(ctx context.Context, cred Credentials, req CancelTaskRequest) (*Task, error) {
+	if err := rejectReplay(cred); err != nil {
+		return nil, err
+	}
 	ctx, _, err := s.authenticate(ctx, cred)
 	if err != nil {
 		return nil, err
@@ -227,7 +251,9 @@ func (s *Service) authenticate(ctx context.Context, cred Credentials) (context.C
 		// name under, and it would land looking like a local agent.
 		return ctx, Peer{}, ErrUnauthenticated()
 	}
-	return cortex.WithScope(ctx, peer.Scope), peer, nil
+	peer.Scope.Levels = append([]cortex.Level(nil), peer.Scope.Levels...)
+	ctx = cortex.WithScope(ctx, peer.Scope)
+	return context.WithValue(ctx, authenticatedPeerKey{}, peer), peer, nil
 }
 
 // checkTenant refuses a tenant that names no agent here.

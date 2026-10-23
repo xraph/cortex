@@ -73,6 +73,9 @@ func (s *Service) StreamMessage(ctx context.Context, cred Credentials, req SendM
 
 // SubscribeTask follows a task that is already running.
 func (s *Service) SubscribeTask(ctx context.Context, cred Credentials, tenant, taskID string, emit Emit) error {
+	if err := rejectReplay(cred); err != nil {
+		return err
+	}
 	task, err := s.GetTask(ctx, cred, GetTaskRequest{Tenant: tenant, ID: taskID})
 	if err != nil {
 		return err

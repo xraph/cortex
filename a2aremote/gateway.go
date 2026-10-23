@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
@@ -119,4 +120,13 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("/agents/", s.CardHandler())
 	mux.Handle("/", s.JSONRPCHandler())
 	return mux
+}
+
+func (g engineGateway) PublicEventReplayAvailable() bool { return g.eng.PublicEventReplayAvailable() }
+
+func (g engineGateway) ReadPublicEvents(ctx context.Context, req event.ReadRequest) (event.Page, error) {
+	if !g.PublicEventReplayAvailable() {
+		return event.Page{}, event.ErrUnavailable
+	}
+	return g.eng.ReadPublicEvents(ctx, req)
 }

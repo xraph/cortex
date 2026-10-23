@@ -40,3 +40,8 @@ func (e *Engine) ReadPublicEvents(ctx context.Context, request event.ReadRequest
 	}
 	return e.publicEventReader.Read(ctx, request)
 }
+
+// PublicEventReplayAvailable reports whether current-authority replay is configured.
+func (e *Engine) PublicEventReplayAvailable() bool {
+	return e != nil && e.publicEventReader != nil
+}

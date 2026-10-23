@@ -72,6 +72,11 @@ func (s *Server) GetTask(ctx context.Context, req *a2apb.GetTaskRequest) (*a2apb
 	if err != nil {
 		return nil, statusOf(err)
 	}
+	if a2aremote.ReplayActive(task) {
+		if err := grpc.SetHeader(ctx, metadata.Pairs("a2a-extensions", a2aremote.ReplayExtensionURI)); err != nil {
+			return nil, status.Error(codes.Internal, "could not acknowledge replay extension")
+		}
+	}
 	return taskToProto(task), nil
 }
 
@@ -126,7 +131,15 @@ func statusOf(err error) error {
 	if !errors.As(err, &perr) {
 		return status.Error(codes.Internal, "the request could not be completed")
 	}
-	return status.Error(grpcCodeFor(perr), perr.Message)
+	result := status.New(grpcCodeFor(perr), perr.Message)
+	if len(perr.Data) > 0 {
+		if detail := metadataToProto(map[string]any{"a2a_error_data": perr.Data}); detail != nil {
+			if withDetails, detailErr := result.WithDetails(detail); detailErr == nil {
+				result = withDetails
+			}
+		}
+	}
+	return result.Err()
 }
 
 func grpcCodeFor(err *a2aremote.Error) codes.Code {

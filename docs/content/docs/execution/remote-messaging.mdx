@@ -196,6 +196,74 @@ of a transition by re-reading the task on `StreamPoll`, so that interval bounds
 how stale an update can be and nothing else. A client that disconnects ends its
 own subscription, and the task carries on without it.
 
+## Durable metadata replay
+
+Enable replay on both the engine and remote service:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(storage),
+    engine.WithPublicEventReplay(replayPolicy),
+)
+// Handle err before constructing the service.
+svc := a2aremote.NewService(a2aremote.EngineGateway(eng), resolver,
+    a2aremote.Options{PublicEventReplay: true})
+```
+
+Your `replayPolicy` implements `event.Authorizer`. Use
+`a2aremote.PeerFromContext(ctx)` and `cortex.ScopeFromContext(ctx)` to check the
+peer's current grant for the requested run. The engine calls this policy before
+and after each storage read. Returning an error discards the whole page, including
+its retention watermark. Custom gateways must provide the same checks through
+`PublicEventGateway`; a raw store is not an authorized reader.
+
+The service advertises the optional extension
+`https://cortex.xraph.dev/a2a/extensions/public-events/v1` in its card. To activate
+it, send these headers with `GetTask` on REST or JSON-RPC, or the corresponding
+lowercase gRPC metadata keys:
+
+```http
+A2A-Extensions: https://cortex.xraph.dev/a2a/extensions/public-events/v1
+Cortex-Replay-Limit: 128
+```
+
+Leave `Cortex-Replay-Cursor` absent for your first page. For subsequent pages,
+copy `task.metadata["cortex.replay"].next_cursor` into that header. The limit is a
+canonical decimal integer from 0 to 128; absent or zero selects 128. Duplicate
+cursor or limit headers, foreign-run cursors and replay headers without extension
+activation are refused. Successful responses acknowledge the extension through
+`A2A-Extensions`; HTTP responses also set `Cache-Control: no-store`.
+
+You receive the current task status and a metadata envelope containing
+`schema_version`, `events`, `watermark`, `next_cursor` and `gap`. Event sequences,
+watermark sequences and run revisions are decimal strings, so JSON and protobuf
+`Struct` preserve their full integer range. Each event carries a stable ID, a
+closed lifecycle type, its run ID and revision, and its observation time. A result
+ID may identify a committed result, but it grants no permission to retrieve it.
+Candidate text, artifacts, history and provider error messages are excluded.
+
+Persist the cursor after you process the page, and deduplicate events by ID.
+When `gap` is true, earlier events have been pruned. Refresh your run snapshot
+before continuing from `next_cursor`; the response contains no event bodies in
+that case. A delivery ID resolves to its run once execution has started. Before
+that, replay returns unavailable. The canonical task ID and cursor name the run.
+
+Each request has a five-second deadline. Your resolver, store and authorization
+callbacks must honor cancellation. Cortex checks that the run revision matches
+the replay watermark and resolves the peer again before returning the response.
+A changed node or scope, revoked credentials or expired deadline discards it.
+Failures carry static replay codes and retryability in A2A error data; gRPC exposes
+that data in a `google.protobuf.Struct` status detail under `a2a_error_data`.
+
+Replay activation applies only to `GetTask`. Sending it with a mutation, task
+list or subscription returns an error before that operation acts. Without
+activation, existing task projections and task streaming retain their behavior.
+Durable remote subscriptions and approved-content replay remain unimplemented.
+
+This extension uses the activation and metadata mechanisms in the pinned
+[A2A 1.0 extension specification](https://github.com/a2aproject/A2A/blob/v1.0.0/docs/topics/extensions.md).
+It does not change the task schema or vendored protobuf definitions.
+
 ## What is still not implemented
 
 Declared in the card rather than discovered by failing:

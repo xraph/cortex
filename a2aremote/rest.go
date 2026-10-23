@@ -144,6 +144,7 @@ func decodeREST(w http.ResponseWriter, r *http.Request, dest any) bool {
 // protocol's own numeric code in the body. A client that only understands
 // one of the two still understands what happened.
 func writeREST(w http.ResponseWriter, result any, err error) {
+	writeReplayHeaders(w, result)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(versionHeader, ProtocolVersion)
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/skill"
 )
 
@@ -99,6 +100,8 @@ type CardOptions struct {
 	// Streaming says the card should advertise streaming, which it does
 	// only when the service actually serves it.
 	Streaming bool
+	// PublicEventReplay advertises metadata replay when the service enables it.
+	PublicEventReplay bool
 	// Bindings names which bindings the card advertises. Empty means
 	// JSON-RPC only, which is what this module serves on its own.
 	//
@@ -165,6 +168,14 @@ func BuildCard(a *agent.Config, skills []*skill.Skill, opts CardOptions) AgentCa
 		DefaultInputModes:  []string{"text/plain"},
 		DefaultOutputModes: []string{"text/plain"},
 		Skills:             cardSkills(a, skills),
+	}
+	if opts.PublicEventReplay {
+		card.Capabilities.Extensions = append(card.Capabilities.Extensions, AgentExtension{
+			URI:         ReplayExtensionURI,
+			Description: "Authorized metadata replay through GetTask. Sequence and revision fields are decimal strings.",
+			Params: map[string]any{"methods": []string{MethodGetTask}, "metadataKey": ReplayMetadataKey,
+				"cursorHeader": ReplayCursorHeader, "limitHeader": ReplayLimitHeader, "maxPageSize": event.MaxPageSize},
+		})
 	}
 	if opts.Provider.Organization != "" {
 		p := opts.Provider
