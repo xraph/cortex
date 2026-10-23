@@ -58,6 +58,10 @@ func newDeploymentAttestation(ctx context.Context, name string, verify Qualifica
 	if err != nil {
 		return nil, err
 	}
+	return bindDeploymentAttestation(name, configuration, verify, owner), nil
+}
+
+func bindDeploymentAttestation(name string, configuration WorkerConfiguration, verify QualificationVerifier, owner uint32) DeploymentAttestation {
 	expected := deploymentIdentity(configuration)
 	check := func(ctx context.Context) error {
 		current, readErr := readWorkerConfig(ctx, name, owner)
@@ -89,7 +93,7 @@ func newDeploymentAttestation(ctx context.Context, name string, verify Qualifica
 			return sandbox.Capabilities{}, validationErr
 		}
 		return qualified.Capabilities, nil
-	}, nil
+	}
 }
 
 func deploymentIdentity(configuration WorkerConfiguration) DeploymentIdentity {

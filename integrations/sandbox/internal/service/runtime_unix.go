@@ -71,8 +71,15 @@ func (r *Runtime) Start(ctx context.Context, receipt sandbox.Receipt) error {
 	if err != nil {
 		return err
 	}
-	if operationErr := caps.Supports(receipt.Job); operationErr != nil {
+	if operationErr := checkCurrentCapabilities(caps, receipt); operationErr != nil {
 		return operationErr
+	}
+	return r.controller.launcher.Launch(operation, receipt)
+}
+
+func checkCurrentCapabilities(caps sandbox.Capabilities, receipt sandbox.Receipt) error {
+	if err := caps.Supports(receipt.Job); err != nil {
+		return err
 	}
 	accepted := receipt.Capabilities
 	if caps.RuntimeDigest != accepted.RuntimeDigest || caps.Profile != accepted.Profile || caps.Qualification != accepted.Qualification {
@@ -81,7 +88,7 @@ func (r *Runtime) Start(ctx context.Context, receipt sandbox.Receipt) error {
 	if caps.QualifiedUntil.Before(acceptanceDeadline(receipt)) {
 		return broker.ErrConflict
 	}
-	return r.controller.launcher.Launch(operation, receipt)
+	return nil
 }
 
 // Inspect returns detached terminal output only after independent finalization.

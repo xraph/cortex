@@ -1085,3 +1085,42 @@ identities, revoked or expired qualification, malformed capabilities, concurrent
 observations and cancellation. A Linux fixture exercises protected configuration
 loading through the production constructor. Host evidence-provider assembly and
 live Linux qualification remain open.
+
+### Installed host assembly
+
+`service.AssembleDaemon(ctx, HostConfig)` joins the installed configuration,
+worker journal, service manager, source providers, capture recovery and broker.
+It requires root on Linux. Supply an already opened worker journal and reaper;
+you retain ownership of those resources and the providers until `Run` returns.
+Assembly starts no service and does not invoke qualification.
+
+The installed configuration supplies the control socket, launch profile, input
+size ceiling and compressed-image ceiling. Launch and attestation use the same
+verified configuration snapshot. Broker name, signing key and worker journal
+must agree with the installed identity. Configure at least one private report
+slot so workers can transfer content and report completion.
+
+Supply public-operation authorization through `Broker.Authorize`, connected-caller
+launch checks through `AuthorizeLaunch`, and signed-subject grant checks through
+`Revalidate`. Recovery loads the original receipt from the worker journal and
+requires its exact job digest. It then checks current grants and qualification
+against that receipt, including the accepted runtime, profile, qualification ID,
+execution deadline and resource limits. Worker access uses this same recovery
+check. Policy callbacks receive detached job values.
+
+Capture recovery is required even when new captures are disabled, so evidence
+from an earlier daemon remains recoverable. Its journal is supplied by assembly;
+an explicitly supplied journal must match. `CapturePolicy` must be present exactly
+when the installed `CaptureRetention` is nonzero. Worker uploads and independent
+cleanup use the repository configured in `Captures`. Cleanup authorization must
+remain independent of the expired execution grant.
+
+Pass the resulting daemon to the bounded TLS serving pattern above. The assembler
+accepts trusted host providers; it does not provision certificates, credentials,
+source adapters or a live qualification-evidence service. A standalone installed
+broker command, orphan discovery and live systemd/runsc qualification remain open.
+
+Root Linux fixtures cover lifecycle, missing services, identity mismatches,
+capture configuration, changed grants, changed qualification and mismatched jobs.
+CI runs these fixtures with the race detector alongside private worker transport
+checks. These are controlled service-manager tests, not live runtime qualification.

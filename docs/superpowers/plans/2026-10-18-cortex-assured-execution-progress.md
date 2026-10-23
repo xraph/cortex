@@ -1220,3 +1220,48 @@ and serial package execution, in 26.774s and 3.865s respectively.
 Host provider assembly, the concrete live-evidence verifier, installation,
 orphan recovery and live systemd/runsc qualification remain open. S2.4 and the
 four-stage plan are incomplete.
+
+### S2.4 installed daemon assembly
+
+Added `service.AssembleDaemon` to wire protected worker configuration, the worker
+journal, reaper, source providers, capture recovery, private transport and broker.
+It requires root on Linux, retains caller ownership of supplied resources and
+does not start services or invoke qualification during construction. The control
+socket, launch profile and transfer limits come from the installed configuration.
+Launch and attestation share one verified snapshot to avoid binding them to two
+installations during a configuration change.
+
+Public-operation policy, connected-caller launch policy and signed-subject
+revalidation remain explicit host services. Recovery now loads the original
+receipt, requires its exact job digest and checks current grants and qualification
+against its accepted controls and deadline. Runtime launch and recovery share the
+same capability comparison. Worker access already uses this recovery eligibility
+path. Policy callbacks cannot mutate the retained job through their arguments.
+
+Capture recovery remains mandatory when new capture is disabled. Its journal must
+match the worker journal, and worker upload and cleanup use the same repository.
+Capture authority must agree with the installed retention setting. Private report
+capacity cannot be disabled in an assembled worker host.
+
+The first tests failed for the missing assembler. Linux fixtures then exercised
+construction, lifecycle, missing providers, identity/key mismatches, capture
+configuration, grant revocation, qualification drift, shortened qualification,
+reduced resource limits, changed installation and mismatched journal jobs. The
+lifecycle fixture initially omitted authenticated identity; it now tests both
+anonymous denial and authenticated capability access.
+
+Validation: scoped make f, final make l across all ten modules, Linux tagged lint,
+Linux amd64 build and actionlint passed. Full service and broker race suites
+passed in 30.837s and 3.679s. Host and attestation Linux fixtures passed ten
+repetitions without skips; the expanded CI fixture selection also passed locally.
+CI now includes host assembly, attestation and daemon fixtures in the existing
+root Linux service race step. Remote CI is pending integration and push.
+
+The attestation commit remains local because remote main advanced through
+telemetry PR #59. A conflict-free merge preview was prepared and approval was
+requested under the no-merge-without-request rule. Work continued on assembly
+while that approval was pending. No histories were rewritten or merged.
+
+Concrete source adapters, certificate/credential provisioning, the live-evidence
+verifier, standalone broker installation, orphan recovery and live systemd/runsc
+qualification remain open. S2.4 and the four-stage plan are incomplete.
