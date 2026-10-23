@@ -1434,3 +1434,39 @@ were fixed by using separate error variables.
 Installed provider configuration, credential provisioning, live evidence
 verification, standalone broker installation and live systemd/runsc qualification
 remain open. S2.4 and the four-stage plan remain incomplete.
+
+### S2.4 pinned daemon credentials
+
+Local image source commit `e623d16` passed every remote CI job in run
+`39888987778`.
+
+The installed credential loader now reads protected, hash-pinned receipt and TLS
+keys, the server chain and client CA bundle through the shared hostfs reader.
+Every file requires root ownership, mode 0600, one link and an explicit byte
+ceiling. The receipt key must be Ed25519 and match the verified worker public
+key. The loader returns no partial credentials after failure.
+
+PEM parsing rejects unconsumed text, headers, nested malformed blocks and excess
+blocks. Private keys require PKCS8 and cannot contain trailing DER values after
+the key. Client trust requires distinct CA certificates with signing usage.
+Server certificate validity, key matching, algorithm limits and detached TLS
+state remain owned by the existing NewServer validator. This installed transport
+requires mutual TLS plus the host's current authentication callback.
+
+TDD began with missing loader APIs. Regression tests then reproduced Go's
+permissive handling of a malformed PEM prefix followed by a valid key, and of
+trailing DER values inside a key block. Both are now rejected. The loopback test
+submits a broker job and verifies its signed receipt, rejects a client without a
+certificate before authentication and rejects an authenticated transport after
+host authentication is revoked. Removing the installed TLS key after loading
+also confirms that the server uses its detached credential snapshot.
+
+Validation passed: scoped make f, final make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. After the final
+DER check, the complete service race suite passed in 20.201s. The final Linux
+credential suite passed ten repetitions, 40 top-level tests, without skips.
+
+Certificate issuance and installation, host identity policy, installed provider
+configuration, live evidence verification, standalone broker installation and
+live systemd/runsc qualification remain open. S2.4 and the four-stage plan remain
+incomplete.

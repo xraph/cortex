@@ -1052,8 +1052,9 @@ without taking ownership of another listener.
 Loopback TLS tests cover authentication, mTLS, connection saturation, unfinished
 handler admission, request deadlines, slow bodies, oversized headers, certificate
 copying and listener failure. A daemon fixture submits a signed job through this
-server and verifies joined shutdown. Host certificate provisioning, credential
-validation, installed providers and live sandbox qualification remain required.
+server and verifies joined shutdown. Host certificate issuance, current credential
+authorization, installed provider configuration and live sandbox qualification
+remain required.
 
 ### Installation-bound qualification
 
@@ -1236,3 +1237,43 @@ the signed job's manifest and membership of each requested blob; image staging
 also verifies hashes and layer DiffIDs. Local content is neither execution
 authority nor runtime qualification. Installed provider configuration,
 credential provisioning and live Linux qualification remain separate work.
+
+### Installed daemon credentials
+
+Use `service.ReadDaemonCredentials` with the public key returned by
+`ReadWorkerConfig`, protected `DaemonCredentialFiles`, your authenticator and
+explicit `ServerLimits`. It returns the receipt-signing key and a prepared
+`sandboxbroker.Server`. Pass the signing key into `HostConfig.Broker.SigningKey`
+and use the server's `Serve` method in the daemon callback shown above.
+Loading credentials does not open a listener or qualify a worker.
+
+Each credential pin specifies an absolute path, SHA256, byte length and mode
+0600. Files must belong to root and have one link. The loader uses the same
+no-follow path and hash checks as deployment verification. Keep these pins and
+private keys in daemon configuration, outside worker configuration and launch
+credentials. The receipt key must match the verified worker's public key.
+
+| File | Encoding | Maximum |
+|---|---|---|
+| Receipt-signing key | One PKCS8 Ed25519 `PRIVATE KEY` block | 4 KiB |
+| Server certificate chain | 1 through 8 `CERTIFICATE` blocks | 192 KiB |
+| Server private key | One PKCS8 `PRIVATE KEY` block | 24 KiB |
+| Client CA bundle | 1 through 32 distinct `CERTIFICATE` blocks | 256 KiB |
+
+The loader rejects extra text, malformed or nested PEM blocks, PEM headers and
+trailing DER values after a private key.
+Client trust entries must be CA certificates with certificate-signing usage.
+TLS key support, certificate validity, key matching and decoded size limits come
+from `NewServer`; the loader does not maintain another TLS validation policy.
+Any failure returns no credentials or server.
+
+Client certificates are required for this installed transport. A verified TLS
+chain establishes transport identity; your authenticator must still map it to
+the current principal and scope and apply revocation policy on each request.
+The broker authorizer governs execution grants separately. Loading a CA bundle
+does not grant its clients permission to execute jobs.
+
+TLS rotation requires a new server lifetime. Receipt-key changes also require
+matching worker configuration and journal identity. Certificate issuance,
+credential installation, host identity policy and standalone broker configuration
+remain host responsibilities; this loader only reads an approved installation.
