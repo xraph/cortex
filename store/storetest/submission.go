@@ -19,7 +19,25 @@ import (
 
 func submissionFixture(t *testing.T, s store.Store, alter ...func(*run.Run, *verification.Binding)) (context.Context, coordination.Assignment, coordination.AssignmentChange, verification.Job) {
 	t.Helper()
-	ctx, p, h := assignmentFixture(t, s)
+	return configuredSubmissionFixture(t, s, submissionFixtureConfig{}, alter...)
+}
+
+type submissionFixtureConfig struct {
+	Plan     func(*planning.Plan)
+	Contract func(planning.Plan) verification.Contract
+}
+
+func configuredSubmissionFixture(t *testing.T, s store.Store, config submissionFixtureConfig, alter ...func(*run.Run, *verification.Binding)) (context.Context, coordination.Assignment, coordination.AssignmentChange, verification.Job) {
+	t.Helper()
+	var configure []func(*planning.Plan)
+	if config.Plan != nil {
+		configure = append(configure, config.Plan)
+	}
+	ctx, p, h := assignmentFixture(t, s, configure...)
+	contract := p.Contract
+	if config.Contract != nil {
+		contract = config.Contract(p)
+	}
 	journal := resultCapability[coordination.AssignmentStore](t, s)
 	current, err := journal.ProposeAssignment(ctx, h)
 	require.NoError(t, err)
@@ -32,19 +50,19 @@ func submissionFixture(t *testing.T, s store.Store, alter ...func(*run.Run, *ver
 	r.Provenance.PreparedDigest = evidence.Digest([]byte("prepared"))
 	r.Provenance.ParentRunID = h.ParentRunID.String()
 	r.Provenance.AssignmentDigest = h.Digest
-	r.Provenance.AcceptanceRef = p.Contract.ID.String()
+	r.Provenance.AcceptanceRef = contract.ID.String()
 	require.NoError(t, s.UpdateRun(ctx, r))
 	artifact, err := evidence.Seal(evidence.Artifact{Ref: evidence.Ref{SchemaVersion: 1, ID: id.New(evidence.PrefixArtifact), Scope: h.Scope, Version: "1", Producer: planning.ArtifactProducer(p, h.TaskID), MediaType: "text/plain", Sensitivity: evidence.SensitivityRestricted, CreatedAt: time.Now().UTC().Add(-time.Second), RetainUntil: h.Deadline.Add(time.Hour)}, Data: []byte(r.Output)})
 	require.NoError(t, err)
-	binding := verification.Binding{Scope: h.Scope, RunID: r.ID, ContractDigest: p.Contract.Digest, Candidate: artifact.Ref, Context: verification.ContextSnapshot{PrincipalRef: h.Receiver.Principal, AuthorityRevision: "1", PreparedDigest: r.Provenance.PreparedDigest, PolicyRevision: "1", EnvironmentRevision: "1", DatasetRevision: "1", Sources: p.Sources, Tools: []verification.ToolRevision{{Name: "lookup", Revision: "1"}}}}
+	binding := verification.Binding{Scope: h.Scope, RunID: r.ID, ContractDigest: contract.Digest, Candidate: artifact.Ref, Context: verification.ContextSnapshot{PrincipalRef: h.Receiver.Principal, AuthorityRevision: "1", PreparedDigest: r.Provenance.PreparedDigest, PolicyRevision: "1", EnvironmentRevision: "1", DatasetRevision: "1", Sources: p.Sources, Tools: []verification.ToolRevision{{Name: "lookup", Revision: "1"}}}}
 	for _, mutate := range alter {
 		mutate(r, &binding)
 	}
 	if len(alter) > 0 {
 		require.NoError(t, s.UpdateRun(ctx, r))
 	}
-	require.NoError(t, resultCapability[verification.Store](t, s).CreateContract(ctx, p.Contract))
-	job, err := resultCapability[verification.CaptureStore](t, s).CaptureVerificationJob(ctx, verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: r.Revision, ContractID: p.Contract.ID, Binding: binding, Deadline: h.Deadline, MaxAttempts: 2})
+	require.NoError(t, resultCapability[verification.Store](t, s).CreateContract(ctx, contract))
+	job, err := resultCapability[verification.CaptureStore](t, s).CaptureVerificationJob(ctx, verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: r.Revision, ContractID: contract.ID, Binding: binding, Deadline: h.Deadline, MaxAttempts: 2})
 	require.NoError(t, err)
 	digest, err := binding.Digest()
 	require.NoError(t, err)

@@ -1347,6 +1347,40 @@ The journal alone does not satisfy `HandoffReceiverConfig.Accept`. Your host sti
 needs atomic current-grant and scheduler-ownership fences, work reservations and
 verified evidence acceptance. Keep those checks in the acceptance integration.
 
+### Verify each task against its assigned checks
+
+Call `planning.TaskContract(plan, taskID, newContractID)` to derive a verification
+contract for one task. Use a fresh `verification.PrefixContract` ID and save the
+result through `verification.Store.CreateContract` before execution. Reuse that
+saved ID for retries of the same contract; a changed plan needs a new contract.
+
+The projection includes exactly the task's assigned criteria, in plan-contract
+order. Every assigned check becomes required for that task, including checks that
+are optional for the whole plan. Verifier revisions, manifests, evidence counts,
+freshness limits and plan constraints remain unchanged. The objective is the task
+instruction, and the contract revision binds the sealed plan digest and task ID.
+
+Use the projected contract ID in prepared execution's verification configuration
+and `PreparedRunOptions.AcceptanceRef`, and its digest in the verification binding.
+The candidate still uses `planning.ArtifactProducer(plan, taskID)`. The handoff
+continues to name the original plan contract and assigned criteria, preserving
+the coordinator's full requirements.
+
+`planning.ValidateTaskContract` rejects omitted, weakened, foreign or superseded
+checks. `planning.ValidateTaskBindingForContract` also checks the task's artifact,
+sources and tools. Submission storage loads the retained job contract and applies
+these checks under the plan/run transaction. Review storage accepts the plan
+contract or a retained projection for the same task; a review stays advisory.
+
+When evaluating dependencies with `planning.Ready`, set `TaskState.Contract` to
+the retained projection and supply trusted reports with a freshly resolved
+`Current` binding. Leaving `Contract` nil selects the original plan contract for
+existing callers. A task can now verify its own output without satisfying checks
+assigned only to other outputs. Its pass does not satisfy the whole plan contract.
+
+This supplies the contract and evidence checks. Durable task acceptance,
+authoritative grant checks and scheduler dispatch still need integration.
+
 ### Submit retained task evidence
 
 Before you execute an assigned child, pass the sealed handoff digest and parent
@@ -1359,8 +1393,9 @@ fence and identities already sealed into the handoff.
 Capture the candidate through the existing verification job path. Its producer
 must be `planning.ArtifactProducer(plan, taskID)`, with the task's output media
 type and byte limit. The binding must use the task's pinned sources and tool
-revisions. `planning.ValidateTaskBinding` shares those checks with dependency
-readiness; passing it establishes structure, not verifier approval.
+revisions. `planning.ValidateTaskBindingForContract` shares those checks with
+dependency readiness; passing it establishes structure, not verifier approval.
+`ValidateTaskBinding` remains the plan-contract shorthand.
 
 To move a working assignment to `submitted`, attach a `coordination.Submission`
 to `AssignmentChange`. It pins the verification job ID and request digest, child

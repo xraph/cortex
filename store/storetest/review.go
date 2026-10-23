@@ -16,9 +16,13 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-func storedReviewFixture(t *testing.T, s store.Store) (context.Context, coordination.Review, coordination.Assignment, verification.Job) {
+func storedReviewFixture(t *testing.T, s store.Store, configs ...submissionFixtureConfig) (context.Context, coordination.Review, coordination.Assignment, verification.Job) {
 	t.Helper()
-	ctx, _, change, job := submissionFixture(t, s)
+	config := submissionFixtureConfig{}
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+	ctx, _, change, job := configuredSubmissionFixture(t, s, config)
 	journal := resultCapability[coordination.AssignmentStore](t, s)
 	subject, err := journal.AdvanceAssignment(ctx, change)
 	require.NoError(t, err)
@@ -142,68 +146,84 @@ func testAssignmentReviewsDenied(t *testing.T, newStore func(*testing.T) store.S
 
 func testAssignmentReviewAfterVerification(t *testing.T, newStore func(*testing.T) store.Store) {
 	s := newStore(t)
-	for _, status := range []verification.Status{verification.StatusFailed, verification.StatusInconclusive, verification.StatusPassed} {
-		t.Run(string(status), func(t *testing.T) {
-			ctx, r, _, job := storedReviewFixture(t, s)
-			jobs := resultCapability[verification.JobStore](t, s)
-			job, err := jobs.ClaimVerificationJob(ctx, verification.JobClaim{JobID: job.Request.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "verifier", Duration: time.Minute})
-			require.NoError(t, err)
-			now := time.Now().UTC()
-			report, err := verification.SealReport(verification.Report{SchemaVersion: 1, ID: id.New(verification.PrefixReport), Binding: job.Request.Binding, CheckedAt: now, ExpiresAt: now.Add(time.Minute), Outcomes: []verification.Outcome{{CriterionID: "check", Verifier: "tests", VerifierRevision: "1", Status: status}}})
-			require.NoError(t, err)
-			job, err = jobs.SaveVerificationJobReport(ctx, *job.Lease, report)
-			require.NoError(t, err)
-			if status == verification.StatusPassed {
-				_, err = resultCapability[verification.CommitStore](t, s).CommitVerifiedResult(ctx, jobCommitRequest(job))
-				require.NoError(t, err)
+	for _, projected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plan_contract", true: "task_contract"}[projected], func(t *testing.T) {
+			config := submissionFixtureConfig{}
+			if projected {
+				config = taskContractConfig(t)
 			}
-			before, err := s.GetRun(ctx, job.Request.Binding.RunID)
-			require.NoError(t, err)
-			_, err = resultCapability[coordination.ReviewStore](t, s).RecordAssignmentReview(ctx, r)
-			require.NoError(t, err)
-			after, err := s.GetRun(ctx, before.ID)
-			require.NoError(t, err)
-			require.Equal(t, before, after, "review must retain the current verifier verdict")
+			for _, status := range []verification.Status{verification.StatusFailed, verification.StatusInconclusive, verification.StatusPassed} {
+				t.Run(string(status), func(t *testing.T) {
+					ctx, r, _, job := storedReviewFixture(t, s, config)
+					jobs := resultCapability[verification.JobStore](t, s)
+					job, err := jobs.ClaimVerificationJob(ctx, verification.JobClaim{JobID: job.Request.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "verifier", Duration: time.Minute})
+					require.NoError(t, err)
+					now := time.Now().UTC()
+					report, err := verification.SealReport(verification.Report{SchemaVersion: 1, ID: id.New(verification.PrefixReport), Binding: job.Request.Binding, CheckedAt: now, ExpiresAt: now.Add(time.Minute), Outcomes: []verification.Outcome{{CriterionID: "check", Verifier: "tests", VerifierRevision: "1", Status: status}}})
+					require.NoError(t, err)
+					job, err = jobs.SaveVerificationJobReport(ctx, *job.Lease, report)
+					require.NoError(t, err)
+					if status == verification.StatusPassed {
+						_, err = resultCapability[verification.CommitStore](t, s).CommitVerifiedResult(ctx, jobCommitRequest(job))
+						require.NoError(t, err)
+					}
+					before, err := s.GetRun(ctx, job.Request.Binding.RunID)
+					require.NoError(t, err)
+					_, err = resultCapability[coordination.ReviewStore](t, s).RecordAssignmentReview(ctx, r)
+					require.NoError(t, err)
+					after, err := s.GetRun(ctx, before.ID)
+					require.NoError(t, err)
+					require.Equal(t, before, after, "review must retain the current verifier verdict")
+				})
+			}
 		})
 	}
 }
 
 func testAssignmentReviewPrivateOutput(t *testing.T, newStore func(*testing.T) store.Store) {
 	s := newStore(t)
-	for _, deleted := range []bool{false, true} {
-		ctx, r, _, producerJob := storedReviewFixture(t, s)
-		current, err := s.GetRun(ctx, r.RunID)
-		require.NoError(t, err)
-		output := current.Output
-		current.State, current.StopReason, current.Output = run.StateRunning, "", ""
-		require.NoError(t, s.UpdateRun(ctx, current))
-		binding := producerJob.Request.Binding
-		binding.RunID = r.RunID
-		binding.Context.PreparedDigest, binding.Context.PrincipalRef = r.PreparedDigest, r.Handoff.Receiver.Principal
-		binding.Candidate.ID = id.New(evidence.PrefixArtifact)
-		binding.Candidate.Producer = r.Handoff.Digest
-		binding.Candidate.MediaType = "application/json"
-		binding.Candidate.Bytes, binding.Candidate.SHA256 = 0, evidence.Digest(nil)
-		template := verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: current.Revision, ContractID: producerJob.Request.ContractID, Binding: binding, Deadline: r.Handoff.Deadline, MaxAttempts: 2, EvaluationBudget: &verification.EvaluationBudget{MaxCalls: 2, MaxTokens: 100, TokenOnly: true}}
-		intent, err := verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: template, ResultID: id.New(verification.PrefixResult), MaxCandidateBytes: coordination.MaxReviewBytes})
-		require.NoError(t, err)
-		require.NoError(t, resultCapability[verification.CaptureIntentStore](t, s).CreateCaptureIntent(ctx, intent))
-		job, err := resultCapability[run.CandidateStore](t, s).CaptureCandidate(ctx, run.CandidateCapture{SchemaVersion: 1, IntentID: intent.ID, ExpectedRunRevision: current.Revision, Output: output, FinishReason: "stop"})
-		require.NoError(t, err)
-		r.RunRevision = job.RunRevision
-		r, err = coordination.SealReview(r)
-		require.NoError(t, err)
-		if deleted {
-			require.NoError(t, resultCapability[evidence.Storage](t, s).TombstoneEvidence(evidence.WithDeletionActor(ctx, "host"), job.Request.Binding.Candidate, "removed"))
-		}
-		_, err = resultCapability[coordination.ReviewStore](t, s).RecordAssignmentReview(ctx, r)
-		if deleted {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-		after, readErr := s.GetRun(ctx, r.RunID)
-		require.NoError(t, readErr)
-		require.Empty(t, after.Output)
+	for _, projected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plan_contract", true: "task_contract"}[projected], func(t *testing.T) {
+			config := submissionFixtureConfig{}
+			if projected {
+				config = taskContractConfig(t)
+			}
+			for _, deleted := range []bool{false, true} {
+				ctx, r, _, producerJob := storedReviewFixture(t, s, config)
+				current, err := s.GetRun(ctx, r.RunID)
+				require.NoError(t, err)
+				output := current.Output
+				current.State, current.StopReason, current.Output = run.StateRunning, "", ""
+				require.NoError(t, s.UpdateRun(ctx, current))
+				binding := producerJob.Request.Binding
+				binding.RunID = r.RunID
+				binding.Context.PreparedDigest, binding.Context.PrincipalRef = r.PreparedDigest, r.Handoff.Receiver.Principal
+				binding.Candidate.ID = id.New(evidence.PrefixArtifact)
+				binding.Candidate.Producer = r.Handoff.Digest
+				binding.Candidate.MediaType = "application/json"
+				binding.Candidate.Bytes, binding.Candidate.SHA256 = 0, evidence.Digest(nil)
+				template := verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: current.Revision, ContractID: producerJob.Request.ContractID, Binding: binding, Deadline: r.Handoff.Deadline, MaxAttempts: 2, EvaluationBudget: &verification.EvaluationBudget{MaxCalls: 2, MaxTokens: 100, TokenOnly: true}}
+				intent, err := verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: template, ResultID: id.New(verification.PrefixResult), MaxCandidateBytes: coordination.MaxReviewBytes})
+				require.NoError(t, err)
+				require.NoError(t, resultCapability[verification.CaptureIntentStore](t, s).CreateCaptureIntent(ctx, intent))
+				job, err := resultCapability[run.CandidateStore](t, s).CaptureCandidate(ctx, run.CandidateCapture{SchemaVersion: 1, IntentID: intent.ID, ExpectedRunRevision: current.Revision, Output: output, FinishReason: "stop"})
+				require.NoError(t, err)
+				r.RunRevision = job.RunRevision
+				r, err = coordination.SealReview(r)
+				require.NoError(t, err)
+				if deleted {
+					require.NoError(t, resultCapability[evidence.Storage](t, s).TombstoneEvidence(evidence.WithDeletionActor(ctx, "host"), job.Request.Binding.Candidate, "removed"))
+				}
+				_, err = resultCapability[coordination.ReviewStore](t, s).RecordAssignmentReview(ctx, r)
+				if deleted {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+				after, readErr := s.GetRun(ctx, r.RunID)
+				require.NoError(t, readErr)
+				require.Empty(t, after.Output)
+			}
+		})
 	}
 }

@@ -28,13 +28,15 @@ const (
 // TaskState is a host-supplied readiness snapshot. Current must be rebuilt from
 // currently authorized artifact and environment revisions, not copied from a
 // persisted report. Reports must come from trusted verifier storage. This type
-// carries no credentials and cannot authenticate remote success claims.
+// carries no credentials and cannot authenticate remote success claims. Contract
+// is the retained task contract; nil selects the original plan contract.
 type TaskState struct {
-	TaskID     id.ID                 `json:"task_id"`
-	PlanDigest string                `json:"plan_digest"`
-	Status     Status                `json:"status"`
-	Current    verification.Binding  `json:"current"`
-	Reports    []verification.Report `json:"reports,omitempty"`
+	TaskID     id.ID                  `json:"task_id"`
+	PlanDigest string                 `json:"plan_digest"`
+	Status     Status                 `json:"status"`
+	Current    verification.Binding   `json:"current"`
+	Reports    []verification.Report  `json:"reports,omitempty"`
+	Contract   *verification.Contract `json:"contract,omitempty"`
 }
 
 // Ready returns pending tasks in definition order whose entire prerequisite
@@ -111,7 +113,11 @@ func Ready(p Plan, states []TaskState, at time.Time) ([]id.ID, error) {
 
 func taskAccepted(p Plan, task Task, state TaskState, at time.Time) bool {
 	binding := state.Current
-	if !taskBindingValid(p, task, binding) {
+	contract := p.Contract
+	if state.Contract != nil {
+		contract = *state.Contract
+	}
+	if contract.Validate() != nil || validateTaskContract(p, task, contract) != nil || !taskBindingValid(p, task, contract, binding) {
 		return false
 	}
 	if len(state.Reports) == 0 || len(state.Reports) > 256 {
@@ -122,7 +128,7 @@ func taskAccepted(p Plan, task Task, state TaskState, at time.Time) bool {
 			return false
 		}
 	}
-	verdict := verification.Aggregate(p.Contract, state.Reports, at)
+	verdict := verification.Aggregate(contract, state.Reports, at)
 	checks := make(map[string]verification.Status, len(verdict.Criteria))
 	for _, criterion := range verdict.Criteria {
 		checks[criterion.CriterionID] = criterion.Status
@@ -171,17 +177,23 @@ func ArtifactProducer(p Plan, taskID id.ID) string {
 // ValidateTaskBinding checks candidate shape and frozen task sources/tools. It
 // does not establish provenance authenticity, current access or a verifier pass.
 func ValidateTaskBinding(p Plan, taskID id.ID, binding verification.Binding) error {
-	if Validate(p, Limits{}) != nil {
+	return ValidateTaskBindingForContract(p, taskID, p.Contract, binding)
+}
+
+// ValidateTaskBindingForContract checks a retained plan or task contract and the
+// exact task artifact/context. It does not establish authority or a verifier pass.
+func ValidateTaskBindingForContract(p Plan, taskID id.ID, contract verification.Contract, binding verification.Binding) error {
+	if Validate(p, Limits{}) != nil || contract.Validate() != nil {
 		return ErrInvalid
 	}
 	for _, task := range p.Tasks {
-		if task.ID == taskID && taskBindingValid(p, task, binding) {
+		if task.ID == taskID && validateTaskContract(p, task, contract) == nil && taskBindingValid(p, task, contract, binding) {
 			return nil
 		}
 	}
 	return ErrInvalid
 }
 
-func taskBindingValid(p Plan, task Task, binding verification.Binding) bool {
-	return binding.Validate() == nil && binding.Scope.Canonical() == p.Scope.Canonical() && binding.ContractDigest == p.Contract.Digest && taskContextMatches(p, task, binding.Context) && binding.Candidate.Producer == ArtifactProducer(p, task.ID) && binding.Candidate.MediaType == task.Output.MediaType && binding.Candidate.Bytes <= task.Output.MaxBytes
+func taskBindingValid(p Plan, task Task, contract verification.Contract, binding verification.Binding) bool {
+	return binding.Validate() == nil && binding.Scope.Canonical() == p.Scope.Canonical() && binding.ContractDigest == contract.Digest && taskContextMatches(p, task, binding.Context) && binding.Candidate.Producer == ArtifactProducer(p, task.ID) && binding.Candidate.MediaType == task.Output.MediaType && binding.Candidate.Bytes <= task.Output.MaxBytes
 }

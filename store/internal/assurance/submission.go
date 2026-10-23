@@ -48,7 +48,11 @@ func (s *Repository) validateAssignmentSubmission(ctx context.Context, a coordin
 	if err != nil {
 		return err
 	}
-	if job.Request.ContractID != p.Contract.ID || planning.ValidateTaskBinding(p, a.Handoff.TaskID, binding) != nil {
+	contract, err := s.GetContract(ctx, job.Request.ContractID)
+	if err != nil {
+		return err
+	}
+	if planning.ValidateTaskBindingForContract(p, a.Handoff.TaskID, contract, binding) != nil {
 		return coordination.ErrInvalidAssignment
 	}
 	refs := append([]evidence.Ref{binding.Candidate}, binding.Evidence...)

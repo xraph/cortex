@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/verification"
 )
@@ -152,7 +153,21 @@ func (s *Repository) validateReviewExecution(ctx context.Context, r coordination
 	if err != nil {
 		return err
 	}
-	if current.Revision != r.RunRevision || current.State != run.StateCompleted || current.StopReason != run.StopFinalAnswer || current.Scope.Canonical() != r.Handoff.Scope.Canonical() || current.Provenance.ParentRunID != r.Handoff.ParentRunID.String() || current.Provenance.AssignmentDigest != r.Handoff.Digest || current.Provenance.PreparedDigest != r.PreparedDigest || current.Provenance.AcceptanceRef != p.Contract.ID.String() {
+	if current.Revision != r.RunRevision || current.State != run.StateCompleted || current.StopReason != run.StopFinalAnswer || current.Scope.Canonical() != r.Handoff.Scope.Canonical() || current.Provenance.ParentRunID != r.Handoff.ParentRunID.String() || current.Provenance.AssignmentDigest != r.Handoff.Digest || current.Provenance.PreparedDigest != r.PreparedDigest {
+		return coordination.ErrInvalidReview
+	}
+	contractID, err := id.ParseWithPrefix(current.Provenance.AcceptanceRef, verification.PrefixContract)
+	if err != nil {
+		return coordination.ErrInvalidReview
+	}
+	contract := p.Contract
+	if contractID != p.Contract.ID {
+		contract, err = s.GetContract(ctx, contractID)
+		if err != nil {
+			return err
+		}
+	}
+	if planning.ValidateTaskContract(p, r.Handoff.TaskID, contract) != nil {
 		return coordination.ErrInvalidReview
 	}
 	producer, err := reader.LockSubmissionRun(ctx, subject.Submission.RunID)

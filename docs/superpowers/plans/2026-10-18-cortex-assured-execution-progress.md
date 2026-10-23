@@ -4110,3 +4110,46 @@ backend checks passed on SQLite (27.339s), PostgreSQL (18.431s) and MongoDB
 (24.430s), with real containers and no skips. Documentation typecheck, lint and
 build passed. CI 40013300772 for the preceding shared-budget commit is green.
 These tests establish the storage behavior, not installed runtime accounting.
+
+
+### S3.1/S3.3 task-specific verification contracts
+
+Acceptance integration exposed a contract mismatch: verification jobs required
+all required checks from the plan contract, even when the task owned only a
+subset. The readiness validator already checked assigned criteria, but a job for
+one output could not complete without checks belonging to other outputs.
+
+Ruling: derive an immutable task contract from the sealed plan before dispatch.
+`TaskContract` takes a new host-selected contract ID, preserves plan constraint
+text and every assigned verifier parameter, and makes each assigned criterion
+required. It retains plan-contract order and binds plan digest/task ID in the
+revision. Replanning requires a new contract. The original plan contract and
+handoff remain unchanged.
+
+Readiness accepts a retained projection through `TaskState.Contract`; omitted
+contracts preserve existing plan-contract behavior. Submission and review storage
+resolve the actual execution contract and use the shared validator. Root-plan
+contracts remain supported. A reviewer using the plan contract can resolve it
+from the immutable plan even when the producer saved only a task projection.
+
+TDD reproduced missing derivation, rejected projected readiness, rejected task
+submissions before/after result commit, and the root-contract reviewer lookup
+gap. Tests also reject modified verifier revisions, manifests, constraints,
+freshness limits, evidence requirements, another task's contract and a superseded
+plan. An assigned optional criterion remains required for the task, and checks
+keep their original plan order. The multi-task store fixture completes one
+verification job, submits its result and derives dependency readiness while the
+whole plan remains unverified.
+
+This fixes contract composition before durable task acceptance. It does not
+persist task success or provide current-grant fences and scheduler dispatch. The
+four-stage goal remains active.
+
+The existing review suites now run against both plan and projected task contracts,
+including failed/inconclusive/committed producer verification and protected
+reviewer output with deletion denials. Final `make f`, all-module `make l`, the
+root build and complete planning/coordination/assurance race suites passed.
+Task-contract, submission, review, transaction and planning backend checks passed
+on SQLite (68.046s), PostgreSQL (83.373s) and MongoDB (107.827s), with real containers
+and no skips. Documentation typecheck, lint and build passed. CI 40015814552 for
+the preceding atomic claim/budget commit was still running at this checkpoint.

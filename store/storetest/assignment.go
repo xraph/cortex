@@ -13,13 +13,22 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/verification"
 )
 
-func assignmentFixture(t *testing.T, backend store.Store) (context.Context, planning.Plan, coordination.Handoff) {
+func assignmentFixture(t *testing.T, backend store.Store, configure ...func(*planning.Plan)) (context.Context, planning.Plan, coordination.Handoff) {
 	t.Helper()
 	scope := cortex.Scope{Levels: []cortex.Level{{Key: "org", Value: id.New(coordination.PrefixAssignment).String()}, {Key: "project", Value: "one"}}}
 	ctx := cortex.WithScope(context.Background(), scope)
 	p := storedPlan(t, scope)
+	for _, change := range configure {
+		change(&p)
+		var sealErr error
+		p.Contract, sealErr = verification.SealContract(p.Contract)
+		require.NoError(t, sealErr)
+		p, sealErr = planning.Seal(p, planning.Limits{})
+		require.NoError(t, sealErr)
+	}
 	plans, ok := backend.(planning.Store)
 	require.True(t, ok)
 	require.NoError(t, plans.CreatePlan(ctx, p))
