@@ -1322,3 +1322,36 @@ Evidence access, capture cleanup and runtime qualification still require their
 own policies. This host policy grants bounded sandbox execution and image access;
 it does not grant artifact access or publication. Supply those services when
 assembling the broker. Standalone configuration and installation remain open.
+
+### Evidence repository binding
+
+Use `service.NewEvidenceRepository` to connect the daemon to an existing Cortex
+`evidence.Storage` and its `evidence.TombstoneReader`. Both dependencies must use
+the same durable repository. The adapter reuses the root evidence repository for
+exact scope, immutable writes, byte ceilings and content verification. Configure
+`MaxBytes` explicitly, at most one GiB and within the backend's limit. The shared
+SQLite, PostgreSQL and MongoDB evidence stores currently cap artifacts at one MiB.
+
+Supply current `Inputs` and `Captures` policies, plus an independent `Cleanup`
+policy. Nil `Captures` disables capture reads and writes. Cleanup must authorize
+the context's deletion actor under the original signed job subject, including
+after execution grants expire. It covers deletion and tombstone audit together.
+
+Pass this adapter as `HostConfig.Inputs` and as both `Repository` and `Audit` in
+`HostConfig.Captures`. Keep the corresponding worker and recovery policies in
+place. `WorkerEvidence` supplies the private validated job context after checking
+the live worker, claim and capture intent. `CaptureRecovery` supplies a separate
+cleanup context. A caller with only scope, principal or a deletion actor receives
+no repository authority.
+
+Worker contexts can read exact declared inputs and read or write declared
+captures. They cannot delete evidence or inspect tombstones. Cleanup contexts can
+delete and audit declared captures, but cannot access content or delete inputs.
+Tombstone reads recheck policy after storage access and verify the complete
+reference binding before returning proof. Cleanup preserves the store's durable
+fence against late uploads, including captures whose bytes never arrived.
+
+SQLite integration fixtures exercise worker input, intent, upload, readback and
+confirmation, plus cleanup of stored and absent captures. They also cover revoked
+policy, cancellation, altered authority and mismatched audit records. Database
+provisioning, installed source grants and live runtime qualification remain open.

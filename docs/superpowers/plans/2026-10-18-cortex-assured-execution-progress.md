@@ -1509,3 +1509,42 @@ all-module lint passed.
 Installed policy/provider configuration, live evidence verification, certificate
 provisioning, standalone broker installation and live systemd/runsc qualification
 remain open. S2.4 and the four-stage plan remain incomplete.
+
+### S2.4 job-bound evidence repository
+
+Current host policy commit `30605fe` passed every remote CI job in run
+`39891861852`.
+
+The daemon can now reuse Cortex evidence storage through a repository adapter
+that requires a private validated job context. Scope, principal and deletion
+actor alone grant no access. The context retains a detached job whose original
+digest must validate before copying; an invalid nested context shadows earlier
+authority. Worker contexts clear inherited deletion actors. Recovery binds its
+configured cleanup actor separately from the original job subject.
+
+Worker access permits exact declared inputs and declared output captures through
+current policies. Deletion and tombstone audit require the independent cleanup
+context and a declared output. Cleanup cannot read or write content or delete
+inputs. The adapter reuses the root repository's immutable storage and content
+checks. Audit reads verify the full reference binding and recheck cleanup policy
+before returning proof. Worker liveness, claims, capture intent and confirmation
+remain enforced by WorkerEvidence and its controller.
+
+TDD started with missing adapter APIs. Real SQLite fixtures now exercise input
+read, capture intent, immutable upload, readback and confirmation through the
+worker service. Recovery fixtures verify both stored and absent captures become
+durable tombstones that reject late uploads. Failure cases cover ambient or
+altered authority, invalid job digests, mutated policy arguments, disabled capture,
+revocation during storage reads, cancellation and mismatched tombstone metadata.
+The sandbox module pins Grove and its SQLite driver at the root module's existing
+versions for these integration tests.
+
+Validation passed: scoped make f, final make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The service race
+suite passed in 40.304s. Linux evidence
+repository tests passed ten repetitions, 70 top-level tests, without skips.
+Module tidy reported no diff.
+
+Installed database provisioning, source grants, live evidence verification,
+standalone broker installation and live systemd/runsc qualification remain open.
+S2.4 and the four-stage plan remain incomplete.

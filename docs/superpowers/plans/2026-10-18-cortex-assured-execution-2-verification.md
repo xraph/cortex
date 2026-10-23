@@ -86,6 +86,8 @@ Interfaces: spec's `sandbox.Runner`; remote client/broker implement the same con
 - [ ] Persist job receipt/status before execution; reconcile ambiguous starts through Inspect. Idempotent cancel/collect and a crash-safe reaper clean orphan workloads. Inspect exported files by descriptor/path policy, reject devices/unsafe links, cap archive expansion and preserve immutable digests.
 - [ ] Pin tested runtime, image and client-library versions in `compatibility.json` with host/kernel requirements and test evidence. Run Linux integration probes in CI plus deployed broker restart/resource tests. Add module build/test/lint/release coverage. Commit `feat(sandbox): isolate evaluation jobs behind an authenticated broker` after common checks.
 
+The service evidence repository now binds existing evidence storage to private validated job contexts. Worker access permits declared inputs and captures through current policies; independent recovery permits only declared capture deletion and tombstone audit. SQLite fixtures cover the actual worker and recovery flows, including durable fences against uploads after cleanup. Installed database provisioning, source grants and live runtime qualification remain open.
+
 ## S2.5: Isolated candidate execution and protected grading
 
 Depends on S2.1/S2.4 and S2.3 for semantic scoring. Owner: evaluation harness implementer.

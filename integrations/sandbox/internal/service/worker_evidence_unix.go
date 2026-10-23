@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"time"
 
-	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	broker "github.com/xraph/cortex/integrations/sandbox"
 	"github.com/xraph/cortex/integrations/sandbox/internal/staging"
@@ -243,8 +241,4 @@ func declaredInput(job sandbox.Job, ref evidence.Ref) bool {
 		}
 	}
 	return false
-}
-
-func evidenceContext(ctx context.Context, job sandbox.Job) context.Context {
-	return cortex.WithScope(ctx, cortex.Scope{Levels: slices.Clone(job.Scope.Levels)})
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/integrations/sandbox/internal/workerstore"
@@ -238,7 +237,7 @@ func (s *CaptureRecovery) allowed(ctx context.Context, job sandbox.Job, ref evid
 }
 
 func (s *CaptureRecovery) scoped(ctx context.Context, job sandbox.Job) context.Context {
-	return evidence.WithDeletionActor(cortex.WithScope(ctx, cortex.Scope{Levels: slices.Clone(job.Scope.Levels)}), s.actor)
+	return cleanupEvidenceContext(ctx, job, s.actor)
 }
 
 func detachedCaptureRef(ref evidence.Ref) evidence.Ref {
