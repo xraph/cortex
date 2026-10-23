@@ -185,8 +185,15 @@ evidence reads, polling and cancellation are bounded.
 The sandbox module's `grading.NewAuthenticity` supplies broker authentication.
 You still need a qualified runner, a concrete supervisor with durable observations
 and retry reconciliation, total evaluation accounting, durable phase recovery,
-contextual adapters and the separate export command. The full packet checkboxes
+remaining contextual adapters and the separate export command. The full packet checkboxes
 above stay open until those paths and Linux adversarial qualification pass.
+
+Registered external-state checks are implemented with `StateManifest` and
+`StateVerifier`. They bind probes to captured sources, reauthorize around reads,
+enforce per-probe deadlines and retain authenticated host observation windows
+through report storage. Changed revisions fail; invalid or expired observations
+cannot authorize publication. Concrete source observers, objective coverage,
+schema/units and installed end-to-end qualification remain open.
 
 ## S2.6: Durable safe event replay
 

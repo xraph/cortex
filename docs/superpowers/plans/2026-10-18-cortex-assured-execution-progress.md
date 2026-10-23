@@ -24,7 +24,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
-| S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch and pinned broker authentication implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
+| S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication and bounded contextual state observations implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3502,3 +3502,52 @@ Validation:
 - After the cleanup review, the verification race suite passed in 3.652s;
   grading authentication passed in 1.206s. Root and sandbox builds passed.
   Docs type checking, lint and production build also passed.
+
+
+### S2.5 registered state checks and observation windows
+
+`StateManifest` pins a state criterion and its exact execution binding to a
+nonempty subset of captured sources. `StateVerifier` freezes those registrations,
+selects only the exact scoped check, and asks a host-supplied authenticated reader
+for current revisions and digests. Shared request validation keeps binding,
+criterion, retention and source-age rules identical to sandbox test evaluation.
+
+Each read has the manifest's context deadline, capped at 30 seconds. The full
+check also has a 30-second bound and configured admission of one through 64
+concurrent evaluations. Current authorization runs before and after reads.
+Changed source revisions produce failed checks; wrong tenant/task/resource
+identity, replayed or malformed observations, revoked grants and source outages
+cannot produce passed results.
+
+Observation windows now travel from `CheckResult` into `Outcome` and the sealed
+report. Each binds the manifest, captured binding, source, read interval and
+host-derived expiry. Report validation rejects duplicate or foreign resources,
+changed source data in a passing outcome and malformed timing. Contract
+validation bounds expiry by the state criterion. Freshness checks reject future
+or expired observations. The optional JSON field preserves existing report
+encodings; historical reports gain no new guarantee.
+
+Ruling: retain external observations inside the existing immutable report instead
+of creating another evidence store or claiming a remote lock. The host observer
+must authenticate its source and scope. Publication still requires the existing
+current-binding fence. Concrete source adapters, objective coverage, schema/units,
+approved export, supervisor recovery and Linux qualification remain open.
+
+Validation so far:
+
+- Initial regressions failed because the placeholder skipped reads and returned
+  success for changed context. The report integration test then failed because
+  the host dropped observation windows. Both paths now pass.
+- The per-probe deadline test exposed the inherited 30-second overall deadline;
+  the checker now gives the observer the manifest's shorter deadline.
+- Full verification race tests passed. SQLite, PostgreSQL and MongoDB passed the
+  shared observation storage and expiry case under the race detector, including
+  rejection of a saved report that exceeds its criterion's allowed age.
+  PostgreSQL and MongoDB ran in Docker; Mongo used the pinned 7.0.41 fixture.
+- Initial lint found formatting and one unnecessary struct conversion. These
+  were corrected before the final format, lint and test cycle.
+- Final formatting, all-ten-module lint, verification race tests (4.291s), root
+  build, docs type checks, docs lint and docs production build passed.
+- CI `39983797018` passed on sandbox orchestration commit `ace6674`.
+- The broader engine race suite passed in 371.019s, including its SQLite-backed
+  verification recovery tests. Its build also passed.

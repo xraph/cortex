@@ -113,10 +113,19 @@ func evaluationName(value string, limit int) bool {
 // The deadline must fit inside every artifact's retention interval. Callers must
 // independently recheck current authority, source state and runtime qualification.
 func (m EvaluationManifest) ValidateRequest(req TestRequest, now time.Time) error {
-	if m.Validate() != nil || req.Criterion != m.Criterion || now.IsZero() || !req.Deadline.After(now) {
+	if m.Validate() != nil {
 		return ErrInvalid
 	}
-	expected, err := m.Binding.Digest()
+	return validateCapturedCheck(req.CheckRequest, m.Binding, m.Criterion, now)
+}
+
+// validateCapturedCheck shares exact binding, criterion and timing checks across
+// test and state adapters. It performs no external authorization.
+func validateCapturedCheck(req CheckRequest, binding Binding, criterion Criterion, now time.Time) error {
+	if req.Criterion != criterion || now.IsZero() || !req.Deadline.After(now) {
+		return ErrInvalid
+	}
+	expected, err := binding.Digest()
 	if err != nil {
 		return ErrInvalid
 	}
@@ -124,14 +133,14 @@ func (m EvaluationManifest) ValidateRequest(req TestRequest, now time.Time) erro
 	if err != nil || actual != expected {
 		return ErrInvalid
 	}
-	refs := append([]evidence.Ref{m.Binding.Candidate}, m.Binding.Evidence...)
+	refs := append([]evidence.Ref{binding.Candidate}, binding.Evidence...)
 	for _, ref := range refs {
 		if ref.CreatedAt.After(now) || !ref.RetainUntil.After(req.Deadline) {
 			return ErrInvalid
 		}
 	}
-	for _, source := range m.Binding.Context.Sources {
-		if source.RetrievedAt.After(now) || (m.Criterion.MaxSourceAge > 0 && now.Sub(source.RetrievedAt) > m.Criterion.MaxSourceAge) {
+	for _, source := range binding.Context.Sources {
+		if source.RetrievedAt.After(now) || (criterion.MaxSourceAge > 0 && now.Sub(source.RetrievedAt) > criterion.MaxSourceAge) {
 			return ErrInvalid
 		}
 	}

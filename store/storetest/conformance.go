@@ -89,6 +89,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("ResultSnapshotDenials", func(t *testing.T) { testResultSnapshotDenials(t, newStore) })
 	t.Run("VerifiedResultCommit", func(t *testing.T) { testVerifiedResultCommit(t, newStore) })
 	t.Run("Verification", func(t *testing.T) { testVerification(t, newStore) })
+	t.Run("StateObservation", func(t *testing.T) { testStateObservation(t, newStore) })
 	t.Run("EvidenceConcurrentIdentity", func(t *testing.T) { testEvidenceConcurrentIdentity(t, newStore) })
 	t.Run("EvidenceDeletionFence", func(t *testing.T) { testEvidenceDeletionFence(t, newStore) })
 	t.Run("PreparationSnapshot", func(t *testing.T) { testPreparationSnapshot(t, newStore) })

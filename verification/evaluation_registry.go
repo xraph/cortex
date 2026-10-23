@@ -80,7 +80,11 @@ func (r *EvaluationRegistry) Resolve(ctx context.Context, req TestRequest, now t
 }
 
 func evaluationRequestKey(req TestRequest) (evaluationKey, error) {
-	if req.Criterion.validate() != nil || req.Criterion.Kind != KindTest {
+	return capturedCheckKey(req.CheckRequest, KindTest)
+}
+
+func capturedCheckKey(req CheckRequest, kind Kind) (evaluationKey, error) {
+	if req.Criterion.validate() != nil || req.Criterion.Kind != kind {
 		return evaluationKey{}, ErrInvalid
 	}
 	digest, err := req.Binding.Digest()

@@ -29,11 +29,12 @@ type HumanRequest struct{ CheckRequest }
 // CheckResult contains evaluator output without caller-controlled timestamps,
 // report identity or binding. The host supplies those after evaluation.
 type CheckResult struct {
-	Status      Status
-	Score       *float64
-	EvidenceIDs []id.ID
-	Human       *HumanVerdict
-	Reason      string
+	StateObservations []StateObservation
+	Status            Status
+	Score             *float64
+	EvidenceIDs       []id.ID
+	Human             *HumanVerdict
+	Reason            string
 }
 
 // SchemaChecker validates captured content against a registered schema.

@@ -23,14 +23,15 @@ type HumanVerdict struct {
 // Outcome describes one check. Scores are optional diagnostics in [0,1].
 // Status is the authoritative verdict; scores never turn failures into passes.
 type Outcome struct {
-	CriterionID      string        `json:"criterion_id"`
-	Verifier         string        `json:"verifier"`
-	VerifierRevision string        `json:"verifier_revision"`
-	Status           Status        `json:"status"`
-	Score            *float64      `json:"score,omitempty"`
-	EvidenceIDs      []id.ID       `json:"evidence_ids,omitempty"`
-	Human            *HumanVerdict `json:"human,omitempty"`
-	Reason           string        `json:"reason,omitempty"`
+	StateObservations []StateObservation `json:"state_observations,omitempty"`
+	CriterionID       string             `json:"criterion_id"`
+	Verifier          string             `json:"verifier"`
+	VerifierRevision  string             `json:"verifier_revision"`
+	Status            Status             `json:"status"`
+	Score             *float64           `json:"score,omitempty"`
+	EvidenceIDs       []id.ID            `json:"evidence_ids,omitempty"`
+	Human             *HumanVerdict      `json:"human,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
 }
 
 // Report is an immutable, host-stamped observation. SealReport computes
@@ -88,6 +89,9 @@ func (r Report) validateFields() error {
 	}
 	seen := make(map[string]bool, len(r.Outcomes))
 	for _, outcome := range r.Outcomes {
+		if len(outcome.StateObservations) > 0 && validateStateObservations(outcome.StateObservations, r.Binding, r.CheckedAt, r.ExpiresAt, outcome.Status) != nil {
+			return ErrInvalid
+		}
 		if !validText(outcome.CriterionID, outcome.Verifier, outcome.VerifierRevision, outcome.Reason) {
 			return ErrInvalid
 		}
@@ -163,6 +167,11 @@ func ValidateReportForContract(c Contract, r Report) error {
 		criterion, ok := criteria[outcome.CriterionID]
 		if !ok || outcome.Verifier != criterion.Verifier || outcome.VerifierRevision != criterion.VerifierRevision || (outcome.Human != nil && criterion.Kind != KindHuman) {
 			return ErrInvalid
+		}
+		for _, observation := range outcome.StateObservations {
+			if criterion.Kind != KindState || criterion.MaxSourceAge <= 0 || observation.ExpiresAt.After(observation.StartedAt.Add(criterion.MaxSourceAge)) || observation.ExpiresAt.After(observation.StartedAt.Add(criterion.MaxAge)) {
+				return ErrInvalid
+			}
 		}
 	}
 	return nil

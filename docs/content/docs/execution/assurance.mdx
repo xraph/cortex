@@ -70,6 +70,39 @@ Before acting on a result, reauthorize the resources and compare a trusted curre
 Evidence deletion retains an audit tombstone. Set the authenticated actor with `evidence.WithDeletionActor` before deleting through the authorized repository. The first deletion records the reference, actor, time and reason; retries cannot rewrite that history or restore the bytes. Tombstone reads are a separate storage capability and require host audit authorization.
 
 
+### Check current external state
+
+Use `verification.NewStateVerifier` with `verification.RegisterState` when a
+criterion needs to confirm that captured resources still have the same revision
+and digest. You register sealed `StateManifest` values for exact bindings and
+criteria. Each manifest names a nonempty subset of captured sources, a positive
+source-age limit and a read window of at most 30 seconds.
+
+Your `StateObserver` authenticates each resource in its captured scope and reads
+its current revision and digest without repeating task effects. It returns the
+manifest and binding digests, the resource identity, and the start, finish and
+source-observation times. Configure the observer independently of candidate
+content. Cortex supplies the checker, not your service's authenticated reader.
+
+The checker reauthorizes around each read. A changed revision or digest fails the
+check; wrong identities, source outages, revoked grants and invalid read windows
+return errors. An observer cannot choose its expiry. The checker derives that
+from the request deadline and criterion limits, with a separate context deadline
+for each probe. Set `MaxConcurrent` between one and 64 to bound admission.
+
+Reports retain these windows in `Outcome.StateObservations`. Freshness checks
+reject future or expired observations, and contract validation prevents a state
+observation from extending its permitted age. SQLite, PostgreSQL and MongoDB
+retain the complete records. Existing reports without observations keep their
+encoding and do not acquire an external-state guarantee.
+Fresh reads do not renew the original captured source timestamps. If that capture
+is stale, collect a new binding and evaluate it again.
+
+A passing state check establishes that the registered source versions matched
+within the recorded windows. It does not establish objective coverage, schema or
+unit correctness, lock a remote resource, or authorize an export. Register those
+acceptance checks separately and retain the publication fence below.
+
 ## Commit a verified result
 
 Built-in stores expose optional `verification.CommitStore`. A commit consumes
