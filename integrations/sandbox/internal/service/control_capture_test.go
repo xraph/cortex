@@ -98,11 +98,13 @@ func TestCaptureTransportRefusesUncertainAndUnboundAcknowledgements(t *testing.T
 			if ack, err := captureConnection(t.Context(), dialControl(t, path), claim, ref, false, time.Second); err == nil || !ack.ArtifactID.IsNil() {
 				t.Fatal("unbound capture receipt", ack, err)
 			}
+			cancel()
+			_ = awaitControllerStop(t, done)
+			// Deadline cancellation can close the socket before the handler's
+			// deferred peer cleanup runs. Join it before inspecting its state.
 			if session.calls > 1 || session.closes.Load() != 1 {
 				t.Fatal("capture replayed or identity leaked")
 			}
-			cancel()
-			_ = awaitControllerStop(t, done)
 		})
 	}
 }
