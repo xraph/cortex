@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/integrations/sandbox/internal/workspace"
+	"github.com/xraph/cortex/integrations/sandbox/internal/retention"
 )
 
-type workspaceRecovery interface {
+type retainedRecovery interface {
 	Discover(context.Context, int) ([]id.ID, error)
 	Reclaim(context.Context, id.ID) error
 }
@@ -23,14 +23,14 @@ func NewWorkspaceScanner(cfg OrphanConfig, root string) (*WorkspaceScanner, erro
 	if cfg.Reaper == nil {
 		return nil, fmt.Errorf("cortex: workspace recovery requires a reaper")
 	}
-	recovery, err := workspace.NewRecovery(root, cfg.Reaper.FenceAndStop)
+	recovery, err := retention.NewWorkspaces(root, cfg.Reaper.FenceAndStop)
 	if err != nil {
 		return nil, err
 	}
 	return newWorkspaceScanner(cfg, recovery)
 }
 
-func newWorkspaceScanner(cfg OrphanConfig, recovery workspaceRecovery) (*WorkspaceScanner, error) {
+func newWorkspaceScanner(cfg OrphanConfig, recovery retainedRecovery) (*WorkspaceScanner, error) {
 	if recovery == nil {
 		return nil, fmt.Errorf("cortex: workspace recovery is missing")
 	}

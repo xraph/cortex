@@ -323,8 +323,9 @@ their contexts. A stopped controller cannot run again.
 
 The executable daemon still needs to construct and run these components. A slow
 cleanup can delay a later page, so scans cannot enforce an exact execution
-deadline. Worker deadline supervision, the outer service ceiling, discovery of
-services absent from the journal and cleanup of retained files remain required.
+deadline. Worker deadline supervision and the outer service ceiling remain
+required. Installed assembly also wires independent service discovery and
+retained workspace and credential cleanup.
 
 ## Worker identity and authorization
 
@@ -494,9 +495,10 @@ Further execution authorization is refused, including while a report is waiting
 for upload capacity. A successful or uncertain report cannot be sent again from
 that session; inspect the broker to resolve a lost acknowledgement.
 
-This is an internal startup component. Worker CLI assembly, approved image
-delivery, production broker/export wiring, daemon setup and retained-file cleanup
-still need implementation. Session evidence adapters now connect input staging
+The worker executable and installed daemon assembly connect this startup
+component to image delivery, export and retained-file cleanup. Production provider
+configuration and standalone daemon installation remain open. Session evidence
+adapters connect input staging
 and output capture to the private daemon. Tests cover configuration and credential
 substitution, activation races, deadline/cancellation handling,
 snapshot isolation and report retry rules. Linux root fixtures exercise the real
@@ -615,8 +617,8 @@ The `sandbox_mount_kernel` tests create a child mount namespace before the Go
 runtime starts. They exercise actual byte and inode exhaustion, replacement
 refusal, revocation, cancellation, busy cleanup and mount removal on process
 exit. Run them as root only in a disposable Linux environment. These tests do
-not qualify systemd, runsc or a production worker. Worker execution and export
-assembly, retained-file recovery and live qualification remain open.
+not qualify systemd, runsc or a production worker. Installed provider
+configuration and live qualification remain open.
 
 ## Worker execution coordinator
 
@@ -648,9 +650,8 @@ between zero (exclusive) and 24 hours. The worker session supplies the
 authenticated capture journal through its private daemon connection.
 Zero disables capture. A job requesting capture is refused before execution if
 these services are unavailable. Authorized release remains a separate host
-operation. Executable worker/daemon installation, broker runtime activation,
-retained-file recovery, production repository integration and live qualification
-remain open. The Linux staging fixture uses real image/input verification, bundle writes
+operation. Standalone daemon installation, production repository integration
+and live qualification remain open. The Linux staging fixture uses real image/input verification, bundle writes
 and artifact capture with an explicit test executor and workspace. It does not
 attest to runtime isolation.
 
@@ -1173,4 +1174,34 @@ mounts also fail the unique mount identity check.
 Partial setup and already absent directories are safe to retry. Startup recovery
 must finish before admission; periodic failures close admission and trigger
 shutdown recovery. The host must prevent concurrent privileged filesystem
-changes. Launch-credential file retention is a separate remaining cleanup task.
+changes. Launch credentials use the separate fixed file layout described below.
+
+
+### Launch-credential recovery
+
+Create a root-owned `0700` directory at `StateDirectory/launch` before assembly.
+The daemon pins this root and scans it independently of loaded services. Missing
+or terminal journal records are eligible for cleanup; live claims remain with
+execution recovery. Journal errors still trigger containment cleanup and remain
+unresolved afterward.
+
+The cleanup layout accepts at most one file: `claim.tmp` or `claim.json`. It must
+be a regular, single-link file owned by root, mode `0400`, at most one MiB, and on
+the original filesystem and mount. Empty or malformed content can come from an
+interrupted write, so cleanup neither parses nor logs it. Unknown entries,
+multiple files, aliases, changed permissions and mounts stop cleanup. Directory
+changes are synced before success is returned. These are unlink guarantees, not
+physical media erasure.
+
+A shared gate coordinates credential publication and removal for each job.
+Cleanup waits for an in-flight publisher; a later publisher must verify current
+journal ownership while holding the same gate. Cancelled or terminal claims
+cannot recreate a file after cleanup. Gate storage is fixed, waits honor caller
+cancellation, and a failed operation releases its slot. Use the controller for
+all launches and keep privileged writes outside these directories.
+
+Installed assembly requires credential recovery alongside workspace and service
+recovery. Each has its own periodic cursor, and an unresolved scan closes
+admission. Startup and shutdown run all three through the same journal eligibility
+rules. A replacement controller must retain the launcher's matching credential
+gate; it cannot silently discard or replace that coordination boundary.

@@ -1,6 +1,6 @@
 //go:build linux
 
-package workspace
+package retention
 
 import (
 	"context"
@@ -34,7 +34,7 @@ func retainedFixture(t *testing.T) (string, id.ID) {
 
 func recoveryFixture(t *testing.T, root string, fence func(context.Context, id.ID) error) *Recovery {
 	t.Helper()
-	recovery, err := newRecovery(root, fence, uint32(os.Geteuid()))
+	recovery, err := newRecovery(root, fence, uint32(os.Geteuid()), workspaceLayout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestRetainedWorkspaceRejectsRootReplacementAndInvalidAuthority(t *testing.T
 	if err := recovery.Reclaim(t.Context(), id.New(id.PrefixAgent)); err == nil || calls != 0 {
 		t.Fatal("invalid cleanup fenced service", calls, err)
 	}
-	if _, err := newRecovery(root, nil, uint32(os.Geteuid())); err == nil {
+	if _, err := newRecovery(root, nil, uint32(os.Geteuid()), workspaceLayout); err == nil {
 		t.Fatal("missing fence accepted")
 	}
 	previous := root + "-retained"

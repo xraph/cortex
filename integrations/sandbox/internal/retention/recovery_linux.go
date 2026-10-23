@@ -1,6 +1,6 @@
 //go:build linux
 
-package workspace
+package retention
 
 import (
 	"context"
@@ -17,31 +17,37 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
+type retainedEntry struct {
+	name string
+	file *os.File
+}
+
 type recoveryIdentity struct {
 	deviceMajor, deviceMinor uint32
 	inode, mount             uint64
 }
 
-// Recovery reclaims only empty host mountpoints after independent service fencing.
-// The trusted host must reserve Root for this worker installation and prevent
-// concurrent privileged filesystem changes. It never unmounts or recursively
-// deletes content. No descriptors are retained between operations.
+// Recovery reclaims a fixed host layout after independent service fencing.
+// The host must reserve the root for this installation and coordinate writers.
+// It never unmounts or recursively deletes content. No descriptors are retained
+// between operations.
 type Recovery struct {
 	root     string
 	owner    uint32
 	identity recoveryIdentity
 	fence    func(context.Context, id.ID) error
+	kind     layout
 }
 
-func productionRecovery(root string, fence func(context.Context, id.ID) error) (*Recovery, error) {
+func productionRecovery(root string, fence func(context.Context, id.ID) error, kind layout) (*Recovery, error) {
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("cortex: workspace recovery requires root on Linux")
 	}
-	return newRecovery(root, fence, 0)
+	return newRecovery(root, fence, 0, kind)
 }
 
-func newRecovery(root string, fence func(context.Context, id.ID) error, owner uint32) (*Recovery, error) {
-	if fence == nil {
+func newRecovery(root string, fence func(context.Context, id.ID) error, owner uint32, kind layout) (*Recovery, error) {
+	if fence == nil || (kind != workspaceLayout && kind != credentialLayout) {
 		return nil, fmt.Errorf("cortex: workspace recovery requires service fencing")
 	}
 	directory, err := hostfs.OpenDirectory(root, owner)
@@ -53,11 +59,11 @@ func newRecovery(root string, fence func(context.Context, id.ID) error, owner ui
 	if err != nil {
 		return nil, err
 	}
-	return &Recovery{root: root, owner: owner, identity: identity, fence: fence}, nil
+	return &Recovery{root: root, owner: owner, identity: identity, fence: fence, kind: kind}, nil
 }
 
 func retainedIdentity(file *os.File, owner uint32) (recoveryIdentity, error) {
-	stat, err := mountIdentity(int(file.Fd()))
+	stat, err := hostfs.MountIdentity(int(file.Fd()))
 	if err != nil {
 		return recoveryIdentity{}, err
 	}
@@ -145,17 +151,20 @@ func (r *Recovery) reclaim(ctx context.Context, key id.ID) error {
 	defer root.Close()
 	directory, err := r.openChild(root, key.String())
 	if errors.Is(err, unix.ENOENT) {
-		return ctx.Err()
+		return errors.Join(root.Sync(), ctx.Err())
 	}
 	if err != nil {
 		return err
 	}
 	defer directory.Close()
+	if r.kind == credentialLayout {
+		return r.reclaimCredential(ctx, root, directory, key)
+	}
 	names, err := boundedNames(directory, 2)
 	if err != nil {
 		return err
 	}
-	children := make([]ownedDirectory, 0, len(names))
+	children := make([]retainedEntry, 0, len(names))
 	defer func() {
 		for _, child := range children {
 			child.file.Close()
@@ -170,7 +179,7 @@ func (r *Recovery) reclaim(ctx context.Context, key id.ID) error {
 		if openErr != nil {
 			return openErr
 		}
-		children = append(children, ownedDirectory{name: name, file: child})
+		children = append(children, retainedEntry{name: name, file: child})
 		entries, readErr := boundedNames(child, 0)
 		if readErr != nil || len(entries) != 0 {
 			return errors.Join(readErr, fmt.Errorf("cortex: retained workspace mountpoint is not empty"))
@@ -187,6 +196,10 @@ func (r *Recovery) reclaim(ctx context.Context, key id.ID) error {
 			return checkErr
 		}
 	}
+	return r.removeDirectory(ctx, root, directory, key)
+}
+
+func (r *Recovery) removeDirectory(ctx context.Context, root, directory *os.File, key id.ID) error {
 	if checkErr := ctx.Err(); checkErr != nil {
 		return checkErr
 	}
@@ -197,17 +210,31 @@ func (r *Recovery) reclaim(ctx context.Context, key id.ID) error {
 	if checkErr := currentRoot.Close(); checkErr != nil {
 		return checkErr
 	}
-	if checkErr := r.checkChild(root, ownedDirectory{name: key.String(), file: directory}); checkErr != nil {
+	if checkErr := r.checkChild(root, retainedEntry{name: key.String(), file: directory}); checkErr != nil {
 		return checkErr
 	}
-	return unix.Unlinkat(int(root.Fd()), key.String(), unix.AT_REMOVEDIR)
+	if checkErr := directory.Sync(); checkErr != nil {
+		return checkErr
+	}
+	if checkErr := unix.Unlinkat(int(root.Fd()), key.String(), unix.AT_REMOVEDIR); checkErr != nil {
+		return checkErr
+	}
+	return errors.Join(root.Sync(), ctx.Err())
 }
 
-func (r *Recovery) checkChild(parent *os.File, child ownedDirectory) error {
+func (r *Recovery) checkChild(parent *os.File, child retainedEntry) error {
 	current, err := r.openChild(parent, child.name)
 	if err != nil {
 		return err
 	}
 	defer current.Close()
-	return sameDirectory(child.file, current)
+	expected, err := retainedIdentity(child.file, r.owner)
+	if err != nil {
+		return err
+	}
+	observed, err := retainedIdentity(current, r.owner)
+	if err != nil || expected != observed {
+		return errors.Join(err, fmt.Errorf("cortex: retained directory identity changed"))
+	}
+	return nil
 }

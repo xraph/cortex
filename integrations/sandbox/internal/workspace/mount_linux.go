@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
 )
 
 type namespaceID struct{ device, inode uint64 }
@@ -61,7 +63,7 @@ func mountTmpfs(ctx context.Context, parent int, name string, plan mountPlan) (*
 			parentFile.Close()
 		}
 	}()
-	parentStat, err := mountIdentity(parentFD)
+	parentStat, err := hostfs.MountIdentity(parentFD)
 	if err != nil || parentStat.Uid != 0 || parentStat.Mode&unix.S_IFMT != unix.S_IFDIR || parentStat.Mode&0o7777 != 0o700 {
 		return nil, errors.Join(err, fmt.Errorf("cortex: workspace parent must be private and root owned"))
 	}
@@ -71,7 +73,7 @@ func mountTmpfs(ctx context.Context, parent int, name string, plan mountPlan) (*
 	}
 	target := os.NewFile(uintptr(targetFD), name)
 	defer target.Close()
-	targetStat, err := mountIdentity(targetFD)
+	targetStat, err := hostfs.MountIdentity(targetFD)
 	if err != nil || targetStat.Uid != 0 || targetStat.Mode&0o7777 != 0o700 || targetStat.Mnt_id != parentStat.Mnt_id {
 		return nil, errors.Join(err, fmt.Errorf("cortex: unsafe or already mounted workspace target"))
 	}
@@ -106,7 +108,7 @@ func mountTmpfs(ctx context.Context, parent int, name string, plan mountPlan) (*
 	}
 	detached := os.NewFile(uintptr(mountFD), "tmpfs mount")
 	defer detached.Close()
-	identity, err := mountIdentity(mountFD)
+	identity, err := hostfs.MountIdentity(mountFD)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +196,7 @@ func (m *mountedTmpfs) openCurrent(ctx context.Context) (*os.File, error) {
 		return nil, err
 	}
 	file := os.NewFile(uintptr(fd), m.name)
-	stat, err := mountIdentity(fd)
+	stat, err := hostfs.MountIdentity(fd)
 	if err != nil || stat.Mnt_id != m.identity.Mnt_id || stat.Ino != m.identity.Ino || stat.Dev_major != m.identity.Dev_major || stat.Dev_minor != m.identity.Dev_minor {
 		file.Close()
 		return nil, errors.Join(err, fmt.Errorf("cortex: workspace mount was replaced"))
@@ -229,19 +231,6 @@ func (m *mountedTmpfs) close(ctx context.Context) error {
 	}
 	m.closed = true
 	return m.parent.Close()
-}
-
-func mountIdentity(fd int) (unix.Statx_t, error) {
-	var stat unix.Statx_t
-	mask := unix.STATX_BASIC_STATS | unix.STATX_MNT_ID_UNIQUE
-	if err := unix.Statx(fd, "", unix.AT_EMPTY_PATH, mask, &stat); err != nil {
-		return stat, err
-	}
-	required := uint32(unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_UID | unix.STATX_GID | unix.STATX_INO | unix.STATX_MNT_ID_UNIQUE)
-	if stat.Mask&required != required || stat.Mnt_id == 0 {
-		return stat, fmt.Errorf("cortex: unique workspace mount identity unavailable")
-	}
-	return stat, nil
 }
 
 func openProc() (*os.File, error) {

@@ -57,6 +57,7 @@ func runMountChild(t *testing.T, root string) {
 	defer runtime.UnlockOSThread()
 	exerciseWorkspace(t, root)
 	exerciseRetainedMount(t)
+	exerciseRetainedCredentialMount(t)
 	parent, err := os.Open(root)
 	if err != nil {
 		t.Fatal(err)

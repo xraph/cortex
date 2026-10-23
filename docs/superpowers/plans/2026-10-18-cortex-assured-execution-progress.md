@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, launch-credential cleanup and live qualification remain open |
+| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, standalone installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -1353,3 +1353,49 @@ The Linux amd64 sandbox module build passed as well.
 Launch-credential file cleanup, installed source adapters, credential provisioning,
 live evidence verification, standalone installation and live systemd/runsc
 qualification remain open. This packet does not close S2.4 or the four-stage plan.
+
+
+### S2.4 launch-credential recovery
+
+Workspace cleanup commit `a5086b7` passed every remote CI job in run
+`39885715666`.
+
+Installed assembly now pins the private launch directory and requires credential
+recovery during startup, periodic scans and shutdown. A missing or terminal job
+can have at most one retained file, claim.tmp or claim.json. Cleanup fences the
+service, checks the no-follow file handle for root ownership, mode 0400, one link,
+a one-MiB ceiling and matching unique mount identity, then unlinks and syncs the
+directory changes. Interrupted, malformed and expired contents need no execution
+authority and are never parsed or logged. Unexpected entries remain unresolved.
+
+Filesystem recovery moved into internal/retention so workspace and credential
+layouts share root identity, discovery, bounded scans and directory removal.
+The Linux mount identity primitive now lives in hostfs and remains shared with
+workspace mount enforcement. Journal eligibility and error retention continue to
+use the same cleanup scanner.
+
+Credential publication runs in the daemon, outside the worker cgroup. Cleanup
+therefore shares a fixed-size per-job coordination gate with the launcher. It
+waits for in-flight publication; a delayed publisher verifies current claim
+ownership inside the gate and cannot recreate a credential after cancellation
+or terminal cleanup. Gate waits respect cancellation and release after failure.
+Controller reconstruction retains the same gate without nested locking, and a
+mismatched or omitted gate is rejected.
+
+TDD covered missing APIs, partial writes, no secret-content dependency, links,
+permissions, special files, oversize files, conflicting filenames, failed fences,
+writer/cleanup ordering, delayed publication and cancelled waiters. An additional
+regression exposed a panic from empty cleanup service values. Shared nil-safe
+binding checks now reject those configurations without panic.
+
+Validation: scoped make f, final make l across all ten modules, Linux tagged lint
+and the Linux amd64 build passed. The full sandbox module race suite passed;
+the final service rerun passed in 22.480s and focused credential regressions in
+1.947s. Retention, installed host and real mount fixtures each passed ten Linux
+repetitions without skips. The first file fixtures tried to rewrite mode-0400
+files without DAC override; fixture setup now changes and restores owner mode
+explicitly. The production cleanup policy remains mode 0400.
+
+Installed providers, credential provisioning, live evidence verification,
+standalone installation and live systemd/runsc qualification remain open. The
+four-stage plan remains incomplete.

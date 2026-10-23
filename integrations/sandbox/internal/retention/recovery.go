@@ -1,4 +1,4 @@
-package workspace
+package retention
 
 import (
 	"context"
@@ -9,11 +9,18 @@ import (
 	"github.com/xraph/cortex/sandbox"
 )
 
-// NewRecovery binds an existing private root-owned workspace directory on Linux.
+type layout uint8
+
+const (
+	workspaceLayout layout = iota
+	credentialLayout
+)
+
+// NewWorkspaces binds an existing private root-owned workspace directory on Linux.
 // Fence must durably prevent starts and confirm complete service/cgroup drain.
 // It must honor cancellation; execution permission alone is not cleanup proof.
-func NewRecovery(root string, fence func(context.Context, id.ID) error) (*Recovery, error) {
-	return productionRecovery(root, fence)
+func NewWorkspaces(root string, fence func(context.Context, id.ID) error) (*Recovery, error) {
+	return productionRecovery(root, fence, workspaceLayout)
 }
 
 // Discover returns a sorted bounded snapshot of canonical retained job IDs.
@@ -31,7 +38,7 @@ func (r *Recovery) Discover(ctx context.Context, maximum int) ([]id.ID, error) {
 }
 
 // Reclaim fences the service before inspecting its retained directory. Only
-// empty stage/scratch mountpoints on the root filesystem may be removed. Partial
+// the selected layout on the original root filesystem may be removed. Partial
 // setup and already absent directories are valid; uncertainty requires retry.
 func (r *Recovery) Reclaim(ctx context.Context, key id.ID) error {
 	if key.IsNil() || key.Prefix() != sandbox.PrefixJob {
@@ -49,4 +56,10 @@ func (r *Recovery) Reclaim(ctx context.Context, key id.ID) error {
 		return err
 	}
 	return r.reclaim(operation, key)
+}
+
+// NewCredentials binds the private launch directory. Cleanup removes only the
+// fixed claim file or interrupted temporary file after service fencing.
+func NewCredentials(root string, fence func(context.Context, id.ID) error) (*Recovery, error) {
+	return productionRecovery(root, fence, credentialLayout)
 }

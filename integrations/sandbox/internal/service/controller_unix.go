@@ -63,6 +63,15 @@ func NewController(launcher *Launcher, scanner *RecoveryScanner, interval time.D
 	if launcher == nil || scanner == nil || launcher.store == nil || launcher.reaper == nil || launcher.store != scanner.store || launcher.reaper != scanner.reaper || scanner.revalidate == nil || scanner.now == nil || scanner.pageSize < 1 || scanner.pageSize > 256 || interval < 10*time.Millisecond || interval > time.Second {
 		return nil, fmt.Errorf("cortex: invalid sandbox controller")
 	}
+	if scanner.credentials != nil {
+		if launcher.credentialGate != nil && launcher.credentialGate != scanner.credentials.gate {
+			return nil, fmt.Errorf("cortex: launcher uses another credential recovery gate")
+		}
+		launcher.credentialGate = scanner.credentials.gate
+	} else if launcher.credentialGate != nil {
+		return nil, fmt.Errorf("cortex: launcher requires matching credential recovery")
+	}
+
 	return &Controller{capturePolicy: policy, launcher: launcher, scanner: scanner, interval: interval, checkWorker: launcher.reaper.CheckWorker}, nil
 }
 
@@ -126,7 +135,7 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 	}
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
-	cursor, captureCursor, orphanCursor, workspaceCursor := "", "", "", ""
+	cursor, captureCursor, orphanCursor, workspaceCursor, credentialCursor := "", "", "", "", ""
 	for {
 		select {
 		case <-c.lifetime.Done():
@@ -158,6 +167,16 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 				workspaceCursor = workspacePage.Next
 				if workspacePage.Done {
 					workspaceCursor = ""
+				}
+			}
+			if c.scanner.credentials != nil {
+				credentialPage, credentialErr := c.scanner.credentials.Sweep(c.lifetime, credentialCursor)
+				if credentialErr != nil {
+					return credentialErr
+				}
+				credentialCursor = credentialPage.Next
+				if credentialPage.Done {
+					credentialCursor = ""
 				}
 			}
 			if c.scanner.captures != nil {

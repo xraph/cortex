@@ -19,19 +19,21 @@ import (
 // It must honor context cancellation and must not require the original caller
 // to remain connected. A non-nil error stops the job, including provider outages.
 type RecoveryConfig struct {
-	Workspaces *WorkspaceScanner
-	Orphans    *OrphanScanner
-	Captures   *CaptureRecovery
-	Store      *workerstore.Store
-	Reaper     *Reaper
-	Revalidate func(context.Context, sandbox.Job) error
-	Now        func() time.Time
-	PageSize   int
+	Credentials *CredentialScanner
+	Workspaces  *WorkspaceScanner
+	Orphans     *OrphanScanner
+	Captures    *CaptureRecovery
+	Store       *workerstore.Store
+	Reaper      *Reaper
+	Revalidate  func(context.Context, sandbox.Job) error
+	Now         func() time.Time
+	PageSize    int
 }
 
 // RecoveryReport counts observations in one scan, not unique lifetime events.
 // Unresolved counts entries whose checks or cleanup returned an error.
 type RecoveryReport struct {
+	Credentials                             CleanupReport
 	Workspaces                              CleanupReport
 	Orphans                                 CleanupReport
 	Captures                                CaptureRecoveryReport
@@ -52,22 +54,26 @@ type RecoveryPage struct {
 // any recovery error, and call Sweep continuously during operation. Sweeps are a
 // recovery fallback, not a substitute for worker and external deadline limits.
 type RecoveryScanner struct {
-	workspaces *WorkspaceScanner
-	orphans    *OrphanScanner
-	captures   *CaptureRecovery
-	store      *workerstore.Store
-	reaper     *Reaper
-	revalidate func(context.Context, sandbox.Job) error
-	now        func() time.Time
-	pageSize   int
+	credentials *CredentialScanner
+	workspaces  *WorkspaceScanner
+	orphans     *OrphanScanner
+	captures    *CaptureRecovery
+	store       *workerstore.Store
+	reaper      *Reaper
+	revalidate  func(context.Context, sandbox.Job) error
+	now         func() time.Time
+	pageSize    int
 }
 
 // NewRecoveryScanner requires explicit grant revalidation and a bounded page.
 func NewRecoveryScanner(cfg RecoveryConfig) (*RecoveryScanner, error) {
-	if cfg.Workspaces != nil && (cfg.Workspaces.store != cfg.Store || cfg.Workspaces.reaper != cfg.Reaper) {
+	if cfg.Credentials != nil && (cfg.Credentials.gate == nil || !cfg.Credentials.boundTo(cfg.Store, cfg.Reaper)) {
+		return nil, fmt.Errorf("cortex: credential recovery uses another journal or reaper")
+	}
+	if cfg.Workspaces != nil && !cfg.Workspaces.boundTo(cfg.Store, cfg.Reaper) {
 		return nil, fmt.Errorf("cortex: workspace recovery uses another journal or reaper")
 	}
-	if cfg.Orphans != nil && (cfg.Orphans.store != cfg.Store || cfg.Orphans.reaper != cfg.Reaper) {
+	if cfg.Orphans != nil && !cfg.Orphans.boundTo(cfg.Store, cfg.Reaper) {
 		return nil, fmt.Errorf("cortex: orphan recovery uses another journal or reaper")
 	}
 	if cfg.Captures != nil && cfg.Captures.store != cfg.Store {
@@ -79,7 +85,7 @@ func NewRecoveryScanner(cfg RecoveryConfig) (*RecoveryScanner, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &RecoveryScanner{workspaces: cfg.Workspaces, orphans: cfg.Orphans, captures: cfg.Captures, store: cfg.Store, reaper: cfg.Reaper, revalidate: cfg.Revalidate, now: cfg.Now, pageSize: cfg.PageSize}, nil
+	return &RecoveryScanner{credentials: cfg.Credentials, workspaces: cfg.Workspaces, orphans: cfg.Orphans, captures: cfg.Captures, store: cfg.Store, reaper: cfg.Reaper, revalidate: cfg.Revalidate, now: cfg.Now, pageSize: cfg.PageSize}, nil
 }
 
 // Recover reconciles every outstanding acceptance before the daemon admits work.
@@ -114,6 +120,11 @@ func (s *RecoveryScanner) Recover(ctx context.Context) (RecoveryReport, error) {
 		workspaces, workspaceErr := s.workspaces.Recover(ctx)
 		report.Workspaces = workspaces
 		first = errors.Join(first, workspaceErr)
+	}
+	if s.credentials != nil && ctx.Err() == nil {
+		credentials, credentialErr := s.credentials.Recover(ctx)
+		report.Credentials = credentials
+		first = errors.Join(first, credentialErr)
 	}
 	if s.captures != nil && ctx.Err() == nil {
 		captures, captureErr := s.captures.Recover(ctx)

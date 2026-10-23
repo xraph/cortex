@@ -22,14 +22,15 @@ import (
 // The owning daemon must recover outstanding claims on startup and monitor
 // accepted deadlines independently of request contexts.
 type Launcher struct {
-	store     *workerstore.Store
-	reaper    *Reaper
-	profile   LaunchProfile
-	authorize func(context.Context, sandbox.Job) error
-	now       func() time.Time
-	preflight func(context.Context, LaunchProfile, id.ID) error
-	prepare   func(context.Context, LaunchProfile, workerstore.Claim) error
-	start     func(context.Context, id.ID) error
+	credentialGate *credentialGate
+	store          *workerstore.Store
+	reaper         *Reaper
+	profile        LaunchProfile
+	authorize      func(context.Context, sandbox.Job) error
+	now            func() time.Time
+	preflight      func(context.Context, LaunchProfile, id.ID) error
+	prepare        func(context.Context, LaunchProfile, workerstore.Claim) error
+	start          func(context.Context, id.ID) error
 }
 
 // NewLauncher requires current host authorization. The callback must bind the
@@ -131,7 +132,11 @@ func acknowledge(record workerstore.Record) error {
 }
 
 func (l *Launcher) dispatch(ctx context.Context, receipt sandbox.Receipt, claim workerstore.Claim) error {
-	if err := l.prepare(ctx, l.profile, claim); err != nil {
+	prepare := l.prepare
+	if l.credentialGate != nil {
+		prepare = l.credentialGate.prepare(l.store, prepare)
+	}
+	if err := prepare(ctx, l.profile, claim); err != nil {
 		return err
 	}
 	if err := l.preflight(ctx, l.profile, receipt.Job.ID); err != nil {

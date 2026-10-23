@@ -100,7 +100,11 @@ func AssembleDaemon(ctx context.Context, cfg HostConfig) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	scanner, err := NewRecoveryScanner(RecoveryConfig{Workspaces: workspaces, Orphans: orphans, Store: cfg.Store, Reaper: cfg.Reaper, Captures: captures, PageSize: cfg.PageSize, Now: cfg.Broker.Now, Revalidate: installedRevalidation(cfg.Store, cfg.Revalidate, attest)})
+	credentials, err := NewCredentialScanner(OrphanConfig{Store: cfg.Store, Reaper: cfg.Reaper, MaxUnits: cfg.DiscoveryLimit, PageSize: cfg.PageSize}, filepath.Join(settings.Service.StateDirectory, "launch"))
+	if err != nil {
+		return nil, err
+	}
+	scanner, err := NewRecoveryScanner(RecoveryConfig{Credentials: credentials, Workspaces: workspaces, Orphans: orphans, Store: cfg.Store, Reaper: cfg.Reaper, Captures: captures, PageSize: cfg.PageSize, Now: cfg.Broker.Now, Revalidate: installedRevalidation(cfg.Store, cfg.Revalidate, attest)})
 	if err != nil {
 		return nil, err
 	}

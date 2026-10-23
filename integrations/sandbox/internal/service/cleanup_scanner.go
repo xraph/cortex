@@ -122,3 +122,7 @@ func (s *cleanupScanner) check(ctx context.Context, key id.ID, report *CleanupRe
 	}
 	return errors.Join(readErr, stopErr, ctx.Err())
 }
+
+func (s *cleanupScanner) boundTo(store *workerstore.Store, reaper *Reaper) bool {
+	return s != nil && s.store == store && s.reaper == reaper && s.discover != nil && s.cleanup != nil
+}

@@ -39,6 +39,9 @@ func hostFixture(t *testing.T) (HostConfig, WorkerConfig, *hostManager) {
 	if err := os.Mkdir(filepath.Join(settings.Service.StateDirectory, "workspaces"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(settings.Service.StateDirectory, "launch"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	store, err := workerstore.Open(t.Context(), workerstore.Config{Database: filepath.Join(settings.Service.StateDirectory, "worker.db"), Broker: settings.Broker, PublicKey: settings.BrokerPublicKey, MaxJobs: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -323,5 +326,70 @@ func TestHostAssemblyReclaimsRetainedWorkspacesBeforeAdmission(t *testing.T) {
 	}
 	if _, err = AssembleDaemon(t.Context(), cfg); err == nil {
 		t.Fatal("missing workspace root accepted")
+	}
+}
+
+func TestHostAssemblyReclaimsLaunchCredentials(t *testing.T) {
+	cfg, settings, _ := hostFixture(t)
+	root := filepath.Join(settings.Service.StateDirectory, "launch")
+	key := id.New(sandbox.PrefixJob)
+	directory := filepath.Join(root, key.String())
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "claim.tmp"), []byte("interrupted credential"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := AssembleDaemon(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := daemon.cfg.Controller.scanner.Recover(t.Context())
+	if err != nil || report.Credentials.Cleaned != 1 {
+		t.Fatal(report, err)
+	}
+	if _, err = os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("credential survived recovery", err)
+	}
+	if err = os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AssembleDaemon(t.Context(), cfg); err == nil {
+		t.Fatal("missing launch directory accepted")
+	}
+}
+
+func TestHostAssemblyCredentialPublicationCannotReappear(t *testing.T) {
+	launcher, receipt, _ := launcherFixture(t)
+	root := filepath.Join(launcher.profile.StateDirectory, "launch")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	scanner, err := NewCredentialScanner(OrphanConfig{Store: launcher.store, Reaper: launcher.reaper, MaxUnits: 10, PageSize: 2}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := launcher.store.Claim(t.Context(), receipt.Job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare := scanner.gate.prepare(launcher.store, func(ctx context.Context, profile LaunchProfile, owned workerstore.Claim) error {
+		return writeCredential(ctx, profile, owned, 0)
+	})
+	if err = prepare(t.Context(), launcher.profile, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = launcher.reaper.Reap(t.Context(), launcher.store, receipt.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	report, err := scanner.Recover(t.Context())
+	if err != nil || report.Cleaned != 1 {
+		t.Fatal(report, err)
+	}
+	if err = prepare(t.Context(), launcher.profile, claim); err == nil {
+		t.Fatal("credential recreated after cleanup")
+	}
+	if _, err = os.Stat(filepath.Join(root, receipt.Job.ID.String())); !os.IsNotExist(err) {
+		t.Fatal("credential directory returned", err)
 	}
 }
