@@ -477,16 +477,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			st.failedAttempt(0, cfg, r)
 			e.failRun(ctx, r, ag.ID, err, startedAt)
 			stepSpan.finish(stepError, err)
-			sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
-				"message": err.Error(),
-			}})
+			sendEvent(ctx, events, runErrorEvent(r, err))
 			return
 		}
 
 		if stream == nil {
 			st.failedAttempt(0, cfg, r)
 			if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopInvalidResponse, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
-				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}})
+				sendEvent(ctx, events, runErrorEvent(r, err))
 			} else {
 				sendEvent(ctx, events, outcomeEvent(r, time.Since(startedAt)))
 			}
@@ -515,12 +513,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				_ = stream.Close()
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
-				message := ctx.Err().Error()
+				failure := ctx.Err()
 				if terminalErr != nil {
-					message = terminalErr.Error()
+					failure = terminalErr
 				}
 				stepSpan.finish(stepStopped, nil)
-				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": message}})
+				sendEvent(ctx, events, runErrorEvent(r, failure))
 
 				return
 			default:
@@ -536,9 +534,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				e.failRun(ctx, r, ag.ID, err, startedAt)
 				stepSpan.finish(stepError, err)
-				sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
-					"message": err.Error(),
-				}})
+				sendEvent(ctx, events, runErrorEvent(r, err))
 				return
 			}
 
@@ -754,9 +750,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				if err != nil {
 					e.failRun(ctx, r, ag.ID, err, startedAt)
 					stepSpan.finish(stepError, err)
-					sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{
-						"message": err.Error(),
-					}})
+					sendEvent(ctx, events, runErrorEvent(r, err))
 					return
 				}
 				// A streaming caller that never learns the run paused
@@ -792,7 +786,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	// Complete the run.
 	completedAt := time.Now().UTC()
 	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: stopReason, FinishReason: lastFinishReason, Output: finalOutput, StepCount: st.stepIndex, TokensUsed: st.tokensUsed, CompletedAt: completedAt}); err != nil {
-		sendEvent(ctx, events, StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}})
+		sendEvent(ctx, events, runErrorEvent(r, err))
 		return
 	}
 

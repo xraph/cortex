@@ -226,5 +226,12 @@ and pending tool membership before claiming and again before continuing.
 
 Schema-3/4 required snapshots must be drained or re-prepared; ordinary schema 2
 remains supported. This closes initial-context binding. Dynamic tool-result
-evidence, transport mapping, durable effect receipts and public delivery remain
+evidence, durable effect receipts and public delivery remain
 open in S2.2 and its dependent packets.
+
+
+The public-error pass maps unverified/unavailable outcomes to stable, redacted
+recovery metadata across REST, dashboard commands and SSE. Automatic retry is
+not advertised, and available run IDs survive failed command dispatch. REST
+stream startup errors preserve normal HTTP headers; a failed SSE write cancels
+the owned execution context. Durable public delivery is still open.

@@ -50,7 +50,14 @@ func command[I, O any](d *dispatcher.Dispatcher, s *service, name, permission st
 		if decodeErr := json.Unmarshal(raw, &resource); decodeErr != nil {
 			return out, bad("Invalid command parameters")
 		}
-		err = s.write(ctx, p, name, resource.ID, func() error { var callErr error; out, callErr = fn(ctx, in); return callErr })
+		err = s.write(ctx, p, name, resource.ID, func() error {
+			var callErr error
+			out, callErr = fn(ctx, in)
+			if current, ok := any(out).(*run.Run); ok {
+				return mapRunError(callErr, current)
+			}
+			return callErr
+		})
 		return out, err
 	})
 }

@@ -403,3 +403,19 @@ writers are unsupported because older writers do not enforce this binding.
 
 This captures the initial conversation. Tool-result evidence, crash recovery for
 external effects and durable result delivery remain separate work.
+
+
+## Verification failures on public transports
+
+REST callers now receive HTTP 409 for `ErrRunUnverified` and HTTP 503 for
+`ErrVerificationUnavailable`. Both responses add safe `details` to the existing
+`error`/numeric `code` envelope. Read `details.code` for `run_unverified` or
+`verification_unavailable`; `run_id`, `state` and `verification_status` appear
+when the engine returned a run. `retryable` is false. Dashboard commands use
+`CONFLICT`/`UNAVAILABLE` with the same details, and SSE errors carry them directly.
+
+Remove automatic run retries for these failures. Inspect saved work and use its
+stable intent/job identities for recovery. Wrapped private diagnostics are no
+longer forwarded by these mappings. The REST stream handler also waits for
+successful startup before setting SSE headers and cancels its execution context
+when writing to the client fails. Cancellation does not roll back tool effects.

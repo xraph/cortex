@@ -2449,3 +2449,38 @@ Validation for input binding:
   passed. Docs type checking, lint and production build passed. Three local
   shadowing warnings were fixed before the final lint run.
 - CI for preceding commit `50c4005` passed (run `39933521329`).
+
+
+## Verification failure transport semantics
+
+The runtime, REST API and dashboard share a safe verification failure projection.
+It preserves stable failure code and available run identity/state without output
+or wrapped diagnostics. REST maps rejected verification to 409 and unavailable
+verification to 503. Dashboard commands use conflict/unavailable and preserve run
+identity through the generic audited command wrapper. Neither advertises retry;
+SSE errors include the same recovery fields.
+
+Tests first reproduced missing stream failure codes, premature SSE headers on
+startup failure and a provider left running after an SSE writer disconnected.
+The handler now sets headers after startup and cancels only its owned context.
+A lost evaluator reply remains pending with its durable job identity discoverable
+from the streamed run ID. That regression checks that generation and evaluation
+are not retried automatically. Generic dashboard command dispatch is covered too.
+
+This completes the current public-error mapping pass. It does not implement
+crash-atomic effects, tool-result evidence, a recovery scheduler or durable event
+replay. Those remain required by S2.2 and the later coordination/delivery packets.
+
+
+Validation for transport semantics:
+
+- Full engine/run race suites passed (218.471s and 1.311s). Run tests passed
+  again after the final JSON schema annotations (1.179s).
+- API race tests passed on the final response schema (1.511s), including failed
+  startup headers and provider cancellation after a disconnected writer.
+  Dashboard contract race tests passed (18.624s), including audited command
+  dispatch with a failed run and its recovery identity.
+- Final formatting, all ten module lint checks, root build, diff checks and docs
+  type/lint/build checks passed. No dependency changes were needed.
+- CI for `914de4d` has passed docs, format, submodules, lint, security and verify;
+  its root test job was still running at this packet's final check.

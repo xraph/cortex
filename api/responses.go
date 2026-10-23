@@ -134,3 +134,11 @@ type A2AConversationResponse struct {
 type AgentInboxResponse struct {
 	Items []a2a.InboxItem `json:"items"`
 }
+
+// VerificationFailureResponse carries safe recovery metadata for a failed run.
+// Details is optional because other conflicts can share the HTTP status code.
+type VerificationFailureResponse struct {
+	Error   string                   `json:"error"`
+	Code    int                      `json:"code"`
+	Details *run.VerificationFailure `json:"details,omitempty"`
+}

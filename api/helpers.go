@@ -7,6 +7,7 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
 )
 
@@ -14,6 +15,9 @@ import (
 func mapStoreError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if failure, ok := run.DescribeVerificationFailure(err, nil); ok {
+		return verificationHTTPError{failure: failure}
 	}
 	switch {
 	case errors.Is(err, cortex.ErrRunConflict):

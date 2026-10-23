@@ -505,6 +505,24 @@ Neither path releases an answer or a `done` event. The saved run can be executio
 A2A projects pending required verification as working and rejects unverified
 completion artifacts.
 
+REST maps `ErrRunUnverified` to HTTP 409 and `ErrVerificationUnavailable` to
+HTTP 503. Both retain the standard `error` and numeric `code` fields and add
+safe `details` with a stable `code` (`run_unverified` or
+`verification_unavailable`), `message` and `retryable: false`. If the engine
+returns a run, the details include `run_id`, `state` and `verification_status`.
+Dashboard commands return the same details under `CONFLICT` or `UNAVAILABLE`.
+SSE `error` events carry those fields directly.
+
+Inspect the saved run before deciding what to do next. An unavailable verifier
+can already have a running evaluation or committed work, so a new run may repeat
+generation or tool effects. Recover through the saved intent/job identities and
+the authorized verification worker. A missing run ID does not prove that no work
+was saved. These errors omit candidate text and wrapped diagnostics.
+
+The REST streaming handler sets SSE headers after startup succeeds. A failed
+write cancels its provider context; this asks in-flight work to stop but cannot
+undo an external effect or guarantee that a provider honors cancellation.
+
 Checked-segment publication remains unsupported: required answers must wait for
 whole-result verification. Tool-free snapshots reject unexpected tool calls;
 tool-enabled snapshots enforce their frozen allowlist and current tool authority.

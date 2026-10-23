@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/run"
 )
 
 const ContributorName = "cortex"
@@ -159,6 +160,9 @@ func scopeFromClaims(p dc.Principal, fallback cortex.Scope) (cortex.Scope, error
 func mapError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if failure, ok := run.DescribeVerificationFailure(err, nil); ok {
+		return verificationError(failure)
 	}
 	var ce *dc.Error
 	if errors.As(err, &ce) {

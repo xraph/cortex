@@ -136,3 +136,12 @@ func (e *Engine) emitTerminalOutcome(ctx context.Context, r *run.Run) {
 	e.instr.runFinished(r)
 	e.extensions.EmitRunTerminated(ctx, r.AgentID, r.ID, r.TerminalSummary())
 }
+
+// runErrorEvent shares safe verification failure metadata with HTTP and dashboard
+// adapters. Other errors retain their existing checked message contract.
+func runErrorEvent(r *run.Run, err error) StreamEvent {
+	if failure, ok := run.DescribeVerificationFailure(err, r); ok {
+		return StreamEvent{Type: EventError, Data: failure.Fields()}
+	}
+	return StreamEvent{Type: EventError, Data: map[string]any{"message": err.Error()}}
+}

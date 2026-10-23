@@ -200,6 +200,12 @@ func TestRequiredVerificationStream(t *testing.T) {
 				require.Equal(t, engine.EventDone, delivered[len(delivered)-1].Type)
 			} else {
 				require.NotContains(t, string(raw), "private-candidate")
+				last := delivered[len(delivered)-1]
+				require.Equal(t, engine.EventError, last.Type)
+				require.Equal(t, "run_unverified", last.Data["code"])
+				require.Equal(t, false, last.Data["retryable"])
+				require.Equal(t, string(status), last.Data["verification_status"])
+				require.NotEmpty(t, last.Data["run_id"])
 				for _, event := range delivered {
 					require.NotEqual(t, engine.EventDone, event.Type)
 				}
@@ -577,4 +583,38 @@ func TestRequiredVerificationConcurrentCaptureCannotImplySuccess(t *testing.T) {
 	require.Empty(t, r.Output)
 	require.Equal(t, verification.StatusPending, r.VerificationStatus)
 	require.Zero(t, f.adapter.evaluations)
+}
+
+func TestRequiredVerificationStreamUncertainRecoveryMetadata(t *testing.T) {
+	f := newWorkerFixture(t)
+	f.adapter.lost = true
+	client := &requiredClient{chunks: []llm.Chunk{{Content: "SECRET candidate", FinishReason: "stop"}}}
+	e, ag, overrides := requiredSetup(t, f, client)
+	events := make(chan engine.StreamEvent, 20)
+	require.NoError(t, e.StreamAgent(f.ctx, ag.Name, "work", overrides, events))
+	var last engine.StreamEvent
+	for event := range events {
+		require.NotEqual(t, engine.EventDone, event.Type)
+		require.NotEqual(t, engine.EventToken, event.Type)
+		last = event
+	}
+	require.Equal(t, engine.EventError, last.Type)
+	require.Equal(t, "verification_unavailable", last.Data["code"])
+	require.Equal(t, false, last.Data["retryable"])
+	require.Equal(t, "pending", last.Data["verification_status"])
+	runID, err := id.ParseAgentRunID(last.Data["run_id"].(string))
+	require.NoError(t, err)
+	saved, err := f.storage.GetRun(f.ctx, runID)
+	require.NoError(t, err)
+	require.Empty(t, saved.Output)
+	intent, err := f.storage.GetRunCaptureIntent(f.ctx, runID)
+	require.NoError(t, err)
+	job, err := f.storage.GetVerificationJob(f.ctx, intent.Template.ID)
+	require.NoError(t, err)
+	require.Equal(t, verification.JobRunning, job.State)
+	require.Equal(t, 1, f.adapter.evaluations)
+	raw, err := json.Marshal(last.Data)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "SECRET")
+	require.NotContains(t, string(raw), "lost provider reply")
 }

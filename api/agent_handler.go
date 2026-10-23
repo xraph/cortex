@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -73,6 +74,8 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 		forge.WithDescription("Executes an agent with the given input and returns the result."),
 		forge.WithOperationID("runAgent"),
 		forge.WithRequestSchema(RunAgentRequest{}),
+		forge.WithResponseSchema(http.StatusConflict, "Run did not pass required verification", VerificationFailureResponse{}),
+		forge.WithResponseSchema(http.StatusServiceUnavailable, "Verification unavailable; inspect saved work before retrying", VerificationFailureResponse{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register agent routes: %w", err)
@@ -83,6 +86,8 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 		forge.WithDescription("Executes an agent with streaming SSE output."),
 		forge.WithOperationID("streamAgent"),
 		forge.WithRequestSchema(StreamAgentRequest{}),
+		forge.WithResponseSchema(http.StatusConflict, "Run did not pass required verification", VerificationFailureResponse{}),
+		forge.WithResponseSchema(http.StatusServiceUnavailable, "Verification unavailable; inspect saved work before retrying", VerificationFailureResponse{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register agent routes: %w", err)
@@ -238,7 +243,7 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 
 	r, err := a.eng.RunAgent(ctx.Context(), req.Name, req.Input, mapOverrides(req.Overrides))
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, mapRunError(err, r)
 	}
 
 	var durationMs int64
@@ -266,16 +271,16 @@ func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}
 		return nil, forge.BadRequest("input is required")
 	}
 
+	runCtx, cancel := context.WithCancel(ctx.Context())
+	defer cancel()
+	events := make(chan engine.StreamEvent, 64)
+	if err := a.eng.StreamAgent(runCtx, req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
+		return nil, mapStoreError(err)
+	}
 	ctx.SetHeader("Content-Type", "text/event-stream")
 	ctx.SetHeader("Cache-Control", "no-cache")
 	ctx.SetHeader("Connection", "keep-alive")
 	ctx.SetHeader("X-Accel-Buffering", "no")
-
-	events := make(chan engine.StreamEvent, 64)
-
-	if err := a.eng.StreamAgent(ctx.Context(), req.Name, req.Input, mapOverrides(req.Overrides), events); err != nil {
-		return nil, mapStoreError(err)
-	}
 
 	for evt := range events {
 		if err := ctx.WriteSSE(string(evt.Type), evt.Data); err != nil {
