@@ -319,6 +319,8 @@ func toolOutcomeLabel(o toolOutcome) string {
 		return "denied"
 	case outcomePending:
 		return "pending"
+	case outcomeUncertain:
+		return "uncertain"
 	default:
 		return labelUnknown
 	}
@@ -674,7 +676,7 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 		switch {
 		case !returned:
 			label, failErr = "failed", telemetry.ErrPanic
-		case outcome == outcomeFailed:
+		case outcome == outcomeFailed || outcome == outcomeUncertain:
 			failErr = failure.err
 			if failErr == nil {
 				failErr = errToolFailed

@@ -643,10 +643,21 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
 	}
 
+	var executionErr error
 	if openedASuspendedRun(cp) {
 		if decision.Approved {
 			if err := e.resumeApproved(ctx, cp); err != nil {
-				return err
+				if !errors.Is(err, cortex.ErrEffectUncertain) {
+					return err
+				}
+				// Approval took effect even though its external action is
+				// unresolved. Confirm the durable stop before recording the
+				// decision; a failed terminal write must not count as one.
+				saved, readErr := e.store.GetRun(ctx, cp.RunID)
+				if readErr != nil || saved == nil || !isTerminalRunState(saved.State) || saved.Error != cortex.ErrEffectUncertain.Error() {
+					return err
+				}
+				executionErr = err
 			}
 		} else if err := e.failRejected(ctx, cp, decision); err != nil {
 			return err
@@ -660,10 +671,10 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 	// visible and it is recoverable, which is more than the reverse
 	// order offers.
 	if err := e.store.Resolve(ctx, cpID, decision); err != nil {
-		return fmt.Errorf("record checkpoint %s as resolved after acting on it: %w", cpID, err)
+		return errors.Join(executionErr, fmt.Errorf("record checkpoint %s as resolved after acting on it: %w", cpID, err))
 	}
 	e.extensions.EmitCheckpointResolved(ctx, cpID, decisionLabel(decision))
-	return nil
+	return executionErr
 }
 
 // openedASuspendedRun reports whether the loop wrote this checkpoint, and

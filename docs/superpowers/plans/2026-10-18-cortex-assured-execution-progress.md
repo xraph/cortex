@@ -25,7 +25,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
-| S3.4 | active | this chat | Durable effect reservations, immutable provider receipts and explicit recovery executor implemented; engine integration, retries, compensation, conflict handling and worker fencing remain open |
+| S3.4 | active | this chat | Durable effect reservations, provider receipts, recovery executor and explicit engine handlers implemented; operation discovery, continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3674,3 +3674,60 @@ supervisor calls. Production deadline and cleanup behavior is unchanged.
 Both deadline cases passed 100 repetitions under the race detector (5.333s).
 The complete verification race suite passed (5.666s), as did formatting,
 all-module lint and diff checks. Effect recovery is committed as `c88f71c`.
+
+### S3.4 explicit engine effect handlers and uncertain stops
+
+CI run 39991896222 passed for `bea9d39`, including effect persistence and the
+sandbox deadline fixture correction.
+
+`engine.NewEffectToolHandler` connects a host-registered `EffectExecutor` to
+`WithTool`. Its resolver returns the retained operation for the invocation; it
+must preserve the original request across retries and worker replacement. The
+helper checks exact scope, run, tool, argument digest and call identity before
+reservation, and gives the resolver a detached scope. It returns provider outcome
+and external identity/version while retaining private evidence and authority
+references in the journal. Resolution and execution share `MaxEffectDuration`.
+No ordinary handler acquires an inferred idempotency or reconciliation contract.
+
+A typed `ErrEffectUncertain` now stops synchronous, streamed and approved calls
+before remaining sibling tools or another model request. The engine records an incomplete
+run with `tool_error` and a fixed uncertainty error, while preserving existing
+cancellation/deadline outcomes. It does not save an unfinished tool exchange to
+conversation history or evaluate it as a required-verification candidate.
+Streaming never reports successful completion for an uncertain action, including
+when a conflicting terminal row is already present. A failed terminal write
+emits the fixed uncertainty error without announcing a durable incomplete state.
+Tool telemetry records the bounded `uncertain` outcome.
+
+Approval is recorded separately from provider outcome. An approved action that
+becomes uncertain retains the human's decision after the engine confirms its
+durable stop. Repeating that checkpoint decision cannot dispatch again. A failed
+terminal write leaves the decision pending for host audit, and the consumed
+suspension prevents repeated execution. This retains the existing non-atomic
+checkpoint/run boundary; it does not claim a transaction across provider effects.
+
+Behavioral red tests reproduced continued model/sibling execution after an
+uncertain effect, an empty direct-dispatch result, a pending approval after the
+run stopped, unbounded operation resolution, a lost run deadline during approval
+resume, a misleading verification-outage stream error and a success event from
+a conflicting terminal row. Those tests pass after the corresponding fixes.
+SQLite-backed handler tests cover acknowledged writes, lost replies and journal
+reopen with one provider dispatch. Adversarial cases reject mismatched scope,
+run, tool, arguments, expired requests, resolver mutation and missing identities.
+Required-verification fixtures cover synchronous, streamed and approved calls,
+with no evaluator call, accepted result or private tool content on uncertainty.
+
+The host still owns durable operation allocation, current authority and the
+qualified provider adapter. Reconciliation records provider knowledge; it does
+not automatically resume an incomplete run or verify the task. Operation
+discovery, governed continuation, shared budgets, retry policy, compensation,
+artifact conflicts and scheduler fencing remain open. The four-stage goal is
+active, and Linux qualification remains deferred.
+
+Final validation for the engine integration: `GOWORK=off go test -race ./engine
+./execution -count=1` passed on the finished code (engine 344.253s, execution
+1.218s). The earlier full run also passed before the final deadline/streaming
+corrections; those corrections have behavioral red/green tests and were included
+in the final full run. Formatting, all-module lint, root build, documentation
+typecheck/lint/build and diff checks passed. The provider and authorization ports
+in these tests are fixtures, not installed-service qualification.

@@ -58,7 +58,7 @@ func (e *Engine) emitToolDenied(ctx context.Context, runID id.AgentRunID, name, 
 }
 
 func closedRequiredError(err error) error {
-	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, cortex.ErrResultsMismatch, cortex.ErrInvalidContinuation, cortex.ErrInvalidPrepared, cortex.ErrMaxStepsReached, cortex.ErrRunUnverified} {
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, cortex.ErrResultsMismatch, cortex.ErrInvalidContinuation, cortex.ErrInvalidPrepared, cortex.ErrMaxStepsReached, cortex.ErrRunUnverified, cortex.ErrEffectUncertain} {
 		if errors.Is(err, sentinel) {
 			return sentinel
 		}

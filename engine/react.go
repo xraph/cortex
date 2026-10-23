@@ -307,6 +307,11 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				if outcome == outcomeUncertain {
+					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
+					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
+					return r, errors.Join(cortex.ErrEffectUncertain, terminalErr)
+				}
 				if outcome == outcomePending {
 					// No tool call row: nothing ran, and a row with a
 					// completion timestamp on it would be a lie the
@@ -704,6 +709,16 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				}})
 
 				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				if outcome == outcomeUncertain {
+					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
+					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
+					if terminalErr != nil || r.State == run.StateCompleted {
+						sendEvent(ctx, events, runErrorEvent(r, cortex.ErrEffectUncertain))
+					} else {
+						sendEvent(ctx, events, outcomeEvent(r, time.Since(startedAt)))
+					}
+					return
+				}
 				if outcome == outcomePending {
 					pending.add(tc, pendingReason)
 					continue
@@ -993,6 +1008,8 @@ const (
 	outcomeCompleted toolOutcome = iota
 	outcomeFailed
 	outcomeDenied
+	// outcomeUncertain stops the run before another effect or model step.
+	outcomeUncertain
 	// outcomePending means the call is waiting on something outside the
 	// engine and has not ended at all yet, so none of the three terminal
 	// events is owed for it. The loop collects these across the whole
@@ -1034,7 +1051,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 	}
 
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
-	if outcome == outcomeFailed {
+	if outcome == outcomeFailed || outcome == outcomeUncertain {
 		noteToolFailure(ctx, failErr)
 		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
@@ -1078,6 +1095,9 @@ func (e *Engine) dispatchTool(ctx context.Context, s cortex.Subject, tc llm.Tool
 	for _, rt := range e.tools {
 		if rt.def.Name == tc.Name {
 			out, err := rt.handler(ctx, inv)
+			if errors.Is(err, cortex.ErrEffectUncertain) {
+				return "", outcomeUncertain, cortex.ErrEffectUncertain
+			}
 			if err != nil {
 				return jsonResult("error", err.Error()), outcomeFailed, err
 			}

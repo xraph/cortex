@@ -1145,6 +1145,49 @@ terminal receipts fail without overwriting history.
 Retain journal rows for as long as delayed deliveries or provider effects remain
 possible. The host must retain its operation-to-run mapping, protect direct store
 access and supply the pinned provider adapter. Automatic retries, compensation,
-scheduler fencing, atomic event publication and engine tool integration remain
-open work. The crash fixture checks a durable local file write followed by a
+scheduler fencing and atomic task/event updates remain open work. The crash fixture checks a durable local file write followed by a
 killed process and SQLite recovery; it does not qualify a production provider.
+
+
+### Connect effect recovery to engine tools
+
+Build an `execution.EffectExecutor` with your durable store, registered provider
+adapters and current authorizer. Pass it to `engine.NewEffectToolHandler` with an
+`EffectRequestResolver`, then register the returned handler through `WithTool`.
+Pin the implementation with `WithToolRevision`, using the revision registered in
+the executor. Existing publication checks still screen the tool's arguments and
+result.
+
+Your resolver owns the durable operation-to-run mapping. Return the original
+complete request when a worker retries or resumes the same logical operation.
+A model-provided call ID does not authorize another action, and an uncertain
+outcome must never cause the resolver to allocate a replacement key. The helper
+checks the exact scope, run, tool and argument digest before dispatch. It requires
+an agent/run identity, so `Dispatch`, which has neither, cannot execute it.
+Resolution and execution share the executor's 30-second bound.
+
+Successful handler responses contain `effect_status`, `external_id` and
+`external_version`. Provider evidence references and authority bindings stay in
+the journal. `applied` means the provider acknowledged the action; `not_applied`
+means its adapter established that the original attempt cannot later apply.
+Neither status is an acceptance check.
+
+A handler error matching `cortex.ErrEffectUncertain` stops synchronous, streamed
+and approved execution before remaining sibling tools or another model request. The run
+records `incomplete` with `tool_error` and the fixed uncertainty error, unless an
+existing cancellation or deadline determines its terminal state. Private provider
+errors and unfinished tool messages are not published as results. Required
+verification does not evaluate or publish a candidate from this stop.
+
+Approval remains a separate fact. When an approved action becomes uncertain,
+the engine records the approval after confirming the durable stop, then returns
+the uncertainty error. Repeating the checkpoint decision cannot run the action
+again. If the terminal write fails, the checkpoint remains pending for host audit;
+the claimed suspension still prevents repeated dispatch.
+
+Reconcile the retained request through `EffectExecutor.Reconcile` with current
+host authorization. Saving a recovered provider receipt does not resume the run,
+mark its task correct or publish an answer. Durable operation discovery, governed
+continuation after reconciliation and scheduler ownership are still required for
+automatic recovery. The SQLite-backed engine fixture verifies journal reopen and
+zero duplicate dispatch; you still need to qualify your installed provider.

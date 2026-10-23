@@ -10,6 +10,9 @@ import (
 	"github.com/xraph/cortex/evidence"
 )
 
+// MaxEffectDuration bounds one dispatch or reconciliation, including host resolution.
+const MaxEffectDuration = 30 * time.Second
+
 // EffectAction lets host policy distinguish mutations from recovery reads.
 type EffectAction string
 
@@ -117,7 +120,7 @@ func (e *EffectExecutor) perform(ctx context.Context, request EffectRequest, arg
 	default:
 		return EffectReceipt{}, ErrEffectUnavailable
 	}
-	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bounded, cancel := context.WithTimeout(ctx, MaxEffectDuration)
 	defer cancel()
 	action := EffectActionReconcile
 	if !recoverOnly {

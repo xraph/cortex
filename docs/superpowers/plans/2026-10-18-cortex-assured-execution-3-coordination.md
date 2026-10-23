@@ -89,9 +89,10 @@ reserve operations before dispatch and recover through read-only reconciliation.
 All three built-in stores share the immutable reservation/receipt implementation.
 The executor pins trusted handler metadata and rechecks current authority. It
 never automatically repeats a mutation. A killed-process fixture checks that a
-completed external file write is reconciled without a second write. Engine tool
-wiring, retry policy execution, compensation, artifact conflict handling, scheduler
-fences and durable events remain open; the full packet stays unchecked.
+completed external file write is reconciled without a second write. Explicit engine tool handlers now use that executor, and uncertainty stops normal,
+streamed and approved execution. Durable operation discovery, governed continuation,
+retry policy execution, compensation, artifact conflict handling, scheduler fences
+and durable events remain open; the full packet stays unchecked.
 
 ## S3.5: Shared budgets and bounded replanning
 

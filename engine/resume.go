@@ -348,6 +348,13 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 	toolCtx, cancelTools := runDeadline(ctx, resumeConfig)
 	resultErr := e.recordResumedCalls(toolCtx, ag, r, susp, in.ToolResults, st, resumeConfig)
+	if errors.Is(resultErr, cortex.ErrEffectUncertain) {
+		// Preserve an elapsed run deadline before releasing this context.
+		// Cancelling it first would mislabel every uncertain action cancelled.
+		terminalErr := e.finalizeUncertainEffect(toolCtx, r, st)
+		cancelTools()
+		return nil, nil, errors.Join(cortex.ErrEffectUncertain, terminalErr)
+	}
 	cancelTools()
 	if resultErr != nil {
 		return nil, nil, e.stopPublication(ctx, r, st, resultErr)
@@ -478,6 +485,10 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
 		content, errText, outcome := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
+		if outcome == outcomeUncertain {
+			e.emitToolFailed(ctx, r.ID, p.Name, cortex.ErrEffectUncertain)
+			return cortex.ErrEffectUncertain
+		}
 		approved, checkErr := e.checkToolResult(ctx, ag, r, cfg.Publication, content, "tool_result")
 		if checkErr != nil {
 			return checkErr
@@ -584,6 +595,10 @@ func (e *Engine) runResumedTool(ctx context.Context, s cortex.Subject, call llm.
 	switch outcome {
 	case outcomeCompleted:
 		return out, outcomeCompleted
+	case outcomeUncertain:
+		noteToolFailure(ctx, cortex.ErrEffectUncertain)
+		*errText = cortex.ErrEffectUncertain.Error()
+		return "", outcomeUncertain
 	case outcomeFailed:
 		noteToolFailure(ctx, err)
 		*errText = err.Error()

@@ -36,6 +36,9 @@ func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 	// reads like a tool that ran and said nothing. The two reasons get
 	// their own sentence, because they send the caller to different
 	// places: one needs a result, the other needs a decision.
+	if outcome == outcomeUncertain {
+		return jsonResult("error", cortex.ErrEffectUncertain.Error())
+	}
 	if outcome == outcomePending {
 		if reason == suspension.ReasonApproval {
 			return jsonResult("error", "tool "+name+" requires approval: it is answered by resolving the checkpoint on a suspended run, not through Dispatch")
