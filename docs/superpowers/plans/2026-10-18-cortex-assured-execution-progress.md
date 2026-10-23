@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API and leased verification-job storage implemented; host deployment adapters, evaluator scheduling, runtime gates and public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs and budgeted evaluator-dispatch storage implemented; host deployment adapters, evaluator scheduling, runtime gates and public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -1981,3 +1981,62 @@ host authorization, clock configuration, evaluator dispatch, budget accounting,
 atomic engine finalization and public event delivery remain open. The scheduler
 must recover the window between captured output and job enqueue without rerunning
 generation or tools. G1 still gates runtime activation, and S2.2 remains active.
+
+
+## Evaluator dispatch and conservative accounting
+
+Baseline `5d14304` is pushed; CI run `39911840103` passed. This packet extends
+verification storage without activating engine verification gates.
+
+S2.2 ruling: one verifier name/revision group may be dispatched once within a
+budgeted job. Its durable call ID, assigned criteria and reserved allowance are
+saved before the provider call. A replacement worker may reconcile a retained
+outcome under its current lease, but changing the call ID cannot authorize a
+repeat. This follows the job's immutable accepted-criterion policy. The cost is
+that a lost acknowledgement before any provider invocation can consume an
+allowance until the host establishes what happened; safety takes precedence over
+a speculative retry. A new job still requires host approval and remaining budget.
+
+`JobRequest.EvaluationBudget` opts into bounded call, token and money accounting.
+Money accounting requires a pinned pricing revision; `TokenOnly` explicitly opts
+out of a monetary ceiling. A zero token limit permits zero-token checks only.
+`CallStore.BeginVerificationCall` acquires the same run transaction as job
+ownership, checks the current lease and remaining allowance, derives the assigned
+criteria from the saved contract and records dispatch. A committed begin grants
+one invocation. Repeated begins return `ErrCallUncertain` and never grant another.
+
+`CompleteVerificationCall` detaches and validates the result, requires every
+assigned criterion exactly once, and saves usage, report and job progress in one
+transaction. Budgeted jobs reject direct report acceptance. Report validation and
+terminal-state decisions share the existing helper. Already dispatched optional
+checks remain pending until they settle, even after the required checks pass.
+An explicit evaluator failure records inconclusive verification. Unknown usage
+retains its full reservation; known usage requires a host-attributed receipt.
+Actual overruns remain visible and block later dispatch. Arithmetic saturates
+instead of wrapping. These are admission limits, not a provider billing guarantee.
+
+Tests first failed for the absent API, then for dispatch against the unimplemented
+store. Behavioral regressions also reproduced required-report persistence failing
+while an optional call was active, and a snapshot accepting a failed evaluator
+without terminalizing its job. Those cases now pass. Shared backend tests cover
+scope denial, changed receipts, wrong reports, unknown verifiers, overruns,
+concurrent calls competing for the same allowance, duplicate dispatch, lease
+takeover, transaction rollback and SQLite database reopen. A lost acknowledgement
+survives restart and still refuses another begin. Pure tests cover unknown versus
+known-zero usage, budget bounds, overflow, detached snapshots and invalid history.
+
+Final focused verification/job/result race checks passed on all three backends,
+including real PostgreSQL, MongoDB transactions and standalone MongoDB refusal.
+Scoped formatting, the ten-module lint gate, root build and diff checks passed.
+
+The full verification and all three backend race suites also passed: SQLite in
+227 seconds, PostgreSQL in 23 seconds and MongoDB in 22 seconds. Docs type
+generation, type checking, lint and the production build passed. The final
+focused run includes the later scope-denial and competing-budget cases.
+
+Remaining integration: the evaluator executor, trusted allowance/receipt adapters,
+provider reconciliation, allocation from the remaining run budget, captured-output
+recovery and public delivery. Terminal jobs retain unresolved reserved charges;
+a late-receipt accounting path remains open and those charges must not disappear
+when the host allocates a later job. Live provider/scanner qualification and G1
+still gate activation. This packet does not close S2.2 or the four-stage plan.

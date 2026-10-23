@@ -39,17 +39,21 @@ const (
 // JobRequest pins the captured candidate and contract. Scheduling never invokes
 // an agent or tool. A new verification attempt uses a new ID and run revision.
 type JobRequest struct {
-	SchemaVersion       int       `json:"schema_version"`
-	ID                  id.ID     `json:"id"`
-	ExpectedRunRevision int64     `json:"expected_run_revision"`
-	ContractID          id.ID     `json:"contract_id"`
-	Binding             Binding   `json:"binding"`
-	Deadline            time.Time `json:"deadline"`
-	MaxAttempts         int       `json:"max_attempts"`
+	SchemaVersion       int               `json:"schema_version"`
+	ID                  id.ID             `json:"id"`
+	ExpectedRunRevision int64             `json:"expected_run_revision"`
+	ContractID          id.ID             `json:"contract_id"`
+	Binding             Binding           `json:"binding"`
+	Deadline            time.Time         `json:"deadline"`
+	MaxAttempts         int               `json:"max_attempts"`
+	EvaluationBudget    *EvaluationBudget `json:"evaluation_budget,omitempty"`
 }
 
 // Freeze validates and detaches an immutable job request.
 func (r JobRequest) Freeze() (JobRequest, string, error) {
+	if r.EvaluationBudget != nil && r.EvaluationBudget.Validate() != nil {
+		return JobRequest{}, "", ErrInvalid
+	}
 	if r.SchemaVersion != 1 || r.ID.IsNil() || r.ID.Prefix() != PrefixJob || r.ContractID.IsNil() || r.ContractID.Prefix() != PrefixContract || r.ExpectedRunRevision <= 0 || r.ExpectedRunRevision >= math.MaxInt64-1 || r.Deadline.IsZero() || r.MaxAttempts < 1 || r.MaxAttempts > 256 {
 		return JobRequest{}, "", ErrInvalid
 	}
@@ -92,21 +96,22 @@ func (l JobLease) Validate() error {
 // Job persists accepted reports across worker restarts. A digest detects stored
 // corruption, not authenticity; this is trusted storage metadata.
 type Job struct {
-	SchemaVersion int        `json:"schema_version"`
-	Request       JobRequest `json:"request"`
-	RequestDigest string     `json:"request_digest"`
-	RunRevision   int64      `json:"run_revision"`
-	Revision      int64      `json:"revision"`
-	Generation    int64      `json:"generation"`
-	Attempts      int        `json:"attempts"`
-	ClaimIDs      []id.ID    `json:"claim_ids,omitempty"`
-	State         JobState   `json:"state"`
-	Lease         *JobLease  `json:"lease,omitempty"`
-	ReportIDs     []id.ID    `json:"report_ids,omitempty"`
-	ResultID      id.ID      `json:"result_id,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	Digest        string     `json:"digest"`
+	SchemaVersion int              `json:"schema_version"`
+	Request       JobRequest       `json:"request"`
+	RequestDigest string           `json:"request_digest"`
+	RunRevision   int64            `json:"run_revision"`
+	Revision      int64            `json:"revision"`
+	Generation    int64            `json:"generation"`
+	Attempts      int              `json:"attempts"`
+	ClaimIDs      []id.ID          `json:"claim_ids,omitempty"`
+	State         JobState         `json:"state"`
+	Lease         *JobLease        `json:"lease,omitempty"`
+	ReportIDs     []id.ID          `json:"report_ids,omitempty"`
+	Calls         []EvaluationCall `json:"calls,omitempty"`
+	ResultID      id.ID            `json:"result_id,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+	Digest        string           `json:"digest"`
 }
 
 // SealJob validates and detaches a storage-produced job snapshot.
@@ -165,6 +170,17 @@ func SealJob(j Job) (Job, error) {
 	j.ClaimIDs = append([]id.ID(nil), j.ClaimIDs...)
 	j.Request = req
 	j.ReportIDs = append([]id.ID(nil), j.ReportIDs...)
+	if validationErr := j.validateCalls(); validationErr != nil {
+		return Job{}, validationErr
+	}
+	j.Calls = append([]EvaluationCall(nil), j.Calls...)
+	for i := range j.Calls {
+		j.Calls[i].CriterionIDs = append([]string(nil), j.Calls[i].CriterionIDs...)
+		if j.Calls[i].Completion != nil {
+			completion := *j.Calls[i].Completion
+			j.Calls[i].Completion = &completion
+		}
+	}
 	j.Digest = ""
 	j.Digest, err = recordDigest(j)
 	if err != nil {

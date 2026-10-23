@@ -32,86 +32,93 @@ func (s *Repository) SaveVerificationJobReport(ctx context.Context, lease verifi
 		if runErr := checkJobRun(txctx, tx, *job); runErr != nil {
 			return runErr
 		}
-		if verification.CheckFreshness(frozen, job.Request.Binding, now) != verification.StatusPassed {
-			return verification.ErrConflict
+		if job.Request.EvaluationBudget != nil {
+			return verification.ErrJobConflict
 		}
-		contract, readErr := repository.GetContract(txctx, job.Request.ContractID)
-		if readErr != nil {
-			return readErr
-		}
-		if checkErr := verification.ValidateReportForContract(contract, frozen); checkErr != nil {
-			return checkErr
-		}
-		existing, readErr := repository.GetReport(txctx, frozen.ID)
-		if readErr != nil && !errors.Is(readErr, verification.ErrNotFound) {
-			return readErr
-		}
-		if readErr == nil && existing.Digest != frozen.Digest {
-			return verification.ErrConflict
-		}
-		if slices.Contains(job.ReportIDs, frozen.ID) {
-			return nil
-		}
-		if len(job.ReportIDs) >= 256 {
-			return verification.ErrInvalid
-		}
-		reports, loadErr := repository.jobReports(txctx, *job)
-		if loadErr != nil {
-			return loadErr
-		}
-		seen := make(map[string]bool)
-		for _, saved := range reports {
-			for _, outcome := range saved.Outcomes {
-				seen[outcome.CriterionID] = true
-			}
-		}
-		for _, outcome := range frozen.Outcomes {
-			if seen[outcome.CriterionID] {
-				return verification.ErrConflict
-			}
-		}
-		reports = append(reports, frozen)
-		if boundsErr := reportBounds(reports); boundsErr != nil {
-			return boundsErr
-		}
-		if errors.Is(readErr, verification.ErrNotFound) {
-			if saveErr := repository.SaveReport(txctx, frozen); saveErr != nil {
-				return saveErr
-			}
-		}
-		job.ReportIDs = append(job.ReportIDs, frozen.ID)
-		for _, outcome := range frozen.Outcomes {
+		return repository.acceptJobReport(txctx, tx, job, frozen, now)
+	})
+}
+
+func (s *Repository) acceptJobReport(txctx context.Context, tx RunTransaction, job *verification.Job, frozen verification.Report, now time.Time) error {
+	if verification.CheckFreshness(frozen, job.Request.Binding, now) != verification.StatusPassed {
+		return verification.ErrConflict
+	}
+	contract, readErr := s.GetContract(txctx, job.Request.ContractID)
+	if readErr != nil {
+		return readErr
+	}
+	if checkErr := verification.ValidateReportForContract(contract, frozen); checkErr != nil {
+		return checkErr
+	}
+	existing, readErr := s.GetReport(txctx, frozen.ID)
+	if readErr != nil && !errors.Is(readErr, verification.ErrNotFound) {
+		return readErr
+	}
+	if readErr == nil && existing.Digest != frozen.Digest {
+		return verification.ErrConflict
+	}
+	if slices.Contains(job.ReportIDs, frozen.ID) {
+		return nil
+	}
+	if len(job.ReportIDs) >= 256 {
+		return verification.ErrInvalid
+	}
+	reports, loadErr := s.jobReports(txctx, *job)
+	if loadErr != nil {
+		return loadErr
+	}
+	seen := make(map[string]bool)
+	for _, saved := range reports {
+		for _, outcome := range saved.Outcomes {
 			seen[outcome.CriterionID] = true
 		}
-		decision := verification.Aggregate(contract, reports, now)
-		status := verification.StatusPending
-		for _, criterion := range decision.Criteria {
-			if !criterion.Required || !seen[criterion.CriterionID] {
-				continue
-			}
-			if criterion.Status == verification.StatusFailed {
-				status = verification.StatusFailed
-				break
-			}
-			if criterion.Status == verification.StatusStale {
-				status = verification.StatusStale
-			} else if criterion.Status == verification.StatusInconclusive && status != verification.StatusStale {
-				status = verification.StatusInconclusive
-			}
+	}
+	for _, outcome := range frozen.Outcomes {
+		if seen[outcome.CriterionID] {
+			return verification.ErrConflict
 		}
-		if status != verification.StatusPending {
-			job.State = verification.JobInconclusive
-			if status == verification.StatusFailed {
-				job.State = verification.JobFailed
-			}
-			job.Lease = nil
-			return tx.SetRunVerification(txctx, job.Request.Binding.RunID, job.RunRevision, status, id.ID{}, now)
+	}
+	reports = append(reports, frozen)
+	if boundsErr := reportBounds(reports); boundsErr != nil {
+		return boundsErr
+	}
+	if errors.Is(readErr, verification.ErrNotFound) {
+		if saveErr := s.SaveReport(txctx, frozen); saveErr != nil {
+			return saveErr
 		}
-		if decision.Status == verification.StatusPassed {
-			job.State = verification.JobReady
+	}
+	job.ReportIDs = append(job.ReportIDs, frozen.ID)
+	for _, outcome := range frozen.Outcomes {
+		seen[outcome.CriterionID] = true
+	}
+	decision := verification.Aggregate(contract, reports, now)
+	status := verification.StatusPending
+	for _, criterion := range decision.Criteria {
+		if !criterion.Required || !seen[criterion.CriterionID] {
+			continue
 		}
-		return nil
-	})
+		if criterion.Status == verification.StatusFailed {
+			status = verification.StatusFailed
+			break
+		}
+		if criterion.Status == verification.StatusStale {
+			status = verification.StatusStale
+		} else if criterion.Status == verification.StatusInconclusive && status != verification.StatusStale {
+			status = verification.StatusInconclusive
+		}
+	}
+	if status != verification.StatusPending {
+		job.State = verification.JobInconclusive
+		if status == verification.StatusFailed {
+			job.State = verification.JobFailed
+		}
+		job.Lease = nil
+		return tx.SetRunVerification(txctx, job.Request.Binding.RunID, job.RunRevision, status, id.ID{}, now)
+	}
+	if decision.Status == verification.StatusPassed && !slices.ContainsFunc(job.Calls, func(call verification.EvaluationCall) bool { return call.Completion == nil }) {
+		job.State = verification.JobReady
+	}
+	return nil
 }
 
 func (s *Repository) jobReports(ctx context.Context, job verification.Job) ([]verification.Report, error) {

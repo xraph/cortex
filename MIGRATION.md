@@ -238,3 +238,16 @@ permit one. Retry the same claim ID only to recover its original live lease.
 This adds durable work storage, not automatic evaluation. Runtime scheduling,
 remaining-budget enforcement and recovery between captured output and enqueue
 still need integration. Existing completion hooks keep their meaning.
+
+Budgeted jobs also require `verification.CallStore`. Set `EvaluationBudget` when
+enqueueing, record each verifier group with `BeginVerificationCall`, then settle
+its report and usage through `CompleteVerificationCall`. Direct report acceptance
+is disabled for these jobs. Dispatch records and budget reservations share the
+job transaction; no new table is required. Jobs without an evaluation budget
+retain the existing manual report path and encodings.
+
+Upgrade all writers before using budgeted jobs. A repeated begin does not grant
+another evaluator call, even with a fresh call ID after takeover. Resolve the
+recorded provider outcome or leave its reserved charge outstanding. A new job
+needs host approval and a budget drawn from the remaining run allowance; this
+storage capability does not allocate budgets across jobs.

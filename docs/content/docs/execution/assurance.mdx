@@ -150,6 +150,40 @@ inconclusive and record stale verification on the run. A retry of those checks
 needs a new host-approved job under the current run revision and remaining budget.
 `MaxAttempts` limits ownership generations, not individual evaluator calls.
 
+Set `JobRequest.EvaluationBudget` when workers will dispatch evaluators. This
+pins a call limit and token allowance, plus either a money allowance with a
+pricing revision or explicit `TokenOnly` accounting. Zero tokens permits only
+calls whose host-calculated token bound is zero. There is no implicit unlimited
+budget.
+
+Built-in stores expose `verification.CallStore` for these jobs:
+
+1. Call `BeginVerificationCall` with the current lease, a new call ID, the exact
+   verifier name/revision and conservative token/money bounds. The transaction
+   reserves the allowance and records every criterion assigned to that verifier.
+2. Invoke the evaluator only after a successful begin. A repeated call ID or
+   verifier group returns `ErrCallUncertain`, including after worker takeover.
+   Read the saved call and reconcile its provider outcome. A new ID does not
+   grant permission to repeat that group in the same job.
+3. Call `CompleteVerificationCall` with the current lease, an authenticated usage
+   observation and the report covering exactly those criteria. Usage, report and
+   job progress commit together. An explicit evaluator failure with no report
+   ends the job as inconclusive.
+
+Unknown usage retains the full reserved amount. Known zero needs a receipt.
+Reported overruns are preserved, even when they exceed the allowance, and block
+further dispatch. You must enforce provider limits and validate usage receipts in
+your host adapter; a receipt string alone proves neither its origin nor a billing
+ceiling. Pricing revisions identify the host's pricing inputs, not a live quote.
+
+Budgeted jobs reject direct `SaveVerificationJobReport` calls. Already dispatched
+optional checks must settle before the job becomes ready. If cancellation,
+expiry or another failed check ends a job with unresolved calls, their reserved
+charges remain in its snapshot. This API does not settle late receipts after a
+terminal job; host accounting reconciliation still needs integration. Keep those
+charges when allocating budgets to later jobs. The evaluator executor, provider
+reconciliation adapters and cross-job budget reservations remain separate work.
+
 Passing every required criterion makes the job ready. It does not publish a
 result. Build `verification.CommitRequest` from the saved job's run revision,
 binding, contract, accepted report IDs and current `JobLease`, then use the guarded

@@ -220,12 +220,12 @@ func (s *Repository) mutateJob(ctx context.Context, jobID id.ID, change func(con
 			return changeErr
 		}
 		// Idempotent operations leave the entire persisted snapshot unchanged.
-		unchanged, sealErr := verification.SealJob(job)
-		if sealErr != nil {
-			return sealErr
+		unchanged, encodeErr := json.Marshal(job)
+		if encodeErr != nil {
+			return encodeErr
 		}
-		if unchanged.Digest == row.Digest {
-			result = unchanged
+		if string(unchanged) == row.Body {
+			result = job
 			return nil
 		}
 		if job.Revision == math.MaxInt64 {
