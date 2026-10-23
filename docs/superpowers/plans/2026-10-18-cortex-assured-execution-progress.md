@@ -27,7 +27,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
-| S3.2 | active | this chat | Durable ownership, atomic capacity reservation, renewal, dispatch intent, expiry, verified completion and immutable history implemented; atomic readiness/grant admission, runtime scheduling, event delivery and recovery qualification remain open |
+| S3.2 | active | this chat | Durable ownership, atomic readiness/capacity admission, renewal, dispatch intent, expiry, verified completion and immutable history implemented; current-grant admission, runtime scheduling, event delivery and recovery qualification remain open |
 | S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; runtime binding and bounded replan policy remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
@@ -4243,3 +4243,47 @@ and build passed. Complete coordination and verification race suites passed
 acceptance is committed as `3ae6eec`; both packets are ready for publication.
 Atomic readiness and budgeted claiming, scheduler integration, concrete host
 grants and live qualification remain open. The four-stage goal is still active.
+
+
+### S3.2 atomic readiness and capacity admission
+
+Ruling: compose readiness with the existing budgeted claim transaction and the
+same retained prerequisite loader used by task acceptance. `ClaimReadyTask`
+selects the explicitly requested task; deterministic ordering and fairness remain
+scheduler responsibilities. Reusing the shared validators keeps admission and
+acceptance aligned. If the host lets external revisions change outside its
+fence, storage cannot establish current authorization for those sources.
+
+`ReadyTaskClaimRequest` pins one budgeted attempt and the complete accepted
+prerequisite chain. The store reloads assignments, completed claims, verification
+jobs, committed results and evidence, applies `planning.Ready`, then writes the
+claim, capacity reservation and metadata event intent together. It checks report
+freshness again after the final write. Reads remain bounded to 32 MiB total and
+8 MiB per result. No transaction invokes an agent or external service.
+
+The original admission survives lost acknowledgment and later evidence deletion.
+Only a confirmed first commit returns outer `Fresh: true`; its nested acquisition
+is historical. Changed retries conflict, and independently acquired budgeted
+claims cannot be upgraded. `GetReadyTaskClaim` provides exact-scope recovery by
+claim ID. Host authorization, dispatch-time revalidation, parent cancellation,
+scheduler lifecycle and event delivery remain required.
+
+The new request and store tests first failed for the missing APIs. SQLite then
+passed admission, conflicting and identical concurrent requests, write rollback,
+lost acknowledgment, insufficient capacity, historical retry and dependency
+checks. The latter include a three-task chain, missing transitive acceptance,
+changed context/digests, cancellation, replanning, deleted evidence and expiry
+during reads or after the final write. Shared budget acquisition and acceptance
+material loading were extracted without adding another accounting implementation.
+
+Final `make f`, all-module `make l`, root build and documentation typecheck,
+lint and build passed. Initial lint found formatting and a byte-comparison issue;
+both were corrected before the final checks. Complete coordination, planning and
+assurance race suites passed (44.400s, 3.399s and 1.181s).
+
+The affected backend race matrix passed on SQLite (91.045s), PostgreSQL (68.860s)
+and MongoDB (111.602s), with real containers and no skips. Each backend passed
+101 tests, including 28 new admission cases and existing claim, budget, planning
+and task-acceptance regressions. CI 40023614073 for the preceding host-acceptance
+commit was still running its coverage job at this checkpoint. Guarded host
+admission and scheduler dispatch are next. The four-stage goal remains active.

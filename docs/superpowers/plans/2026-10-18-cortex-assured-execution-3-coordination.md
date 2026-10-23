@@ -60,10 +60,11 @@ transaction capability. Expired unused reservations release; ambiguous dispatche
 enter recovery and cannot be reassigned. Ownership and shared capacity can now be
 reserved together, with budget checks on renewal and dispatch intent. Verified
 task acceptance now atomically completes ownership and retains the receipt with
-a metadata outbox intent. Readiness and grant admission, runtime dispatch,
-cancellation, recovery settlement and event delivery remain open.
-`ClaimReadyTask` and `Scheduler.Tick` are still integration work; the ownership
-store is not a completed scheduler.
+a metadata outbox intent. `ClaimReadyTask` now reloads the complete accepted
+prerequisite chain and atomically reserves ownership, capacity and event intent.
+Current grant admission, runtime dispatch, cancellation, recovery settlement and
+event delivery remain open. `Scheduler.Tick` still needs integration; the
+ownership store is not a completed scheduler.
 
 ## S3.3: Structured handoffs and independent review
 

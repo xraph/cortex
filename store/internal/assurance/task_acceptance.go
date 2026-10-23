@@ -185,22 +185,42 @@ type taskAcceptanceMaterial struct {
 }
 
 func validateTaskAcceptanceMaterials(p planning.Plan, taskID id.ID, materials []taskAcceptanceMaterial, at time.Time) error {
-	states := make([]planning.TaskState, 0, len(materials))
-	for i, material := range materials {
-		if i == 0 && !at.Before(material.deadline) {
-			return coordination.ErrInvalidTaskAcceptance
-		}
-		r := material.snapshot.Receipt
-		read := verification.ResultReadRequest{SchemaVersion: 1, RunID: r.Request.Current.RunID, ResultID: r.Request.ResultID, ReceiptDigest: r.Digest}
-		if err := material.snapshot.Validate(read, at); err != nil {
-			return err
-		}
-		states = append(states, material.state)
+	if len(materials) == 0 || !at.Before(materials[0].deadline) {
+		return coordination.ErrInvalidTaskAcceptance
+	}
+	states, err := validateTaskMaterials(materials, at)
+	if err != nil {
+		return err
 	}
 	return planning.ValidateTaskAcceptance(p, taskID, states, at)
 }
 
+func validateTaskMaterials(materials []taskAcceptanceMaterial, at time.Time) ([]planning.TaskState, error) {
+	states := make([]planning.TaskState, 0, len(materials))
+	for _, material := range materials {
+		r := material.snapshot.Receipt
+		read := verification.ResultReadRequest{SchemaVersion: 1, RunID: r.Request.Current.RunID, ResultID: r.Request.ResultID, ReceiptDigest: r.Digest}
+		if err := material.snapshot.Validate(read, at); err != nil {
+			return nil, err
+		}
+		states = append(states, material.state)
+	}
+	return states, nil
+}
+
 func (s *Repository) taskAcceptanceMaterials(ctx context.Context, p planning.Plan, req coordination.TaskAcceptanceRequest, claim coordination.Claim) ([]taskAcceptanceMaterial, error) {
+	own, used, err := s.loadTaskAcceptanceMaterial(ctx, p, req, claim, 8<<20)
+	if err != nil {
+		return nil, err
+	}
+	dependencies, err := s.acceptedPrerequisiteMaterials(ctx, p, claim.TaskID, req.Dependencies, (32<<20)-used)
+	if err != nil {
+		return nil, err
+	}
+	return append([]taskAcceptanceMaterial{own}, dependencies...), nil
+}
+
+func (s *Repository) acceptedPrerequisiteMaterials(ctx context.Context, p planning.Plan, taskID id.ID, deps []coordination.AcceptedDependency, remaining int) ([]taskAcceptanceMaterial, error) {
 	required := make(map[id.ID]bool)
 	definitions := make(map[id.ID]planning.Task, len(p.Tasks))
 	for _, task := range p.Tasks {
@@ -215,19 +235,12 @@ func (s *Repository) taskAcceptanceMaterials(ctx context.Context, p planning.Pla
 			}
 		}
 	}
-	visit(claim.TaskID)
-	if len(req.Dependencies) != len(required) {
+	visit(taskID)
+	if len(deps) != len(required) {
 		return nil, coordination.ErrInvalidTaskAcceptance
 	}
-	remaining := 32 << 20
-	own, used, err := s.loadTaskAcceptanceMaterial(ctx, p, req, claim, min(remaining, 8<<20))
-	if err != nil {
-		return nil, err
-	}
-	remaining -= used
-	materials := make([]taskAcceptanceMaterial, 0, len(req.Dependencies)+1)
-	materials = append(materials, own)
-	for _, dep := range req.Dependencies {
+	materials := make([]taskAcceptanceMaterial, 0, len(deps))
+	for _, dep := range deps {
 		accepted, readErr := s.GetTaskAcceptance(ctx, dep.AcceptanceID)
 		if readErr != nil {
 			return nil, readErr

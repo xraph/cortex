@@ -1564,7 +1564,7 @@ remain recoverable. The list is not a snapshot; restart a sweep from the beginni
 after its last page. Reads and historical retries do not establish current
 ownership or permission to execute.
 
-This is the ownership storage layer. `ClaimReadyTask`, current-grant fencing,
+This is the ownership storage layer. Current-grant fencing,
 parent cancellation, runtime dispatch and recovery
 settlement still need scheduler integration. Acquiring a claim alone does not
 prove that dependencies passed, that a worker may use a tool, or that budget is
@@ -1644,6 +1644,35 @@ past the allocation deadline. Expiring a claim still retains unknown budget
 charges; it does not refund them.
 
 You still need to authenticate the worker, resolve current grants and verify task
-dependencies. The combined operation does not provide `ClaimReadyTask` or invoke
-the runtime. Your adapter must enforce the reserved allowance during execution
+dependencies. Use `ReadyTaskClaimStore` below to include retained prerequisites
+in the transaction. Your adapter must enforce the reserved allowance during execution
 and account for actual usage. Storage tests do not qualify that integration.
+
+### Claim a task with verified prerequisites
+
+Call `coordination.ReadyTaskClaimStore.ClaimReadyTask` with a version 1
+`ReadyTaskClaimRequest`. Set `Acquisition` to the budgeted claim request and
+include an `AcceptedDependency` for every prerequisite in the complete chain,
+with its acceptance ID, receipt digest and freshly resolved current binding.
+Root tasks have no dependencies.
+
+The store reloads accepted assignments, completed claims, committed verification
+results and retained evidence under the plan transaction. It checks the graph
+with `planning.Ready`, acquires ownership and capacity through the shared budget
+implementation, then retains a `task_claimed` event intent. Evidence must remain
+fresh through the final write. Missing prerequisites, changed plans, expired
+reports, deleted artifacts, another owner or insufficient capacity prevent the
+whole admission. The read budget is 32 MiB across prerequisites, capped at 8 MiB
+per result.
+
+Only the outer `ReadyTaskClaim.Fresh` reports a confirmed first admission.
+`Acquisition` contains the retained historical claim and reservation. Identical
+retries return the original admission with `Fresh=false`; changed retries
+conflict. `GetReadyTaskClaim` recovers it by claim ID after a lost response.
+An independently acquired budgeted claim cannot be upgraded into this admission.
+
+Your host must authenticate the worker and hold current grant and external
+revision guards across storage. Before dispatch, recheck ownership, authority,
+budget and prerequisites. This admission does not invoke an agent or publish the
+event intent, and a historical receipt grants neither permission. Scheduler
+lifecycle, parent cancellation and recovery remain separate integration work.

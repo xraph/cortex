@@ -52,70 +52,9 @@ func (s *Repository) AcquireBudgetedTaskClaim(ctx context.Context, request coord
 	}
 	var result coordination.BudgetedClaim
 	err = s.planTransaction(ctx, req.Claim.PlanID, func(tc context.Context, tx *Repository) error {
-		result = coordination.BudgetedClaim{}
-		cached, readErr := tx.getClaimBudget(tc, req.Claim.ID)
-		if readErr == nil {
-			if cached.RequestDigest != digest {
-				return coordination.ErrClaimConflict
-			}
-			result = cached.Result
-			return nil
-		}
-		if !errors.Is(readErr, ErrAbsent) {
-			return readErr
-		}
-		op := claimOperation{Kind: "acquire", Request: &req.Claim}
-		opDigest, digestErr := op.digest()
-		if digestErr != nil {
-			return digestErr
-		}
-		claim, fresh, claimErr := tx.mutateClaimInTransaction(tc, req.Claim.PlanID, req.Claim.TaskID, op, opDigest)
-		if claimErr != nil {
-			return claimErr
-		}
-		if !fresh {
-			return coordination.ErrClaimConflict
-		}
-		if claim.ExpiresAt.After(req.Reservation.Deadline) {
-			return execution.ErrBudgetExceeded
-		}
-		_, reservationDigest, freezeErr := req.Reservation.Freeze()
-		if freezeErr != nil {
-			return freezeErr
-		}
-		reservation, fresh, reserveErr := tx.reserveInTransaction(tc, req.Reservation, reservationDigest)
-		if reserveErr != nil {
-			return reserveErr
-		}
-		if !fresh {
-			return execution.ErrReservationConflict
-		}
-		if reservation.CreatedAt.Before(claim.At) {
-			return coordination.ErrClaimConflict
-		}
-		retained := coordination.BudgetedClaim{Claim: claim, Reservation: reservation}
-		binding := claimBudgetRecord{Request: req, RequestDigest: digest, Result: retained}
-		data, encodeErr := json.Marshal(binding)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		if len(data) > 64<<10 {
-			return coordination.ErrInvalidClaim
-		}
-		row, buildErr := record(kindTaskClaimBudget, claim.ID.String(), evidence.Digest(data), claimKey(claim.PlanID, claim.TaskID), claim.Scope, binding)
-		if buildErr != nil {
-			return buildErr
-		}
-		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
-			return insertErr
-		}
-		observed := s.clock.Now()
-		if observed.IsZero() || observed.Before(reservation.CreatedAt) || !observed.Before(claim.ExpiresAt) || !observed.Before(reservation.Request.Deadline) {
-			return coordination.ErrClaimConflict
-		}
-		result = retained
-		result.Fresh = true
-		return nil
+		var acquireErr error
+		result, acquireErr = tx.acquireBudgetedClaimInTransaction(tc, req, digest)
+		return acquireErr
 	})
 	if errors.Is(err, ErrExists) {
 		err = coordination.ErrClaimConflict
@@ -175,4 +114,70 @@ func (s *Repository) GetBudgetedTaskClaim(ctx context.Context, claimID id.ID) (c
 		return coordination.BudgetedClaim{}, err
 	}
 	return binding.Result, nil
+}
+
+// acquireBudgetedClaimInTransaction shares accounting with readiness admission.
+// Call only while holding the plan transaction, with a frozen request.
+func (s *Repository) acquireBudgetedClaimInTransaction(ctx context.Context, req coordination.BudgetedClaimRequest, digest string) (coordination.BudgetedClaim, error) {
+	cached, readErr := s.getClaimBudget(ctx, req.Claim.ID)
+	if readErr == nil {
+		if cached.RequestDigest != digest {
+			return coordination.BudgetedClaim{}, coordination.ErrClaimConflict
+		}
+		return cached.Result, nil
+	}
+	if !errors.Is(readErr, ErrAbsent) {
+		return coordination.BudgetedClaim{}, readErr
+	}
+	op := claimOperation{Kind: "acquire", Request: &req.Claim}
+	opDigest, digestErr := op.digest()
+	if digestErr != nil {
+		return coordination.BudgetedClaim{}, digestErr
+	}
+	claim, fresh, claimErr := s.mutateClaimInTransaction(ctx, req.Claim.PlanID, req.Claim.TaskID, op, opDigest)
+	if claimErr != nil {
+		return coordination.BudgetedClaim{}, claimErr
+	}
+	if !fresh {
+		return coordination.BudgetedClaim{}, coordination.ErrClaimConflict
+	}
+	if claim.ExpiresAt.After(req.Reservation.Deadline) {
+		return coordination.BudgetedClaim{}, execution.ErrBudgetExceeded
+	}
+	_, reservationDigest, freezeErr := req.Reservation.Freeze()
+	if freezeErr != nil {
+		return coordination.BudgetedClaim{}, freezeErr
+	}
+	reservation, fresh, reserveErr := s.reserveInTransaction(ctx, req.Reservation, reservationDigest)
+	if reserveErr != nil {
+		return coordination.BudgetedClaim{}, reserveErr
+	}
+	if !fresh {
+		return coordination.BudgetedClaim{}, execution.ErrReservationConflict
+	}
+	if reservation.CreatedAt.Before(claim.At) {
+		return coordination.BudgetedClaim{}, coordination.ErrClaimConflict
+	}
+	retained := coordination.BudgetedClaim{Claim: claim, Reservation: reservation}
+	binding := claimBudgetRecord{Request: req, RequestDigest: digest, Result: retained}
+	data, encodeErr := json.Marshal(binding)
+	if encodeErr != nil {
+		return coordination.BudgetedClaim{}, encodeErr
+	}
+	if len(data) > 64<<10 {
+		return coordination.BudgetedClaim{}, coordination.ErrInvalidClaim
+	}
+	row, buildErr := record(kindTaskClaimBudget, claim.ID.String(), evidence.Digest(data), claimKey(claim.PlanID, claim.TaskID), claim.Scope, binding)
+	if buildErr != nil {
+		return coordination.BudgetedClaim{}, buildErr
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return coordination.BudgetedClaim{}, insertErr
+	}
+	observed := s.clock.Now()
+	if observed.IsZero() || observed.Before(reservation.CreatedAt) || !observed.Before(claim.ExpiresAt) || !observed.Before(reservation.Request.Deadline) {
+		return coordination.BudgetedClaim{}, coordination.ErrClaimConflict
+	}
+	retained.Fresh = true
+	return retained, nil
 }

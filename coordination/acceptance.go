@@ -54,12 +54,8 @@ func (r TaskAcceptanceRequest) Freeze() (TaskAcceptanceRequest, string, error) {
 	if r.SchemaVersion != 1 || r.ID.IsNil() || r.ID.Prefix() != PrefixTaskAcceptance || r.Claim.Validate() != nil || r.AssignmentID.IsNil() || r.AssignmentID.Prefix() != PrefixAssignment || r.AssignmentRevision < 1 || r.AssignmentRevision == math.MaxInt64 || !evidence.ValidDigest(r.AssignmentDigest) || r.Result.Validate() != nil || r.Current.Validate() != nil || r.Current.RunID != r.Result.RunID || len(r.Dependencies) > 255 || !handoffText(r.Actor, 512) || !handoffText(r.Reason, 4096) {
 		return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
 	}
-	seen := make(map[id.ID]bool, len(r.Dependencies))
-	for _, dep := range r.Dependencies {
-		if dep.AcceptanceID.IsNil() || dep.AcceptanceID.Prefix() != PrefixTaskAcceptance || dep.AcceptanceID == r.ID || seen[dep.AcceptanceID] || !evidence.ValidDigest(dep.Digest) || dep.Current.Validate() != nil || dep.Current.Scope.Canonical() != r.Current.Scope.Canonical() {
-			return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
-		}
-		seen[dep.AcceptanceID] = true
+	if !validAcceptedDependencies(r.Dependencies, r.Current.Scope, r.ID) {
+		return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
 	}
 	data, err := json.Marshal(r)
 	if err != nil || len(data) > 1<<20 {
