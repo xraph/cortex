@@ -273,3 +273,44 @@ func TestWorkerHeartbeatRechecksCallingPrincipal(t *testing.T) {
 		t.Fatalf("caller revocation missed by heartbeat: %v", err)
 	}
 }
+
+func TestWorkerRenewsLeaseBeforeEachStep(t *testing.T) {
+	s, err := memory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	bundle := storetest.Fixture(t, "renew-step")
+	ctx := cortex.WithScope(context.Background(), bundle.Experiment.Spec.Scope)
+	var previous optimization.WorkLease
+	calls := 0
+	handler := phaseHandler(func(_ context.Context, item optimization.WorkItem) (optimization.Transition, error) {
+		calls++
+		if calls == 2 && (item.Lease.Generation != previous.Generation || !item.Lease.ExpiresAt.After(previous.ExpiresAt)) {
+			t.Errorf("step started with an aging lease: previous=%+v current=%+v", previous, item.Lease)
+		}
+		previous = item.Lease
+		return optimization.Transition{}, optimization.ErrUnavailable
+	})
+	op, err := optimization.NewOptimizer(optimization.OptimizerConfig{Repository: s, Authorizer: meterAuthorizer(func(context.Context, optimization.Action, optimization.Resource) error { return nil }), IdentityResolver: meterResolver(func(ctx context.Context, _ optimization.IdentityRef, _ cortex.Scope) (context.Context, error) {
+		return ctx, nil
+	}), Caller: callerIdentity(func(context.Context) (optimization.IdentityRef, error) { return bundle.Experiment.Spec.Requester, nil }), Handler: handler, Worker: optimization.DefaultWorkerConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := op.Create(ctx, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = op.Start(ctx, created.ID, created.Revision); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = op.WorkOnce(ctx, created.ID); !errors.Is(err, optimization.ErrUnavailable) {
+			t.Fatal(err)
+		}
+	}
+	if calls != 2 {
+		t.Fatal("missing phase dispatch")
+	}
+}

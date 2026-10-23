@@ -217,24 +217,8 @@ func (c *modelController) evidence(ctx context.Context, values []DiscoveryEviden
 		if !equalControllerData(evaluation, value.Evaluation) {
 			return ErrPolicyDenied
 		}
-		refs := append([]ArtifactRef(nil), trial.Execution.Artifacts...)
-		for _, attempt := range trial.Attempts {
-			if attempt.Execution != nil {
-				refs = append(refs, attempt.Execution.Artifacts...)
-			}
-		}
-		for _, ref := range refs {
-			if _, err := ref.BindingDigest(); err != nil || ref.ExperimentID != trial.ExperimentID {
-				return ErrIncompleteEvidence
-			}
-			retention, err := c.factory.repository.GetArtifact(ctx, ref)
-			if err != nil {
-				return err
-			}
-			now := time.Now().UTC()
-			if retention.Revision != 1 || retention.Deletion != nil || !retention.InvalidatedAt.IsZero() || !retention.DeletedAt.IsZero() || !equalControllerData(retention.Ref, ref) || retention.CreatedAt.IsZero() || now.Before(retention.CreatedAt) || !now.Before(retention.ExpiresAt) {
-				return ErrIncompleteEvidence
-			}
+		if artifactErr := checkTrialArtifacts(ctx, c.factory.repository, trial); artifactErr != nil {
+			return artifactErr
 		}
 	}
 	return nil

@@ -109,7 +109,7 @@ Construct these pieces in your host:
    model bindings and explicit input/output limits. Each `ModelBinding` supplies
    a provider, model revision, token counter, optional pricing and receipt reporter.
 2. Pass that factory to `NewControllerPhaseHandler`. It handles proposal,
-   composition and reflection. Supply your existing trial/evaluation `PhaseHandler`
+   composition and reflection. Supply `NewTrialPhaseHandler` with your environment factory and evaluator
    for baseline, probe, validation and decision work. A missing handler returns
    `ErrUnavailable` for those phases.
 3. Build `NewUsageRecovery` with an authoritative receipt lookup provider, then
@@ -155,7 +155,46 @@ receipt cannot refund twice. Unknown evidence retains the conservative debit.
 
 Before takeover or resumption, the worker scans bounded reservation pages and
 reconciles unresolved dispatches, with a thirty-second lookup deadline per receipt.
-Missing verification stops the worker before another phase runs. Accounting
+A reservation bound to a persisted trial attempt is retained for environment
+inspection by the trial handler. Its full debit remains until settlement. Other
+unresolved calls require verified receipt recovery before another phase runs. Accounting
 recovery does not recover a lost model response: a saved dispatch marker still
 returns `ErrUnknownAttempt` if the controller would repeat the call. Such cases
 need host reconciliation of the original output before the phase can advance.
+
+
+## Trial execution
+
+Use `NewTrialPhaseHandler` for sequential experiments. You supply an
+`EnvironmentFactory`, `Evaluator`, repository, authorization ports and a
+`TrialAllowance` covering the entire trial. Your environment must enforce that
+allowance across model calls, tools and retrieval, along with the frozen step,
+output and time limits. A priced allowance must match the experiment's pricing
+revision. Capability flags are host guarantees. They don't qualify a sandbox.
+
+Each worker step persists one boundary before advancing:
+
+1. Schedule the frozen case and repetition, then create its attempt.
+2. Open the environment idempotently and commit its receipt.
+3. Reserve usage and persist a dispatch marker before execution.
+4. Capture the result and confirmed containment receipt in one transition.
+5. Settle captured usage, score the stored output and commit the evaluation.
+
+Every attempt gets a stable, separate session ID and the optimization execution
+purpose. After a lost response, the handler reconnects and inspects that same
+attempt. It never dispatches over an existing marker. An ambiguous inspection or
+stop keeps the attempt unresolved and its budget charged. Cancellation triggers
+bounded cleanup, and artifacts from earlier attempts must remain eligible before
+scoring or selection.
+
+Probe scheduling covers accepted proposals and composed candidates within the
+frozen round and candidate limits. The finalist is chosen from complete discovery
+scores, with ties retaining the baseline. Validation pins that choice in a durable
+allocation and records exposure before executing the held-out cases. Sentinel
+supplies the paired statistics; Cortex checks the frozen selection thresholds and
+stored evidence before committing a decision for reflection and review.
+
+This handler currently accepts sequential mode. Parallel controller experiments
+and task-local selection need their own scheduling adapters. You can bind the
+Sentinel implementation from `github.com/xraph/cortex/sentinel/optimization`;
+see its [adapter guide](../sentinel/optimization/README.md).

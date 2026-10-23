@@ -60,14 +60,17 @@ type EnvironmentReceipt struct {
 
 // TrialRequest provisions one idempotent attempt from a frozen task snapshot.
 type TrialRequest struct {
-	Scope        cortex.Scope `json:"scope"`
-	ExperimentID id.ID        `json:"experiment_id"`
-	TrialID      id.ID        `json:"trial_id"`
-	AttemptID    id.ID        `json:"attempt_id"`
-	Task         TaskCase     `json:"task"`
-	Version      VersionRef   `json:"version"`
-	Fence        Fence        `json:"fence"`
-	Deadline     time.Time    `json:"deadline"`
+	// Allowance and Limits must be enforced by the host environment.
+	Allowance    TrialAllowance `json:"allowance"`
+	Limits       Limits         `json:"limits"`
+	Scope        cortex.Scope   `json:"scope"`
+	ExperimentID id.ID          `json:"experiment_id"`
+	TrialID      id.ID          `json:"trial_id"`
+	AttemptID    id.ID          `json:"attempt_id"`
+	Task         TaskCase       `json:"task"`
+	Version      VersionRef     `json:"version"`
+	Fence        Fence          `json:"fence"`
+	Deadline     time.Time      `json:"deadline"`
 }
 
 // StopState distinguishes positive containment evidence from an ambiguous reply.

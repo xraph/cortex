@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xraph/cortex/id"
@@ -98,7 +99,19 @@ func (o *Optimizer) WorkOnce(ctx context.Context, experimentID id.ID) error {
 	if transactionErr := o.config.Repository.Transact(resolved, func(tx Transaction) error {
 		var claimErr error
 		lease, claimErr = tx.ClaimWork(ClaimRequest{ExperimentID: experimentID, Owner: o.owner, Duration: o.config.Worker.LeaseDuration})
-		return claimErr
+		if claimErr != nil {
+			return claimErr
+		}
+		// Repeated short steps may never reach a heartbeat tick. Refresh the
+		// existing generation before every dispatch, while the lease is valid.
+		expires := time.Now().UTC().Add(o.config.Worker.LeaseDuration)
+		if expires.After(prior.Deadline) {
+			expires = prior.Deadline
+		}
+		if expires.After(lease.ExpiresAt) {
+			lease.ExpiresAt = expires
+		}
+		return tx.RenewLease(lease)
 	}); transactionErr != nil {
 		return transactionErr
 	}
@@ -148,6 +161,13 @@ func (o *Optimizer) reconcileUsage(ctx context.Context, experiment Experiment) e
 			if reservation.Call == nil || reservation.State == ReservationSettled {
 				continue
 			}
+			bound, bindingErr := o.recoverableTrialCall(ctx, experiment, reservation)
+			if bindingErr != nil {
+				return bindingErr
+			}
+			if bound {
+				continue
+			}
 			if o.config.UsageRecovery == nil {
 				return ErrUnknownAttempt
 			}
@@ -190,4 +210,37 @@ func (o *Optimizer) heartbeat(ctx context.Context, cancel context.CancelFunc, ex
 			}
 		}
 	}
+}
+
+// A trial's persisted dispatch marker must survive takeover so the environment
+// can be inspected. Its full reservation stays charged until captured settlement.
+func (o *Optimizer) recoverableTrialCall(ctx context.Context, experiment Experiment, r Reservation) (bool, error) {
+	switch r.Request.Operation {
+	case OperationBaseline, OperationProbe, OperationValidation:
+	default:
+		return false, nil
+	}
+	parts := strings.Split(r.Request.CallKey, "/")
+	if len(parts) != 3 || parts[0] != "trial" || parts[2] != r.Request.AttemptID.String() {
+		return false, nil
+	}
+	trialID, err := ParseID(parts[1], PrefixTrial)
+	if err != nil {
+		return false, nil
+	}
+	trial, err := o.config.Repository.GetTrial(ctx, trialID)
+	if err != nil {
+		return false, err
+	}
+	if trial.ExperimentID != experiment.ID || len(trial.Attempts) == 0 {
+		return false, ErrIncompleteEvidence
+	}
+	attempt := trial.Attempts[len(trial.Attempts)-1]
+	phase := PhaseProbe
+	if trial.Split == SplitValidation {
+		phase = PhaseValidate
+	} else if trial.CandidateID.IsNil() {
+		phase = PhaseBaseline
+	}
+	return attempt.ID == r.Request.AttemptID && attempt.Receipt != nil && r.Request.Operation == trialOperation(phase), nil
 }

@@ -36,6 +36,8 @@ func Run(t *testing.T, factory Factory) {
 	candidates(t, factory)
 	trials(t, factory)
 	trialEvidence(t, factory)
+	trialAdapters(t, factory)
+	trialAdapterLoop(t, factory)
 	evaluations(t, factory)
 	evaluationIntegrity(t, factory)
 	candidateEvidence(t, factory)
