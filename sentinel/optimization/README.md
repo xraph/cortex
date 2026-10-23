@@ -31,9 +31,24 @@ frozen plan identities, then projects criterion IDs and scorer revisions into
 Cortex. Supported scorers are the pinned local built-ins: `exact`, `contains`,
 `not_contains`, `regex`, `json_valid`, `length`, `latency` and `cost`.
 
-LLM judges and custom scorers are unavailable here until an adapter can reserve
-and settle their actual charged calls. This prevents a suite from adding judge
-spend outside the optimization budget. Unknown scorer revisions are refused too.
+For a model judge, construct `NewMeteredJudge` with your repository, authorizer,
+identity resolver and `optimization.ModelBinding`. Set explicit input bytes,
+response bytes and output token limits. Call `judge.Register(engine.Scorers())`
+before freezing the suite, use its scorer name with `{"rubric": "your criteria"}`,
+and include that judge in `Config.Judges`. Other custom scorers remain unavailable.
+
+Your model binding supplies the conservative input counter, frozen pricing and
+provider receipt reporter. The judge reserves the full request before dispatch,
+including input framing and the output cap. It charges `OperationJudge` under the
+requesting worker's lease and rechecks the caller and original requester. You must
+pin provider routing to the configured model revision and enforce the output cap.
+The scorer revision includes the model revision and limits; the plan pins the rubric.
+
+Judges return strict JSON with a numeric `score` between zero and one and an
+optional `reason`. Scores of at least 0.5 pass the criterion. Malformed, duplicate,
+missing and truncated answers produce incomplete evidence. The adapter does not
+substitute a neutral score. Each case may use a judge name once; register separate
+names if you need multiple rubrics for the same model.
 
 Recorded jobs preserve original output, duration, usage quality and Cortex run
 identity. Artifact bindings and step/tool-call IDs remain opaque references.
@@ -57,18 +72,34 @@ Sentinel v1.9.2 implements a 95% interval with 2,000 bootstrap samples. Other fr
 confidence settings return `ErrUnavailable`. Too few distinct cases produce
 inconclusive evidence. Repetitions do not increase the distinct-case count.
 
-Cost quality remains visible, but Sentinel's recorded usage does not retain the
-Cortex pricing revision. This adapter therefore leaves `CostRatio` unavailable;
-a configured cost-ratio gate cannot recommend a candidate without that evidence.
-Trial and controller spend still count against their own reservations.
+Supply `Config.Repository` to enable cost ratios. The adapter joins each Sentinel
+job to its stored Cortex evaluation and sealed trial capture, checks the report,
+experiment and plan identities, and compares the original execution charges only
+when every charge is known and uses the experiment's frozen pricing revision.
+Unknown or estimated charges, token-only budgets and a zero baseline leave the
+ratio unavailable. Conflicting captures fail the comparison.
+
+Judge charges remain separate from trial costs. `Evaluation.JudgeUsage` reports
+ledger observations with an aggregate receipt reference; individual provider
+receipts and their request digests remain in the reservations. It does not treat
+unreported usage as free.
+
+## Recovery
+
+A completed recorded job reuses its score without another model call. If a judge
+answer is lost before Sentinel commits it, the ledger's dispatch marker prevents
+replay. The evaluation stays incomplete. Use `optimization.UsageRecovery` with
+your receipt verifier to reconcile a late charge, including after cancellation or
+lease loss. A receipt establishes usage, not the missing answer.
 
 ## Verification boundary
 
 The integration test uses both SQLite stores, the real optimizer worker and
 controller handler, and Sentinel's recorded scoring and comparison. It closes
 and reopens both stores after lost provisioning, execution and scoring acknowledgements,
-checks that execution is not replayed, and advances through review.
+checks that execution and committed judge calls are not replayed, verifies separate
+judge reservations and a priced cost-ratio gate, and advances through review.
 
 Its model and environment are fixtures. Live sandbox qualification, hosted model
-calls, metered judges, parallel/task-local scheduling, Fabriq publication and
+calls, parallel/task-local scheduling, Fabriq publication and
 dashboard application flows are separate work.

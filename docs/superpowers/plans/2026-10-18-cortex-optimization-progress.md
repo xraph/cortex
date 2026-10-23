@@ -873,3 +873,37 @@ memory, SQLite and PostgreSQL; MongoDB's sole failure was the lease regression
 from the binary built before the fix. Its corrected recovery cases passed both
 the targeted backend run and a verbose MongoDB run. These database fixtures start
 real containers and fail when Docker is unavailable.
+
+## Metered Sentinel judges and cost provenance
+
+You can register a `MeteredJudge` before freezing a Sentinel suite and bind it to
+an optimizer repository, current authority services and a pinned model route.
+Each actual call reserves input plus capped output through the existing ledger.
+The evaluation request carries the worker lease, so a stale worker cannot borrow
+a replacement's authority. Scorer revisions include the model revision and
+limits, while the frozen plan retains the private rubric.
+
+Judges accept strict JSON scores. Missing, malformed or truncated responses stay
+incomplete. Recorded-job retries reuse committed scores, and a dispatch marker
+prevents another call when the answer was lost before persistence. Late provider
+receipts can reconcile accounting after pause or lease loss; they cannot recover
+the missing answer. Judge usage remains separate from trial execution costs.
+
+With `Config.Repository`, comparisons join exact Sentinel jobs to stored Cortex
+evaluations and sealed captures. Cost ratios require measured execution charges
+at the experiment's frozen pricing revision. Unknown or estimated costs,
+token-only budgets and zero baseline spend leave the ratio unavailable.
+Conflicting report, plan or capture identities fail the comparison.
+
+Verification covers four SQLite loop variants with composition on or off and
+metered judges on or off. Each reopens both stores after lost provisioning,
+execution and scoring acknowledgements. The priced variants verify a 0.5 trial
+cost ratio and one settled judge reservation per execution. Failure tests cover
+budget denial, stale leases, revoked authority, strict score parsing, retained
+unknown usage and idempotent late receipts without replay. The full Sentinel
+race suite, optimization core race suite and memory/SQLite trial recovery race
+checks pass. All-module lint and both module builds pass.
+
+Sentinel pins the published optimization lease API at `32be891`. Live provider
+qualification, lost model-answer recovery, parallel scheduling, Fabriq
+publication, activation and dashboard application flows remain open.

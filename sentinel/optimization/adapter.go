@@ -44,9 +44,11 @@ type Binding struct {
 
 // Config supplies a Sentinel engine and explicit scope and case bindings.
 type Config struct {
-	Engine   *se.Engine
-	Mapper   ScopeMapper
-	Bindings []Binding
+	Engine     *se.Engine
+	Mapper     ScopeMapper
+	Bindings   []Binding
+	Repository opt.Repository
+	Judges     []*MeteredJudge
 }
 
 // Evaluator scores recorded output without an executable target callback.
@@ -63,6 +65,18 @@ func NewEvaluator(c Config) (*Evaluator, error) {
 	}
 	if decodeErr := json.Unmarshal(data, &c.Bindings); decodeErr != nil {
 		return nil, decodeErr
+	}
+	c.Judges = slices.Clone(c.Judges)
+	judgeNames := map[string]bool{}
+	for _, judge := range c.Judges {
+		if judge == nil || judgeNames[judge.config.Name] {
+			return nil, opt.ErrInvalidSpec
+		}
+		judgeNames[judge.config.Name] = true
+		revision, revErr := c.Engine.Scorers().Revision(judge.config.Name)
+		if revErr != nil || revision != judge.revision {
+			return nil, opt.ErrStaleVersion
+		}
 	}
 	seen := map[string]bool{}
 	for _, b := range c.Bindings {
@@ -160,15 +174,25 @@ func (e *Evaluator) plan(ctx context.Context, b Binding) (*evalplan.Plan, opt.Ev
 		}
 		result.CaseDigests[binding.Task.ID] = binding.Task.Digest
 		criteria := make([]opt.CriterionDefinition, 0, len(found.Criteria))
+		judgeNames := map[string]bool{}
 		for _, c := range found.Criteria {
-			// Only built-in local scorers are admitted without a metered judge binding.
-			if c.Revision != "sentinel/builtin/"+c.Scorer+"/v1" {
-				return nil, empty, opt.ErrUnavailable
-			}
-			switch c.Scorer {
-			case "exact", "contains", "not_contains", "regex", "json_valid", "length", "latency", "cost":
-			default:
-				return nil, empty, opt.ErrUnavailable
+			if judge := e.judge(c.Scorer); judge != nil {
+				if c.Revision != judge.revision || judgeNames[c.Scorer] {
+					return nil, empty, opt.ErrUnavailable
+				}
+				judgeNames[c.Scorer] = true
+				if _, getErr := e.config.Engine.Scorers().GetVersioned(c.Scorer, c.Revision, c.Config); getErr != nil {
+					return nil, empty, getErr
+				}
+			} else {
+				if c.Revision != "sentinel/builtin/"+c.Scorer+"/v1" {
+					return nil, empty, opt.ErrUnavailable
+				}
+				switch c.Scorer {
+				case "exact", "contains", "not_contains", "regex", "json_valid", "length", "latency", "cost":
+				default:
+					return nil, empty, opt.ErrUnavailable
+				}
 			}
 			revision, revErr := e.config.Engine.Scorers().Revision(c.Scorer)
 			if revErr != nil || revision != c.Revision {
@@ -328,6 +352,14 @@ func (e *Evaluator) Evaluate(ctx context.Context, r opt.EvaluationRequest) (opt.
 	}
 	capture.CaseID, capture.Repetition, capture.InputDigest = binding.CaseID, r.Repetition, recorded.InputDigest(binding.Task.Input)
 	request := se.RecordedRunRequest{PlanID: p.ID, PlanDigest: p.Digest, IdempotencyKey: r.IdempotencyKey, SourceExperimentID: r.ExperimentID.String(), SourceCandidateID: r.CandidateID.String(), Cases: []se.RecordedCase{capture}}
+	for _, revision := range plan.Scorers {
+		if judge := e.judge(revision.Name); judge != nil {
+			if _, authErr := judge.authorize(ctx, r); authErr != nil {
+				return empty, authErr
+			}
+		}
+	}
+	mapped = context.WithValue(mapped, judgeContextKey{}, judgeContext{request: r})
 	result, evalErr := e.config.Engine.EvaluateRecorded(mapped, request)
 	if result == nil || result.Recorded == nil {
 		return empty, errors.Join(opt.ErrIncompleteEvidence, evalErr)
@@ -378,8 +410,10 @@ func (e *Evaluator) Evaluate(ctx context.Context, r opt.EvaluationRequest) (opt.
 		score := entry.Result.Score
 		out.Score = &score
 	}
-	// Local scorers cannot make charged calls. No provider receipt is fabricated.
-	out.JudgeUsage = opt.Usage{TokenQuality: opt.UsageKnown, MoneyQuality: opt.UsageUnknown}
+	out.JudgeUsage, err = e.judgeUsage(ctx, r)
+	if err != nil {
+		return empty, err
+	}
 	if evalErr != nil && len(out.Errors) == 0 {
 		out.Errors = append(out.Errors, evalErr.Error())
 		out.Complete = false

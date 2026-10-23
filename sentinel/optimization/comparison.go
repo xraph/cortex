@@ -82,6 +82,8 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 
 	arms := make([]map[string]comparisonEvidence, 2)
 	experiment := ""
+	costs := [2]int64{}
+	costsKnown := true
 	for arm, ids := range [][]sid.ID{baseline, candidate} {
 		arms[arm] = map[string]comparisonEvidence{}
 		candidateID := ""
@@ -96,6 +98,15 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 			}
 			if experiment == "" || job.Request.SourceExperimentID != experiment || (arm == 0 && job.Request.SourceCandidateID != "") || (arm == 1 && job.Request.SourceCandidateID == "") || (haveCandidate && candidateID != job.Request.SourceCandidateID) {
 				return opt.Comparison{}, opt.ErrIncompleteEvidence
+			}
+			cost, known, costErr := e.executionCost(ctx, job)
+			if costErr != nil {
+				return opt.Comparison{}, costErr
+			}
+			costsKnown = costsKnown && known
+			costs[arm], costErr = addCost(costs[arm], cost)
+			if costErr != nil {
+				return opt.Comparison{}, costErr
 			}
 			candidateID, haveCandidate = job.Request.SourceCandidateID, true
 			results := map[string]*evalrun.Result{}
@@ -168,7 +179,9 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 		ratio := candidateLatency / baseLatency
 		out.LatencyRatio = &ratio
 	}
-	// Sentinel captures do not retain the pricing revision. Do not claim a
-	// price-compatible ratio from currency alone; the optimizer keeps that gate closed.
+	if costsKnown && costs[0] > 0 {
+		ratio := float64(costs[1]) / float64(costs[0])
+		out.CostRatio = &ratio
+	}
 	return out, nil
 }

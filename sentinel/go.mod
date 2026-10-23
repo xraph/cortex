@@ -6,7 +6,7 @@ replace github.com/xraph/cortex => ../
 
 require (
 	github.com/xraph/cortex v1.8.0
-	github.com/xraph/cortex/optimization v0.0.0-20261023050839-7f96edf55420
+	github.com/xraph/cortex/optimization v0.0.0-20261023143543-32be891b7757
 	github.com/xraph/grove v1.9.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
 	github.com/xraph/sentinel v1.9.2

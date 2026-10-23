@@ -73,6 +73,7 @@ type loopHost struct {
 	executions int
 	lost       bool
 	lostOpen   bool
+	priced     bool
 }
 type loopEnvironment struct {
 	host    *loopHost
@@ -132,7 +133,17 @@ func (e *loopEnvironment) Execute(_ context.Context, p *engine.PreparedAgent, _ 
 	if p.Digest() == e.host.base {
 		output = "incorrect"
 	}
-	capture, err := opt.SealExecution(opt.ExecutionRecord{RunID: cid.NewAgentRunID(), PreparedDigest: p.Digest(), InputDigest: e.request.Task.InputDigest, State: run.StateCompleted, Outcome: run.Outcome{Output: output, StopReason: run.StopFinalAnswer, CompletedAt: now}, StartedAt: now.Add(-time.Second), CompletedAt: now, Duration: time.Second, Environment: e.receipt, Usage: opt.Usage{Tokens: 10, TokenQuality: opt.UsageKnown}})
+	usage := opt.Usage{Tokens: 10, TokenQuality: opt.UsageKnown}
+	if e.host.priced {
+		usage.MoneyQuality = opt.UsageKnown
+		usage.PricingRevision = "prices-1"
+		usage.USDMicros = 50
+		if output == "incorrect" {
+			usage.USDMicros = 100
+		}
+		usage.Receipt = "trial/" + e.receipt.AttemptID.String()
+	}
+	capture, err := opt.SealExecution(opt.ExecutionRecord{RunID: cid.NewAgentRunID(), PreparedDigest: p.Digest(), InputDigest: e.request.Task.InputDigest, State: run.StateCompleted, Outcome: run.Outcome{Output: output, StopReason: run.StopFinalAnswer, CompletedAt: now}, StartedAt: now.Add(-time.Second), CompletedAt: now, Duration: time.Second, Environment: e.receipt, Usage: usage})
 	if err != nil {
 		return nil, err
 	}
@@ -178,10 +189,12 @@ func loopDB(t *testing.T, path string) *grove.DB {
 
 func TestSentinelOptimizationLoopRecoversAcrossReopen(t *testing.T) {
 	for _, composition := range []bool{false, true} {
-		t.Run(fmt.Sprint("composition=", composition), func(t *testing.T) { testSentinelLoop(t, composition) })
+		for _, metered := range []bool{false, true} {
+			t.Run(fmt.Sprint("composition=", composition, "/metered=", metered), func(t *testing.T) { testSentinelLoop(t, composition, metered) })
+		}
 	}
 }
-func testSentinelLoop(t *testing.T, composition bool) {
+func testSentinelLoop(t *testing.T, composition, metered bool) {
 	t.Helper()
 	bundle := storetest.Fixture(t, "sentinel-loop")
 	view, err := bundle.Versions[0].Prepared.Inspect()
@@ -199,12 +212,40 @@ func testSentinelLoop(t *testing.T, composition bool) {
 	bundle.Experiment.Spec.Limits.MaxRounds = 1
 	bundle.Experiment.Spec.Objective.MinValidationCases = 1
 	bundle.Experiment.Spec.Budget.MaxTokens = 10000
+	if metered {
+		bundle.Experiment.Spec.Budget.TokenOnly = false
+		bundle.Experiment.Spec.Budget.MaxUSDMicros = 100000
+		bundle.Experiment.Spec.Budget.PricingRevision = "prices-1"
+		ratio := .75
+		bundle.Experiment.Spec.Objective.MaxCostRatio = &ratio
+	}
 	scope := bundle.Experiment.Spec.Scope
 	ctx := cortex.WithScope(context.Background(), scope)
 	mapped := sentinel.WithApp(sentinel.WithTenant(ctx, "tenant"), "app")
 	dir := t.TempDir()
 	sentinelPath := filepath.Join(dir, "sentinel.db")
 	optimizerPath := filepath.Join(dir, "optimizer.db")
+	repository := osqlite.New(loopDB(t, optimizerPath))
+	if err = repository.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	authority := loopAuthority{actor: bundle.Experiment.Spec.Requester}
+	judgeModel := &loopJudgeModel{}
+	var judge *adapter.MeteredJudge
+	registerJudge := func(e *se.Engine) {
+		t.Helper()
+		if !metered {
+			return
+		}
+		var createErr error
+		judge, createErr = adapter.NewMeteredJudge(adapter.JudgeConfig{Name: "quality", Repository: repository, Authorizer: authority, IdentityResolver: authority, Model: opt.ModelBinding{Model: "fixture", Revision: "1", Provider: judgeModel, Counter: loopCounter{}, Pricing: loopPricing{}, Reporter: loopReporter{}}, MaxInputBytes: 1 << 20, MaxResponseBytes: 4096, MaxOutputTokens: 100})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if createErr = judge.Register(e.Scorers()); createErr != nil {
+			t.Fatal(createErr)
+		}
+	}
 	sentinelStore := ssqlite.New(loopDB(t, sentinelPath))
 	if err = sentinelStore.Migrate(ctx); err != nil {
 		t.Fatal(err)
@@ -216,6 +257,9 @@ func testSentinelLoop(t *testing.T, composition bool) {
 	cases := make([]adapter.CaseBinding, 0, len(bundle.Experiment.Spec.Tasks))
 	for _, task := range bundle.Experiment.Spec.Tasks {
 		tc := &testcase.Case{ID: sid.NewCaseID(), SuiteID: suiteRecord.ID, Name: task.ID, Input: task.Input, Expected: "answer", Scorers: []testcase.ScorerConfig{{Name: "exact"}}}
+		if metered {
+			tc.Scorers = []testcase.ScorerConfig{{Name: "quality", Config: map[string]any{"rubric": "Return 1 for answer, 0 otherwise."}}}
+		}
 		if err = sentinelStore.CreateCase(mapped, tc); err != nil {
 			t.Fatal(err)
 		}
@@ -225,6 +269,7 @@ func testSentinelLoop(t *testing.T, composition bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerJudge(sentinelEngine)
 	frozen, err := sentinelEngine.FreezeEvaluation(mapped, se.FreezeRequest{SuiteID: suiteRecord.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +278,11 @@ func testSentinelLoop(t *testing.T, composition bool) {
 	bundle.Experiment.Spec.Evaluation = ref
 	makeEvaluator := func() *adapter.Evaluator {
 		t.Helper()
-		value, createErr := adapter.NewEvaluator(adapter.Config{Engine: sentinelEngine, Mapper: mapper(func(ctx context.Context, _ cortex.Scope) (context.Context, error) {
+		judges := []*adapter.MeteredJudge{}
+		if metered {
+			judges = append(judges, judge)
+		}
+		value, createErr := adapter.NewEvaluator(adapter.Config{Repository: repository, Judges: judges, Engine: sentinelEngine, Mapper: mapper(func(ctx context.Context, _ cortex.Scope) (context.Context, error) {
 			return sentinel.WithApp(sentinel.WithTenant(ctx, "tenant"), "app"), nil
 		}), Bindings: []adapter.Binding{{Scope: scope, AppID: "app", TenantID: "tenant", Plan: ref, Cases: cases}}})
 		if createErr != nil {
@@ -246,11 +295,7 @@ func testSentinelLoop(t *testing.T, composition bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository := osqlite.New(loopDB(t, optimizerPath))
-	if err = repository.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	authority := loopAuthority{actor: bundle.Experiment.Spec.Requester}
+
 	proposal := opt.Proposal{Edits: []opt.Edit{{Kind: opt.EditSectionBody, Target: base.Policy.MutableSections[0], Text: "Check the evidence."}}, Rationale: "Test candidate"}
 	proposals := []opt.Proposal{proposal}
 	expectedExecutions, expectedControllers := 12, 2
@@ -273,14 +318,19 @@ func testSentinelLoop(t *testing.T, composition bool) {
 		}
 		model.composition = string(data)
 	}
-	host := &loopHost{dir: dir, base: base.Prepared.Digest(), lost: true, lostOpen: true}
+	host := &loopHost{dir: dir, base: base.Prepared.Digest(), lost: true, lostOpen: true, priced: metered}
 	makeOptimizer := func() *opt.Optimizer {
 		t.Helper()
-		trials, createErr := opt.NewTrialPhaseHandler(opt.TrialConfig{Repository: repository, Authorizer: authority, IdentityResolver: authority, Environments: host, Evaluator: evaluator, Allowance: opt.TrialAllowance{MaxTokens: 100}})
+		allowance := opt.TrialAllowance{MaxTokens: 100}
+		if metered {
+			allowance.MaxUSDMicros = 200
+			allowance.PricingRevision = "prices-1"
+		}
+		trials, createErr := opt.NewTrialPhaseHandler(opt.TrialConfig{Repository: repository, Authorizer: authority, IdentityResolver: authority, Environments: host, Evaluator: evaluator, Allowance: allowance})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
-		models, createErr := opt.NewControllerFactory(repository, authority, authority, []opt.ModelBinding{{Model: "fixture", Revision: "1", Provider: model, Counter: loopCounter{}}}, opt.ControllerLimits{MaxInputBytes: 1 << 20, MaxResponseBytes: 4096, MaxOutputTokens: 100, MaxProposals: 2, MaxLessons: 2})
+		models, createErr := opt.NewControllerFactory(repository, authority, authority, []opt.ModelBinding{{Model: "fixture", Revision: "1", Provider: model, Counter: loopCounter{}, Pricing: loopPricing{}, Reporter: loopReporter{}}}, opt.ControllerLimits{MaxInputBytes: 1 << 20, MaxResponseBytes: 4096, MaxOutputTokens: 100, MaxProposals: 2, MaxLessons: 2})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
@@ -333,6 +383,7 @@ func testSentinelLoop(t *testing.T, composition bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			registerJudge(sentinelEngine)
 			evaluator.Evaluator = makeEvaluator()
 			worker = makeOptimizer()
 			continue
@@ -345,6 +396,27 @@ func testSentinelLoop(t *testing.T, composition bool) {
 			if decision.Outcome != opt.DecisionRecommend || !decision.Comparison.Complete || decision.Comparison.MeanDelta != 1 || len(decision.EvaluationIDs) != 6 || host.executions != expectedExecutions || model.calls != expectedControllers || recoveries != 3 {
 				t.Fatalf("loop evidence: decision=%+v executions=%d controller=%d recoveries=%d", decision, host.executions, model.calls, recoveries)
 			}
+			if metered {
+				if judgeModel.calls != expectedExecutions || decision.Comparison.CostRatio == nil || *decision.Comparison.CostRatio != .5 {
+					t.Fatalf("judge/cost: calls=%d comparison=%+v", judgeModel.calls, decision.Comparison)
+				}
+				page, listErr := repository.ListReservations(ctx, current.ID, opt.PageQuery{Limit: 100})
+				if listErr != nil {
+					t.Fatal(listErr)
+				}
+				judges := 0
+				for _, reservation := range page.Items {
+					if reservation.Request.Operation == opt.OperationJudge {
+						judges++
+						if reservation.State != opt.ReservationSettled || reservation.Call == nil || reservation.DebitedUSDMicros != 5 {
+							t.Fatalf("judge accounting: %+v", reservation)
+						}
+					}
+				}
+				if judges != expectedExecutions {
+					t.Fatalf("judge reservations %d", judges)
+				}
+			}
 			if err = repository.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -355,4 +427,40 @@ func testSentinelLoop(t *testing.T, composition bool) {
 		}
 	}
 	t.Fatal("optimization loop did not finish")
+}
+
+type loopJudgeModel struct{ calls int }
+
+func (p *loopJudgeModel) Complete(_ context.Context, r *llm.Request) (*llm.Response, error) {
+	p.calls++
+	var data struct{ Actual string }
+	if err := json.Unmarshal([]byte(r.Messages[0].Content), &data); err != nil {
+		return nil, err
+	}
+	score := 0
+	if data.Actual == "answer" {
+		score = 1
+	}
+	return &llm.Response{Model: "fixture", Content: fmt.Sprintf(`{"score":%d,"reason":"fixture"}`, score), FinishReason: "stop", Usage: llm.Usage{TotalTokens: 10}}, nil
+}
+func (*loopJudgeModel) CompleteStream(context.Context, *llm.Request) (llm.Stream, error) {
+	return nil, opt.ErrUnavailable
+}
+
+type loopPricing struct{}
+
+func (loopPricing) Price(_ context.Context, r opt.UsageEstimate) (opt.MoneyEstimate, error) {
+	return opt.MoneyEstimate{USDMicros: 200, Quality: opt.UsageKnown, PricingRevision: r.PricingRevision}, nil
+}
+
+type loopReporter struct{}
+
+func (loopReporter) Observe(_ context.Context, r opt.ModelObservation) (opt.ModelUsageReport, error) {
+	usage := opt.Usage{Tokens: 10, TokenQuality: opt.UsageKnown, Receipt: "receipt/" + r.RequestDigest}
+	if r.Reservation.PricingRevision != "" {
+		usage.MoneyQuality = opt.UsageKnown
+		usage.PricingRevision = r.Reservation.PricingRevision
+		usage.USDMicros = 5
+	}
+	return opt.ModelUsageReport{Usage: usage, Complete: true}, nil
 }
