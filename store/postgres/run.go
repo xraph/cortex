@@ -84,6 +84,10 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // is never written back. r.Scope is left untouched — whatever runToModel
 // derives from it is excluded from the SET clause by mutableRunColumns.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
+	return (assuranceDriver{store: s}).UpdateRunSnapshot(ctx, r, time.Now().UTC())
+}
+
+func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at time.Time) error {
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return scopeErr
@@ -94,8 +98,8 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 	m := runToModel(r)
 	m.Revision = next
-	m.UpdatedAt = time.Now().UTC()
-	q := s.pgdb.NewUpdate(m).Column(mutableRunColumns...).WherePK().Where("revision = ?", r.Revision)
+	m.UpdatedAt = at
+	q := d.queries().NewUpdate(m).Column(mutableRunColumns...).WherePK().Where("revision = ?", r.Revision)
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -108,7 +112,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 		return fmt.Errorf("cortex: update run rows affected: %w", err)
 	}
 	if n == 0 {
-		return runstate.UpdateConflict(ctx, s, scope, r.ID)
+		return runstate.UpdateConflict(ctx, d, scope, r.ID)
 	}
 	r.Revision = m.Revision
 	r.UpdatedAt = m.UpdatedAt

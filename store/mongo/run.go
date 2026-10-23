@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -72,6 +73,10 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // out scope_l0/l1/l2/extra/canon rather than relying on them happening to
 // already match.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
+	return (assuranceDriver{store: s}).UpdateRunSnapshot(ctx, r, now())
+}
+
+func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at time.Time) error {
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return scopeErr
@@ -82,7 +87,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 	m := runToModel(r)
 	m.Revision = next
-	m.UpdatedAt = now()
+	m.UpdatedAt = at
 
 	filter := bson.M{"_id": m.ID, "revision": r.Revision}
 	if r.Revision == 0 {
@@ -117,7 +122,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 		"updated_at":          m.UpdatedAt,
 	}
 
-	res, err := s.mdb.NewUpdate((*runModel)(nil)).
+	res, err := d.store.mdb.NewUpdate((*runModel)(nil)).
 		Filter(filter).
 		SetUpdate(bson.M{"$set": set}).
 		Exec(ctx)
@@ -126,7 +131,7 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 
 	if res.MatchedCount() == 0 {
-		return runstate.UpdateConflict(ctx, s, scope, r.ID)
+		return runstate.UpdateConflict(ctx, d, scope, r.ID)
 	}
 
 	r.Revision = m.Revision

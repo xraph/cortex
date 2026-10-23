@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE and A2A metadata pages implemented; installed subscriptions, ordinary run producers, approved content and remote subscriptions remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A metadata pages and ordinary terminal recording implemented; installed subscriptions, artifact events, approved content and remote subscriptions remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -2956,3 +2956,46 @@ Validation for the deadline correction:
   (3.472s). Full API and remote race suites passed (1.700s and 8.097s).
 - Root/API builds, final lint across all ten modules and diff checks passed.
   Fresh Linux CI must still confirm the correction and the coverage timeout.
+
+
+### Ordinary terminal lifecycle recording
+
+`WithPublicEventRecording` enables atomic terminal state and metadata persistence
+for ordinary runs. It requires the optional `event.TerminalStore` capability.
+The shared repository commits a complete terminal snapshot, request-bound receipt
+and `execution_finished` observation in the existing run transaction. SQL and
+Mongo adapters reuse their ordinary update implementation inside that transaction.
+No migration or new database table is needed.
+
+Exact retries preserve the receipt and event ID after a lost acknowledgement or
+retention pruning. Changed requests, stale revisions, competing terminal writers,
+wrong scopes and verification bypasses fail closed. Runtime completion, failure,
+cancellation and external terminal updates share one helper; persistence failure
+cannot silently fall back or publish completion. Required-verification capture
+and result commit retain their existing event sequence.
+
+Recording remains opt-in, independent of subscriber authorization. Direct store
+writes, imported terminal rows and historical backfill are outside this mode.
+Artifact events, approved-content replay and durable observer delivery remain
+open. The full four-stage plan remains active.
+
+Validation for ordinary terminal recording:
+
+- New request/runtime tests failed before the capability existed. A separate
+  metadata integer regression exposed rounding during snapshot freezing and now
+  passes with exact JSON number decoding.
+- SQLite runtime tests cover synchronous and streaming completion, provider
+  failure, cancellation, external updates, mock runs, disabled-mode compatibility,
+  unavailable storage and suppression of completion hooks after write failure.
+  Required verification retains its four-event sequence without duplication.
+- Conformance tests passed on all three backends for terminal states, competing
+  writers, scope/revision denial, changed retries, rollback, lost acknowledgements
+  and retry after event pruning. PostgreSQL and MongoDB fixtures ran in Docker.
+- Final full race suites passed: engine 296.394s, event 1.196s, run 1.194s,
+  SQLite 352.977s, PostgreSQL 44.137s and MongoDB 51.617s. API and remote race
+  suites passed in 1.898s and 10.675s. Root/API builds passed.
+- Final formatting, lint across all ten modules, diff checks and docs type checks,
+  lint and production build passed. Installed host rollout remains unqualified.
+- Previous baseline `aad1305` passed Linux CI run 39955834822, confirming the
+  replay deadline and race-coverage timeout corrections. This packet still needs
+  its own post-push CI result.

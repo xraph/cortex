@@ -45,6 +45,8 @@ type Engine struct {
 	logThrottle           telemetry.Throttle
 	store                 store.Store
 	atomicPreparation     bool
+	publicEventRecording  bool
+	publicEventRecorder   event.TerminalStore
 	publicEventConfigured bool
 	publicEventAuthorizer event.Authorizer
 	publicEventReader     *event.Reader
@@ -822,7 +824,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	r.StopReason = run.StopCancelled
 	completedAt := time.Now().UTC()
 	r.CompletedAt = &completedAt
-	if err := e.store.UpdateRun(ctx, r); err != nil {
+	if err := e.persistRun(ctx, r); err != nil {
 		return fmt.Errorf("cancel run %s: %w", runID, err)
 	}
 	e.emitTerminalOutcome(context.WithoutCancel(ctx), r)
@@ -851,7 +853,7 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	r = e.claimedRun(ctx, r.ID, r, susp.ClaimedRun)
 	r.State = run.StateCancelled
 	r.StopReason = run.StopCancelled
-	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {
+	if err := e.persistRun(context.WithoutCancel(ctx), r); err != nil {
 		// The suspension stays. It is the only record of what the run was
 		// waiting on, and the run is still running from the claim, so
 		// dropping the row now would throw that away for nothing.
@@ -1202,5 +1204,5 @@ func (e *Engine) UpdateRun(ctx context.Context, r *run.Run) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
-	return e.store.UpdateRun(ctx, r)
+	return e.persistRun(ctx, r)
 }

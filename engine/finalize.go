@@ -75,7 +75,7 @@ func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcom
 		outcome.CompletedAt = time.Now().UTC()
 	}
 	next.CompletedAt = &outcome.CompletedAt
-	if err := e.store.UpdateRun(writeCtx, &next); err != nil {
+	if err := e.persistRun(writeCtx, &next); err != nil {
 		return fmt.Errorf("cortex: persist terminal outcome: %w", err)
 	}
 	*r = next

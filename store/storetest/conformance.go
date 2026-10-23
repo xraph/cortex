@@ -45,6 +45,8 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("VerificationCancellationLifecycle", func(t *testing.T) { testVerificationCancellationLifecycle(t, newStore) })
 	t.Run("PublicEventsRetention", func(t *testing.T) { testPublicEventsRetention(t, newStore) })
 	t.Run("PublicEventsDenials", func(t *testing.T) { testPublicEventsDenials(t, newStore) })
+	t.Run("TerminalEventsConcurrent", func(t *testing.T) { testTerminalEventsConcurrent(t, newStore) })
+	t.Run("TerminalEvents", func(t *testing.T) { testTerminalEvents(t, newStore) })
 	t.Run("PublicEvents", func(t *testing.T) { testPublicEvents(t, newStore) })
 	t.Run("PublicEventsConcurrent", func(t *testing.T) { testPublicEventsConcurrent(t, newStore) })
 	t.Run("RunRevisionClaims", func(t *testing.T) { testRunRevisionClaims(t, newStore) })

@@ -861,7 +861,7 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 		r.StopReason = run.StopCancelled
 		r.Error = saved.Error
 		r.CompletedAt = &completedAt
-		return e.store.UpdateRun(writeCtx, r)
+		return e.persistRun(writeCtx, r)
 	}
 	r.State = run.StateFailed
 	r.StopReason = run.StopExecutionError
@@ -883,7 +883,7 @@ func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.Agen
 	// every context value (including scope) while dropping the
 	// cancellation signal for this one terminal write, exactly like the
 	// cancel branches do.
-	writeErr := e.store.UpdateRun(writeCtx, r)
+	writeErr := e.persistRun(writeCtx, r)
 	// Same reasoning as the store write above: a hook subscriber (audit,
 	// for instance) that does its own I/O keyed on ctx would otherwise
 	// silently drop the failure event on an already-cancelled ctx, even

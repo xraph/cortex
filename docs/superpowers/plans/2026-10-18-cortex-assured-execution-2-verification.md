@@ -222,9 +222,19 @@ Tests cover idle revocation, stalled writers, flush failures, real HTTP disconne
 and admission/cancellation under load. Installed browser/proxy behavior remains
 unqualified.
 
-The remaining S2.6 work includes ordinary run lifecycle producers, artifact events,
-approved content replay, remaining transport integration, installed live subscriptions and
-installed reconnect/revocation checks. The packet checkboxes stay open until
+Ordinary terminal outcomes now record `execution_finished` atomically when the
+host enables `WithPublicEventRecording`. Completion, incomplete outcomes, failures
+and cancellation share the terminal persistence helper. Exact storage retries
+reuse a request-bound receipt, including after a lost acknowledgement or retention
+pruning. Direct store updates and imported terminal rows are not backfilled.
+
+Remote `GetTask` also exposes opt-in metadata pages through the A2A public-events
+extension on REST, JSON-RPC and gRPC. Sequence and revision fields use decimal
+strings, and reads recheck the resolved peer and current subscriber grant.
+
+The remaining S2.6 work includes artifact events, approved content replay,
+remote durable subscriptions, installed live subscriptions and installed
+reconnect/revocation checks. The packet checkboxes stay open until
 those paths use the shared log.
 
 ## S2.7: Installed integration, evidence review and release qualification

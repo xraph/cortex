@@ -508,6 +508,45 @@ history, completion hooks or outbox events.
 Production evaluator/fence qualification and host deployment remain required.
 
 
+### Record ordinary terminal outcomes
+
+Enable atomic lifecycle recording on the engine that executes ordinary runs:
+
+```go
+e, err := engine.New(
+    engine.WithStore(storage),
+    engine.WithPublicEventRecording(),
+    engine.WithPublicEventReplay(subscriberPolicy),
+)
+```
+
+Recording and reading are separate options. Recording requires
+`event.TerminalStore`; the SQLite, PostgreSQL and MongoDB stores implement it.
+MongoDB needs transactions, so use a replica set or sharded deployment. Without
+the recording option, ordinary run updates retain their existing behavior.
+Verification transactions already record their lifecycle events.
+
+With recording enabled, completion, incomplete outcomes, failures and cancellation
+commit their run snapshot and `execution_finished` event in one transaction.
+Synchronous, streaming and mock execution use the same persistence helper, as do
+`Engine.CancelRun` and terminal `Engine.UpdateRun` calls. A failed transaction
+does not fall back to an unrecorded update or publish a completion hook. The
+recording option does not publish output or grant replay access.
+
+The storage request carries the exact scope, expected revision, full terminal
+snapshot and a stable event ID. Its encoded snapshot is limited to 8 MiB. The
+receipt contains a digest and identifiers, without private output or metadata.
+Reuse the identical `event.TerminalUpdate` when a storage acknowledgement is
+lost. It returns the original receipt, even after replay retention has pruned the
+event. Changed contents or competing terminal writes are refused. A receipt
+acknowledges that historical write; read the current run before acting on it.
+
+Required-verification success continues through private candidate capture and
+guarded result commit. The ordinary recording method rejects verification
+results and required candidates. Direct store updates and imported terminal rows
+do not produce these events, and enabling recording does not backfill history.
+Artifact events, approved-content replay and durable hook delivery remain open.
+
 ### Replay verification lifecycle metadata
 
 Configure `engine.WithPublicEventReplay` with your current subscriber authorizer.
