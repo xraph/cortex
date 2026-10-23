@@ -1512,9 +1512,8 @@ The full binding includes scope, source, version, sensitivity and retention.
 Identical bytes under another reference need a separate installed file and
 grant. `SourceURI` is metadata; the source never fetches it. You can provision
 new bindings while the broker runs without opening its exclusive capture
-database. Publish complete files atomically through a trusted host process and
-keep the original references with their source records. A provisioning command
-is still pending.
+database. Use the provisioning command below and keep the original references
+with their source records.
 
 `service.NewLocalInputs` verifies ownership, exact mode, link count, size and
 content digest before returning a memory snapshot. The configured ceiling is at
@@ -1534,3 +1533,51 @@ snapshots cannot be erased from another reader, and trusted host provisioning
 owns physical file deletion and retention. Captured outputs continue to use the
 evidence database, including its durable deletion and delayed-upload fences;
 this source exposes no write or delete operation.
+
+### Provisioning an input
+
+Build `./cmd/cortex-sandbox-input` from the sandbox module with `GOWORK=off`
+and install the approved binary through your host deployment. Run it as root
+on Linux with these arguments in this order:
+
+```sh
+cortex-sandbox-input \
+  --config /etc/cortex/broker.json \
+  --job /etc/cortex/jobs/task.json \
+  --input /inputs/data \
+  --file /etc/cortex/sources/data.bin
+```
+
+`--job` is the protected canonical encoding of a host-sealed `sandbox.Job`.
+`--input` selects one of its declared guest paths. The broker and job files must
+be root-owned, single-link mode-0600 files; the source must also have mode 0600
+and match the selected reference's exact size and digest. The input directory
+must already exist with mode 0700. Current evidence policy must grant that exact
+input binding to the job's principal and scope.
+
+The command verifies configuration, the job, source bytes and current grants,
+then publishes a mode-0400 file under the reference binding digest. It syncs the
+file before an exclusive atomic rename and syncs the directory afterward.
+Configuration, job and policy are rechecked before publication and before a
+successful receipt. It opens no broker database, listener or worker service and
+does not qualify or execute the job.
+
+An identical retry verifies the installed file. Conflicting contents or unsafe
+metadata fail without replacement. A failed call after rename may still have
+installed complete bytes; retry the same request to resolve that outcome. A
+process exit before rename can leave a private `.cortex-publish-*.tmp` file.
+Those names cannot be read as inputs. Remove orphan staging files only after
+confirming that their provisioning process has stopped; this command does not
+delete another writer's files or run a background cleanup service.
+
+Success writes a JSON receipt with the job ID, job digest, reference binding,
+content digest and byte count. Failure exits nonzero with a generic diagnostic;
+source bytes, policy bodies and internal errors are not printed. Cancellation
+and preparation have a 30-second bound between local filesystem operations.
+As with input reads, use responsive local storage because a stalled kernel call
+cannot be forcibly cancelled.
+
+Linux fixtures execute the built command, verify identical retries and preserve
+installed data after a conflicting request. Publication tests cover concurrent
+writers, policy changes, unsafe metadata and process exit before and after commit.
+Host installation and live systemd/runsc qualification remain separate work.

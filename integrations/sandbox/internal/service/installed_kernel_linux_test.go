@@ -27,7 +27,7 @@ func installedFixture(t *testing.T) (string, BrokerConfig, daemonCredentialFixtu
 		t.Fatal("installed broker fixture requires root")
 	}
 	credentials := daemonCredentialsFixture(t)
-	name, cfg := brokerConfigFixture(t, credentials)
+	name, cfg := brokerConfigWithCredentials(t, credentials)
 	worker, err := ReadWorkerConfig(t.Context(), cfg.WorkerConfig)
 	if err != nil {
 		t.Fatal(err)

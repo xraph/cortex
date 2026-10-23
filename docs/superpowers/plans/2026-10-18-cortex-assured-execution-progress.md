@@ -1713,3 +1713,47 @@ expiry during authorization, reader capacity and real worker transfer.
 The provisioning command, standalone broker executable, concrete live verifier
 and installation flow remain open. Linux worker selection remains deferred.
 S2.4 and the four-stage plan remain incomplete.
+
+### S2.4 input provisioning command and atomic publication
+
+Protected input delivery commit `4341d13` passed CI run `39899988310`.
+
+The Linux `cortex-sandbox-input` command now installs one declared input from
+protected broker/job configuration and a mode-0600 source file. It checks the
+full reference, exact bytes and current evidence grant, publishes the mode-0400
+binding file, reads it through the installed source and emits a bounded metadata
+receipt. Configuration, job and current policy are checked again before commit
+and before success. Provisioning opens no broker database, listener or service
+connection and grants no job execution or runtime qualification.
+
+The shared host-file publisher writes a unique private staging file, applies the
+final mode, syncs it and uses the platform's exclusive rename operation. It
+never overwrites an existing destination. Identical retries independently verify
+metadata and bytes; conflicts remain untouched. Publication syncs the parent
+directory and checks the installed pin. TDD caught a retry accepting a file
+changed during its policy callback; verification now runs again afterward.
+
+Process-exit tests cover interruption before rename and after a committed write.
+An interrupted preparation can leave a private staging file, which input readers
+cannot address. Retry installs or verifies the exact destination without adopting
+that orphan. Host cleanup must confirm the original publisher has stopped before
+removing staging files. This command does not claim automatic crash cleanup.
+
+Fixtures also cover concurrent publishers, cancellation, changed prepared config
+and jobs, revoked grants, replaced directories, unsafe source/destination metadata
+and mismatched bytes. The root Linux suite executes the built command, checks an
+identical receipt on retry and verifies that failed requests preserve installed
+content and do not print source bytes. CI builds and runs that command fixture.
+
+Validation passed: scoped make f, sandbox lint, Linux tagged lint, Linux amd64
+build and the full sandbox race suite. The service race suite passed in 53.685s.
+The Linux command/configuration fixtures passed 90 top-level tests and atomic
+publication fixtures passed 50, each across ten repetitions without skips.
+Repository-wide make l passed eight modules on the final recheck, including
+optimization. The extension module needs dependency tidying after the concurrent
+Sentinel changes; the new Sentinel adapter has two gocritic findings. These were
+sent to their owner and remain outside this sandbox commit.
+
+The standalone broker executable, concrete live qualification verifier and full
+host installation/provisioning flow remain open. Linux worker selection remains
+deferred; S2.4 and the four-stage plan are incomplete.

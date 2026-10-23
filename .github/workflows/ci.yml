@@ -115,7 +115,8 @@ jobs:
           GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-peer.test" ./internal/workerpeer
           sudo -- "$RUNNER_TEMP/cortex-worker-peer.test" -test.v -test.timeout=60s
           GOWORK=off go test -race -c -tags=sandbox_peer_kernel -o "$RUNNER_TEMP/cortex-worker-control.test" ./internal/service
-          sudo -- "$RUNNER_TEMP/cortex-worker-control.test" -test.run='^Test(ControlKernel|DaemonKernel|HostAssembly|InstalledAttestation|InstalledBroker)' -test.v -test.timeout=60s
+          GOWORK=off go build -o "$RUNNER_TEMP/cortex-sandbox-input" ./cmd/cortex-sandbox-input
+          sudo env CORTEX_INPUT_COMMAND="$RUNNER_TEMP/cortex-sandbox-input" "$RUNNER_TEMP/cortex-worker-control.test" -test.run='^Test(ControlKernel|DaemonKernel|HostAssembly|InstalledAttestation|InstalledBroker|InstalledInputCommand)' -test.v -test.timeout=60s
 
       - name: Test bounded workspace filesystems
         if: matrix.module == 'integrations/sandbox'
