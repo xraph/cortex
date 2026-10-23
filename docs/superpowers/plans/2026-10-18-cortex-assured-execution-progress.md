@@ -2099,3 +2099,50 @@ late-receipt accounting, cross-job/run budgets, worker scheduling and renewal,
 captured-output/enqueue recovery, engine sync/stream/prepared/resume integration,
 completion hooks, public delivery and installed qualification. The full S2.2
 packet and four-stage goal remain open.
+
+## Explicit engine verification worker
+
+S2.2 ruling: add `WithVerificationWorker` and `Engine.VerifyRun` as an explicit
+host operation before installing the automatic publication gate. This connects
+the existing durable job, evaluator and guarded committer without changing normal
+run completion. The full S2.2 runtime and hook checkboxes remain open.
+
+The host supplies saved candidate evidence, its exact contract/context binding,
+a reserved evaluation budget, claim identity and stable result ID. Construction
+requires all trusted host ports and optional durable store capabilities, in either
+option order. There is no default evaluator, fence or in-memory job store.
+Malformed claims and result identities fail before enqueue. Returned ownership
+must match the requested claim ID and owner before evaluation starts.
+
+Each unique verifier name/revision group runs in contract order. Required-check
+readiness stops further dispatch, so later optional groups are skipped. Already
+dispatched optional checks still have to settle. The worker returns explicit
+failed, inconclusive or cancelled job states without a success receipt. Budget
+exhaustion retains partial reports and conservative charges for recovery.
+
+Uncertain evaluator calls reconcile the original operation. Commit recovery
+checks the stored receipt against the job and reuses its original request through
+the host fence. Current authorization applies before work, at commit and before
+returning saved outcomes, including historical retries. Errors may follow durable
+writes; the same job and result identities must be reused. Lease renewal, expiry
+sweeping and cross-scope discovery are not installed by this API.
+
+TDD evidence: tests first failed against the missing engine API. A later
+regression reproduced acceptance of a different returned claim ID, then passed
+after checking requested ownership. Real SQLite tests execute a prepared agent
+and tool, verify its captured output and reopen the database after lost evaluator
+or commit replies. Generation and tool counters remain unchanged during retries.
+Other cases cover required-check failure, terminal outcomes, wrong scopes,
+incomplete or changed candidates, expired jobs, missing/typed-nil ports, revoked
+authority around commit, deleted evidence, changed historical receipts, duplicate
+verifier groups, bounded dispatch and detached authorization inputs.
+
+Final verification passed: scoped `make f`, all ten modules through `make l`,
+root build, diff checks, and race suites for engine, verification, execution, run
+and suspension. The engine suite completed in 126 seconds. Docs type generation,
+type checking, lint and production build passed after the final content edit.
+These fixtures do not qualify a production evaluator, host fence, provider,
+scanner or Linux sandbox.
+Automatic candidate capture/enqueue recovery, shared run budgets, scheduling,
+sync/stream/prepared/resume publication gating, completion hooks and public event
+delivery remain open. The contextual-verification capability remains false.

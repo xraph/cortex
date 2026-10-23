@@ -27,7 +27,8 @@ Content screening covers input, output, retrieved content, tool results and publ
 
 `Engine.RuntimeCapabilities()` and the dashboard's `runtime.detail.assurance` describe process configuration. They report prepared-execution support, publication mode, whether a gate is installed and whether that gate advertises incremental checking. Presence does not certify provider health or effectiveness.
 
-Contextual verification remains unavailable. Default preparation freezes collected inputs and checks its source read set for observed changes. Those independent reads are not one transaction.
+Automatic contextual verification at publication remains unavailable. The explicit
+`VerifyRun` worker below can verify saved candidates. Default preparation freezes collected inputs and checks its source read set for observed changes. Those independent reads are not one transaction.
 
 ## Atomic preparation
 
@@ -252,7 +253,57 @@ keep every writer upgraded before enabling jobs; older binaries do not enforce
 this protocol. Queue access also needs host authorization. There is no implicit
 cross-scope worker discovery.
 
-The scheduler, evaluator dispatch, budget accounting and engine finalization
-still need to be connected. In particular, scheduling must recover a captured
-candidate without repeating its generation or tool effects. These storage tests
-do not qualify that runtime path or a production host fence.
+### Verify a saved run through the engine
+
+Install `engine.WithVerificationWorker` to advance a captured candidate through
+job creation, ownership, evaluation and guarded result commit:
+
+```go
+e, err := engine.New(
+    engine.WithStore(storage),
+    engine.WithVerificationWorker(engine.VerificationWorkerConfig{
+        Adapter:    hostEvaluator,
+        Authorizer: currentAuthority,
+        Fence:      hostCommitFence,
+        Clock:      hostClock,
+    }),
+)
+if err != nil {
+    return err
+}
+result, err := e.VerifyRun(ctx, engine.VerifyRunRequest{
+    Job:      capturedJob,
+    Claim:    workerClaim,
+    ResultID: stableResultID,
+})
+```
+
+`capturedJob` must identify saved evidence for a completed final-answer run and
+its saved acceptance contract. Its evaluation budget must already be reserved
+from the remaining run allowance. `workerClaim.JobID` must match the job, and
+`stableResultID` uses `verification.PrefixResult`. Persist these identities before
+calling the worker. Built-in stores supply the required capabilities; custom
+stores must implement `JobStore`, `ExecutorStore` and `CommitStore`.
+
+The worker runs each verifier name/revision group once, in contract order. It
+stops when the job becomes ready or reaches a failed, inconclusive or cancelled
+state. Optional groups that follow readiness are skipped; already dispatched
+optional checks must settle. Failed, inconclusive and cancelled outcomes return
+the saved job with a nil receipt. Inspect the state even when the error is nil.
+
+After an error, retry with the same job, claim and result identities. Uncertain
+evaluator calls reconcile their original operation. A lost commit acknowledgement
+recovers the original request and receipt through fresh authorization under the
+host fence. A changed result ID is rejected once the job has committed. The
+worker never calls generation or tools, including during database restart recovery.
+
+A claim can only be recovered while its stored lease is live. After expiry, use
+a new claim ID to take over eligible work, keeping the job and result IDs stable.
+This worker does not renew leases, sweep expired jobs or discover other scopes.
+
+This is an explicit host operation. It does not change synchronous, streaming,
+prepared or resumed run publication, install completion hooks or deliver outbox
+events. `RuntimeCapabilities.ContextualVerification` remains false. Automatic
+candidate capture/enqueue recovery, scheduling, shared budget allocation and
+publication gating still need integration. Tests use host doubles and do not
+qualify a production evaluator or commit fence.

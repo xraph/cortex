@@ -56,8 +56,8 @@ steps below remain open.
 
 Durable job storage now atomically enqueues pending verification, leases work,
 records partial reports and commits ready jobs with results. Claim history fences
-replayed ownership requests. Runtime scheduling, evaluator dispatch and the
-captured-output recovery window remain open, so the job/lease runtime checkbox
+replayed ownership requests. Automatic scheduling and the captured-output
+recovery window remain open, so the job/lease runtime checkbox
 below stays unchecked.
 
 Budgeted jobs also persist evaluator dispatch and conservative usage charges
@@ -66,8 +66,13 @@ unknown outcomes cannot be redispatched by changing worker or call identity.
 `verification.Executor` now advances one verifier group through host-authorized
 estimation, durable dispatch, adapter evaluation and atomic settlement. Uncertain
 calls use the adapter's separate reconciliation path and completed calls do not
-dispatch again. Qualified provider adapters, worker scheduling and allocation
-from the remaining run budget still need runtime integration.
+dispatch again. `engine.WithVerificationWorker` and `Engine.VerifyRun` now join
+enqueue, claim, ordered verifier groups and guarded commit for an explicitly
+captured candidate. SQLite restart tests cover lost evaluator and commit replies
+without repeating generation or tools. Qualified provider adapters, automatic
+worker scheduling, capture recovery and allocation from the remaining run budget
+still need integration. This explicit API does not satisfy the automatic
+sync/stream/prepared/resume publication gate or hook checkboxes below.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

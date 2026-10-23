@@ -36,6 +36,7 @@ The central coordinator.
 | `Engine.RunAgent(ctx, name, input, overrides)` | Run an agent and wait for the `*run.Run` |
 | `Engine.StreamAgent(ctx, name, input, overrides, events)` | Run an agent and send `StreamEvent`s on a channel, which it closes |
 | `Engine.Resume`, `ResumeStream`, `CancelRun` | Continue or cancel a suspended run |
+| `WithVerificationWorker`, `Engine.VerifyRun(ctx, request)` | Explicit verification of a saved candidate through durable jobs and guarded commit; see [Assurance](/docs/execution/assurance) |
 | `Engine.BuildSystemPrompt(ctx, ag, overrides)` | The assembled system prompt for an agent |
 | `Engine.CreateAgent`, `GetAgent`, `GetAgentByName`, `UpdateAgent`, `DeleteAgent`, `ListAgents`, `CountAgents`, `CloneAgent` | Agents |
 | `Engine.CreateSkill`, `GetSkillByName`, `ListSkills`, ... (and the same for traits, behaviors and personas, plus `ClonePersona`) | Human model CRUD |

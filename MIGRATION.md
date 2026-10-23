@@ -259,3 +259,19 @@ execute an exact verifier group under an existing lease. The executor requires
 use `EvaluationAdapter.Reconcile` and never fall back to another evaluation.
 Provide a qualified adapter that retains original report and usage receipts.
 This API does not register a scheduler or change engine completion behavior.
+
+For explicit engine orchestration, configure `engine.WithVerificationWorker`
+with the same evaluator, authorizer and clock plus a host commit fence. The store
+must implement the optional job, executor and commit capabilities. Missing or
+typed-nil services fail construction; there is no process-memory fallback.
+`Engine.VerifyRun` requires saved candidate evidence, a budgeted job request,
+claim identity and stable result ID. It validates the request before enqueueing,
+reconciles uncertain calls and commits through the guarded boundary.
+
+Persist the request before dispatch and reuse its identities after an ambiguous
+error. Replace an expired claim with a new claim ID only when taking over eligible
+work. Failed, inconclusive and cancelled jobs return no receipt. Historical commit
+recovery still checks current authority; a receipt does not authorize later public
+access. Ordinary execution and publication behavior are unchanged. Automatic
+required verification, capture recovery, lease renewal and event delivery remain
+separate integrations, and the contextual-verification capability stays false.
