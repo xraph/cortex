@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots and guarded host content reads implemented; content transports, arbitrary artifact producers and installed qualification remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard content adapters implemented; remote content, arbitrary artifact producers and installed qualification remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3195,3 +3195,58 @@ Validation for guarded content reads:
 
 This completes the host reader, not the transport or installed qualification
 work. The four-stage goal remains active.
+
+
+### S2.6 HTTP and dashboard content access
+
+`GET /v1/runs/:id/results/:result_id` and dashboard `runs.result` v1 call the
+configured guarded reader. Both parse the exact run/result pair with a shared
+helper and map failures through one static vocabulary. Dashboard reads retain
+principal and exact scope from the dispatcher, require `cortex.read` and still
+require the reader's separate content grant. Neither adapter resolves raw output
+from a run detail record.
+
+The HTTP route sets no-store caching, limits concurrent reads to 64 and requires
+write-deadline support before accessing private material. Writes have a ten-second
+limit, narrowed by an earlier caller deadline. A bounded JSON response carries
+content length, and failed writes never append a second body. Admission slots are
+released on cancellation and delivery failure. Dashboard hosts own their network
+delivery bounds and private-response cache controls.
+
+`ResultContentResponse` keeps the public result fields and encodes the run revision
+as a decimal string. The engine's Go result remains unchanged. The explicit
+transport field also gives generated OpenAPI the correct string type; a JSON tag
+alone was insufficient for the current Forge schema generator.
+
+Transport tests share an actual committed SQLite result fixture. Initial tests
+failed on the absent HTTP route and dashboard intent. Coverage includes screened
+success, current revocation, evidence deletion during screening, foreign scope,
+invalid identities, missing services, publication failure, no-store responses,
+64 concurrent cancellations and stalled writes. A live HTTP client reads a result,
+then receives denial after grant revocation. JSON preserves revisions above 2^53,
+and a generated OpenAPI test checks the same wire type.
+
+Metadata SSE still carries no answer text. Remote content, installed browser and
+proxy behavior, dashboard-host delivery and broader qualification remain open.
+The test fixture uses sequential host guards and does not qualify a deployed
+cross-process fence. Existing administrative run/store access remains separately
+host-authorized.
+
+Validation for HTTP and dashboard content access:
+
+- Full API race tests passed in 35.485s; dashboard contract race tests passed in
+  34.573s. Root verification and focused engine content-read race tests passed.
+- The 64-reader cancellation test fills admission, rejects overflow and checks
+  that every slot is released. Stalled writes stop at ten seconds, and a real
+  HTTP connection verifies content delivery followed by current-grant denial.
+- JSON and generated OpenAPI both preserve the decimal revision representation.
+  The new envelope leaves the engine's `PublishedResult` type unchanged.
+- Coordinated `GOWORK=off make f`, final all-ten-module `GOWORK=off make l`, root,
+  API and extension builds, and `git diff --check` passed. API and extension
+  `go mod tidy -diff` checks passed; new module entries support SQLite transport
+  tests and do not change existing dependency pins.
+- Docs type check, lint and production build passed.
+- Guarded reader commit `bffa2c5` passed Linux CI run `39968186862`.
+
+Remote content, installed delivery qualification and the remaining four-stage
+work stay open. The concurrent Sentinel metering work owns separate commits.

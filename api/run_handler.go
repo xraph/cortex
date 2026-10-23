@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 func (a *API) registerRunRoutes(router forge.Router) error {
@@ -35,6 +36,17 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register run routes: %w", err)
+	}
+
+	if err := g.GET("/runs/:id/results/:result_id", a.readResultContent,
+		forge.WithSummary("Read screened verified result content"),
+		forge.WithDescription("Checks current content authority, retained verification and publication policy before bounded delivery."),
+		forge.WithOperationID("readResultContent"),
+		forge.WithRequestSchema(ResultContentRequest{}),
+		forge.WithResponseSchema(http.StatusOK, "Screened result", verification.ResultContentResponse{}),
+		forge.WithErrorResponses(),
+	); err != nil {
+		return fmt.Errorf("register result content: %w", err)
 	}
 
 	if err := g.GET("/runs/:id/events", a.replayRun,

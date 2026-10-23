@@ -14,6 +14,7 @@ import (
 // API wires all Forge-style HTTP handlers together for the Cortex system.
 type API struct {
 	replayStreams atomic.Int64
+	contentReads  atomic.Int64
 	eng           *engine.Engine
 	router        forge.Router
 }

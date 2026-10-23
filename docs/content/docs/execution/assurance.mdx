@@ -178,11 +178,36 @@ provider diagnostics, and do not regenerate, reevaluate or update the stored run
 The existing publication hooks and metrics observe screening with source
 `result_replay`.
 
-This is a host API. HTTP, dashboard and remote content adapters still need to use
-it, and metadata SSE continues to carry no answer text. A returned observation is
-not a permission lease: reauthorize each subsequent read and bound delivery in
-your transport. Existing administrative store and run APIs still require host
-access controls; configuring this reader does not replace them.
+HTTP exposes this reader at `GET /v1/runs/:id/results/:result_id`. The dashboard
+query `runs.result` v1 accepts `id` and `result_id`; it requires `cortex.read` as
+well as the engine's separate current content grant. Both use the same parser,
+reader and static failure vocabulary. `run_revision` is a decimal string in the
+JSON response, so browser clients preserve revisions above JavaScript's exact
+integer range. Go callers retain the `int64` field.
+
+The HTTP route sets `Cache-Control: no-store`, admits at most 64 concurrent reads
+per API instance and requires response-writer deadline support before reading
+private material. It bounds response writes to ten seconds, with an earlier
+caller deadline taking precedence. Content length lets clients detect truncated
+responses; a failed write never appends another error body. Dashboard hosts must
+bound their own dispatcher response delivery and prevent shared caching of these
+private responses.
+
+| Failure code | HTTP status | Meaning |
+| --- | --- | --- |
+| `result_invalid` | 400 | Invalid run or result identity |
+| `result_denied`, `result_blocked` | 403 | Current access or publication policy refuses content |
+| `result_not_found` | 404 | No result in the authorized scope |
+| `result_stale` | 409 | Verification no longer matches |
+| `result_limit` | 413 | Publication size limit exceeded |
+| `result_unavailable`, `result_interrupted`, `result_busy` | 503 | Unavailable service, interrupted read or exhausted HTTP capacity |
+
+Remote content adapters remain open, and metadata SSE continues to carry no
+answer text. A returned observation is not a permission lease: reauthorize each
+subsequent read and bound delivery in your transport. Existing administrative
+store and run APIs still require host access controls; configuring this reader
+does not replace them. Installed browser, proxy and dashboard-host behavior still
+needs qualification.
 
 
 ## Durable verification work

@@ -73,7 +73,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return checkErr
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage} {
 		if checkErr := bind(d); checkErr != nil {
 			return checkErr
 		}
