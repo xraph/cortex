@@ -40,6 +40,8 @@ type CriterionDefinition struct {
 
 // EvaluationRequest contains recorded output, never a callback to execute a task.
 type EvaluationRequest struct {
+	// Lease fences any charged judge call to the requesting worker generation.
+	Lease          WorkLease       `json:"lease"`
 	ExperimentID   id.ID           `json:"experiment_id"`
 	TrialID        id.ID           `json:"trial_id"`
 	CandidateID    id.ID           `json:"candidate_id,omitempty"`

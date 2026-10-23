@@ -148,7 +148,7 @@ func (h *TrialPhaseHandler) step(ctx context.Context, item WorkItem, trial Trial
 		if err := h.settle(ctx, item, trial, *trial.Execution); err != nil {
 			return Transition{}, err
 		}
-		evaluation, err := h.config.Evaluator.Evaluate(ctx, EvaluationRequest{ExperimentID: trial.ExperimentID, TrialID: trial.ID, CandidateID: trial.CandidateID, CaseID: trial.CaseID, CaseDigest: trial.CaseDigest, Repetition: trial.Repetition, Plan: item.Experiment.EvaluationPlan, Execution: *trial.Execution, IdempotencyKey: "trial/" + trial.ID.String() + "/" + trial.Execution.Digest})
+		evaluation, err := h.config.Evaluator.Evaluate(ctx, EvaluationRequest{Lease: item.Lease, ExperimentID: trial.ExperimentID, TrialID: trial.ID, CandidateID: trial.CandidateID, CaseID: trial.CaseID, CaseDigest: trial.CaseDigest, Repetition: trial.Repetition, Plan: item.Experiment.EvaluationPlan, Execution: *trial.Execution, IdempotencyKey: "trial/" + trial.ID.String() + "/" + trial.Execution.Digest})
 		if err != nil {
 			return Transition{}, err
 		}

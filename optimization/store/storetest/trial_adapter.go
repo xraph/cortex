@@ -94,6 +94,9 @@ func (*trialFixtureEvaluator) Compare(context.Context, optimization.ComparisonRe
 	return optimization.Comparison{}, optimization.ErrUnavailable
 }
 func (e *trialFixtureEvaluator) Evaluate(_ context.Context, r optimization.EvaluationRequest) (optimization.Evaluation, error) {
+	if r.Lease.ExperimentID != r.ExperimentID || r.Lease.Owner == "" || r.Lease.Generation < 1 || !time.Now().Before(r.Lease.ExpiresAt) {
+		return optimization.Evaluation{}, optimization.ErrConflict
+	}
 	e.calls++
 	v := 1.0
 	now := time.Now().UTC()
