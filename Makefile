@@ -1,4 +1,4 @@
-.PHONY: help build run test test-integration clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
+.PHONY: help build run test test-coverage test-integration clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -43,6 +43,7 @@ help:
 	@echo "  make test-race      - Run tests with race detector"
 	@echo "  make test-integration - Run integration tests (inttest/ module; needs Docker)"
 	@echo "  make coverage       - Generate test coverage report"
+	@echo "  make test-coverage  - Run CI race coverage with a 30-minute package timeout"
 	@echo "  make coverage-html  - Generate HTML coverage report"
 	@echo ""
 	@echo "$(GREEN)Dependencies:$(NC)"
@@ -165,6 +166,11 @@ test-integration:
 	@echo "$(BLUE)Running integration tests...$(NC)"
 	cd inttest && $(GO) test -tags=integration -p 1 -timeout 30m ./...
 	@echo "$(GREEN)✓ Integration tests complete$(NC)"
+
+## test-coverage: Run race coverage with enough time for SQLite conformance migrations.
+## The shared CI workflow selects this target when present.
+test-coverage:
+	$(GO) test -race -covermode=atomic -coverprofile=coverage.out -timeout=30m ./...
 
 ## coverage: Generate test coverage
 coverage:

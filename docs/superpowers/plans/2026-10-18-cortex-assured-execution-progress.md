@@ -2910,3 +2910,27 @@ Validation for A2A metadata pages:
 - Prior commit CI run 39952169782 failed when the SQLite race conformance suite
   reached its ten-minute package timeout during fixture migration. This packet's
   local checks do not qualify that full Linux suite or installed remote peers.
+
+
+### Root CI coverage timeout
+
+CI run 39952169782 passed the ordinary SQLite suite in 107.815s, then exceeded
+Go's default ten-minute package timeout during race coverage. The trace was
+inside a fresh fixture's scope-column migration, near the end of conformance.
+The shared workflow used its fallback coverage command because the repository
+had no `test-coverage` target.
+
+`make test-coverage` now supplies the same race detector, atomic coverage mode,
+profile path and full root package set with an explicit thirty-minute timeout.
+The shared workflow discovers this target without a workflow fork. A timeout
+still fails the run. No storage behavior or conformance cases were changed.
+
+Validation for the coverage timeout target:
+
+- The shared workflow's exact target probe now succeeds and resolves the full
+  race/atomic coverage command with a thirty-minute bound.
+- Full local SQLite race coverage passed in 339.712s with 74.9% statement
+  coverage. Formatting, all-module lint, root build and diff checks passed.
+- Linux qualification remains pending. CI run 39954455702 failed earlier, in
+  `TestFollowReplayDeadlineAndCancelledRead`, after an extra send at the exact
+  lifetime boundary. That failure needs a separate replay deadline correction.
