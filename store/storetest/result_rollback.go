@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/store"
@@ -46,6 +47,9 @@ func VerifiedResultRollback(t *testing.T, s store.Store, driver assurance.Driver
 	after, err := s.GetRun(ctx, req.Current.RunID)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+	watermark, err := resultCapability[event.Store](t, s).ReadEventWatermark(ctx, req.Current.RunID)
+	require.NoError(t, err)
+	require.Zero(t, watermark.LastSequence)
 	_, err = repository.GetCommittedResult(ctx, req.ResultID)
 	require.ErrorIs(t, err, verification.ErrNotFound)
 	receipt, err = resultCapability[verification.CommitStore](t, s).CommitVerifiedResult(ctx, req)
@@ -125,4 +129,9 @@ func VerifiedResultRestart(t *testing.T, s store.Store, reopen func() store.Stor
 	current, err := restored.GetRun(ctx, req.Current.RunID)
 	require.NoError(t, err)
 	require.Equal(t, receipt.RunRevision, current.Revision)
+	page, err := resultCapability[event.Store](t, restored).ReadPublicEvents(ctx, event.ReadRequest{After: event.Cursor{SchemaVersion: 1, RunID: req.Current.RunID}, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, receipt.Outbox.EventID, page.Events[0].ID)
+	require.Equal(t, uint64(1), page.Events[0].Sequence)
 }

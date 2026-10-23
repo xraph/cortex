@@ -508,6 +508,61 @@ history, completion hooks or outbox events.
 Production evaluator/fence qualification and host deployment remain required.
 
 
+### Replay committed result metadata
+
+Configure `engine.WithPublicEventReplay` with your current subscriber authorizer.
+Then read a bounded page using the exact authorized scope and a cursor for one run:
+
+```go
+page, err := e.ReadPublicEvents(ctx, event.ReadRequest{
+    After: event.Cursor{SchemaVersion: 1, RunID: runID, Sequence: 0},
+    Limit: 64,
+})
+```
+
+The authorizer implements `event.Authorizer.AuthorizePublicReplay(ctx, runID)`.
+It must check the current subscriber's grant in the context's exact scope. The
+reader calls it before and after storage, including when a cursor has expired.
+Missing authority or storage fails construction. Ordinary engines keep replay
+unavailable until you opt in.
+
+Use each event ID to deduplicate delivery. Save `page.Next` after consuming a
+page and use it to reconnect. Sequence numbers increase within a run; they do
+not order different runs. These events contain typed lifecycle metadata and
+stable identifiers, without candidate text, tool arguments, principal references
+or provider errors. A historical `result_committed` event does not prove that
+the result is still fresh or authorize access to its content.
+
+Every new verified result commit writes its event in the same transaction as the
+receipt, job and run update. The event reuses the receipt's outbox ID. A crash or
+lost acknowledgement cannot leave a committed result without this event, and
+retrying the commit preserves its sequence. Existing historical receipts are
+not backfilled automatically.
+
+Built-in stores expose optional `event.Store` operations for trusted host code:
+`AppendPublicEvents`, `ReadPublicEvents`, `ReadEventWatermark` and
+`PrunePublicEvents`. Appends require an expected run revision and last sequence,
+validate lifecycle metadata against stored state, and commit a batch atomically.
+Reuse the exact request after an uncertain write. A changed batch cannot reuse
+one of its event IDs, even after retention removes the original envelope.
+Raw storage reads do not authorize subscribers; use the engine reader or
+`event.NewReader` at the public boundary.
+
+Each run retains at most 256 envelopes. Appends evict the oldest envelopes when
+needed; a host retention job can prune through an earlier cursor explicitly.
+The ID, batch digest and sequence-range tombstones remain to fence delayed writes.
+An expired cursor returns `event.ErrCursorGap`, no events, and a watermark with
+the current run revision, result ID and retained range. Fetch a fresh authorized
+snapshot before continuing at `page.Next`. Never treat a gap as an empty success.
+Page sizes are limited to 128 and append batches to 32 events.
+
+Only result commits produce events automatically in this version. Other supported
+lifecycle observations require explicit host append calls. Automatic lifecycle
+ordering, artifact events, approved answer-content replay, SSE/dashboard/A2A
+transport wiring and completion-hook delivery remain open. This reader does not
+start background polling or claim exactly-once network delivery.
+
+
 ### Require verification before publishing an answer
 
 `engine.WithRequiredVerification` connects preparation, generation, private

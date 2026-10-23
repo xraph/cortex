@@ -95,3 +95,11 @@ var (
 	ErrSandboxInputsIncomplete   = errors.New("cortex: sandbox input staging is incomplete")
 	ErrSandboxInputsConflict     = errors.New("cortex: sandbox input staging identity conflict")
 )
+
+// Public replay errors distinguish unsupported requests, gaps and unavailable storage.
+var (
+	ErrInvalidPublicEvent     = errors.New("cortex: invalid public event")
+	ErrPublicEventConflict    = errors.New("cortex: public event identity or sequence conflict")
+	ErrPublicEventCursorGap   = errors.New("cortex: public event cursor expired")
+	ErrPublicEventUnavailable = errors.New("cortex: public event replay unavailable")
+)

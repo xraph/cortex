@@ -22,7 +22,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.5 through S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S2.6 | active | this chat | Atomic committed-result metadata replay, scoped readers and retention gaps implemented; lifecycle producers, approved content and transport integration remain open |
+| S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -2628,3 +2629,56 @@ Validation for evaluator renewal:
   Documentation type checks, lint and production build passed.
 - CI for the preceding recovery commit `5a090dd` completed successfully
   (`39942247964`). No dependency or database schema changes were required.
+
+
+### S2.6 durable public metadata replay
+
+Ruling: reuse the existing run transaction for sequence assignment and committed
+result events. Keep public envelopes limited to closed lifecycle types and stable
+IDs. Current subscriber authorization belongs to the reader, independently of
+historical result authority. This prevents a crash after result commit from losing
+its metadata event while preserving the existing publication boundary.
+
+`event.Store` supports atomic batches with expected run revision and sequence,
+consistent scoped pages, watermarks and explicit pruning. The bounded window
+retains 256 events per run. Permanent ID/digest/sequence-range tombstones keep
+pruned identities from being reused or recreated by a delayed retry. Concurrent
+appenders serialize on the existing run fence; only one expected-sequence write
+wins. Invalid batches roll back envelopes and identity records together.
+
+New result commits append their outbox ID in the same transaction as the receipt,
+run and job. Existing receipt retries preserve historical behavior and do not
+invent a missing event. Mixed old/new result writers therefore cannot guarantee
+complete replay; upgrade all writers together. No schema migration is required.
+
+The optional engine reader reauthorizes every page before and after storage,
+validates cursor/schema/run identity, sequence completeness and bounded retention,
+and detaches slices before invoking host code again. Failure returns no page.
+Cursor gaps carry only a watermark and retained boundary after fresh authority.
+The host must fetch an authorized current snapshot before resuming.
+
+The API-absence tests failed first, followed by a behavioral failure showing the
+result commit had no replay event. Both passed after implementation. Tests cover
+SQLite reopen, lost-acknowledgement retry, backend transaction rollback, competing
+appenders, changed batches, scope denial, automatic and explicit retention,
+malformed pages, revocation during read, cancellation and callback alias mutation.
+
+Automatic result events are implemented. Other lifecycle events still require
+explicit host append calls. Approved answer-content replay, artifact events,
+SSE/dashboard/A2A subscriptions, completion hooks and installed qualification
+remain open. S2.6 and the full four-stage goal remain active.
+
+
+Validation for metadata replay:
+
+- Full engine, event and verification race suites passed (306.619s, 1.143s and
+  1.260s). The final focused engine/event run passed after formatting (128.439s
+  and 1.188s), including worker, recovery and lease-renewal regressions.
+- Expanded storage race suites passed on SQLite (133.704s), PostgreSQL (26.533s)
+  and MongoDB (33.709s). Docker-backed tests ran without skips. These include
+  public events, result commits, verification jobs/calls, private candidates and
+  transaction rollback. SQLite reopen preserves the event ID and sequence.
+- Final `make f`, all ten module lint checks, root build and diff checks passed.
+  Documentation type checks, lint and production build passed.
+- CI for lease renewal commit `5b23804` completed successfully (`39944141714`).
+  Replay transport and deployed subscriber policy remain unverified.

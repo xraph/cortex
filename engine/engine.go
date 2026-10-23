@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
@@ -37,27 +38,30 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
-	config               cortex.Config
-	logger               log.Logger
-	metrics              gometrics.Metrics
-	instr                *engineMetrics
-	logThrottle          telemetry.Throttle
-	store                store.Store
-	atomicPreparation    bool
-	verificationConfig   *VerificationWorkerConfig
-	verificationWorker   *verificationWorker
-	requiredVerification *RequiredVerificationConfig
-	llm                  llm.Client
-	safety               safety.Scanner
-	publicationPolicy    safety.Policy
-	publicationGate      safety.PublicationGate
-	knowledge            knowledge.Provider
-	authorizer           cortex.ToolAuthorizer
-	extensions           *plugin.Registry
-	pendingExts          []plugin.Extension
-	tools                []registeredTool
-	toolRevisions        map[string]string
-	modelRevisions       map[string]string
+	config                cortex.Config
+	logger                log.Logger
+	metrics               gometrics.Metrics
+	instr                 *engineMetrics
+	logThrottle           telemetry.Throttle
+	store                 store.Store
+	atomicPreparation     bool
+	publicEventConfigured bool
+	publicEventAuthorizer event.Authorizer
+	publicEventReader     *event.Reader
+	verificationConfig    *VerificationWorkerConfig
+	verificationWorker    *verificationWorker
+	requiredVerification  *RequiredVerificationConfig
+	llm                   llm.Client
+	safety                safety.Scanner
+	publicationPolicy     safety.Policy
+	publicationGate       safety.PublicationGate
+	knowledge             knowledge.Provider
+	authorizer            cortex.ToolAuthorizer
+	extensions            *plugin.Registry
+	pendingExts           []plugin.Extension
+	tools                 []registeredTool
+	toolRevisions         map[string]string
+	modelRevisions        map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []llm.Tool
@@ -126,6 +130,10 @@ func New(opts ...Option) (*Engine, error) {
 	}
 
 	if err := e.configurePublication(); err != nil {
+		return nil, err
+	}
+
+	if err := e.configurePublicEventReplay(); err != nil {
 		return nil, err
 	}
 

@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/internal/assurance"
@@ -83,20 +84,28 @@ func (d assuranceDriver) SetRunVerification(ctx context.Context, runID id.AgentR
 }
 
 func (d assuranceDriver) ReplaceJob(ctx context.Context, row assurance.Record, expectedBody string) error {
-	if row.Kind != assurance.KindJob {
+	return d.replaceMutableRecord(ctx, row, expectedBody, assurance.KindJob, verification.ErrJobConflict)
+}
+
+func (d assuranceDriver) ReplaceEventStream(ctx context.Context, row assurance.Record, expectedBody string) error {
+	return d.replaceMutableRecord(ctx, row, expectedBody, assurance.KindEventStream, event.ErrConflict)
+}
+
+func (d assuranceDriver) replaceMutableRecord(ctx context.Context, row assurance.Record, expectedBody, kind string, conflict error) error {
+	if row.Kind != kind {
 		return verification.ErrInvalid
 	}
 	filter, err := assuranceFilter(ctx)
 	if err != nil {
 		return err
 	}
-	filter["kind"], filter["id"], filter["body"], filter["deleted"] = assurance.KindJob, row.ID, expectedBody, false
+	filter["kind"], filter["id"], filter["body"], filter["deleted"] = kind, row.ID, expectedBody, false
 	result, err := d.store.mdb.Collection(colAssurance).UpdateOne(ctx, filter, bson.M{"$set": bson.M{"body": row.Body, "digest": row.Digest}})
 	if err != nil {
 		return err
 	}
 	if result.MatchedCount != 1 {
-		return verification.ErrJobConflict
+		return conflict
 	}
 	return nil
 }

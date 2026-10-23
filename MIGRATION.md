@@ -475,3 +475,28 @@ the watchdog enforces the latest acknowledged expiry separately.
 Uncertain renewal leaves a recorded paid call unresolved. Recovery must reconcile
 that original call, including when a renewal committed but its reply was lost.
 This does not qualify a production evaluator, fence or worker deployment.
+
+
+## Durable public metadata replay
+
+Built-in stores now write a metadata replay event atomically with each new
+verified result commit. The shared assurance table holds bounded event windows
+and permanent identity tombstones, so no database migration is required.
+Upgrade all result writers together. Earlier writers do not emit replay events,
+and retries of historical receipts do not backfill missing events.
+
+Opt into reads with `engine.WithPublicEventReplay(authorizer)`. Your authorizer
+must check the current subscriber, exact scope and run grant on every call.
+Storage reads alone do not provide this check. Custom backends need the optional
+`event.ReadStore` capability to configure the reader; built-in stores provide the
+full `event.Store` API.
+
+A run retains at most 256 envelopes, with pages capped at 128 and append batches
+at 32. Handle `event.ErrCursorGap` by fetching a current authorized snapshot and
+then continuing from the returned cursor. Keep event IDs for consumer
+idempotency. Pruning removes envelopes but retains ID/digest tombstones so a late
+append cannot reuse an old identity.
+
+The existing live stream protocols are unchanged. This API replays typed metadata;
+answer text, tool results, history, hooks and transport subscriptions still need
+separate publication integration.

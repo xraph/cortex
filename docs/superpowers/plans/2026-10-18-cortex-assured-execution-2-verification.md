@@ -188,6 +188,26 @@ Interfaces: `event.Store` exposes `AppendPublicEvents`, `ReadPublicEvents` and `
 - [ ] Test execution-finished, verification-pending/failed/passed, artifact-created and result-committed ordering, retention gaps and cancellation under load. Run remote gRPC tests explicitly because root CI does not cover them today.
 - [ ] Apply common checks and commit `feat(streaming): persist authorized result events for safe replay`.
 
+### S2.6 metadata replay foundation
+
+The root `event` package now defines schema-bound per-run cursors, typed metadata
+and bounded append/read contracts. Built-in stores atomically append each new
+committed-result event with its receipt/run/job transaction. Exact-request
+retries preserve sequence assignments; retained ID/digest tombstones reject
+changed identities after envelope pruning. Explicit and count-based retention
+return a cursor gap with the current run snapshot identity.
+
+`WithPublicEventReplay` configures fresh host subscriber authorization around
+each bounded read. The reader validates the entire page and discards it after
+revocation, cancellation or malformed storage output. Restart, concurrent append,
+rollback, scope and retention tests cover the storage boundary. The metadata
+reader does not publish candidate bodies or start a subscription goroutine.
+
+The remaining S2.6 work includes automatic lifecycle ordering, artifact events,
+approved content replay, transport integration, bounded live subscriptions and
+installed reconnect/revocation checks. The packet checkboxes stay open until
+those paths use the shared log.
+
 ## S2.7: Installed integration, evidence review and release qualification
 
 Depends on S2.1 through S2.6. Owner: integration coordinator with UI, CI and release owners.

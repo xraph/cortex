@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/event"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/internal/assurance"
@@ -79,14 +80,22 @@ func (d assuranceDriver) SetRunVerification(ctx context.Context, runID id.AgentR
 }
 
 func (d assuranceDriver) ReplaceJob(ctx context.Context, row assurance.Record, expectedBody string) error {
-	if row.Kind != assurance.KindJob {
+	return d.replaceMutableRecord(ctx, row, expectedBody, assurance.KindJob, verification.ErrJobConflict)
+}
+
+func (d assuranceDriver) ReplaceEventStream(ctx context.Context, row assurance.Record, expectedBody string) error {
+	return d.replaceMutableRecord(ctx, row, expectedBody, assurance.KindEventStream, event.ErrConflict)
+}
+
+func (d assuranceDriver) replaceMutableRecord(ctx context.Context, row assurance.Record, expectedBody, kind string, conflict error) error {
+	if row.Kind != kind {
 		return verification.ErrInvalid
 	}
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return err
 	}
-	q := d.queries().NewUpdate((*assurance.Record)(nil)).Set("body = ?", row.Body).Set("digest = ?", row.Digest).Where("kind = ?", assurance.KindJob).Where("id = ?", row.ID).Where("scope_canon = ?", scope.Canonical()).Where("body = ?", expectedBody).Where("deleted = ?", false)
+	q := d.queries().NewUpdate((*assurance.Record)(nil)).Set("body = ?", row.Body).Set("digest = ?", row.Digest).Where("kind = ?", kind).Where("id = ?", row.ID).Where("scope_canon = ?", scope.Canonical()).Where("body = ?", expectedBody).Where("deleted = ?", false)
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -99,7 +108,7 @@ func (d assuranceDriver) ReplaceJob(ctx context.Context, row assurance.Record, e
 		return err
 	}
 	if n != 1 {
-		return verification.ErrJobConflict
+		return conflict
 	}
 	return nil
 }

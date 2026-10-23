@@ -23,6 +23,7 @@ type RunTransaction interface {
 	SetRunVerification(context.Context, id.AgentRunID, int64, verification.Status, id.ID, time.Time) error
 	SetRunCandidate(context.Context, *run.Run, time.Time) error
 	ReplaceJob(context.Context, Record, string) error
+	ReplaceEventStream(context.Context, Record, string) error
 }
 
 // RunDriver supplies a database transaction; callbacks contain no remote I/O.
@@ -158,6 +159,9 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 	}
 	if jobErr := commitJob(ctx, tx, job, jobRow, req.ResultID, observed); jobErr != nil {
 		return verification.CommitReceipt{}, jobErr
+	}
+	if eventErr := s.appendCommittedEvent(ctx, tx, receipt); eventErr != nil {
+		return verification.CommitReceipt{}, eventErr
 	}
 	return receipt, nil
 }
