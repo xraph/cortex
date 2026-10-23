@@ -22,7 +22,7 @@ fi
 
 cd "$(dirname "$0")/.."
 
-SUBMODULES=(api sentinel extension integrations/fabriq integrations/sandbox)
+SUBMODULES=(api sentinel extension integrations/fabriq integrations/sandbox optimization)
 
 for mod in "${SUBMODULES[@]}"; do
 	f="$mod/go.mod"

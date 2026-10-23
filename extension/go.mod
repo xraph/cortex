@@ -7,7 +7,7 @@ replace github.com/xraph/cortex => ../
 replace github.com/xraph/cortex/sentinel => ../sentinel
 
 require (
-	github.com/xraph/cortex v1.7.0
+	github.com/xraph/cortex v1.8.0
 	github.com/xraph/cortex/sentinel v1.7.0
 	github.com/xraph/forge v1.12.10
 	github.com/xraph/go-utils v1.4.1
@@ -108,7 +108,7 @@ require (
 	github.com/xraph/confy v1.1.0 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.9.0 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.9.0 // indirect
-	github.com/xraph/sentinel v1.8.0 // indirect
+	github.com/xraph/sentinel v1.9.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect

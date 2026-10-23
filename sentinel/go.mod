@@ -5,9 +5,22 @@ go 1.26.0
 replace github.com/xraph/cortex => ../
 
 require (
-	github.com/xraph/cortex v1.7.0
-	github.com/xraph/sentinel v1.8.0
+	github.com/xraph/cortex v1.8.0
+	github.com/xraph/cortex/optimization v0.0.0-20261023050839-7f96edf55420
+	github.com/xraph/grove v1.9.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
+	github.com/xraph/sentinel v1.9.2
 	github.com/xraph/vessel v1.0.4
+)
+
+require (
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	modernc.org/libc v1.75.7 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.12.1 // indirect
+	modernc.org/sqlite v1.58.0 // indirect
 )
 
 require (
@@ -127,3 +140,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/xraph/cortex/optimization => ../optimization

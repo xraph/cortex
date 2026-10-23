@@ -816,3 +816,60 @@ store race suites passed. The final controller, reflection, lifecycle and receip
 checks were rerun across all four backends after the worker authority fix, with
 real database containers and no skips. No hosted model or complete optimizer
 application flow was exercised.
+
+## Trial execution and Sentinel adapter packet
+
+`TrialPhaseHandler` now schedules sequential baseline, probe and validation work,
+selects a finalist from discovery, pins the validation allocation and produces a
+decision from the evaluator's paired statistics. It composes with the existing
+metered controller handler through reflection. The original edit policy and
+stored evidence checks still control every accepted candidate and decision.
+
+Execution persists the attempt and environment receipt before a durable dispatch
+marker. The host enforces the whole-trial allowance. Reconnecting workers inspect
+that attempt, retain unresolved budget and require confirmed containment before
+committing its capture. Scoring follows capture persistence. Artifacts from every
+prior attempt are checked before scoring and selection, and cleanup has a bounded
+context independent of caller cancellation.
+
+The new `sentinel/optimization` package binds exact Cortex scopes and public tasks
+to private frozen Sentinel plans. It scores recorded output without a target
+callback, preserves usage quality and original duration, and reuses durable jobs
+on retry. Paired comparison uses Sentinel v1.9.2's authoritative job-set API.
+Unsupported confidence settings and unmetered scorers fail before scoring.
+
+The SQLite integration test drives the worker, controller handler, trial adapter
+and real Sentinel scoring/comparison through a recommendation and reflection. It
+reopens both databases after lost provisioning, execution and scoring
+acknowledgements. The single candidate case uses twelve trial executions and two
+controller calls. A second
+case exercises composition, with eighteen executions and three controller calls.
+Shared backend tests cover worker replacement, ambiguous containment and baseline
+retention after a rejected proposal. Models and environments remain fixtures.
+
+Sequential scheduling and local scorers are the supported integration in this
+packet. Metered judges, cost-ratio provenance, parallel/task-local scheduling,
+lost controller-output reconciliation, live sandbox qualification, Fabriq
+publication, activation and dashboard application flows remain open. This packet
+does not mark the overall optimization plan or deployed system complete.
+
+The extended race run exposed a worker lease defect: short steps reused the
+original expiry without reaching a heartbeat tick. A regression reproduced it.
+`WorkOnce` now renews the valid current generation before each dispatch. A second
+regression caught unknown cost passing Sentinel's cost scorer as zero; the adapter
+now refuses that scorer until captured cost is known.
+
+Sentinel requires the published optimization commit `7f96edf` and Sentinel
+v1.9.2. Its consumer check passes with both local Cortex replacements removed.
+The release workflow now verifies, pins, tags and probes the optimization module
+alongside the existing modules. A temporary-copy check covered all six module
+pins and preserved their local replacements. No release was dispatched.
+
+Verification: scoped `make f`, all-ten-module `make l`, and optimization, Sentinel
+and extension builds passed. Full Sentinel and extension race suites passed.
+Final optimization core/artifact race suites and trial/controller recovery tests
+passed across memory, SQLite, PostgreSQL and MongoDB. The broad store run passed
+memory, SQLite and PostgreSQL; MongoDB's sole failure was the lease regression
+from the binary built before the fix. Its corrected recovery cases passed both
+the targeted backend run and a verbose MongoDB run. These database fixtures start
+real containers and fail when Docker is unavailable.
