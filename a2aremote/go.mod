@@ -6,8 +6,8 @@ replace github.com/xraph/cortex => ../
 
 require (
 	github.com/xraph/cortex v1.6.1
-	github.com/xraph/grove v1.8.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.8.0
+	github.com/xraph/grove v1.9.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
 )
 
 require (

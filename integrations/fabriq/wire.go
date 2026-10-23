@@ -4,6 +4,7 @@ import (
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/internal/telemetry"
 
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/query"
@@ -47,7 +48,7 @@ func buildToolkit(f query.Fabric, reg *registry.Registry, c config) (*agent.Tool
 func resolveToolkit(f query.Fabric, reg *registry.Registry, c config) *agent.Toolkit {
 	tk, err := buildToolkit(f, reg, c)
 	if err != nil {
-		c.logger.Error("fabriq-brain: toolkit build failed; brain not wired", log.String("error", err.Error()))
+		c.logger.Error("fabriq-brain: toolkit build failed; brain not wired", log.String("error_type", telemetry.ErrorType(err)))
 		return nil
 	}
 	return tk
@@ -62,6 +63,17 @@ func engineOptions(tk brainToolkit, cfg config, opts []Option) []engine.Option {
 	out = append(out, toolOpts...)
 	out = append(out, engine.WithExtension(NewPlugin(tk, opts...)))
 	return out
+}
+
+// withHostLogger puts the container's logger (a Forge app registers its own)
+// ahead of your options, so the bridge logs where the app does unless you
+// passed WithLogger yourself, which still wins because it comes later.
+func withHostLogger(c vessel.Vessel, opts []Option) []Option {
+	l, err := vessel.Inject[log.Logger](c)
+	if err != nil || l == nil {
+		return opts
+	}
+	return append([]Option{WithLogger(l)}, opts...)
 }
 
 // injectFabric resolves the fabriq query port and its entity registry from the
@@ -82,7 +94,7 @@ func injectFabric(c vessel.Vessel, logger log.Logger) (query.Fabric, *registry.R
 	if err != nil {
 		logger.Error(
 			"fabriq-brain: fabric resolved but entity registry "+registry.ServiceName+" did not; brain not wired",
-			log.String("error", err.Error()),
+			log.String("error_type", telemetry.ErrorType(err)),
 		)
 		return nil, nil, err
 	}
@@ -93,6 +105,7 @@ func injectFabric(c vessel.Vessel, logger log.Logger) (query.Fabric, *registry.R
 // weave.EngineOption). Returns a no-op option when no fabriq facade is in the
 // container.
 func EngineOption(c vessel.Vessel, opts ...Option) engine.Option {
+	opts = withHostLogger(c, opts)
 	cfg := applyOptions(opts)
 	f, reg, err := injectFabric(c, cfg.logger)
 	if err != nil {
@@ -109,6 +122,7 @@ func EngineOption(c vessel.Vessel, opts ...Option) engine.Option {
 // learning-loop plugin. Returns nil (safe to spread) when no fabriq facade is
 // present.
 func EngineOptions(c vessel.Vessel, opts ...Option) []engine.Option {
+	opts = withHostLogger(c, opts)
 	cfg := applyOptions(opts)
 	f, reg, err := injectFabric(c, cfg.logger)
 	if err != nil {

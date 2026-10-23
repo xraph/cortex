@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/xraph/forge"
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
@@ -165,5 +166,55 @@ func TestEngineOptionCanTurnMetricsOff(t *testing.T) {
 	runOnce(t, e)
 	if body := scrape(t, app); strings.Contains(body, "forge_cortex_") {
 		t.Error("cortex metrics are on the scrape though the host turned them off")
+	}
+}
+
+func startedLines(l log.Logger) int {
+	tl, ok := l.(*log.TestLogger)
+	if !ok {
+		return -1
+	}
+	n := 0
+	for _, e := range tl.GetLogs() {
+		if e.Message == "cortex engine started" {
+			n++
+		}
+	}
+	return n
+}
+
+// Register hands the engine the app's logger, so the engine's lines reach
+// wherever the app logs, and a logger you pass with WithEngineOption wins.
+func TestRegisterPassesTheAppLogger(t *testing.T) {
+	ctx := context.Background()
+
+	appLogger := log.NewTestLogger()
+	app := forge.New(forge.WithAppName("cortex-logger-test"), forge.WithAppLogger(appLogger),
+		forge.WithEnableConfigAutoDiscovery(false))
+	e := New(WithStore(scopespy.New()))
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Engine().Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.Engine().Stop(ctx)
+	if got := startedLines(appLogger); got != 1 {
+		t.Errorf("the app's logger got %d engine start lines, want 1", got)
+	}
+
+	appLogger2, mine := log.NewTestLogger(), log.NewTestLogger()
+	app2 := forge.New(forge.WithAppName("cortex-logger-override"), forge.WithAppLogger(appLogger2),
+		forge.WithEnableConfigAutoDiscovery(false))
+	e2 := New(WithStore(scopespy.New()), WithEngineOption(engine.WithLogger(mine)))
+	if err := e2.Register(app2); err != nil {
+		t.Fatal(err)
+	}
+	if err := e2.Engine().Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = e2.Engine().Stop(ctx)
+	if startedLines(mine) != 1 || startedLines(appLogger2) != 0 {
+		t.Errorf("start lines: yours %d, the app's %d; want your logger to win", startedLines(mine), startedLines(appLogger2))
 	}
 }

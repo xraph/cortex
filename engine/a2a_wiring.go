@@ -130,17 +130,17 @@ func (e *Engine) startA2A(ctx context.Context) {
 	// in flight when the last process stopped is still marked as being
 	// carried. Reclaiming before the redrive means the redrive finds them.
 	if n, err := e.a2a.ReclaimStaleDeliveries(ctx); err != nil {
-		e.logger.Warn("cortex: a2a delivery reclaim failed", log.Error(err))
+		e.logWarn("cortex: a2a delivery reclaim failed", err)
 	} else if n > 0 {
 		e.logger.Info("cortex: a2a reclaimed abandoned deliveries", log.Int("count", n))
 	}
 	if n, err := e.a2a.Redrive(ctx); err != nil {
-		e.logger.Warn("cortex: a2a redrive failed", log.Error(err))
+		e.logWarn("cortex: a2a redrive failed", err)
 	} else if n > 0 {
 		e.logger.Info("cortex: a2a redrove orphaned deliveries", log.Int("count", n))
 	}
 	if err := e.a2a.Start(ctx); err != nil {
-		e.logger.Warn("cortex: a2a dispatcher failed to start", log.Error(err))
+		e.logWarn("cortex: a2a dispatcher failed to start", err)
 		return
 	}
 	e.startAskSweep(ctx)
@@ -174,14 +174,14 @@ func (e *Engine) startAskSweep(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if _, err := e.a2a.SweepExpiredAsks(sweepCtx); err != nil {
-					e.logger.Warn("cortex: a2a ask sweep failed", log.Error(err))
+					e.logWarn("cortex: a2a ask sweep failed", err)
 				}
 				// A delivery whose worker died is put back in the queue
 				// on the same pass. Nothing wedges without this, because
 				// an ask resolves on its deadline either way, but an
 				// informative caught mid-delivery would simply be lost.
 				if n, err := e.a2a.ReclaimStaleDeliveries(sweepCtx); err != nil {
-					e.logger.Warn("cortex: a2a delivery reclaim failed", log.Error(err))
+					e.logWarn("cortex: a2a delivery reclaim failed", err)
 				} else if n > 0 {
 					e.logger.Info("cortex: a2a reclaimed abandoned deliveries", log.Int("count", n))
 				}

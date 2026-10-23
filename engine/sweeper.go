@@ -125,17 +125,24 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 	// that exist, so a scoped list would find nothing at all.
 	expired, err := e.store.ListExpiredAcrossScopes(ctx, now, e.sweepLimit)
 	if err != nil {
-		e.logger.Error("list expired suspensions", log.String("error", err.Error()))
+		e.logError("list expired suspensions", err)
 		return
 	}
 
+	// One line per sweep, not per row: a store outage fails every row in
+	// the batch, and each one is already on its own expire suspension span.
+	failed := 0
+	var firstErr error
 	for _, susp := range expired {
 		if err := e.expireSuspension(ctx, susp, now); err != nil {
-			e.logger.Error("expire suspension",
-				log.String("run_id", susp.RunID.String()),
-				log.String("error", err.Error()),
-			)
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if failed > 0 {
+		e.logError("expire suspensions", firstErr, log.Int("failed", failed), log.Int("batch", len(expired)))
 	}
 }
 
@@ -265,7 +272,7 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 	// what the caller cares about; the leftover row is picked up by
 	// dropOrphanedSuspension on the next sweep.
 	if err := e.store.DeleteSuspension(ctx, susp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
-		e.logger.Error("delete suspension of an expired run", log.String("error", err.Error()))
+		e.logError("delete suspension of an expired run", err, log.String("run_id", susp.RunID.String()))
 	}
 
 	// An approval pause opened a checkpoint, and the run it belongs to

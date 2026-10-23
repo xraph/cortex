@@ -138,9 +138,31 @@ The run's input and output, prompts and prompt sections, conversation history, s
 
 Agent, persona, skill and orchestration names are yours to choose, so they never appear anywhere either: spans use the IDs. A tool name reaches `gen_ai.tool.name` only when you or the engine registered it. A name the model invented is model output, and it shows up as `unknown`. Metric labels carry the tool's kind and never its name, since a host can register any number of tools. The model name is on the `run agent` span and never on a label.
 
-## The engine doesn't log yet
+## Logs
 
-The engine still logs to a no-op logger, even inside Forge. Handing it the app's logger would switch on around forty log lines, and a lot of them log raw store errors, so that waits for an audit of its own.
+In a Forge app the extension hands the engine the app's logger, so the engine's lines land wherever the app logs. Pass `cortexext.WithEngineOption(engine.WithLogger(l))` to send them somewhere else. Outside Forge, `engine.WithLogger` is the only way in; without it the engine logs nothing.
+
+Every line follows the same rules. A failure is logged as `error_type` (the error's Go type or sentinel name), never as its text, because a store error quotes the value it refused and a hook's error quotes whatever it was handed. Fields are IDs and counts. Each message is throttled to one line a minute, and the next line it writes carries `suppressed`, the number it skipped, so a database outage that fails every step costs you one line a minute per message.
+
+| Message | Level | Fields |
+|---|---|---|
+| `cortex engine started`, `cortex engine stopped` | info | |
+| `create step`, `create tool call`, `create resumed tool call`, `update run on failure`, `persist cancelled publication` | error | `run_id`, `error_type` |
+| `read a claimed run, falling back to the pre-claim snapshot`, `list steps for resumed tool calls` | error | `run_id`, `error_type` |
+| `no step found for resumed tool calls` | warn | `run_id` |
+| `read before terminal update; using owned run snapshot` | warn | `run_id`, `error_type` |
+| `save conversation` | error | `agent_id`, `error_type` |
+| `skipping conversation save: the run carries no session` | warn | `agent_id` |
+| `delete suspension of a rejected run`, `... of a cancelled run`, `... of an expired run`, `delete suspension after a failed checkpoint write`, `delete orphaned suspension`, `resolve orphaned checkpoint`, `release agent ask after suspending`, `list the checkpoints of a run that ended` | error | `run_id`, `error_type` |
+| `resolve the checkpoint of a run that ended` | error | `checkpoint_id`, `run_id`, `error_type` |
+| `list expired suspensions` | error | `error_type` |
+| `expire suspensions` (once per sweep, not per row) | error | `failed`, `batch`, `error_type` of the first failure |
+| `prompt overlay patches declined` | warn | `overlay_id`, `agent_id`, `declined` (a count) |
+| `cortex: a2a delivery reclaim failed`, `cortex: a2a redrive failed`, `cortex: a2a dispatcher failed to start`, `cortex: a2a ask sweep failed` | warn | `error_type` |
+| `cortex: a2a reclaimed abandoned deliveries`, `cortex: a2a redrove orphaned deliveries` | info | `count` |
+| `extension hook error` (throttled per hook and extension) | warn | `hook`, `extension`, `error_type` |
+
+The Fabriq bridge logs through the container's logger too, unless you pass `fabriqbrain.WithLogger`: `fabriq-brain: memory write failed` and its three siblings as warnings with `run_id` and `error_type`, and the two wiring failures at startup with `error_type`. `audit_hook` logs only through the logger you give it, with the same rules.
 
 ## Migrating from the metrics plugin
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
@@ -345,7 +347,7 @@ func withPublicationContext(ctx context.Context, ag *agent.Config, r *run.Run, p
 func (e *Engine) cancelPublication(ctx context.Context, r *run.Run, steps, tokens int) {
 	r.Usage.Steps = steps
 	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: steps, TokensUsed: tokens}); err != nil {
-		e.logger.Error("persist cancelled publication")
+		e.logError("persist cancelled publication", err, log.String("run_id", r.ID.String()))
 	}
 }
 
