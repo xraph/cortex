@@ -32,8 +32,9 @@ type SourceSnapshot struct {
 // ExecutionProvenance identifies the inputs behind a run without copying prompt
 // or evidence bytes into metadata. Empty fields mean unavailable, not verified.
 type ExecutionProvenance struct {
-	VerificationRequired bool   `json:"verification_required,omitempty"`
-	VerificationIntentID string `json:"verification_intent_id,omitempty"`
+	ExecutionInputsDigest string `json:"execution_inputs_digest,omitempty"`
+	VerificationRequired  bool   `json:"verification_required,omitempty"`
+	VerificationIntentID  string `json:"verification_intent_id,omitempty"`
 	// SourceValidation distinguishes read-set checks from atomic store capture.
 	// read_set_checked detects observed changes but is not an atomic snapshot.
 	SourceSnapshot       SourceSnapshot           `json:"source_snapshot,omitzero"`

@@ -115,6 +115,9 @@ func (s *Repository) captureNewCandidate(ctx context.Context, tx RunTransaction,
 	if current.Revision != capture.ExpectedRunRevision || current.Revision < intent.Template.ExpectedRunRevision || current.Scope.Canonical() != intent.Template.Binding.Scope.Canonical() || current.State != run.StateRunning || current.Output != "" || current.ResultRef != "" || current.CompletedAt != nil || current.StopReason != "" || current.VerificationStatus.Normalized() != verification.StatusUnchecked || current.Provenance.PreparedDigest != intent.Template.Binding.Context.PreparedDigest || current.Provenance.AcceptanceRef != intent.Template.ContractID.String() || !validCaptureUsage(current, capture.Usage) {
 		return verification.Job{}, cortex.ErrRunConflict
 	}
+	if inputErr := s.validateExecutionInputs(ctx, current, intent.Template.Binding); inputErr != nil {
+		return verification.Job{}, inputErr
+	}
 	jobRequest, err := intent.JobFor(current.Revision+1, capture.Output)
 	if err != nil {
 		return verification.Job{}, err

@@ -159,6 +159,9 @@ func (s *Repository) checkNewCaptureIntent(ctx context.Context, tx RunTransactio
 	if current.Scope.Canonical() != req.Binding.Scope.Canonical() || current.Revision != req.ExpectedRunRevision || current.State != run.StateRunning || current.Output != "" || current.ResultRef != "" || current.CompletedAt != nil || current.StopReason != "" || current.StepCount != 0 || current.TokensUsed != 0 || current.Usage != (execution.Usage{}) || current.VerificationStatus.Normalized() != verification.StatusUnchecked || current.Provenance.PreparedDigest != req.Binding.Context.PreparedDigest || current.Provenance.AcceptanceRef != req.ContractID.String() {
 		return cortex.ErrRunConflict
 	}
+	if inputErr := s.validateExecutionInputs(ctx, current, req.Binding); inputErr != nil {
+		return inputErr
+	}
 	contract, err := s.GetContract(ctx, req.ContractID)
 	if err != nil {
 		return err

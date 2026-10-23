@@ -76,6 +76,14 @@ func requiredConfiguration(t *testing.T, f workerFixture) engine.RequiredVerific
 			req.Binding.Candidate.Bytes = 0
 			req.Binding.Candidate.SHA256 = evidence.Digest(nil)
 			req.Deadline = in.Deadline
+			data, err := in.Inputs.Encode()
+			require.NoError(t, err)
+			ref := req.Binding.Candidate
+			ref.ID, ref.MediaType = id.New(evidence.PrefixArtifact), "application/json"
+			artifact, err := evidence.Seal(evidence.Artifact{Ref: ref, Data: data})
+			require.NoError(t, err)
+			req.Binding.Context.ExecutionInputs = &artifact.Ref
+			req.Binding.Evidence = append(req.Binding.Evidence, artifact.Ref)
 			return verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: req, ResultID: id.New(verification.PrefixResult), MaxCandidateBytes: 4096})
 		}),
 	}
@@ -89,7 +97,7 @@ func requiredSetup(t *testing.T, f workerFixture, client llm.Client, changes ...
 	for _, change := range changes {
 		change(&cfg)
 	}
-	e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg))
+	e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithModelRevision("smart", "model:1"), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg))
 	require.NoError(t, err)
 	return e, ag, &engine.RunOverrides{ToolsRestricted: true, Budget: &execution.Budget{MaxSteps: 3, MaxTokens: 1000, Deadline: time.Now().Add(2 * time.Minute)}}
 }
@@ -394,7 +402,7 @@ func TestRequiredVerificationRejectsToolsWithoutAuthoritiesAndSegments(t *testin
 			f := newWorkerFixture(t)
 			client := &requiredClient{}
 			cfg := requiredConfiguration(t, f)
-			opts := []engine.Option{engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg)}
+			opts := []engine.Option{engine.WithStore(f.storage), engine.WithLLM(client), engine.WithModelRevision("smart", "model:1"), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg)}
 			if mode == "tool" {
 				opts = append(opts, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) { t.Fatal("tool dispatched"); return "", nil }))
 			} else {
@@ -434,7 +442,7 @@ func TestRequiredVerificationRecoveryDoesNotGenerateAgain(t *testing.T) {
 	client := &requiredClient{}
 	cfg := requiredConfiguration(t, f)
 	hooks := &requiredHooks{}
-	e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithExtension(hooks))
+	e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithModelRevision("smart", "model:1"), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithExtension(hooks))
 	require.NoError(t, err)
 	ag := &agent.Config{ID: id.NewAgentID(), Name: "lost-required"}
 	require.NoError(t, f.storage.Create(f.ctx, ag))
@@ -471,6 +479,9 @@ func TestRequiredVerificationCaptureRevocation(t *testing.T) {
 	e, ag, overrides := requiredSetup(t, f, client, func(c *engine.RequiredVerificationConfig) {
 		c.CaptureAuthorizer = captureAuthorizer(func(_ context.Context, action evidence.Action, ref evidence.Ref) error {
 			require.Equal(t, evidence.ActionPut, action)
+			if ref.MediaType == "application/json" {
+				return nil
+			}
 			checks++
 			if checks > 1 {
 				require.Positive(t, ref.Bytes)
@@ -531,7 +542,7 @@ func TestRequiredVerificationCompletionHook(t *testing.T) {
 			f.adapter.status = status
 			client := &requiredClient{}
 			hooks := &requiredHooks{}
-			e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(requiredConfiguration(t, f)), engine.WithExtension(hooks))
+			e, err := engine.New(engine.WithStore(f.storage), engine.WithLLM(client), engine.WithModelRevision("smart", "model:1"), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(requiredConfiguration(t, f)), engine.WithExtension(hooks))
 			require.NoError(t, err)
 			ag := &agent.Config{ID: id.NewAgentID(), Name: "hooks"}
 			require.NoError(t, f.storage.Create(f.ctx, ag))

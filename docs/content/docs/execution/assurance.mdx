@@ -449,12 +449,31 @@ engine.WithRequiredVerification(engine.RequiredVerificationConfig{
 ```
 
 Your builder implements `BuildVerificationIntent(ctx, input)`. It receives the
-reserved run ID, exact scope, prepared digest and effective deadline. Return a
+reserved run ID, exact scope, prepared digest, effective deadline and detached
+`verification.ExecutionInputs`. These inputs contain the scanned task, initial
+conversation, session and host model/tool revision pins. Return a
 sealed `verification.CaptureIntent` for run revision 1 with the configured
 contract, policy revision and evaluation budget. Bind current host context and
 allocate stable evidence, job and result IDs. The builder must not dispatch
-billable work. The evidence authorizer receives `ActionPut` for the empty
-reservation before generation and again for the actual candidate before capture.
+billable work.
+
+Encode `input.Inputs` with `Encode()`, seal an evidence reference for those bytes,
+and include that exact reference in both `Binding.Context.ExecutionInputs` and
+`Binding.Evidence`. Your host chooses its stable ID, sensitivity and retention.
+Cortex checks the digest and size against its original inputs, authorizes
+`ActionPut`, and saves the bytes before creating the run and registering its
+intent. The artifact is limited to one MiB and 100 initial messages. A failed
+start can leave an authorized artifact for your retention cleanup to remove.
+
+The evidence authorizer also receives `ActionPut` for the empty candidate
+reservation and again for the actual candidate before capture. Resume requires
+`ActionRead` on input evidence. Missing history, deleted input evidence or a
+changed initial conversation prevents required execution. Capture, evaluator
+claims and result commit recheck the saved run against the input artifact.
+
+Pin the model with `WithModelRevision` and every available tool with
+`WithToolRevision`. Required preparation rejects missing pins. These are your
+host's implementation revisions; they do not attest which model a provider ran.
 
 Supply a positive total token budget and a deadline through `RunOverrides.Budget`.
 Preparation reserves the evaluator's maximum tokens and freezes the remainder
@@ -463,7 +482,8 @@ verification allowance gives generation 970 tokens. Evaluation money limits
 remain separate from generation pricing. Provider-reported usage is never
 clamped; an overrun prevents evaluation.
 
-Required snapshots without tools use schema 3; snapshots with tools use schema 4.
+Required snapshots and continuations use schema 5. Re-prepare earlier required
+snapshots; changing their schema number cannot supply missing input evidence.
 Schema 2 remains unchanged for ordinary runs.
 A worker without the matching required configuration rejects required execution;
 a required worker also rejects ordinary prepared snapshots. Contract, revision,
@@ -504,11 +524,12 @@ principal's permission to inspect pending calls and supply their outcomes, using
 the exact scope and run identity. It is a separate decision from permission to
 execute a tool.
 
-Preparation freezes schema 4 for tool-enabled required runs. Resume restores the
+Preparation freezes schema 5 for required runs. Resume restores the
 verification policy from that prepared payload rather than maintaining a second
 policy copy in continuation configuration. Before claiming a suspension, Cortex
 checks the saved budget, provenance, capture intent, policy revision, host ports,
-current handoff grant and evidence-write grant. It repeats the checks after claim
+current model/tool pins, initial conversation, handoff grant and evidence grants.
+It repeats the checks after claim
 and rechecks tool dispatch authority before effects. An older worker rejects the
 new schema instead of resuming without the verification requirement.
 

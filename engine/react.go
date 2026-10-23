@@ -217,7 +217,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		}
 		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
 		stepSpan.toolCalls = len(resp.ToolCalls)
-		if r.Provenance.VerificationRequired && st.preparedSnapshot.SchemaVersion != requiredToolsSchemaVersion && len(resp.ToolCalls) > 0 {
+		if r.Provenance.VerificationRequired && len(st.preparedSnapshot.Tools) == 0 && len(resp.ToolCalls) > 0 {
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
 			r.Usage = st.usage
@@ -600,7 +600,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 		_ = stream.Close()
 		stepSpan.toolCalls = len(toolCalls)
-		if r.Provenance.VerificationRequired && st.preparedSnapshot.SchemaVersion != requiredToolsSchemaVersion && len(toolCalls) > 0 {
+		if r.Provenance.VerificationRequired && len(st.preparedSnapshot.Tools) == 0 && len(toolCalls) > 0 {
 			st.stepIndex++
 			st.usage.Steps = st.stepIndex
 			r.Usage = st.usage

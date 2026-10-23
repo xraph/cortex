@@ -77,7 +77,7 @@ func requiredToolEngine(t *testing.T, f workerFixture, client llm.Client, auth *
 	cfg := requiredConfiguration(t, f)
 	cfg.HandoffAuthorizer = auth
 	opts := make([]engine.Option, 0, 5+len(extra))
-	opts = append(opts, engine.WithStore(f.storage), engine.WithLLM(client), engine.WithToolAuthorizer(auth), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg))
+	opts = append(opts, engine.WithStore(f.storage), engine.WithLLM(client), engine.WithModelRevision("smart", "model:1"), engine.WithToolRevision("probe", "1"), engine.WithToolAuthorizer(auth), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg))
 	opts = append(opts, extra...)
 	e, err := engine.New(opts...)
 	require.NoError(t, err)
@@ -345,7 +345,7 @@ func TestRequiredVerificationResumeRejectsChangedPolicy(t *testing.T) {
 				require.NoError(t, f.storage.CreateSuspension(f.ctx, s))
 			}
 			after := &requiredToolClient{final: true}
-			fresh, newErr := engine.New(engine.WithStore(f.storage), engine.WithLLM(after), engine.WithToolAuthorizer(auth), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithExternalTool(llm.Tool{Name: "probe"}))
+			fresh, newErr := engine.New(engine.WithStore(f.storage), engine.WithLLM(after), engine.WithModelRevision("smart", "model:1"), engine.WithToolRevision("probe", "1"), engine.WithToolAuthorizer(auth), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithExternalTool(llm.Tool{Name: "probe"}))
 			require.NoError(t, newErr)
 			_, err = fresh.Resume(f.ctx, r.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "SECRET-ID", Content: "SECRET result"}}})
 			require.Error(t, err)

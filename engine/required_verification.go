@@ -15,12 +15,14 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-const requiredPreparedSchemaVersion = 3
-const requiredToolsSchemaVersion = 4
+const requiredPreparedSchemaVersion = 5
 
 // VerificationIntentInput supplies trusted identity before generation. Deadline
-// includes the caller's narrower deadline. Scope is detached from engine state.
+// includes the caller's narrower deadline. Inputs and Scope are detached.
+// The builder must reference Inputs.Encode() in Context.ExecutionInputs and
+// Binding.Evidence. Cortex authorizes and persists those exact bytes.
 type VerificationIntentInput struct {
+	Inputs         verification.ExecutionInputs
 	RunID          id.AgentRunID
 	Scope          cortex.Scope
 	PreparedDigest string
@@ -37,7 +39,8 @@ type VerificationIntentBuilder interface {
 // RequiredVerificationConfig gates prepared, sync, stream and resumed runs.
 // Evaluator tokens are reserved from the total run token budget at preparation.
 // Money limits cover evaluation only. The builder owns context provenance; the
-// capture authorizer checks artifact creation both before generation and capture.
+// capture authorizer checks artifact creation before generation and capture,
+// and input-evidence reads on resume.
 // Tools require both a ToolAuthorizer and HandoffAuthorizer. Checked-segment
 // publication remains unsupported. Other ports and worker settings are required.
 type RequiredVerificationConfig struct {
@@ -62,6 +65,7 @@ type requiredPolicy struct {
 type requiredVerificationStore interface {
 	verification.CaptureIntentStore
 	run.CandidateStore
+	evidence.Storage
 }
 
 // WithRequiredVerification enables fail-closed candidate publication. It also
@@ -89,6 +93,14 @@ func (e *Engine) prepareRequiredVerification(ctx context.Context, cfg *resolvedC
 	if c == nil {
 		return nil
 	}
+	if strings.TrimSpace(e.modelRevisions[cfg.Model]) == "" {
+		return cortex.ErrVerificationUnavailable
+	}
+	for _, def := range defs {
+		if strings.TrimSpace(e.toolRevisions[def.Name]) == "" {
+			return cortex.ErrVerificationUnavailable
+		}
+	}
 	if cfg.Publication.Mode == safety.ModeCheckedSegments || cfg.Budget.MaxTokens <= 0 || c.EvaluationBudget.MaxTokens >= int64(cfg.Budget.MaxTokens) || cfg.Budget.Deadline.IsZero() {
 		return cortex.ErrVerificationUnavailable
 	}
@@ -115,7 +127,7 @@ func validRequiredSnapshot(s *preparedSnapshot) bool {
 	if p == nil {
 		return s.SchemaVersion == preparedSchemaVersion
 	}
-	return (s.SchemaVersion == requiredToolsSchemaVersion || (s.SchemaVersion == requiredPreparedSchemaVersion && len(s.Tools) == 0 && len(s.Config.Tools) == 0)) && utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && s.Config.Publication.Mode != safety.ModeCheckedSegments
+	return (s.SchemaVersion == requiredPreparedSchemaVersion) && utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && s.Config.Publication.Mode != safety.ModeCheckedSegments
 }
 
 func (e *Engine) requireVerification(s *preparedSnapshot) error {
@@ -126,20 +138,32 @@ func (e *Engine) requireVerification(s *preparedSnapshot) error {
 	if p == nil && c == nil {
 		return nil
 	}
-	if p == nil || c == nil || e.verificationWorker == nil || (s.SchemaVersion == requiredToolsSchemaVersion && (c.HandoffAuthorizer == nil || e.authorizer == nil)) || p.Revision != c.Revision || p.ContractID != c.ContractID || p.EvaluationBudget != c.EvaluationBudget {
+	if p == nil || c == nil || e.verificationWorker == nil || (len(s.Tools) > 0 && (c.HandoffAuthorizer == nil || e.authorizer == nil)) || p.Revision != c.Revision || p.ContractID != c.ContractID || p.EvaluationBudget != c.EvaluationBudget {
 		return cortex.ErrVerificationUnavailable
 	}
 	return nil
 }
 
-func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg resolvedConfig, r *run.Run) (verification.CaptureIntent, error) {
+func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg resolvedConfig, r *run.Run, messages []llm.Message) (verification.CaptureIntent, error) {
 	if cfg.Verification == nil {
 		return verification.CaptureIntent{}, nil
+	}
+	inputs := verification.ExecutionInputs{SchemaVersion: 1, RunID: r.ID, AgentID: r.AgentID, SessionID: r.SessionID, PreparedDigest: p.Digest(), Input: r.Input, History: messages, Model: cfg.Model, ModelRevision: r.Provenance.ModelRevision}
+	for _, tool := range r.Provenance.Tools {
+		inputs.Tools = append(inputs.Tools, verification.ToolRevision{Name: tool.Name, Revision: tool.Revision})
+	}
+	data, err := inputs.Encode()
+	if err != nil {
+		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
+	}
+	detached, err := verification.DecodeExecutionInputs(data)
+	if err != nil {
+		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
 	policy := cfg.Verification
 	scope := r.Scope
 	scope.Levels = append([]cortex.Level(nil), scope.Levels...)
-	intent, err := e.requiredVerification.Builder.BuildVerificationIntent(ctx, VerificationIntentInput{RunID: r.ID, Scope: scope, PreparedDigest: p.Digest(), Deadline: cfg.Budget.Deadline})
+	intent, err := e.requiredVerification.Builder.BuildVerificationIntent(ctx, VerificationIntentInput{Inputs: detached, RunID: r.ID, Scope: scope, PreparedDigest: p.Digest(), Deadline: cfg.Budget.Deadline})
 	if err != nil || intent.Validate() != nil {
 		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
 	}
@@ -154,6 +178,18 @@ func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg 
 	if authErr := e.authorizeCandidate(ctx, req.Binding.Candidate); authErr != nil {
 		return verification.CaptureIntent{}, authErr
 	}
+	ref := req.Binding.Context.ExecutionInputs
+	if ref == nil || ref.SHA256 != evidence.Digest(data) || ref.Bytes != int64(len(data)) {
+		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
+	}
+	if authErr := e.authorizeCandidate(ctx, *ref); authErr != nil {
+		return verification.CaptureIntent{}, authErr
+	}
+	storage, ok := e.store.(requiredVerificationStore)
+	if !ok || storage.SaveEvidence(ctx, evidence.Artifact{Ref: *ref, Data: data}) != nil {
+		return verification.CaptureIntent{}, cortex.ErrVerificationUnavailable
+	}
+	r.Provenance.ExecutionInputsDigest = ref.SHA256
 	r.Provenance.VerificationRequired = true
 	r.Provenance.VerificationIntentID = intent.ID.String()
 	r.Provenance.AcceptanceRef = policy.ContractID.String()

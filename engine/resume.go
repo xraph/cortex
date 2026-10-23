@@ -220,7 +220,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 			}
 		}
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
-			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredToolsSchemaVersion {
+			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredPreparedSchemaVersion {
 				vErr = cortex.ErrResultsMismatch
 			}
 			return nil, nil, vErr

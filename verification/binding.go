@@ -2,6 +2,7 @@ package verification
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type ToolRevision struct {
 // AuthorityRevision must change when grants are revoked. Verifiers cannot
 // establish current authorization by inspecting this snapshot alone.
 type ContextSnapshot struct {
+	ExecutionInputs     *evidence.Ref  `json:"execution_inputs,omitempty"`
 	PrincipalRef        string         `json:"principal_ref"`
 	AuthorityRevision   string         `json:"authority_revision"`
 	PreparedDigest      string         `json:"prepared_digest"`
@@ -75,17 +77,19 @@ func (b Binding) Validate() error {
 	if err := ValidateSources(b.Context.Sources); err != nil {
 		return err
 	}
-	tools := make(map[string]bool, len(b.Context.Tools))
-	for _, tool := range b.Context.Tools {
-		if !validText(tool.Name, tool.Revision) {
+	if ref := b.Context.ExecutionInputs; ref != nil {
+		found := false
+		for _, supporting := range b.Evidence {
+			if reflect.DeepEqual(*ref, supporting) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return ErrInvalid
 		}
-		if strings.TrimSpace(tool.Name) == "" || strings.TrimSpace(tool.Revision) == "" || tools[tool.Name] {
-			return ErrInvalid
-		}
-		tools[tool.Name] = true
 	}
-	return nil
+	return validateToolRevisions(b.Context.Tools)
 }
 
 // Digest binds every reference in order, including identity and source timing.

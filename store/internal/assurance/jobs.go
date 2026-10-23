@@ -95,6 +95,9 @@ func (s *Repository) validateCapturedRun(ctx context.Context, r *run.Run, expect
 	if r.ID != binding.RunID || r.Revision != expected || r.State != run.StateCompleted || r.StopReason != run.StopFinalAnswer || r.ResultRef != "" || r.Provenance.PreparedDigest != binding.Context.PreparedDigest || r.Provenance.AcceptanceRef != contractID.String() {
 		return cortex.ErrRunConflict
 	}
+	if err := s.validateExecutionInputs(ctx, r, binding); err != nil {
+		return err
+	}
 	return s.validateCapturedOutput(ctx, r, binding)
 }
 

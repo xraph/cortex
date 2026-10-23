@@ -2407,3 +2407,45 @@ model/tool revision records into verification context, and check host transport
 error semantics. The current host builder owns context provenance; passing
 fixture checks does not qualify those host integrations. These items remain open
 alongside crash-atomic tool effects and durable result publication.
+
+
+## Required execution-input binding
+
+Required schema-5 runs capture the scanned task and initial history, agent,
+session, prepared digest and host model/tool pins in one immutable evidence
+artifact before generation. The intent builder receives detached inputs and
+chooses the artifact's retention and sensitivity. Cortex checks its exact bytes,
+authorizes creation and saves it. Missing revision pins or unavailable history
+stop before generation; ordinary schema-2 execution keeps its existing behavior.
+
+The binding references the artifact through its existing support-evidence list.
+Storage registration, private capture, evaluator claims and result commit compare
+saved run identity against those bytes. Resume checks the initial conversation
+and current pins before claiming, then repeats the check after claim. Deleted
+evidence and altered pending tool names reject resume without consuming the pause.
+
+The first domain tests failed for the absent input schema. Behavioral storage
+tests then showed that changed task/session/agent/model/tool values and deleted
+input evidence were accepted. Those regressions pass with shared validation.
+Engine fixtures cover builder mutation, missing/changed/denied evidence, scanned
+input/history, missing revision pins, unavailable history and continuation drift.
+Existing SQLite reopen and required sync/stream/tool tests consume the new input
+artifact through the same runtime.
+
+Transport error semantics still need their own pass. Tool-result evidence,
+crash-atomic effects, durable publication/history, scheduler/lease renewal and
+live host/provider/sandbox qualification remain open. Contextual-verification
+capability stays disabled.
+
+
+Validation for input binding:
+
+- Full engine/run/verification race suites passed (223.681s, 1.147s and 1.482s).
+- SQLite, PostgreSQL and Mongo input-binding/private-capture/intent conformance
+  race suites passed (89.844s, 19.560s and 25.983s), with no container skips.
+  PostgreSQL first caught a fixture referencing an absent agent; the fixture now
+  creates that agent before testing input-binding rejection.
+- Initial and final all-module lint, final formatting, root build and diff checks
+  passed. Docs type checking, lint and production build passed. Three local
+  shadowing warnings were fixed before the final lint run.
+- CI for preceding commit `50c4005` passed (run `39933521329`).

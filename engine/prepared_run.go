@@ -157,7 +157,14 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	}
 	input = string(safeInput)
 	r.Input = input
-	intent, intentErr := e.buildRequiredIntent(ctx, p, cfg, r)
+	var messages []llm.Message
+	if cfg.Verification != nil {
+		messages, err = e.loadPreparedHistory(ctx, snap, r)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	intent, intentErr := e.buildRequiredIntent(ctx, p, cfg, r, messages)
 	if intentErr != nil {
 		return nil, nil, intentErr
 	}
@@ -177,14 +184,11 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	}
 	runTraceFrom(ctx).bind(r, cfg.Model)
 	e.extensions.EmitRunStarted(ctx, r.AgentID, r.ID, input)
-	history, err := e.store.LoadConversation(ctx, r.AgentID, sessionID, 100)
-	if err != nil {
-		// Preserve legacy best-effort history while recording its absence.
-		r.Provenance.Diagnostics = append(r.Provenance.Diagnostics, "conversation history unavailable")
-	}
-	messages := memoryToLLM(history)
-	if scanErr := e.checkMessages(ctx, &snap.Agent, r, cfg.Publication, messages); scanErr != nil {
-		return nil, nil, e.stopPublication(ctx, r, &reactState{}, scanErr)
+	if cfg.Verification == nil {
+		messages, err = e.loadPreparedHistory(ctx, snap, r)
+		if err != nil {
+			return nil, nil, e.stopPublication(ctx, r, &reactState{}, err)
+		}
 	}
 	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: sessionID, newMessagesFrom: len(messages), prepared: &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
@@ -209,4 +213,19 @@ func preparedOptions(overrides *RunOverrides) PreparedRunOptions {
 		opts.SessionID = overrides.SessionID
 	}
 	return opts
+}
+
+func (e *Engine) loadPreparedHistory(ctx context.Context, snap *preparedSnapshot, r *run.Run) ([]llm.Message, error) {
+	history, err := e.store.LoadConversation(ctx, r.AgentID, r.SessionID, 100)
+	if err != nil {
+		if snap.Config.Verification != nil {
+			return nil, cortex.ErrVerificationUnavailable
+		}
+		r.Provenance.Diagnostics = append(r.Provenance.Diagnostics, "conversation history unavailable")
+	}
+	messages := memoryToLLM(history)
+	if scanErr := e.checkMessages(ctx, &snap.Agent, r, snap.Config.Publication, messages); scanErr != nil {
+		return nil, scanErr
+	}
+	return messages, nil
 }

@@ -2,12 +2,16 @@ package engine
 
 import (
 	"context"
+	"reflect"
 	"slices"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
+	"github.com/xraph/cortex/verification"
 )
 
 // ToolHandoffAuthorizer checks current access to private pending calls and
@@ -67,11 +71,19 @@ func (e *Engine) checkRequiredResume(ctx context.Context, r *run.Run, s *suspens
 	if !required {
 		return nil
 	}
-	if snap == nil || snap.SchemaVersion != requiredToolsSchemaVersion || !r.Provenance.VerificationRequired || r.Provenance.VerificationIntentID == "" || s.RunID != r.ID || s.Scope.Canonical() != r.Scope.Canonical() {
+	if snap == nil || snap.SchemaVersion != requiredPreparedSchemaVersion || !r.Provenance.VerificationRequired || r.Provenance.VerificationIntentID == "" || s.RunID != r.ID || s.Scope.Canonical() != r.Scope.Canonical() {
 		return cortex.ErrVerificationUnavailable
 	}
 	if policyErr := e.requireVerification(snap); policyErr != nil {
 		return policyErr
+	}
+	if revisionErr := e.checkPreparedRevisions(snap); revisionErr != nil {
+		return revisionErr
+	}
+	for _, pending := range s.Pending {
+		if len(filterByName(snap.Tools, []string{pending.Name})) == 0 {
+			return cortex.ErrVerificationUnavailable
+		}
 	}
 	if continuationErr := validateFrozenContinuation(s.Cont, snap, r); continuationErr != nil {
 		return continuationErr
@@ -89,6 +101,31 @@ func (e *Engine) checkRequiredResume(ctx context.Context, r *run.Run, s *suspens
 	}
 	req, p := intent.Template, snap.Config.Verification
 	if intent.ID.String() != r.Provenance.VerificationIntentID || !requiredIntentMatchesPolicy(intent, p, r) || r.Provenance.AcceptanceRef != p.ContractID.String() || req.Deadline.After(r.Budget.Deadline) || !e.verificationWorker.config.Clock.Now().Before(req.Deadline) {
+		return cortex.ErrVerificationUnavailable
+	}
+	ref := req.Binding.Context.ExecutionInputs
+	if ref == nil {
+		return cortex.ErrVerificationUnavailable
+	}
+	detachedRef := *ref
+	detachedRef.Scope.Levels = slices.Clone(ref.Scope.Levels)
+	if authErr := e.requiredVerification.CaptureAuthorizer.AuthorizeEvidence(ctx, evidence.ActionRead, detachedRef); authErr != nil {
+		return cortex.ErrVerificationUnavailable
+	}
+	artifact, readErr := storage.LoadEvidence(ctx, *ref)
+	if readErr != nil {
+		return cortex.ErrVerificationUnavailable
+	}
+	inputs, decodeErr := verification.DecodeExecutionInputs(artifact.Data)
+	if decodeErr != nil || r.ValidateExecutionInputs(inputs) != nil || inputs.Model != snap.Config.Model || s.Cont.NewMessagesFrom != len(inputs.History) || len(s.Cont.Messages) <= len(inputs.History) {
+		return cortex.ErrVerificationUnavailable
+	}
+	for i, message := range inputs.History {
+		if !reflect.DeepEqual(message, s.Cont.Messages[i]) {
+			return cortex.ErrVerificationUnavailable
+		}
+	}
+	if !reflect.DeepEqual(s.Cont.Messages[len(inputs.History)], llm.Message{Role: "user", Content: inputs.Input}) {
 		return cortex.ErrVerificationUnavailable
 	}
 	return e.authorizeCandidate(ctx, req.Binding.Candidate)

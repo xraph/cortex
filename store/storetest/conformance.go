@@ -40,6 +40,7 @@ import (
 // it once per subtest so tests never see another subtest's rows.
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevisionClaims", func(t *testing.T) { testRunRevisionClaims(t, newStore) })
+	t.Run("ExecutionInputs", func(t *testing.T) { testExecutionInputs(t, newStore) })
 	t.Run("PrivateCandidateConcurrent", func(t *testing.T) { testPrivateCandidateConcurrent(t, newStore) })
 	t.Run("PrivateCandidateDenied", func(t *testing.T) { testPrivateCandidateDenied(t, newStore) })
 	t.Run("PrivateCandidateCannotPublish", func(t *testing.T) { testPrivateCandidateCannotPublish(t, newStore) })

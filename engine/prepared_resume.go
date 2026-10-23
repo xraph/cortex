@@ -23,7 +23,7 @@ func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *prepared
 		}
 		return nil, nil, nil
 	}
-	if cont.SchemaVersion != preparedSchemaVersion && cont.SchemaVersion != requiredToolsSchemaVersion {
+	if cont.SchemaVersion != preparedSchemaVersion && cont.SchemaVersion != requiredPreparedSchemaVersion {
 		return nil, nil, fmt.Errorf("cortex: continuation schema %d: %w", cont.SchemaVersion, cortex.ErrInvalidContinuation)
 	}
 	var prepared PreparedAgent

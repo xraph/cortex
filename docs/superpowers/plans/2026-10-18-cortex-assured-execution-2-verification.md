@@ -94,12 +94,12 @@ as the receipt and passed status. This reuses existing jobs and leases. Automati
 registration and withholding are now connected for the experimental tool-free
 runtime path described below. The complete runtime gate checkboxes stay unchecked.
 
-`WithRequiredVerification` now freezes a schema-3 policy and evaluator token
+`WithRequiredVerification` freezes a schema-5 policy and evaluator token
 reservation, registers host-built intent before generation, captures privately
 and invokes the guarded worker from shared finalization. Sync/prepared and
 streaming paths withhold candidate text from steps, history and completion hooks.
 Failed or inconclusive checks cannot emit done or successful A2A artifacts.
-Unsupported tools, resume and checked-segment policies fail closed. Lost evaluator
+Checked-segment policies fail closed; tools and resume require host authorities. Lost evaluator
 reply recovery uses the saved job without another generation call. This option is
 off by default; G1 qualification is still required before production rollout.
 New durable result hooks, history publication, scheduler,
@@ -107,7 +107,7 @@ lease renewal, bounded repair and pre-capture recovery remain open.
 
 
 The required runtime now supports tool execution, authorized external handoffs,
-approval checkpoints and sync/stream resume through schema 4. It validates frozen
+approval checkpoints and sync/stream resume through schema 5. It validates frozen
 policy and capture intent before claim and again before effects. The authorized
 `PendingVerificationTools` reader replaces public pending bodies; public tool
 rows/hooks also omit private content. Evaluator reservation survives restart.
@@ -212,3 +212,19 @@ Interfaces: query intents for acceptance contract, reports, evidence metadata, s
 - [ ] Installed integrations and desktop/narrow UI have evidence receipts; unavailable credentials or runtimes remain explicit blockers.
 
 Handoff includes frozen contracts, environment manifests, evidence/report fixtures, migration compatibility records and the measured G1/G2 latency/cost baseline. Stage 3 can now use verified artifacts as task dependencies.
+
+
+### S2.2 execution-input binding follow-up
+
+Required runtime execution uses schema 5 and captures a bounded, immutable
+`verification.ExecutionInputs` artifact before generation. It binds scanned task
+text, initial history, session and exact host model/tool revision pins. The intent
+builder supplies the evidence metadata; the engine authorizes and saves the
+original bytes, and all three storage backends check saved run identity during
+registration, capture, evaluator claims and commit. Resume checks initial history
+and pending tool membership before claiming and again before continuing.
+
+Schema-3/4 required snapshots must be drained or re-prepared; ordinary schema 2
+remains supported. This closes initial-context binding. Dynamic tool-result
+evidence, transport mapping, durable effect receipts and public delivery remain
+open in S2.2 and its dependent packets.

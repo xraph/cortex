@@ -377,3 +377,29 @@ downgrades. Tool authorization remains live and governs effects before execution
 final-result verification does not roll effects back. Recovery across a crash
 inside a tool effect still requires durable effect receipts. Production G1
 qualification and contextual-verification capability advertising remain open.
+
+
+## Required execution-input evidence (schema 5)
+
+Upgrade all workers and update your intent builder before enabling required
+execution. The builder now receives `VerificationIntentInput.Inputs`. Encode it
+with `ExecutionInputs.Encode()` and return a sealed evidence reference in both
+`Template.Binding.Context.ExecutionInputs` and `Template.Binding.Evidence`.
+Cortex authorizes and persists those exact bytes before generation. Your evidence
+authorizer must allow input-artifact creation and authorized reads during resume.
+
+Pin the selected model and each available tool through `WithModelRevision` and
+`WithToolRevision`. Required preparation rejects missing revisions. The input
+artifact contains the scanned task and initial history, session, prepared digest
+and those pins; saved run provenance stores only its digest. No migration is
+needed for the additive JSON fields.
+
+Required schema-3/4 snapshots and pauses cannot execute on upgraded workers.
+Drain or cancel them on compatible workers, then prepare new schema-5 snapshots.
+Do not relabel old snapshots or manufacture missing evidence for completed work.
+Ordinary schema-2 runs remain supported, and explicit verification jobs without
+required-run markers keep their legacy behavior. Mixed old and new storage
+writers are unsupported because older writers do not enforce this binding.
+
+This captures the initial conversation. Tool-result evidence, crash recovery for
+external effects and durable result delivery remain separate work.
