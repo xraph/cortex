@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, retained-file cleanup and live qualification remain open |
+| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, launch-credential cleanup and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -1318,3 +1318,38 @@ missing metadataBase warning for social-image URLs.
 These checks validate the merged implementation. Live systemd/runsc isolation
 qualification remains deferred to the Linux worker the user will select. The
 four-stage plan remains incomplete.
+
+
+### S2.4 retained workspace recovery
+
+The prior integration at `dc38f47` passed every remote CI job, including sandbox
+kernel fixtures and security checks, in run `39884402969`.
+
+Installed assembly now pins the private workspace root and requires retained
+workspace recovery. Startup, periodic and shutdown scans discover directories
+independently of loaded services. Service orphans and retained workspaces share
+one bounded scanner for journal eligibility, cursor handling, error retention
+and cleanup counts. Known nonterminal jobs remain with execution recovery.
+
+Cleanup requires a persistent service fence and complete cgroup drain. It removes
+only empty stage/scratch mountpoints and their job directory using no-follow
+handles. Inode, owner, permissions and unique Linux mount identity checks reject
+replacement roots, symlinks, unexpected content and mounted paths, including
+same-filesystem bind mounts. It never recursively deletes payload files or
+unmounts filesystems. Partial setup and absent directories can be retried.
+
+TDD started with missing workspace and service APIs. Linux fixtures cover failed
+fences, retries, partial setup, unexpected entries, size limits, cancelled calls,
+root replacement before and during fencing, tmpfs and bind mounts. Service tests
+cover live-job preservation, startup cleanup and periodic failure closing
+admission. The final Linux filesystem and host suites passed ten repetitions
+without skips. Lint identified seven local error assignments and four Linux-only
+fields exposed to the macOS build; these were corrected without exemptions.
+
+Scoped make f, final make l across all ten modules and Linux tagged lint passed.
+The final service and workspace race suites passed in 33.357s and 1.088s.
+The Linux amd64 sandbox module build passed as well.
+
+Launch-credential file cleanup, installed source adapters, credential provisioning,
+live evidence verification, standalone installation and live systemd/runsc
+qualification remain open. This packet does not close S2.4 or the four-stage plan.

@@ -1149,3 +1149,28 @@ an error closes admission and triggers shutdown recovery. Each pass revisits
 services inserted before the previous cursor. This discovery runs inside the
 daemon, so you still need installed restart supervision and external resource
 limits when the daemon itself is unavailable.
+
+### Retained workspace recovery
+
+Create a root-owned `0700` directory at `StateDirectory/workspaces` before
+assembling the daemon. Assembly pins its inode and unique Linux mount identity.
+Workspace discovery has its own bounded cursor and uses `DiscoveryLimit` and
+`PageSize`. It includes directories whose services are no longer loaded.
+
+The scanner shares orphan recovery's journal rules: leave nonterminal jobs with
+execution recovery, reclaim missing or terminal jobs, and retain journal errors
+even when cleanup succeeds. Before removing a workspace it persistently fences
+the service and confirms the complete cgroup drain. Cleanup authority does not
+depend on an expired execution grant.
+
+Only empty `stage` and `scratch` mountpoints and their job directory are removed.
+These are the host directories beneath the worker's private tmpfs mounts. Cleanup
+does not traverse payload files, unmount filesystems or delete unexpected content.
+Symlinks, changed ownership or permissions, replacement roots, mounted job
+directories and mounted children leave recovery unresolved. Same-filesystem bind
+mounts also fail the unique mount identity check.
+
+Partial setup and already absent directories are safe to retry. Startup recovery
+must finish before admission; periodic failures close admission and trigger
+shutdown recovery. The host must prevent concurrent privileged filesystem
+changes. Launch-credential file retention is a separate remaining cleanup task.

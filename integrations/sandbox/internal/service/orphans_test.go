@@ -63,7 +63,7 @@ func TestOrphansFenceMissingAndTerminalJobsWithoutClaiming(t *testing.T) {
 	missing := id.New(sandbox.PrefixJob)
 	manager.units = []id.ID{missing, receipts[1].Job.ID, receipts[0].Job.ID}
 	report, err := orphans.Recover(t.Context())
-	if err != nil || report.Examined != 3 || report.Managed != 1 || report.Stopped != 2 || report.Unresolved != 0 || len(manager.stoppedUnits) != 2 {
+	if err != nil || report.Examined != 3 || report.Managed != 1 || report.Cleaned != 2 || report.Unresolved != 0 || len(manager.stoppedUnits) != 2 {
 		t.Fatal("incorrect independent recovery", report, manager.stoppedUnits, err)
 	}
 	if _, err = scanner.store.Load(t.Context(), missing); !errors.Is(err, broker.ErrNotFound) {
@@ -89,15 +89,15 @@ func TestOrphansRetainFailedCleanupAndUncertainJournal(t *testing.T) {
 				t.Fatal("unresolved orphan hidden", report, err)
 			}
 			if mode == "cleanup" {
-				if report.Stopped != 0 {
+				if report.Cleaned != 0 {
 					t.Fatal("failed stop acknowledged")
 				}
 				manager.fail = ""
 				report, err = orphans.Recover(t.Context())
-				if err != nil || report.Stopped != 1 {
+				if err != nil || report.Cleaned != 1 {
 					t.Fatal("orphan retry failed", report, err)
 				}
-			} else if report.Stopped != 1 {
+			} else if report.Cleaned != 1 {
 				t.Fatal("journal failure prevented independent fence")
 			}
 		})
@@ -183,16 +183,16 @@ func TestOrphanPagesRevisitInsertionsBeforeCursorOnNextPass(t *testing.T) {
 	slices.SortFunc(keys, func(a, b id.ID) int { return strings.Compare(a.String(), b.String()) })
 	manager.units = keys[1:]
 	first, err := orphans.Sweep(t.Context(), "")
-	if err != nil || first.Done || first.Stopped != 1 || first.Next != keys[1].String() {
+	if err != nil || first.Done || first.Cleaned != 1 || first.Next != keys[1].String() {
 		t.Fatal(first, err)
 	}
 	manager.units = keys
 	second, err := orphans.Sweep(t.Context(), first.Next)
-	if err != nil || !second.Done || second.Stopped != 1 || second.Next != keys[2].String() {
+	if err != nil || !second.Done || second.Cleaned != 1 || second.Next != keys[2].String() {
 		t.Fatal(second, err)
 	}
 	next, err := orphans.Sweep(t.Context(), "")
-	if err != nil || next.Next != keys[0].String() || next.Stopped != 1 {
+	if err != nil || next.Next != keys[0].String() || next.Cleaned != 1 {
 		t.Fatal("new earlier service lost", next, err)
 	}
 }

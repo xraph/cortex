@@ -36,6 +36,9 @@ func hostFixture(t *testing.T) (HostConfig, WorkerConfig, *hostManager) {
 	name, settings, private := workerConfigFixture(t)
 	settings.ControlSocket = filepath.Join(filepath.Dir(settings.ControlSocket), "host.sock")
 	writeWorkerConfig(t, name, settings)
+	if err := os.Mkdir(filepath.Join(settings.Service.StateDirectory, "workspaces"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	store, err := workerstore.Open(t.Context(), workerstore.Config{Database: filepath.Join(settings.Service.StateDirectory, "worker.db"), Broker: settings.Broker, PublicKey: settings.BrokerPublicKey, MaxJobs: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +78,7 @@ func TestHostAssemblyBindsInstalledServicesWithoutStarting(t *testing.T) {
 		t.Fatal("construction started or qualified worker")
 	}
 	c := daemon.cfg.Controller
-	if daemon.cfg.Socket != settings.ControlSocket || c.launcher.store != cfg.Store || c.scanner.store != cfg.Store || c.scanner.captures.store != cfg.Store || c.scanner.captures.repository != cfg.Captures.Repository || c.capturePolicy != nil {
+	if daemon.cfg.Socket != settings.ControlSocket || c.launcher.store != cfg.Store || c.scanner.store != cfg.Store || c.scanner.workspaces == nil || c.scanner.workspaces.store != cfg.Store || c.scanner.captures.store != cfg.Store || c.scanner.captures.repository != cfg.Captures.Repository || c.capturePolicy != nil {
 		t.Fatal("assembly lost installed configuration or shared recovery services")
 	}
 	loaded, err := ReadWorkerConfig(t.Context(), cfg.WorkerConfig)
@@ -290,5 +293,35 @@ func TestHostAssemblyRevalidatesAcceptedQualification(t *testing.T) {
 				t.Fatal("stale acceptance survived current authority change")
 			}
 		})
+	}
+}
+
+func TestHostAssemblyReclaimsRetainedWorkspacesBeforeAdmission(t *testing.T) {
+	cfg, settings, manager := hostFixture(t)
+	root := filepath.Join(settings.Service.StateDirectory, "workspaces")
+	key := id.New(sandbox.PrefixJob)
+	directory := filepath.Join(root, key.String())
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(directory, "stage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := AssembleDaemon(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := daemon.cfg.Controller.scanner.Recover(t.Context())
+	if err != nil || report.Workspaces.Cleaned != 1 || len(manager.calls) == 0 {
+		t.Fatal(report, err)
+	}
+	if _, err = os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("retained workspace survived recovery", err)
+	}
+	if err = os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AssembleDaemon(t.Context(), cfg); err == nil {
+		t.Fatal("missing workspace root accepted")
 	}
 }
