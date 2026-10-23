@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -335,18 +336,38 @@ func TestSandboxEvaluationRejectsUnsafePlanBeforeExecution(t *testing.T) {
 }
 
 func TestSandboxEvaluationCancelsOwnedJobOnDeadline(t *testing.T) {
-	cfg, req, runner, supervisor, _ := sandboxEvaluationFixture(t)
-	runner.running = true
-	verifier, err := verification.NewSandboxTestVerifier(cfg)
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(cortex.WithScope(t.Context(), req.Binding.Scope), 30*time.Millisecond)
-	defer cancel()
-	_, err = verifier.EvaluateTests(ctx, req)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Len(t, runner.jobs, 1)
-	require.Equal(t, 1, runner.cancelled)
-	require.Zero(t, supervisor.calls)
+	synctest.Test(t, func(t *testing.T) {
+		cfg, req, runner, supervisor, _ := sandboxEvaluationFixture(t)
+		runner.running = true
+		verifier, err := verification.NewSandboxTestVerifier(cfg)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(cortex.WithScope(t.Context(), req.Binding.Scope), 30*time.Millisecond)
+		defer cancel()
+		_, err = verifier.EvaluateTests(ctx, req)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Len(t, runner.jobs, 1)
+		require.Equal(t, 1, runner.cancelled)
+		require.Zero(t, supervisor.calls)
+	})
 }
+
+func TestSandboxEvaluationDeadlineBeforeDispatchOwnsNoJob(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg, req, runner, supervisor, _ := sandboxEvaluationFixture(t)
+		verifier, err := verification.NewSandboxTestVerifier(cfg)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(cortex.WithScope(t.Context(), req.Binding.Scope), 30*time.Millisecond)
+		defer cancel()
+		time.Sleep(30 * time.Millisecond)
+		synctest.Wait()
+		_, err = verifier.EvaluateTests(ctx, req)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Empty(t, runner.jobs)
+		require.Zero(t, runner.cancelled)
+		require.Zero(t, supervisor.calls)
+	})
+}
+
 func TestSandboxEvaluationMissingCheckIsInconclusive(t *testing.T) {
 	cfg, req, _, supervisor, _ := sandboxEvaluationFixture(t)
 	original := supervisor.assess

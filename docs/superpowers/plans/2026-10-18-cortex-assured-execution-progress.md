@@ -3658,3 +3658,19 @@ Engine tool wiring, durable operation discovery, atomic task/event updates,
 automatic retries, explicit compensation, artifact conflict resolution and
 stale-worker fencing remain open. The fixture does not qualify an external
 provider or the deferred Linux sandbox. S3.4 and the four-stage goal remain active.
+
+### Sandbox deadline fixture correction
+
+CI run 39989422674 for export commit `33dc45e` failed only the root race test
+`TestSandboxEvaluationCancelsOwnedJobOnDeadline`. Its 30 ms wall-clock timeout
+expired before submission under CI load, leaving zero owned jobs when the test
+expected one. The other CI jobs passed.
+
+The cleanup test now uses `testing/synctest`, so elapsed fake time reaches the
+polling deadline after dispatch regardless of host scheduling. A separate test
+expires the deadline before dispatch and requires zero jobs, cancellations and
+supervisor calls. Production deadline and cleanup behavior is unchanged.
+
+Both deadline cases passed 100 repetitions under the race detector (5.333s).
+The complete verification race suite passed (5.666s), as did formatting,
+all-module lint and diff checks. Effect recovery is committed as `c88f71c`.
