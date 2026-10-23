@@ -80,6 +80,7 @@ func TestConformance(t *testing.T) {
 	t.Run("VerificationJobTermination", func(t *testing.T) { storetest.VerificationJobTermination(t, s, assuranceDriver{store: s}) })
 	t.Run("VerificationJobConcurrentClaims", func(t *testing.T) { storetest.VerificationJobConcurrentClaims(t, s) })
 	t.Run("TerminalEventRollback", func(t *testing.T) { storetest.TerminalEventRollback(t, s, assuranceDriver{store: s}) })
+	t.Run("ResultSnapshotBoundaries", func(t *testing.T) { storetest.ResultSnapshotBoundaries(t, s, assuranceDriver{store: s}) })
 	t.Run("VerifiedResultRollback", func(t *testing.T) { storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := truncateConformanceTables(ctx, s); err != nil {

@@ -105,6 +105,28 @@ has since expired or been deleted. The guarded API still requires current access
 A receipt does not renew evidence freshness or grant permission to publish.
 `GetCommittedResult` is a raw storage read, so protect audit access separately.
 
+Built-in stores also expose the optional `verification.ResultSnapshotStore`.
+Use `ReadResultSnapshot` when trusted host code needs the saved output with a
+fresh check of its stored verification material. Supply a `ResultReadRequest`
+with schema version 1, the exact run and result IDs, and the receipt digest.
+The digest binds the request to a receipt. It grants no access.
+
+The read uses one run transaction to check the current passed run revision,
+receipt, contract, report freshness, candidate bytes and all supporting evidence,
+including captured execution inputs and transcripts. Deleted evidence, changed
+runs and expired reports return an error with no snapshot. Freshness and context
+cancellation are checked again after the transaction finishes. Reads preserve
+run state and public events, and still work after metadata replay retention
+removes the corresponding events.
+
+Keep this capability inside trusted host code. `ResultSnapshot.Output` is omitted
+from JSON, but the receipt, contract and reports still contain private metadata.
+Do not expose the snapshot directly. You must enforce current content access,
+check current external source revisions and apply the current publication policy
+before returning any bytes. `snapshot.Validate(request, now)` lets you recheck
+integrity and time-based freshness after I/O; it cannot discover deleted evidence
+or changed grants and resources. Approved-content replay remains unimplemented.
+
 SQLite uses a write transaction; PostgreSQL locks the run and evidence records.
 MongoDB requires a transaction-capable deployment and fences evidence against
 concurrent deletion. A standalone MongoDB server returns
@@ -545,7 +567,8 @@ Required-verification success continues through private candidate capture and
 guarded result commit. The ordinary recording method rejects verification
 results and required candidates. Direct store updates and imported terminal rows
 do not produce these events, and enabling recording does not backfill history.
-Artifact events, approved-content replay and durable hook delivery remain open.
+Verified-result commits also announce their result artifact. Arbitrary artifact
+producers, approved-content replay and durable hook delivery remain open.
 
 ### Replay verification lifecycle metadata
 

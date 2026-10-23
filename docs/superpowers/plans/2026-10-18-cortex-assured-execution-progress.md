@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A metadata pages and ordinary terminal recording implemented; installed subscriptions, artifact events, approved content and remote subscriptions remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements and fresh result snapshot storage implemented; approved content, arbitrary artifact producers and installed qualification remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3089,3 +3089,49 @@ Validation for remote durable subscriptions:
 These are local and CI results. Installed client/proxy qualification, arbitrary
 artifact producers, approved content replay and the remaining four-stage scope
 are still open.
+
+
+### S2.6 fresh result snapshot storage
+
+Built-in stores expose `verification.ResultSnapshotStore` as an optional trusted
+capability. `ReadResultSnapshot` binds the request to an exact run, result and
+receipt digest, then reads the current passed run, contract, reports and retained
+evidence under the existing backend run transaction. Commit and read share bounded
+material loading and snapshot validation. No schema migration or widening of the
+legacy composite store is required.
+
+The read checks captured execution inputs and transcripts, current run revision,
+receipt integrity, candidate bytes and report freshness. It returns no snapshot
+after a transaction error, context cancellation or expiry during acknowledgement.
+It preserves lifecycle state and replay events. Historical receipt retries keep
+their existing semantics after evidence expiry or deletion, while fresh reads
+refuse that evidence.
+
+This is a prerequisite for approved-content replay. The snapshot contains private
+material, even though output is excluded from JSON. Host code still has to fence
+current content grants and source revisions, apply current publication policy,
+and reject revocation or deletion during those checks before serving bytes.
+No public content route or content-bearing replay is enabled by this packet.
+
+The initial SQLite regression failed because the capability was absent. Added
+tests cover request identity, material tampering, expiry, exact scope, cancellation,
+changed runs, deleted candidate/input/transcript evidence, detached reads,
+metadata retention, restart recovery and failed or delayed transaction acknowledgements.
+
+Validation for fresh result snapshots:
+
+- Full verification, engine and SQLite race suites passed. Engine took 323.308s
+  and SQLite took 396.563s. After lint corrections, focused snapshot and restart
+  race tests passed again on the final code.
+- PostgreSQL and MongoDB verification/commit conformance ran against Docker with
+  race detection and passed in 28.454s and 35.079s. Final snapshot boundary checks
+  passed on both backends too, with no skipped cases.
+- `GOWORK=off make f`, final `GOWORK=off make l` across all ten modules, root build
+  and `git diff --check` passed. Lint corrections narrowed two local error
+  variables and asserted the initially successful snapshot in the boundary test.
+- Docs type check, lint and production build passed.
+- Remote subscription commit `14a0f83` passed Linux CI run `39962487804`.
+
+Public content authorization, current-resource fencing and publication screening
+are the next integration work. Linux sandbox qualification remains deferred by
+the user; this packet does not close the four-stage plan.

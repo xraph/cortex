@@ -136,4 +136,7 @@ func VerifiedResultRestart(t *testing.T, s store.Store, reopen func() store.Stor
 	requireLifecycle(t, page, event.VerificationPassed, event.ArtifactCreated, event.ResultCommitted)
 	require.Equal(t, receipt.Outbox.EventID, page.Events[2].ID)
 	require.Equal(t, uint64(3), page.Events[2].Sequence)
+	snapshot, err := resultCapability[verification.ResultSnapshotStore](t, restored).ReadResultSnapshot(ctx, verification.ResultReadRequest{SchemaVersion: 1, RunID: req.Current.RunID, ResultID: req.ResultID, ReceiptDigest: receipt.Digest})
+	require.NoError(t, err)
+	require.Equal(t, "private candidate text", snapshot.Output)
 }

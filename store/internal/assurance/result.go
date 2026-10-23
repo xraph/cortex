@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
-	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/verification"
@@ -84,68 +83,27 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 	if r.VerificationStatus != verification.StatusPending {
 		return verification.CommitReceipt{}, cortex.ErrRunConflict
 	}
-	contract, err := s.GetContract(ctx, req.ContractID)
+	material, err := s.loadResultMaterial(ctx, req)
 	if err != nil {
 		return verification.CommitReceipt{}, err
-	}
-	if contract.Digest != req.Current.ContractDigest {
-		return verification.CommitReceipt{}, verification.ErrConflict
-	}
-	reports := make([]verification.Report, 0, len(req.ReportIDs))
-	digests := make([]string, 0, len(req.ReportIDs))
-	// Bound total material processed while locks are held, in addition to each
-	// record's one MiB limit. Artifact bytes are released between loads.
-	total := 0
-	for _, reportID := range req.ReportIDs {
-		report, readErr := s.GetReport(ctx, reportID)
-		if readErr != nil {
-			return verification.CommitReceipt{}, readErr
-		}
-		body, marshalErr := json.Marshal(report)
-		if marshalErr != nil {
-			return verification.CommitReceipt{}, marshalErr
-		}
-		total += len(body)
-		if total > 8<<20 {
-			return verification.CommitReceipt{}, verification.ErrInvalid
-		}
-		reports = append(reports, report)
-		digests = append(digests, report.Digest)
-	}
-	var candidateOutput string
-	for index, ref := range append([]evidence.Ref{req.Current.Candidate}, req.Current.Evidence...) {
-		artifact, readErr := s.LoadEvidence(ctx, ref)
-		if readErr != nil {
-			return verification.CommitReceipt{}, readErr
-		}
-		total += len(artifact.Data)
-		if total > 8<<20 {
-			return verification.CommitReceipt{}, verification.ErrInvalid
-		}
-		if index == 0 {
-			candidateOutput = string(artifact.Data)
-		}
 	}
 	observed := s.clock.Now().UTC()
 	job, jobRow, jobErr := s.jobForCommit(ctx, req, observed)
 	if jobErr != nil {
 		return verification.CommitReceipt{}, jobErr
 	}
-	for _, report := range reports {
-		if verification.CheckFreshness(report, req.Current, observed) != verification.StatusPassed {
-			return verification.CommitReceipt{}, verification.ErrConflict
-		}
-	}
-	if verification.Aggregate(contract, reports, observed).Status != verification.StatusPassed {
-		return verification.CommitReceipt{}, verification.ErrConflict
-	}
 	bindingDigest, err := req.Current.Digest()
 	if err != nil {
 		return verification.CommitReceipt{}, err
 	}
-	receipt, err := verification.SealCommitReceipt(verification.CommitReceipt{SchemaVersion: 1, Request: req, RequestDigest: digest, RunRevision: r.Revision + 1, ReportDigests: digests, ObservedAt: observed, Outbox: verification.CommitOutbox{EventID: id.New(verification.PrefixCommitEvent), Type: "result_committed", RunID: r.ID, ResultID: req.ResultID, BindingDigest: bindingDigest}})
+	receipt, err := verification.SealCommitReceipt(verification.CommitReceipt{SchemaVersion: 1, Request: req, RequestDigest: digest, RunRevision: r.Revision + 1, ReportDigests: material.digests, ObservedAt: observed, Outbox: verification.CommitOutbox{EventID: id.New(verification.PrefixCommitEvent), Type: "result_committed", RunID: r.ID, ResultID: req.ResultID, BindingDigest: bindingDigest}})
 	if err != nil {
 		return verification.CommitReceipt{}, err
+	}
+	snapshot := material.snapshot(receipt, observed)
+	read := verification.ResultReadRequest{SchemaVersion: 1, RunID: r.ID, ResultID: req.ResultID, ReceiptDigest: receipt.Digest}
+	if validateErr := snapshot.Validate(read, observed); validateErr != nil {
+		return verification.CommitReceipt{}, validateErr
 	}
 	row, err := record(kindResult, req.ResultID.String(), receipt.Digest, r.ID.String(), req.Current.Scope, receipt)
 	if err != nil {
@@ -154,7 +112,7 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
 		return verification.CommitReceipt{}, insertErr
 	}
-	if commitErr := s.publishCandidateResult(ctx, tx, r, req.ResultID, candidateOutput, observed); commitErr != nil {
+	if commitErr := s.publishCandidateResult(ctx, tx, r, req.ResultID, material.output, observed); commitErr != nil {
 		return verification.CommitReceipt{}, commitErr
 	}
 	if jobErr := commitJob(ctx, tx, job, jobRow, req.ResultID, observed); jobErr != nil {
