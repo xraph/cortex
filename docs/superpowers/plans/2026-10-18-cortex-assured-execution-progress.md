@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, containment, internal worker and declared artifact capture implemented; deployment pending | this chat | Staging, bounded storage, capture and cleanup fixtures pass; repository adapters/recovery and qualified Linux deployment pending |
+| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, retained-file cleanup and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -1297,3 +1297,24 @@ merge and combined-tree validation follow this packet. Concrete source adapters,
 credential provisioning, live evidence verification, standalone installation,
 retained-file cleanup and live systemd/runsc qualification remain open. S2.4 and
 the four-stage plan are incomplete.
+
+
+### Approved main integration
+
+The user approved merging remote main, rerunning checks and pushing. Sandbox
+commits `1c044ad`, `504d6df` and `f550247` were integrated with telemetry PR #59
+and dependency updates through merge `2de2778`. The merge had no conflicts and
+root make f produced no changes.
+Final make l passed across all ten modules with zero findings.
+
+On the combined tree, the engine race suite passed in 226.504s; audit hooks,
+telemetry and root sandbox contracts also passed. The full sandbox module race
+suite passed, including service recovery (71.529s) and worker storage (9.510s).
+Forge extension and dashboard contract race suites passed, as did Fabriq.
+Root and Linux sandbox builds, Linux tagged lint, docs type checking, docs lint
+and the docs production build passed. The docs build reported a
+missing metadataBase warning for social-image URLs.
+
+These checks validate the merged implementation. Live systemd/runsc isolation
+qualification remains deferred to the Linux worker the user will select. The
+four-stage plan remains incomplete.
