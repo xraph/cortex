@@ -1407,3 +1407,36 @@ confirmation, then revokes content access and cleans the abandoned capture throu
 its independent grant. File, policy and revocation tests run on macOS and Linux.
 You still need to provision the database and policy files, install the broker and
 qualify its live systemd/runsc environment.
+
+### Protected evidence database
+
+The internal `evidencedb.Open(ctx, path)` factory initializes a dedicated SQLite
+store using Cortex's existing schema and evidence persistence. Production opening
+requires root. Provide a canonical absolute path inside an existing root-owned
+mode-0700 directory. The database, its `.lock` ownership file and any SQLite WAL,
+shared-memory or rollback-journal files must be single-link mode-0600 regular
+files. Aliases and unsafe metadata are rejected.
+
+A new database receives an evidence application ID and format version before
+Grove opens it or enables WAL. Existing databases must carry that identity;
+ordinary Cortex databases, worker/broker journals and future format versions are
+not adopted. Startup checks SQLite integrity and runs the root store's migrations.
+File names are encoded as SQLite URI paths, so query characters remain part of
+the file name. Startup does not repair rejected files or delete their sidecars.
+
+The separate ownership lock spans initialization and the open store's lifetime.
+SQLite also uses exclusive locking, one pooled connection, full synchronous
+writes and a five-second busy timeout. Close waits for active evidence operations,
+closes SQLite and then releases ownership. Do not replace these files while the
+store is open. Use local storage that supports SQLite locking and synchronous
+writes, and keep the database and its recovery files together.
+
+The factory exposes evidence storage, tombstone audit and Close. It grants no
+artifact access. Pass it through `service.NewEvidenceRepository` and the installed
+evidence policy; the private worker and recovery boundaries still apply. Tests
+verify content and tombstones across clean restarts and process exits with a
+committed WAL, plus late-upload fences and exclusion of other SQLite processes.
+
+Standalone command configuration, directory/policy provisioning, input-provider
+assembly and live systemd/runsc qualification remain open. This factory does not
+install or start the broker.

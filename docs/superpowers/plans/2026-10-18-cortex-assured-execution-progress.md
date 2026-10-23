@@ -1589,3 +1589,47 @@ repetitions, 120 top-level tests, without skips.
 Database and policy provisioning, live evidence verification, standalone broker
 installation and live systemd/runsc qualification remain open. S2.4 and the full
 four-stage plan remain incomplete. Linux worker selection remains deferred.
+
+### S2.4 protected evidence database startup
+
+Installed evidence policy commit `f7f8a89` passed CI run `39894793132`.
+
+The broker now has an internal evidence database factory that reuses the root
+SQLite store and its migrations. Production opening requires root and a canonical
+path in a private directory. Database, ownership and SQLite recovery files must
+have exact ownership, mode and link metadata. A new database receives a dedicated
+application ID and format version before Grove can enable WAL. Foreign databases
+and unsupported format headers are rejected without changing their contents.
+
+The factory holds a separate ownership-file lock across initialization and use.
+SQLite also uses exclusive locking, one connection and full synchronous writes.
+Close waits for active storage operations before closing SQLite and releasing
+ownership. Storage and audit methods retain the root store's exact scope, size,
+immutability and tombstone rules. Authorization remains in the service repository
+and installed policy.
+
+TDD reproduced two ownership gaps. Locking the database file itself conflicted
+with SQLite on macOS, so lifetime ownership uses a separate protected file. That
+lock alone still allowed another SQLite process to read the database; the new
+cross-process regression passes with SQLite exclusive locking. Metadata checks
+use descriptor-relative stat rather than opening and closing another database
+file descriptor. Private state creation and validation are shared with the
+existing journal opener.
+
+Tests verify clean reopen, content and tombstone recovery after process exit with
+committed WAL, delayed-upload rejection after recovery, competing ownership,
+close during active operations, exact scope, byte bounds and URI-safe filenames.
+Unsafe directories, file modes, ownership, symlinks, hard links, special files,
+foreign roles, future formats and orphan sidecars are rejected. Rejected database
+contents remain unchanged.
+
+Final validation passed: scoped make f, make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The evidence
+store race suite passed in 27.660s; the service suite passed in 40.752s. The Linux
+database suite passed ten repetitions, including crash subprocesses and the
+independent SQLite client, without skips.
+
+Standalone configuration, directory/policy provisioning, input-provider assembly,
+live evidence verification and live systemd/runsc qualification remain open.
+The factory does not install or start the broker. S2.4 and the four-stage plan
+remain incomplete.
