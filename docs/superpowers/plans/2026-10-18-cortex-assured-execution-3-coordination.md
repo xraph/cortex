@@ -71,7 +71,9 @@ authorization under explicit guards and validates the returned receipt, includin
 on historical retries. `CreateTaskRun` atomically creates the reserved child,
 required capture policy and metadata receipt after revalidating live ownership,
 the parent, assignment, budget and prerequisites. The creation receipt contains
-no duplicate private input. Prepared execution still needs to consume this
+no duplicate private input. `NewTaskRunAdmitter` now guards creation with explicit
+host fencing and authorization ports and validates the original receipt on every
+retry. Prepared execution still needs to consume this
 capability and enforce authority through provider/tool calls. Concrete host grant services, runtime dispatch, cancellation after
 intent, recovery settlement and event delivery remain open. `Scheduler.Tick` still needs integration; the
 ownership store is not a completed scheduler.

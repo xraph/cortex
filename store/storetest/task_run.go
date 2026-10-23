@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -68,6 +69,45 @@ func TaskRunTransactions(t *testing.T, backend store.Store, driver assurance.Dri
 		ctx, req, parent := taskRunFixture(t, backend, driver)
 		return ctx, assurance.New(driver), req, parent
 	}
+	t.Run("host_guarded_creation", func(t *testing.T) {
+		ctx, repo, req, _ := fixture(t)
+		req, _, err := req.Freeze()
+		require.NoError(t, err)
+		held, allowed := false, true
+		authorizations := 0
+		fence := taskRunFenceFixture(func(_ context.Context, current coordination.TaskRunRequest, next func(coordination.TaskRunRequest) error) error {
+			held = true
+			defer func() { held = false }()
+			return next(current)
+		})
+		authorizer := taskRunAuthorizerFixture(func(_ context.Context, current coordination.TaskRunRequest) error {
+			require.True(t, held)
+			require.Equal(t, req, current)
+			authorizations++
+			if !allowed {
+				return errors.New("revoked worker")
+			}
+			return nil
+		})
+		admitter, err := coordination.NewTaskRunAdmitter(repo, fence, authorizer)
+		require.NoError(t, err)
+		result, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		require.True(t, result.Fresh)
+		require.NoError(t, result.Validate(req))
+		retry, err := admitter.Admit(ctx, req)
+		require.NoError(t, err)
+		result.Fresh = false
+		require.Equal(t, result, retry)
+		allowed = false
+		denied, err := admitter.Admit(ctx, req)
+		require.Error(t, err)
+		require.Zero(t, denied)
+		require.Equal(t, 3, authorizations)
+		current, err := backend.GetRun(ctx, req.Run.ID)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, current.Revision)
+	})
 	t.Run("create_retry_scope", func(t *testing.T) {
 		ctx, repo, req, parent := fixture(t)
 		require.NotNil(t, resultCapability[coordination.TaskRunStore](t, backend))
@@ -298,4 +338,16 @@ func TaskRunTransactions(t *testing.T, backend store.Store, driver assurance.Dri
 			require.Equal(t, expected, success)
 		})
 	}
+}
+
+type taskRunFenceFixture func(context.Context, coordination.TaskRunRequest, func(coordination.TaskRunRequest) error) error
+
+func (f taskRunFenceFixture) WithTaskRunFence(ctx context.Context, req coordination.TaskRunRequest, next func(coordination.TaskRunRequest) error) error {
+	return f(ctx, req, next)
+}
+
+type taskRunAuthorizerFixture func(context.Context, coordination.TaskRunRequest) error
+
+func (f taskRunAuthorizerFixture) AuthorizeTaskRun(ctx context.Context, req coordination.TaskRunRequest) error {
+	return f(ctx, req)
 }

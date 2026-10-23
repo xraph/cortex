@@ -4468,3 +4468,38 @@ passed. Docker-backed PostgreSQL and MongoDB checks ran against real containers.
 Prepared-runtime startup, per-call authority and lease enforcement, cancellation,
 recovery settlement and installed worker qualification remain open. The full
 four-stage goal remains active.
+
+### S3.2 guarded child creation
+
+Ruling: reuse the shared task authority guard before atomic child creation.
+Require explicit host fencing and authorization, and validate the entire returned
+receipt against the frozen original request. Creation and execution remain
+separate operations.
+
+`NewTaskRunAdmitter` requires `TaskRunStore`, `TaskRunFence` and
+`TaskRunAuthorizer`. The authorizer authenticates actor and worker, resolves the
+retained dispatch, working assignment and parent, and checks current grants,
+allocation, prerequisites, prepared configuration and capture policy. The fence
+holds the relevant external revision and grant guards through storage. Every
+relevant writer must participate. External services need conditional operations
+or a declared bounded observation window.
+
+The shared guard checks exact scope, detaches input, rejects changed bindings,
+and restricts callback lifetime. Each attempt authorizes again, including a
+retry that returns historical creation metadata. The admitter validates the
+initial run digest, intent identity and outbox associations, then detaches the
+bounded receipt. A lost response may follow a committed child, so recovery must
+preserve the original request and inspect current run state.
+
+Tests began with the missing API. They cover callback ordering, detached nested
+input, changed input/parent/assignment/budget/policy, revoked authority, changed
+prerequisites, cancellation, missing or duplicate callbacks, ambiguous responses,
+invalid receipts and required ports. The backend fixture tests fresh creation,
+historical replay and revoked retry against each actual store. These fixture
+ports are not an installed host identity integration.
+
+After `make f`, all-module `make l`, the root build, docs typecheck/lint/build
+and the complete coordination (22.166s) and assurance (1.120s) race suites passed.
+The child-creation race suite passed all 40 test entries on each backend:
+SQLite (16.367s), PostgreSQL (8.903s) and MongoDB (11.433s), with no skips.
+Prepared execution, per-call guards and the full scheduler remain open.

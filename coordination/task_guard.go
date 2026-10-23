@@ -20,7 +20,8 @@ type taskAuthority[T any] struct {
 }
 
 // withTaskAuthority keeps identity, callback lifetime and authorization ordering
-// identical for task admission, dispatch and completion. Ports receive detached requests.
+// identical for task admission, dispatch, child creation and completion.
+// Ports receive detached requests.
 func withTaskAuthority[T frozenTaskRequest[T], R any](ctx context.Context, request T, guard taskAuthority[T], commit func(context.Context, T, string) (R, error)) (R, error) {
 	var zero R
 	if err := ctx.Err(); err != nil {

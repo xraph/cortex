@@ -1782,9 +1782,23 @@ requests conflict. `GetTaskRunStart(claimID)` recovers the receipt without
 restoring deleted evidence or changing the current child. After a lost response,
 read and reconcile that child. Do not invoke it again from a historical receipt.
 
-The store does not start the ReAct loop. Your host must authorize the prepared
-configuration and hold current grant and external revision guards through
-creation. Runtime integration still needs to enforce ownership, parent
+Use `coordination.NewTaskRunAdmitter(storage, fence, authorizer)` at the host
+boundary. Supply `TaskRunFence` and `TaskRunAuthorizer` explicitly. The fence
+resolves current authority and prerequisite bindings and holds their guards
+through creation. The authorizer authenticates the actor and worker, resolves
+the retained dispatch, assignment and parent, then checks the current grant,
+allocation, prerequisite chain, prepared configuration and capture policy.
+All relevant writers must participate in those guards. For external services,
+use conditional operations or document the bounded observation window.
+
+The admitter rejects a changed request before authorization, validates the
+returned receipt and reauthorizes historical retries. Missing, duplicate or
+escaped callbacks, cancellation, and malformed receipts fail closed. Keep the
+original request after an ambiguous failure. A guarded receipt still does not
+start the ReAct loop or authorize a provider call, and fixture ports do not
+qualify your installed identity service.
+
+Runtime integration still needs to enforce ownership, parent
 cancellation and current authority before provider/tool calls, and reconcile
 ambiguous starts. Creating a running row alone does not establish live execution
 or worker qualification.

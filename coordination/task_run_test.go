@@ -31,7 +31,7 @@ func taskRunRequestFixture(t *testing.T) coordination.TaskRunRequest {
 	require.NoError(t, err)
 	r := run.Run{ID: dispatch.Claim.RunID, AgentID: id.NewAgentID(), SessionID: id.NewSessionID(), Scope: h.Scope, State: run.StateRunning, Input: "input", Budget: execution.Budget{MaxSteps: 1, MaxTokens: 10, MaxToolCalls: 1, Deadline: h.Deadline}, Provenance: run.ExecutionProvenance{SchemaVersion: 1, Purpose: run.PurposeNormal, PreparedDigest: binding.Context.PreparedDigest, AssignmentDigest: h.Digest, ParentRunID: h.ParentRunID.String(), AcceptanceRef: contractID.String(), VerificationRequired: true, VerificationIntentID: intent.ID.String(), ExecutionInputsDigest: input.SHA256}}
 	req := coordination.TaskRunRequest{SchemaVersion: 1, Claim: dispatch.Claim.Token(), DispatchDigest: dispatch.RequestDigest, AssignmentRevision: dispatch.Assignment.Revision, AssignmentDigest: dispatch.Assignment.Digest, ParentRunRevision: 1, Run: r, Intent: intent, Actor: h.Receiver.Principal, Reason: "start"}
-	_, _, err = req.Freeze()
+	req, _, err = req.Freeze()
 	require.NoError(t, err)
 	return req
 }
