@@ -34,7 +34,20 @@ if err := s.Migrate(ctx); err != nil {
 
 The blank `sqlitemigrate` import registers Grove's migration executor for SQLite. Without it `Migrate` fails with "no executor registered for driver".
 
-If you turn on agent messaging (`engine.WithA2A`), set a busy timeout in the DSN, for example `cortex.db?_pragma=busy_timeout(5000)`. The message dispatcher writes from its own goroutines, and SQLite answers a concurrent writer with `SQLITE_BUSY` unless it's told to wait.
+For concurrent messaging, verification workers or replay subscribers, configure
+WAL and a busy timeout on every connection:
+
+```text
+cortex.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+```
+
+The message dispatcher and lease-renewal loop write while runs are active.
+Assurance transactions, including replay reads, acquire a write lock before
+reading to keep their run and event snapshots consistent. SQLite otherwise
+rejects a competing writer immediately with `SQLITE_BUSY`. Keep the same DSN
+settings when reopening a store after restart. A busy timeout does not extend a
+verification lease: renewal still needs an acknowledged write before expiry, and
+storage failure cancels the evaluator while preserving an uncertain paid call.
 
 ## Internals
 

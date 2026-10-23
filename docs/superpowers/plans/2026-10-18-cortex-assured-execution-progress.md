@@ -2822,3 +2822,30 @@ Validation for bounded SSE replay:
   safely cancelled the evaluator. The worker fixture lacks the WAL/busy-timeout
   configuration already used by storage concurrency fixtures. This is being
   handled separately; the CI run is not green.
+
+
+### SQLite worker fixture concurrency settings
+
+CI `39949024564` failed the long-evaluation lease-renewal test when its competing
+claim overlapped renewal. The worker fixture opened SQLite with no WAL or busy
+timeout, so a writer received `SQLITE_BUSY` immediately. Verification correctly
+cancelled the callback and kept the dispatched call uncertain. The run passed ten
+local repetitions, confirming that local timing alone did not reproduce the
+reported interleaving.
+
+The worker fixture now retains a WAL/busy-timeout DSN for initial opens and restart
+opens, matching the existing storage concurrency fixtures. Production transaction
+and lease handling are unchanged. The SQLite guide now covers verification and
+replay alongside messaging, including the fact that assurance reads acquire a
+write lock for a consistent snapshot. Renewal still fails closed if storage cannot
+acknowledge within the live lease.
+
+Validation for the SQLite worker fixture correction:
+
+- The long-evaluation renewal race test passed 20 repetitions (52.705s).
+- Full engine, verification and event race suites passed (280.206s, 1.371s and
+  1.191s), including worker restart, recovery, renewal and fail-closed cases.
+- Formatting, lint across all ten modules, root build, diff checks and
+  documentation type checks, lint and production build passed.
+- The original CI failure remains recorded. A fresh CI run must verify the
+  corrected fixture on Linux before this is treated as CI-qualified.

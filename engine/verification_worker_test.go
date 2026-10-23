@@ -103,7 +103,8 @@ type workerFixture struct {
 func newWorkerFixture(t *testing.T, criteria ...verification.Criterion) workerFixture {
 	t.Helper()
 	ctx := overlayCtx("verification-worker")
-	path := filepath.Join(t.TempDir(), "worker.db")
+	// Renewal and competing claims share the deployed SQLite concurrency settings.
+	path := filepath.Join(t.TempDir(), "worker.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	s := openSQLiteStoreForTest(t, path)
 	scope, err := cortex.RequireScope(ctx)
 	require.NoError(t, err)
