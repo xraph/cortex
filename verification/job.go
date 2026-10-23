@@ -114,6 +114,26 @@ type Job struct {
 	Digest        string           `json:"digest"`
 }
 
+// CheckLease checks ownership against this saved snapshot. Callers must validate
+// the snapshot and use trusted current time. ExpiresAt in the supplied token is
+// not authoritative, and this check does not lock or refresh storage.
+func (j Job) CheckLease(lease JobLease, now time.Time) error {
+	if lease.Validate() != nil || now.IsZero() {
+		return ErrInvalid
+	}
+	if j.State != JobRunning && j.State != JobReady {
+		return ErrJobConflict
+	}
+	current := j.Lease
+	if current == nil || lease.JobID != j.Request.ID || current.ClaimID != lease.ClaimID || current.Owner != lease.Owner || current.Generation != lease.Generation {
+		return ErrJobConflict
+	}
+	if !current.ExpiresAt.After(now) || !j.Request.Deadline.After(now) {
+		return ErrJobExpired
+	}
+	return nil
+}
+
 // SealJob validates and detaches a storage-produced job snapshot.
 func SealJob(j Job) (Job, error) {
 	req, digest, err := j.Request.Freeze()

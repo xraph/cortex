@@ -15,7 +15,7 @@ func (s *Repository) BeginVerificationCall(ctx context.Context, lease verificati
 		return verification.Job{}, verification.ErrInvalid
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
-		if err := activeJobLease(*job, lease, now); err != nil {
+		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
 		if err := checkJobRun(txctx, tx, *job); err != nil {
@@ -60,7 +60,7 @@ func (s *Repository) CompleteVerificationCall(ctx context.Context, lease verific
 		return verification.Job{}, err
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
-		if err := activeJobLease(*job, lease, now); err != nil {
+		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
 		if err := checkJobRun(txctx, tx, *job); err != nil {

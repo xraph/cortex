@@ -41,13 +41,13 @@ type guardedCommitter struct {
 // NewCommitter requires explicit storage, fencing and current grant checks.
 // The authorizer runs inside the fence, including on idempotent retries.
 func NewCommitter(storage CommitStore, fence CommitFence, authorizer BindingAuthorizer) (Committer, error) {
-	if nilCommitPort(storage) || nilCommitPort(fence) || nilCommitPort(authorizer) {
+	if nilHostPort(storage) || nilHostPort(fence) || nilHostPort(authorizer) {
 		return nil, ErrInvalid
 	}
 	return &guardedCommitter{storage: storage, fence: fence, authorizer: authorizer}, nil
 }
 
-func nilCommitPort(value any) bool {
+func nilHostPort(value any) bool {
 	if value == nil {
 		return true
 	}

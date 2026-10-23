@@ -63,8 +63,11 @@ below stays unchecked.
 Budgeted jobs also persist evaluator dispatch and conservative usage charges
 before any provider call. Atomic completion records the usage receipt and report;
 unknown outcomes cannot be redispatched by changing worker or call identity.
-Provider invocation, authenticated receipt reconciliation and allocation from
-the remaining run budget still need runtime integration.
+`verification.Executor` now advances one verifier group through host-authorized
+estimation, durable dispatch, adapter evaluation and atomic settlement. Uncertain
+calls use the adapter's separate reconciliation path and completed calls do not
+dispatch again. Qualified provider adapters, worker scheduling and allocation
+from the remaining run budget still need runtime integration.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

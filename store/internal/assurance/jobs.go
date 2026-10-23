@@ -264,23 +264,6 @@ func checkJobRun(ctx context.Context, tx RunTransaction, job verification.Job) e
 	return validateCapturedRun(current, job.RunRevision, job.Request.ContractID, job.Request.Binding)
 }
 
-func activeJobLease(job verification.Job, lease verification.JobLease, now time.Time) error {
-	if lease.Validate() != nil {
-		return verification.ErrInvalid
-	}
-	if job.State != verification.JobRunning && job.State != verification.JobReady {
-		return verification.ErrJobConflict
-	}
-	current := job.Lease
-	if current == nil || lease.JobID != job.Request.ID || current.ClaimID != lease.ClaimID || current.Owner != lease.Owner || current.Generation != lease.Generation {
-		return verification.ErrJobConflict
-	}
-	if !current.ExpiresAt.After(now) || !job.Request.Deadline.After(now) {
-		return verification.ErrJobExpired
-	}
-	return nil
-}
-
 func leaseExpiry(now, deadline time.Time, duration time.Duration) (time.Time, error) {
 	if duration <= 0 || duration > verification.MaxJobLease {
 		return time.Time{}, verification.ErrInvalid
@@ -313,7 +296,7 @@ func (s *Repository) ClaimVerificationJob(ctx context.Context, claim verificatio
 				if job.Lease.Owner != claim.Owner {
 					return verification.ErrJobConflict
 				}
-				return activeJobLease(*job, *job.Lease, now)
+				return job.CheckLease(*job.Lease, now)
 			}
 			if job.Lease.ExpiresAt.After(now) {
 				return verification.ErrJobConflict
@@ -346,7 +329,7 @@ func (s *Repository) RenewVerificationJob(ctx context.Context, lease verificatio
 		return verification.Job{}, verification.ErrInvalid
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, _ *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
-		if err := activeJobLease(*job, lease, now); err != nil {
+		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
 		if err := checkJobRun(txctx, tx, *job); err != nil {

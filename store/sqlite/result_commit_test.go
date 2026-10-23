@@ -36,3 +36,12 @@ func TestVerificationCallRestart(t *testing.T) {
 		return openTestStore(t, dsn)
 	})
 }
+
+func TestVerificationExecutorRestart(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "executor.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	s := openTestStore(t, dsn)
+	storetest.VerificationExecutorRestart(t, s, func() store.Store {
+		require.NoError(t, s.Close())
+		return openTestStore(t, dsn)
+	})
+}

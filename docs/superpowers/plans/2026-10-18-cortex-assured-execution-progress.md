@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs and budgeted evaluator-dispatch storage implemented; host deployment adapters, evaluator scheduling, runtime gates and public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; qualified host adapters, scheduling, runtime gates and public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
@@ -2040,3 +2040,62 @@ recovery and public delivery. Terminal jobs retain unresolved reserved charges;
 a late-receipt accounting path remains open and those charges must not disappear
 when the host allocates a later job. Live provider/scanner qualification and G1
 still gate activation. This packet does not close S2.2 or the four-stage plan.
+
+
+## Evaluator execution and recovery
+
+Baseline `2ed08db` is pushed; CI run `39913532675` passed. This packet connects
+budgeted verification jobs to an explicit host evaluator adapter. Engine gates
+remain disabled.
+
+S2.2 ruling: the executor advances one contract-defined verifier name/revision
+group per invocation under an existing lease. Scheduling, claiming and renewal
+stay outside it so synchronous workers and later parallel schedulers can use the
+same implementation without copying ReAct. The cost is that a host must provide
+the scheduling policy before this becomes an automatic verification service.
+
+`verification.NewExecutor` requires durable storage, an evaluator adapter, current
+binding authorization and a trusted clock. It validates and detaches the saved
+job and contract, obtains a conservative estimate, records dispatch, then invokes
+the adapter. Pricing revisions must match the job. Missing dispatch records,
+changed call identity, wrong evidence bindings and mismatched reports fail closed.
+The executor validates the saved settlement before returning it. Original run
+output, generation and tool execution are not invoked through this interface.
+
+Recovery uses a separate `EvaluationAdapter.Reconcile` method with the original
+call ID, criteria, allowance and job deadline. Completed calls return their saved
+state after current authorization checks. Provider errors discard partial output
+and retain the conservative charge. Definitive evaluator failures use the typed
+failure result; a missing outcome remains uncertain. Reconciliation cannot do
+billable work or fall back to another evaluation. Charged recovery needs its own
+host reservation, which remains a separate integration requirement.
+
+Authority is checked around adapter access and before returning persisted data.
+A shared `Job.CheckLease` supplies the store and executor ownership rules. Contexts
+are bounded by caller, saved lease and job deadlines, and trusted time is checked
+after host callbacks. The executor does not claim that cancellation physically
+stops a remote effect or uncooperative callback. Qualified adapters must honor
+limits, retain authenticated receipts and enforce actual resource access.
+
+TDD evidence: the initial store-backed executor test failed against the absent
+behavior, then passed through dispatch and settlement. New regressions reproduced
+reservation after expiry during estimation, evaluator invocation after expiry
+during authorization, and a completed-call read returning after grant revocation.
+All three now pass. Tests also cover missing/typed-nil services, cancellation,
+revocation, wrong prices, wrong call/binding, plausible partial provider errors,
+callback input mutation, missing dispatch receipts and lost acknowledgements at
+begin, provider response and settlement. SQLite reopen recovers the retained
+provider outcome without another estimate or evaluator invocation. Shared tests
+run against real PostgreSQL and MongoDB as well as SQLite.
+
+Final focused executor race suites passed on all three backends, including the
+latest revocation regression. Scoped formatting, ten-module lint, root build and
+diff checks passed. Full verification and backend race suites also passed:
+SQLite in 240 seconds, PostgreSQL in 21 seconds and MongoDB in 20 seconds.
+Final docs type generation, type checking, lint and production build passed.
+
+Remaining work: qualified provider adapters and their receipt provenance,
+late-receipt accounting, cross-job/run budgets, worker scheduling and renewal,
+captured-output/enqueue recovery, engine sync/stream/prepared/resume integration,
+completion hooks, public delivery and installed qualification. The full S2.2
+packet and four-stage goal remain open.

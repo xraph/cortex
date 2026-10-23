@@ -26,7 +26,7 @@ func (s *Repository) SaveVerificationJobReport(ctx context.Context, lease verifi
 		return verification.Job{}, err
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
-		if leaseErr := activeJobLease(*job, lease, now); leaseErr != nil {
+		if leaseErr := job.CheckLease(lease, now); leaseErr != nil {
 			return leaseErr
 		}
 		if runErr := checkJobRun(txctx, tx, *job); runErr != nil {
@@ -225,7 +225,7 @@ func (s *Repository) jobForCommit(ctx context.Context, req verification.CommitRe
 	if req.JobLease == nil || job.RequestDigest != index.Digest || job.RunRevision != req.ExpectedRunRevision || job.Request.ContractID != req.ContractID || job.State != verification.JobReady || !slices.Equal(job.ReportIDs, req.ReportIDs) {
 		return nil, Record{}, verification.ErrJobConflict
 	}
-	if leaseErr := activeJobLease(job, *req.JobLease, now); leaseErr != nil {
+	if leaseErr := job.CheckLease(*req.JobLease, now); leaseErr != nil {
 		return nil, Record{}, leaseErr
 	}
 	actual, err := job.Request.Binding.Digest()

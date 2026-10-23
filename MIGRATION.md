@@ -251,3 +251,11 @@ another evaluator call, even with a fresh call ID after takeover. Resolve the
 recorded provider outcome or leave its reserved charge outstanding. A new job
 needs host approval and a budget drawn from the remaining run allowance; this
 storage capability does not allocate budgets across jobs.
+
+`verification.NewExecutor` consumes these capabilities through `ExecutorStore`.
+Configure a host evaluator adapter, current binding authorizer and clock, then
+execute an exact verifier group under an existing lease. The executor requires
+`EvaluationBudget`; manual jobs cannot enter this path. Saved unresolved calls
+use `EvaluationAdapter.Reconcile` and never fall back to another evaluation.
+Provide a qualified adapter that retains original report and usage receipts.
+This API does not register a scheduler or change engine completion behavior.

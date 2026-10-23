@@ -181,8 +181,63 @@ optional checks must settle before the job becomes ready. If cancellation,
 expiry or another failed check ends a job with unresolved calls, their reserved
 charges remain in its snapshot. This API does not settle late receipts after a
 terminal job; host accounting reconciliation still needs integration. Keep those
-charges when allocating budgets to later jobs. The evaluator executor, provider
-reconciliation adapters and cross-job budget reservations remain separate work.
+charges when allocating budgets to later jobs. Concrete provider reconciliation
+adapters and cross-job budget reservations remain separate work.
+
+### Execute or recover a verifier group
+
+Use `verification.NewExecutor` to connect budgeted jobs to a host evaluator. It
+requires an `ExecutorStore`, `EvaluationAdapter`, `BindingAuthorizer` and trusted
+`Clock`. Built-in stores implement the storage capability. There is no default
+evaluator or authorization policy.
+
+```go
+executor, err := verification.NewExecutor(verification.ExecutorConfig{
+    Store:      storage,
+    Adapter:    hostEvaluator,
+    Authorizer: currentAuthority,
+    Clock:      hostClock,
+})
+if err != nil {
+    return err
+}
+job, err := executor.Execute(ctx, verification.ExecutorRequest{
+    Lease:            *claimed.Lease,
+    Verifier:         "tests",
+    VerifierRevision: "v1",
+})
+```
+
+Each call advances one verifier name/revision group from the saved acceptance
+contract. Fresh work passes through `Estimate`, durable dispatch and `Evaluate`.
+An unresolved saved call goes directly to `Reconcile`, with its original call
+ID, criteria and allowance. A completed call returns its saved job after current
+authorization checks. Neither retry path invokes the evaluator again.
+
+`Estimate` must calculate a conservative bound from trusted manifests and pricing
+without billable provider work. Its pricing revision must match the job.
+`Evaluate` must enforce those limits, retain a recoverable result under the call
+ID and supply authenticated usage. `Reconcile` reads that original result. It
+must not restart generation, tools or the evaluator when the provider cannot
+confirm an outcome; return `ErrCallUncertain` instead. A usable reconciliation
+returns the original report identity and usage receipt, not a newly scored copy.
+Reconciliation must not perform billable work. If recovery itself requires a
+charged operation, the host needs a separate reservation before invoking it.
+
+Provider errors never authorize partial reports or refunds. Return a definitive
+evaluator failure through `CallResult.Failure` with a nil error. Errors after
+dispatch leave its conservative charge outstanding. Settlement validates the
+exact call, candidate binding, contract and criterion set, then saves the report
+with usage in one transaction. A storage acknowledgement can be lost after that
+transaction commits, so retry through the executor or inspect the saved job.
+
+The executor detaches callback inputs, rechecks authority around adapter access,
+and checks lease expiry after host callbacks. Its context deadline is the earliest
+of the caller deadline, lease expiry and job deadline. The immutable request keeps
+the original job deadline for recovery. Adapters must honor cancellation and
+reauthorize their actual resource reads; an in-process callback cannot forcibly
+stop a remote effect or uncooperative code. Lease renewal, worker scheduling,
+provider qualification and engine finalization remain separate integration work.
 
 Passing every required criterion makes the job ready. It does not publish a
 result. Build `verification.CommitRequest` from the saved job's run revision,
