@@ -1143,3 +1143,45 @@ passed three repetitions and the complete broker race suite passed in 2.207s.
 Scoped make f, final make l across all ten modules and the Linux amd64 build
 passed. Confirmed-absence cancellation and ordinary TLS client round trips
 remain covered.
+
+## S2.4 bounded public TLS server
+
+The public server now supplies a TLS 1.3, HTTP/1.1 listener around the existing
+broker handler. It requires finite connection, header, request and idle limits,
+static certificate material and host authentication. Optional client CAs require
+verified mTLS. Key/certificate material and trust pools are copied; malformed,
+unsupported, mismatched or oversized inputs fail construction. RSA precomputation
+uses a detached key, and ECDSA cloning uses the supported raw-key encoding API.
+
+The first tests failed for the missing server. A resource regression then showed
+that a timed-out connection could release admission while its handler was still
+finishing. Separate connection and handler limits now preserve the work slot until
+return. Request expiration closes the associated connection. Cancellation and
+listener failure close admission, cancel requests and join active handlers before
+releasing server ownership.
+
+Tests cover signed broker round trips, mTLS success and denial, frozen trust/key
+material, RSA/ECDSA/Ed25519 handshakes, disabled multiplexing, plaintext and old-TLS
+refusal, oversized headers, slow bodies, request deadlines, connection saturation,
+unfinished handler admission, malformed keys, listener failure and single-use
+ownership. A combined daemon/TLS fixture verifies submission and joined shutdown
+through worker recovery and broker-journal release.
+
+The server is an assembly component. Host credential validation, certificate
+provisioning, installed provider/configuration assembly, independent orphan
+recovery, retained-file cleanup and live systemd/runsc qualification remain open.
+S2.4 and the four-stage plan are incomplete.
+
+Two shutdown regressions additionally showed that listener closure alone left raw
+connections open and could admit an accept completing during close. The bounded
+listener now tracks and closes raw connections before HTTP/TLS cleanup, rejects
+late registrations and releases each connection slot once. This avoids serial TLS
+close-notification waits during daemon shutdown.
+
+Validation: scoped make f, final make l across all ten modules, Linux tagged lint
+and the Linux amd64 build passed. Final broker and service race suites passed in
+3.303s and 24.107s. The arm64 Linux TLS/connection suite and daemon TLS/private
+endpoint suite each passed ten repetitions without skips. The closed-pipe fixture
+sets its read deadline before shutdown, since net.Pipe rejects deadline changes
+after closure. These tests establish transport/lifecycle behavior with controlled
+worker-manager fixtures, not live sandbox isolation.

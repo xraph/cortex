@@ -1004,3 +1004,52 @@ Those errors cannot produce a successful cancellation or a retained result.
 The HTTP adapter also preserves that distinction: wrapped or joined absence and
 pending errors return 503, rather than 404 or 202, so remote clients cannot lose
 the accompanying runtime failure.
+
+### Bounded public TLS serving
+
+Use `sandboxbroker.NewServer` for the daemon's public callback. Supply a current
+certificate and matching software key, an authenticator and explicit `ServerLimits`.
+Supported keys are ECDSA P-256/P-384/P-521, Ed25519 and two-prime RSA from 2048 to
+8192 bits. Certificate chains, metadata and keys have size bounds. The server
+copies this material and any client CA pool; it does not retain your mutable key
+or parsed leaf certificate.
+
+TLS 1.3 and HTTP/1.1 are required. Session tickets and HTTP multiplexing are disabled.
+A non-nil client CA pool requires a verified client certificate before your
+application authenticator runs. Without that pool, the authenticator must validate
+host-issued credentials over TLS. Identity and current grants still belong to the
+host. Static certificates are replaced by starting a new server lifetime.
+
+Set `Connections` from 1 to 256 and `HeaderBytes` from 1024 to 32768. Header timeout
+is 10ms to 10s; request timeout is 50ms to 30s and cannot be shorter than the header
+timeout. Idle timeout is 10ms to 30s. Header parsing uses net/http's bounded header
+budget. The broker's existing request and result size checks still apply.
+
+Connections and active broker handlers have separate admission limits. An expired
+request closes its connection, but its work slot stays occupied until the handler
+returns. Saturated work admission returns 503 before authentication or dispatch.
+This also bounds work when a trusted callback takes time to finish cancellation.
+
+Create the listener inside the daemon callback, then pass it to `Serve`:
+
+```go
+err = daemon.Run(ctx, func(lifetime context.Context, instance *sandboxbroker.Broker) error {
+    listener, err := (&net.ListenConfig{}).Listen(lifetime, "tcp", bindAddress)
+    if err != nil {
+        return err
+    }
+    return publicServer.Serve(lifetime, listener, instance)
+})
+```
+
+`Serve` owns that listener for its first valid call. Cancellation or a listener
+failure closes connections, cancels requests and joins active broker handlers
+before returning. Callbacks must honor cancellation. The daemon can then recover
+workers and release the broker journal. Reusing a server returns `ErrConflict`
+without taking ownership of another listener.
+
+Loopback TLS tests cover authentication, mTLS, connection saturation, unfinished
+handler admission, request deadlines, slow bodies, oversized headers, certificate
+copying and listener failure. A daemon fixture submits a signed job through this
+server and verifies joined shutdown. Host certificate provisioning, credential
+validation, installed providers and live sandbox qualification remain required.
