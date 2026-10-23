@@ -88,17 +88,14 @@ func (s *Repository) ListVerificationJobs(ctx context.Context, req verification.
 	return jobs, nil
 }
 
-func validateCapturedRun(r *run.Run, expected int64, contractID id.ID, binding verification.Binding) error {
+func (s *Repository) validateCapturedRun(ctx context.Context, r *run.Run, expected int64, contractID id.ID, binding verification.Binding) error {
 	if r.Scope.Canonical() != binding.Scope.Canonical() {
 		return cortex.ErrRunNotFound
 	}
 	if r.ID != binding.RunID || r.Revision != expected || r.State != run.StateCompleted || r.StopReason != run.StopFinalAnswer || r.ResultRef != "" || r.Provenance.PreparedDigest != binding.Context.PreparedDigest || r.Provenance.AcceptanceRef != contractID.String() {
 		return cortex.ErrRunConflict
 	}
-	if int64(len(r.Output)) != binding.Candidate.Bytes || evidence.Digest([]byte(r.Output)) != binding.Candidate.SHA256 {
-		return verification.ErrConflict
-	}
-	return nil
+	return s.validateCapturedOutput(ctx, r, binding)
 }
 
 // EnqueueVerificationJob saves the job, revision binding and pending run together.
@@ -150,10 +147,10 @@ func (s *Repository) enqueueJob(ctx context.Context, tx RunTransaction, req veri
 	if readErr != nil {
 		return verification.Job{}, readErr
 	}
-	if checkErr := validateCapturedRun(current, req.ExpectedRunRevision, req.ContractID, req.Binding); checkErr != nil {
+	if checkErr := s.validateCapturedRun(ctx, current, req.ExpectedRunRevision, req.ContractID, req.Binding); checkErr != nil {
 		return verification.Job{}, checkErr
 	}
-	if intentErr := s.validateEnqueueIntent(ctx, req, current.Output); intentErr != nil {
+	if intentErr := s.validateEnqueueIntent(ctx, req); intentErr != nil {
 		return verification.Job{}, intentErr
 	}
 	switch current.VerificationStatus.Normalized() {
@@ -272,7 +269,7 @@ func (s *Repository) mutateJob(ctx context.Context, jobID id.ID, change func(con
 	return result, nil
 }
 
-func checkJobRun(ctx context.Context, tx RunTransaction, job verification.Job) error {
+func (s *Repository) checkJobRun(ctx context.Context, tx RunTransaction, job verification.Job) error {
 	current, err := tx.GetRun(ctx, job.Request.Binding.RunID)
 	if err != nil {
 		return err
@@ -280,7 +277,7 @@ func checkJobRun(ctx context.Context, tx RunTransaction, job verification.Job) e
 	if current.Revision != job.RunRevision || current.VerificationStatus != verification.StatusPending {
 		return verification.ErrJobConflict
 	}
-	return validateCapturedRun(current, job.RunRevision, job.Request.ContractID, job.Request.Binding)
+	return s.validateCapturedRun(ctx, current, job.RunRevision, job.Request.ContractID, job.Request.Binding)
 }
 
 func leaseExpiry(now, deadline time.Time, duration time.Duration) (time.Time, error) {
@@ -303,8 +300,8 @@ func (s *Repository) ClaimVerificationJob(ctx context.Context, claim verificatio
 	if shape.Validate() != nil || claim.Duration <= 0 || claim.Duration > verification.MaxJobLease {
 		return verification.Job{}, verification.ErrInvalid
 	}
-	return s.mutateJob(ctx, claim.JobID, func(txctx context.Context, _ *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
-		if err := checkJobRun(txctx, tx, *job); err != nil {
+	return s.mutateJob(ctx, claim.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+		if err := repository.checkJobRun(txctx, tx, *job); err != nil {
 			return err
 		}
 		if job.State != verification.JobQueued && job.State != verification.JobRunning && job.State != verification.JobReady {
@@ -347,11 +344,11 @@ func (s *Repository) RenewVerificationJob(ctx context.Context, lease verificatio
 	if lease.Validate() != nil {
 		return verification.Job{}, verification.ErrInvalid
 	}
-	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, _ *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
 		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
-		if err := checkJobRun(txctx, tx, *job); err != nil {
+		if err := repository.checkJobRun(txctx, tx, *job); err != nil {
 			return err
 		}
 		expiry, err := leaseExpiry(now, job.Request.Deadline, duration)

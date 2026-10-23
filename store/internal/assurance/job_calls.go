@@ -18,7 +18,7 @@ func (s *Repository) BeginVerificationCall(ctx context.Context, lease verificati
 		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
-		if err := checkJobRun(txctx, tx, *job); err != nil {
+		if err := repository.checkJobRun(txctx, tx, *job); err != nil {
 			return err
 		}
 		if job.Request.EvaluationBudget == nil || job.State != verification.JobRunning {
@@ -63,7 +63,7 @@ func (s *Repository) CompleteVerificationCall(ctx context.Context, lease verific
 		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}
-		if err := checkJobRun(txctx, tx, *job); err != nil {
+		if err := repository.checkJobRun(txctx, tx, *job); err != nil {
 			return err
 		}
 		if job.Request.EvaluationBudget == nil {

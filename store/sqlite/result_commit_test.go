@@ -63,3 +63,9 @@ func TestCaptureIntentRestart(t *testing.T) {
 		return openTestStore(t, dsn)
 	})
 }
+
+func TestPrivateCandidateRestart(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "private-candidate.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	s := openTestStore(t, dsn)
+	storetest.PrivateCandidateRestart(t, s, func() store.Store { require.NoError(t, s.Close()); return openTestStore(t, dsn) })
+}

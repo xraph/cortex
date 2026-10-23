@@ -319,3 +319,16 @@ the original fractional value cannot be recovered. New readers reject malformed
 values or values inconsistent with the native date. Upgrade every writer before
 relying on exact deadlines, since an older writer can leave an inconsistent
 companion value when changing a budget. New writers update or clear both values.
+
+Built-in stores now expose optional `run.CandidateStore`. `CaptureCandidate`
+accepts a final answer under a registered intent while the saved run is still
+running. It records evidence, private capture metadata, execution completion and
+the verification job atomically. The run's output stays empty until guarded
+result commit publishes the candidate with its passed status and receipt.
+
+The existing assurance table stores the private capture metadata, so no schema
+migration is required. Upgrade verification workers and writers before using
+this path; older workers expect candidate bytes in the run row. The composite
+store interface is unchanged. Automatic engine gating remains unfinished:
+hosts using this capability must withhold candidate text in their own streams,
+steps, conversation history and hooks until publication is authorized.

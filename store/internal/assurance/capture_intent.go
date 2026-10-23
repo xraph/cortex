@@ -263,27 +263,31 @@ func (s *Repository) CaptureFromIntent(ctx context.Context, intentID id.ID) (ver
 }
 
 func matchIntentJob(intent verification.CaptureIntent, job verification.Job) error {
+	return matchIntentRequest(intent, job.Request, job.RequestDigest)
+}
+
+func matchIntentRequest(intent verification.CaptureIntent, request verification.JobRequest, requestDigest string) error {
 	req, _, err := intent.Template.Freeze()
 	if err != nil {
 		return err
 	}
-	if job.Request.ExpectedRunRevision <= req.ExpectedRunRevision || job.Request.Binding.Candidate.Bytes > intent.MaxCandidateBytes {
+	if request.ExpectedRunRevision <= req.ExpectedRunRevision || request.Binding.Candidate.Bytes > intent.MaxCandidateBytes {
 		return verification.ErrConflict
 	}
-	req.ExpectedRunRevision = job.Request.ExpectedRunRevision
-	req.Binding.Candidate.SHA256 = job.Request.Binding.Candidate.SHA256
-	req.Binding.Candidate.Bytes = job.Request.Binding.Candidate.Bytes
+	req.ExpectedRunRevision = request.ExpectedRunRevision
+	req.Binding.Candidate.SHA256 = request.Binding.Candidate.SHA256
+	req.Binding.Candidate.Bytes = request.Binding.Candidate.Bytes
 	_, digest, err := req.Freeze()
 	if err != nil {
 		return err
 	}
-	if job.RequestDigest != digest {
+	if requestDigest != digest {
 		return verification.ErrConflict
 	}
 	return nil
 }
 
-func (s *Repository) validateEnqueueIntent(ctx context.Context, req verification.JobRequest, output string) error {
+func (s *Repository) validateEnqueueIntent(ctx context.Context, req verification.JobRequest) error {
 	intent, err := s.GetRunCaptureIntent(ctx, req.Binding.RunID)
 	if errors.Is(err, verification.ErrNotFound) {
 		_, reservedErr := s.indexedCaptureIntent(ctx, kindIntentJob, req.ID.String())
@@ -298,22 +302,11 @@ func (s *Repository) validateEnqueueIntent(ctx context.Context, req verification
 	if err != nil {
 		return err
 	}
-	expected, err := intent.JobFor(req.ExpectedRunRevision, output)
-	if err != nil {
-		return err
-	}
-	_, expectedDigest, err := expected.Freeze()
-	if err != nil {
-		return err
-	}
 	_, digest, err := req.Freeze()
 	if err != nil {
 		return err
 	}
-	if expectedDigest != digest {
-		return verification.ErrConflict
-	}
-	return nil
+	return matchIntentRequest(intent, req, digest)
 }
 
 func (s *Repository) validateIntentCommit(ctx context.Context, req verification.CommitRequest) error {

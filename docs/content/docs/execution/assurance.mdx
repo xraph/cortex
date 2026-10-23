@@ -236,7 +236,49 @@ finalization paths. They do not reserve a shared run budget, gate model dispatch
 or withhold public output. Those runtime integrations remain required before you
 can treat a workflow as verification-required.
 
-### Capture a saved candidate atomically
+### Capture privately before publication
+
+Use the optional `run.CandidateStore` when the answer must stay private during
+verification. Register the capture intent before generation, then pass the final
+candidate and cumulative usage to `CaptureCandidate` while the saved run is
+still running:
+
+```go
+job, err := candidates.CaptureCandidate(ctx, run.CandidateCapture{
+    SchemaVersion:       1,
+    IntentID:            intent.ID,
+    ExpectedRunRevision: currentRun.Revision,
+    Output:              approvedCandidate,
+    FinishReason:        "stop",
+    Usage:               cumulativeUsage,
+})
+```
+
+The built-in stores save bounded candidate evidence, a capture receipt, execution
+completion and the queued verification job in one transaction. `run.Output`
+stays empty. The run is execution-completed with verification pending, so consumers
+must read both fields. Capture rejects changed preparation, consumed accounting
+that goes backwards, exceeded generation limits and a verification deadline
+beyond the saved run deadline.
+
+Pass the returned job request and intent result ID to `Engine.VerifyRun` with
+your configured worker. Claims, evaluator settlement and guarded commit use the
+existing protocol. Passing reports alone leave the answer private. The commit
+copies the exact candidate bytes into `run.Output` atomically with the receipt,
+outbox and passed status. Failed, inconclusive, cancelled or revoked checks do
+not publish. The raw commit store still requires the host fence and authorization
+provided by `verification.NewCommitter` or the engine worker.
+
+Retry an uncertain capture with the identical request. A changed candidate,
+revision, finish reason or usage conflicts with the stored capture. Retries
+return the saved job without restoring deleted evidence; `CaptureFromIntent`
+also discovers that job after restart. This storage capability does not register
+intents or intercept normal engine streams, conversation history, steps or hooks.
+Those paths still need the required-verification runtime gate. Your host must
+authorize capture and keep candidate text out of public transports before calling
+this operation.
+
+### Capture an already saved candidate
 
 Use the optional `verification.CaptureStore` when candidate evidence has not yet
 been saved. Its `CaptureVerificationJob(ctx, request)` takes the same `JobRequest`

@@ -29,7 +29,7 @@ func (s *Repository) SaveVerificationJobReport(ctx context.Context, lease verifi
 		if leaseErr := job.CheckLease(lease, now); leaseErr != nil {
 			return leaseErr
 		}
-		if runErr := checkJobRun(txctx, tx, *job); runErr != nil {
+		if runErr := repository.checkJobRun(txctx, tx, *job); runErr != nil {
 			return runErr
 		}
 		if job.Request.EvaluationBudget != nil {

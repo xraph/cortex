@@ -2267,3 +2267,50 @@ passed again in 57 seconds. Selected capture, job, call, deadline and prepared
 conformance races passed on SQLite in 80 seconds and PostgreSQL in 17 seconds.
 The full MongoDB race suite passed in 33 seconds. Verbose database logs contained
 no skips. Docs type generation, type checking, lint and production build passed.
+
+
+## Private candidate capture and commit
+
+Ruling: a required runtime gate needs private persistence before automatic
+finalization can use the verification worker. The previous capture path starts
+from an already public run output. Keep that explicit legacy path and add an
+atomic private transition under the same capture intent, job, lease and commit
+protocol, with no second evaluator or publication queue.
+
+`run.CandidateCapture` binds the final output, saved running revision, finish
+reason and cumulative usage to a retry digest. Built-in stores expose optional
+`run.CandidateStore`. Capture validates the registered intent, current preparation,
+accounting and limits; saves bounded candidate evidence and immutable metadata;
+then completes execution and enqueues verification in one transaction. The run's
+public output stays empty. Existing job validation checks the private candidate
+reference and execution metadata instead of expecting its bytes in the run row.
+
+Passing reports alone do not release content. The guarded result commit copies
+the exact retained candidate bytes to the run in the transaction that records the
+receipt, outbox, result reference and passed status. Failed, inconclusive,
+cancelled, stale or revoked work cannot take that transition. Capture retries
+validate the original request digest and return historical job state without
+recreating tombstoned evidence. No schema migration or composite store widening
+is needed; all verification workers and writers must upgrade before use.
+
+TDD first failed on the missing capture request and store capability. The next
+regression showed that a passed commit still left the private output empty, then
+passed after atomic publication was connected. Conformance covers hidden output
+in run reads/lists, accounting and deadline denial, scope, cancellation, changed
+identity/content, failed checks, tombstones, concurrent captures, rollback after
+each capture write and each commit write, and lost replies after both commits.
+SQLite reopen and explicit engine-worker evaluator recovery use the same saved
+candidate without new generation or tool calls.
+
+This is the persistence transition required by S2.2, not the automatic runtime
+gate. Prepared policy versioning, pre-dispatch registration, stream/step/history
+withholding, completion hooks, shared budget allocation and scheduling remain
+open. Contextual verification capability stays false.
+
+Final checks passed: scoped `make f`, ten-module `make l`, root build and diff
+checks. Full race suites passed for run, verification and engine, with engine in
+145 seconds. All backend race suites passed: SQLite in 320 seconds, PostgreSQL
+in 44 seconds and MongoDB in 53 seconds. Final focused private-capture races
+passed again on all three backends after lint fixes, including real PostgreSQL
+and MongoDB, with no skipped cases. Docs type generation, type checking, lint
+and production build passed.

@@ -250,6 +250,26 @@ func (tx captureFailTransaction) SetRunVerification(ctx context.Context, runID i
 	return nil
 }
 
+func (tx captureFailTransaction) SetRunCandidate(ctx context.Context, r *run.Run, at time.Time) error {
+	if err := tx.RunTransaction.SetRunCandidate(ctx, r, at); err != nil {
+		return err
+	}
+	if tx.kind == "candidate_run" {
+		return tx.failure
+	}
+	return nil
+}
+
+func (tx captureFailTransaction) ReplaceJob(ctx context.Context, row assurance.Record, body string) error {
+	if err := tx.RunTransaction.ReplaceJob(ctx, row, body); err != nil {
+		return err
+	}
+	if tx.kind == "commit_job" {
+		return tx.failure
+	}
+	return nil
+}
+
 // VerificationCaptureRollback checks every capture write inside a real transaction.
 func VerificationCaptureRollback(t *testing.T, s store.Store, driver assurance.Driver) {
 	t.Helper()

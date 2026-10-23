@@ -143,7 +143,7 @@ func (f workerFixture) engine(t *testing.T, s store.Store) *engine.Engine {
 	return e
 }
 
-func (f *workerFixture) registerIntent(t *testing.T) verification.CaptureIntent {
+func (f *workerFixture) prepareIntent(t *testing.T) (verification.CaptureIntent, *run.Run, string) {
 	t.Helper()
 	source, err := f.storage.GetRun(f.ctx, f.request.Job.Binding.RunID)
 	require.NoError(t, err)
@@ -160,11 +160,18 @@ func (f *workerFixture) registerIntent(t *testing.T) verification.CaptureIntent 
 	intent, err := verification.SealCaptureIntent(verification.CaptureIntent{SchemaVersion: 1, ID: id.New(verification.PrefixCaptureIntent), Template: template, ResultID: f.request.ResultID, MaxCandidateBytes: 1 << 20})
 	require.NoError(t, err)
 	require.NoError(t, f.storage.CreateCaptureIntent(f.ctx, intent))
-	current.State, current.StopReason, current.Output = run.StateCompleted, run.StopFinalAnswer, source.Output
+	return intent, current, source.Output
+}
+
+func (f *workerFixture) registerIntent(t *testing.T) verification.CaptureIntent {
+	t.Helper()
+	intent, current, output := f.prepareIntent(t)
+	current.State, current.StopReason, current.Output = run.StateCompleted, run.StopFinalAnswer, output
 	require.NoError(t, f.storage.UpdateRun(f.ctx, current))
+	var err error
 	f.request.Job, err = intent.JobFor(current.Revision, current.Output)
 	require.NoError(t, err)
-	require.NoError(t, f.storage.SaveEvidence(f.ctx, evidence.Artifact{Ref: f.request.Job.Binding.Candidate, Data: []byte(source.Output)}))
+	require.NoError(t, f.storage.SaveEvidence(f.ctx, evidence.Artifact{Ref: f.request.Job.Binding.Candidate, Data: []byte(output)}))
 	return intent
 }
 
@@ -641,4 +648,37 @@ func TestVerificationWorkerBudgetStopsRemainingGroups(t *testing.T) {
 	require.Len(t, job.ReportIDs, 1)
 	require.Equal(t, 2, f.llm.calls)
 	require.Equal(t, 1, f.llm.tools)
+}
+
+func TestVerificationWorkerCommitsPrivateCandidate(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "recovered"}[lost], func(t *testing.T) {
+			f := newWorkerFixture(t)
+			intent, current, output := f.prepareIntent(t)
+			captured, err := f.storage.CaptureCandidate(f.ctx, run.CandidateCapture{SchemaVersion: 1, IntentID: intent.ID, ExpectedRunRevision: current.Revision, Output: output, FinishReason: "stop"})
+			require.NoError(t, err)
+			f.request.Job = captured.Request
+			f.adapter.lost = lost
+			result, err := f.engine(t, f.storage).VerifyRun(f.ctx, f.request)
+			storage := f.storage
+			if lost {
+				require.Error(t, err)
+				saved, readErr := storage.GetRun(f.ctx, current.ID)
+				require.NoError(t, readErr)
+				require.Empty(t, saved.Output)
+				require.NoError(t, storage.Close())
+				storage = openSQLiteStoreForTest(t, f.path)
+				result, err = f.engine(t, storage).VerifyRun(f.ctx, f.request)
+			}
+			require.NoError(t, err)
+			require.Equal(t, verification.JobCommitted, result.Job.State)
+			saved, err := storage.GetRun(f.ctx, current.ID)
+			require.NoError(t, err)
+			require.Equal(t, output, saved.Output)
+			require.Equal(t, verification.StatusPassed, saved.VerificationStatus)
+			require.Equal(t, 1, f.adapter.evaluations)
+			require.Equal(t, 2, f.llm.calls)
+			require.Equal(t, 1, f.llm.tools)
+		})
+	}
 }

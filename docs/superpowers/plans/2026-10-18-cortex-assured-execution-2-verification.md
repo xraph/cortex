@@ -86,6 +86,14 @@ Admission now rechecks a shortened saved run deadline inside enqueue. The explic
 worker also reads a supported store's intent before enqueue or evaluation and
 rejects a mismatched reserved result ID without consuming evaluator budget.
 
+The optional `run.CandidateStore` now captures a final answer while its run is
+still running. Evidence, private capture metadata, execution completion and
+verification enqueue share one transaction. Run output remains empty until the
+guarded result commit copies the verified candidate bytes in the same transaction
+as the receipt and passed status. This reuses existing jobs and leases. Automatic
+registration and withholding across engine streams, history, steps and hooks
+remain open, so the runtime gate checkboxes below stay unchecked.
+
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.
 - [ ] Build the verification request from trusted runtime records. Persist candidate/contract/report bindings and transition to pending verification. On failure allow a bounded repair under the remaining budget, explicit human review, or a committed explanation of incomplete work. None yields `ResultSucceeded` without all required checks passing.

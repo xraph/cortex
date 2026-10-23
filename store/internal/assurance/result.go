@@ -21,6 +21,7 @@ type RunTransaction interface {
 	Driver
 	GetRun(context.Context, id.AgentRunID) (*run.Run, error)
 	SetRunVerification(context.Context, id.AgentRunID, int64, verification.Status, id.ID, time.Time) error
+	SetRunCandidate(context.Context, *run.Run, time.Time) error
 	ReplaceJob(context.Context, Record, string) error
 }
 
@@ -76,7 +77,7 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 	if err != nil {
 		return verification.CommitReceipt{}, err
 	}
-	if checkErr := validateCapturedRun(r, req.ExpectedRunRevision, req.ContractID, req.Current); checkErr != nil {
+	if checkErr := s.validateCapturedRun(ctx, r, req.ExpectedRunRevision, req.ContractID, req.Current); checkErr != nil {
 		return verification.CommitReceipt{}, checkErr
 	}
 	if r.VerificationStatus != verification.StatusPending {
@@ -110,7 +111,8 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 		reports = append(reports, report)
 		digests = append(digests, report.Digest)
 	}
-	for _, ref := range append([]evidence.Ref{req.Current.Candidate}, req.Current.Evidence...) {
+	var candidateOutput string
+	for index, ref := range append([]evidence.Ref{req.Current.Candidate}, req.Current.Evidence...) {
 		artifact, readErr := s.LoadEvidence(ctx, ref)
 		if readErr != nil {
 			return verification.CommitReceipt{}, readErr
@@ -118,6 +120,9 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 		total += len(artifact.Data)
 		if total > 8<<20 {
 			return verification.CommitReceipt{}, verification.ErrInvalid
+		}
+		if index == 0 {
+			candidateOutput = string(artifact.Data)
 		}
 	}
 	observed := s.clock.Now().UTC()
@@ -148,7 +153,7 @@ func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req ve
 	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
 		return verification.CommitReceipt{}, insertErr
 	}
-	if commitErr := tx.SetRunVerification(ctx, r.ID, r.Revision, verification.StatusPassed, req.ResultID, observed); commitErr != nil {
+	if commitErr := s.publishCandidateResult(ctx, tx, r, req.ResultID, candidateOutput, observed); commitErr != nil {
 		return verification.CommitReceipt{}, commitErr
 	}
 	if jobErr := commitJob(ctx, tx, job, jobRow, req.ResultID, observed); jobErr != nil {
