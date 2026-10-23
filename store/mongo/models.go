@@ -138,6 +138,7 @@ func agentFromModel(m *agentModel) (*agent.Config, error) {
 // ──────────────────────────────────────────────────
 
 type runModel struct {
+	Revision           int64 `grove:"revision" bson:"revision"`
 	grove.BaseModel    `grove:"table:cortex_runs"`
 	ID                 string                  `grove:"id,pk"          bson:"_id"`
 	AgentID            string                  `grove:"agent_id"       bson:"agent_id"`
@@ -180,6 +181,7 @@ func runToModel(r *run.Run) *runModel {
 		FinishReason:       r.FinishReason,
 		VerificationStatus: string(r.VerificationStatus.Normalized()),
 		ResultRef:          r.ResultRef,
+		Revision:           r.Revision,
 		Input:              r.Input,
 		Output:             r.Output,
 		Error:              r.Error,
@@ -228,6 +230,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		FinishReason:       m.FinishReason,
 		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),
 		ResultRef:          m.ResultRef,
+		Revision:           m.Revision,
 		Input:              m.Input,
 		Output:             m.Output,
 		Error:              m.Error,

@@ -158,3 +158,29 @@ The Sentinel UI hook implementation was disconnected in `06ea111`. Its remaining
 | Source retirement audit | No `dashboard/`, `sentinel/pages`, `.templ`, generated `_templ.go` files or imports/requires of `github.com/xraph/cortex/dashboard` remain |
 
 Earlier ledger rows describe the original migration review and retain their original limits. External production credentials/grants and Sentinel automatic evaluation remain outside the verified local cutover.
+
+# Run revisions and conditional updates
+
+Built-in stores now assign `run.Run.Revision = 1` when you create a run.
+`UpdateRun` compares the supplied revision with the stored value and increments
+it on success. Keep the record returned by `CreateRun` or `GetRun` when you
+update it. A newly constructed record with revision zero cannot overwrite an
+existing versioned run.
+
+If you receive `cortex.ErrRunConflict`, reload the run and decide whether your
+change still applies. Don't copy the new revision onto an old result and retry.
+Failed updates leave the caller's revision and update timestamp unchanged.
+Missing runs and writes outside the exact scope still return `ErrRunNotFound`.
+
+SQLite and PostgreSQL add a revision column with zero as the historical default.
+MongoDB treats an absent revision as zero. The first successful update advances
+that historical record to one. Resume and expiry claims also advance revisions
+and return a transient `Suspension.ClaimedRun` snapshot; the engine uses that
+snapshot for its subsequent writes. The snapshot isn't serialized or saved in
+the suspension record.
+
+Upgrade all writers before relying on revision conflicts. Older binaries don't
+increment this field, and custom stores must implement the same conditional
+update and claim contract to provide this guarantee. Revision checks protect run
+updates; they do not yet make verification, result publication and event delivery
+one atomic operation.

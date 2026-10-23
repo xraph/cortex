@@ -19,6 +19,7 @@ import (
 // scope-matching) context would silently overwrite a row's narrower
 // stored scope.
 var mutableRunColumns = []string{
+	"revision",
 	"agent_id",
 	"session_id",
 	"state",
@@ -46,10 +47,12 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	r.UpdatedAt = now
 	r.Scope = scope
 	m := runToModel(r)
+	m.Revision = 1
 	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: create run: %w", err)
 	}
+	r.Revision = m.Revision
 	return nil
 }
 
@@ -83,9 +86,14 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	if scopeErr != nil {
 		return scopeErr
 	}
-	r.UpdatedAt = time.Now().UTC()
+	next, revisionErr := runstate.NextRevision(r.Revision)
+	if revisionErr != nil {
+		return revisionErr
+	}
 	m := runToModel(r)
-	q := s.sdb.NewUpdate(m).Column(mutableRunColumns...).WherePK()
+	m.Revision = next
+	m.UpdatedAt = time.Now().UTC()
+	q := s.sdb.NewUpdate(m).Column(mutableRunColumns...).WherePK().Where("revision = ?", r.Revision)
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -98,8 +106,10 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 		return fmt.Errorf("cortex/sqlite: update run rows affected: %w", rowsErr)
 	}
 	if n == 0 {
-		return cortex.ErrRunNotFound
+		return runstate.UpdateConflict(ctx, s, scope, r.ID)
 	}
+	r.Revision = m.Revision
+	r.UpdatedAt = m.UpdatedAt
 	return nil
 }
 

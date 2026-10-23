@@ -164,6 +164,9 @@ func mapError(err error) error {
 	if errors.As(err, &ce) {
 		return ce
 	}
+	if errors.Is(err, cortex.ErrRunConflict) {
+		return &dc.Error{Code: dc.CodeConflict, Message: cortex.ErrRunConflict.Error()}
+	}
 	for _, e := range []error{cortex.ErrAgentNotFound, cortex.ErrPersonaNotFound, cortex.ErrSkillNotFound, cortex.ErrTraitNotFound, cortex.ErrBehaviorNotFound, cortex.ErrRunNotFound, cortex.ErrCheckpointNotFound, cortex.ErrSessionNotFound, cortex.ErrOrchestrationNotFound, cortex.ErrOverlayNotFound, cortex.ErrOrchestrationRunNotFound, a2a.ErrConversationNotFound, a2a.ErrMessageNotFound} {
 		if errors.Is(err, e) {
 			return &dc.Error{Code: dc.CodeNotFound, Message: "Cortex resource was not found in your scope"}

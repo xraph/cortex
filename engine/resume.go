@@ -249,7 +249,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// for every resumed write and authorization check.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
-	r := e.claimedRun(ctx, runID, snapshot)
+	r := e.claimedRun(ctx, runID, snapshot, susp.ClaimedRun)
 	runTraceFrom(ctx).bind(r, susp.Cont.Config.Model)
 
 	ag, err := e.store.Get(ctx, r.AgentID)
@@ -382,23 +382,13 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	return ctx, &resumption{ag: ag, cfg: cfg, run: r, state: st, startedAt: startedAt}, nil
 }
 
-// claimedRun is the run a successful claim just took: read fresh, and
-// falling back to the snapshot taken just before the claim when that
-// read does not come back.
-//
-// The fallback is the difference between a store hiccup and a stranded
-// run. Once a claim succeeds the run is running and only this call can
-// move it, so returning without a terminal write leaves it running for
-// good: every claim wants a paused run, so nothing takes it again, and
-// the sweeper's orphan drop wants a terminal one, so nothing clears its
-// suspension either.
-//
-// The snapshot is the same row read a moment earlier while the run was
-// still paused, and nothing but a claim moves a paused run. Every caller
-// here uses it for one thing, writing a terminal state onto a run that
-// is ending, and the fields that decides are the ones this call sets
-// itself.
-func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot *run.Run) *run.Run {
+// claimedRun uses the exact snapshot returned by a revision-aware atomic claim.
+// Older custom stores retain their historical read/fallback behavior; they do
+// not acquire the built-in stores' optimistic concurrency guarantee.
+func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot, claimed *run.Run) *run.Run {
+	if claimed != nil {
+		return claimed
+	}
 	r, err := e.store.GetRun(ctx, runID)
 	if err == nil {
 		return r

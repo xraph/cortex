@@ -737,7 +737,7 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 	// run records has to land where its earlier writes did.
 	ctx = cortex.WithScope(ctx, susp.Scope)
 
-	r := e.claimedRun(ctx, cp.RunID, snapshot)
+	r := e.claimedRun(ctx, cp.RunID, snapshot, susp.ClaimedRun)
 
 	reason := decision.Reason
 	if reason == "" {
@@ -829,7 +829,7 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	// The run already read above is the snapshot, so a read that fails
 	// after the claim cannot leave the run running with nothing able to
 	// take it again.
-	r = e.claimedRun(ctx, r.ID, r)
+	r = e.claimedRun(ctx, r.ID, r, susp.ClaimedRun)
 	r.State = run.StateCancelled
 	r.StopReason = run.StopCancelled
 	if err := e.store.UpdateRun(context.WithoutCancel(ctx), r); err != nil {

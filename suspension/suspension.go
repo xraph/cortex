@@ -148,6 +148,9 @@ type Continuation struct {
 
 // Suspension is a paused run.
 type Suspension struct {
+	// ClaimedRun is the snapshot returned by an atomic claim, including its
+	// new revision. It is transient and is never saved as suspension content.
+	ClaimedRun *run.Run `json:"-"`
 	cortex.Entity
 	ID    id.SuspensionID `json:"id"`
 	RunID id.AgentRunID   `json:"run_id"`

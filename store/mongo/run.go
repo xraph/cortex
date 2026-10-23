@@ -23,12 +23,14 @@ func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	r.UpdatedAt = t
 	r.Scope = scope
 	m := runToModel(r)
+	m.Revision = 1
 
 	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: create run: %w", err)
 	}
 
+	r.Revision = m.Revision
 	return nil
 }
 
@@ -74,15 +76,25 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	if scopeErr != nil {
 		return scopeErr
 	}
-	r.UpdatedAt = now()
+	next, revisionErr := runstate.NextRevision(r.Revision)
+	if revisionErr != nil {
+		return revisionErr
+	}
 	m := runToModel(r)
+	m.Revision = next
+	m.UpdatedAt = now()
 
-	filter := bson.M{"_id": m.ID}
+	filter := bson.M{"_id": m.ID, "revision": r.Revision}
+	if r.Revision == 0 {
+		filter["$or"] = bson.A{bson.M{"revision": int64(0)}, bson.M{"revision": bson.M{"$exists": false}}}
+		delete(filter, "revision")
+	}
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 
 	set := bson.M{
+		"revision":   m.Revision,
 		"agent_id":   m.AgentID,
 		"session_id": m.SessionID,
 		"state":      m.State,
@@ -112,9 +124,11 @@ func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	}
 
 	if res.MatchedCount() == 0 {
-		return cortex.ErrRunNotFound
+		return runstate.UpdateConflict(ctx, s, scope, r.ID)
 	}
 
+	r.Revision = m.Revision
+	r.UpdatedAt = m.UpdatedAt
 	return nil
 }
 

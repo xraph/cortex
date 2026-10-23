@@ -10,6 +10,7 @@ var (
 
 	// Not found errors.
 	ErrAgentNotFound            = errors.New("cortex: agent not found")
+	ErrRunConflict              = errors.New("cortex: run revision conflict")
 	ErrRunNotFound              = errors.New("cortex: run not found")
 	ErrStepNotFound             = errors.New("cortex: step not found")
 	ErrToolCallNotFound         = errors.New("cortex: tool call not found")

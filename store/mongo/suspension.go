@@ -3,9 +3,12 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -102,19 +105,24 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
-	update := bson.M{"$set": bson.M{
+	filter["$or"] = bson.A{bson.M{"revision": bson.M{"$gte": int64(0), "$lt": int64(math.MaxInt64)}}, bson.M{"revision": bson.M{"$exists": false}}}
+	update := bson.M{"$inc": bson.M{"revision": int64(1)}, "$set": bson.M{
 		"state":      string(run.StateRunning),
 		"updated_at": now(),
 	}}
 
-	res := s.mdb.Collection(colRuns).FindOneAndUpdate(ctx, filter, update)
-	if err := res.Err(); err != nil {
-		if isNoDocuments(err) {
+	res := s.mdb.Collection(colRuns).FindOneAndUpdate(ctx, filter, update, options.FindOneAndUpdate().SetReturnDocument(options.After))
+	if claimErr := res.Err(); claimErr != nil {
+		if isNoDocuments(claimErr) {
 			return nil, cortex.ErrNotSuspended
 		}
-		return nil, fmt.Errorf("cortex/mongo: claim suspension: %w", err)
+		return nil, fmt.Errorf("cortex/mongo: claim suspension: %w", claimErr)
 	}
 
+	m.ClaimedRun, err = decodeClaimedRun(res)
+	if err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -157,19 +165,24 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
-	update := bson.M{"$set": bson.M{
+	filter["$or"] = bson.A{bson.M{"revision": bson.M{"$gte": int64(0), "$lt": int64(math.MaxInt64)}}, bson.M{"revision": bson.M{"$exists": false}}}
+	update := bson.M{"$inc": bson.M{"revision": int64(1)}, "$set": bson.M{
 		"state":      string(run.StateRunning),
 		"updated_at": now(),
 	}}
 
-	res := s.mdb.Collection(colRuns).FindOneAndUpdate(ctx, filter, update)
-	if err := res.Err(); err != nil {
-		if isNoDocuments(err) {
+	res := s.mdb.Collection(colRuns).FindOneAndUpdate(ctx, filter, update, options.FindOneAndUpdate().SetReturnDocument(options.After))
+	if claimErr := res.Err(); claimErr != nil {
+		if isNoDocuments(claimErr) {
 			return nil, cortex.ErrNotSuspended
 		}
-		return nil, fmt.Errorf("cortex/mongo: claim expired suspension: %w", err)
+		return nil, fmt.Errorf("cortex/mongo: claim expired suspension: %w", claimErr)
 	}
 
+	m.ClaimedRun, err = decodeClaimedRun(res)
+	if err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -266,4 +279,12 @@ func (s *Store) findSuspension(ctx context.Context, scope cortex.Scope, runID id
 		return nil, fmt.Errorf("cortex/mongo: get suspension: %w", err)
 	}
 	return suspensionFromModel(&m)
+}
+
+func decodeClaimedRun(result *mongo.SingleResult) (*run.Run, error) {
+	var claimed runModel
+	if err := result.Decode(&claimed); err != nil {
+		return nil, err
+	}
+	return runFromModel(&claimed)
 }

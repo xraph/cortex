@@ -594,6 +594,7 @@ func sessionFromModel(m *sessionModel) (*session.Session, error) {
 // ──────────────────────────────────────────────────
 
 type runModel struct {
+	Revision           int64 `grove:"revision"`
 	grove.BaseModel    `grove:"table:cortex_runs"`
 	ID                 string     `grove:"id,pk"`
 	AgentID            string     `grove:"agent_id,notnull"`
@@ -636,6 +637,7 @@ func runToModel(r *run.Run) *runModel {
 		FinishReason:       r.FinishReason,
 		VerificationStatus: string(r.VerificationStatus.Normalized()),
 		ResultRef:          r.ResultRef,
+		Revision:           r.Revision,
 		Input:              r.Input,
 		Output:             r.Output,
 		Error:              r.Error,
@@ -683,6 +685,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		FinishReason:       m.FinishReason,
 		VerificationStatus: verification.Status(m.VerificationStatus).Normalized(),
 		ResultRef:          m.ResultRef,
+		Revision:           m.Revision,
 		Input:              m.Input,
 		Output:             m.Output,
 		Error:              m.Error,

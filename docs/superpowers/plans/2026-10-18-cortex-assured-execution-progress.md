@@ -18,9 +18,11 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, worker, transport, protected providers, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone command, provisioning and live qualification remain open |
+| S2.2 | active | this chat | Persisted run revisions, conditional writes and claim snapshots pass backend/runtime race checks; atomic result/report/event publication and verification gates remain open |
+| S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
-| S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
+| S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
+| S2.5 through S2.7 and S3.2 through S3.6 | queued | shared owners | Runtime verification gates remain disabled |
 
 ## Interface rulings
 
@@ -1757,3 +1759,50 @@ sent to their owner and remain outside this sandbox commit.
 The standalone broker executable, concrete live qualification verifier and full
 host installation/provisioning flow remain open. Linux worker selection remains
 deferred; S2.4 and the four-stage plan are incomplete.
+
+### S2.2 run revision fences
+
+Input provisioning commit `90e45f0` passed CI run `39902290045`.
+
+Ruling: add a persisted run revision before atomic result publication. The
+current unconditional update could overwrite changes made after verification.
+The revision is a prerequisite for the result commit's expected-version check;
+it does not enable contextual verification or satisfy G1.
+
+New runs start at revision one. UpdateRun compares the caller's revision and
+advances it in the same database write. A stale writer receives
+`cortex.ErrRunConflict`; failed writes preserve its revision and timestamp.
+Missing runs and writes outside the exact scope remain `ErrRunNotFound`.
+Historical SQL rows and Mongo documents start at zero and advance on their first
+successful write. Negative and exhausted revisions cannot wrap around.
+REST maps conflicts to HTTP 409. The dashboard returns a conflict without an
+automatic retry hint; both use a fixed message without wrapped internal details.
+
+Resume and expiry claims advance the same revision. Each claim returns the run
+snapshot acquired by its database operation, so resume, cancellation, checkpoint
+rejection and expiry use the acquired version without another fallible read.
+SQL reads the snapshot within the claim transaction; Mongo returns the updated
+document. The snapshot is transient and never enters suspension JSON or storage.
+Older custom stores keep their existing behavior. All writers must be upgraded
+before you rely on revision conflicts; old binaries do not advance the field.
+
+TDD reproduced a stale writer overwriting a current result and both claim paths
+leaving revisions unchanged. The fixes passed the focused backend race tests.
+Shared tests cover eight competing writers with one winner, scope denial,
+cancellation, invalid revisions, stored/listed versions and stale pre-claim
+writes. SQL migration replay preserves historical completion; Mongo tests cover
+updates and claims on documents without a revision field.
+The API and dashboard mapping tests also failed before their conflict handling
+was added.
+
+Validation passed: scoped make f, make l across all ten modules, root build,
+API and dashboard contract race suites, and full engine/run/suspension race
+suites. The final engine run passed in 211.121s. Full PostgreSQL and MongoDB
+race suites passed in 54.250s and 91.775s without skips. The five-minute engine
+and ten-minute SQLite package limits were reached during fresh fixture setup,
+with active subtests only one or two seconds old. Both longer reruns passed;
+the standalone SQLite race suite completed in 305.045s without skips. The final
+claim-content regression also passed on all three backends after formatting.
+
+Atomic report consumption, result/outbox publication and runtime verification
+activation remain open. S2.2 and the full plan are incomplete.

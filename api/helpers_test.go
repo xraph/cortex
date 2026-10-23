@@ -1,12 +1,27 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/safety"
 )
+
+func TestRunRevisionConflictHTTPStatus(t *testing.T) {
+	for _, cause := range []error{cortex.ErrRunConflict, fmt.Errorf("private details: %w", cortex.ErrRunConflict)} {
+		mapped := mapStoreError(cause)
+		status, ok := mapped.(statusCoder)
+		if !ok || status.StatusCode() != http.StatusConflict {
+			t.Fatalf("revision conflict mapping: %v", mapped)
+		}
+		if strings.Contains(mapped.Error(), "private details") {
+			t.Fatal("conflict disclosed wrapped details")
+		}
+	}
+}
 
 // statusCoder mirrors forge/errs.HTTPError's StatusCode() method without
 // importing the concrete type, so this test only depends on the

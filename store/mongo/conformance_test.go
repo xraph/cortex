@@ -100,6 +100,7 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("HistoricalRunRevision", func(t *testing.T) { testHistoricalRunRevision(t, s) })
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := clearConformanceCollections(ctx, s); err != nil {
 			t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/xraph/grove/drivers/pgdriver"
@@ -106,6 +107,8 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	now := time.Now().UTC()
 	q := tx.NewUpdate((*runModel)(nil)).
 		Set("state = ?", string(run.StateRunning)).
+		Set("revision = revision + 1").
+		Where("revision >= 0 AND revision < ?", int64(math.MaxInt64)).
 		Set("updated_at = ?", now).
 		Where("id = ?", runID.String()).
 		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
@@ -129,6 +132,11 @@ func (s *Store) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*susp
 	}
 
 	m, err := selectSuspensionRow(ctx, tx, scope, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	m.ClaimedRun, err = selectClaimedRun(ctx, tx, scope, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +176,8 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 	at := now.UTC()
 	q := tx.NewUpdate((*runModel)(nil)).
 		Set("state = ?", string(run.StateRunning)).
+		Set("revision = revision + 1").
+		Where("revision >= 0 AND revision < ?", int64(math.MaxInt64)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", runID.String()).
 		Where("state IN (?, ?)", string(run.StatePaused), runstate.PausedPrepared)
@@ -188,6 +198,11 @@ func (s *Store) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID,
 	}
 
 	m, err := selectSuspensionRow(ctx, tx, scope, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	m.ClaimedRun, err = selectClaimedRun(ctx, tx, scope, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,4 +362,17 @@ func selectSuspensionRow(ctx context.Context, q suspensionSelector, scope cortex
 		return nil, fmt.Errorf("cortex: get suspension: %w", err)
 	}
 	return suspensionFromModel(m)
+}
+
+// selectClaimedRun reads under the same transaction that advanced the revision.
+func selectClaimedRun(ctx context.Context, selector suspensionSelector, scope cortex.Scope, runID id.AgentRunID) (*run.Run, error) {
+	claimed := new(runModel)
+	query := selector.NewSelect(claimed).Where("id = ?", runID.String())
+	for _, predicate := range scopePredicates(scope, true) {
+		query = query.Where(predicate.Column+" = ?", predicate.Value)
+	}
+	if err := query.Scan(ctx); err != nil {
+		return nil, err
+	}
+	return runFromModel(claimed)
 }

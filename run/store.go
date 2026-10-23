@@ -10,6 +10,10 @@ import (
 type Store interface {
 	CreateRun(ctx context.Context, run *Run) error
 	GetRun(ctx context.Context, runID id.AgentRunID) (*Run, error)
+	// UpdateRun compares the stored Revision and advances it on success.
+	// A stale or exhausted revision returns cortex.ErrRunConflict. Reload and
+	// reconsider the update; blindly retrying would overwrite another writer.
+	// Failed updates leave the caller's revision and UpdatedAt unchanged.
 	UpdateRun(ctx context.Context, run *Run) error
 	ListRuns(ctx context.Context, filter *ListFilter) ([]*Run, error)
 	CountRuns(ctx context.Context, filter *ListFilter) (int64, error)

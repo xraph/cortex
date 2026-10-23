@@ -26,6 +26,9 @@ const (
 
 // Run represents a single execution of an agent.
 type Run struct {
+	// Revision is the persisted write version. UpdateRun compares and advances it.
+	// Zero identifies a historical record that has not been updated yet.
+	Revision   int64               `json:"revision"`
 	Provenance ExecutionProvenance `json:"provenance,omitempty"`
 	Budget     execution.Budget    `json:"budget,omitempty"`
 	Usage      execution.Usage     `json:"usage,omitempty"`

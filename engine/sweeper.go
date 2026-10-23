@@ -232,7 +232,8 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 		return expiryError, fmt.Errorf("load the run behind an expired suspension: %w", err)
 	}
 
-	if _, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now); err != nil {
+	claimed, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
+	if err != nil {
 		if errors.Is(err, cortex.ErrNotSuspended) {
 			// Somebody else owns this run: it was resumed, decided, or
 			// already swept. Not an error, and nothing to log.
@@ -257,7 +258,7 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 	// its cancellation.
 	ctx = context.WithoutCancel(ctx)
 
-	r := e.claimedRun(ctx, susp.RunID, snapshot)
+	r := e.claimedRun(ctx, susp.RunID, snapshot, claimed.ClaimedRun)
 
 	if err := e.persistFailure(ctx, r, r.AgentID, expiredRunError(susp)); err != nil {
 		// The suspension stays. It is the only record of what the run
