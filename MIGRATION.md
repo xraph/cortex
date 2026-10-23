@@ -564,3 +564,21 @@ behavior and probes an error-aware inner writer for swallowed socket errors.
 This is metadata replay only. Existing execution streams retain their protocol.
 Browser/proxy deployment, approved answer-content replay, artifact events and
 remote bindings still need qualification or implementation.
+
+
+## Guarded dashboard results
+
+The React plugin uses `runs.replay` and `runs.result` for protected runs. Configure
+both the metadata replay authorizer and the guarded result reader in your host.
+The plugin clears result text on authority changes, hidden tabs and refresh;
+current denial never restores an older answer. Redacted projections are labelled
+separately from the candidate's verification outcome.
+
+Opaque replay cursors and decimal revision strings remain strings in the client.
+After a retention gap, the plugin reloads the saved run before continuing.
+Monitoring pauses after five minutes and offers a fresh check. Run cancellation
+remains available while work is pending.
+
+Client tests and a local browser fixture cover this behavior. You still need to
+qualify installed host authorization, response cache controls and delivery
+deadlines. The client refresh interval is not a server-side grant lifetime.

@@ -23,7 +23,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
-| S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
+| S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
+| S2.5 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -3351,3 +3352,47 @@ Validation for protected historical projections:
 - The new shared projection leaves trusted stored data intact. The dashboard
   cache refusal and A2A terminal subscription are tested separately from the
   guarded content reads. Installed client migration is still unverified.
+
+
+### S2.7 guarded dashboard result views
+
+The React client in `forge-dashboard/packages/plugin-cortex` now uses durable
+metadata replay for protected live runs and the guarded `runs.result` query for
+committed text. Local dashboard commit `2ea7eff` contains this packet. Publishing
+it is pending a decision because that checkout already had seven unrelated
+Tether commits ahead of remote main; pushing it would publish all eight.
+
+The result view bypasses the shared query cache, validates run/result identity,
+version, publication state and the decimal revision string, and renders literal
+text. Refresh, authority-context changes and hidden tabs clear displayed bytes.
+Each request has a ten-second client deadline; successful views renew after
+fifteen seconds. Late replies are discarded. Denial, stale data or malformed
+responses leave no previous-answer fallback. Redaction explicitly describes a
+projection of the verified candidate, not a separately verified answer.
+
+Protected live monitoring refreshes the run snapshot before accepting each
+opaque cursor, including retention gaps. It bounds retained metadata, stops
+after five minutes, preserves cancellation, and waits for required verification
+when execution has finished. The typed legacy cache refusal switches clients to
+this path. Saved run details withhold private input and use the same result view.
+
+Validation:
+
+- All 60 Cortex plugin tests passed, covering gap recovery, large cursors,
+  malformed identities, access denial, cancellation, timeout/late replies,
+  authority changes, hidden tabs, display retention and literal HTML text.
+- The plugin's documented `format`, `lint`, `typecheck` and `test` pnpm scripts
+  passed. The sibling has no make lint/format targets. The full shell production
+  build (`tsc -b` and Vite) passed. Formatting changed only owned plugin files.
+- A labelled local UI fixture was checked at 1280x900 and 390x844. Result text,
+  redaction labels, wrapped controls and access revocation were inspected in the
+  browser. Temporary preview sources and the preview server were removed.
+- This is client implementation and fixture validation. Installed host cache
+  controls, delivery deadlines, real authorization wiring and live provider or
+  sandbox qualification remain open. The four-stage plan is not complete.
+
+The prior Cortex CI run `39975802817` failed in the sandbox expired-capture test.
+Its assertion raced deferred peer cleanup after the socket closed. Commit
+`fc59e50` joins the server before inspecting cleanup; 100 focused race runs and
+the full sandbox race suite passed, followed by all-module lint and formatting.
+The fix is pushed. Linux CI must confirm it independently.
