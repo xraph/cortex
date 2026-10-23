@@ -69,6 +69,9 @@ func (s *Repository) CommitVerifiedResult(ctx context.Context, request verificat
 }
 
 func (s *Repository) commitResult(ctx context.Context, tx RunTransaction, req verification.CommitRequest, digest string) (verification.CommitReceipt, error) {
+	if err := s.validateIntentCommit(ctx, req); err != nil {
+		return verification.CommitReceipt{}, err
+	}
 	r, err := tx.GetRun(ctx, req.Current.RunID)
 	if err != nil {
 		return verification.CommitReceipt{}, err

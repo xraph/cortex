@@ -78,7 +78,10 @@ Built-in `verification.CaptureStore` now copies a saved candidate and enqueues
 its job in one transaction. Capture reads output from the saved run, validates
 its requested digest and revision, preserves tombstones and rolls back evidence
 with the job/run update. This closes the separate artifact/enqueue write window.
-Pre-generation capture intent and automatic finalizer recovery are still open.
+Immutable pre-generation capture intent is now stored with exact run/job/result
+identity indexes. `CaptureFromIntent` recovers the saved contract, context and
+budget policy and derives candidate bytes from the completed run. Runtime
+registration ordering and automatic finalizer recovery remain open.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

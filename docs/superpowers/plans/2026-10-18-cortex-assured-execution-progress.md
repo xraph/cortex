@@ -2183,3 +2183,49 @@ backends: SQLite in 246 seconds, PostgreSQL in 27 seconds and MongoDB in 34
 seconds. Verbose focused capture race tests passed against real PostgreSQL and
 MongoDB with no skipped cases. Docs type generation, type checking, lint and
 production build passed after the final content edit.
+
+## Durable capture intent
+
+S2.2 now has immutable `verification.CaptureIntent` and optional
+`CaptureIntentStore`. The intent fixes a budgeted job template, result identity
+and maximum candidate size before output exists. The candidate starts with a
+zero-byte/empty-digest placeholder; its remaining metadata and context stay
+pinned. The candidate creation time records the host's identity reservation.
+`JobFor` changes only the later run revision, hash and byte count and detaches
+its returned request.
+
+Registration requires the exact pristine running run, its preparation and
+acceptance contract, retained supporting evidence, a live deadline bounded by
+the saved run deadline, and an unused candidate identity. Existing evidence and
+tombstones reject registration. The intent and unique exact-scope run/job/result
+indexes share one transaction. Same-request registration remains idempotent after
+execution; it does not grant permission to execute again.
+
+Recovery looks up the intent by run ID. `CaptureFromIntent` reads the completed
+run and derives its candidate/job inside the same transaction as capture and
+enqueue. The enqueue implementation is shared with direct capture. Normal enqueue
+and commit validate pinned intent policy and result identity. Historical capture
+retries validate the saved job and never recreate deleted evidence. No schema
+migration is needed, but every writer must upgrade before enabling this protocol.
+
+TDD evidence: domain tests failed against the absent intent types, and store
+conformance failed on the missing capability. Later regressions reproduced
+registration beyond the saved run deadline, registration of existing or
+tombstoned candidate IDs, and insufficient run-revision headroom; those cases
+now reject. Tests cover policy detachment,
+changed templates, competing run/job/result identities, immutable result binding,
+rollback after each registration/index write and during capture, and SQLite
+reopen before final output capture.
+
+The host must register before external dispatch. Stored zero counters do not
+prove that ordering, and storage does not authorize access or reserve shared
+budgets. Engine preparation, finalization, streaming/resume withholding and
+public completion hooks still need integration. The automatic contextual
+verification capability remains false.
+
+Final checks passed: scoped `make f`, ten-module `make l`, root build and diff
+checks. Full race suites passed for verification and all backends, with SQLite
+in 282 seconds, PostgreSQL in 29 seconds and MongoDB in 39 seconds. Final focused
+intent and exact-scope recovery race suites passed on all three backends with
+no skips. The existing engine-worker recovery race suite passed in 45 seconds.
+Docs type generation, type checking, lint and production build passed.

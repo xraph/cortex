@@ -289,3 +289,21 @@ Retries reuse the original job identity without resurrecting deleted evidence.
 The operation requires a transaction-capable MongoDB deployment and provides no
 fallback to separate writes. Automatic finalizer capture and pre-generation
 capture-intent recovery remain open.
+
+Built-in stores implement optional `verification.CaptureIntentStore`. A sealed
+`CaptureIntent` fixes a budgeted job template, candidate identity/policy and
+result ID before output exists. Register it against the exact pristine running
+run before dispatch. Registration and the run/job/result identity indexes are
+atomic; the existing assurance-record table needs no migration.
+
+After restart, look up the intent by run ID and call `CaptureFromIntent` once
+the run has saved its final answer. Capture derives the candidate hash and byte
+count from that saved output. Existing enqueue and commit paths enforce the
+intent's job policy and result ID. All writers must understand this protocol
+before you use it; older writers do not enforce capture intents.
+
+Storage cannot prove that no external operation happened before registration.
+The host owns that ordering, current authorization and budget reservation.
+Automatic preparation/finalization integration and required publication gating
+remain open. An idempotent registration response is not permission to run the
+agent again.

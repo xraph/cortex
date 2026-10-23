@@ -54,3 +54,12 @@ func TestVerificationCaptureRestart(t *testing.T) {
 		return openTestStore(t, dsn)
 	})
 }
+
+func TestCaptureIntentRestart(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "capture-intent.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	s := openTestStore(t, dsn)
+	storetest.CaptureIntentRestart(t, s, func() store.Store {
+		require.NoError(t, s.Close())
+		return openTestStore(t, dsn)
+	})
+}

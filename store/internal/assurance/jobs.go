@@ -125,86 +125,93 @@ func (s *Repository) enqueueVerificationJob(ctx context.Context, request verific
 	err = driver.TransactRun(ctx, req.Binding.RunID, func(txctx context.Context, tx RunTransaction) error {
 		result = verification.Job{}
 		repository := s.inTransaction(tx)
-		existing, readErr := repository.GetVerificationJob(txctx, req.ID)
-		if readErr == nil {
-			if existing.RequestDigest != digest {
-				return verification.ErrJobConflict
-			}
-			result = existing
-			return nil
-		}
-		if !errors.Is(readErr, verification.ErrJobNotFound) {
-			return readErr
-		}
-		current, readErr := tx.GetRun(txctx, req.Binding.RunID)
-		if readErr != nil {
-			return readErr
-		}
-		if checkErr := validateCapturedRun(current, req.ExpectedRunRevision, req.ContractID, req.Binding); checkErr != nil {
-			return checkErr
-		}
-		switch current.VerificationStatus.Normalized() {
-		case verification.StatusUnchecked, verification.StatusFailed, verification.StatusInconclusive, verification.StatusStale:
-		default:
-			return verification.ErrJobConflict
-		}
-		contract, readErr := repository.GetContract(txctx, req.ContractID)
-		if readErr != nil {
-			return readErr
-		}
-		if contract.Digest != req.Binding.ContractDigest {
-			return verification.ErrConflict
-		}
-		now := s.clock.Now().UTC()
-		if now.IsZero() || !req.Deadline.After(now) {
-			return verification.ErrJobExpired
-		}
-		if capture {
-			if captureErr := repository.captureCandidate(txctx, req.Binding.Candidate, current.Output); captureErr != nil {
-				return captureErr
-			}
-		}
-		total := int64(0)
-		for _, ref := range append([]evidence.Ref{req.Binding.Candidate}, req.Binding.Evidence...) {
-			total += ref.Bytes
-			if total > 8<<20 {
-				return verification.ErrInvalid
-			}
-			if req.Deadline.After(ref.RetainUntil) {
-				return verification.ErrJobExpired
-			}
-			if _, loadErr := repository.LoadEvidence(txctx, ref); loadErr != nil {
-				return loadErr
-			}
-		}
-		job, sealErr := verification.SealJob(verification.Job{SchemaVersion: 1, Request: req, RequestDigest: digest, RunRevision: current.Revision + 1, Revision: 1, State: verification.JobQueued, CreatedAt: now, UpdatedAt: now})
-		if sealErr != nil {
-			return sealErr
-		}
-		row, recordErr := record(KindJob, req.ID.String(), job.Digest, req.Binding.RunID.String(), req.Binding.Scope, job)
-		if recordErr != nil {
-			return recordErr
-		}
-		if insertErr := tx.Insert(txctx, row); insertErr != nil {
-			return insertErr
-		}
-		index, recordErr := record(kindJobBinding, jobBindingKey(req.Binding.RunID, job.RunRevision), digest, req.Binding.RunID.String(), req.Binding.Scope, req.ID)
-		if recordErr != nil {
-			return recordErr
-		}
-		if insertErr := tx.Insert(txctx, index); insertErr != nil {
-			return insertErr
-		}
-		if updateErr := tx.SetRunVerification(txctx, current.ID, current.Revision, verification.StatusPending, id.ID{}, now); updateErr != nil {
-			return updateErr
-		}
-		result = job
-		return nil
+		var enqueueErr error
+		result, enqueueErr = repository.enqueueJob(txctx, tx, req, digest, capture)
+		return enqueueErr
 	})
 	if err != nil {
 		return verification.Job{}, err
 	}
 	return result, nil
+}
+
+func (s *Repository) enqueueJob(ctx context.Context, tx RunTransaction, req verification.JobRequest, digest string, capture bool) (verification.Job, error) {
+	existing, readErr := s.GetVerificationJob(ctx, req.ID)
+	if readErr == nil {
+		if existing.RequestDigest != digest {
+			return verification.Job{}, verification.ErrJobConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(readErr, verification.ErrJobNotFound) {
+		return verification.Job{}, readErr
+	}
+	current, readErr := tx.GetRun(ctx, req.Binding.RunID)
+	if readErr != nil {
+		return verification.Job{}, readErr
+	}
+	if checkErr := validateCapturedRun(current, req.ExpectedRunRevision, req.ContractID, req.Binding); checkErr != nil {
+		return verification.Job{}, checkErr
+	}
+	if intentErr := s.validateEnqueueIntent(ctx, req, current.Output); intentErr != nil {
+		return verification.Job{}, intentErr
+	}
+	switch current.VerificationStatus.Normalized() {
+	case verification.StatusUnchecked, verification.StatusFailed, verification.StatusInconclusive, verification.StatusStale:
+	default:
+		return verification.Job{}, verification.ErrJobConflict
+	}
+	contract, readErr := s.GetContract(ctx, req.ContractID)
+	if readErr != nil {
+		return verification.Job{}, readErr
+	}
+	if contract.Digest != req.Binding.ContractDigest {
+		return verification.Job{}, verification.ErrConflict
+	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() || !req.Deadline.After(now) {
+		return verification.Job{}, verification.ErrJobExpired
+	}
+	if capture {
+		if captureErr := s.captureCandidate(ctx, req.Binding.Candidate, current.Output); captureErr != nil {
+			return verification.Job{}, captureErr
+		}
+	}
+	total := int64(0)
+	for _, ref := range append([]evidence.Ref{req.Binding.Candidate}, req.Binding.Evidence...) {
+		total += ref.Bytes
+		if total > 8<<20 {
+			return verification.Job{}, verification.ErrInvalid
+		}
+		if req.Deadline.After(ref.RetainUntil) {
+			return verification.Job{}, verification.ErrJobExpired
+		}
+		if _, loadErr := s.LoadEvidence(ctx, ref); loadErr != nil {
+			return verification.Job{}, loadErr
+		}
+	}
+	job, sealErr := verification.SealJob(verification.Job{SchemaVersion: 1, Request: req, RequestDigest: digest, RunRevision: current.Revision + 1, Revision: 1, State: verification.JobQueued, CreatedAt: now, UpdatedAt: now})
+	if sealErr != nil {
+		return verification.Job{}, sealErr
+	}
+	row, recordErr := record(KindJob, req.ID.String(), job.Digest, req.Binding.RunID.String(), req.Binding.Scope, job)
+	if recordErr != nil {
+		return verification.Job{}, recordErr
+	}
+	if insertErr := tx.Insert(ctx, row); insertErr != nil {
+		return verification.Job{}, insertErr
+	}
+	index, recordErr := record(kindJobBinding, jobBindingKey(req.Binding.RunID, job.RunRevision), digest, req.Binding.RunID.String(), req.Binding.Scope, req.ID)
+	if recordErr != nil {
+		return verification.Job{}, recordErr
+	}
+	if insertErr := tx.Insert(ctx, index); insertErr != nil {
+		return verification.Job{}, insertErr
+	}
+	if updateErr := tx.SetRunVerification(ctx, current.ID, current.Revision, verification.StatusPending, id.ID{}, now); updateErr != nil {
+		return verification.Job{}, updateErr
+	}
+	return job, nil
 }
 
 func (s *Repository) mutateJob(ctx context.Context, jobID id.ID, change func(context.Context, *Repository, RunTransaction, *verification.Job, time.Time) error) (verification.Job, error) {

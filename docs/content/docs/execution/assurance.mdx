@@ -185,6 +185,47 @@ terminal job; host accounting reconciliation still needs integration. Keep those
 charges when allocating budgets to later jobs. Concrete provider reconciliation
 adapters and cross-job budget reservations remain separate work.
 
+### Persist capture intent before dispatch
+
+`verification.CaptureIntentStore` stores immutable capture policy before a host
+starts generation. `CreateCaptureIntent` requires a pristine saved running run:
+the exact registration revision, no output or completion, no consumed steps,
+tokens or tools, and the pinned preparation and acceptance contract. Your host
+must register it before dispatch. Empty counters cannot prove that an external
+call has not already happened.
+
+Seal the intent with `verification.SealCaptureIntent`. Its `Template` is a
+budgeted `JobRequest` with a stable job ID and the run's registration revision.
+The candidate reference has zero bytes and `evidence.Digest(nil)` as placeholders.
+Its other metadata is fixed, including sensitivity and retention. `CreatedAt`
+records when you reserved the future artifact identity. Supply a stable result ID
+and an explicit positive `MaxCandidateBytes`; built-in stores allow at most one
+MiB. The host must reserve the evaluation budget separately from generation.
+
+Registration validates the contract and retained supporting evidence, rejects
+existing or tombstoned candidate IDs, and limits the verification deadline to the
+saved run deadline when one exists. A run, job ID and result ID can each belong
+to one immutable intent in that exact scope. Changed policy cannot overwrite it.
+The registration and identity indexes share a transaction.
+
+After a restart, `GetRunCaptureIntent` discovers the intent by run ID. Once the
+run has saved a completed final answer, `CaptureFromIntent` derives its job from
+the current saved run revision and output. Only the candidate hash, byte count
+and completed run revision replace template values. Capture and enqueue happen
+in one transaction. Pass the returned job request and the intent's result ID to
+`Engine.VerifyRun`; use a fresh claim ID only when acquiring new ownership.
+
+Normal enqueue and result commit also check saved intents. They reject a changed
+job policy or result identity. A same-request registration retry remains valid
+after execution, but it does not authorize another generation call. Capture
+retries return the saved job, including terminal states, without recreating
+removed evidence. Authorize every read and capture through your host policy.
+
+These storage primitives do not yet run inside the engine's preparation or
+finalization paths. They do not reserve a shared run budget, gate model dispatch
+or withhold public output. Those runtime integrations remain required before you
+can treat a workflow as verification-required.
+
 ### Capture a saved candidate atomically
 
 Use the optional `verification.CaptureStore` when candidate evidence has not yet

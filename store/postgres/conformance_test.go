@@ -71,6 +71,7 @@ func TestConformance(t *testing.T) {
 		return s
 	})
 	t.Run("VerifiedResultRevocation", func(t *testing.T) { storetest.VerifiedResultRevocation(t, s, assuranceDriver{store: s}) })
+	t.Run("CaptureIntentRollback", func(t *testing.T) { storetest.CaptureIntentRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("VerificationCaptureRollback", func(t *testing.T) { storetest.VerificationCaptureRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("VerificationCallRecovery", func(t *testing.T) { storetest.VerificationCallRecovery(t, s, assuranceDriver{store: s}) })
 	t.Run("VerificationJobRollback", func(t *testing.T) { storetest.VerificationJobRollback(t, s, assuranceDriver{store: s}) })
