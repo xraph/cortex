@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 )
@@ -15,6 +16,7 @@ const (
 )
 
 var _ execution.EffectStore = (*Repository)(nil)
+var _ execution.EffectDiscoveryStore = (*Repository)(nil)
 
 // BeginEffect grants dispatch only after a confirmed fresh insert. An identical
 // existing row never grants permission, even after a lost insert acknowledgement.
@@ -63,12 +65,65 @@ func (s *Repository) GetEffect(ctx context.Context, key string) (execution.Effec
 	if err != nil {
 		return execution.EffectRecord{}, err
 	}
+	result, err := s.effectRecord(ctx, row)
+	if err != nil {
+		return execution.EffectRecord{}, err
+	}
+	if result.Request.OperationKey != key {
+		return execution.EffectRecord{}, execution.ErrInvalidEffect
+	}
+	return result, nil
+}
+
+// ListEffects returns a bounded page including both pending and terminal records.
+// Repeated scans are required: concurrent inserts can sort before the cursor.
+func (s *Repository) ListEffects(ctx context.Context, req execution.EffectListRequest) ([]execution.EffectRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	if _, err := cortex.RequireScope(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.driver.Select(ctx, Query{Kind: kindEffectRequest, RunID: req.RunID.String(), After: req.After, Limit: req.Limit})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > req.Limit {
+		return nil, execution.ErrInvalidEffect
+	}
+	result := make([]execution.EffectRecord, 0, len(rows))
+	previous := req.After
+	for _, row := range rows {
+		if row.ID <= previous || (!req.RunID.IsNil() && row.RunID != req.RunID.String()) {
+			return nil, execution.ErrInvalidEffect
+		}
+		item, readErr := s.effectRecord(ctx, row)
+		if readErr != nil {
+			return nil, readErr
+		}
+		result = append(result, item)
+		previous = row.ID
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Repository) effectRecord(ctx context.Context, row Record) (execution.EffectRecord, error) {
+	if err := validateRecord(ctx, row); err != nil {
+		return execution.EffectRecord{}, err
+	}
 	var request execution.EffectRequest
 	if row.Deleted || len(row.Body) > 16<<10 || json.Unmarshal([]byte(row.Body), &request) != nil {
 		return execution.EffectRecord{}, execution.ErrInvalidEffect
 	}
 	r, digest, err := request.Freeze()
-	if err != nil || r.OperationKey != key || row.Kind != kindEffectRequest || row.ID != identifier || row.Digest != digest || row.RunID != r.RunID.String() || row.ScopeCanon != r.Scope.Canonical() {
+	identifier := evidence.Digest([]byte(r.OperationKey))
+	if err != nil || row.Kind != kindEffectRequest || row.ID != identifier || row.Digest != digest || row.RunID != r.RunID.String() || row.ScopeCanon != r.Scope.Canonical() {
 		return execution.EffectRecord{}, execution.ErrInvalidEffect
 	}
 	result := execution.EffectRecord{Request: r}

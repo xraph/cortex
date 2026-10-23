@@ -1187,7 +1187,50 @@ the claimed suspension still prevents repeated dispatch.
 
 Reconcile the retained request through `EffectExecutor.Reconcile` with current
 host authorization. Saving a recovered provider receipt does not resume the run,
-mark its task correct or publish an answer. Durable operation discovery, governed
-continuation after reconciliation and scheduler ownership are still required for
-automatic recovery. The SQLite-backed engine fixture verifies journal reopen and
+mark its task correct or publish an answer. Governed continuation after
+reconciliation and scheduler ownership are still required for automatic recovery. The SQLite-backed engine fixture verifies journal reopen and
 zero duplicate dispatch; you still need to qualify your installed provider.
+
+
+### Discover retained effects after a worker restart
+
+You can call `EffectExecutor.RecoverPage` from a supervised host worker to find
+operations in the executor's durable journal. SQLite, PostgreSQL and MongoDB
+provide the optional `execution.EffectDiscoveryStore` capability. Authorize the
+worker to discover one exact scope before calling this host-only API. It does
+not enumerate tenants or expose a model tool or public route.
+
+```go
+request := execution.EffectListRequest{Limit: 32}
+page, err := executor.RecoverPage(scopedWorkerContext, request)
+// Retain page.NextAfter for the next pass, including after partial cancellation.
+// An empty cursor starts another complete scan.
+```
+
+`RunID` optionally restricts discovery to one run. Each page reads at most 256
+operation records, including terminal records, in operation-key digest order.
+`After` is the last digest inspected. A full final page needs one empty read to
+wrap; a shorter page wraps immediately. New inserts can sort before your cursor,
+so keep scanning from the beginning after each wrap. Pages are observations and
+do not provide a database snapshot or claim ownership of an operation.
+
+The executor validates and detaches the whole page before probing any provider.
+It then calls the existing `Reconcile` path for each original request, which
+checks current authorization and rereads the journal. Retained terminal receipts
+need no provider call. Denied, unsupported and uncertain operations still advance
+the cursor so one unresolved operation cannot block the rest of the scope. A
+later full scan revisits them with current grants and provider knowledge.
+
+Each page has a 30-second deadline, including discovery. `MaxConcurrent` limits
+active recovery pages separately from the executor's shared operation limit.
+Callbacks and adapters must honor cancellation. On interruption, the returned
+cursor covers only inspected operations; discovery errors return no progress.
+Schedule passes and backoff in your host supervisor. Cortex does not start a
+background recovery worker automatically.
+
+Page items contain the operation digest, run ID and one of `terminal`,
+`uncertain` or `unavailable`. Only an authorized terminal receipt supplies an
+`applied` or `not_applied` outcome. No item contains arguments, authority
+references, provider evidence or private errors. These are trusted worker
+observations, not task acceptance or permission to publish a result. Recovery
+cannot reserve another attempt, retry a mutation, compensate or resume a run.

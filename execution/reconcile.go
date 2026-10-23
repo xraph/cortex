@@ -46,6 +46,7 @@ type EffectExecutor struct {
 	adapters  map[string]EffectRegistration
 	authorize func(context.Context, EffectRequest, EffectAction) error
 	slots     chan struct{}
+	pageSlots chan struct{}
 }
 
 // NewEffectExecutor copies host registrations and rejects ambiguous revisions.
@@ -53,7 +54,7 @@ func NewEffectExecutor(cfg EffectExecutorConfig) (*EffectExecutor, error) {
 	if effectNil(cfg.Store) || cfg.Authorize == nil || len(cfg.Adapters) < 1 || len(cfg.Adapters) > 256 || cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > 64 {
 		return nil, ErrEffectUnavailable
 	}
-	e := &EffectExecutor{store: cfg.Store, adapters: make(map[string]EffectRegistration, len(cfg.Adapters)), authorize: cfg.Authorize, slots: make(chan struct{}, cfg.MaxConcurrent)}
+	e := &EffectExecutor{store: cfg.Store, adapters: make(map[string]EffectRegistration, len(cfg.Adapters)), authorize: cfg.Authorize, slots: make(chan struct{}, cfg.MaxConcurrent), pageSlots: make(chan struct{}, cfg.MaxConcurrent)}
 	for _, registration := range cfg.Adapters {
 		if registration.Requirement.Validate() != nil || effectNil(registration.Adapter) {
 			return nil, ErrInvalidEffect

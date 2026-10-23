@@ -62,6 +62,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevision", func(t *testing.T) { testRunRevision(t, newStore) })
 	t.Run("Effects", func(t *testing.T) { testEffects(t, newStore) })
 	t.Run("EffectsConcurrent", func(t *testing.T) { testEffectsConcurrent(t, newStore) })
+	t.Run("EffectDiscovery", func(t *testing.T) { testEffectDiscovery(t, newStore) })
 	t.Run("Planning", func(t *testing.T) { testPlanning(t, newStore) })
 	t.Run("PlanningConcurrentRevision", func(t *testing.T) { testPlanningConcurrentRevision(t, newStore) })
 	t.Run("CaptureIntentConcurrent", func(t *testing.T) { testCaptureIntentConcurrent(t, newStore) })

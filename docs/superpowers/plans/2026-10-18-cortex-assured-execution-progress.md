@@ -25,7 +25,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
-| S3.4 | active | this chat | Durable effect reservations, provider receipts, recovery executor and explicit engine handlers implemented; operation discovery, continuation, retries, compensation, conflict handling and worker fencing remain open |
+| S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3731,3 +3731,47 @@ corrections; those corrections have behavioral red/green tests and were included
 in the final full run. Formatting, all-module lint, root build, documentation
 typecheck/lint/build and diff checks passed. The provider and authorization ports
 in these tests are fixtures, not installed-service qualification.
+
+
+### S3.4 durable discovery and bounded effect reconciliation
+
+`EffectDiscoveryStore.ListEffects` pages the same immutable operation journal
+used by dispatch. Its optional run filter and exact scope apply in SQLite,
+PostgreSQL and MongoDB through the shared assurance repository. Terminal records
+count toward the page limit, so discovery never scans an unbounded set while
+looking for unresolved work. Reading one operation and listing a page share the
+same request/receipt validation path.
+
+`EffectExecutor.RecoverPage` uses its own journal, validates and detaches the
+whole page, then reconciles each original request through current authorization.
+It never allocates attempts or dispatches mutations. A denied or unknown operation
+advances the cursor, and the next full scan revisits it. The operation-key digest
+cursor wraps after a short page; concurrent inserts before a cursor require that
+wrap. The host owns exact-scope discovery authorization and supervised scheduling.
+
+A page has a 30-second bound including discovery, local admission control and
+partial progress on cancellation. Returned metadata excludes authority, provider
+evidence and private errors. A terminal observation records provider knowledge,
+not acceptance, run continuation or public delivery. Concurrent workers can issue
+read-only probes; immutable receipts reject conflicting terminal knowledge.
+
+Red tests established the missing storage capability and recovery behavior before
+implementation. Tests cover bounded pagination across terminal rows, exact-scope
+and run isolation, corrupted stored bindings, whole-page rejection before probes,
+denied and unknown operations, deadline/admission limits, partial cancellation,
+detached records and recovery on a later scan. The process-crash fixture now
+reopens SQLite and discovers the retained operation after killing the dispatching
+process; the replacement worker records the external outcome without another write.
+
+Governed continuation, shared budgets, retry execution, compensation, artifact
+conflicts, atomic task/events and scheduler fencing remain open. Installed host
+and provider qualification remain separate, and live Linux selection is deferred.
+The four-stage goal remains active.
+
+Validation: the complete execution package and engine effect tests passed with
+`-race`. Effect conformance and recovery tests passed with `-race` on SQLite
+(31.629s), PostgreSQL (11.843s) and MongoDB (14.962s); both server backends ran in
+real containers, with no skipped conformance cases. The first combined backend
+run exposed shared fixture scope across cases, corrected by giving discovery its
+own scope before rerunning. `make f`, `make l` across all ten modules, root
+`GOWORK=off go build ./...`, docs typecheck/lint/build and diff checks passed.
