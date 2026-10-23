@@ -1465,6 +1465,7 @@ the worker keeps its own deployment identity.
 | `storage` | Distinct `broker_journal`, `worker_journal` and `evidence` files directly inside the worker state directory |
 | `images`, `image_root` | One to 256 unique immutable digests and the private local content tree |
 | `image_limits` | Explicit `max_bytes` and `readers` within local-source and worker staging ceilings |
+| `input_root`, `input_readers` | Separate private input directory and one to 16 concurrent snapshots |
 | `evidence_bytes` | One byte to one MiB, within the worker's per-input ceiling |
 | `max_jobs`, `max_active` | One to 100,000 retained jobs; one to 256 active jobs, no more than retained capacity |
 | `cleanup_actor` | Principal for independent evidence cleanup grants |
@@ -1475,10 +1476,10 @@ Marshal the Go types to produce canonical field names and duration values.
 The document contains credential pins, not key bytes. The loader reserves all
 database sidecar and lock names, worker state subdirectories, configuration,
 credentials, policies, worker executable, service template and control socket.
-Image storage must be separate from runtime and worker state storage. Unsafe
+Image and input storage must be separate from each other, runtime and worker state storage. Unsafe
 paths, overlapping roles and implicit limits fail startup.
 
-The runner loads current policies, pinned credentials and local image storage,
+The runner loads current policies, pinned credentials and local image/input storage,
 opens the evidence and worker databases, connects to systemd and assembles the
 daemon. It rechecks broker configuration bytes and worker profile identity before
 starting recovery. Once private control and recovery are ready, it requests fresh
@@ -1497,3 +1498,39 @@ controlled service manager and fixture qualification. They check authenticated
 serving, revocation on a reused connection, changed startup files, failed
 qualification, partial service/listener failures and released database ownership.
 Those fixtures do not qualify a live systemd/runsc installation.
+
+### Installed input files
+
+Provision inputs in the directory configured by `input_root`. It must be
+root-owned with mode 0700 and separate from images, runtime, state and installed
+configuration. Each file contains the raw artifact bytes and is named by
+`ref.BindingDigest()`, the lowercase SHA256 of the full evidence reference.
+Use mode 0400 and a single hard link. The reference must also appear in the
+signed job and the current evidence policy's input bindings.
+
+The full binding includes scope, source, version, sensitivity and retention.
+Identical bytes under another reference need a separate installed file and
+grant. `SourceURI` is metadata; the source never fetches it. You can provision
+new bindings while the broker runs without opening its exclusive capture
+database. Publish complete files atomically through a trusted host process and
+keep the original references with their source records. A provisioning command
+is still pending.
+
+`service.NewLocalInputs` verifies ownership, exact mode, link count, size and
+content digest before returning a memory snapshot. The configured ceiling is at
+most one MiB per input; empty inputs still require a real protected file and the
+empty-content digest. Symlinks, devices, changed directories and mismatched bytes
+fail without returning a reader. The source reuses the protected file reader;
+images and inputs share the same cancellation-aware snapshot reader.
+
+Each open reader holds one capacity slot until Close. There are at most 16
+slots, and waiting respects cancellation. Current grants are checked before the
+wait, after acquiring capacity and after reading. Retention is checked around
+policy calls. Worker transfer adds live claim and source-policy checks before
+its final acknowledgement, so bytes remain provisional until that succeeds.
+
+Revoke a grant to stop subsequent authorized transfers. Existing memory
+snapshots cannot be erased from another reader, and trusted host provisioning
+owns physical file deletion and retention. Captured outputs continue to use the
+evidence database, including its durable deletion and delayed-upload fences;
+this source exposes no write or delete operation.

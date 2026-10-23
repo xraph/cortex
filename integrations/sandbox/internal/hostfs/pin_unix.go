@@ -38,7 +38,7 @@ func VerifyPin(ctx context.Context, pin Pin, owner uint32) error {
 // Callers must bound concurrent snapshots. Use a responsive local filesystem;
 // context cancellation cannot forcibly interrupt a stalled kernel file call.
 func ReadPin(ctx context.Context, pin Pin, owner uint32) ([]byte, error) {
-	if pin.Bytes <= 0 || pin.Bytes > 64<<20 {
+	if pin.Bytes < 0 || pin.Bytes > 64<<20 {
 		return nil, fmt.Errorf("cortex: invalid host snapshot size")
 	}
 	file, err := openPin(ctx, pin, owner)
@@ -53,7 +53,7 @@ func ReadPin(ctx context.Context, pin Pin, owner uint32) ([]byte, error) {
 }
 
 func openPin(ctx context.Context, pin Pin, owner uint32) (*os.File, error) {
-	if !evidence.ValidDigest(pin.SHA256) || pin.Bytes <= 0 || pin.Bytes > 2<<30 {
+	if !evidence.ValidDigest(pin.SHA256) || pin.Bytes < 0 || pin.Bytes > 2<<30 {
 		return nil, fmt.Errorf("cortex: invalid host file pin")
 	}
 	if err := ctx.Err(); err != nil {

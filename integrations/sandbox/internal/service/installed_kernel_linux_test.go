@@ -35,7 +35,7 @@ func installedFixture(t *testing.T) (string, BrokerConfig, daemonCredentialFixtu
 	settings := worker.Settings
 	settings.ControlSocket = filepath.Join(filepath.Dir(settings.ControlSocket), "installed.sock")
 	writeWorkerConfig(t, cfg.WorkerConfig, settings)
-	for _, directory := range []string{filepath.Join(settings.Service.StateDirectory, "workspaces"), filepath.Join(settings.Service.StateDirectory, "launch"), filepath.Join(cfg.ImageRoot, "blobs", "sha256")} {
+	for _, directory := range []string{filepath.Join(settings.Service.StateDirectory, "workspaces"), filepath.Join(settings.Service.StateDirectory, "launch"), filepath.Join(cfg.ImageRoot, "blobs", "sha256"), cfg.InputRoot} {
 		if err = os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +149,7 @@ func TestInstalledBrokerServesMTLSAfterRecoveryAndJoinsResources(t *testing.T) {
 }
 
 func TestInstalledBrokerRefusesUnavailableQualificationAndCleansFailures(t *testing.T) {
-	for _, mode := range []string{"qualifier", "service", "service-empty", "service-partial", "qualification", "listener", "listener-empty", "listener-partial", "worker-changed", "config-changed"} {
+	for _, mode := range []string{"qualifier", "input-missing", "input-mode", "service", "service-empty", "service-partial", "qualification", "listener", "listener-empty", "listener-partial", "worker-changed", "config-changed"} {
 		t.Run(mode, func(t *testing.T) {
 			name, cfg, _, reaper, closed := installedFixture(t)
 			listens := 0
@@ -164,6 +164,14 @@ func TestInstalledBrokerRefusesUnavailableQualificationAndCleansFailures(t *test
 			switch mode {
 			case "qualifier":
 				verify = nil
+			case "input-missing":
+				if err := os.Remove(cfg.InputRoot); err != nil {
+					t.Fatal(err)
+				}
+			case "input-mode":
+				if err := os.Chmod(cfg.InputRoot, 0o755); err != nil {
+					t.Fatal(err)
+				}
 			case "service":
 				ports.openReaper = func(context.Context) (*Reaper, error) { return nil, errors.New("manager unavailable") }
 			case "service-empty":
@@ -213,7 +221,8 @@ func TestInstalledBrokerRefusesUnavailableQualificationAndCleansFailures(t *test
 			if listens != expected {
 				t.Fatal("opened listener before startup completed", listens)
 			}
-			if mode != "service" && mode != "service-empty" && mode != "qualifier" && !closed.Load() {
+			early := mode == "qualifier" || mode == "input-missing" || mode == "input-mode"
+			if mode != "service" && mode != "service-empty" && !early && !closed.Load() {
 				t.Fatal("manager leaked")
 			}
 			if mode == "listener-partial" {
@@ -224,9 +233,9 @@ func TestInstalledBrokerRefusesUnavailableQualificationAndCleansFailures(t *test
 					t.Fatal("partial listener retained", closeErr)
 				}
 			}
-			if mode == "qualifier" {
+			if early {
 				if _, err := os.Stat(cfg.Storage.Evidence); !os.IsNotExist(err) {
-					t.Fatal("missing verifier opened storage", err)
+					t.Fatal("invalid installation opened storage", err)
 				}
 			} else {
 				assertInstalledOwnershipReleased(t, cfg)

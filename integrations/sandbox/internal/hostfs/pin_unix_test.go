@@ -91,3 +91,25 @@ func TestReadPinBoundsAllocation(t *testing.T) {
 		}
 	}
 }
+
+func TestFilePinAuthenticatesEmptyContent(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := Pin{Path: filepath.Join(root, "empty"), SHA256: evidence.Digest(nil), Mode: 0o400}
+	if err = os.WriteFile(pin.Path, nil, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyPin(t.Context(), pin, uint32(os.Geteuid())); err != nil {
+		t.Fatal(err)
+	}
+	body, err := ReadPin(t.Context(), pin, uint32(os.Geteuid()))
+	if err != nil || len(body) != 0 {
+		t.Fatal("empty snapshot", err)
+	}
+	pin.SHA256 = evidence.Digest([]byte("other"))
+	if body, err = ReadPin(t.Context(), pin, uint32(os.Geteuid())); err == nil || body != nil {
+		t.Fatal("empty digest bypass", err)
+	}
+}

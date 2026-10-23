@@ -38,6 +38,8 @@ type BrokerConfig struct {
 	Images         []string              `json:"images"`
 	ImageRoot      string                `json:"image_root"`
 	ImageLimits    image.LocalLimits     `json:"image_limits"`
+	InputRoot      string                `json:"input_root"`
+	InputReaders   int                   `json:"input_readers"`
 	EvidenceBytes  int64                 `json:"evidence_bytes"`
 	MaxJobs        int                   `json:"max_jobs"`
 	MaxActive      int                   `json:"max_active"`
@@ -100,7 +102,7 @@ func validBrokerSettings(cfg BrokerConfig) bool {
 	if cfg.Interval < 10*time.Millisecond || cfg.Interval > time.Second || cfg.PublicLimits.Validate() != nil || cfg.Control.validate() != nil || cfg.Control.Reports == 0 {
 		return false
 	}
-	if cfg.ImageLimits.Validate() != nil || cfg.EvidenceBytes <= 0 || cfg.EvidenceBytes > 1<<20 || len(cfg.Images) < 1 || len(cfg.Images) > 256 {
+	if cfg.ImageLimits.Validate() != nil || !validLocalInputLimits(cfg.EvidenceBytes, cfg.InputReaders) || len(cfg.Images) < 1 || len(cfg.Images) > 256 {
 		return false
 	}
 	images := make(map[string]bool)
@@ -116,8 +118,13 @@ func validBrokerSettings(cfg BrokerConfig) bool {
 
 func validBrokerLayout(name string, cfg BrokerConfig, worker WorkerConfiguration) bool {
 	state, runtimeRoot := worker.Settings.Service.StateDirectory, worker.Settings.Runtime.Directory
-	if !profilePath(cfg.ImageRoot) || under(cfg.ImageRoot, state) || under(state, cfg.ImageRoot) || under(cfg.ImageRoot, runtimeRoot) || under(runtimeRoot, cfg.ImageRoot) {
+	if under(cfg.ImageRoot, cfg.InputRoot) || under(cfg.InputRoot, cfg.ImageRoot) {
 		return false
+	}
+	for _, root := range []string{cfg.ImageRoot, cfg.InputRoot} {
+		if !profilePath(root) || under(root, state) || under(state, root) || under(root, runtimeRoot) || under(runtimeRoot, root) {
+			return false
+		}
 	}
 	reserved := map[string]bool{filepath.Join(state, "workspaces"): true, filepath.Join(state, "launch"): true}
 	add := func(path string) bool {
@@ -129,12 +136,12 @@ func validBrokerLayout(name string, cfg BrokerConfig, worker WorkerConfiguration
 	}
 	files := cfg.Credentials
 	for _, path := range []string{name, cfg.WorkerConfig, cfg.HostPolicy, cfg.EvidencePolicy, files.SigningKey.Path, files.Certificate.Path, files.TLSKey.Path, files.ClientCAs.Path, worker.Profile.Worker.Path, worker.Profile.TemplatePath} {
-		if !add(path) || under(path, state) || under(path, cfg.ImageRoot) {
+		if !add(path) || under(path, state) || under(path, cfg.ImageRoot) || under(path, cfg.InputRoot) {
 			return false
 		}
 	}
 	socket := worker.Settings.ControlSocket
-	if !add(socket) || under(socket, cfg.ImageRoot) || under(socket, filepath.Join(state, "workspaces")) || under(socket, filepath.Join(state, "launch")) {
+	if !add(socket) || under(socket, cfg.ImageRoot) || under(socket, cfg.InputRoot) || under(socket, filepath.Join(state, "workspaces")) || under(socket, filepath.Join(state, "launch")) {
 		return false
 	}
 	for _, database := range []string{cfg.Storage.BrokerJournal, cfg.Storage.WorkerJournal, cfg.Storage.Evidence} {

@@ -3,16 +3,15 @@
 package image
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/xraph/cortex/integrations/sandbox/internal/hostfs"
+	"github.com/xraph/cortex/integrations/sandbox/internal/verifiedio"
 )
 
 // LocalSource reads installed blobs from root/blobs/sha256/<digest>. It uses
@@ -131,35 +130,5 @@ func (s *LocalSource) Open(ctx context.Context, digest string) (io.ReadCloser, e
 		return nil, contextErr
 	}
 	retained = true
-	return &localReader{ctx: ctx, reader: bytes.NewReader(body), release: func() { <-s.slots }}, nil
-}
-
-type localReader struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	reader  *bytes.Reader
-	release func()
-}
-
-func (r *localReader) Read(p []byte) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.reader == nil {
-		return 0, os.ErrClosed
-	}
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
-}
-
-func (r *localReader) Close() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.reader != nil {
-		r.reader = nil
-		r.release()
-		r.release = nil
-	}
-	return nil
+	return verifiedio.Snapshot(ctx, body, func() { <-s.slots }), nil
 }

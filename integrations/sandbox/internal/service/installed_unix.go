@@ -65,6 +65,10 @@ func runInstalledDaemon(ctx context.Context, name string, verify QualificationVe
 	if err != nil {
 		return err
 	}
+	inputs, err := NewLocalInputs(cfg.InputRoot, cfg.EvidenceBytes, cfg.InputReaders, evidencePolicy.AuthorizeInput)
+	if err != nil {
+		return err
+	}
 	storage, err := evidencedb.Open(preparation, cfg.Storage.Evidence)
 	if err != nil {
 		return err
@@ -97,7 +101,7 @@ func runInstalledDaemon(ctx context.Context, name string, verify QualificationVe
 		WorkerConfig: cfg.WorkerConfig, Store: workers, Reaper: reaper,
 		Broker:        broker.Config{Database: cfg.Storage.BrokerJournal, Name: worker.Settings.Broker, SigningKey: credentials.SigningKey, Authorize: hostPolicy.Authorize, MaxJobs: cfg.MaxJobs, MaxActive: cfg.MaxActive, Images: cfg.Images},
 		Qualification: verify, AuthorizeLaunch: hostPolicy.Revalidate, Revalidate: hostPolicy.Revalidate,
-		Inputs: repository, InputPolicy: evidencePolicy.AuthorizeInput, Images: images, ImagePolicy: hostPolicy.AuthorizeImage,
+		Inputs: inputs, InputPolicy: evidencePolicy.AuthorizeInput, Images: images, ImagePolicy: hostPolicy.AuthorizeImage,
 		Captures: CaptureRecoveryConfig{Repository: repository, Audit: repository, Authorize: evidencePolicy.AuthorizeCleanup, Actor: cfg.CleanupActor, PageSize: cfg.PageSize}, CapturePolicy: capturePolicy,
 		Control: cfg.Control, Interval: cfg.Interval, PageSize: cfg.PageSize, DiscoveryLimit: cfg.DiscoveryLimit,
 	})

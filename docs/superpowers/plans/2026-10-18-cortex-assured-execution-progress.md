@@ -18,7 +18,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.4 broker/runtime | broker, worker, transport, daemon assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation and independent service discovery; installed adapters, standalone installation and live qualification remain open |
+| S2.4 broker/runtime | broker, worker, transport, protected providers, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone command, provisioning and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.2, S2.3, S2.5 through S2.7, S3.2 through S3.6 and Stage 4 | queued | shared owners | Runtime verification gates remain disabled |
 
@@ -1670,3 +1670,46 @@ The service package remains internal. A standalone executable, concrete live
 qualification verifier, installation/provisioning flow and input ingestion are
 still open. Linux worker selection remains deferred. S2.4 and the four-stage
 plan remain incomplete.
+
+### S2.4 protected installed input delivery
+
+Installed broker startup commit `acb042c` passed CI run `39898806605`.
+
+Ruling: installed inputs use a separate protected file source, while captured
+outputs keep the exclusive evidence database. This lets a trusted host provision
+new input bindings during a daemon lifetime without opening the capture database
+or adding upload authority to worker requests. Host provisioning remains
+responsible for input-file retention and deletion.
+
+`LocalInputs` requires a private root-owned directory and mode-0400 single-link
+files named by the full evidence reference binding digest. It verifies the raw
+bytes against the job's exact size and SHA256. The caller must carry private
+validated job authority, declare that input and pass current source policy.
+Authorization runs before waiting for bounded reader capacity, after the wait
+and after reading. Retention is checked before and after each policy call.
+Missing files, unsafe metadata, aliases and directory replacement return no
+reader. No URL fetching, upload or deletion API is exposed.
+
+The configured source permits at most one MiB per input and 16 open snapshots.
+Images and inputs share the extracted cancellation-aware snapshot reader, which
+releases its capacity exactly once on Close. The shared protected pin reader now
+authenticates empty files too; executables, runtime inventories and credentials
+retain their separate nonempty constraints. TDD caught empty-file rejection and
+expiry during the final authorization callback before both regressions passed.
+
+Installed broker configuration requires `input_root` and `input_readers` and
+rejects overlap with image, runtime, state or protected configuration paths.
+Startup loads the source before opening durable storage. Worker input transfer
+uses it through the existing claim, grant and digest checks; capture storage and
+independent recovery keep their existing database and tombstone rules.
+
+Final validation passed: scoped make f, make l across all ten modules, Linux
+tagged lint, Linux amd64 build and the full sandbox race suite. The service race
+suite passed in 64.726s. Input-source, configuration and installed startup tests
+passed ten Linux repetitions, 110 top-level tests, without skips. The tests cover
+empty content, unsafe file metadata, changed bindings, cancellation, revocation,
+expiry during authorization, reader capacity and real worker transfer.
+
+The provisioning command, standalone broker executable, concrete live verifier
+and installation flow remain open. Linux worker selection remains deferred.
+S2.4 and the four-stage plan remain incomplete.

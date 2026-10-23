@@ -26,6 +26,8 @@ func brokerConfigFixture(t *testing.T, provided ...daemonCredentialFixture) (str
 	credentials.files.SigningKey = credentialPin(t, credentials.files.SigningKey.Path, credentialPEM(t, private))
 	root := filepath.Dir(workerName)
 	cfg := BrokerConfig{SchemaVersion: 1, WorkerConfig: workerName, Credentials: credentials.files, HostPolicy: filepath.Join(root, "host-policy.json"), EvidencePolicy: filepath.Join(root, "evidence-policy.json"), Listen: "127.0.0.1:8443", Storage: BrokerStorage{BrokerJournal: filepath.Join(worker.Service.StateDirectory, "broker.db"), WorkerJournal: filepath.Join(worker.Service.StateDirectory, "worker.db"), Evidence: filepath.Join(worker.Service.StateDirectory, "evidence.db")}, Images: []string{"sha256:" + strings.Repeat("a", 64)}, ImageRoot: filepath.Join(root, "images"), ImageLimits: image.LocalLimits{MaxBytes: 64 << 20, Readers: 2}, EvidenceBytes: 1 << 20, MaxJobs: 100, MaxActive: 4, CleanupActor: "service:cleanup", PublicLimits: credentialLimits(), Control: ControlLimits{Connections: 4, Reports: 1, Timeout: time.Second}, Interval: time.Second, PageSize: 2, DiscoveryLimit: 100}
+	cfg.InputRoot = filepath.Join(root, "inputs")
+	cfg.InputReaders = 2
 	name := filepath.Join(root, "broker.json")
 	writeInstalledPolicy(t, name, cfg)
 	return name, cfg
@@ -58,10 +60,24 @@ func TestBrokerConfigBindsWorkerAndExplicitStartupSettings(t *testing.T) {
 }
 
 func TestBrokerConfigRejectsUnsafeOrUnboundedSettings(t *testing.T) {
-	for _, mode := range []string{"schema", "worker-path", "listener-dns", "listener-port", "listener-zone", "no-images", "duplicate-image", "bad-image", "jobs", "active", "active-jobs", "page", "discovery", "interval", "public-limit", "control-limit", "reports", "image-limit", "image-memory", "evidence-limit", "cleanup", "db-parent", "db-alias", "db-sidecar", "db-lock", "db-workspaces", "db-launch", "secret-overlap", "secret-state", "policy-overlap", "image-state", "image-runtime", "config-image", "pin-mode", "pin-size", "pin-digest", "credential-alias"} {
+	for _, mode := range []string{"schema", "worker-path", "listener-dns", "listener-port", "listener-zone", "no-images", "duplicate-image", "bad-image", "jobs", "active", "active-jobs", "page", "discovery", "interval", "public-limit", "control-limit", "reports", "image-limit", "image-memory", "evidence-limit", "cleanup", "db-parent", "db-alias", "db-sidecar", "db-lock", "db-workspaces", "db-launch", "secret-overlap", "secret-state", "policy-overlap", "image-state", "image-runtime", "config-image", "pin-mode", "pin-size", "pin-digest", "credential-alias", "input-missing", "input-readers", "input-state", "input-image", "input-runtime", "input-config", "input-ancestor"} {
 		t.Run(mode, func(t *testing.T) {
 			name, cfg := brokerConfigFixture(t)
 			switch mode {
+			case "input-missing":
+				cfg.InputRoot = ""
+			case "input-readers":
+				cfg.InputReaders = 17
+			case "input-state":
+				cfg.InputRoot = filepath.Dir(cfg.Storage.Evidence)
+			case "input-image":
+				cfg.InputRoot = cfg.ImageRoot
+			case "input-runtime":
+				cfg.InputRoot = filepath.Join(filepath.Dir(name), "runtime")
+			case "input-config":
+				cfg.InputRoot = filepath.Dir(name)
+			case "input-ancestor":
+				cfg.InputRoot = filepath.Dir(filepath.Dir(name))
 			case "schema":
 				cfg.SchemaVersion++
 			case "worker-path":
