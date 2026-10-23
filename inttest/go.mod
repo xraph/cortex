@@ -104,10 +104,10 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xraph/go-utils v1.4.1 // indirect
-	github.com/xraph/grove v1.8.0 // indirect
-	github.com/xraph/grove/drivers/pgdriver v1.8.0 // indirect
-	github.com/xraph/grove/kv v1.8.0 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.8.0 // indirect
+	github.com/xraph/grove v1.9.0 // indirect
+	github.com/xraph/grove/drivers/pgdriver v1.9.0 // indirect
+	github.com/xraph/grove/kv v1.9.0 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.9.0 // indirect
 	github.com/xraph/trove v1.7.1 // indirect
 	github.com/xraph/vessel v1.0.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

@@ -8,6 +8,7 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/plugin"
 	"github.com/xraph/cortex/run"
 )
@@ -57,6 +58,8 @@ type Extension struct {
 	recorder Recorder
 	enabled  map[string]bool
 	logger   log.Logger
+
+	recordErrors telemetry.Throttle
 }
 
 // New creates an Extension that emits audit events through the provided Recorder.
@@ -186,11 +189,20 @@ func (e *Extension) record(
 	}
 
 	if recErr := e.recorder.Record(ctx, evt); recErr != nil {
-		e.logger.Warn("audit_hook: failed to record audit event",
-			log.String("action", action),
-			log.String("resource_id", resourceID),
-			log.String("error", recErr.Error()),
-		)
+		// By type, never text: a recorder's error can quote the event it
+		// refused. Throttled per action, so a recorder that is down for an
+		// hour does not log every event it missed.
+		if ok, suppressed := e.recordErrors.Allow(action, time.Now()); ok {
+			fields := []log.Field{
+				log.String("action", action),
+				log.String("resource_id", resourceID),
+				log.String("error_type", telemetry.ErrorType(recErr)),
+			}
+			if suppressed > 0 {
+				fields = append(fields, log.Int("suppressed", suppressed))
+			}
+			e.logger.Warn("audit_hook: failed to record audit event", fields...)
+		}
 	}
 	return nil
 }

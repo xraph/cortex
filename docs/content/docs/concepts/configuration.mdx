@@ -78,7 +78,7 @@ A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel`
 | `engine.WithSuspensionSweepInterval(d)` | How often the expiry sweeper runs |
 | `engine.WithSuspensionSweepLimit(n)` | How many expired suspensions one sweep handles |
 | `engine.WithExtension(ext)` | Registers a plugin extension |
-| `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger |
+| `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger; the Forge extension passes the app's logger |
 | `engine.WithMetrics(m)` | Records the engine's metrics on a go-utils metrics sink. Nil, the default, records nothing; the Forge extension passes the app's metrics |
 
 ## Agent-level overrides

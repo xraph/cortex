@@ -203,7 +203,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 	cp, err := e.createCheckpoint(ctx, r, s, reason)
 	if err != nil {
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
-			e.logger.Error("delete suspension after a failed checkpoint write", log.String("error", delErr.Error()))
+			e.logError("delete suspension after a failed checkpoint write", delErr, log.String("run_id", r.ID.String()))
 		}
 		return "", fmt.Errorf("create checkpoint: %w", err)
 	}
@@ -226,7 +226,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 		// dropOrphanedSuspension clears the row once the run reaches a
 		// terminal state.
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
-			e.logger.Error("delete orphaned suspension", log.String("error", delErr.Error()))
+			e.logError("delete orphaned suspension", delErr, log.String("run_id", r.ID.String()))
 		}
 		// Same cleanup for the checkpoint, by the only route the store
 		// offers: there is no delete, so it is resolved against itself.
@@ -240,7 +240,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 				DecidedAt: time.Now().UTC(),
 			}
 			if resErr := e.store.Resolve(ctx, cp.ID, decision); resErr != nil {
-				e.logger.Error("resolve orphaned checkpoint", log.String("error", resErr.Error()))
+				e.logError("resolve orphaned checkpoint", resErr, log.String("run_id", r.ID.String()))
 			}
 		}
 		return "", fmt.Errorf("update run to paused: %w", err)
@@ -261,8 +261,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 	// never went out into a failure the agent can read.
 	for _, ask := range pend.asks {
 		if err := e.a2a.Release(ctx, ask); err != nil {
-			e.logger.Error("release agent ask after suspending",
-				log.String("run_id", r.ID.String()), log.String("reply_with", ask.ReplyWith), log.Error(err))
+			e.logError("release agent ask after suspending", err, log.String("run_id", r.ID.String()))
 		}
 	}
 	return reason, nil

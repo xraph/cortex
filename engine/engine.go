@@ -41,6 +41,7 @@ type Engine struct {
 	logger            log.Logger
 	metrics           gometrics.Metrics
 	instr             *engineMetrics
+	logThrottle       telemetry.Throttle
 	store             store.Store
 	atomicPreparation bool
 	llm               llm.Client
@@ -753,7 +754,7 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 	// is dead weight. Dropping it is also what makes the rejection final:
 	// a resume after this finds nothing to claim.
 	if err := e.store.DeleteSuspension(ctx, cp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
-		e.logger.Error("delete suspension of a rejected run", log.String("error", err.Error()))
+		e.logError("delete suspension of a rejected run", err, log.String("run_id", cp.RunID.String()))
 	}
 	return nil
 }
@@ -843,7 +844,7 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	// The run is cancelled and no claim will ever take it again, so the
 	// row is dead weight, and dropping it is what makes the cancel final.
 	if err := e.store.DeleteSuspension(ctx, r.ID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
-		e.logger.Error("delete suspension of a cancelled run", log.String("error", err.Error()))
+		e.logError("delete suspension of a cancelled run", err, log.String("run_id", r.ID.String()))
 	}
 	e.closePendingCheckpoints(ctx, r.ID, "the run was cancelled, so there is nothing left to decide")
 	return nil
@@ -867,7 +868,7 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunID, reason string) {
 	cps, err := e.store.ListPending(ctx, &checkpoint.ListFilter{RunID: runID.String()})
 	if err != nil {
-		e.logger.Error("list the checkpoints of a run that ended", log.String("error", err.Error()))
+		e.logError("list the checkpoints of a run that ended", err, log.String("run_id", runID.String()))
 		return
 	}
 	decision := checkpoint.Decision{
@@ -877,9 +878,9 @@ func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunI
 	}
 	for _, cp := range cps {
 		if err := e.store.Resolve(ctx, cp.ID, decision); err != nil {
-			e.logger.Error("resolve the checkpoint of a run that ended",
+			e.logError("resolve the checkpoint of a run that ended", err,
 				log.String("checkpoint_id", cp.ID.String()),
-				log.String("error", err.Error()),
+				log.String("run_id", runID.String()),
 			)
 		}
 	}
@@ -1052,7 +1053,7 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 	stepEnd := time.Now().UTC()
 	step.CompletedAt = &stepEnd
 	if err := e.store.CreateStep(ctx, step); err != nil {
-		e.logger.Error("create step", log.String("error", err.Error()))
+		e.logError("create step", err, log.String("run_id", r.ID.String()))
 	}
 
 	if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopFinalAnswer, Output: step.Output, StepCount: 1, TokensUsed: step.TokensUsed}); err != nil {
@@ -1156,7 +1157,7 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		step.TokensUsed = len(input) + 6
 		step.CompletedAt = &stepEnd
 		if err := e.store.CreateStep(ctx, step); err != nil {
-			e.logger.Error("create step", log.String("error", err.Error()))
+			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
 		if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopFinalAnswer, Output: response, StepCount: 1, TokensUsed: step.TokensUsed}); err != nil {

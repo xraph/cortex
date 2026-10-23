@@ -22,7 +22,7 @@ func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcom
 	defer cancel()
 	saved, err := e.store.GetRun(writeCtx, r.ID)
 	if err != nil {
-		e.logger.Warn("read before terminal update; using owned run snapshot", log.String("error", err.Error()))
+		e.logWarn("read before terminal update; using owned run snapshot", err, log.String("run_id", r.ID.String()))
 	}
 	if err == nil && isTerminalRunState(saved.State) {
 		*r = *saved

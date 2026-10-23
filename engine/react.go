@@ -249,7 +249,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			CompletedAt: &stepEnd,
 		}
 		if err := e.store.CreateStep(ctx, step); err != nil {
-			e.logger.Error("create step", log.String("error", err.Error()))
+			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
 		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
@@ -324,7 +324,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					CompletedAt: &tcEnd,
 				}
 				if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
-					e.logger.Error("create tool call", log.String("error", err.Error()))
+					e.logError("create tool call", err, log.String("run_id", r.ID.String()))
 				}
 
 				// executeTool already emitted the terminal event for a denial
@@ -637,7 +637,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			step.TokensUsed = u.TotalTokens
 		}
 		if err := e.store.CreateStep(ctx, step); err != nil {
-			e.logger.Error("create step", log.String("error", err.Error()))
+			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
 		e.extensions.EmitStepCompleted(ctx, r.ID, st.stepIndex, stepEnd.Sub(stepStart))
@@ -709,7 +709,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					CompletedAt: &tcEnd,
 				}
 				if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
-					e.logger.Error("create tool call", log.String("error", err.Error()))
+					e.logError("create tool call", err, log.String("run_id", r.ID.String()))
 				}
 
 				// Same as the non-streaming loop: one terminal event per
@@ -795,13 +795,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 // should lose a save and say so, not quietly write into the shared bucket.
 func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *reactState) {
 	if st.sessionID.IsNil() {
-		e.logger.Warn("skipping conversation save: the run carries no session",
+		e.logWarn("skipping conversation save: the run carries no session", nil,
 			log.String("agent_id", agentID.String()))
 		return
 	}
 	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
 	if err := e.store.SaveConversation(ctx, agentID, st.sessionID, convMsgs); err != nil {
-		e.logger.Error("save conversation", log.String("error", err.Error()))
+		e.logError("save conversation", err, log.String("agent_id", agentID.String()))
 	}
 }
 
@@ -811,7 +811,7 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 // actually landing calls persistFailure instead.
 func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error, _ time.Time) {
 	if err := e.persistFailure(ctx, r, agentID, runErr); err != nil {
-		e.logger.Error("update run on failure", log.String("error", err.Error()))
+		e.logError("update run on failure", err, log.String("run_id", r.ID.String()))
 	}
 }
 

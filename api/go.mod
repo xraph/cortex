@@ -6,7 +6,7 @@ replace github.com/xraph/cortex => ../
 
 require (
 	github.com/xraph/cortex v1.6.1
-	github.com/xraph/forge v1.12.9
+	github.com/xraph/forge v1.12.10
 )
 
 require (
