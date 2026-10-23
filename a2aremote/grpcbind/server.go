@@ -67,7 +67,21 @@ func (s *Server) SendMessage(ctx context.Context, req *a2apb.SendMessageRequest)
 
 // GetTask projects a run as a task.
 func (s *Server) GetTask(ctx context.Context, req *a2apb.GetTaskRequest) (*a2apb.Task, error) {
-	task, err := s.svc.GetTask(ctx, credentialsOf(ctx), a2aremote.GetTaskRequest{
+	cred := credentialsOf(ctx)
+	content, err := a2aremote.ResultContentRequested(cred)
+	if err != nil {
+		return nil, statusOf(err)
+	}
+	if content {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > a2aremote.MaxResultDeliveryDuration || time.Until(deadline) <= 0 {
+			return nil, status.Error(codes.InvalidArgument, "result content requires a deadline within fifteen seconds")
+		}
+		if headerErr := grpc.SetHeader(ctx, metadata.Pairs("cache-control", "no-store")); headerErr != nil {
+			return nil, status.Error(codes.Internal, "could not set private response metadata")
+		}
+	}
+	task, err := s.svc.GetTask(ctx, cred, a2aremote.GetTaskRequest{
 		Tenant: req.GetTenant(), ID: req.GetId(),
 	})
 	if err != nil {
@@ -76,6 +90,11 @@ func (s *Server) GetTask(ctx context.Context, req *a2apb.GetTaskRequest) (*a2apb
 	if a2aremote.ReplayActive(task) {
 		if err := grpc.SetHeader(ctx, metadata.Pairs("a2a-extensions", a2aremote.ReplayExtensionURI)); err != nil {
 			return nil, status.Error(codes.Internal, "could not acknowledge replay extension")
+		}
+	}
+	if a2aremote.ResultContentActive(task) {
+		if err := grpc.SetHeader(ctx, metadata.Pairs("a2a-extensions", a2aremote.ResultContentExtensionURI)); err != nil {
+			return nil, status.Error(codes.Internal, "could not acknowledge result content extension")
 		}
 	}
 	return taskToProto(task), nil

@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/skill"
+	"github.com/xraph/cortex/verification"
 )
 
 // ErrNoMessaging is returned when attaching to an engine that never
@@ -129,4 +130,12 @@ func (g engineGateway) ReadPublicEvents(ctx context.Context, req event.ReadReque
 		return event.Page{}, event.ErrUnavailable
 	}
 	return g.eng.ReadPublicEvents(ctx, req)
+}
+
+func (g engineGateway) ResultContentAvailable() bool {
+	return g.eng != nil && g.eng.ResultContentAvailable()
+}
+
+func (g engineGateway) ReadResultContent(ctx context.Context, req verification.ResultContentRequest) (verification.PublishedResult, error) {
+	return g.eng.ReadResultContent(ctx, req)
 }

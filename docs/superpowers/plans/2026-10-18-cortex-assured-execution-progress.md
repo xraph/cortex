@@ -22,7 +22,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard content adapters implemented; remote content, arbitrary artifact producers and installed qualification remain open |
+| S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters implemented; legacy public projection policy, arbitrary artifact producers and installed qualification remain open |
 | S2.5, S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -3250,3 +3250,57 @@ Validation for HTTP and dashboard content access:
 
 Remote content, installed delivery qualification and the remaining four-stage
 work stay open. The concurrent Sentinel metering work owns separate commits.
+
+
+### S2.6 guarded A2A content access
+
+A2A now exposes the guarded reader through an opt-in `result-content/v1`
+extension on `GetTask`. REST, JSON-RPC and gRPC share the same service logic.
+Requests name the committed result in `Cortex-Result-ID`; the service resolves
+the task's canonical run, checks the routed agent, reads through the current
+content authorizer/publication gate and reauthenticates the peer before returning.
+The card follows the service capability. Missing and typed-nil gateways fail
+construction when guarded content is enabled.
+
+The task carries `ResultContentResponse` under `cortex.result`, with a decimal
+revision and explicit redaction status. No raw run output, error, history or
+private receipt enters this projection. Mixed replay/content activation,
+ambiguous headers and content negotiation on work/stream operations are refused.
+The first regression test showed an unknown content request returning the raw
+stored answer; the implemented path now fails without that fallback.
+
+Service reads have a five-second bound and 64 slots. HTTP holds a separate
+64-slot admission through delivery, requires writer deadline support before
+reading content, sends no-store and bounds writing to ten seconds within a
+fifteen-second request lifetime. gRPC requires a caller deadline within fifteen
+seconds. Host callbacks must honor cancellation; gRPC server connection/stream
+limits and installed transport behavior remain host qualification work.
+
+Tests cover successful redaction, current grant denial, resolved-scope isolation,
+peer/node revocation, route mismatch, mismatched result/revision, unsafe or
+oversized publication, deadlines, cancellation and slot release. An actual
+committed SQLite result exercises the engine gateway and preserves the stored
+candidate. Live HTTP and gRPC tests cover activation, content and precision.
+A later red regression caught an error body on a JSON-RPC notification when
+writer setup failed; notifications now retain their no-response semantics.
+
+Legacy requests without the extension retain existing projections and need
+separate host access controls. This packet does not establish current content
+policy for every old task/list/send/stream path. Arbitrary artifact producers,
+installed qualification and the rest of the four-stage plan remain open.
+
+Validation for guarded A2A content access:
+
+- Final full remote race suite passed in 10.664s; full gRPC binding race suite
+  passed in 1.320s. Both module builds passed, and their `go mod tidy -diff`
+  checks passed. Added indirect dependencies support the shared SQLite fixture.
+- The HTTP admission test filled 64 slots, rejected both HTTP and direct-reader
+  overflow, cancelled every request and verified that all slots were released.
+  Stalled writes stopped at ten seconds without appending another body.
+- Coordinated `GOWORK=off make f`, final all-ten-module `GOWORK=off make l`, and
+  `git diff --check` passed. Formatting touched only this packet's files.
+- Docs type check, lint and production build passed.
+- Prior transport CI run `39971269395` was cancelled. Successor run `39971728918`
+  had passed docs, formatting, security, lint and all submodules, with the root
+  Linux test job still running at this checkpoint. Neither run is recorded as
+  fully passed here.

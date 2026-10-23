@@ -35,6 +35,13 @@ func (s *Service) RESTHandler() http.Handler {
 		id, verb := splitVerb(r.PathValue("id"))
 		switch verb {
 		case "":
+			writer, request, release, prepareErr := s.prepareResultHTTP(w, r)
+			if prepareErr != nil {
+				writeREST(w, nil, prepareErr)
+				return
+			}
+			defer release()
+			w, r = writer, request
 			task, err := s.GetTask(r.Context(), credentialsOf(r), GetTaskRequest{
 				Tenant: r.PathValue("tenant"), ID: id,
 			})

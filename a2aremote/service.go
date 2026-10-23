@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/run"
 )
 
@@ -44,6 +45,8 @@ type Options struct {
 	Streaming bool
 	// PublicEventReplay enables metadata pages and, with Streaming, subscriptions.
 	PublicEventReplay bool
+	// ResultContent enables explicit guarded content requests on GetTask.
+	ResultContent bool
 	// StreamPoll is how often a subscription re-reads its task. It
 	// bounds how stale an update can be and nothing else.
 	StreamPoll time.Duration
@@ -56,10 +59,12 @@ type Options struct {
 // of security rules: a rule enforced here cannot be forgotten by the
 // gRPC handler.
 type Service struct {
-	replayStreams atomic.Int32
-	gw            Gateway
-	resolver      PeerResolver
-	opts          Options
+	replayStreams     atomic.Int32
+	contentReads      atomic.Int32
+	contentDeliveries atomic.Int32
+	gw                Gateway
+	resolver          PeerResolver
+	opts              Options
 }
 
 // NewService builds a Service, or returns nil when it cannot.
@@ -69,12 +74,18 @@ type Service struct {
 // every agent in the process, and defaulting to it would be the kind of
 // convenience that reads as a feature until it is a breach.
 func NewService(gw Gateway, resolver PeerResolver, opts Options) *Service {
-	if gw == nil || resolver == nil || (!opts.Scope.IsZero() && cortex.ValidateScope(opts.Scope) != nil) {
+	if hostport.IsNil(gw) || hostport.IsNil(resolver) || (!opts.Scope.IsZero() && cortex.ValidateScope(opts.Scope) != nil) {
 		return nil
 	}
 	if opts.PublicEventReplay {
 		replay, ok := gw.(PublicEventGateway)
 		if !ok || !replay.PublicEventReplayAvailable() {
+			return nil
+		}
+	}
+	if opts.ResultContent {
+		content, ok := gw.(ResultContentGateway)
+		if !ok || !content.ResultContentAvailable() {
 			return nil
 		}
 	}
@@ -161,6 +172,13 @@ func (s *Service) SendMessage(ctx context.Context, cred Credentials, req SendMes
 
 // GetTask projects a run as a task.
 func (s *Service) GetTask(ctx context.Context, cred Credentials, req GetTaskRequest) (*Task, error) {
+	content, err := parseResultContentRequest(cred)
+	if err != nil {
+		return nil, err
+	}
+	if content.active {
+		return s.getResultContentTask(ctx, cred, req, content)
+	}
 	replay, err := parseReplayRequest(cred)
 	if err != nil {
 		return nil, err

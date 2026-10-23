@@ -102,6 +102,8 @@ type CardOptions struct {
 	Streaming bool
 	// PublicEventReplay advertises metadata replay when the service enables it.
 	PublicEventReplay bool
+	// ResultContent advertises guarded content reads when the service enables them.
+	ResultContent bool
 	// Bindings names which bindings the card advertises. Empty means
 	// JSON-RPC only, which is what this module serves on its own.
 	//
@@ -179,6 +181,13 @@ func BuildCard(a *agent.Config, skills []*skill.Skill, opts CardOptions) AgentCa
 			Description: "Authorized metadata replay. Sequence and revision fields are decimal strings.",
 			Params: map[string]any{"methods": methods, "metadataKey": ReplayMetadataKey,
 				"cursorHeader": ReplayCursorHeader, "limitHeader": ReplayLimitHeader, "maxPageSize": event.MaxPageSize},
+		})
+	}
+	if opts.ResultContent {
+		card.Capabilities.Extensions = append(card.Capabilities.Extensions, AgentExtension{
+			URI:         ResultContentExtensionURI,
+			Description: "Current-authorized, screened committed content. Run revisions are decimal strings.",
+			Params:      map[string]any{"methods": []string{MethodGetTask}, "metadataKey": ResultContentMetadataKey, "resultHeader": ResultIDHeader},
 		})
 	}
 	if opts.Provider.Organization != "" {

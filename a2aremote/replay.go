@@ -103,8 +103,8 @@ func replayHeader(cred Credentials, name string) (value string, present bool, er
 	return value, count > 0, nil
 }
 
-func parseReplayRequest(cred Credentials) (replayRequest, error) {
-	var req replayRequest
+func extensionRequested(cred Credentials, uriWanted string) (bool, error) {
+	active := false
 	size, tokens := 0, 0
 	for key, values := range cred.Headers {
 		if !strings.EqualFold(key, "A2A-Extensions") {
@@ -113,19 +113,29 @@ func parseReplayRequest(cred Credentials) (replayRequest, error) {
 		for _, value := range values {
 			size += len(value)
 			if size > 4096 {
-				return req, replayError(event.ErrInvalid)
+				return false, replayError(event.ErrInvalid)
 			}
 			for uri := range strings.SplitSeq(value, ",") {
 				tokens++
 				if tokens > 32 {
-					return req, replayError(event.ErrInvalid)
+					return false, replayError(event.ErrInvalid)
 				}
-				if strings.TrimSpace(uri) == ReplayExtensionURI {
-					req.active = true
+				if strings.TrimSpace(uri) == uriWanted {
+					active = true
 				}
 			}
 		}
 	}
+	return active, nil
+}
+
+func parseReplayRequest(cred Credentials) (replayRequest, error) {
+	var req replayRequest
+	active, err := extensionRequested(cred, ReplayExtensionURI)
+	if err != nil {
+		return req, err
+	}
+	req.active = active
 	cursor, hasCursor, err := replayHeader(cred, ReplayCursorHeader)
 	if err != nil {
 		return req, err
@@ -152,6 +162,9 @@ func parseReplayRequest(cred Credentials) (replayRequest, error) {
 }
 
 func rejectReplay(cred Credentials) error {
+	if err := rejectResultContent(cred); err != nil {
+		return err
+	}
 	req, err := parseReplayRequest(cred)
 	if err != nil {
 		return err
@@ -254,6 +267,10 @@ func replayError(err error) *Error {
 
 func writeReplayHeaders(w http.ResponseWriter, result any) {
 	task, ok := result.(*Task)
+	if ok && ResultContentActive(task) {
+		w.Header().Set("A2A-Extensions", ResultContentExtensionURI)
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if ok && ReplayActive(task) {
 		w.Header().Set("A2A-Extensions", ReplayExtensionURI)
 		w.Header().Set("Cache-Control", "no-store")

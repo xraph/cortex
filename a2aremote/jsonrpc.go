@@ -86,6 +86,19 @@ func (s *Service) JSONRPCHandler() http.Handler {
 		// gets no response, which JSON-RPC is explicit about.
 		notification := len(req.ID) == 0
 
+		if req.Method == MethodGetTask {
+			writer, request, release, prepareErr := s.prepareResultHTTP(w, r)
+			if prepareErr != nil {
+				if notification {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: asProtocolError(prepareErr)})
+				return
+			}
+			defer release()
+			w, r = writer, request
+		}
 		resp := s.dispatch(r, req)
 		if notification {
 			w.WriteHeader(http.StatusNoContent)
@@ -248,6 +261,7 @@ func (s *Service) writeCard(w http.ResponseWriter, r *http.Request, name string)
 	opts := s.opts.Card
 	opts.Streaming = s.opts.Streaming
 	opts.PublicEventReplay = s.opts.PublicEventReplay
+	opts.ResultContent = s.opts.ResultContent
 	card := BuildCard(a, s.skillsOf(ctx, a), opts)
 
 	w.Header().Set("Content-Type", "application/json")

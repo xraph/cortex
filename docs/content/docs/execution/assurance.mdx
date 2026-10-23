@@ -202,12 +202,57 @@ private responses.
 | `result_limit` | 413 | Publication size limit exceeded |
 | `result_unavailable`, `result_interrupted`, `result_busy` | 503 | Unavailable service, interrupted read or exhausted HTTP capacity |
 
-Remote content adapters remain open, and metadata SSE continues to carry no
-answer text. A returned observation is not a permission lease: reauthorize each
+Metadata SSE continues to carry no answer text. A returned observation is not a permission lease: reauthorize each
 subsequent read and bound delivery in your transport. Existing administrative
 store and run APIs still require host access controls; configuring this reader
 does not replace them. Installed browser, proxy and dashboard-host behavior still
 needs qualification.
+
+### Read content through A2A
+
+Enable `a2aremote.Options.ResultContent` on a service backed by
+`a2aremote.EngineGateway(eng)`. Construction refuses an unavailable guarded
+reader. The agent card advertises this Cortex extension only when the service
+has enabled it:
+
+```http
+A2A-Extensions: https://cortex.xraph.dev/a2a/extensions/result-content/v1
+Cortex-Result-ID: vresult_...
+```
+
+Use `GetTask` with the run ID or its delivery ID. This works through REST,
+JSON-RPC and gRPC. The service checks the routed agent, calls the engine's guarded
+reader and reauthenticates the peer before returning. Your content authorizer
+can inspect `a2aremote.PeerFromContext` for the resolved node and scope.
+
+The task's `cortex.result` metadata contains `ResultContentResponse`, including
+screened `content`, decimal-string `run_revision` and `content_changed`. Task
+artifacts, history and status messages carry no stored answer or diagnostics.
+The response acknowledges the extension in `A2A-Extensions`. This is a Cortex
+extension using the [A2A 1.0 activation mechanism](https://github.com/a2aproject/A2A/blob/v1.0.0/docs/topics/extensions.md#extension-activation),
+not an official A2A extension.
+
+Supply exactly one result header. A content request cannot also activate
+metadata replay, start work, cancel a task or subscribe to a stream. Invalid
+requests and unavailable readers fail without falling back to the legacy raw
+projection. Failures use the shared `result_*` codes in protocol error data;
+REST follows A2A status mappings, which differ from the Cortex HTTP table above.
+
+The service admits 64 guarded reads and bounds each to five seconds. HTTP also
+holds one of 64 delivery slots through the response, requires writer deadlines
+before reading content, sets `Cache-Control: no-store`, and limits writes to ten
+seconds within a fifteen-second request bound. Earlier caller deadlines win.
+gRPC clients must send a deadline no more than fifteen seconds away; the server
+acknowledges private-cache metadata and uses that deadline to bound delivery.
+Host callbacks must honor cancellation, and your gRPC server still needs its
+own connection and stream limits.
+
+Requests that do not activate this extension retain their existing behavior.
+Keep legacy task/list/send/stream projections and administrative APIs behind
+separate host access controls. Enabling the reader does not make those paths
+subject to current content authorization. Installed proxies, clients and host
+policy fences still need qualification.
+
 
 
 ## Durable verification work

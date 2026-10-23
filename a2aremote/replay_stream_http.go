@@ -13,6 +13,10 @@ import (
 // Legacy subscriptions keep their existing framing and error behavior.
 func (s *Service) serveSubscription(w http.ResponseWriter, r *http.Request, tenant, taskID string, wrap func(StreamEvent) any, reject func(error)) {
 	cred := credentialsOf(r)
+	if err := rejectResultContent(cred); err != nil {
+		reject(err)
+		return
+	}
 	replay, err := parseReplayRequest(cred)
 	if err != nil {
 		reject(err)
