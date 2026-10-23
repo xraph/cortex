@@ -126,7 +126,7 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 	}
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
-	cursor, captureCursor := "", ""
+	cursor, captureCursor, orphanCursor := "", "", ""
 	for {
 		select {
 		case <-c.lifetime.Done():
@@ -139,6 +139,16 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 			cursor = page.Next
 			if page.Done {
 				cursor = ""
+			}
+			if c.scanner.orphans != nil {
+				orphanPage, orphanErr := c.scanner.orphans.Sweep(c.lifetime, orphanCursor)
+				if orphanErr != nil {
+					return orphanErr
+				}
+				orphanCursor = orphanPage.Next
+				if orphanPage.Done {
+					orphanCursor = ""
+				}
 			}
 			if c.scanner.captures != nil {
 				capturePage, captureErr := c.scanner.captures.Sweep(c.lifetime, captureCursor)

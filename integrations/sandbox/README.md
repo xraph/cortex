@@ -1118,9 +1118,34 @@ remain independent of the expired execution grant.
 Pass the resulting daemon to the bounded TLS serving pattern above. The assembler
 accepts trusted host providers; it does not provision certificates, credentials,
 source adapters or a live qualification-evidence service. A standalone installed
-broker command, orphan discovery and live systemd/runsc qualification remain open.
+broker command and live systemd/runsc qualification remain open.
 
 Root Linux fixtures cover lifecycle, missing services, identity mismatches,
 capture configuration, changed grants, changed qualification and mismatched jobs.
 CI runs these fixtures with the race detector alongside private worker transport
 checks. These are controlled service-manager tests, not live runtime qualification.
+
+### Orphan discovery
+
+Reserve the entire `cortex-sandbox-worker@*.service` namespace for one worker
+journal. Installed assembly requires `DiscoveryLimit` (1 through 10000) and a
+manager that can enumerate that namespace independently of journal records.
+Do not share it across brokers with separate journals.
+
+Discovery queries systemd's `ListUnitsByPatterns` with all states, including
+inactive services and queued jobs. It rejects aliases, malformed names,
+duplicates and oversized snapshots. The systemd method has no pagination;
+`DiscoveryLimit` bounds accepted rows after D-Bus decoding, not transport memory.
+You can inspect the method in the [systemd D-Bus interface documentation](https://www.freedesktop.org/software/systemd/man/257/org.freedesktop.systemd1.html).
+
+Services missing from the journal or already terminal go through persistent
+fencing and whole-service drain checks. A journal read failure also triggers
+cleanup, but the failure remains unresolved even if cleanup succeeds. Recovery
+does not manufacture a receipt or change a recorded result. Known nonterminal
+jobs stay with normal execution recovery.
+
+Startup recovery gates admission. Periodic discovery uses its own page cursor;
+an error closes admission and triggers shutdown recovery. Each pass revisits
+services inserted before the previous cursor. This discovery runs inside the
+daemon, so you still need installed restart supervision and external resource
+limits when the daemon itself is unavailable.

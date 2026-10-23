@@ -41,10 +41,11 @@ type HostConfig struct {
 	// remains recoverable. Its Store is filled by assembly or must match Store.
 	Captures CaptureRecoveryConfig
 	// CapturePolicy must be present exactly when installed retention is nonzero.
-	CapturePolicy CapturePolicy
-	Control       ControlLimits
-	Interval      time.Duration
-	PageSize      int
+	CapturePolicy  CapturePolicy
+	Control        ControlLimits
+	Interval       time.Duration
+	PageSize       int
+	DiscoveryLimit int
 }
 
 // AssembleDaemon binds one verified installation to launch, recovery, content
@@ -90,7 +91,11 @@ func AssembleDaemon(ctx context.Context, cfg HostConfig) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	scanner, err := NewRecoveryScanner(RecoveryConfig{Store: cfg.Store, Reaper: cfg.Reaper, Captures: captures, PageSize: cfg.PageSize, Now: cfg.Broker.Now, Revalidate: installedRevalidation(cfg.Store, cfg.Revalidate, attest)})
+	orphans, err := NewOrphanScanner(OrphanConfig{Store: cfg.Store, Reaper: cfg.Reaper, MaxUnits: cfg.DiscoveryLimit, PageSize: cfg.PageSize})
+	if err != nil {
+		return nil, err
+	}
+	scanner, err := NewRecoveryScanner(RecoveryConfig{Orphans: orphans, Store: cfg.Store, Reaper: cfg.Reaper, Captures: captures, PageSize: cfg.PageSize, Now: cfg.Broker.Now, Revalidate: installedRevalidation(cfg.Store, cfg.Revalidate, attest)})
 	if err != nil {
 		return nil, err
 	}

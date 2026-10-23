@@ -26,6 +26,8 @@ type hostManager struct{ fakeManager }
 
 func (m *hostManager) Start(context.Context, string) error { return m.step("start") }
 
+func (*hostManager) Workers(ctx context.Context, _ int) ([]id.ID, error) { return nil, ctx.Err() }
+
 func hostFixture(t *testing.T) (HostConfig, WorkerConfig, *hostManager) {
 	t.Helper()
 	if os.Geteuid() != 0 {
@@ -53,7 +55,7 @@ func hostFixture(t *testing.T) (HostConfig, WorkerConfig, *hostManager) {
 		AuthorizeLaunch: func(context.Context, sandbox.Job) error { return nil }, Revalidate: func(context.Context, sandbox.Job) error { return nil },
 		Inputs: repository, InputPolicy: policy, Images: &workerImageSource{}, ImagePolicy: func(context.Context, sandbox.Job, string) error { return nil },
 		Captures: CaptureRecoveryConfig{Repository: repository, Audit: repository, Authorize: func(context.Context, sandbox.Job, evidence.Ref) error { return nil }, Actor: "service:cleanup", PageSize: 2},
-		Control:  ControlLimits{Connections: 3, Reports: 1, Timeout: time.Second}, Interval: time.Second, PageSize: 2,
+		Control:  ControlLimits{Connections: 3, Reports: 1, Timeout: time.Second}, Interval: time.Second, PageSize: 2, DiscoveryLimit: 100,
 	}
 	return cfg, settings, manager
 }
@@ -109,7 +111,7 @@ func TestHostAssemblyBindsInstalledServicesWithoutStarting(t *testing.T) {
 }
 
 func TestHostAssemblyRequiresCompleteAndConsistentServices(t *testing.T) {
-	for _, mode := range []string{"store", "foreign-store", "reaper", "broker", "key", "runtime", "qualifier", "launch", "revalidate", "inputs", "input-policy", "images", "image-policy", "capture-store", "capture-repository", "capture-audit", "capture-cleanup", "capture-policy", "capture-retention", "reports", "page", "interval"} {
+	for _, mode := range []string{"store", "foreign-store", "reaper", "broker", "key", "runtime", "qualifier", "launch", "revalidate", "inputs", "input-policy", "images", "image-policy", "capture-store", "capture-repository", "capture-audit", "capture-cleanup", "capture-policy", "capture-retention", "reports", "page", "interval", "discovery"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, settings, manager := hostFixture(t)
 			switch mode {
@@ -158,6 +160,8 @@ func TestHostAssemblyRequiresCompleteAndConsistentServices(t *testing.T) {
 				cfg.PageSize = 0
 			case "interval":
 				cfg.Interval = 0
+			case "discovery":
+				cfg.DiscoveryLimit = 0
 			}
 			if daemon, err := AssembleDaemon(t.Context(), cfg); err == nil || daemon != nil {
 				t.Fatal("incomplete host accepted")

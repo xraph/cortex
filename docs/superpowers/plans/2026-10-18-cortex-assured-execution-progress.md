@@ -1265,3 +1265,35 @@ while that approval was pending. No histories were rewritten or merged.
 Concrete source adapters, certificate/credential provisioning, the live-evidence
 verifier, standalone broker installation, orphan recovery and live systemd/runsc
 qualification remain open. S2.4 and the four-stage plan are incomplete.
+
+### S2.4 independent worker discovery
+
+Installed daemon assembly now requires bounded service discovery in addition to
+journal recovery. The systemd adapter queries only the reserved worker namespace,
+includes inactive services and queued jobs, and rejects malformed identities,
+aliases, duplicate IDs and oversized snapshots. The snapshot limit applies after
+D-Bus decoding because the systemd method does not paginate.
+
+Missing and terminal records trigger persistent fencing and whole-service drain
+checks. Journal read errors also trigger cleanup and remain unresolved afterward.
+Recovery creates no claims or results. Known nonterminal jobs stay with execution
+recovery. The host must reserve the complete worker namespace for one journal.
+
+Startup recovery gates admission. Periodic discovery has a separate page cursor,
+and failures close admission before shutdown recovery. A subsequent pass revisits
+insertions before the cursor. This is independent discovery inside the daemon;
+installed restart supervision and external enforcement remain required.
+
+TDD began with missing-API failures. Tests cover real-shaped D-Bus replies,
+canonical identities, ambiguity, bounded pages, insertions between pages, journal
+failure, cleanup retries, startup denial, periodic discovery failure and ownership
+consistency. Linux fixtures passed ten repetitions without skips. Final make l
+passed across all ten modules after scoped make f; Linux tagged lint and the
+Linux amd64 build passed. Final race suites passed for service (47.367s),
+containment (1.134s) and broker (4.204s).
+
+The user approved integrating remote main, rerunning checks and pushing. The
+merge and combined-tree validation follow this packet. Concrete source adapters,
+credential provisioning, live evidence verification, standalone installation,
+retained-file cleanup and live systemd/runsc qualification remain open. S2.4 and
+the four-stage plan are incomplete.
