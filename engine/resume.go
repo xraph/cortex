@@ -240,6 +240,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, fmt.Errorf("load run to resume: %w", err)
 	}
 
+	if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
+		return nil, nil, cortex.ErrVerificationUnavailable
+	}
 	susp, err := e.store.ClaimSuspension(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)

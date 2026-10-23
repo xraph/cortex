@@ -18,11 +18,11 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.5 | implemented | this chat | Strict delegation, bounded repair, cancellation, failure receipts, race, all-module lint and root build pass |
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
-| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; qualified host adapters, scheduling, runtime gates and public delivery remain open |
+| S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental tool-free runtime gate implemented; qualified host adapters, tools/resume, scheduling and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S2.5 through S2.7 and S3.2 through S3.6 | queued | shared owners | Runtime verification gates remain disabled |
+| S2.5 through S2.7 and S3.2 through S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
 
@@ -2314,3 +2314,51 @@ in 44 seconds and MongoDB in 53 seconds. Final focused private-capture races
 passed again on all three backends after lint fixes, including real PostgreSQL
 and MongoDB, with no skipped cases. Docs type generation, type checking, lint
 and production build passed.
+
+
+## Required verification runtime, initial tool-free path
+
+Implemented `WithRequiredVerification` across normal/prepared synchronous and
+streaming execution. Schema 3 freezes contract identity, policy revision and
+evaluator allowance. Schema 2 ordinary snapshots remain compatible. Generation
+receives the total token budget minus the frozen evaluator reservation; host
+capture intent is registered before any model call.
+
+Private capture and the guarded worker now run in shared finalization. Candidate
+text is withheld from token events, generation steps, conversation history and
+completion hooks until commit. Required history remains unpublished even after
+commit. Failed/inconclusive checks return `ErrRunUnverified`, uncertain failures
+return static errors, and A2A cannot expose an unverified required output artifact.
+Capture revocation fails the run while CAS preserves an uncertain durable capture.
+
+Tools, resume and checked-segment publication fail closed in this first path.
+They remain implementation work, alongside durable result hooks/history delivery,
+scheduling, lease renewal, repair and recovery before candidate capture. The
+option is experimental and off by default. G1 and production contextual-verification
+qualification remain open; capability advertising stays false.
+
+Regression tests cover registration ordering, token reservation, private surfaces,
+sync/stream rejection, policy downgrade, missing services/budgets, unsupported
+paths, capture revocation, completion-hook ordering and SQLite restart after a
+lost evaluator reply without repeated generation or evaluation. The A2A regression
+failed before its projection fix. Constructor/API tests first failed for the absent
+runtime option, and capture-revocation testing exposed the stranded running state.
+
+
+Validation for this packet:
+
+- Full engine/run/verification race suites passed; engine took 185.377s. After
+  the final concurrent-capture correction, all required-verification race tests
+  passed again in 42.615s, and terminal-outcome regressions were rerun.
+- SQLite, PostgreSQL and Mongo private-capture, rollback and prepared-metadata
+  race tests passed in 42.798s, 13.619s and 16.042s. Both container backends ran;
+  the log contains no skips. Required policy markers survive backend round trips.
+- A2A and gRPC binding race suites passed in 6.136s and 1.305s. Docs type checking,
+  lint and production build passed. Formatting, all ten module lint checks, root
+  build and diff checks passed on the final code.
+- A concurrent owner could previously capture a candidate while generation was
+  still running and make finalization return success with pending verification.
+  The new regression failed first; required completion now rejects that state.
+
+These checks qualify the local implementation and fixtures only. Live provider,
+scanner, sandbox and installed-host qualification remain open.

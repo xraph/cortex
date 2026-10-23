@@ -66,7 +66,7 @@ func (p *PreparedAgent) UnmarshalJSON(data []byte) error {
 	if err := decodePreparedJSON(wire.Snapshot, &snap); err != nil {
 		return fmt.Errorf("cortex: decode prepared payload: %w", err)
 	}
-	if snap.SchemaVersion != preparedSchemaVersion {
+	if !validRequiredSnapshot(&snap) {
 		return fmt.Errorf("cortex: prepared schema %d: %w", snap.SchemaVersion, cortex.ErrInvalidPrepared)
 	}
 	// Canonicalize JSON whitespace without changing semantic numeric values.
@@ -175,6 +175,9 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 			return nil, fmt.Errorf("cortex: required tool %q unavailable: %w", name, cortex.ErrInvalidPrepared)
 		}
 	}
+	if verificationErr := e.prepareRequiredVerification(ctx, &cfg, defs); verificationErr != nil {
+		return nil, verificationErr
+	}
 	provenance := run.ExecutionProvenance{Diagnostics: diagnostics, SchemaVersion: 1, Purpose: run.PurposeNormal, ModelRevision: e.modelRevisions[cfg.Model]}
 	if provenance.ModelRevision == "" {
 		provenance.Diagnostics = append(provenance.Diagnostics, "model revision is not pinned")
@@ -190,6 +193,9 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 		provenance.Diagnostics = append(provenance.Diagnostics, "optional knowledge provider unavailable")
 	}
 	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
+	if cfg.Verification != nil {
+		snap.SchemaVersion = requiredPreparedSchemaVersion
+	}
 	if !isAtomicPreparation(ctx) {
 		if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {
 			return nil, publicationErr

@@ -70,8 +70,8 @@ dispatch again. `engine.WithVerificationWorker` and `Engine.VerifyRun` now join
 enqueue, claim, ordered verifier groups and guarded commit for an explicitly
 captured candidate. SQLite restart tests cover lost evaluator and commit replies
 without repeating generation or tools. Qualified provider adapters, automatic
-worker scheduling, capture recovery and allocation from the remaining run budget
-still need integration. This explicit API does not satisfy the automatic
+worker scheduling and recovery before capture still need integration. The
+experimental tool-free gate below reserves evaluator tokens at preparation. This explicit API does not satisfy the automatic
 sync/stream/prepared/resume publication gate or hook checkboxes below.
 
 Built-in `verification.CaptureStore` now copies a saved candidate and enqueues
@@ -80,8 +80,8 @@ its requested digest and revision, preserves tombstones and rolls back evidence
 with the job/run update. This closes the separate artifact/enqueue write window.
 Immutable pre-generation capture intent is now stored with exact run/job/result
 identity indexes. `CaptureFromIntent` recovers the saved contract, context and
-budget policy and derives candidate bytes from the completed run. Runtime
-registration ordering and automatic finalizer recovery remain open.
+budget policy and derives candidate bytes from the completed run. Required tool-free execution now supplies registration ordering. Recovery before
+candidate capture remains open.
 Admission now rechecks a shortened saved run deadline inside enqueue. The explicit
 worker also reads a supported store's intent before enqueue or evaluation and
 rejects a mismatched reserved result ID without consuming evaluator budget.
@@ -91,8 +91,19 @@ still running. Evidence, private capture metadata, execution completion and
 verification enqueue share one transaction. Run output remains empty until the
 guarded result commit copies the verified candidate bytes in the same transaction
 as the receipt and passed status. This reuses existing jobs and leases. Automatic
-registration and withholding across engine streams, history, steps and hooks
-remain open, so the runtime gate checkboxes below stay unchecked.
+registration and withholding are now connected for the experimental tool-free
+runtime path described below. The complete runtime gate checkboxes stay unchecked.
+
+`WithRequiredVerification` now freezes a schema-3 policy and evaluator token
+reservation, registers host-built intent before generation, captures privately
+and invokes the guarded worker from shared finalization. Sync/prepared and
+streaming paths withhold candidate text from steps, history and completion hooks.
+Failed or inconclusive checks cannot emit done or successful A2A artifacts.
+Unsupported tools, resume and checked-segment policies fail closed. Lost evaluator
+reply recovery uses the saved job without another generation call. This option is
+off by default; G1 qualification is still required before production rollout.
+Tool/resume support, new durable result hooks, history publication, scheduler,
+lease renewal, bounded repair and pre-capture recovery remain open.
 
 - [ ] Write `TestNoFinalAnswerBypassesRequiredVerification`, `TestFailedTestPreventsSuccess`, `TestEvidenceChangedBeforeCommitRejected`, `TestRevokedAuthorityBeforeCommitRejected`, `TestReportForOtherRunRejected`, `TestVerificationTimeoutIsInconclusive`, and `TestVerificationResumeDoesNotRepeatToolEffects`.
 - [ ] Run `GOWORK=off go test ./engine -run 'Test(NoFinal|FailedTest|EvidenceChanged|RevokedAuthority|ReportFor|Verification)' -count=1`; establish failures.

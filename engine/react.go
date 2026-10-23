@@ -214,6 +214,14 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		}
 		st.chargeTokens(resp.Usage.TotalTokens, cfg, r)
 		stepSpan.toolCalls = len(resp.ToolCalls)
+		if r.Provenance.VerificationRequired && len(resp.ToolCalls) > 0 {
+			st.stepIndex++
+			st.usage.Steps = st.stepIndex
+			r.Usage = st.usage
+			stopReason = run.StopInvalidResponse
+			stepSpan.finish(stepStopped, nil)
+			break
+		}
 		responseReason := responseStopReason(resp.FinishReason, resp.Content, len(resp.ToolCalls))
 		checked, checkErr := e.checkResponse(ctx, ag, r, cfg.Publication, resp.Content, resp.ToolCalls)
 		if checkErr == nil {
@@ -242,8 +250,8 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			RunID:       r.ID,
 			Index:       st.stepIndex,
 			Type:        "generation",
-			Input:       lastContent(st.messages),
-			Output:      resp.Content,
+			Input:       publicGenerationText(r, lastContent(st.messages)),
+			Output:      publicGenerationText(r, resp.Content),
 			TokensUsed:  resp.Usage.TotalTokens,
 			StartedAt:   &stepStart,
 			CompletedAt: &stepEnd,
@@ -588,6 +596,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 		_ = stream.Close()
 		stepSpan.toolCalls = len(toolCalls)
+		if r.Provenance.VerificationRequired && len(toolCalls) > 0 {
+			st.stepIndex++
+			st.usage.Steps = st.stepIndex
+			r.Usage = st.usage
+			stopReason = run.StopInvalidResponse
+			stepSpan.finish(stepStopped, nil)
+			break
+		}
 		responseReason := responseStopReason(finishReason, contentBuf, len(toolCalls))
 		var checked approvedText
 		var checkErr error
@@ -614,7 +630,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			return
 		}
 		contentBuf = string(checked)
-		if segments == nil && !publishToken(ctx, events, checked, 0) {
+		if !r.Provenance.VerificationRequired && segments == nil && !publishToken(ctx, events, checked, 0) {
 			e.cancelPublication(ctx, r, st.stepIndex+1, st.tokensUsed)
 			stepSpan.finish(stepStopped, nil)
 			return
@@ -628,8 +644,8 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			RunID:       r.ID,
 			Index:       st.stepIndex,
 			Type:        "generation",
-			Input:       lastContent(st.messages),
-			Output:      contentBuf,
+			Input:       publicGenerationText(r, lastContent(st.messages)),
+			Output:      publicGenerationText(r, contentBuf),
 			StartedAt:   &stepStart,
 			CompletedAt: &stepEnd,
 		}
@@ -794,6 +810,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 // between tenants. A future writer that forgets to carry the session
 // should lose a save and say so, not quietly write into the shared bucket.
 func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *reactState) {
+	if st.preparedSnapshot != nil && st.preparedSnapshot.Config.Verification != nil {
+		return
+	}
 	if st.sessionID.IsNil() {
 		e.logWarn("skipping conversation save: the run carries no session", nil,
 			log.String("agent_id", agentID.String()))

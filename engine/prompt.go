@@ -23,6 +23,7 @@ import (
 // resolvedConfig holds the effective configuration after merging
 // agent config, engine defaults, and per-run overrides.
 type resolvedConfig struct {
+	Verification  *requiredPolicy `json:",omitempty"`
 	Publication   safety.Policy
 	Model         string
 	Temperature   *float64

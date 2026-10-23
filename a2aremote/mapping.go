@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 // fipaMeta is the ACL parameter set as it travels in Message.metadata,
@@ -179,6 +180,12 @@ func fipaFrom(metadata map[string]any) fipaMeta {
 // have made possible.
 func TaskFromRun(r *run.Run, contextID string) Task {
 	state := taskState(r.State)
+	if r.State == run.StateCompleted && r.Provenance.VerificationRequired && (r.VerificationStatus != verification.StatusPassed || r.ResultRef == "") {
+		state = TaskStateFailed
+		if r.VerificationStatus == verification.StatusPending {
+			state = TaskStateWorking
+		}
+	}
 	task := Task{
 		ID:        r.ID.String(),
 		ContextID: contextID,

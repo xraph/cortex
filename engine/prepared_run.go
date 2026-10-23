@@ -104,6 +104,12 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	if scope.Canonical() != snap.Scope.Canonical() {
 		return nil, nil, fmt.Errorf("cortex: prepared scope mismatch: %w", cortex.ErrInvalidPrepared)
 	}
+	if verificationErr := e.requireVerification(snap); verificationErr != nil {
+		return nil, nil, verificationErr
+	}
+	if snap.Config.Verification != nil && opts.AcceptanceRef != "" && opts.AcceptanceRef != snap.Config.Verification.ContractID.String() {
+		return nil, nil, cortex.ErrVerificationUnavailable
+	}
 	sourceStatus, policyErr := e.validatePreparedPublication(ctx, snap)
 	if policyErr != nil {
 		return nil, nil, policyErr
@@ -151,8 +157,23 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	}
 	input = string(safeInput)
 	r.Input = input
+	intent, intentErr := e.buildRequiredIntent(ctx, p, cfg, r)
+	if intentErr != nil {
+		return nil, nil, intentErr
+	}
+	ctx = withExecutionProvenance(ctx, r.Provenance)
 	if err = e.store.CreateRun(ctx, r); err != nil {
 		return nil, nil, fmt.Errorf("cortex: create prepared run: %w", err)
+	}
+	if cfg.Verification != nil {
+		storage, captureOK := e.store.(requiredVerificationStore)
+		if !captureOK || r.Revision != 1 {
+			return nil, nil, cortex.ErrVerificationUnavailable
+		}
+		if registerErr := storage.CreateCaptureIntent(ctx, intent); registerErr != nil {
+			e.failRun(ctx, r, r.AgentID, cortex.ErrVerificationUnavailable, now)
+			return nil, nil, cortex.ErrVerificationUnavailable
+		}
 	}
 	runTraceFrom(ctx).bind(r, cfg.Model)
 	e.extensions.EmitRunStarted(ctx, r.AgentID, r.ID, input)

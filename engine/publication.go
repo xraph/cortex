@@ -309,6 +309,9 @@ func (e *Engine) checkedToolError(ctx context.Context, subject cortex.Subject, e
 }
 
 func (e *Engine) checkedProviderError(ctx context.Context, ag *agent.Config, r *run.Run, p safety.Policy, err error) error {
+	if r.Provenance.VerificationRequired {
+		return errors.New("cortex: provider request failed")
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

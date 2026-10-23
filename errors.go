@@ -89,6 +89,7 @@ var (
 	ErrVerificationJobExpired    = errors.New("cortex: verification job deadline or attempts exhausted")
 	ErrVerificationJobBudget     = errors.New("cortex: verification job budget exhausted")
 	ErrVerificationCallUncertain = errors.New("cortex: verification call already dispatched; reconcile its outcome")
+	ErrRunUnverified             = errors.New("cortex: run did not pass required verification")
 	ErrVerificationUnavailable   = errors.New("cortex: verification worker unavailable")
 	ErrResultCommitUnavailable   = errors.New("cortex: atomic verified result commit unavailable")
 	ErrSandboxInputsIncomplete   = errors.New("cortex: sandbox input staging is incomplete")

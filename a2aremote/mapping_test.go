@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 func TestTaskStateProjection(t *testing.T) {
@@ -258,5 +259,22 @@ func TestTaskAssuranceMetadata(t *testing.T) {
 	}
 	if task.Status.State != TaskStateFailed || summary.State != run.StateIncomplete || summary.StopReason != run.StopTokenLimit || summary.VerificationStatus != "unchecked" {
 		t.Fatalf("incorrect assurance: %+v", task)
+	}
+}
+
+func TestRequiredVerificationTaskProjection(t *testing.T) {
+	for _, status := range []verification.Status{verification.StatusUnchecked, verification.StatusPending, verification.StatusFailed, verification.StatusInconclusive, verification.StatusStale, verification.Status("future")} {
+		t.Run(string(status), func(t *testing.T) {
+			r := &run.Run{ID: id.NewAgentRunID(), State: run.StateCompleted, Output: "candidate", VerificationStatus: status, Provenance: run.ExecutionProvenance{VerificationRequired: true}}
+			task := TaskFromRun(r, "")
+			if task.Status.State == TaskStateCompleted || len(task.Artifacts) != 0 {
+				t.Fatalf("unverified required run published: %+v", task)
+			}
+		})
+	}
+	r := &run.Run{ID: id.NewAgentRunID(), State: run.StateCompleted, Output: "answer", VerificationStatus: verification.StatusPassed, ResultRef: "result", Provenance: run.ExecutionProvenance{VerificationRequired: true}}
+	task := TaskFromRun(r, "")
+	if task.Status.State != TaskStateCompleted || len(task.Artifacts) != 1 {
+		t.Fatalf("committed answer missing: %+v", task)
 	}
 }

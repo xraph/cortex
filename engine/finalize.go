@@ -16,7 +16,7 @@ import (
 // requires a store claim; this helper does not promise exactly-once delivery.
 func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcome) error {
 	if isTerminalRunState(r.State) {
-		return nil
+		return requiredCompletionError(r)
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -25,8 +25,29 @@ func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcom
 		e.logWarn("read before terminal update; using owned run snapshot", err, log.String("run_id", r.ID.String()))
 	}
 	if err == nil && isTerminalRunState(saved.State) {
+		required := r.Provenance.VerificationRequired
 		*r = *saved
-		return nil
+		if required {
+			r.Provenance.VerificationRequired = true
+		}
+		return requiredCompletionError(r)
+	}
+	if r.Provenance.VerificationRequired {
+		if outcome.StopReason == run.StopFinalAnswer && ctx.Err() == nil {
+			verifyErr := e.finalizeRequiredCandidate(ctx, r, outcome)
+			if verifyErr != nil && r.State == run.StateRunning {
+				// A capture reply may be lost after its transaction commits. CAS prevents
+				// a failure write from replacing that pending or committed result.
+				e.failRun(ctx, r, r.AgentID, verifyErr, time.Time{})
+				if current, readErr := e.store.GetRun(writeCtx, r.ID); readErr == nil {
+					*r = *current
+				}
+				r.Output = ""
+			}
+			return verifyErr
+		}
+		outcome.Output = ""
+		outcome.FinishReason = ""
 	}
 	next := *r
 	next.State = run.StateIncomplete
@@ -97,7 +118,7 @@ func responseStopReason(finish, content string, toolCount int) run.StopReason {
 // outcomeEvent is emitted only after the durable terminal update succeeds.
 func outcomeEvent(r *run.Run, duration time.Duration) StreamEvent {
 	kind := EventIncomplete
-	if r.State == run.StateCompleted {
+	if r.State == run.StateCompleted && (!r.Provenance.VerificationRequired || (r.VerificationStatus == verification.StatusPassed && r.ResultRef != "")) {
 		kind = EventDone
 	}
 	return StreamEvent{Type: kind, Data: map[string]any{

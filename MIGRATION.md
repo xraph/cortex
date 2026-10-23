@@ -304,9 +304,9 @@ before you use it; older writers do not enforce capture intents.
 
 Storage cannot prove that no external operation happened before registration.
 The host owns that ordering, current authorization and budget reservation.
-Automatic preparation/finalization integration and required publication gating
-remain open. An idempotent registration response is not permission to run the
-agent again.
+The experimental runtime option below supplies that ordering for tool-free runs.
+Other execution paths still need integration. An idempotent registration response
+is not permission to run the agent again.
 
 Verification enqueue now rejects a job deadline beyond the saved run deadline,
 including deadlines shortened after capture-intent registration. The explicit
@@ -329,6 +329,28 @@ result commit publishes the candidate with its passed status and receipt.
 The existing assurance table stores the private capture metadata, so no schema
 migration is required. Upgrade verification workers and writers before using
 this path; older workers expect candidate bytes in the run row. The composite
-store interface is unchanged. Automatic engine gating remains unfinished:
-hosts using this capability must withhold candidate text in their own streams,
-steps, conversation history and hooks until publication is authorized.
+store interface is unchanged. Hosts calling this capability directly must withhold
+candidate text in streams, steps, conversation history and hooks until publication
+is authorized. The runtime option below supplies those checks for tool-free runs.
+
+
+## Experimental required verification for tool-free runs
+
+`WithRequiredVerification` is opt-in and requires the explicit worker ports,
+capture-capable storage and a real LLM. Required prepared snapshots use schema 3;
+ordinary snapshots retain schema 2. Upgrade all workers before using schema 3.
+Older workers reject that schema, and a new worker without the matching required
+policy rejects execution. The new provenance fields are additive JSON fields;
+no database migration is needed.
+
+Required runs reserve evaluator tokens before generation, register an immutable
+intent before the model call, withhold candidate text from steps, streams and
+history, and publish only after guarded result commit. They do not append
+conversation history after success. Completion hooks run after verified commit,
+but explicit recovery does not replay them. Execution completion and verification
+status remain separate; A2A no longer projects an unverified required result as a
+completed task with an output artifact.
+
+Tools, resume and checked-segment streaming fail closed in this initial path.
+G1 production qualification, durable delivery and the remaining S2.2 paths are
+still open. Runtime contextual-verification capability remains false.
