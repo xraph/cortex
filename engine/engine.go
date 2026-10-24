@@ -43,6 +43,7 @@ type Engine struct {
 	lifecycle             lifecycleGate
 	taskScheduling        *coordination.TaskService
 	claimRecovery         *coordination.ClaimRecoveryService
+	providerRecovery      *coordination.ProviderRecoveryService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard
@@ -249,7 +250,7 @@ func (e *Engine) Start(ctx context.Context) error {
 // The sweeper is joined, not merely signalled, and it is joined before
 // the shutdown hook fires: a subscriber told the engine has stopped
 // while a sweep is still failing runs has been told something untrue. Optional
-// task scheduling and recovery receive cancellation before either is drained.
+// task scheduling and recovery receive cancellation before any service is drained.
 // If a stop deadline expires, Stop returns an error without emitting shutdown;
 // call Stop again before disposing stores. Lifecycle calls are serialized through
 // shutdown notification, with cancellation-aware waits for another caller.

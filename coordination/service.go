@@ -36,8 +36,8 @@ type TaskPlanPage struct {
 
 // TaskPlanSource discovers plans under the host service identity. The source
 // authorizes discovery across scopes; ordinary store calls still require scope.
-// Execution ticks repeat current admission checks; recovery ticks only expire
-// retained claims. Recovery discovery must include plans with outstanding claims,
+// Execution ticks repeat current admission checks; recovery ticks expire claims
+// or reconcile retained provider proof. Recovery discovery must include plans with outstanding claims,
 // including cancelled or completed plans. Honor context
 // cancellation and avoid provider/tool execution in this port.
 type TaskPlanSource interface {

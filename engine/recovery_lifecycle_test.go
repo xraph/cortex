@@ -75,12 +75,20 @@ func TestEngineClaimRecoveryCancelsAllServicesBeforeDrain(t *testing.T) {
 			close(recoveryCancelled)
 			return coordination.TaskPlanPage{}, ctx.Err()
 		})}
+		providerEntered, providerCancelled := make(chan struct{}), make(chan struct{})
+		provider := lifecycleProviderConfig(lifecyclePlanSource(func(ctx context.Context, _ coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error) {
+			close(providerEntered)
+			<-ctx.Done()
+			close(providerCancelled)
+			return coordination.TaskPlanPage{}, ctx.Err()
+		}))
 		hook := new(recoveryShutdownHook)
-		e, err := engine.New(engine.WithTaskScheduling(scheduler), engine.WithClaimRecovery(recovery), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}), engine.WithExtension(hook), engine.WithSuspensionTTL(0))
+		e, err := engine.New(engine.WithTaskScheduling(scheduler), engine.WithClaimRecovery(recovery), engine.WithProviderRecovery(provider), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}), engine.WithExtension(hook), engine.WithSuspensionTTL(0))
 		require.NoError(t, err)
 		require.NoError(t, e.Start(context.Background()))
 		<-executionEntered
 		<-recoveryEntered
+		<-providerEntered
 		stop, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		require.ErrorIs(t, e.Stop(stop), context.DeadlineExceeded)
@@ -88,6 +96,11 @@ func TestEngineClaimRecoveryCancelsAllServicesBeforeDrain(t *testing.T) {
 		case <-recoveryCancelled:
 		default:
 			t.Fatal("recovery discovery survived another service's drain timeout")
+		}
+		select {
+		case <-providerCancelled:
+		default:
+			t.Fatal("provider discovery survived another service's drain timeout")
 		}
 		require.Zero(t, hook.calls.Load())
 		require.ErrorIs(t, e.Start(context.Background()), coordination.ErrSchedulerStopped)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/execution"
 )
 
 type lifecycleDiscovery func(context.Context, coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error)
@@ -30,7 +31,7 @@ func (*lifecycleShutdown) Name() string                       { return "lifecycl
 func (h *lifecycleShutdown) OnShutdown(context.Context) error { h.calls.Add(1); return nil }
 
 func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
-	for _, kind := range []string{"execution", "recovery"} {
+	for _, kind := range []string{"execution", "recovery", "provider"} {
 		t.Run(kind, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -54,9 +55,26 @@ func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
 					},
 				}
 				options := []engine.Option{engine.WithExtension(hook), engine.WithSuspensionTTL(0)}
-				if kind == "execution" {
+				switch kind {
+				case "execution":
 					options = append(options, engine.WithTaskScheduling(cfg), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}))
-				} else {
+				case "provider":
+					options = append(options, engine.WithProviderRecovery(coordination.ProviderRecoveryServiceConfig{
+						Discovery: cfg.Service.Discovery,
+						Recovery: execution.ProviderRecoveryConfig{
+							Store: struct{ lifecycleProviderStorage }{},
+							Adapter: struct {
+								execution.ProviderCallRecoveryAdapter
+							}{},
+							Fence: struct {
+								execution.ProviderCallRecoveryFence
+							}{},
+							Authorize:     func(context.Context, execution.RunCallRequest) error { return nil },
+							Authenticate:  func(context.Context, execution.RunCallRequest, execution.ProviderCallReceipt) error { return nil },
+							AuthorizeScan: func(context.Context, execution.RunCallSeal) error { return nil },
+						},
+					}))
+				case "recovery":
 					options = append(options, engine.WithClaimRecovery(coordination.ClaimRecoveryConfig{Store: struct{ coordination.ClaimExpiryStore }{}, Clock: lifecycleClock{}, Discovery: cfg.Service.Discovery}))
 				}
 				eng, err := engine.New(options...)
@@ -78,4 +96,11 @@ func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
 			})
 		})
 	}
+}
+
+// These ports are unreachable because the lifecycle fixture blocks discovery.
+type lifecycleProviderStorage interface {
+	execution.RunCallSealStore
+	execution.ProviderCallReceiptStore
+	ListTaskClaims(context.Context, coordination.ClaimListRequest) ([]coordination.Claim, error)
 }

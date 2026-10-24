@@ -5300,3 +5300,48 @@ full execution and assurance race suites passed. Root build, docs type checks,
 docs lint and the 132-page production build passed. Automatic discovery of
 recovering runs, guarded adoption, shared usage settlement and installed provider
 qualification remain open.
+
+
+### S3.2 lifecycle provider recovery discovery
+
+`coordination.NewProviderRecoveryService` now traverses authorized plan discovery,
+bounded claim pages and sealed call pages through the existing `TaskService`.
+`engine.WithProviderRecovery` joins the engine's shared startup/drain sequence and
+exposes local status. The Forge lifecycle tests include provider recovery. No new
+polling pool or shutdown implementation was added; claim and provider page waits
+also share one cancellation helper.
+
+The service scans recovering claims only. Unsealed runs and active claims remain
+untouched. Discovery must authorize plan/claim reads, including outstanding work
+in cancelled plans, and the scanner still requires current exact-run authorization
+and authenticated provider proof. This service does not close journals, adopt
+results, retry execution or settle usage.
+
+The first service and engine integration tests failed on missing APIs. A later
+fairness regression failed because a run-specific error stopped the pass before
+later claims. The pass now retains its first error, continues other claims and
+reports failure at the end. Invalid claim pages and cancellation still stop it.
+Tests cover scope and service identity, restart, nested call/claim pages, an
+arriving seal, bounded reads and timed-out shutdown. Killed-worker SQLite tests
+now expire ownership with an injected clock and recover proof through a running
+engine before repeating the process with reopened storage. Final checks follow.
+
+Final formatting and all-module lint passed with zero issues. The race detector
+caught an unsynchronized seal update in the arrival fixture; the fixture now
+guards that update with a mutex. Full coordination and execution race suites
+passed in 41.569 and 1.578 seconds. The lifecycle and six killed-worker cases
+passed in a 24.042-second engine run. Full extension and contract race suites
+passed in 2.147 and 42.037 seconds.
+
+Lint also required a tagged switch and context-first test helper. After those
+test-only changes, affected engine and Forge lifecycle race tests passed again,
+as did the root build. The final lint pass used an isolated temporary directory
+and cache after an earlier pass waited on another repository's lint lock. Only
+the waiting Cortex processes were stopped. Docs type checks, lint and the
+132-page production build passed. CI run `40060302961` passed for scanner commit
+`c308cc0`.
+
+Provider discovery and lifecycle wiring are implemented and fixture-tested.
+Installed host discovery and provider proof adapters still need qualification.
+Guarded claim adoption, effect recovery integration and shared usage settlement
+remain open.

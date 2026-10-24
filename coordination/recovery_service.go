@@ -101,15 +101,23 @@ func (s *claimRecoveryScheduler) Tick(ctx context.Context, planID id.ID) error {
 			return nil
 		}
 		request.AfterTaskID = page.NextTaskID
-		timer := time.NewTimer(s.interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		if waitErr := waitRecoveryPage(ctx, s.interval); waitErr != nil {
+			return waitErr
 		}
 	}
 }
 
 // The enclosing service cancels the shared lifetime and joins every Tick.
 func (*claimRecoveryScheduler) Shutdown(context.Context) error { return nil }
+
+// waitRecoveryPage throttles page traversal while retaining cancellation.
+func waitRecoveryPage(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}

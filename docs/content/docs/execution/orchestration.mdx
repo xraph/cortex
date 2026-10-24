@@ -418,10 +418,42 @@ query. A late local return that contradicts provider proof fails the scan while
 preserving both records. Recheck those records before adoption or settlement;
 the page is an observation, not an atomic recovery decision.
 
+### Run provider recovery with the engine
+
+Pass `engine.WithProviderRecovery(coordination.ProviderRecoveryServiceConfig)`
+before `Start`. Set `Recovery` to your provider recovery configuration and supply
+an authorized `TaskPlanSource` as `Discovery`. The recovery store must also expose
+`ListTaskClaims` and `RunCallSealStore`. Built-in stores provide these capabilities.
+You can use `coordination.NewProviderRecoveryService` directly when you own the
+lifecycle outside the engine.
+
+Discovery must authorize plan and claim reads under your service identity and
+include plans with outstanding claims after cancellation or completion. Each
+pass validates a full claim page, then scans sealed runs in `ClaimRecovering`.
+Active claims are left alone. Unsealed runs are revisited on a later pass; use the
+guarded sealer separately when your authority permits closing admission.
+
+Defaults are four concurrent plan passes, one per exact scope, 64 claims or calls
+per page and a one-second interval between pages. `PageTimeout` defaults to five
+seconds for claim and seal reads. `Recovery.Timeout` bounds each provider page.
+A plan keeps its slot through all pages. A run-specific error does not block
+later claims: the pass continues and reports its first error when it ends, without
+retaining an unbounded list of errors. Cancellation or an invalid claim page stops
+the pass immediately.
+
+`ProviderRecoveryStatus` reports local running, stopping, active and failure
+counters. The engine cancels scheduling, claim expiry and provider recovery before
+waiting for any of them to drain. A timed-out `Stop` leaves work owned and blocks
+restart until it finishes. Forge preserves its started state on that path too.
+Restart begins discovery again and reauthenticates retained proof. The service
+never executes an agent or tool, accepts a task, releases ownership or settles a
+shared reservation.
+
 The subprocess tests kill a real fixture worker before a provider reply or after
-local completion, reopen SQLite, seal and scan the journal, retain terminal fixture
-proof and reopen it again. They check that claim, run, call records and budget
-state remain unchanged.
+local completion, reopen SQLite, expire ownership with an injected clock, seal
+the journal and start lifecycle recovery. A second engine repeats recovery after
+another reopen. They check that recovering ownership, run, call records and budget
+state remain unchanged while authenticated fixture proof is retained.
 This qualifies the persistence path with fixture authority. Installed provider
 adapters and governed continuation still need separate qualification.
 

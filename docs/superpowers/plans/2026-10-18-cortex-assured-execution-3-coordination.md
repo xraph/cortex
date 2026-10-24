@@ -113,7 +113,7 @@ provider query. Receipt usage distinguishes known tokens/money from unknown
 charges. Late local disagreements preserve both records and fail recovery.
 Killed-worker SQLite tests cover pending and locally completed calls followed by
 fixture receipt recovery and storage reopen. Concrete provider/routing proof
-adapters, lifecycle reconciliation discovery, claim adoption and shared settlement
+adapters, installed discovery qualification, claim adoption and shared settlement
 remain open; receipt persistence alone does not authorize continuation.
 `Engine.NewRunCallSealer` now supplies a guarded permanent journal barrier. All
 three stores serialize new call admission with closure on a shared durable anchor.
@@ -128,7 +128,13 @@ explicit current discovery authorization. It validates the whole page before
 provider queries, reuses authenticated single-call recovery and reports terminal,
 unresolved and tool calls separately. Errors preserve earlier proof but return no
 cursor. Scope, seal and authority are rechecked before acknowledging a page.
-Lifecycle discovery of recovering runs and guarded adoption remain open.
+`WithProviderRecovery` now runs authorized plan discovery, bounded claim pages
+and sealed provider recovery pages through the shared lifecycle service. It skips
+active or unsealed runs, isolates run-specific failures so later claims progress,
+and drains with scheduling and claim expiry before shutdown notification. Restart
+reuses retained proof. Engine/Forge stop-timeout tests and killed-worker SQLite
+tests cover this wiring. Installed discovery/provider qualification, guarded
+adoption and shared usage settlement remain open.
 
 `RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
 its captured inputs through the original prepared snapshot and ReAct loop.
