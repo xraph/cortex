@@ -220,6 +220,13 @@ streamed and approved execution. Bounded exact-scope operation discovery and rec
 Governed continuation, retry policy execution, compensation, artifact conflict handling, scheduler fences
 and durable events remain open; the full packet stays unchecked.
 
+Guarded tool effects retain the exact original `RunCallRequest` in their existing
+operation journal. Built-in admission validates that call and serializes with
+local completion and the permanent run seal. Recovery uses the full retained
+request; legacy unbound effects cannot be relabelled. This supplies durable
+call-to-effect identity. Claim adoption, complete effect recovery supervision and
+shared usage settlement remain open.
+
 ## S3.5: Shared budgets and bounded replanning
 
 Depends on S3.1/S3.2/S3.4. Owner: budget/planning implementer; integrator serializes shared runtime edits.

@@ -100,6 +100,10 @@ func (e *EffectExecutor) perform(ctx context.Context, request EffectRequest, arg
 	if err := ctx.Err(); err != nil {
 		return EffectReceipt{}, err
 	}
+	request, err := bindEffectCall(ctx, request, recoverOnly)
+	if err != nil {
+		return EffectReceipt{}, err
+	}
 	r, digest, err := request.Freeze()
 	if err != nil {
 		return EffectReceipt{}, err
@@ -126,11 +130,15 @@ func (e *EffectExecutor) perform(ctx context.Context, request EffectRequest, arg
 	action := EffectActionReconcile
 	if !recoverOnly {
 		action = EffectActionExecute
-		if !time.Now().Before(r.Deadline) {
+		deadline := r.Deadline
+		if r.RunCall != nil && r.RunCall.Deadline.Before(deadline) {
+			deadline = r.RunCall.Deadline
+		}
+		if !time.Now().Before(deadline) {
 			return EffectReceipt{}, context.DeadlineExceeded
 		}
 		var finish context.CancelFunc
-		bounded, finish = context.WithDeadline(bounded, r.Deadline)
+		bounded, finish = context.WithDeadline(bounded, deadline)
 		defer finish()
 	}
 	if authErr := e.authorizeRequest(bounded, r, action); authErr != nil {
@@ -138,7 +146,15 @@ func (e *EffectExecutor) perform(ctx context.Context, request EffectRequest, arg
 	}
 	created := false
 	if !recoverOnly {
-		created, err = e.store.BeginEffect(bounded, cloneEffect(r))
+		if r.RunCall != nil {
+			bound, supported := e.store.(BoundEffectStore)
+			if !supported {
+				return EffectReceipt{}, ErrEffectUnavailable
+			}
+			created, err = bound.BeginBoundEffect(bounded, cloneEffect(r))
+		} else {
+			created, err = e.store.BeginEffect(bounded, cloneEffect(r))
+		}
 		if err != nil {
 			if errors.Is(err, ErrEffectConflict) {
 				return EffectReceipt{}, err
@@ -203,5 +219,38 @@ func (e *EffectExecutor) authorizeRequest(ctx context.Context, r EffectRequest, 
 }
 func cloneEffect(r EffectRequest) EffectRequest {
 	r.Scope.Levels = append([]cortex.Level(nil), r.Scope.Levels...)
+	if r.RunCall != nil {
+		call := *r.RunCall
+		call.Scope.Levels = append([]cortex.Level(nil), call.Scope.Levels...)
+		r.RunCall = &call
+	}
 	return r
+}
+
+// bindEffectCall keeps recovery tied to the retained request. Only execution
+// attaches runtime metadata; a recovery read cannot relabel an old operation.
+func bindEffectCall(ctx context.Context, r EffectRequest, recoverOnly bool) (EffectRequest, error) {
+	call, present := RunCallFromContext(ctx)
+	if !present {
+		if r.RunCall != nil && !recoverOnly {
+			return EffectRequest{}, ErrEffectUnavailable
+		}
+		return r, nil
+	}
+	_, digest, err := call.Freeze()
+	if err != nil {
+		return EffectRequest{}, err
+	}
+	if r.RunCall == nil {
+		if recoverOnly {
+			return EffectRequest{}, ErrEffectConflict
+		}
+		r.RunCall = &call
+	} else {
+		_, retainedDigest, freezeErr := r.RunCall.Freeze()
+		if freezeErr != nil || retainedDigest != digest {
+			return EffectRequest{}, ErrEffectConflict
+		}
+	}
+	return r, nil
 }

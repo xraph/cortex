@@ -42,6 +42,14 @@ func (d lostEffectAckDriver) Insert(ctx context.Context, r assurance.Record) err
 	}
 	return nil
 }
+func (d lostEffectAckDriver) TransactRunCalls(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.Driver) error) error {
+	err := d.assuranceDriver.TransactRunCalls(ctx, runID, callback)
+	if err == nil && d.kind == "effect_request" {
+		return errEffectAckLost
+	}
+	return err
+}
+
 func TestEffectLostReservationAcknowledgementNeverGrantsDispatch(t *testing.T) {
 	s := newTestStore(t)
 	r := sqliteEffectRequest()

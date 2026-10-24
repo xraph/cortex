@@ -319,7 +319,8 @@ to `Seal`. The guarded operation has a thirty-second deadline, which your host
 ports and storage must honor.
 
 The seal and call admission serialize on the same durable database row. Once the
-seal is acknowledged, `BeginRunCall` rejects every slot for that run with
+seal is acknowledged, `BeginRunCall` and built-in effect admission reject every
+slot or operation for that run with
 `ErrRunCallsSealed`, including historical attempts. An empty journal can be
 sealed before a delayed worker reaches its first call. The prepared task runtime
 then stops before invoking the provider. There is no reopen operation.
@@ -343,6 +344,31 @@ bypass the barrier. Admission now requires a transaction-capable store, includin
 a replica set or supported sharded deployment for MongoDB. Missing transaction
 support fails closed. Keep seals for at least as long as their call records and
 possible delayed workers.
+
+### Bind a tool effect to its guarded call
+
+`EffectExecutor.Execute` retains the runtime's `RunCallRequest` inside the
+`EffectRequest`. Your adapter's receipt must hash that complete request. Keep it
+for recovery, including the original call, operation key and attempt ID.
+`NewEffectToolHandler` passes this metadata through automatically.
+
+For guarded tools, your store must implement `BoundEffectStore`. Fresh admission
+checks the exact retained tool call, its deadline and its unfinished local return.
+Admission, local completion and run sealing serialize on the same database guard.
+The executor also bounds dispatch by both the effect and call deadlines. A
+hand-built context carries correlation only; your current authorization and the
+adapter's external write checks still control permission.
+
+Use `Reconcile` with the retained bound request after worker replacement. It can
+record terminal proof after sealing without re-executing the tool. Calling
+`Execute` with a bound request requires matching runtime metadata, and sealed
+runs reject admission even for an existing operation. A legacy unbound effect
+cannot be attached to a call later, so a missing binding is unresolved recovery
+information, not proof that a tool had no effects.
+
+All built-in effect admission requires transaction support, including ordinary
+operations without a task call. Upgrade every writer before relying on this
+barrier, and retain both journals while external outcomes remain possible.
 
 ### Reconcile an interrupted provider call
 

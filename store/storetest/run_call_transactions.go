@@ -100,6 +100,47 @@ func RunCallTransactions(t *testing.T, driver assurance.Driver) {
 			require.False(t, fresh)
 		})
 	}
+	for _, mode := range []string{"rollback", "lost acknowledgment", "cancelled acknowledgment"} {
+		t.Run("bound effect "+mode, func(t *testing.T) {
+			r := storedBoundEffect()
+			ctx := cortex.WithScope(t.Context(), r.Scope)
+			fresh, err := ordinary.BeginRunCall(ctx, *r.RunCall)
+			require.NoError(t, err)
+			require.True(t, fresh)
+			attemptCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			fault := runCallFaultDriver{Driver: driver, transaction: transactional, rollback: mode == "rollback", loseAck: mode == "lost acknowledgment"}
+			if mode == "cancelled acknowledgment" {
+				fault.afterCommit = cancel
+			}
+			fresh, err = assurance.New(fault).BeginBoundEffect(attemptCtx, r)
+			require.Error(t, err)
+			require.False(t, fresh)
+			if mode == "cancelled acknowledgment" {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			retained, readErr := ordinary.GetEffect(ctx, r.OperationKey)
+			if mode == "rollback" {
+				require.ErrorIs(t, readErr, execution.ErrEffectNotFound)
+			} else {
+				require.NoError(t, readErr)
+				require.Equal(t, r.RunCall, retained.Request.RunCall)
+			}
+			fresh, err = ordinary.BeginBoundEffect(ctx, r)
+			require.NoError(t, err)
+			require.Equal(t, mode == "rollback", fresh)
+		})
+	}
+	t.Run("expired bound call", func(t *testing.T) {
+		r := storedBoundEffect()
+		ctx := cortex.WithScope(t.Context(), r.Scope)
+		_, err := ordinary.BeginRunCall(ctx, *r.RunCall)
+		require.NoError(t, err)
+		expired := assurance.New(driver).WithClock(&jobClock{at: r.RunCall.Deadline.Add(time.Second)})
+		fresh, err := expired.BeginBoundEffect(ctx, r)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.False(t, fresh)
+	})
 	t.Run("legacy journal without guard", func(t *testing.T) {
 		r := storedRunCall()
 		ctx := cortex.WithScope(t.Context(), r.Scope)
@@ -135,4 +176,13 @@ func RunCallTransactionsUnavailable(t *testing.T, s execution.RunCallSealStore) 
 	sealed, err := s.GetRunCallSeal(ctx, r.RunID)
 	require.NoError(t, err)
 	require.Nil(t, sealed)
+	effects, ok := s.(execution.EffectStore)
+	require.True(t, ok)
+	effect := storedEffect()
+	effect.Scope = r.Scope
+	fresh, err = effects.BeginEffect(ctx, effect)
+	require.ErrorIs(t, err, execution.ErrRunCallUnavailable)
+	require.False(t, fresh)
+	_, err = effects.GetEffect(ctx, effect.OperationKey)
+	require.ErrorIs(t, err, execution.ErrEffectNotFound)
 }

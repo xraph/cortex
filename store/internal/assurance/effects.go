@@ -15,6 +15,7 @@ const (
 	kindEffectReceipt = "effect_receipt"
 )
 
+var _ execution.BoundEffectStore = (*Repository)(nil)
 var _ execution.EffectStore = (*Repository)(nil)
 var _ execution.EffectDiscoveryStore = (*Repository)(nil)
 
@@ -28,28 +29,79 @@ func (s *Repository) BeginEffect(ctx context.Context, request execution.EffectRe
 	if err != nil {
 		return false, err
 	}
+	fresh := false
+	err = s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
+		fresh = false
+		sealed, readErr := tx.GetRunCallSeal(tc, r.RunID)
+		if readErr != nil {
+			return readErr
+		}
+		if sealed != nil {
+			return execution.ErrRunCallsSealed
+		}
+		var beginErr error
+		fresh, beginErr = tx.beginEffect(tc, r, digest)
+		return beginErr
+	})
+	if err != nil {
+		return false, err
+	}
+	return fresh, nil
+}
+
+// BeginBoundEffect requires the original tool invocation in the retained request.
+func (s *Repository) BeginBoundEffect(ctx context.Context, request execution.EffectRequest) (bool, error) {
+	if request.RunCall == nil {
+		return false, execution.ErrInvalidEffect
+	}
+	return s.BeginEffect(ctx, request)
+}
+
+func (s *Repository) beginEffect(ctx context.Context, r execution.EffectRequest, digest string) (bool, error) {
+	existing, readErr := s.GetEffect(ctx, r.OperationKey)
+	if readErr == nil {
+		_, storedDigest, checkErr := existing.Request.Freeze()
+		if checkErr != nil || storedDigest != digest {
+			return false, execution.ErrEffectConflict
+		}
+		return false, nil
+	}
+	if !errors.Is(readErr, execution.ErrEffectNotFound) {
+		return false, readErr
+	}
+	if r.RunCall != nil {
+		if err := s.validateEffectCall(ctx, r); err != nil {
+			return false, err
+		}
+	}
 	row, err := record(kindEffectRequest, evidence.Digest([]byte(r.OperationKey)), digest, r.RunID.String(), r.Scope, r)
 	if err != nil {
 		return false, err
 	}
-	// Deliberately bypass s.insert: its identical-replay success must not turn
-	// a retained operation into permission to repeat an external mutation.
+	// A different run or an older writer may race for the scope-wide key.
+	// Neither a duplicate nor an uncertain acknowledgment grants dispatch.
 	err = s.driver.Insert(ctx, row)
-	if err == nil {
-		return true, nil
-	}
-	if !errors.Is(err, ErrExists) {
-		return false, err
-	}
-	existing, readErr := s.GetEffect(ctx, r.OperationKey)
-	if readErr != nil {
-		return false, readErr
-	}
-	_, storedDigest, checkErr := existing.Request.Freeze()
-	if checkErr != nil || storedDigest != digest {
+	if errors.Is(err, ErrExists) {
 		return false, execution.ErrEffectConflict
 	}
-	return false, nil
+	return err == nil, err
+}
+
+func (s *Repository) validateEffectCall(ctx context.Context, r execution.EffectRequest) error {
+	call, err := s.GetRunCall(ctx, r.RunID, r.RunCall.OperationDigest)
+	if err != nil {
+		return err
+	}
+	_, digest, err := call.Request.Freeze()
+	_, expected, checkErr := r.RunCall.Freeze()
+	if err != nil || checkErr != nil || digest != expected || call.Completion != nil {
+		return execution.ErrRunCallConflict
+	}
+	at := s.clock.Now().UTC()
+	if !at.Before(call.Request.Deadline) || !at.Before(r.Deadline) {
+		return context.DeadlineExceeded
+	}
+	return ctx.Err()
 }
 
 // GetEffect reads the retained request and terminal receipt at exact scope.

@@ -150,6 +150,19 @@ func (s *Repository) CompleteRunCall(ctx context.Context, request execution.RunC
 	if err := require(ctx, request.Scope); err != nil {
 		return err
 	}
+	r, _, err := request.Freeze()
+	if err != nil {
+		return err
+	}
+	return s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
+		return tx.completeRunCall(tc, r, completion)
+	})
+}
+
+func (s *Repository) completeRunCall(ctx context.Context, request execution.RunCallRequest, completion execution.RunCallCompletion) error {
+	if err := require(ctx, request.Scope); err != nil {
+		return err
+	}
 	r, digest, err := request.Freeze()
 	if err != nil {
 		return err

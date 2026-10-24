@@ -5345,3 +5345,46 @@ Provider discovery and lifecycle wiring are implemented and fixture-tested.
 Installed host discovery and provider proof adapters still need qualification.
 Guarded claim adoption, effect recovery integration and shared usage settlement
 remain open.
+
+
+### S3.2 guarded tool effect identity
+
+The first binding tests failed because `EffectRequest` had no original task-call
+identity and stores had no bound-admission capability. Requests now retain the
+full optional `RunCallRequest`, which participates in the canonical request hash
+and the adapter receipt. The executor attaches runtime metadata before admission,
+requires `BoundEffectStore`, and keeps reconciliation tied to the original record.
+Nested scopes are detached before host or adapter callbacks.
+
+Built-in stores serialize every effect admission with the run seal. Bound fresh
+operations require the exact retained tool call, a live deadline and no local
+completion. Call completion uses the same guard to prevent a return/admission
+race. Late call returns and effect receipts remain writable after sealing. Legacy
+unbound requests remain readable but cannot be retroactively assigned to a call.
+All built-in effect admission now requires usable database transactions.
+
+Tests cover missing, changed and expired calls, missing store capability,
+legacy conflicts, late proof, exact scope, admission/seal and admission/return
+races, engine handler propagation, rollback and ambiguous commit acknowledgment.
+An older SQLite fault fixture injected outside the new transaction path; it now
+injects lost acknowledgment after commit. Final verification follows.
+
+This is a prerequisite for recovering claim adoption. It does not authenticate
+external proof by itself, establish task success or settle provider usage.
+
+Final formatting and all-module lint passed. Lint required checked capability
+assertions in the shared conformance helpers. After that fix, the final SQLite,
+PostgreSQL and MongoDB race matrices passed in 14.376, 9.509 and 14.526 seconds,
+with no skips. The MongoDB run also proved that standalone effect admission
+returns unavailable without retaining an operation.
+
+The earlier broader effect, call, seal and provider recovery database matrices
+passed on all three backends. Full execution and assurance race suites passed,
+as did engine effect/recovery tests and the prepared-task/call-journal matrix.
+Root build, docs type checks, docs lint and the 132-page production build passed.
+Docker was healthy on recheck, so these runs needed no further daemon restart.
+CI run `40061756934` passed for preceding lifecycle commit `a66a486`.
+
+Guarded adoption, supervised effect recovery, shared usage settlement and installed
+host qualification remain open. Live Linux sandbox qualification remains deferred
+until you choose a worker.

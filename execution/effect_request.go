@@ -36,6 +36,7 @@ type EffectRequest struct {
 	AuthorityRef  string            `json:"authority_ref"`
 	Deadline      time.Time         `json:"deadline"`
 	Requirement   EffectRequirement `json:"requirement"`
+	RunCall       *RunCallRequest   `json:"run_call,omitempty"`
 }
 
 // Freeze validates and detaches the request and hashes its canonical encoding.
@@ -44,6 +45,12 @@ type EffectRequest struct {
 func (r EffectRequest) Freeze() (EffectRequest, string, error) {
 	if r.SchemaVersion != 1 || cortex.ValidateScope(r.Scope) != nil || r.RunID.IsNil() || r.RunID.Prefix() != id.PrefixAgentRun || r.AttemptID.IsNil() || r.AttemptID.Prefix() != PrefixEffectAttempt || !evidence.ValidDigest(r.ArgsDigest) || !operationText(r.OperationKey, 256) || !operationText(r.PrincipalRef, 512) || !operationText(r.AuthorityRef, 512) || r.Deadline.IsZero() || r.Requirement.Validate() != nil {
 		return EffectRequest{}, "", ErrInvalidEffect
+	}
+	if r.RunCall != nil {
+		call, _, err := r.RunCall.Freeze()
+		if err != nil || call.Kind != RunCallTool || call.RunID != r.RunID || call.Scope.Canonical() != r.Scope.Canonical() {
+			return EffectRequest{}, "", ErrInvalidEffect
+		}
 	}
 	data, err := json.Marshal(r)
 	if err != nil || len(data) > 16<<10 {
@@ -121,6 +128,16 @@ type EffectStore interface {
 	BeginEffect(context.Context, EffectRequest) (bool, error)
 	GetEffect(context.Context, string) (EffectRecord, error)
 	CompleteEffect(context.Context, EffectRequest, EffectReceipt) error
+}
+
+// BoundEffectStore admits effects only against the exact retained, unfinished
+// tool call. Fresh admission checks its deadline and serializes with run sealing
+// and local call completion. A seal blocks admission, including replay, while
+// CompleteEffect remains available for late terminal proof.
+// Custom stores must implement this contract before serving guarded task tools.
+type BoundEffectStore interface {
+	EffectStore
+	BeginBoundEffect(context.Context, EffectRequest) (bool, error)
 }
 
 // EffectAdapter is a trusted registered handler. Execute must enforce current
