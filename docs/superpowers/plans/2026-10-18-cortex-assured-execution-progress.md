@@ -4850,3 +4850,47 @@ engine race suite then passed in 558.179 seconds: 731 cases across all 365
 top-level tests, without an assertion failure, race report or package timeout.
 This full run also covers the earlier runtime journal implementation. The older
 whole-suite timeout remains historical evidence, not a passing run.
+
+
+### S3.2 atomic execution renewal
+
+`TaskRenewalRequest` binds dispatched ownership to the expected parent, child and
+assignment revisions, complete accepted prerequisite chain, worker actor and
+reason. `RenewTaskExecution` uses the shared plan transaction and existing claim
+renewal logic. It checks the retained child-creation chain and capture provenance,
+locks the parent and child, rechecks prerequisites and shared allocation, and
+persists the renewed claim with its metadata event intent. There is no provider
+or tool invocation inside the transaction.
+
+The claim cannot extend beyond the parent, child, assignment or capture-policy
+deadline. Cancelled, failed and incomplete children are rejected. Paused children
+and completed runs awaiting acceptance may retain ownership under host authority;
+this does not resume them or refund their allocation. The task claim marker is
+required, so an unmarked legacy child cannot acquire this renewal behavior.
+
+`NewTaskClaimRenewer` reuses the shared synchronous host fence and authorization
+implementation. Every retry repeats authorization. Storage returns historical
+receipts with `Fresh: false`; a lost acknowledgement never proves that a local
+worker may extend its execution window. The existing scheduler still stops at its
+original claim expiry. Its guarded renewal loop remains the next integration.
+
+Red tests failed on the absent public APIs. A SQLite expiry fixture initially
+advanced one minute while requesting a two-minute renewal, so the lease was
+still valid. The corrected fixture advances to the renewed expiry and verifies
+transaction rollback. An initial broad test expression also ran unrelated SQLite
+checks; the recorded failing run is not treated as passing evidence. Subsequent
+runs use explicit conformance and transaction test names.
+
+The first complete renewal matrix passed under the race detector against real
+SQLite, PostgreSQL and MongoDB stores in 16.410, 9.776 and 13.302 seconds. It covers
+parent/child cancellation, changed revisions and provenance, cancelled assignment,
+expired ownership, settled capacity, deadline limits, paused/completed retention,
+rollback after the event write, lost acknowledgement and concurrent identical or
+distinct requests. Final full task-run transaction validation is tracked below.
+
+Final coordination race tests passed in 60.064 seconds. The complete task-run
+transaction suites passed against SQLite (29.409 seconds), PostgreSQL (17.571
+seconds) and MongoDB (19.766 seconds), with real containers and no skipped cases.
+Formatting, all-module lint and the root build passed. Docs type checking and
+lint passed before the successful production build. The build retained its
+existing metadataBase warning.

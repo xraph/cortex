@@ -107,6 +107,15 @@ the worker context. The engine adapter preserves fresh dispatch and child creati
 before using the existing journaled execution and verification paths. Automatic
 renewal, installed host qualification and durable recovery remain open.
 
+`RenewTaskExecution` now provides atomic renewal for a task-bound child. It fences
+current parent and child revisions, assignment, capture provenance, prerequisites
+and shared capacity. The renewed claim and metadata event intent commit together;
+retries retain the original receipt with `Fresh: false`. `NewTaskClaimRenewer`
+reuses the host authority guard for every attempt. Automatic renewal still needs
+a loop that cancels at the last confirmed expiry and does not adopt ambiguous
+renewal acknowledgements.
+
+
 ## S3.3: Structured handoffs and independent review
 
 Depends on S2.1 and S3.1 contract. Owner: A2A/remote protocol implementer.

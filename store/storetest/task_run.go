@@ -63,6 +63,7 @@ func taskRunForDispatch(ctx context.Context, t *testing.T, backend store.Store, 
 
 // TaskRunTransactions tests atomic reserved child creation and capture policy.
 func TaskRunTransactions(t *testing.T, backend store.Store, driver assurance.Driver) {
+	t.Run("execution_renewal", func(t *testing.T) { taskRenewalTransactions(t, backend, driver) })
 	plans, ok := driver.(assurance.PlanDriver)
 	require.True(t, ok)
 	fixture := func(t *testing.T) (context.Context, *assurance.Repository, coordination.TaskRunRequest, *run.Run) {

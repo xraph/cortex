@@ -214,3 +214,30 @@ uncertain allocation just to finish shutdown.
 The scheduler does not install itself into `RunOrchestration` or the sweeper.
 Concrete host adapters, automatic claim renewal, recovery settlement and installed
 worker crash/restart qualification remain separate integrations.
+
+### Renew dispatched ownership
+
+Use `coordination.NewTaskClaimRenewer` with a `TaskRenewalStore`, current grant
+fence and authorizer when you need to extend ownership of a task-bound child.
+`TaskRenewalRequest` binds the exact claim, parent and child revisions, current
+assignment, complete prerequisite chain, worker actor and reason. Keep the request
+for recovery if the call fails.
+
+`RenewTaskExecution` locks the execution records and checks the current plan,
+assignment, capture provenance and shared reservation before extending the claim.
+The renewal cannot exceed the parent, child, assignment or verification deadline.
+Cancelled, failed or incomplete children are rejected. Paused children and completed
+runs awaiting acceptance can retain ownership under current host authorization;
+this does not grant permission to resume, repeat a call or accept an output.
+
+The renewed claim and metadata event intent commit together. Only a confirmed
+first write returns `Fresh: true`. An identical retry returns the original receipt
+with `Fresh: false`, including after a lost acknowledgement. That historical
+receipt may already be expired. Preserve the last acknowledged local expiry and
+stop work when renewal is uncertain; reconcile before continuing. Renewal does
+not replenish shared capacity or reset any deadline.
+
+Automatic scheduler renewal is not installed by this capability. `TaskScheduler`
+still bounds each worker by its original claim expiry until a guarded renewal
+loop is explicitly integrated. Host grant services and event delivery also need
+installation and qualification.
