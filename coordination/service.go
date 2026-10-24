@@ -36,7 +36,9 @@ type TaskPlanPage struct {
 
 // TaskPlanSource discovers plans under the host service identity. The source
 // authorizes discovery across scopes; ordinary store calls still require scope.
-// Every resulting Tick repeats its own current admission checks. Honor context
+// Execution ticks repeat current admission checks; recovery ticks only expire
+// retained claims. Recovery discovery must include plans with outstanding claims,
+// including cancelled or completed plans. Honor context
 // cancellation and avoid provider/tool execution in this port.
 type TaskPlanSource interface {
 	ListScheduledPlans(context.Context, TaskPlanListRequest) (TaskPlanPage, error)
@@ -67,13 +69,19 @@ type TaskServiceStatus struct {
 // It never retries an uncertain invocation, accepts outputs or refunds capacity.
 // Stop it before disposing stores. You may restart after complete drainage.
 type TaskService struct {
-	config  TaskServiceConfig
-	mu      sync.Mutex
-	current *taskServiceRun
+	config       TaskServiceConfig
+	newScheduler func() (serviceScheduler, error)
+	mu           sync.Mutex
+	current      *taskServiceRun
+}
+
+type serviceScheduler interface {
+	Scheduler
+	Shutdown(context.Context) error
 }
 
 type taskServiceRun struct {
-	scheduler *TaskScheduler
+	scheduler serviceScheduler
 	ctx       context.Context
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -85,6 +93,20 @@ type taskServiceRun struct {
 // NewTaskService validates ports and finite bounds without starting work. Defaults
 // are one-second polling, a five-second discovery timeout and 64 in-flight ticks.
 func NewTaskService(config TaskServiceConfig) (*TaskService, error) {
+	validated, err := NewScheduler(config.Scheduler)
+	if err != nil {
+		return nil, err
+	}
+	config.Scheduler = validated.config
+	if shutdownErr := validated.Shutdown(context.Background()); shutdownErr != nil {
+		return nil, shutdownErr
+	}
+	return newPlanService(config, func() (serviceScheduler, error) { return NewScheduler(config.Scheduler) })
+}
+
+// newPlanService shares discovery bounds, scope fairness and drainage across
+// execution and recovery. Only constructors in this package supply a worker.
+func newPlanService(config TaskServiceConfig, factory func() (serviceScheduler, error)) (*TaskService, error) {
 	if config.Interval == 0 {
 		config.Interval = time.Second
 	}
@@ -97,15 +119,7 @@ func NewTaskService(config TaskServiceConfig) (*TaskService, error) {
 	if hostport.IsNil(config.Discovery) || config.Interval < time.Millisecond || config.Interval > time.Hour || config.DiscoveryTimeout < time.Millisecond || config.DiscoveryTimeout > time.Minute || config.MaxInFlight < 1 || config.MaxInFlight > 4096 {
 		return nil, ErrInvalidScheduler
 	}
-	validated, err := NewScheduler(config.Scheduler)
-	if err != nil {
-		return nil, err
-	}
-	config.Scheduler = validated.config
-	if shutdownErr := validated.Shutdown(context.Background()); shutdownErr != nil {
-		return nil, shutdownErr
-	}
-	return &TaskService{config: config}, nil
+	return &TaskService{config: config, newScheduler: factory}, nil
 }
 
 // Start preserves startup context values for the host service identity while
@@ -127,7 +141,7 @@ func (s *TaskService) Start(ctx context.Context) error {
 			return nil
 		}
 	}
-	scheduler, err := NewScheduler(s.config.Scheduler)
+	scheduler, err := s.newScheduler()
 	if err != nil {
 		return err
 	}
@@ -138,17 +152,26 @@ func (s *TaskService) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop cancels discovery and all owned ticks, then waits for complete drainage.
-// A timeout leaves the service stopping, with stores and reservations retained.
-// Call Stop again to wait; the caller deadline is not permission to detach work.
-func (s *TaskService) Stop(ctx context.Context) error {
+// RequestStop signals cancellation without claiming drainage. Use Stop to wait
+// before disposing stores or notifying shutdown subscribers.
+func (s *TaskService) RequestStop() { s.requestStop() }
+
+func (s *TaskService) requestStop() *taskServiceRun {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	current := s.current
 	if current != nil {
 		current.stopping = true
 		current.cancel()
 	}
-	s.mu.Unlock()
+	return current
+}
+
+// Stop cancels discovery and all owned ticks, then waits for complete drainage.
+// A timeout leaves the service stopping, with stores and reservations retained.
+// Call Stop again to wait; the caller deadline is not permission to detach work.
+func (s *TaskService) Stop(ctx context.Context) error {
+	current := s.requestStop()
 	if current == nil {
 		return nil
 	}
@@ -212,6 +235,8 @@ func (s *TaskService) poll(current *taskServiceRun) {
 	active := make(map[string]string)
 	activeScopes := make(map[string]int)
 	cursor := ""
+	// Pages contain at most 256 identities; this cyclic offset covers each one.
+	var passRotation uint8
 	for {
 		if current.ctx.Err() != nil {
 			return
@@ -222,7 +247,18 @@ func (s *TaskService) poll(current *taskServiceRun) {
 				s.recordFailure(current, err)
 			} else {
 				cursor = page.Next
-				for _, plan := range page.Plans {
+				start := 0
+				if len(page.Plans) > 0 {
+					start = int(passRotation) % len(page.Plans)
+				}
+				if page.Next == "" {
+					passRotation++
+				}
+				// Rotate across whole source passes, not individual pages. A
+				// stable page must not always give its first plan the only
+				// available scope slot, even when that plan finishes quickly.
+				for offset := range page.Plans {
+					plan := page.Plans[(start+offset)%len(page.Plans)]
 					if current.ctx.Err() != nil {
 						return
 					}

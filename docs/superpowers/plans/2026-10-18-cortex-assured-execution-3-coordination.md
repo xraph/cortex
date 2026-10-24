@@ -85,8 +85,11 @@ fair scope queues. `Engine.NewTaskWorker` connects fresh admission to guarded
 dispatch and the prepared runtime. Optional `WithTaskScheduling` now integrates
 bounded, scoped discovery with engine and Forge lifecycle handling. It drains
 callbacks before shutdown notification, preserves started state on stop timeout,
-and blocks restart while draining. Host resolution, expired-claim recovery and
-installed worker crash/restart qualification remain open.
+and blocks restart while draining. Optional `WithClaimRecovery` now owns scoped
+expiry discovery and bounded storage pages through the same lifecycle loop. It
+retains uncertain dispatches for reconciliation and cancels both services before
+drainage. Host resolution, provider/effect reconciliation and installed worker
+crash/restart qualification remain open.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,

@@ -40,7 +40,9 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	lifecycle             lifecycleGate
 	taskScheduling        *coordination.TaskService
+	claimRecovery         *coordination.ClaimRecoveryService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard
@@ -194,33 +196,50 @@ func (e *Engine) Health(ctx context.Context) error {
 // Start initializes the engine for operation.
 //
 // Background services own their lifetimes and are stopped by Stop. Optional
-// task scheduling preserves context values for host identity, without using
+// task scheduling and recovery preserve context values for host identity, without using
 // the startup request cancellation as the service lifetime.
 func (e *Engine) Start(ctx context.Context) error {
+	release, lockErr := e.lifecycle.acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
 	if err := e.configureTaskScheduling(); err != nil {
 		return err
 	}
-	if e.taskScheduling != nil {
-		status := e.taskScheduling.Status()
+	services := e.taskServices()
+	allRunning := len(services) > 0
+	for _, service := range services {
+		status := service.Status()
 		if status.Stopping {
 			return coordination.ErrSchedulerStopped
 		}
-		if status.Running {
-			return nil
-		}
+		allRunning = allRunning && status.Running
+	}
+	if allRunning {
+		return nil
+	}
+	if len(services) > 0 {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 	}
 	e.startSweeper()
 	e.startA2A(ctx)
-	if e.taskScheduling != nil {
-		if err := e.taskScheduling.Start(ctx); err != nil {
-			e.stopSweeper()
-			e.stopA2A()
-			return err
+	// Admission to startup is checked once above. Each service owns its lifetime,
+	// so cancellation between starts must not leave a partially started engine.
+	startup := context.WithoutCancel(ctx)
+	for _, service := range services {
+		if err := service.Start(startup); err != nil {
+			stopErr := e.stopTaskServices(ctx)
+			if stopErr == nil {
+				e.stopSweeper()
+				e.stopA2A()
+			}
+			return errors.Join(err, stopErr)
 		}
 	}
+
 	e.logger.Info("cortex engine started")
 	return nil
 }
@@ -230,10 +249,17 @@ func (e *Engine) Start(ctx context.Context) error {
 // The sweeper is joined, not merely signalled, and it is joined before
 // the shutdown hook fires: a subscriber told the engine has stopped
 // while a sweep is still failing runs has been told something untrue. Optional
-// task scheduling drains first. If its stop deadline expires, Stop returns the
-// error without emitting shutdown; call Stop again before disposing stores.
+// task scheduling and recovery receive cancellation before either is drained.
+// If a stop deadline expires, Stop returns an error without emitting shutdown;
+// call Stop again before disposing stores. Lifecycle calls are serialized through
+// shutdown notification, with cancellation-aware waits for another caller.
 func (e *Engine) Stop(ctx context.Context) error {
-	if err := e.stopTaskScheduling(ctx); err != nil {
+	release, lockErr := e.lifecycle.acquire(ctx)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
+	if err := e.stopTaskServices(ctx); err != nil {
 		return err
 	}
 	e.stopSweeper()

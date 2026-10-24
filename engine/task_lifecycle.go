@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/internal/hostport"
@@ -50,11 +51,36 @@ func (e *Engine) configureTaskScheduling() error {
 	return err
 }
 
-func (e *Engine) stopTaskScheduling(ctx context.Context) error {
-	if e.taskScheduling == nil {
-		return nil
+type taskLifecycleService interface {
+	Start(context.Context) error
+	RequestStop()
+	Stop(context.Context) error
+	Status() coordination.TaskServiceStatus
+}
+
+func (e *Engine) taskServices() []taskLifecycleService {
+	var services []taskLifecycleService
+	if e.taskScheduling != nil {
+		services = append(services, e.taskScheduling)
 	}
-	return e.taskScheduling.Stop(ctx)
+	if e.claimRecovery != nil {
+		services = append(services, e.claimRecovery)
+	}
+	return services
+}
+
+func (e *Engine) stopTaskServices(ctx context.Context) error {
+	services := e.taskServices()
+	for _, service := range services {
+		service.RequestStop()
+	}
+	var failures []error
+	for _, service := range services {
+		if err := service.Stop(ctx); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // TaskSchedulingStatus returns bounded lifecycle counters and whether scheduling

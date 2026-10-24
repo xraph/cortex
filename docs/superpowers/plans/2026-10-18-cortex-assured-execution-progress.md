@@ -5085,3 +5085,56 @@ scope commit `737307c` in 14 minutes 36 seconds, including the preceding lifecyc
 work. The claim sweep remains a caller-owned bounded operation; lifecycle
 recovery polling, provider reconciliation and killed-worker qualification are
 still required.
+
+
+### S3.2 claim recovery lifecycle
+
+The bounded expiry sweep is committed and pushed as `8591e04`. Recovery now has
+an optional `ClaimRecoveryService` and `engine.WithClaimRecovery` bridge. The
+service reuses task scheduling's discovery validation, scope limits, cancellation
+and drainage through a private worker factory. It pages retained claims with a
+per-page timeout and a delay between pages. Failed or restarted passes reread
+storage from the beginning; no cursor or historical acknowledgment grants work.
+
+Engine shutdown signals execution and recovery before joining either. Stop timeout
+retains owned work and suppresses shutdown hooks. The Forge lifecycle test now
+covers both services. The initial service and engine tests failed because their
+APIs were absent. Focused service tests passed in 1.365 seconds; engine tests using
+real SQLite claim storage passed in 6.040 seconds. Shared reservations stayed
+charged and no provider was invoked by expiry.
+
+Review found that a stable discovery page could starve later plans in the same
+scope when its first plan finished quickly. A two-page regression failed. The
+shared loop now rotates page starts across complete discovery passes without
+retaining a queue of skipped identities. Service/fairness race tests passed in
+1.337 seconds and the Forge stop-timeout matrix passed in 1.696 seconds.
+
+This implements lifecycle expiry, not provider reconciliation or live worker
+qualification. Each active plan pass holds a bounded local slot until completion
+or error. Its page count is not capped; the host must provide finite discovery
+passes and cancellation-aware storage. Final checks follow below.
+
+The first broad checks passed coordination race tests (30.537 seconds), extension
+and contract race tests (2.035 and 33.736 seconds), and docs types/lint/build. Root
+lint flagged the rotation's integer conversion; its offset now uses a bounded
+byte covering every position in the maximum 256-entry page, without suppression.
+
+A second regression showed that Start could return success while the preceding
+Stop was still notifying shutdown subscribers. Engine lifecycle calls now share
+a context-aware serialization gate through notification. Queued callers can
+cancel their own waits; an uncontended Stop still signals services with an
+already-cancelled context. Final checks cover this additional change below.
+
+Final post-format checks passed with the lifecycle gate and bounded rotation:
+full coordination race tests (31.801 seconds), engine startup/shutdown/sweeper/
+A2A/telemetry/recovery race tests (62.084 seconds), extension and contract race
+tests (2.089 and 34.383 seconds), all-module lint, root build, docs types, docs
+lint and the production docs build. The earlier full engine run is separate
+pre-gate evidence and is still finishing. CI run `40052823799` passed for the
+preceding sweep commit `8591e04`, including Linux root tests and security checks.
+
+The full engine race suite finished in 553.847 seconds: 741 passing cases,
+including 371 top-level tests, with no failures or skips. This run began before
+the final lifecycle serialization change; the post-format runtime matrix above
+checks that change. Both results are retained without treating fixture execution
+as installed host or provider qualification.

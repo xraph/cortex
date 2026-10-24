@@ -284,3 +284,37 @@ func TestTaskServiceKeepsDiscoveryCapacityForOtherScopes(t *testing.T) {
 		}
 	})
 }
+
+func TestTaskServiceRotatesSameScopePlansAcrossPasses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg, p, ctx := schedulerFixture(t)
+		plans := []id.ID{p.ID, id.New(p.ID.Prefix()), id.New(p.ID.Prefix()), id.New(p.ID.Prefix())}
+		seen := make(chan id.ID, 16)
+		cfg.Source = schedulerSourceFunc(func(_ context.Context, plan id.ID) (planning.Plan, []planning.TaskState, error) {
+			seen <- plan
+			return planning.Plan{}, nil, errors.New("observation complete")
+		})
+		service, err := coordination.NewTaskService(coordination.TaskServiceConfig{Scheduler: cfg, MaxInFlight: 2, Interval: time.Second, Discovery: taskPlanSource(func(_ context.Context, r coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error) {
+			first, next := 0, "second"
+			if r.After == "second" {
+				first, next = 2, ""
+			}
+			return coordination.TaskPlanPage{Plans: []coordination.ScheduledPlan{{Scope: p.Scope, PlanID: plans[first]}, {Scope: p.Scope, PlanID: plans[first+1]}}, Next: next}, nil
+		})})
+		require.NoError(t, err)
+		require.NoError(t, service.Start(ctx))
+		defer func() { require.NoError(t, service.Stop(context.Background())) }()
+		synctest.Wait()
+		for range 3 {
+			time.Sleep(time.Second)
+			synctest.Wait()
+		}
+		counts := map[id.ID]int{}
+		for len(seen) > 0 {
+			counts[<-seen]++
+		}
+		for _, plan := range plans {
+			require.Positive(t, counts[plan], "a stable discovery page starved a same-scope plan")
+		}
+	})
+}

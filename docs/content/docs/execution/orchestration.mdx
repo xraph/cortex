@@ -290,7 +290,9 @@ must be valid UTF-8 and fit the page budget before JSON encoding. The same
 scope/plan pair cannot have two active ticks in one service instance. Discovery
 also limits in-flight ticks per scope to `MaxPerScope`, so queued plans from one
 busy scope cannot consume every discovery slot. Skipped identities are revisited
-on later source passes. Durable claims still arbitrate between processes.
+on later source passes. The page starting position rotates across complete source
+passes so a fast first plan does not always take its scope slot. Durable claims
+still arbitrate between processes.
 
 `Start` preserves context values for your host service identity and gives polling
 its own cancellation handle. Cancelling the startup request does not stop the
@@ -326,10 +328,48 @@ call. They do not distinguish a new write from a historical receipt.
 
 On an error, retry the same page from fresh storage observations. No continuation
 cursor is returned because earlier writes may have committed. Cancellation stops
-further writes and preserves those committed records. You own the polling loop,
-its deadline and its shutdown; the engine's scheduling service does not call this
-sweeper automatically yet.
+further writes and preserves those committed records. You can own the polling
+loop or install the lifecycle service below.
 
 Recovery still needs authenticated provider and effect receipts before a retry,
 continuation or acceptance. Claim expiry does not settle usage, refund shared
 capacity, complete a task or authorize another external call.
+
+
+### Run claim recovery with the engine lifecycle
+
+Pass `engine.WithClaimRecovery(coordination.ClaimRecoveryConfig{...})` to let the
+engine own discovery and expiry. Supply `Store`, `Clock` and `Discovery` explicitly.
+The store needs `ClaimExpiryStore`; discovery uses `TaskPlanSource`. Include plans
+with outstanding claims even when their parent is cancelled or completed. You can
+pass this option through Forge's `extension.WithEngineOption`, or use
+`coordination.NewClaimRecoveryService` directly.
+
+The service shares scheduling's bounded discovery, identity checks and scope
+limits. Defaults are four concurrent plan passes, one per exact scope, 256 claims
+per page, and five seconds for each storage page. `Interval` defaults to one second
+and controls both discovery polls and the delay between claim pages. `PageSize`
+accepts 1 to 256, `PageTimeout` accepts one millisecond to one minute, and
+`MaxInFlight` and `MaxPerScope` accept 1 to 4096. Discovery keeps its own timeout.
+
+Each plan pass starts at its first claim and advances until it reaches the end or
+fails. It keeps its local slot between pages. Limits bound simultaneous work and
+individual page calls, not the total size or duration of a plan's history. On
+restart or error, a later pass begins again and reads retained outcomes. Existing
+released or recovering claims are not expired a second time. You must keep the
+source's pages finite and honor cancellation in storage callbacks.
+
+Engine lifecycle calls are serialized through shutdown notification. A caller
+waiting for another lifecycle call can cancel its own wait. Lifecycle hooks must
+return before another Start or Stop can proceed.
+
+`Engine.Stop` signals both scheduling and recovery before waiting for either to
+drain. A timeout preserves the stopping state and suppresses shutdown hooks;
+retry Stop before disposing stores. `RequestStop` on either standalone service
+only signals cancellation. It does not replace the join performed by Stop.
+`ClaimRecoveryStatus` reports configuration, running/stopping state, active plan
+passes and failures without exposing scope values or run content.
+
+This service moves expired dispatches into recovery. It does not reconcile an
+external provider, retry an invocation, accept task output or settle shared usage.
+Those operations still need their own authorized evidence and transactions.
