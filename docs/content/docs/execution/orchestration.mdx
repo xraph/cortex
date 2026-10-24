@@ -109,3 +109,46 @@ orun, err := eng.RunOrchestration(ctx, "research-team", "Summarize CRDTs")
 ```
 
 `RunOrchestration` returns an `*orchestration.Run` with the result. `eng.ListOrchestrationRuns` and `eng.GetOrchestrationRun` read the history.
+
+## Bounded replanning proposals
+
+Use `planning.ProposeReplan(snapshot, policy)` to choose a response to stalled
+work. It returns `continue`, `wait`, `reconcile`, `propose` or `stop`, with a
+bounded reason and digests of the exact graph, snapshot and normalized policy.
+The helper performs no I/O and never declares a task complete.
+
+Build a schema-version-one `planning.ProgressSnapshot` from the current sealed
+plan, retained progress observations and `execution.BudgetStore.GetBudgetSnapshot`.
+Every attempt and conflict binds the current plan digest. An older graph's
+observations are rejected. Failure fingerprints should group equivalent failures
+using host-defined categories, without retaining private error messages. Set
+`Advanced` only for new accepted artifacts or retained checks; a model's claim
+that it made progress is insufficient.
+
+The default policy allows two replanning attempts. Equivalent failures trigger
+a proposal after two attempts; three attempts without progress also trigger one.
+Idle or waiting work triggers after five minutes, and thirty seconds of deadline
+reserve triggers an earlier proposal. You can configure these thresholds within
+the finite bounds exposed by `ReplanPolicy.Normalize`: at most sixteen replans,
+256 observations and twenty-four hours for either duration setting.
+
+The account's replan allowance must not exceed the policy's `MaxReplans`.
+Outstanding holds count against that allowance. If you raise the policy limit,
+the existing immutable account still constrains it. Unknown usage and graph
+revisions cannot reset the account. See [shared capacity](/docs/execution/assurance#share-capacity-across-workers)
+for reservation and settlement rules.
+
+Unresolved effects take priority over new work, including after a deadline.
+Other decisions check conservative shared capacity and absolute deadlines before
+requesting another proposal. A paused task's deadline keeps advancing. Contradictory
+evidence, repeated failures and stalled progress can request a revised graph,
+but they do not authorize retries, bypass approval or cancel running work.
+
+Automatic execution still needs scheduler integration. Under current host
+authorization, reserve one replan unit and the estimated proposal resources
+before invoking a model. Retain the charge when a proposal fails or is rejected;
+refund only usage that trusted evidence establishes was unused. A reservation
+alone does not grant fresh invocation permission. Apply any resulting graph
+through `planning.ApplyRevision` and the existing expected-revision store commit,
+which preserve acceptance criteria and reject expanded authority or budgets.
+The helper does not wire these execution steps into `RunOrchestration`.
