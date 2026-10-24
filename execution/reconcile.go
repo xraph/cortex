@@ -31,9 +31,11 @@ type EffectRegistration struct {
 // Authorize authenticates the current caller, resolves live grants and checks
 // run/assignment ownership. Adapters must enforce those grants at the write.
 type EffectExecutorConfig struct {
-	Store         EffectStore
-	Adapters      []EffectRegistration
-	Authorize     func(context.Context, EffectRequest, EffectAction) error
+	Store     EffectStore
+	Adapters  []EffectRegistration
+	Authorize func(context.Context, EffectRequest, EffectAction) error
+	// AuthorizeScan is required by RecoverSealedPage for exact-run discovery.
+	AuthorizeScan func(context.Context, RunCallSeal) error
 	MaxConcurrent int
 }
 
@@ -42,11 +44,13 @@ type EffectExecutorConfig struct {
 // idempotent operations. Retrying a request returns its retained receipt or
 // probes the original attempt; unknown outcomes remain reserved indefinitely.
 type EffectExecutor struct {
-	store     EffectStore
-	adapters  map[string]EffectRegistration
-	authorize func(context.Context, EffectRequest, EffectAction) error
-	slots     chan struct{}
-	pageSlots chan struct{}
+	store         EffectStore
+	adapters      map[string]EffectRegistration
+	authorize     func(context.Context, EffectRequest, EffectAction) error
+	slots         chan struct{}
+	pageSlots     chan struct{}
+	scanSlots     chan struct{}
+	authorizeScan func(context.Context, RunCallSeal) error
 }
 
 // NewEffectExecutor copies host registrations and rejects ambiguous revisions.
@@ -54,7 +58,7 @@ func NewEffectExecutor(cfg EffectExecutorConfig) (*EffectExecutor, error) {
 	if effectNil(cfg.Store) || cfg.Authorize == nil || len(cfg.Adapters) < 1 || len(cfg.Adapters) > 256 || cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > 64 {
 		return nil, ErrEffectUnavailable
 	}
-	e := &EffectExecutor{store: cfg.Store, adapters: make(map[string]EffectRegistration, len(cfg.Adapters)), authorize: cfg.Authorize, slots: make(chan struct{}, cfg.MaxConcurrent), pageSlots: make(chan struct{}, cfg.MaxConcurrent)}
+	e := &EffectExecutor{store: cfg.Store, adapters: make(map[string]EffectRegistration, len(cfg.Adapters)), authorize: cfg.Authorize, slots: make(chan struct{}, cfg.MaxConcurrent), pageSlots: make(chan struct{}, cfg.MaxConcurrent), scanSlots: make(chan struct{}, cfg.MaxConcurrent), authorizeScan: cfg.AuthorizeScan}
 	for _, registration := range cfg.Adapters {
 		if registration.Requirement.Validate() != nil || effectNil(registration.Adapter) {
 			return nil, ErrInvalidEffect

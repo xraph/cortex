@@ -224,8 +224,11 @@ Guarded tool effects retain the exact original `RunCallRequest` in their existin
 operation journal. Built-in admission validates that call and serializes with
 local completion and the permanent run seal. Recovery uses the full retained
 request; legacy unbound effects cannot be relabelled. This supplies durable
-call-to-effect identity. Claim adoption, complete effect recovery supervision and
-shared usage settlement remain open.
+call-to-effect identity. `RecoverSealedPage` now discovers bounded effect pages under current exact-run
+authority and rechecks the retained seal before returning a cursor. It reuses the
+existing reconciliation path and preserves legacy unbound records. Claim
+adoption, lifecycle effect recovery supervision and shared usage settlement
+remain open.
 
 ## S3.5: Shared budgets and bounded replanning
 

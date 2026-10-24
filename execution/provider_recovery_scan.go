@@ -65,7 +65,7 @@ func (p *ProviderReconciler) ReconcilePage(ctx context.Context, request Provider
 	case <-bounded.Done():
 		return ProviderRecoveryPage{}, bounded.Err()
 	}
-	if authErr := p.authorizeSealedScan(bounded, storage, seal); authErr != nil {
+	if authErr := authorizeSealedScan(bounded, storage, seal, p.config.AuthorizeScan); authErr != nil {
 		return ProviderRecoveryPage{}, authErr
 	}
 	records, err := storage.ListRunCalls(bounded, query)
@@ -112,33 +112,11 @@ func (p *ProviderReconciler) ReconcilePage(ctx context.Context, request Provider
 			page.Terminal++
 		}
 	}
-	if authErr := p.authorizeSealedScan(bounded, storage, seal); authErr != nil {
+	if authErr := authorizeSealedScan(bounded, storage, seal, p.config.AuthorizeScan); authErr != nil {
 		return ProviderRecoveryPage{}, authErr
 	}
 	if len(requests) == query.Limit {
 		page.NextAfter = previous
 	}
 	return page, nil
-}
-
-func (p *ProviderReconciler) authorizeSealedScan(ctx context.Context, storage RunCallSealStore, seal RunCallSeal) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	offered := seal
-	offered.Request = cloneSealRequest(seal.Request)
-	if err := p.config.AuthorizeScan(ctx, offered); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	current, err := storage.GetRunCallSeal(ctx, seal.Request.RunID)
-	if err != nil {
-		return err
-	}
-	if current == nil || current.Validate() != nil || current.RequestDigest != seal.RequestDigest || !current.At.Equal(seal.At) {
-		return ErrRunCallConflict
-	}
-	return ctx.Err()
 }

@@ -5388,3 +5388,34 @@ CI run `40061756934` passed for preceding lifecycle commit `a66a486`.
 Guarded adoption, supervised effect recovery, shared usage settlement and installed
 host qualification remain open. Live Linux sandbox qualification remains deferred
 until you choose a worker.
+
+
+### S3.2 sealed effect recovery pages
+
+The initial tests failed on missing `AuthorizeScan` and `RecoverSealedPage` APIs.
+The executor now checks current exact-run discovery authority and the retained
+seal before and after a bounded effect page. It reuses `RecoverPage` for complete
+page validation, per-operation authorization and read-only reconciliation.
+Provider and effect scanning share the same detached seal-check helper.
+
+A separate bounded scan queue covers authorization and seal reads without holding
+an operation slot. The existing thirty-second effect bound covers the whole
+page, including queue wait. Errors return no cursor; earlier durable receipts
+remain available to a later authorized pass. Unknown outcomes permit traversal,
+while denied or unavailable operations fail the page. Legacy unbound effects are
+included without inventing a call relationship or task-acceptance proof.
+
+Tests cover exact scope, missing capabilities and authorizer, absent or changed
+seals, malformed whole pages, authority withdrawal after receipt persistence,
+unknown and denied operations, detached host metadata, queue and callback timeout,
+and repeated multi-page recovery. Real-store conformance includes bound and
+legacy operations, delayed terminal evidence and executor reconstruction. Final
+checks follow. Lifecycle effect supervision and claim adoption remain open.
+
+Final formatting and all-module lint passed after preallocating the shared test
+fixture's request slice. Full execution and coordination race suites passed in
+1.412 and 31.714 seconds. Provider and effect scan conformance passed together on
+SQLite, PostgreSQL and MongoDB. The final effect-only race rerun passed in 2.897,
+6.002 and 7.504 seconds, with no skips. Root build, docs type checks, docs lint and
+the 132-page production build passed. Lifecycle supervision and installed host
+qualification remain separate work.

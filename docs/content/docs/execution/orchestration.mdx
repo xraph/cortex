@@ -370,6 +370,28 @@ All built-in effect admission requires transaction support, including ordinary
 operations without a task call. Upgrade every writer before relying on this
 barrier, and retain both journals while external outcomes remain possible.
 
+### Recover effects from a sealed run
+
+Set `EffectExecutorConfig.AuthorizeScan` to authorize exact-run discovery under
+your recovery service identity. Then call
+`RecoverSealedPage(ctx, EffectRecoveryPageRequest{Seal: seal, Limit: 64})`.
+The executor's store must provide `BoundEffectStore`, `EffectDiscoveryStore` and
+`RunCallSealStore`. All deployed effect writers must honor the seal.
+
+Follow `NextAfter` until it is empty, then start a fresh pass to revisit uncertain
+operations. Each page rechecks current scan authority and the exact retained seal
+before discovery and after reconciliation. It uses `RecoverPage` for validation,
+current per-operation authorization and the existing read-only adapter path.
+The thirty-second deadline includes queueing, authorization, storage and probes;
+your callbacks must honor cancellation. Concurrent scans and operations have
+separate limits, both set by `MaxConcurrent`.
+
+An error returns no cursor, even if earlier receipts were committed. Retrying
+that page reads the receipts already retained. Uncertain outcomes remain visible
+and allow traversal to continue; an unavailable or denied operation fails the
+page. Legacy unbound operations are included too. A terminal receipt still does
+not establish a missing task-call binding, task success or usage settlement.
+
 ### Reconcile an interrupted provider call
 
 Use `execution.NewProviderReconciler` with your `ProviderRecoveryConfig` and call

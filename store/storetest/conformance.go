@@ -42,6 +42,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("SchedulerDurableAdmission", func(t *testing.T) { testSchedulerDurableAdmission(t, newStore) })
 	t.Run("ReplanAccountSurvivesConcurrencyAndRevision", func(t *testing.T) { testReplanAccountSurvivesConcurrencyAndRevision(t, newStore) })
 	t.Run("ProviderCallReceipts", func(t *testing.T) { testProviderCallReceipts(t, newStore) })
+	t.Run("SealedEffectRecovery", func(t *testing.T) { testSealedEffectRecovery(t, newStore) })
 	t.Run("ProviderRecoveryScan", func(t *testing.T) { testProviderRecoveryScan(t, newStore) })
 	t.Run("RunCallSeals", func(t *testing.T) { testRunCallSeals(t, newStore) })
 	t.Run("RunCallSealRace", func(t *testing.T) { testRunCallSealRace(t, newStore) })
