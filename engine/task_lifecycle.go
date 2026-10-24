@@ -69,6 +69,9 @@ func (e *Engine) taskServices() []taskLifecycleService {
 	if e.providerRecovery != nil {
 		services = append(services, e.providerRecovery)
 	}
+	if e.effectRecovery != nil {
+		services = append(services, e.effectRecovery)
+	}
 	return services
 }
 

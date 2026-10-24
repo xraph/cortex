@@ -490,7 +490,7 @@ retaining an unbounded list of errors. Cancellation or an invalid claim page sto
 the pass immediately.
 
 `ProviderRecoveryStatus` reports local running, stopping, active and failure
-counters. The engine cancels scheduling, claim expiry and provider recovery before
+counters. The engine cancels scheduling, claim expiry, provider and effect recovery before
 waiting for any of them to drain. A timed-out `Stop` leaves work owned and blocks
 restart until it finishes. Forge preserves its started state on that path too.
 Restart begins discovery again and reauthenticates retained proof. The service
@@ -504,6 +504,37 @@ another reopen. They check that recovering ownership, run, call records and budg
 state remain unchanged while authenticated fixture proof is retained.
 This qualifies the persistence path with fixture authority. Installed provider
 adapters and governed continuation still need separate qualification.
+
+### Run effect recovery with the engine
+
+Pass `engine.WithEffectRecovery(coordination.EffectRecoveryServiceConfig)` before
+`Start`, or use `coordination.NewEffectRecoveryService` when you own the lifecycle.
+For Forge, pass the engine option through `extension.WithEngineOption`.
+`Recovery` contains your `EffectExecutorConfig`; both `AuthorizeScan` and the
+per-operation `Authorize` callback are required. The store also needs
+`ListTaskClaims`, `RunCallSealStore`, `BoundEffectStore` and `EffectDiscoveryStore`.
+
+Supply authorized plan discovery that includes outstanding claims even when a
+plan is cancelled or completed. The service traverses recovering claims only,
+leaves unsealed runs for a later pass and uses `RecoverSealedPage` for each effect
+page. Its claim validation, paging and fairness implementation is shared with
+provider recovery. A failed run does not starve later claims.
+
+Defaults match provider recovery: four plans in flight, one per exact scope,
+64 entries per page, five-second claim/seal reads and one second between pages.
+Effect pages use `execution.MaxEffectDuration`; `Recovery.MaxConcurrent` must be
+set and bounds scan and probe concurrency. Registration slices are copied when
+you construct the service so later caller edits cannot change a restart.
+
+`EffectRecoveryStatus` reports local lifecycle counters. `Stop` cancels every
+engine task service before waiting for any one service, and a drain timeout keeps
+work owned until its callbacks return. Engine and Forge lifecycle tests cover
+that path. The crash fixture kills a worker after its adapter fsyncs an external
+write but before it returns, then recovers the exact bound request through a new
+engine and SQLite connection. A second recovery pass reads the retained receipt
+without another mutation. Claims, local call returns, task results and shared
+reservations stay unchanged. Installed adapters and guarded claim adoption still
+need separate qualification.
 
 ### Sweep expired claims
 

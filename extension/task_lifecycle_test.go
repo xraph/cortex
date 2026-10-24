@@ -31,7 +31,7 @@ func (*lifecycleShutdown) Name() string                       { return "lifecycl
 func (h *lifecycleShutdown) OnShutdown(context.Context) error { h.calls.Add(1); return nil }
 
 func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
-	for _, kind := range []string{"execution", "recovery", "provider"} {
+	for _, kind := range []string{"execution", "recovery", "provider", "effect"} {
 		t.Run(kind, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -74,6 +74,12 @@ func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
 							AuthorizeScan: func(context.Context, execution.RunCallSeal) error { return nil },
 						},
 					}))
+				case "effect":
+					options = append(options, engine.WithEffectRecovery(coordination.EffectRecoveryServiceConfig{Discovery: cfg.Service.Discovery, Recovery: execution.EffectExecutorConfig{
+						Store:     struct{ lifecycleEffectStorage }{},
+						Adapters:  []execution.EffectRegistration{{Requirement: execution.EffectRequirement{Tool: "probe", Revision: "1", Class: execution.EffectNonIdempotent, ReconcileRevision: "1", Retry: execution.RetryPolicy{MaxAttempts: 1}}, Adapter: struct{ execution.EffectAdapter }{}}},
+						Authorize: func(context.Context, execution.EffectRequest, execution.EffectAction) error { return nil }, AuthorizeScan: func(context.Context, execution.RunCallSeal) error { return nil }, MaxConcurrent: 1,
+					}}))
 				case "recovery":
 					options = append(options, engine.WithClaimRecovery(coordination.ClaimRecoveryConfig{Store: struct{ coordination.ClaimExpiryStore }{}, Clock: lifecycleClock{}, Discovery: cfg.Service.Discovery}))
 				}
@@ -102,5 +108,12 @@ func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
 type lifecycleProviderStorage interface {
 	execution.RunCallSealStore
 	execution.ProviderCallReceiptStore
+	ListTaskClaims(context.Context, coordination.ClaimListRequest) ([]coordination.Claim, error)
+}
+
+type lifecycleEffectStorage interface {
+	execution.RunCallSealStore
+	execution.BoundEffectStore
+	execution.EffectDiscoveryStore
 	ListTaskClaims(context.Context, coordination.ClaimListRequest) ([]coordination.Claim, error)
 }

@@ -227,8 +227,11 @@ request; legacy unbound effects cannot be relabelled. This supplies durable
 call-to-effect identity. `RecoverSealedPage` now discovers bounded effect pages under current exact-run
 authority and rechecks the retained seal before returning a cursor. It reuses the
 existing reconciliation path and preserves legacy unbound records. Claim
-adoption, lifecycle effect recovery supervision and shared usage settlement
-remain open.
+adoption and shared usage settlement remain open. Lifecycle effect recovery
+supervision is implemented through `engine.WithEffectRecovery`; it shares
+claim traversal, fairness and shutdown with provider recovery. The subprocess
+fixture covers recovery after an external write and before the tool reply.
+Installed host ports still need qualification.
 
 ## S3.5: Shared budgets and bounded replanning
 

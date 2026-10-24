@@ -15,8 +15,10 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/verification"
 )
@@ -31,6 +33,7 @@ type taskCrashManifest struct {
 	Dispatch      coordination.TaskDispatchRequest
 	Claim         coordination.Claim
 	ProviderCalls int
+	EffectLog     string
 }
 
 type crashRecoveryClock struct{ at time.Time }
@@ -44,14 +47,25 @@ func TestClaimRecoveryCrashWorker(t *testing.T) {
 	if boundary == "" {
 		return
 	}
-	require.Contains(t, []string{"held", "dispatch", "provider_pending", "completed"}, boundary)
+	require.Contains(t, []string{"held", "dispatch", "provider_pending", "completed", "effect_pending"}, boundary)
 	output := os.Getenv(crashManifestEnv)
 	require.NotEmpty(t, output)
-	f := preparedTaskClaimFixture(t)
+	var handler engine.ToolHandler
+	var configure []func(*engine.Engine, *engine.RunOverrides)
+	if boundary == "effect_pending" {
+		configure = append(configure, func(e *engine.Engine, o *engine.RunOverrides) {
+			o.Tools = []string{"probe"}
+			require.NoError(t, engine.WithLLM(&requiredToolClient{})(e))
+			require.NoError(t, engine.WithToolRevision("probe", "1")(e))
+			require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{})(e))
+			require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, inv cortex.Invocation) (string, error) { return handler(ctx, inv) })(e))
+		})
+	}
+	f := preparedTaskClaimFixture(t, configure...)
 	park := func() {
 		claim, err := f.f.storage.GetTaskClaim(f.f.ctx, f.request.Acquisition.Claim.PlanID, f.request.Acquisition.Claim.TaskID)
 		require.NoError(t, err)
-		data, err := json.Marshal(taskCrashManifest{Boundary: boundary, Database: f.f.path, Request: f.request, Dispatch: f.dispatch, Claim: claim, ProviderCalls: f.client.calls})
+		data, err := json.Marshal(taskCrashManifest{Boundary: boundary, Database: f.f.path, Request: f.request, Dispatch: f.dispatch, Claim: claim, ProviderCalls: f.client.calls, EffectLog: output + ".effect"})
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(output+".tmp", data, 0600))
 		require.NoError(t, os.Rename(output+".tmp", output))
@@ -59,6 +73,18 @@ func TestClaimRecoveryCrashWorker(t *testing.T) {
 		defer timer.Stop()
 		<-timer.C
 		t.Fatal("parent did not kill the crash worker")
+	}
+	if boundary == "effect_pending" {
+		requirement := engineEffectRequirement()
+		requirement.Tool = "probe"
+		executor, makeErr := execution.NewEffectExecutor(execution.EffectExecutorConfig{Store: f.f.storage, Adapters: []execution.EffectRegistration{{Requirement: requirement, Adapter: &crashEffectAdapter{path: output + ".effect", park: park}}}, Authorize: func(context.Context, execution.EffectRequest, execution.EffectAction) error { return nil }, MaxConcurrent: 1})
+		require.NoError(t, makeErr)
+		handler, makeErr = engine.NewEffectToolHandler(executor, func(ctx context.Context, inv cortex.Invocation) (execution.EffectRequest, error) {
+			call, ok := execution.RunCallFromContext(ctx)
+			require.True(t, ok)
+			return execution.EffectRequest{SchemaVersion: 1, Scope: inv.Scope, RunID: inv.RunID, OperationKey: inv.RunID.String() + "/probe", AttemptID: id.New(execution.PrefixEffectAttempt), ArgsDigest: evidence.Digest([]byte(inv.Call.Arguments)), PrincipalRef: "worker", AuthorityRef: "fixture-grant", Deadline: call.Deadline, Requirement: requirement}, nil
+		})
+		require.NoError(t, makeErr)
 	}
 	if boundary == "held" {
 		park()

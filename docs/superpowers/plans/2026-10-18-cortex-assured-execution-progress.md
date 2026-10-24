@@ -5419,3 +5419,45 @@ SQLite, PostgreSQL and MongoDB. The final effect-only race rerun passed in 2.897
 6.002 and 7.504 seconds, with no skips. Root build, docs type checks, docs lint and
 the 132-page production build passed. Lifecycle supervision and installed host
 qualification remain separate work.
+
+
+### S3.2 lifecycle effect recovery
+
+`coordination.NewEffectRecoveryService` discovers sealed recovering runs through
+bounded plan and claim pages. `engine.WithEffectRecovery` adds it to the shared
+engine lifecycle and exposes status. The Forge stop-timeout fixture now includes
+effect recovery. Provider and effect services share claim validation, seal reads,
+page traversal, fairness and drainage through `runRecoveryScheduler`; no second
+polling implementation was added.
+
+Initial service and engine tests failed on missing APIs. Tests now cover scoped
+service identity, multi-page recovery, restart using retained receipts, detached
+registration slices, unsealed and active claims, invalid configuration and owned
+callbacks after a stop timeout. The combined shutdown test verifies cancellation
+of all four services before waiting for a blocked one.
+
+A subprocess fixture fsyncs one external effect, records the original bound tool
+call and is killed before returning its receipt. A new engine reopens SQLite,
+scans recovering ownership and retains terminal fixture proof. Another engine
+reopens storage and reads that receipt without another probe or external write.
+The original pending call, recovering claim, task run and charged budget remain
+unchanged. Final checks follow. Guarded claim adoption, shared settlement and live
+host qualification remain open.
+
+Final formatting and all-module lint passed. A strengthened active-claim test
+caught a fixture that changed state without updating its digest; the fixture now
+uses `BeginDispatch` and verifies its validity before testing the skip. The
+recovery implementation correctly rejected the malformed claim. Lint also
+removed an extra blank line in the extracted traversal helper.
+
+Full coordination and execution race suites passed in 22.388 and 1.324 seconds.
+The engine lifecycle and seven killed-worker recovery cases passed in 28.842
+seconds. Full Forge extension and contract race suites passed in 2.282 and 48.925
+seconds. Root build, docs type checks, docs lint and the 132-page production build
+passed. The preceding sealed-scan CI run `40063740341` had passed every job except
+its still-running Linux test job at this checkpoint.
+
+Effect recovery lifecycle wiring is implemented and fixture-tested. Guarded
+adoption, aggregate provider/verifier usage settlement, installed authority ports
+and the remaining Stage 3 and Stage 4 gates remain open. Live Linux sandbox
+qualification is still deferred until a worker is chosen.
