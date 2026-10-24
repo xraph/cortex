@@ -309,6 +309,57 @@ later polls; an uncertain task invocation still requires durable reconciliation.
 Restarting the service resets discovery to the first page but preserves all claims,
 call journals, output acceptance requirements and shared reservations.
 
+### Reconcile an interrupted provider call
+
+Use `execution.NewProviderReconciler` with your `ProviderRecoveryConfig` and call
+`Reconcile(ctx, originalRequest)` for a journaled complete or stream invocation.
+Supply the engine's durable store as `Store`. SQLite, PostgreSQL and MongoDB
+implement `ProviderCallReceiptStore`. Discover original requests through bounded
+`ListRunCalls` pages in an authorized exact scope, and keep this host-owned loop
+separate from claim expiry.
+
+You must supply every host boundary:
+
+- `Adapter.ReconcileProviderCall` queries authoritative state for the original
+  operation. It must never generate, resend or execute it. A partial stream,
+  transient lookup miss or unavailable proof remains uncertain.
+- `Authorize` checks the caller before lookup and again before persistence.
+- `Authenticate` verifies the receipt against retained dispatch and routing
+  evidence, including the original provider, account, operation, adapter revision,
+  result encoding and any known usage. Current agent configuration cannot prove
+  where an earlier call went. If that binding is unavailable, return an error.
+- `Fence.WithProviderCallFence` holds your current authority and routing revision
+  guards through its synchronous commit callback. A no-op guard does not provide
+  this guarantee. The callback must run exactly once before the guard returns.
+
+Receipts retain a proof reference and digest, without credentials or result bytes.
+Their request digest binds the entire frozen `RunCallRequest`. A succeeded receipt
+uses the original call's result digest encoding. Failed and not-accepted receipts
+have no result digest. Not-accepted proof must establish that delayed delivery
+cannot later cause acceptance; a lookup returning no result is insufficient.
+
+Only explicitly known tokens and USD micros count as authenticated usage. Unknown
+usage stays unknown, including after proven non-acceptance. Recovery does not
+settle budgets, release reservations, accept output or authorize another call.
+Those operations need their own guarded checks.
+
+Stored proof is immutable. Identical writes replay safely and conflicting proofs
+return an error. Recovery reauthenticates stored proof without querying the provider
+again, including after a lost storage acknowledgment. Local return observations
+remain separate: a late disagreement preserves both records and makes recovery
+fail. Compare the latest journal again before any later adoption.
+
+Defaults are four concurrent operations and a thirty-second timeout, including
+slot wait. `MaxConcurrent` accepts 1 to 4096; `Timeout` accepts one millisecond to
+thirty seconds. Your adapter, store and guards must honor cancellation. Cortex
+keeps a slot until the callback returns and does not detach timed-out work.
+
+The subprocess tests kill a real fixture worker before a provider reply or after
+local completion, reopen SQLite, retain terminal fixture proof and reopen it
+again. They check that claim, run, journal and budget state remain unchanged.
+This qualifies the persistence path with fixture authority. Installed provider
+adapters and governed continuation still need separate qualification.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in

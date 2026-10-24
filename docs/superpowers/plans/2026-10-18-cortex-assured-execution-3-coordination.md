@@ -105,7 +105,16 @@ and shared usage settlement remain integration requirements. Provider and local
 tool calls now reserve a durable logical slot under the lease and retain normal
 local-return observations. Replay, ambiguous writes and incomplete streams do not
 grant reinvocation. These observations do not settle shared usage or qualify
-provider recovery.
+provider recovery. `execution.NewProviderReconciler` now queries original model
+calls through a read-only host adapter, requires current authorization and proof
+authentication under an explicit host commit fence, and retains immutable terminal
+receipts in all three stores. Replays reauthenticate saved proof without another
+provider query. Receipt usage distinguishes known tokens/money from unknown
+charges. Late local disagreements preserve both records and fail recovery.
+Killed-worker SQLite tests cover pending and locally completed calls followed by
+fixture receipt recovery and storage reopen. Concrete provider/routing proof
+adapters, lifecycle reconciliation discovery, claim adoption and shared settlement
+remain open; receipt persistence alone does not authorize continuation.
 
 `RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
 its captured inputs through the original prepared snapshot and ReAct loop.

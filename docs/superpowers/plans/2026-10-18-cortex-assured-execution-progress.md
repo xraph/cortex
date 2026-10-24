@@ -5174,3 +5174,41 @@ matrix passed in 24.655 seconds with no skips; the four killed-worker cases took
 11.34 seconds of that run. Docs types, lint and production build passed. CI run
 `40054330800` also passed for lifecycle commit `1a90403` in 11 minutes 10 seconds,
 including Linux root tests, submodules and security checks.
+
+
+### S3.2 authenticated provider-call receipt recovery
+
+A host-configured provider reconciler now retains immutable terminal proof for
+original complete and stream call records. It requires current authorization,
+proof authentication and a synchronous host authority fence. Its adapter can only
+query provider state. Reconciliation has bounded local concurrency and timeouts;
+callbacks must honor cancellation. Saved proof is reauthenticated without another
+provider query, including after lost storage acknowledgment.
+
+Receipt persistence reuses the shared assurance repository for SQLite, PostgreSQL
+and MongoDB. The full original journal request binds each receipt. Known token
+and money usage stays distinct from unknown usage. Local returns remain separate,
+so a late contradiction preserves both records and fails recovery. No claim, run,
+reservation or task acceptance is changed by a receipt.
+
+The initial receipt and reconciler tests failed on missing APIs. The SQLite
+conformance case failed because receipt persistence was absent. A corruption
+regression then showed that changed raw JSON could pass canonical digest checks;
+reads now also verify the retained body digest. Initial race tests passed the
+three real backends and two killed-worker SQLite scenarios. The latter recover
+fixture proof after a pending provider call or completed local execution, reopen
+storage and check that execution and budget state remain unchanged.
+
+This is host-port and persistence coverage, not live provider qualification.
+Original routing evidence, installed provider adapters, lifecycle reconciliation
+discovery, guarded claim adoption and shared usage settlement remain open. Final
+checks follow below.
+
+Final formatting and all-module lint passed with zero issues. After the lint
+fixes, execution and shared assurance race suites passed in 1.535 and 1.261
+seconds. The real SQLite, PostgreSQL and MongoDB call/receipt conformance matrices
+passed in 11.809, 24.460 and 14.226 seconds, with no skips. They include identical
+concurrent receipts and competing proofs, where exactly one proof wins. The
+runtime journal and six killed-worker scenarios passed in 33.686 seconds. Root
+build, docs type checks, docs lint and the production docs build passed. CI run
+`40055208267` also passed for the preceding worker-crash commit `b028774`.
