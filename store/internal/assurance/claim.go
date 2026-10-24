@@ -100,7 +100,7 @@ func (s *Repository) GetTaskClaim(ctx context.Context, planID, taskID id.ID) (co
 
 // ListTaskClaims includes removed tasks so their dispatches remain recoverable.
 func (s *Repository) ListTaskClaims(ctx context.Context, req coordination.ClaimListRequest) ([]coordination.Claim, error) {
-	if req.PlanID.IsNil() || req.PlanID.Prefix() != planning.PrefixPlan || req.Limit < 1 || req.Limit > 256 || (!req.AfterTaskID.IsNil() && req.AfterTaskID.Prefix() != planning.PrefixTask) {
+	if req.Validate() != nil {
 		return nil, coordination.ErrInvalidClaim
 	}
 	if _, err := cortex.RequireScope(ctx); err != nil {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 )
 
 // DispatchAdmission identifies whether this call first recorded dispatch intent.
@@ -35,6 +36,14 @@ type ClaimListRequest struct {
 	PlanID      id.ID
 	AfterTaskID id.ID
 	Limit       int
+}
+
+// Validate checks the shared pagination bounds without granting scope access.
+func (r ClaimListRequest) Validate() error {
+	if r.PlanID.IsNil() || r.PlanID.Prefix() != planning.PrefixPlan || r.Limit < 1 || r.Limit > 256 || (!r.AfterTaskID.IsNil() && r.AfterTaskID.Prefix() != planning.PrefixTask) {
+		return ErrInvalidClaim
+	}
+	return nil
 }
 
 // ClaimHistoryRequest pages immutable task ownership revisions.

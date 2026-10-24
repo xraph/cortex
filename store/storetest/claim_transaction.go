@@ -54,6 +54,76 @@ func ClaimTransactions(t *testing.T, backend store.Store, driver assurance.Drive
 		_, err = repo.AcquireTaskClaim(ctx, next)
 		require.ErrorIs(t, err, coordination.ErrClaimConflict)
 	})
+	t.Run("bounded_expiry_sweep", func(t *testing.T) {
+		for _, dispatched := range []bool{false, true} {
+			ctx, request := claimFixture(t, backend)
+			clock := &jobClock{at: time.Now().UTC()}
+			repo := assurance.New(driver).WithClock(clock)
+			claim, err := repo.AcquireTaskClaim(ctx, request)
+			require.NoError(t, err)
+			if dispatched {
+				receipt, dispatchErr := repo.BeginTaskDispatch(ctx, claim.Token(), id.NewAgentRunID())
+				require.NoError(t, dispatchErr)
+				claim = receipt.Claim
+			}
+			// Replanning must not hide old tasks from recovery discovery.
+			plan, err := repo.GetPlan(ctx, request.PlanID)
+			require.NoError(t, err)
+			plan.Tasks[0].ID = id.New(planning.PrefixTask)
+			_, err = repo.CommitRevision(ctx, planning.Revision{Plan: plan, Actor: "host", Reason: "replan"}, 1)
+			require.NoError(t, err)
+			clock.advance(time.Minute)
+			sweeper, err := coordination.NewClaimSweeper(repo, clock)
+			require.NoError(t, err)
+			page, err := sweeper.Sweep(ctx, coordination.ClaimListRequest{PlanID: request.PlanID, Limit: 1})
+			require.NoError(t, err)
+			require.Equal(t, request.TaskID, page.NextTaskID)
+			if dispatched {
+				require.Equal(t, 1, page.Recovering)
+			} else {
+				require.Equal(t, 1, page.Released)
+			}
+			current, err := repo.GetTaskClaim(ctx, request.PlanID, request.TaskID)
+			require.NoError(t, err)
+			require.NoError(t, coordination.ValidateClaimSuccessor(claim, current))
+			require.Equal(t, claim.RunID, current.RunID)
+			// A new sweeper observes durable state after restart; it cannot repeat
+			// the expiry or infer permission to repeat an external invocation.
+			restarted, err := coordination.NewClaimSweeper(assurance.New(driver).WithClock(clock), clock)
+			require.NoError(t, err)
+			replay, err := restarted.Sweep(ctx, coordination.ClaimListRequest{PlanID: request.PlanID, Limit: 2})
+			require.NoError(t, err)
+			require.Zero(t, replay.Released+replay.Recovering)
+			require.True(t, replay.NextTaskID.IsNil())
+			end, err := restarted.Sweep(ctx, coordination.ClaimListRequest{PlanID: request.PlanID, AfterTaskID: page.NextTaskID, Limit: 1})
+			require.NoError(t, err)
+			require.Zero(t, end)
+		}
+	})
+	t.Run("expiry_sweep_lost_acknowledgement", func(t *testing.T) {
+		ctx, request := claimFixture(t, backend)
+		clock := &jobClock{at: time.Now().UTC()}
+		repo := assurance.New(driver).WithClock(clock)
+		claim, err := repo.AcquireTaskClaim(ctx, request)
+		require.NoError(t, err)
+		clock.advance(time.Minute)
+		faulty := assurance.New(&submissionFenceDriver{Driver: driver, plans: plans, lostAck: true}).WithClock(clock)
+		sweeper, err := coordination.NewClaimSweeper(faulty, clock)
+		require.NoError(t, err)
+		page, err := sweeper.Sweep(ctx, coordination.ClaimListRequest{PlanID: request.PlanID, Limit: 1})
+		require.ErrorIs(t, err, errAssignmentInjected)
+		require.Zero(t, page)
+		current, err := repo.GetTaskClaim(ctx, request.PlanID, request.TaskID)
+		require.NoError(t, err)
+		require.Equal(t, coordination.ClaimReleased, current.State)
+		require.Equal(t, claim.Revision+1, current.Revision)
+		restarted, err := coordination.NewClaimSweeper(repo, clock)
+		require.NoError(t, err)
+		page, err = restarted.Sweep(ctx, coordination.ClaimListRequest{PlanID: request.PlanID, Limit: 2})
+		require.NoError(t, err)
+		require.Zero(t, page.Released+page.Recovering)
+	})
+
 	t.Run("rollback", func(t *testing.T) {
 		ctx, request := claimFixture(t, backend)
 		faulty := assurance.New(&submissionFenceDriver{Driver: driver, plans: plans, failInsert: true})

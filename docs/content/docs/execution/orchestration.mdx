@@ -306,3 +306,30 @@ existing error-type logger. Discovery errors and malformed pages are retried on
 later polls; an uncertain task invocation still requires durable reconciliation.
 Restarting the service resets discovery to the first page but preserves all claims,
 call journals, output acceptance requirements and shared reservations.
+
+### Sweep expired claims
+
+Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in
+an authorized scope. Pass a `ClaimListRequest` with a plan ID and a limit from 1
+to 256. The store must implement `ClaimExpiryStore`; the built-in claim stores do.
+Discovery includes tasks removed by replanning.
+
+`Sweep` checks the full page before writing. An expired held claim becomes
+released. An expired dispatched claim becomes recovering and keeps its run ID
+and fence. Each write compares the observed revision inside the store transaction,
+so a concurrent renewal cannot be overwritten by a stale sweep.
+
+Continue with `ClaimSweepPage.NextTaskID` while it is nonzero. When it is zero,
+the pass has ended; start the next pass from the beginning so live claims and
+revision conflicts are checked again. Counts describe acknowledgments in that
+call. They do not distinguish a new write from a historical receipt.
+
+On an error, retry the same page from fresh storage observations. No continuation
+cursor is returned because earlier writes may have committed. Cancellation stops
+further writes and preserves those committed records. You own the polling loop,
+its deadline and its shutdown; the engine's scheduling service does not call this
+sweeper automatically yet.
+
+Recovery still needs authenticated provider and effect receipts before a retry,
+continuation or acceptance. Claim expiry does not settle usage, refund shared
+capacity, complete a task or authorize another external call.

@@ -5043,3 +5043,45 @@ passed in 1.128 and 70.676 seconds; focused engine lifecycle and task-worker tes
 passed in 21.491 seconds. Root build, docs types, docs lint and production docs
 build passed. These checks cover stored identity isolation, not live worker or
 provider qualification.
+
+
+### S3.2 bounded claim expiry sweep
+
+The scope identity fix is committed and pushed as `737307c`. The next recovery
+slice adds a scoped `ClaimSweeper` over the existing list and atomic expiry
+operations. Its initial tests failed because the API was absent. The first race
+matrix passed in 1.619 seconds after implementation.
+
+The sweep validates the complete bounded page before writing, uses exact observed
+revisions, and keeps dispatch uncertainty in the recovering state. It returns no
+cursor after an error or cancellation because earlier writes may have committed.
+Conflicts are observations for the next complete pass. It neither executes work
+nor settles capacity. Automatic lifecycle polling and provider reconciliation
+remain open.
+
+Backend fixtures cover tasks removed by replanning, retained state after a new
+sweeper is constructed, and a lost acknowledgment after an expiry transaction.
+This is storage restart evidence, not a killed worker or live provider test.
+Final checks follow below.
+
+The first backend sweep matrix passed on SQLite (7.537 seconds), PostgreSQL
+(24.563 seconds) and MongoDB (62.767 seconds), with real containers and no skips.
+The full coordination run caught duplicate output names in the cancellation test's
+plan fixture before the sweep could execute. That fixture now gives each task its
+own output. Lint found two error-variable reassignments; those were corrected.
+The failed lint pass was stopped after its root diagnostics so source fixes could
+be checked in a fresh pass. Pagination validation now lives on ClaimListRequest
+and is shared by storage and the sweeper.
+
+After the fixture and validation cleanup, focused expiry race tests passed in
+1.505 seconds. Final formatting passed, followed by the full coordination race
+suite (143.374 seconds) and root build. The complete claim transaction matrix
+passed on SQLite (18.927 seconds), PostgreSQL (37.500 seconds) and MongoDB
+(62.375 seconds), with no skipped cases. Docs types, lint and production build
+passed. All-module lint is still running at this entry.
+
+All-module lint finished with zero issues. CI run `40051658320` also passed for
+scope commit `737307c` in 14 minutes 36 seconds, including the preceding lifecycle
+work. The claim sweep remains a caller-owned bounded operation; lifecycle
+recovery polling, provider reconciliation and killed-worker qualification are
+still required.
