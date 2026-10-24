@@ -1,0 +1,132 @@
+package assurance
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/execution"
+	"github.com/xraph/cortex/id"
+)
+
+// KindRunCallGuard is the shared row that serializes admission and closure.
+const KindRunCallGuard = "run_call_guard"
+const kindRunCallSeal = "run_call_seal"
+
+// RunCallDriver fences one exact run's call admission and closure. Callbacks
+// contain transactional storage work only; Mongo may repeat them after conflicts.
+type RunCallDriver interface {
+	TransactRunCalls(context.Context, id.AgentRunID, func(context.Context, Driver) error) error
+}
+
+var _ execution.RunCallSealStore = (*Repository)(nil)
+
+func (s *Repository) runCallTransaction(ctx context.Context, runID id.AgentRunID, callback func(context.Context, *Repository) error) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun {
+		return execution.ErrInvalidRunCall
+	}
+	driver, ok := s.driver.(RunCallDriver)
+	if !ok {
+		return execution.ErrRunCallUnavailable
+	}
+	// A separate durable anchor also covers journals predating this protocol and
+	// runs whose first worker has not arrived. It contains no execution permission.
+	anchor, err := record(KindRunCallGuard, runID.String(), evidence.Digest([]byte("{}")), runID.String(), scope, struct{}{})
+	if err != nil {
+		return err
+	}
+	if insertErr := s.insert(ctx, anchor); insertErr != nil {
+		return insertErr
+	}
+	err = driver.TransactRunCalls(ctx, runID, func(tc context.Context, tx Driver) error {
+		repo := &Repository{driver: tx, clock: s.clock}
+		row, readErr := repo.get(tc, Query{Kind: KindRunCallGuard, ID: runID.String()})
+		if readErr != nil {
+			return readErr
+		}
+		if row.Deleted || row.Kind != anchor.Kind || row.ID != anchor.ID || row.RunID != anchor.RunID || row.Body != anchor.Body || row.Digest != anchor.Digest {
+			return execution.ErrInvalidRunCall
+		}
+		if callbackErr := callback(tc, repo); callbackErr != nil {
+			return callbackErr
+		}
+		return tc.Err()
+	})
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+// SealRunCalls permanently closes admission while retaining late observations.
+// The caller must hold current host authority through this transaction.
+func (s *Repository) SealRunCalls(ctx context.Context, request execution.RunCallSealRequest) (execution.RunCallSeal, error) {
+	if err := require(ctx, request.Scope); err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	r, digest, err := request.Freeze()
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	var result execution.RunCallSeal
+	err = s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
+		result = execution.RunCallSeal{}
+		existing, readErr := tx.GetRunCallSeal(tc, r.RunID)
+		if readErr != nil {
+			return readErr
+		}
+		if existing != nil {
+			if existing.RequestDigest != digest {
+				return execution.ErrRunCallConflict
+			}
+			result = *existing
+			return nil
+		}
+		value := execution.RunCallSeal{Request: r, RequestDigest: digest, At: s.clock.Now().UTC()}
+		if value.Validate() != nil {
+			return execution.ErrInvalidRunCall
+		}
+		body, encodeErr := json.Marshal(value)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		row, encodeErr := record(kindRunCallSeal, r.RunID.String(), evidence.Digest(body), r.RunID.String(), r.Scope, value)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
+			return insertErr
+		}
+		result = value
+		return nil
+	})
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	return result, nil
+}
+
+// GetRunCallSeal returns a permanent barrier or nil when membership is still open.
+func (s *Repository) GetRunCallSeal(ctx context.Context, runID id.AgentRunID) (*execution.RunCallSeal, error) {
+	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun {
+		return nil, execution.ErrInvalidRunCall
+	}
+	row, err := s.get(ctx, Query{Kind: kindRunCallSeal, ID: runID.String()})
+	if errors.Is(err, ErrAbsent) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sealed execution.RunCallSeal
+	if row.Deleted || row.Kind != kindRunCallSeal || row.ID != runID.String() || row.RunID != runID.String() || len(row.Body) > 32<<10 || row.Digest != evidence.Digest([]byte(row.Body)) || json.Unmarshal([]byte(row.Body), &sealed) != nil || sealed.Validate() != nil || sealed.Request.RunID != runID || sealed.Request.Scope.Canonical() != row.ScopeCanon {
+		return nil, execution.ErrInvalidRunCall
+	}
+	return &sealed, nil
+}

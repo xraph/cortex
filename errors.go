@@ -40,6 +40,8 @@ var (
 	ErrRunCallConflict               = errors.New("cortex: run call conflict")
 	ErrRunCallNotFound               = errors.New("cortex: run call not found")
 	ErrProviderCallUncertain         = errors.New("cortex: provider call uncertain")
+	ErrRunCallsSealed                = errors.New("cortex: run calls sealed")
+	ErrRunCallUnavailable            = errors.New("cortex: run call transaction unavailable")
 
 	// Scheduler errors.
 	ErrInvalidScheduler                = errors.New("cortex: invalid scheduler configuration or snapshot")

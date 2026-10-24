@@ -115,6 +115,14 @@ Killed-worker SQLite tests cover pending and locally completed calls followed by
 fixture receipt recovery and storage reopen. Concrete provider/routing proof
 adapters, lifecycle reconciliation discovery, claim adoption and shared settlement
 remain open; receipt persistence alone does not authorize continuation.
+`Engine.NewRunCallSealer` now supplies a guarded permanent journal barrier. All
+three stores serialize new call admission with closure on a shared durable anchor.
+Acknowledged closure makes call membership stable, including for empty and legacy
+journals, while late returns and provider proof remain writable. The engine test
+checks that a delayed task worker cannot reach its provider after closure.
+Rollback, lost commit acknowledgment and cancellation after commit are covered by
+real backend transactions. All deployed writers must participate; closure does
+not prove external completion or settle a recovering claim.
 
 `RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
 its captured inputs through the original prepared snapshot and ReAct loop.

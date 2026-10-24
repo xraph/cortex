@@ -309,6 +309,41 @@ later polls; an uncertain task invocation still requires durable reconciliation.
 Restarting the service resets discovery to the first page but preserves all claims,
 call journals, output acceptance requirements and shared reservations.
 
+### Close a call journal for recovery
+
+Use `Engine.NewRunCallSealer(fence, authorizer)` to close the engine's journal
+under your current host authority. You can also construct
+`execution.NewRunCallSealer(store, fence, authorizer)` directly. Pass a
+`RunCallSealRequest` with the exact scope, run ID, authenticated actor and reason
+to `Seal`. The guarded operation has a thirty-second deadline, which your host
+ports and storage must honor.
+
+The seal and call admission serialize on the same durable database row. Once the
+seal is acknowledged, `BeginRunCall` rejects every slot for that run with
+`ErrRunCallsSealed`, including historical attempts. An empty journal can be
+sealed before a delayed worker reaches its first call. The prepared task runtime
+then stops before invoking the provider. There is no reopen operation.
+
+This gives bounded recovery scans stable membership. It does not prove that
+admitted calls have finished. Late local returns and provider receipts remain
+writable, and their consistency must be rechecked before adoption or settlement.
+Use call-lease controls to stop already admitted work; a journal seal cannot cancel
+an external operation. Claim, run and shared-budget state remain unchanged.
+
+The host implements `RunCallSealFence.WithRunCallSeal` and
+`RunCallSealAuthorizer.AuthorizeRunCallSeal`. Hold current exact-run authority
+through the synchronous callback and authenticate the actor on every attempt,
+including retries. Identical requests return the retained seal. A changed actor,
+reason or other binding conflicts. Errors can follow a committed write, so repeat
+the same authorized request instead of assuming closure failed.
+
+The built-in stores support journals created before sealing was introduced. All
+writers must run the sealing protocol before you rely on it; an older writer can
+bypass the barrier. Admission now requires a transaction-capable store, including
+a replica set or supported sharded deployment for MongoDB. Missing transaction
+support fails closed. Keep seals for at least as long as their call records and
+possible delayed workers.
+
 ### Reconcile an interrupted provider call
 
 Use `execution.NewProviderReconciler` with your `ProviderRecoveryConfig` and call

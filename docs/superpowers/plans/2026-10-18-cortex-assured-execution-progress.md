@@ -5212,3 +5212,54 @@ concurrent receipts and competing proofs, where exactly one proof wins. The
 runtime journal and six killed-worker scenarios passed in 33.686 seconds. Root
 build, docs type checks, docs lint and the production docs build passed. CI run
 `40055208267` also passed for the preceding worker-crash commit `b028774`.
+
+
+### S3.2 stable call membership before recovery settlement
+
+Ruling: S3.2 recovery and S3.5 settlement need a closed set of invocations before
+claiming a complete scan. The existing journal allowed entries to arrive behind
+a discovery cursor. Add an irreversible, authorized call-admission barrier before
+aggregate recovery or settlement; closing membership does not prove that admitted
+calls finished. The protocol requires every deployed writer to participate.
+
+The shared assurance repository now retains run-call seals and serializes them
+with every journal admission. Backend plan transaction helpers also serve the
+new call anchor, keeping exact-scope SQL and Mongo transaction behavior shared.
+A separate anchor supports empty and legacy journals without rewriting retained
+call rows. Historical admissions after closure fail closed. Late return and
+provider-proof writes remain available.
+
+`execution.NewRunCallSealer` requires a synchronous host authority fence and
+authorizer, checks exact request and receipt bindings, and bounds an operation to
+thirty seconds. `Engine.NewRunCallSealer` uses the engine's existing store. The
+prepared worker test closes a journal before its first call, verifies zero
+provider invocations and retains shared charges across a SQLite reopen. The
+public engine error is redacted by the existing publication policy.
+
+The first model/storage and host-wrapper tests failed on missing APIs. Initial
+race/conformance matrices passed on SQLite, PostgreSQL and MongoDB, including
+admission racing with closure and existing planning/claim behavior. Fault tests
+cover rollback, lost acknowledgment and legacy rows. A new cancellation-after-
+commit regression failed because a successful transaction could still return
+fresh admission after cancellation; the shared wrapper now checks cancellation
+after commit and returns no admission or seal acknowledgment on that path. The
+committed record remains available for recovery. Final checks follow below.
+
+Final formatting, all-module lint, root build and docs type, lint and production
+build checks passed. Execution and assurance race suites passed in 1.963 and
+1.166 seconds. The focused call/receipt matrices passed on real SQLite,
+PostgreSQL and MongoDB in 20.698, 30.158 and 33.643 seconds, without skips. A
+standalone MongoDB test also passed, confirming that unavailable transactions
+deny admission and closure without retaining a call or seal.
+
+The broad worker, journal and killed-process recovery matrix passed in 329.190
+seconds. The broader storage transaction regressions passed SQLite in 446.222
+seconds and PostgreSQL in 331.050 seconds. MongoDB initially failed during
+container startup when Docker could not resolve its mapped port; the isolated
+MongoDB retry passed in 114.630 seconds. Final focused runtime tests passed in
+7.006 seconds. CI run `40057246779` passed for the preceding provider-receipt
+commit `d829e4b`.
+
+This closes journal membership only. Recovery must still validate late returns,
+provider proof, tool effects and verifier usage before guarded adoption or shared
+settlement. Those integrations and live qualification remain open.

@@ -28,11 +28,15 @@ func (d *runCallLostAckDriver) Insert(_ context.Context, row Record) error {
 		return ErrExists
 	}
 	d.rows[key] = row
-	if d.loseAck {
+	if d.loseAck && row.Kind != KindRunCallGuard {
 		return errors.New("acknowledgment lost")
 	}
 	return nil
 }
+func (d *runCallLostAckDriver) TransactRunCalls(ctx context.Context, _ id.AgentRunID, callback func(context.Context, Driver) error) error {
+	return callback(ctx, d)
+}
+
 func (d *runCallLostAckDriver) Select(_ context.Context, q Query) ([]Record, error) {
 	if row, ok := d.rows[q.Kind+q.ID]; ok {
 		return []Record{row}, nil

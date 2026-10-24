@@ -30,6 +30,34 @@ func (s *Repository) BeginRunCall(ctx context.Context, request execution.RunCall
 	if err := require(ctx, request.Scope); err != nil {
 		return false, err
 	}
+	frozen, _, err := request.Freeze()
+	if err != nil {
+		return false, err
+	}
+	fresh := false
+	err = s.runCallTransaction(ctx, frozen.RunID, func(tc context.Context, tx *Repository) error {
+		fresh = false
+		sealed, readErr := tx.GetRunCallSeal(tc, frozen.RunID)
+		if readErr != nil {
+			return readErr
+		}
+		if sealed != nil {
+			return execution.ErrRunCallsSealed
+		}
+		var beginErr error
+		fresh, beginErr = tx.beginRunCall(tc, frozen)
+		return beginErr
+	})
+	if err != nil {
+		return false, err
+	}
+	return fresh, nil
+}
+
+func (s *Repository) beginRunCall(ctx context.Context, request execution.RunCallRequest) (bool, error) {
+	if err := require(ctx, request.Scope); err != nil {
+		return false, err
+	}
 	r, digest, err := request.Freeze()
 	if err != nil {
 		return false, err
@@ -37,6 +65,17 @@ func (s *Repository) BeginRunCall(ctx context.Context, request execution.RunCall
 	at := s.clock.Now().UTC()
 	if !at.Before(r.Deadline) {
 		return false, context.DeadlineExceeded
+	}
+	existing, readErr := s.GetRunCall(ctx, r.RunID, r.OperationDigest)
+	if readErr == nil {
+		_, existingDigest, freezeErr := existing.Request.Freeze()
+		if freezeErr != nil || existingDigest != digest {
+			return false, execution.ErrRunCallConflict
+		}
+		return false, nil
+	}
+	if !errors.Is(readErr, execution.ErrRunCallNotFound) {
+		return false, readErr
 	}
 	value := execution.RunCallRecord{Request: r, StartedAt: at}
 	body, err := json.Marshal(value)
@@ -47,23 +86,13 @@ func (s *Repository) BeginRunCall(ctx context.Context, request execution.RunCall
 	if err != nil {
 		return false, err
 	}
-	// The identical replay behavior of s.insert must never grant a fresh call.
+	// Every writer holds the same journal guard. A conflicting uncoordinated
+	// legacy writer must never be acknowledged as a fresh invocation.
 	err = s.driver.Insert(ctx, row)
-	if err == nil {
-		return true, nil
-	}
-	if !errors.Is(err, ErrExists) {
-		return false, err
-	}
-	existing, err := s.GetRunCall(ctx, r.RunID, r.OperationDigest)
-	if err != nil {
-		return false, err
-	}
-	_, existingDigest, err := existing.Request.Freeze()
-	if err != nil || existingDigest != digest {
+	if errors.Is(err, ErrExists) {
 		return false, execution.ErrRunCallConflict
 	}
-	return false, nil
+	return err == nil, err
 }
 
 // GetRunCall retrieves the original invocation and any immutable local return.
