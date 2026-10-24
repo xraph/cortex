@@ -49,6 +49,8 @@ func RunCallTransactions(t *testing.T, driver assurance.Driver) {
 	t.Helper()
 	transactional, ok := driver.(assurance.RunCallDriver)
 	require.True(t, ok)
+	t.Run("RecoverySnapshotSerialization", func(t *testing.T) { testRecoverySnapshotSerialization(t, driver) })
+	t.Run("RecoverySnapshotFaults", func(t *testing.T) { testRecoverySnapshotFaults(t, driver) })
 	ordinary := assurance.New(driver)
 	for _, mode := range []string{"rollback", "lost acknowledgment", "cancelled acknowledgment"} {
 		t.Run(mode, func(t *testing.T) {

@@ -23,17 +23,34 @@ func (s *Repository) PutProviderCallReceipt(ctx context.Context, request executi
 	if err != nil {
 		return err
 	}
-	if originalErr := s.requireOriginalRunCall(ctx, request); originalErr != nil {
-		return originalErr
-	}
-	row, err := record(kindProviderCallReceipt, request.Key(), digest, request.RunID.String(), request.Scope, frozen)
+	r, _, err := request.Freeze()
 	if err != nil {
 		return err
 	}
-	if err = s.insert(ctx, row); errors.Is(err, ErrExists) {
-		return execution.ErrRunCallConflict
-	}
-	return err
+	return s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
+		existing, readErr := tx.GetProviderCallReceipt(tc, r)
+		if readErr != nil {
+			return readErr
+		}
+		if existing != nil {
+			_, storedDigest, checkErr := existing.Freeze(r)
+			if checkErr != nil || storedDigest != digest {
+				return execution.ErrRunCallConflict
+			}
+			return nil
+		}
+		row, encodeErr := record(kindProviderCallReceipt, r.Key(), digest, r.RunID.String(), r.Scope, frozen)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
+			if errors.Is(insertErr, ErrExists) {
+				return execution.ErrRunCallConflict
+			}
+			return insertErr
+		}
+		return nil
+	})
 }
 
 // GetProviderCallReceipt returns immutable proof, or nil for an unresolved call.

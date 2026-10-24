@@ -281,3 +281,12 @@ Interfaces: plan/task queries and authorized propose/accept-revision, cancel, re
 - [ ] In-process and remote installed flows preserve scope, status and evidence; all UI/runtime gates pass.
 
 Deliver plan/assignment fixtures, crash-window evidence, operation-key contracts and measured coordination overhead. Stage 4 can now choose adaptive actions through these controlled operations.
+
+
+S3.2 recovery snapshot progress: the built-in stores expose a bounded atomic
+snapshot of sealed call and effect journals. Terminal provider/effect writers now
+share the journal transaction guard with local completions. The digest retains
+unresolved and contradictory evidence and pins complete call bindings. Guarded
+claim adoption still needs an atomic current-evidence recheck, authenticated
+quiescence proof and the explicit recovering-to-completed transition. Reading a
+snapshot alone cannot accept a task or release its reservation.

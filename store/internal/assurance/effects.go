@@ -207,6 +207,12 @@ func (s *Repository) CompleteEffect(ctx context.Context, request execution.Effec
 	if checkErr := receipt.Validate(r); checkErr != nil {
 		return checkErr
 	}
+	return s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
+		return tx.completeEffect(tc, r, digest, receipt)
+	})
+}
+
+func (s *Repository) completeEffect(ctx context.Context, r execution.EffectRequest, digest string, receipt execution.EffectReceipt) error {
 	existing, err := s.GetEffect(ctx, r.OperationKey)
 	if err != nil {
 		return err
@@ -214,6 +220,12 @@ func (s *Repository) CompleteEffect(ctx context.Context, request execution.Effec
 	_, storedDigest, err := existing.Request.Freeze()
 	if err != nil || storedDigest != digest {
 		return execution.ErrEffectConflict
+	}
+	if existing.Receipt != nil {
+		if *existing.Receipt != receipt {
+			return execution.ErrEffectConflict
+		}
+		return nil
 	}
 	body, err := json.Marshal(receipt)
 	if err != nil {
@@ -223,7 +235,7 @@ func (s *Repository) CompleteEffect(ctx context.Context, request execution.Effec
 	if err != nil {
 		return err
 	}
-	if err = s.insert(ctx, row); errors.Is(err, ErrExists) {
+	if err = s.driver.Insert(ctx, row); errors.Is(err, ErrExists) {
 		return execution.ErrEffectConflict
 	}
 	return err

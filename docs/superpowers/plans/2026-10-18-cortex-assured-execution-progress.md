@@ -5461,3 +5461,44 @@ Effect recovery lifecycle wiring is implemented and fixture-tested. Guarded
 adoption, aggregate provider/verifier usage settlement, installed authority ports
 and the remaining Stage 3 and Stage 4 gates remain open. Live Linux sandbox
 qualification is still deferred until a worker is chosen.
+
+
+### S3.2 atomic recovery evidence snapshots
+
+Added `RunRecoverySnapshot` and the optional `RunRecoverySnapshotStore`
+capability. Initial tests failed on the missing APIs. Built-in stores now read a
+sealed run's full call and effect journals under one transaction guard, with a
+thirty-second deadline, a combined 4,096-entry limit and a 16 MiB encoding limit.
+Oversized reads and transaction errors return no snapshot.
+
+Provider and effect receipt writes now share that guard. They read existing
+receipts before inserting, preserving idempotency without aborting PostgreSQL
+transactions on an expected duplicate. Late evidence remains writable after
+sealing. The snapshot preserves missing or contradictory observations and legacy
+unbound effects; its validation proves shape and membership, not adoption safety.
+
+Shared tests cover stable digests, delayed receipts, caller mutation, exact scope,
+changed and absent seals, empty journals, multi-page reads, rollback, lost commit
+acknowledgments, cancellation and serialization with all three terminal writers.
+The first database run caught a fixture that reused a tool's operation slot for
+a model call. The store correctly rejected it; the fixture now uses distinct
+slots. Docker was responsive and real PostgreSQL and MongoDB containers started
+without a restart. Final checks follow.
+
+Guarded adoption, provider/verifier usage settlement, installed host integration
+and live Linux sandbox qualification remain open.
+
+Final review added a failing boundary test for the digest's encoded length. The
+16 MiB limit now includes the returned digest, and a snapshot exactly at that
+limit passes. Formatting and all-module lint passed after the fix. Full execution
+and assurance race suites passed in 19.092 and 1.173 seconds. The final snapshot
+conformance rerun passed on SQLite, PostgreSQL and MongoDB with no skips; the
+preceding all-three-backend run also passed terminal-writer serialization and
+transaction fault cases. Targeted engine lifecycle and killed-worker recovery
+cases passed in 18.470 seconds. Root build, docs type checks, docs lint and the
+132-page production build passed.
+
+Broader SQLite and engine test runs were interrupted and are not counted as full
+suite passes. The engine stack was in SQLite fixture migration; the SQLite run
+was within existing private-candidate conformance. CI for the preceding commit
+8777671 completed successfully (run 40064472930). New-commit CI remains separate.

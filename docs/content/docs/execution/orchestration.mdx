@@ -370,6 +370,33 @@ All built-in effect admission requires transaction support, including ordinary
 operations without a task call. Upgrade every writer before relying on this
 barrier, and retain both journals while external outcomes remain possible.
 
+### Read one consistent recovery snapshot
+
+Use `execution.RunRecoverySnapshotStore.SnapshotRunRecovery(ctx, seal)` when you
+need all retained call and effect evidence for one sealed run. The built-in stores
+read the journals under the same transaction guard used by admission, local
+completions and terminal receipt writes. Pass the exact retained seal and scope.
+An absent or changed seal fails.
+
+The snapshot includes local returns, independent provider receipts, bound effects
+and legacy effects with no call binding. Its digest changes when late evidence
+arrives. Missing receipts stay missing, and contradictory observations remain
+available for your recovery policy to reject. `Validate` checks shape, membership
+and integrity; you still need authenticated proof, worker quiescence and current
+authority before adopting a result.
+
+Reads have a thirty-second deadline, a combined limit of 4,096 call/effect entries
+and a 16 MiB encoding limit. Oversized journals fail without returning partial
+evidence. Errors and ambiguous transaction acknowledgments also return no
+snapshot. Authorize discovery in your host before calling this storage API.
+
+Upgrade every writer before relying on this guarantee. Provider and effect
+receipt writes now require transaction support, including a replica set or
+supported sharded deployment for MongoDB. Late receipts remain writable after
+sealing, so a later adoption transaction must recheck the snapshot digest while
+holding the journal guard. This API does not change task ownership or settle
+reserved capacity.
+
 ### Recover effects from a sealed run
 
 Set `EffectExecutorConfig.AuthorizeScan` to authorize exact-run discovery under
