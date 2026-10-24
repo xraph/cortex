@@ -303,7 +303,7 @@ func (s *TaskService) discover(ctx context.Context, request TaskPlanListRequest)
 		remaining -= len(plan.Scope.Levels) * 32
 		for _, level := range plan.Scope.Levels {
 			for _, value := range []string{level.Key, level.Value} {
-				if len(value) > remaining || !utf8.ValidString(value) {
+				if len(value) > remaining {
 					return TaskPlanPage{}, ErrInvalidScheduler
 				}
 				remaining -= len(value)

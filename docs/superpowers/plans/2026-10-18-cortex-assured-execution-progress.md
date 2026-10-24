@@ -5014,3 +5014,32 @@ race tests (43.345 seconds), lifecycle/task-worker/scheduler runtime race tests
 seconds). All-module lint, root build, docs types, docs lint and production docs
 build passed. The complete engine suite and the subsequent focused runtime run
 are distinct evidence; neither is claimed as deployed host qualification.
+
+
+### F0 scope identity encoding validation
+
+Lifecycle scheduling is committed and pushed as `85a52a5`. Its discovery review
+identified a broader shared-validator gap: malformed UTF-8 keys and values passed
+ValidateScope. New root regressions failed for invalid, overlong, truncated and
+surrogate byte sequences. The pre-fix SQLite conformance test also failed because
+invalid contexts could create and list agents.
+
+ValidateScope now rejects malformed UTF-8 before identity access or reconstruction.
+Context lookup, canonical parsing and stored-scope decoding consume that shared
+rule. Discovery keeps its pre-serialization byte budget but delegates scope UTF-8
+validation to Cortex instead of maintaining a second rule. Valid Unicode is not
+normalized; composed/decomposed names and valid replacement characters retain their
+original identity. Root and discovery focused race tests passed in 1.138 and 1.615
+seconds. Backend and final checks are recorded below when complete.
+
+The backend Unicode fixture initially used literal escape text for two intended
+characters. We corrected it to contain the actual replacement character and
+combining accent, then reran the final matrix. SQLite (19.853 seconds), PostgreSQL
+(15.852 seconds) and MongoDB (26.693 seconds) passed the scope-boundary race tests;
+the database containers ran and no cases skipped.
+
+Final formatting and all-module lint passed. Root and coordination race suites
+passed in 1.128 and 70.676 seconds; focused engine lifecycle and task-worker tests
+passed in 21.491 seconds. Root build, docs types, docs lint and production docs
+build passed. These checks cover stored identity isolation, not live worker or
+provider qualification.

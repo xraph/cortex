@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -15,7 +16,8 @@ var (
 )
 
 // ValidateScope checks the identity the built-in stores can enforce. Keys are
-// unique and ordered. The current canonical codec reserves slash and equals.
+// unique and ordered. Keys and values must be valid UTF-8; no Unicode
+// normalization is applied. The canonical codec reserves slash and equals.
 func ValidateScope(s Scope) error {
 	if s.IsZero() {
 		return ErrNoScope
@@ -25,7 +27,7 @@ func ValidateScope(s Scope) error {
 	}
 	seen := make(map[string]bool, len(s.Levels))
 	for _, level := range s.Levels {
-		if strings.TrimSpace(level.Key) == "" || strings.TrimSpace(level.Value) == "" || strings.ContainsAny(level.Key+level.Value, "/=") || seen[level.Key] {
+		if !utf8.ValidString(level.Key) || !utf8.ValidString(level.Value) || strings.TrimSpace(level.Key) == "" || strings.TrimSpace(level.Value) == "" || strings.ContainsAny(level.Key+level.Value, "/=") || seen[level.Key] {
 			return ErrInvalidScope
 		}
 		seen[level.Key] = true

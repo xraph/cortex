@@ -2,6 +2,9 @@ package cortex_test
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -41,6 +44,56 @@ func TestCanonicalRejectsUnsupportedIdentity(t *testing.T) {
 	for _, value := range []string{"a=1/a=2", "a=1=2", "a=1/b=2/c=3/d=4", "a= "} {
 		if _, err := cortex.ParseCanonical(value); err == nil {
 			t.Errorf("accepted %q", value)
+		}
+	}
+}
+
+func TestScopeRejectsInvalidUTF8BeforeIdentityEncoding(t *testing.T) {
+	parent := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "parent"}}})
+	for _, value := range []string{string([]byte{0xff}), string([]byte{0xc0, 0xaf}), string([]byte{0xe2, 0x82}), string([]byte{0xed, 0xa0, 0x80})} {
+		for _, field := range []string{"key", "value"} {
+			t.Run(field+"/"+hex.EncodeToString([]byte(value)), func(t *testing.T) {
+				scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "team"}}}
+				if field == "key" {
+					scope.Levels[0].Key = value
+				} else {
+					scope.Levels[0].Value = value
+				}
+				if err := cortex.ValidateScope(scope); !errors.Is(err, cortex.ErrInvalidScope) {
+					t.Fatalf("invalid UTF-8 scope accepted: %v", err)
+				}
+				ctx := cortex.WithScope(parent, scope)
+				if _, err := cortex.RequireScope(ctx); !errors.Is(err, cortex.ErrInvalidScope) {
+					t.Fatalf("context accepted invalid identity: %v", err)
+				}
+				if !cortex.ScopeFromContext(ctx).IsZero() {
+					t.Fatal("invalid identity retained parent authority")
+				}
+				canon := scope.Canonical()
+				if _, err := cortex.ParseCanonical(canon); !errors.Is(err, cortex.ErrInvalidScope) {
+					t.Fatalf("canonical decoder accepted invalid identity: %v", err)
+				}
+				if _, err := cortex.DecodeStoredScope(canon, [3]string{canon}, false); !errors.Is(err, cortex.ErrInvalidScope) {
+					t.Fatalf("stored decoder accepted invalid identity: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestScopePreservesValidUnicodeWithoutNormalization(t *testing.T) {
+	for _, value := range []string{"team�", "café", "café", "研究"} {
+		scope := cortex.Scope{Levels: []cortex.Level{{Key: "工作区", Value: value}}}
+		if err := cortex.ValidateScope(scope); err != nil {
+			t.Fatalf("valid Unicode rejected: %v", err)
+		}
+		parsed, err := cortex.ParseCanonical(scope.Canonical())
+		if err != nil || !reflect.DeepEqual(scope, parsed) {
+			t.Fatalf("Unicode identity changed: %v %v", parsed, err)
+		}
+		decoded, err := cortex.DecodeStoredScope(scope.Canonical(), [3]string{scope.Canonical()}, false)
+		if err != nil || !reflect.DeepEqual(scope, decoded) {
+			t.Fatalf("stored Unicode identity changed: %v %v", decoded, err)
 		}
 	}
 }

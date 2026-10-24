@@ -91,6 +91,13 @@ The persona's skill and trait assignments, behaviors, cognitive style, communica
 
 A caller who passes an agent ID from outside their scope gets `ErrAgentNotFound` back from the store, the same as for an ID that doesn't exist.
 
+Scope keys and values must be valid UTF-8. `ValidateScope` rejects malformed bytes
+before context access, canonical decoding or stored-identity reconstruction can
+use them. It does not normalize Unicode: composed and decomposed names remain
+different identities, and a valid replacement character stays valid. Invalid scope
+values mask parent authority; Cortex never repairs them or falls back to the
+parent's scope.
+
 ## Plugin system
 
 Extensions implement the `plugin.Extension` base interface (just `Name() string`) and then opt in to specific lifecycle hooks by implementing more interfaces:
