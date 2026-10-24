@@ -349,9 +349,10 @@ possible delayed workers.
 Use `execution.NewProviderReconciler` with your `ProviderRecoveryConfig` and call
 `Reconcile(ctx, originalRequest)` for a journaled complete or stream invocation.
 Supply the engine's durable store as `Store`. SQLite, PostgreSQL and MongoDB
-implement `ProviderCallReceiptStore`. Discover original requests through bounded
-`ListRunCalls` pages in an authorized exact scope, and keep this host-owned loop
-separate from claim expiry.
+implement `ProviderCallReceiptStore`. For a sealed run, use
+`ReconcilePage(ctx, ProviderRecoveryPageRequest{Seal: seal, Limit: 64})` to discover
+and reconcile one bounded journal page. Keep this host-owned loop separate from
+claim expiry.
 
 You must supply every host boundary:
 
@@ -389,9 +390,38 @@ slot wait. `MaxConcurrent` accepts 1 to 4096; `Timeout` accepts one millisecond 
 thirty seconds. Your adapter, store and guards must honor cancellation. Cortex
 keeps a slot until the callback returns and does not detach timed-out work.
 
+### Scan a sealed run
+
+Set `AuthorizeScan` to check current read and recovery permission for the exact
+sealed run. Page scanning requires this callback and a store implementing
+`RunCallSealStore`; single-call reconciliation does not. The scanner checks your
+retained seal and authorization before reading a page and again before returning
+its counts. Each provider call also passes through the existing per-call guards.
+
+Start with `After` empty. Pass the returned `NextAfter` into the next request until
+it is empty, then begin a new pass when you need to revisit unresolved calls.
+`Limit` accepts 1 to 256. The scanner validates the entire page's scope, run,
+record bindings and cursor order before querying any provider. `Timeout` bounds
+the whole page, including queue wait. `MaxConcurrent` limits active pages and
+provider operations independently, so a queued page cannot consume the slot its
+own provider lookup needs.
+
+The counts have different meanings. `Terminal` includes authenticated provider
+success, failure and proven non-acceptance. `Unresolved` needs another lookup or
+external evidence. `ToolCalls` needs separate effect reconciliation. An empty
+cursor means you reached the end of the journal, even if some calls remain
+unresolved. These counts do not settle usage or accept the task.
+
+An error returns no cursor. Earlier proof writes may still have committed, so
+retry the same page. Saved receipts are reauthenticated without another provider
+query. A late local return that contradicts provider proof fails the scan while
+preserving both records. Recheck those records before adoption or settlement;
+the page is an observation, not an atomic recovery decision.
+
 The subprocess tests kill a real fixture worker before a provider reply or after
-local completion, reopen SQLite, retain terminal fixture proof and reopen it
-again. They check that claim, run, journal and budget state remain unchanged.
+local completion, reopen SQLite, seal and scan the journal, retain terminal fixture
+proof and reopen it again. They check that claim, run, call records and budget
+state remain unchanged.
 This qualifies the persistence path with fixture authority. Installed provider
 adapters and governed continuation still need separate qualification.
 

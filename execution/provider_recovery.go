@@ -33,11 +33,14 @@ type ProviderCallRecoveryFence interface {
 // including when returning stored proof. No default authorizer or verifier exists.
 // Timeout includes waiting for a slot; adapters, stores and guards must honor it.
 type ProviderRecoveryConfig struct {
-	Store         ProviderCallReceiptStore
-	Adapter       ProviderCallRecoveryAdapter
-	Authorize     func(context.Context, RunCallRequest) error
-	Authenticate  func(context.Context, RunCallRequest, ProviderCallReceipt) error
-	Fence         ProviderCallRecoveryFence
+	Store        ProviderCallReceiptStore
+	Adapter      ProviderCallRecoveryAdapter
+	Authorize    func(context.Context, RunCallRequest) error
+	Authenticate func(context.Context, RunCallRequest, ProviderCallReceipt) error
+	Fence        ProviderCallRecoveryFence
+	// AuthorizeScan is required only by ReconcilePage. It checks current read
+	// and recovery permission for the exact sealed run before and after a page.
+	AuthorizeScan func(context.Context, RunCallSeal) error
 	Timeout       time.Duration
 	MaxConcurrent int
 }
@@ -46,8 +49,9 @@ type ProviderRecoveryConfig struct {
 // calls. It exposes no execution path. Callers discover work through bounded
 // RunCallStore pages and authorize any later adoption or settlement separately.
 type ProviderReconciler struct {
-	config ProviderRecoveryConfig
-	slots  chan struct{}
+	config    ProviderRecoveryConfig
+	slots     chan struct{}
+	scanSlots chan struct{}
 }
 
 // NewProviderReconciler defaults to four concurrent operations and thirty seconds
@@ -62,7 +66,7 @@ func NewProviderReconciler(config ProviderRecoveryConfig) (*ProviderReconciler, 
 	if hostport.IsNil(config.Store) || hostport.IsNil(config.Adapter) || config.Authorize == nil || config.Authenticate == nil || hostport.IsNil(config.Fence) || config.Timeout < time.Millisecond || config.Timeout > 30*time.Second || config.MaxConcurrent < 1 || config.MaxConcurrent > 4096 {
 		return nil, ErrInvalidRunCall
 	}
-	return &ProviderReconciler{config: config, slots: make(chan struct{}, config.MaxConcurrent)}, nil
+	return &ProviderReconciler{config: config, slots: make(chan struct{}, config.MaxConcurrent), scanSlots: make(chan struct{}, config.MaxConcurrent)}, nil
 }
 
 // Reconcile queries and authenticates a single original call, or reauthenticates

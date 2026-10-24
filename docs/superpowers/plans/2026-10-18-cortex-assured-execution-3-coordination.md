@@ -123,6 +123,12 @@ checks that a delayed task worker cannot reach its provider after closure.
 Rollback, lost commit acknowledgment and cancellation after commit are covered by
 real backend transactions. All deployed writers must participate; closure does
 not prove external completion or settle a recovering claim.
+`ProviderReconciler.ReconcilePage` now scans bounded sealed-journal pages with
+explicit current discovery authorization. It validates the whole page before
+provider queries, reuses authenticated single-call recovery and reports terminal,
+unresolved and tool calls separately. Errors preserve earlier proof but return no
+cursor. Scope, seal and authority are rechecked before acknowledging a page.
+Lifecycle discovery of recovering runs and guarded adoption remain open.
 
 `RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
 its captured inputs through the original prepared snapshot and ReAct loop.

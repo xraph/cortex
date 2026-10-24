@@ -5263,3 +5263,40 @@ commit `d829e4b`.
 This closes journal membership only. Recovery must still validate late returns,
 provider proof, tool effects and verifier usage before guarded adoption or shared
 settlement. Those integrations and live qualification remain open.
+
+
+### S3.2 bounded provider recovery scans
+
+`ProviderReconciler.ReconcilePage` now consumes the sealed journal through bounded
+pages. It requires current exact-run discovery authorization, checks the retained
+seal and validates every record before its first provider query. The existing
+single-call reconciler supplies proof authentication, current commit fencing and
+durable receipt replay. Separate page slots prevent callers waiting for provider
+slots from exhausting the same queue. The configured timeout bounds the full page.
+
+Terminal, unresolved and tool-call counts remain distinct. A terminal provider
+failure is not task success, and tools still need effect reconciliation. Errors
+return no cursor even when earlier proof writes committed. Repeating a page
+reauthenticates saved receipts and revisits uncertainty without repeating model
+execution. A scan does not authorize adoption, retries or budget settlement.
+
+The initial tests failed on the missing page API and discovery authorizer.
+The first race run passed page validation, malformed ordering, wrong scope/run,
+missing or changed seals, revoked authorization, partial failure and replay tests.
+Additional cases cover queue cancellation, whole-page timeout, detached host
+inputs and empty journals. The killed-worker SQLite tests now seal and scan before
+reopening storage and repeating recovery. Final checks follow below.
+
+Final formatting and all-module lint passed. Lint required three scoped error
+variables and preallocation in the shared test fixture; no behavior changed.
+The post-fix provider recovery race suite passed in 1.434 seconds and the two
+killed-worker recovery cases passed in a 7.709-second engine run. Real SQLite,
+PostgreSQL and MongoDB scan tests passed in 3.885, 10.653 and 8.018 seconds, with
+no skips. They cover multiple pages, delayed proof, terminal provider failure,
+retained proof after service reconstruction and contradictory late returns.
+
+The preceding broader call/receipt/seal matrices passed all three stores, and
+full execution and assurance race suites passed. Root build, docs type checks,
+docs lint and the 132-page production build passed. Automatic discovery of
+recovering runs, guarded adoption, shared usage settlement and installed provider
+qualification remain open.
