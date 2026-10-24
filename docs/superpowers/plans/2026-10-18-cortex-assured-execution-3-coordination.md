@@ -82,7 +82,11 @@ dispatch, cancellation after intent, recovery settlement and event delivery
 remain open. `Scheduler.Tick` now provides bounded local admission around the
 guarded claim store, with fresh state loading, deterministic task selection and
 fair scope queues. `Engine.NewTaskWorker` connects fresh admission to guarded
-dispatch and the prepared runtime. Host resolution and lifecycle wiring remain open.
+dispatch and the prepared runtime. Optional `WithTaskScheduling` now integrates
+bounded, scoped discovery with engine and Forge lifecycle handling. It drains
+callbacks before shutdown notification, preserves started state on stop timeout,
+and blocks restart while draining. Host resolution, expired-claim recovery and
+installed worker crash/restart qualification remain open.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,

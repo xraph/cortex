@@ -4945,3 +4945,72 @@ race tests (14.423 seconds), all-module lint and the root build. No formatter
 changes reached unrelated files. Linux CI for the preceding atomic renewal
 commit passed every completed job, with the root test job still running at the
 last observation; that run is not yet a passing CI qualification.
+
+
+### S3.2 scheduling lifecycle integration
+
+The guarded watchdog packet is committed and pushed as `ae707bc`. Its complete
+Linux CI run, `40048809271`, passed, including root tests, nested modules, security,
+formatting and docs. The earlier atomic renewal CI run was superseded and cancelled;
+the passing watchdog run includes that code.
+
+`TaskService` owns bounded discovery and scheduler ticks. The host supplies scoped
+plan identities through an explicitly authorized discovery port. Pages are bounded,
+detached and validated before dispatch; current tick admission still controls
+execution. Per-instance active-plan deduplication and finite capacity prevent
+duplicate local ticks and unbounded goroutines.
+
+`WithTaskScheduling` supplies the engine's prepared worker after validating all
+options. Engine startup preserves host identity values but owns cancellation.
+Stop cancels discovery and ticks before joining them. A timeout retains stopping
+state and rejects restart until callbacks drain. Forge retains its started state
+when engine shutdown reports an error. Shutdown hooks run after successful
+drainage. Durable claims, journals and reservations remain retained.
+
+Initial service and engine tests failed on absent APIs. The first service race
+matrix passed in 1.326 seconds. Engine testing exposed mutation of a reused option
+closure; each application now copies the configuration. A Forge regression failed
+because a timed-out Stop marked the extension stopped. Its initial failure also
+exposed missing fixture cleanup for deliberately blocked discovery; a deferred
+release made that failing test terminate cleanly before fixing production behavior.
+The expanded service race matrix passed in 1.349 seconds, engine lifecycle and
+restart integration in 4.451 seconds, and Forge timeout coverage in 1.743 seconds.
+
+The SQLite engine test runs admission, dispatch, child creation, call journaling
+and verification. Restart cannot invoke the provider again or refund shared
+capacity. Fixture authorizers are not installed host qualification. Expired-claim
+transitions, provider/effect reconciliation and real kill/restart tests remain open.
+
+The broader coordination suite passed in 24.025 seconds. Extension race suites
+passed in 1.794 seconds for the package and 27.352 seconds for contracts. Docs type
+checking, lint and production build passed, as did all-module lint and root build.
+The complete engine race suite passed in 489.164 seconds: all 739 cases and 369
+top-level tests, without failed or skipped cases. That full run preceded the two
+discovery review fixes below, which receive separate post-format regression checks.
+
+Review found that JSON could repair invalid UTF-8 scope bytes before validation.
+The regression observed a scoped state read for an invalid discovery identity.
+The service now checks scope bytes and aggregate size before serialization; the
+malformed-page race matrix passed in 1.268 seconds. Core scope validation outside
+this boundary still needs a separate UTF-8 audit. The failing test's cleanup was
+also corrected so a fatal assertion cannot leave its polling service running.
+
+A discovery fairness test initially passed because two first-page workers could
+race for admission. The revised fixture starts one scope's worker before offering
+another plan in that scope, then asks for a different scope. It failed because
+the queued same-scope tick consumed the remaining discovery slot. The service now
+applies the scheduler's existing MaxPerScope limit to in-flight discovery too.
+Skipped plans remain eligible on later passes. The full service race matrix,
+including both fixes, passed in 1.457 seconds.
+
+Final diff inspection caught a documentation script copying the orchestration
+page over this ledger. The accidental content matched that page byte for byte.
+The committed ledger history was restored and this packet's notes reconstructed
+before staging; no historical entries or unrelated files were removed.
+
+Final post-format checks passed with both discovery fixes: full coordination
+race tests (43.345 seconds), lifecycle/task-worker/scheduler runtime race tests
+(191.943 seconds), and extension package/contract race tests (2.211 and 49.457
+seconds). All-module lint, root build, docs types, docs lint and production docs
+build passed. The complete engine suite and the subsequent focused runtime run
+are distinct evidence; neither is claimed as deployed host qualification.

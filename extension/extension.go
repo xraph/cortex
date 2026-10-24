@@ -191,7 +191,6 @@ func (e *Extension) Start(ctx context.Context) error {
 func (e *Extension) Stop(ctx context.Context) error {
 	if e.eng != nil {
 		if err := e.eng.Stop(ctx); err != nil {
-			e.MarkStopped()
 			return err
 		}
 	}

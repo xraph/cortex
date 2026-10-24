@@ -40,6 +40,8 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	taskScheduling        *coordination.TaskService
+	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard
 	config                cortex.Config
@@ -174,6 +176,10 @@ func New(opts ...Option) (*Engine, error) {
 		return nil, err
 	}
 
+	if err := e.configureTaskScheduling(); err != nil {
+		return nil, err
+	}
+
 	return e, nil
 }
 
@@ -187,13 +193,34 @@ func (e *Engine) Health(ctx context.Context) error {
 
 // Start initializes the engine for operation.
 //
-// The context is deliberately still ignored. Start takes one to match
-// every other lifecycle hook in the ecosystem, but a caller's start
-// context is not the engine's lifetime: the expiry sweeper it launches
-// here runs on a handle of its own and is stopped by Stop.
+// Background services own their lifetimes and are stopped by Stop. Optional
+// task scheduling preserves context values for host identity, without using
+// the startup request cancellation as the service lifetime.
 func (e *Engine) Start(ctx context.Context) error {
+	if err := e.configureTaskScheduling(); err != nil {
+		return err
+	}
+	if e.taskScheduling != nil {
+		status := e.taskScheduling.Status()
+		if status.Stopping {
+			return coordination.ErrSchedulerStopped
+		}
+		if status.Running {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	e.startSweeper()
 	e.startA2A(ctx)
+	if e.taskScheduling != nil {
+		if err := e.taskScheduling.Start(ctx); err != nil {
+			e.stopSweeper()
+			e.stopA2A()
+			return err
+		}
+	}
 	e.logger.Info("cortex engine started")
 	return nil
 }
@@ -202,8 +229,13 @@ func (e *Engine) Start(ctx context.Context) error {
 //
 // The sweeper is joined, not merely signalled, and it is joined before
 // the shutdown hook fires: a subscriber told the engine has stopped
-// while a sweep is still failing runs has been told something untrue.
+// while a sweep is still failing runs has been told something untrue. Optional
+// task scheduling drains first. If its stop deadline expires, Stop returns the
+// error without emitting shutdown; call Stop again before disposing stores.
 func (e *Engine) Stop(ctx context.Context) error {
+	if err := e.stopTaskScheduling(ctx); err != nil {
+		return err
+	}
 	e.stopSweeper()
 	e.stopA2A()
 	e.extensions.EmitShutdown(ctx)

@@ -213,9 +213,10 @@ again to wait for drainage. A callback that ignores cancellation keeps its slot
 until it returns. The scheduler never releases durable ownership or refunds an
 uncertain allocation just to finish shutdown.
 
-The scheduler does not install itself into `RunOrchestration` or the sweeper.
-Concrete host adapters, recovery settlement and installed
-worker crash/restart qualification remain separate integrations.
+Use the optional engine lifecycle integration below to poll scoped plans. Task
+execution still uses the prepared runtime; `RunOrchestration` and the suspension
+sweeper do not infer new plans. Concrete host adapters, expired-claim recovery,
+settlement and installed worker crash/restart qualification remain separate work.
 
 ### Renew dispatched ownership
 
@@ -262,3 +263,46 @@ apply; renewal never extends those ceilings.
 Individual provider and tool calls retain their own authorization leases. Task
 renewal does not extend those leases or resume a suspended run. Host grant services,
 event delivery and installed worker recovery still need qualification.
+
+
+### Run scheduling with the engine lifecycle
+
+Use `engine.WithTaskScheduling` when the engine should own plan discovery and
+worker shutdown. Supply `TaskSchedulingConfig.Worker` with the same work resolver
+and guarded dispatch used by `NewTaskWorker`. Its `Service` field is a
+`coordination.TaskServiceConfig`; leave `Service.Scheduler.Worker` unset because
+the engine supplies its prepared-runtime adapter. The engine validates the
+configured task-run admitter and call guard after all options have been applied.
+You can pass the option through Forge's `extension.WithEngineOption`.
+
+Your `TaskPlanSource.ListScheduledPlans` returns scoped plan identities in pages.
+It authorizes discovery under the host service identity, and each resulting tick
+rechecks admission. A scope or saved plan ID grants no execution permission. The
+source must honor cancellation and eventually return an empty `Next` cursor so
+later passes revisit earlier identities. Discovery never invokes an agent or tool.
+
+The service polls one page per interval, starting immediately on `Engine.Start`.
+Defaults are a one-second interval, a five-second discovery timeout and 64
+in-flight ticks. A page holds at most 256 identities and never exceeds the
+remaining local capacity. Pages are detached and checked for scope, plan ID,
+duplicate entries, size and cursor validity before any tick starts. Scope bytes
+must be valid UTF-8 and fit the page budget before JSON encoding. The same
+scope/plan pair cannot have two active ticks in one service instance. Discovery
+also limits in-flight ticks per scope to `MaxPerScope`, so queued plans from one
+busy scope cannot consume every discovery slot. Skipped identities are revisited
+on later source passes. Durable claims still arbitrate between processes.
+
+`Start` preserves context values for your host service identity and gives polling
+its own cancellation handle. Cancelling the startup request does not stop the
+engine. `Stop(ctx)` cancels discovery and all queued or executing ticks, then joins
+their callbacks before emitting the shutdown hook. If the deadline expires, it
+returns an error and remains in the stopping state. Keep the stores available and
+call `Stop` again. A new start is rejected until the previous work has drained.
+The Forge extension also retains its started state after a timed-out stop.
+
+`TaskSchedulingStatus` reports whether scheduling is configured, lifecycle state,
+in-flight tick count and failure count. Failures are reported through the engine's
+existing error-type logger. Discovery errors and malformed pages are retried on
+later polls; an uncertain task invocation still requires durable reconciliation.
+Restarting the service resets discovery to the first page but preserves all claims,
+call journals, output acceptance requirements and shared reservations.
