@@ -5138,3 +5138,39 @@ including 371 top-level tests, with no failures or skips. This run began before
 the final lifecycle serialization change; the post-format runtime matrix above
 checks that change. Both results are retained without treating fixture execution
 as installed host or provider qualification.
+
+
+### S3.2 killed task-worker evidence
+
+Recovery lifecycle support is committed and pushed as `1a90403`. A new subprocess
+matrix reuses the prepared task-worker fixture and real SQLite file storage. The
+parent starts a test-owned worker, waits for its atomic boundary manifest, kills
+that exact process, joins it and reopens the database through a fresh connection.
+All child temporary files live under the parent's test directory and are removed
+by parent cleanup.
+
+The four boundaries are held ownership, committed dispatch before acknowledgment,
+entry to a journaled provider call before return, and completed local execution
+with verification. Lifecycle expiry preserves dispatched run identity and fences,
+claim history, pending/completed call records and charged shared reservations.
+Historical admission cannot reach work resolution, a repeated call slot is never
+fresh, and changing its attempt ID conflicts. Repeated engine starts leave the
+same expired claim revision intact.
+
+The first race run passed all four cases in 11.535 seconds. This is qualification
+of existing behavior, so no production change or invented failing regression was
+needed. It proves process-crash persistence with a fixture provider and injected
+lease time. Live providers, PostgreSQL/MongoDB process failures, remote workers,
+late external receipts and governed continuation remain open. Final checks follow.
+
+The combined crash/lifecycle race matrix passed in 31.524 seconds, and docs
+checks passed. Lint required the child command to carry a context. It now uses
+the parent test context, in addition to the explicit kill/join cleanup and the
+child's own test timeout. Final formatting, lint and affected checks are rerun
+for that change.
+
+Final formatting, all-module lint and root build passed. The crash/lifecycle race
+matrix passed in 24.655 seconds with no skips; the four killed-worker cases took
+11.34 seconds of that run. Docs types, lint and production build passed. CI run
+`40054330800` also passed for lifecycle commit `1a90403` in 11 minutes 10 seconds,
+including Linux root tests, submodules and security checks.

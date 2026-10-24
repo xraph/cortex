@@ -89,7 +89,13 @@ and blocks restart while draining. Optional `WithClaimRecovery` now owns scoped
 expiry discovery and bounded storage pages through the same lifecycle loop. It
 retains uncertain dispatches for reconciliation and cancels both services before
 drainage. Host resolution, provider/effect reconciliation and installed worker
-crash/restart qualification remain open.
+crash/restart qualification remain open. A SQLite subprocess matrix now kills
+an actual task worker at held-claim, committed-dispatch, pending-provider-call and
+completed-local-run boundaries. A fresh parent connection runs lifecycle expiry,
+checks immutable history and retained call slots, and rejects historical admission
+as permission to execute. The fixture uses a controlled lease clock and a fake
+provider. Installed adapters, remote workers and late external receipts still
+need qualification.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,

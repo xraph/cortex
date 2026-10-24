@@ -373,3 +373,28 @@ passes and failures without exposing scope values or run content.
 This service moves expired dispatches into recovery. It does not reconcile an
 external provider, retry an invocation, accept task output or settle shared usage.
 Those operations still need their own authorized evidence and transactions.
+
+
+### Process-crash coverage
+
+The SQLite crash matrix starts a separate task-worker process and kills it after
+one of four durable boundaries: a held claim, committed dispatch intent, entry to
+a journaled provider call, or completion of local execution and verification.
+The parent reopens the database, advances a controlled lease clock and runs the
+recovery lifecycle through a new engine.
+
+You can run it with:
+
+```bash
+GOWORK=off go test -race -count=1 ./engine -run '^TestClaimRecoveryAfterWorkerProcessCrash$'
+```
+
+The checks require unused claims to release and dispatched claims to enter
+recovery, preserving their run ID, fence, history and charged reservations.
+An interrupted call retains an empty completion. A completed local run retains
+its result, but neither state grants task acceptance or another invocation.
+Historical claim admissions and call-journal entries cannot authorize replay.
+
+This matrix covers process death and SQLite persistence with a fixture provider
+and controlled clock. It does not qualify a deployed provider, remote worker,
+PostgreSQL or MongoDB process failure, or late external completion receipts.
