@@ -4894,3 +4894,54 @@ seconds) and MongoDB (19.766 seconds), with real containers and no skipped cases
 Formatting, all-module lint and the root build passed. Docs type checking and
 lint passed before the successful production build. The build retained its
 existing metadataBase warning.
+
+
+### S3.2 scheduler ownership watchdog
+
+The atomic renewal packet is committed and pushed as `ca93d9c`. Optional
+`SchedulerConfig.Renewal` now watches the original claim expiry from worker entry
+and begins renewal only after fresh child creation. The engine adapter supplies
+that activation through the existing prepared runtime. Dispatch and child creation
+therefore consume their original claim revision before any renewal changes it.
+
+The loop reloads current execution bindings, calls the guarded renewer and accepts
+only a fresh, exact successor acknowledged before the previous expiry. Historical
+receipts, uncertain writes, revoked authority, malformed bindings, clock rollback
+and late responses cancel local work. A stalled renewal cannot prevent the expiry
+watchdog from cancelling the worker. Cleanup cancels in-flight renewal before
+waiting for it, and the local slot stays occupied until those callbacks return.
+
+The scheduler does not extend a provider or tool call's separate authorization
+lease. That remains a host-enforced limit. Tick, plan and task ceilings also remain
+fixed. Suspended work needs its existing authorized resume path, and completed
+runs still need task acceptance and shared usage settlement.
+
+Red scheduler tests failed on the absent renewal API. Engine activation tests
+then failed because the adapter did not implement the renewal worker interface.
+The first watchdog race matrix passed in 1.371 seconds; the lifecycle matrix
+passed in 1.906 seconds. Engine activation tests passed in 10.208 seconds.
+An integration fixture initially used Assignment.ID instead of the actual
+Handoff.AssignmentID; correcting those test fields resolved compilation. The
+scheduler/worker integration matrix then passed under the race detector in
+18.587 seconds, including real SQLite renewal beyond the original claim expiry.
+Fixture host ports establish local behavior, not installed host qualification.
+Final formatting, lint and regression evidence is recorded below when available.
+
+The prepared task, call guard, worker and scheduler regression matrix passed under
+the race detector in 115.899 seconds. Coordination passed in 32.726 seconds.
+Docs types, lint and production build passed. Lint identified a local error
+reassignment in the activation callback; the corrected version passed all-module
+lint and the root build.
+
+Review found one earlier clock boundary: a clock rollback immediately after claim
+admission could enter the worker before activation rejected it. The new
+TestSchedulerRenewalRejectsClockRollbackBeforeWorker failed because Tick returned
+nil. The watchdog now rejects an observation before the admitted claim timestamp
+before invoking the worker. Final checks include this fix.
+
+Final post-format checks passed with the startup clock fix: full coordination
+race tests (25.990 seconds), scheduler/engine renewal integration and activation
+race tests (14.423 seconds), all-module lint and the root build. No formatter
+changes reached unrelated files. Linux CI for the preceding atomic renewal
+commit passed every completed job, with the root test job still running at the
+last observation; that run is not yet a passing CI qualification.

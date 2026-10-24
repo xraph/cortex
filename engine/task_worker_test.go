@@ -157,8 +157,8 @@ func (f engineClaimAuthorizer) AuthorizeTaskClaim(ctx context.Context, r coordin
 	return f(ctx, r)
 }
 
-func TestSchedulerTaskWorkerRunsExistingPreparedPipeline(t *testing.T) {
-	f := newTaskClaimRuntimeFixture(t, false)
+func schedulerTaskWorkerConfig(t *testing.T, f taskClaimRuntimeFixture) coordination.SchedulerConfig {
+	t.Helper()
 	cfg := taskWorkerConfig(t, f)
 	resolver := cfg.Resolver
 	cfg.Resolver = taskWorkerResolver(func(ctx context.Context, req coordination.ReadyTaskClaimRequest, receipt coordination.ReadyTaskClaim) (engine.TaskWork, error) {
@@ -174,12 +174,17 @@ func TestSchedulerTaskWorkerRunsExistingPreparedPipeline(t *testing.T) {
 		return next(req)
 	}), engineClaimAuthorizer(func(context.Context, coordination.ReadyTaskClaimRequest) error { return nil }))
 	require.NoError(t, err)
-	scheduler, err := coordination.NewScheduler(coordination.SchedulerConfig{Worker: worker, Admitter: admitter, Clock: workerClock{}, Resolver: engineClaimResolver(func(context.Context, planning.Plan, id.ID) (coordination.ReadyTaskClaimRequest, error) {
+	return coordination.SchedulerConfig{Worker: worker, Admitter: admitter, Clock: workerClock{}, Resolver: engineClaimResolver(func(context.Context, planning.Plan, id.ID) (coordination.ReadyTaskClaimRequest, error) {
 		return f.request, nil
 	}), Source: engineSchedulingSource(func(ctx context.Context, planID id.ID) (planning.Plan, []planning.TaskState, error) {
 		p, loadErr := f.f.storage.GetPlan(ctx, planID)
 		return p, nil, loadErr
-	})})
+	})}
+}
+
+func TestSchedulerTaskWorkerRunsExistingPreparedPipeline(t *testing.T) {
+	f := newTaskClaimRuntimeFixture(t, false)
+	scheduler, err := coordination.NewScheduler(schedulerTaskWorkerConfig(t, f))
 	require.NoError(t, err)
 	require.NoError(t, scheduler.Tick(f.f.ctx, f.request.Acquisition.Claim.PlanID))
 	result, err := f.f.storage.GetRun(f.f.ctx, f.dispatch.RunID)
@@ -249,4 +254,57 @@ func TestTaskWorkerRequiresExplicitPorts(t *testing.T) {
 	cfg.Resolver = taskWorkerResolver(nil)
 	_, err = f.engine.NewTaskWorker(cfg)
 	require.ErrorIs(t, err, cortex.ErrTaskCallUnavailable)
+}
+
+func TestTaskWorkerActivatesRenewalAfterFreshChildCreation(t *testing.T) {
+	for _, mode := range []string{"fresh", "denied", "lost_ack", "missing_start"} {
+		t.Run(mode, func(t *testing.T) {
+			f := preparedTaskClaimFixture(t)
+			cfg := taskWorkerConfig(t, f)
+			if mode == "lost_ack" {
+				original := f.admitter
+				require.NoError(t, engine.WithTaskRunAdmitter(runtimeTaskAdmitter(func(ctx context.Context, r coordination.TaskRunRequest) (coordination.TaskRunStart, error) {
+					receipt, err := original.Admit(ctx, r)
+					if err == nil {
+						err = errors.New("lost child acknowledgement")
+					}
+					return receipt, err
+				}))(f.engine))
+			}
+			worker, err := f.engine.NewTaskWorker(cfg)
+			require.NoError(t, err)
+			renewing, ok := worker.(coordination.RenewingClaimedTaskWorker)
+			require.True(t, ok)
+			activations := 0
+			start := coordination.TaskRenewalStart(func(claim coordination.Claim) error {
+				activations++
+				require.Zero(t, f.client.calls)
+				require.Equal(t, coordination.ClaimDispatching, claim.State)
+				child, readErr := f.f.storage.GetRun(f.f.ctx, claim.RunID)
+				require.NoError(t, readErr)
+				require.Equal(t, claim.ID.String(), child.Provenance.TaskClaimID)
+				require.NoError(t, coordination.ValidateClaimSuccessor(f.ready.Acquisition.Claim, claim))
+				if mode == "denied" {
+					return errors.New("renewal activation denied")
+				}
+				return nil
+			})
+			if mode == "missing_start" {
+				start = nil
+			}
+			err = renewing.RunClaimedTaskWithRenewal(f.f.ctx, f.request, f.ready, start)
+			if mode == "fresh" {
+				require.NoError(t, err)
+				require.Equal(t, 1, f.client.calls)
+			} else {
+				require.Error(t, err)
+				require.Zero(t, f.client.calls)
+			}
+			if mode == "lost_ack" || mode == "missing_start" {
+				require.Zero(t, activations)
+			} else {
+				require.Equal(t, 1, activations)
+			}
+		})
+	}
 }

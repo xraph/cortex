@@ -104,16 +104,21 @@ Host authority and ownership remain guarded by the admission and per-call ports.
 fresh admission. Queued and owned work is cancellation-aware; waiting workers
 return their local slots without settling shared reservations. Claim expiry bounds
 the worker context. The engine adapter preserves fresh dispatch and child creation
-before using the existing journaled execution and verification paths. Automatic
-renewal, installed host qualification and durable recovery remain open.
+before using the existing journaled execution and verification paths. Installed
+host qualification and durable recovery remain open.
 
 `RenewTaskExecution` now provides atomic renewal for a task-bound child. It fences
 current parent and child revisions, assignment, capture provenance, prerequisites
 and shared capacity. The renewed claim and metadata event intent commit together;
 retries retain the original receipt with `Fresh: false`. `NewTaskClaimRenewer`
-reuses the host authority guard for every attempt. Automatic renewal still needs
-a loop that cancels at the last confirmed expiry and does not adopt ambiguous
-renewal acknowledgements.
+reuses the host authority guard for every attempt. Optional scheduler renewal now
+uses a watchdog that cancels at the last confirmed expiry. The engine activates
+it only after confirming fresh child creation. It rejects ambiguous or historical
+renewal acknowledgements, drains in-flight renewal on worker return and shutdown,
+and preserves the separate expiry of each provider/tool authorization lease.
+The SQLite scheduler-to-engine test runs beyond its original ownership expiry
+with confirmed durable renewal. Host services and live call-lease qualification
+remain open.
 
 
 ## S3.3: Structured handoffs and independent review

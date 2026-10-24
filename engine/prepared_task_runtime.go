@@ -36,6 +36,10 @@ func WithTaskRunAdmitter(admitter coordination.TaskRunAdmitter) Option {
 // a TaskRunAdmitter and TaskCallGuard are required. An ambiguous or historical
 // start returns ErrTaskRunReconciliationRequired without invoking a provider.
 func (e *Engine) RunPreparedTask(ctx context.Context, p *PreparedAgent, request coordination.TaskRunRequest) (r *run.Run, err error) {
+	return e.runPreparedTask(ctx, p, request, nil)
+}
+
+func (e *Engine) runPreparedTask(ctx context.Context, p *PreparedAgent, request coordination.TaskRunRequest, started func() error) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, false)
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -47,6 +51,11 @@ func (e *Engine) RunPreparedTask(ctx context.Context, p *PreparedAgent, request 
 	ctx, rz, err := e.startPreparedTask(ctx, p, request)
 	if err != nil {
 		return nil, err
+	}
+	if started != nil {
+		if activationErr := started(); activationErr != nil {
+			return rz.run, activationErr
+		}
 	}
 	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
 }

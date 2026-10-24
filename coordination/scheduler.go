@@ -55,8 +55,9 @@ type ClaimedTaskWorker interface {
 // SchedulerConfig requires explicit host services. Limits apply to this process;
 // shared capacity and ownership remain enforced by durable guarded admission.
 // TickTimeout bounds queueing, state resolution and execution together. A tick
-// also ends at its original claim expiry; it does not renew claims automatically.
+// ends at its original claim expiry unless guarded Renewal is configured.
 type SchedulerConfig struct {
+	Renewal       *TaskRenewalConfig
 	Source        SchedulingSource
 	Resolver      TaskClaimResolver
 	Admitter      TaskClaimAdmitter
@@ -75,8 +76,9 @@ type SchedulerStatus struct {
 }
 
 // TaskScheduler uses FIFO order within an exact scope and round-robin admission
-// across queued scopes. It starts no background goroutine. Call Tick from the
-// host lifecycle and Shutdown before disposing its stores or worker services.
+// across queued scopes. It starts no polling loop; renewed ticks supervise their
+// own ownership. Call Tick from the host lifecycle and Shutdown before disposing
+// its stores or worker services.
 type TaskScheduler struct {
 	config      SchedulerConfig
 	ctx         context.Context
@@ -97,6 +99,13 @@ type TaskScheduler struct {
 func NewScheduler(config SchedulerConfig) (*TaskScheduler, error) {
 	if hostport.IsNil(config.Source) || hostport.IsNil(config.Resolver) || hostport.IsNil(config.Admitter) || hostport.IsNil(config.Worker) || hostport.IsNil(config.Clock) {
 		return nil, ErrInvalidScheduler
+	}
+	if config.Renewal != nil {
+		policy := *config.Renewal
+		if err := policy.validate(config.Worker); err != nil {
+			return nil, err
+		}
+		config.Renewal = &policy
 	}
 	if config.MaxConcurrent == 0 {
 		config.MaxConcurrent = 4
@@ -216,7 +225,10 @@ func (s *TaskScheduler) Tick(ctx context.Context, planID id.ID) error {
 		return errors.Join(ErrSchedulerReconciliationRequired, err)
 	}
 	// A malicious or buggy host port cannot widen the snapshot's time bounds.
-	deadline := minTime(p.Budget.Deadline, receipt.Acquisition.Claim.ExpiresAt)
+	deadline := p.Budget.Deadline
+	if s.config.Renewal == nil {
+		deadline = minTime(deadline, receipt.Acquisition.Claim.ExpiresAt)
+	}
 	for _, task := range p.Tasks {
 		if task.ID == taskID {
 			deadline = minTime(deadline, task.Budget.Deadline)
@@ -243,7 +255,11 @@ func (s *TaskScheduler) Tick(ctx context.Context, planID id.ID) error {
 	if err = workerCtx.Err(); err != nil {
 		return errors.Join(ErrSchedulerReconciliationRequired, err)
 	}
-	err = s.config.Worker.RunClaimedTask(workerCtx, req, detached)
+	if s.config.Renewal != nil {
+		err = s.runRenewing(workerCtx, req, detached, deadline)
+	} else {
+		err = s.config.Worker.RunClaimedTask(workerCtx, req, detached)
+	}
 	return errors.Join(err, workerCtx.Err())
 }
 

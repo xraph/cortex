@@ -170,7 +170,9 @@ controls shared capacity across scheduler instances.
 
 `TickTimeout` defaults to one minute and covers queueing, preparation and worker
 execution together. It cannot exceed thirty minutes. The worker context is also
-bounded by the original claim expiry, plan deadline and task deadline. Cancellation
+bounded by the plan and task deadlines. Without `Renewal`, the original claim
+expiry also bounds it. With renewal, a watchdog cancels at the last confirmed
+expiry. Cancellation
 propagates from the caller, so attach the parent run's cancellation to that context.
 You must still fence the parent's persisted state and current grants at dispatch
 and at each provider or tool call.
@@ -212,7 +214,7 @@ until it returns. The scheduler never releases durable ownership or refunds an
 uncertain allocation just to finish shutdown.
 
 The scheduler does not install itself into `RunOrchestration` or the sweeper.
-Concrete host adapters, automatic claim renewal, recovery settlement and installed
+Concrete host adapters, recovery settlement and installed
 worker crash/restart qualification remain separate integrations.
 
 ### Renew dispatched ownership
@@ -237,7 +239,26 @@ receipt may already be expired. Preserve the last acknowledged local expiry and
 stop work when renewal is uncertain; reconcile before continuing. Renewal does
 not replenish shared capacity or reset any deadline.
 
-Automatic scheduler renewal is not installed by this capability. `TaskScheduler`
-still bounds each worker by its original claim expiry until a guarded renewal
-loop is explicitly integrated. Host grant services and event delivery also need
-installation and qualification.
+To renew while a scheduler worker runs, set `SchedulerConfig.Renewal` to a
+`TaskRenewalConfig` with your source, guarded renewer, duration and interval.
+The interval must be at least one millisecond and no more than half the duration;
+the duration cannot exceed thirty minutes. Your `TaskRenewalSource` reloads the
+current execution revisions and prerequisite chain for the supplied claim. It can
+shorten the requested duration when the child has a tighter deadline.
+
+The worker must implement `RenewingClaimedTaskWorker`. The engine adapter does.
+It calls the supplied activation function only after confirming fresh child
+creation, so renewal cannot change the revision still needed by dispatch or
+child admission. Until activation, the watchdog enforces the original expiry.
+Each confirmed renewal must be an exact, live successor received before the last
+acknowledged expiry. Invalid or historical receipts, lost acknowledgements,
+revocation and clock rollback cancel the worker and require reconciliation.
+
+The loop cancels pending renewal operations and waits for them before releasing
+the local slot. Both host ports must honor cancellation. Shutdown and caller
+cancellation stop renewal too. The overall tick, plan and task deadlines still
+apply; renewal never extends those ceilings.
+
+Individual provider and tool calls retain their own authorization leases. Task
+renewal does not extend those leases or resume a suspended run. Host grant services,
+event delivery and installed worker recovery still need qualification.

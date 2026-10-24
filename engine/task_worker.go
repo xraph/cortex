@@ -50,7 +50,8 @@ type taskWorker struct {
 // engine's TaskRunAdmitter and TaskCallGuard first. The adapter requires fresh
 // dispatch and child creation, then reuses RunPreparedTask for execution,
 // publication and verification. It does not accept task outputs, settle shared
-// usage, renew claims or infer permission to retry an uncertain call.
+// usage or infer permission to retry an uncertain call. A scheduler configured
+// for renewal receives activation only after confirmed fresh child creation.
 func (e *Engine) NewTaskWorker(config TaskWorkerConfig) (coordination.ClaimedTaskWorker, error) {
 	if e == nil || hostport.IsNil(config.Resolver) || hostport.IsNil(config.Dispatch) || hostport.IsNil(e.taskRunAdmitter) || hostport.IsNil(e.taskCallGuard) {
 		return nil, cortex.ErrTaskCallUnavailable
@@ -59,6 +60,17 @@ func (e *Engine) NewTaskWorker(config TaskWorkerConfig) (coordination.ClaimedTas
 }
 
 func (w *taskWorker) RunClaimedTask(ctx context.Context, request coordination.ReadyTaskClaimRequest, admission coordination.ReadyTaskClaim) error {
+	return w.runClaimedTask(ctx, request, admission, nil)
+}
+
+func (w *taskWorker) RunClaimedTaskWithRenewal(ctx context.Context, request coordination.ReadyTaskClaimRequest, admission coordination.ReadyTaskClaim, start coordination.TaskRenewalStart) error {
+	if start == nil {
+		return coordination.ErrInvalidScheduler
+	}
+	return w.runClaimedTask(ctx, request, admission, start)
+}
+
+func (w *taskWorker) runClaimedTask(ctx context.Context, request coordination.ReadyTaskClaimRequest, admission coordination.ReadyTaskClaim, start coordination.TaskRenewalStart) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -129,6 +141,10 @@ func (w *taskWorker) RunClaimedTask(ctx context.Context, request coordination.Re
 	if err != nil {
 		return errors.Join(cortex.ErrTaskRunReconciliationRequired, err)
 	}
-	_, err = w.engine.RunPreparedTask(ctx, work.Prepared, runRequest)
+	var started func() error
+	if start != nil {
+		started = func() error { return start(dispatched.Claim) }
+	}
+	_, err = w.engine.runPreparedTask(ctx, work.Prepared, runRequest, started)
 	return errors.Join(err, ctx.Err())
 }
