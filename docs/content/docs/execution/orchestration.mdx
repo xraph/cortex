@@ -189,6 +189,21 @@ slot becomes available. This does not settle its shared allocation, extend its
 deadline or mark it successful. Only verified task acceptance establishes success.
 A nil `Tick` result may also mean that no task was ready.
 
+You can use `eng.NewTaskWorker(engine.TaskWorkerConfig{Resolver: resolver,
+Dispatch: dispatchAdmitter})` as the claimed-task worker. Configure the engine's
+`TaskRunAdmitter` and `TaskCallGuard` first. Your resolver supplies an immutable
+prepared agent, private input, accepted assignment, current parent revision and
+stable reserved child identity. It resolves definitions only; provider and tool
+calls belong to the engine runtime.
+
+The adapter checks that dispatch names the exact admitted claim, then requires a
+fresh guarded dispatch receipt. It calls `PrepareTaskRun` and `RunPreparedTask`,
+so scanning, private input capture, guarded child creation, call journaling and
+verification follow the existing runtime path. An old `Fresh` flag cannot replay
+dispatch. If preparation or child creation fails after dispatch was recorded,
+reconcile the retained identities before continuing. The adapter does not accept
+the task output or settle shared usage when the run verifies successfully.
+
 Call `Shutdown(ctx)` before closing the stores or worker services. Shutdown rejects
 new ticks, cancels queued and owned work, then waits for callbacks to return. If your
 shutdown context expires, the scheduler stays stopped and you can call `Shutdown`

@@ -81,7 +81,8 @@ admission and per-call authority. Concrete host grant services, scheduler
 dispatch, cancellation after intent, recovery settlement and event delivery
 remain open. `Scheduler.Tick` now provides bounded local admission around the
 guarded claim store, with fresh state loading, deterministic task selection and
-fair scope queues. The concrete worker adapter and lifecycle wiring remain open.
+fair scope queues. `Engine.NewTaskWorker` connects fresh admission to guarded
+dispatch and the prepared runtime. Host resolution and lifecycle wiring remain open.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,
@@ -102,8 +103,9 @@ Host authority and ownership remain guarded by the admission and per-call ports.
 `TaskScheduler` now invokes an explicit claimed-task worker only for a validated
 fresh admission. Queued and owned work is cancellation-aware; waiting workers
 return their local slots without settling shared reservations. Claim expiry bounds
-the worker context. Concrete engine worker wiring, automatic renewal, installed
-host qualification and durable recovery remain open.
+the worker context. The engine adapter preserves fresh dispatch and child creation
+before using the existing journaled execution and verification paths. Automatic
+renewal, installed host qualification and durable recovery remain open.
 
 ## S3.3: Structured handoffs and independent review
 

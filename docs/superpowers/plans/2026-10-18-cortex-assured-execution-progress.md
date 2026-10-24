@@ -27,7 +27,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
-| S3.2 | active | this chat | Durable ownership, atomic readiness/capacity admission, guarded host admission, renewal, dispatch intent, expiry, verified completion and immutable history implemented; concrete grant providers, runtime scheduling, event delivery and recovery qualification remain open |
+| S3.2 | active | this chat | Durable ownership, guarded readiness/capacity admission, fair bounded scheduling, prepared engine worker dispatch, claim renewal storage, expiry and verified completion implemented; automatic renewal, concrete host services, lifecycle/event delivery and recovery qualification remain open |
 | S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; bounded proposal policy and shared-account validation implemented; runtime accounting and automatic replan execution remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
@@ -4808,3 +4808,45 @@ all 360 current top-level tests across the original run and the passing remainde
 the original whole-suite timeout remains recorded. The earlier replanning commit
 `c5742c5` had its CI run superseded by the runtime journal push, so it has no separate
 successful CI result. The runtime journal CI includes that change.
+
+
+### S3.2 engine scheduler worker adapter
+
+`Engine.NewTaskWorker` connects the scheduler's fresh claim to guarded dispatch,
+`PrepareTaskRun` and `RunPreparedTask`. The host resolver supplies an accepted
+assignment, current parent revision, stable child identity and immutable prepared
+agent. It receives detached admission values and must not invoke a provider or
+tool while resolving definitions.
+
+The adapter validates the exact admitted claim before dispatch and requires a
+fresh dispatch receipt. It reuses existing private input capture, child admission,
+call journals, publication controls and verification. Reusing an old claim's
+`Fresh` flag cannot replay dispatch. A lost child-creation acknowledgement leaves
+the child retained without provider invocation. Neither verified run output nor a
+worker return completes task acceptance or settles shared capacity.
+
+Tests use real SQLite persistence through scheduler admission, dispatch and engine
+execution. Provider and verifier fixtures establish local control flow only.
+Parent cancellation, revoked dispatch, missing call authority, historical receipts,
+changed bindings and acknowledgement failures stop execution. The shared fixture
+now supports both already-claimed runtime tests and fresh scheduler admission.
+
+The initial red run failed on the absent adapter API. The first adapter race
+matrix passed in 20.514 seconds. Full engine validation is tracked separately.
+Host grant services and resolvers, automatic lease renewal, recovery settlement,
+installed lifecycle wiring and provider qualification remain open.
+
+
+The bounded scheduler packet is committed as `0973c28`. Its CI superseded the
+runtime journal run before the latter finished the root test job. Local evidence
+remains as recorded; a cancelled CI run is not a passing qualification.
+
+
+The adapter and prepared-runtime regression matrix passed under the race detector
+in 165.572 seconds. All-module lint, formatting, root build and docs type/lint/build
+checks passed. Final post-format adapter and scheduler integration race checks
+passed in 24.559 seconds, followed by another successful root build. The full
+engine race suite then passed in 558.179 seconds: 731 cases across all 365
+top-level tests, without an assertion failure, race report or package timeout.
+This full run also covers the earlier runtime journal implementation. The older
+whole-suite timeout remains historical evidence, not a passing run.

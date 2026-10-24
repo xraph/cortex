@@ -200,7 +200,24 @@ func (a preparedTaskAuthorizer) AuthorizeTaskRun(ctx context.Context, r coordina
 	return a(ctx, r)
 }
 
-func preparedTaskRuntimeFixture(t *testing.T, configure ...func(*engine.Engine, *engine.RunOverrides)) (workerFixture, *engine.Engine, *requiredClient, *engine.PreparedAgent, coordination.TaskRunRequest, coordination.TaskRunAdmitter) {
+type taskClaimRuntimeFixture struct {
+	f        workerFixture
+	engine   *engine.Engine
+	client   *requiredClient
+	prepared *engine.PreparedAgent
+	options  engine.PreparedTaskRunOptions
+	request  coordination.ReadyTaskClaimRequest
+	ready    coordination.ReadyTaskClaim
+	dispatch coordination.TaskDispatchRequest
+	admitter coordination.TaskRunAdmitter
+}
+
+func preparedTaskClaimFixture(t *testing.T, configure ...func(*engine.Engine, *engine.RunOverrides)) taskClaimRuntimeFixture {
+	t.Helper()
+	return newTaskClaimRuntimeFixture(t, true, configure...)
+}
+
+func newTaskClaimRuntimeFixture(t *testing.T, acquire bool, configure ...func(*engine.Engine, *engine.RunOverrides)) taskClaimRuntimeFixture {
 	t.Helper()
 	f := newWorkerFixture(t)
 	client := &requiredClient{}
@@ -231,8 +248,12 @@ func preparedTaskRuntimeFixture(t *testing.T, configure ...func(*engine.Engine, 
 	require.NoError(t, f.storage.CreatePlan(f.ctx, p))
 	allocation := execution.Resources{Steps: 3, Tokens: 1000, ToolCalls: 1, FanOut: 1}
 	require.NoError(t, f.storage.CreateReservationPolicy(f.ctx, execution.ReservationPolicy{SchemaVersion: 1, PlanID: p.ID, Scope: p.Scope, Limits: allocation, Deadline: p.Budget.Deadline, TokenOnly: true}))
-	ready, err := f.storage.ClaimReadyTask(f.ctx, coordination.ReadyTaskClaimRequest{SchemaVersion: 1, Acquisition: coordination.BudgetedClaimRequest{Claim: coordination.ClaimRequest{SchemaVersion: 1, ID: opts.Claim.ClaimID, PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: taskID, Worker: opts.Claim.Worker, GrantRef: "grant", Duration: time.Minute}, Reservation: execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), PlanID: p.ID, PlanDigest: p.Digest, Scope: p.Scope, TaskID: taskID, OwnerRef: opts.Claim.ClaimID.String(), Kind: execution.ReservationLeaf, Allocation: allocation, Deadline: p.Budget.Deadline}}})
-	require.NoError(t, err)
+	claimRequest := coordination.ReadyTaskClaimRequest{SchemaVersion: 1, Acquisition: coordination.BudgetedClaimRequest{Claim: coordination.ClaimRequest{SchemaVersion: 1, ID: opts.Claim.ClaimID, PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: taskID, Worker: opts.Claim.Worker, GrantRef: "grant", Duration: time.Minute}, Reservation: execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), PlanID: p.ID, PlanDigest: p.Digest, Scope: p.Scope, TaskID: taskID, OwnerRef: opts.Claim.ClaimID.String(), Kind: execution.ReservationLeaf, Allocation: allocation, Deadline: p.Budget.Deadline}}}
+	var ready coordination.ReadyTaskClaim
+	if acquire {
+		ready, err = f.storage.ClaimReadyTask(f.ctx, claimRequest)
+		require.NoError(t, err)
+	}
 	h := opts.Assignment.Handoff
 	h.PlanDigest, h.Criteria = p.Digest, p.Tasks[0].Criteria
 	h, err = coordination.SealHandoff(h)
@@ -243,18 +264,26 @@ func preparedTaskRuntimeFixture(t *testing.T, configure ...func(*engine.Engine, 
 	require.NoError(t, err)
 	assigned, err = f.storage.AdvanceAssignment(f.ctx, coordination.AssignmentChange{AssignmentID: h.AssignmentID, ExpectedRevision: assigned.Revision, HandoffDigest: h.Digest, Fence: h.Fence, State: coordination.AssignmentAccepted, Actor: h.Receiver.Principal, Reason: "accept"})
 	require.NoError(t, err)
-	dispatched, err := f.storage.DispatchReadyTask(f.ctx, coordination.TaskDispatchRequest{SchemaVersion: 1, Scope: p.Scope, Claim: ready.Acquisition.Claim.Token(), ClaimDigest: ready.Acquisition.Claim.Digest, AdmissionDigest: ready.RequestDigest, AssignmentID: h.AssignmentID, AssignmentRevision: assigned.Revision, AssignmentDigest: assigned.Digest, ParentRunRevision: parent.Revision, RunID: opts.RunID, Actor: h.Receiver.Principal, Reason: "dispatch"})
-	require.NoError(t, err)
-	opts.Claim, opts.DispatchDigest, opts.Assignment = dispatched.Claim.Token(), dispatched.RequestDigest, dispatched.Assignment
+	dispatchRequest := coordination.TaskDispatchRequest{SchemaVersion: 1, Scope: p.Scope, Claim: ready.Acquisition.Claim.Token(), ClaimDigest: ready.Acquisition.Claim.Digest, AdmissionDigest: ready.RequestDigest, AssignmentID: h.AssignmentID, AssignmentRevision: assigned.Revision, AssignmentDigest: assigned.Digest, ParentRunRevision: parent.Revision, RunID: opts.RunID, Actor: h.Receiver.Principal, Reason: "dispatch"}
 	prepared, err := e.PrepareAgent(f.ctx, ag.ID, overrides)
-	require.NoError(t, err)
-	req, err := e.PrepareTaskRun(f.ctx, prepared, "task", opts)
 	require.NoError(t, err)
 	admitter, err := coordination.NewTaskRunAdmitter(f.storage, preparedTaskFence(func(_ context.Context, r coordination.TaskRunRequest, next func(coordination.TaskRunRequest) error) error {
 		return next(r)
 	}), preparedTaskAuthorizer(func(context.Context, coordination.TaskRunRequest) error { return nil }))
 	require.NoError(t, err)
-	return f, e, client, prepared, req, admitter
+	return taskClaimRuntimeFixture{f: f, engine: e, client: client, prepared: prepared, options: opts, request: claimRequest, ready: ready, dispatch: dispatchRequest, admitter: admitter}
+}
+
+func preparedTaskRuntimeFixture(t *testing.T, configure ...func(*engine.Engine, *engine.RunOverrides)) (workerFixture, *engine.Engine, *requiredClient, *engine.PreparedAgent, coordination.TaskRunRequest, coordination.TaskRunAdmitter) {
+	t.Helper()
+	fixture := preparedTaskClaimFixture(t, configure...)
+	dispatched, err := fixture.f.storage.DispatchReadyTask(fixture.f.ctx, fixture.dispatch)
+	require.NoError(t, err)
+	opts := fixture.options
+	opts.Claim, opts.DispatchDigest, opts.Assignment = dispatched.Claim.Token(), dispatched.RequestDigest, dispatched.Assignment
+	req, err := fixture.engine.PrepareTaskRun(fixture.f.ctx, fixture.prepared, "task", opts)
+	require.NoError(t, err)
+	return fixture.f, fixture.engine, fixture.client, fixture.prepared, req, fixture.admitter
 }
 
 func TestPrepareTaskRunCreatesReservedChildThroughAdmitter(t *testing.T) {
