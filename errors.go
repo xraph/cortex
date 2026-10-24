@@ -40,6 +40,12 @@ var (
 	ErrRunCallConflict               = errors.New("cortex: run call conflict")
 	ErrRunCallNotFound               = errors.New("cortex: run call not found")
 
+	// Scheduler errors.
+	ErrInvalidScheduler                = errors.New("cortex: invalid scheduler configuration or snapshot")
+	ErrSchedulerFull                   = errors.New("cortex: scheduler queue full")
+	ErrSchedulerStopped                = errors.New("cortex: scheduler stopped")
+	ErrSchedulerReconciliationRequired = errors.New("cortex: scheduler admission requires reconciliation")
+
 	// State errors.
 	ErrInvalidState     = errors.New("cortex: invalid state transition")
 	ErrRunCancelled     = errors.New("cortex: run cancelled")

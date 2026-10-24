@@ -152,3 +152,50 @@ alone does not grant fresh invocation permission. Apply any resulting graph
 through `planning.ApplyRevision` and the existing expected-revision store commit,
 which preserve acceptance criteria and reject expanded authority or budgets.
 The helper does not wire these execution steps into `RunOrchestration`.
+
+## Schedule durable task admissions
+
+Use `coordination.NewScheduler` when your host supplies the current plan state,
+worker resolution, guarded claim admission and a claimed-task worker. Each
+`Tick(ctx, planID)` attempts at most one ready task, in plan definition order.
+Your context must carry the exact scope. The scheduler reloads the plan and
+current verification state after local capacity becomes available, then resolves
+the worker and asks `TaskClaimAdmitter` to reserve ownership and shared capacity.
+
+The local queue admits scopes in round-robin order and keeps FIFO order within
+each scope. Defaults are four concurrent ticks, one per exact scope and 64 queued
+ticks. `MaxConcurrent` can be at most 256, `MaxPerScope` cannot exceed it, and
+`MaxQueued` can be at most 4096. These are process limits. Durable admission still
+controls shared capacity across scheduler instances.
+
+`TickTimeout` defaults to one minute and covers queueing, preparation and worker
+execution together. It cannot exceed thirty minutes. The worker context is also
+bounded by the original claim expiry, plan deadline and task deadline. Cancellation
+propagates from the caller, so attach the parent run's cancellation to that context.
+You must still fence the parent's persisted state and current grants at dispatch
+and at each provider or tool call.
+
+A worker is called only after a confirmed fresh, validated claim receipt. An
+ambiguous write or historical receipt returns `ErrSchedulerReconciliationRequired`
+without invoking it. Preserve and reconcile the durable request and receipt before
+trying to dispatch; a scheduler restart does not grant permission to repeat work.
+The source must reconstruct task states from retained records and current authorized
+bindings. Missing states mean pending, but the claim transaction rechecks prerequisites
+and ownership even when the source snapshot is stale.
+
+Your `ClaimedTaskWorker` must use guarded dispatch and the prepared task runtime.
+Return when a task suspends or enters asynchronous verification so its local worker
+slot becomes available. This does not settle its shared allocation, extend its
+deadline or mark it successful. Only verified task acceptance establishes success.
+A nil `Tick` result may also mean that no task was ready.
+
+Call `Shutdown(ctx)` before closing the stores or worker services. Shutdown rejects
+new ticks, cancels queued and owned work, then waits for callbacks to return. If your
+shutdown context expires, the scheduler stays stopped and you can call `Shutdown`
+again to wait for drainage. A callback that ignores cancellation keeps its slot
+until it returns. The scheduler never releases durable ownership or refunds an
+uncertain allocation just to finish shutdown.
+
+The scheduler does not install itself into `RunOrchestration` or the sweeper.
+Concrete host adapters, automatic claim renewal, recovery settlement and installed
+worker crash/restart qualification remain separate integrations.

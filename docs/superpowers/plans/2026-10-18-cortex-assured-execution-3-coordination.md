@@ -79,8 +79,9 @@ private history, capture policy and input evidence, with no execution side
 effects. The runtime entry points below consume that request under guarded
 admission and per-call authority. Concrete host grant services, scheduler
 dispatch, cancellation after intent, recovery settlement and event delivery
-remain open. `Scheduler.Tick` still needs integration; the ownership store is not
-a completed scheduler.
+remain open. `Scheduler.Tick` now provides bounded local admission around the
+guarded claim store, with fresh state loading, deterministic task selection and
+fair scope queues. The concrete worker adapter and lifecycle wiring remain open.
 
 Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease.
 The lease binds the exact private invocation, lasts through stream consumption,
@@ -98,7 +99,11 @@ They validate current preparation policy and revisions, authorize input reads,
 check the persisted child/intent and require a confirmed fresh receipt. Historical
 or ambiguous starts return a reconciliation error without invoking a provider.
 Host authority and ownership remain guarded by the admission and per-call ports.
-Scheduler wiring, installed host qualification and durable recovery remain open.
+`TaskScheduler` now invokes an explicit claimed-task worker only for a validated
+fresh admission. Queued and owned work is cancellation-aware; waiting workers
+return their local slots without settling shared reservations. Claim expiry bounds
+the worker context. Concrete engine worker wiring, automatic renewal, installed
+host qualification and durable recovery remain open.
 
 ## S3.3: Structured handoffs and independent review
 

@@ -4756,3 +4756,55 @@ and MongoDB (24.072s), with real containers and no skips. Focused planning race
 tests passed in 1.618s; the complete planning race suite passed during development.
 Final formatting, all-module lint, root build, docs types/lint/build and diff
 checks passed.
+
+
+### S3.2 bounded scheduler admission
+
+`coordination.TaskScheduler` implements `Scheduler.Tick` around the existing
+readiness and guarded claim contracts. Each tick reloads state after local
+capacity becomes available, selects the first ready task in graph order, resolves
+current worker identity and allocation, and invokes a host worker only after a
+validated fresh claim. Ambiguous or historical admission returns a reconciliation
+error without dispatch. Worker completion does not imply task acceptance.
+
+The local queue is FIFO within each exact scope and round-robin across queued
+scopes. Global concurrency, per-scope concurrency, queue depth and total tick time
+are finite. Caller cancellation and shutdown cancel queued and owned work; the
+worker context also ends at its original claim, task or plan deadline. Shutdown
+retains uncertain durable ownership and reservations. A callback that ignores
+cancellation keeps its local slot until it returns.
+
+The red test run failed on the missing scheduler API. The first targeted race
+matrix passed; a later context-aliasing test exposed an incorrect fixture
+assumption: `ScopeFromContext` already returns detached scope. The fixture now
+checks that mutating the returned scope cannot affect the worker context, reusing
+the existing scope isolation contract.
+
+Real SQLite, PostgreSQL and MongoDB checks exercise eight competing ticks across
+two scheduler instances, both identical and distinct request identities. Exactly
+one worker is invoked. A restarted scheduler cannot execute the retained admission
+again, and the allocation remains charged after the local worker returns. Revoked
+worker authority prevents both invocation and reservation. The fixture worker does
+not invoke a provider, and its test fence does not qualify a distributed grant
+service.
+
+Concrete engine worker wiring, automatic claim renewal, persisted parent-cancel
+delivery, sweeper integration and real worker crash/restart qualification remain
+open. This packet is not completion of S3.2 or the four-stage goal.
+
+
+Validation for this scheduler packet:
+
+- Full coordination race suite: 23.127 seconds.
+- Scheduler database race checks: SQLite 6.386 seconds, PostgreSQL 5.251 seconds,
+  MongoDB 7.298 seconds. PostgreSQL and MongoDB ran real containers without skips.
+- `make f`, all-module `make l`, root `GOWORK=off go build ./...`, docs
+  `pnpm types:check`, `pnpm lint` and `pnpm build` passed.
+- Shutdown during a successful admission is observed before the cancellation
+  callback runs, preventing a newly committed receipt from starting a worker.
+
+The previous runtime journal commit is `55b9503`. Its local engine evidence covers
+all 360 current top-level tests across the original run and the passing remainder;
+the original whole-suite timeout remains recorded. The earlier replanning commit
+`c5742c5` had its CI run superseded by the runtime journal push, so it has no separate
+successful CI result. The runtime journal CI includes that change.
