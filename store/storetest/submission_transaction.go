@@ -198,3 +198,7 @@ func (d submissionFenceTx) InsertTaskRun(ctx context.Context, child *run.Run) er
 	err := writer.InsertTaskRun(ctx, child)
 	return err
 }
+
+func (d submissionFenceTx) LockRunCalls(ctx context.Context, runID id.AgentRunID) error {
+	return lockRecoveryJournal(ctx, d.Driver, runID)
+}

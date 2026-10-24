@@ -28,11 +28,20 @@ func taskAcceptanceFixture(t *testing.T, backend store.Store, configs ...submiss
 	return ctx, finishTaskAcceptanceFixture(ctx, t, backend, working, change, job)
 }
 
-func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend store.Store, working coordination.Assignment, change coordination.AssignmentChange, job verification.Job) coordination.TaskAcceptanceRequest {
+type acceptanceClaimFixture struct {
+	ID       id.ID
+	Duration time.Duration
+}
+
+func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend store.Store, working coordination.Assignment, change coordination.AssignmentChange, job verification.Job, options ...acceptanceClaimFixture) coordination.TaskAcceptanceRequest {
 	t.Helper()
 	claims := resultCapability[coordination.ClaimStore](t, backend)
 	h := working.Handoff
-	claim, err := claims.AcquireTaskClaim(ctx, coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: h.PlanID, PlanRevision: h.PlanRevision, PlanDigest: h.PlanDigest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: 5 * time.Minute})
+	fixture := acceptanceClaimFixture{ID: id.New(coordination.PrefixClaim), Duration: 5 * time.Minute}
+	if len(options) > 0 {
+		fixture = options[0]
+	}
+	claim, err := claims.AcquireTaskClaim(ctx, coordination.ClaimRequest{SchemaVersion: 1, ID: fixture.ID, PlanID: h.PlanID, PlanRevision: h.PlanRevision, PlanDigest: h.PlanDigest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: fixture.Duration})
 	require.NoError(t, err)
 	dispatch, err := claims.BeginTaskDispatch(ctx, claim.Token(), job.Request.Binding.RunID)
 	require.NoError(t, err)

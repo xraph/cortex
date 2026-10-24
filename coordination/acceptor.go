@@ -47,6 +47,9 @@ func NewTaskAcceptor(storage TaskAcceptanceStore, fence TaskAcceptanceFence, aut
 }
 
 func (a *guardedTaskAcceptor) Accept(ctx context.Context, request TaskAcceptanceRequest) (TaskAcceptance, error) {
+	if request.Recovery != nil {
+		return TaskAcceptance{}, ErrInvalidTaskAcceptance
+	}
 	guard := taskAuthority[TaskAcceptanceRequest]{
 		operation: "task acceptance", invalid: ErrInvalidTaskAcceptance, conflict: ErrTaskAcceptanceConflict,
 		scope: func(req TaskAcceptanceRequest) cortex.Scope { return req.Current.Scope },
@@ -57,14 +60,18 @@ func (a *guardedTaskAcceptor) Accept(ctx context.Context, request TaskAcceptance
 		if acceptErr != nil {
 			return TaskAcceptance{}, acceptErr
 		}
-		if receipt.Validate() != nil || receipt.RequestDigest != digest {
-			return TaskAcceptance{}, ErrInvalidTaskAcceptance
-		}
-		detached, sealErr := SealTaskAcceptance(receipt)
-		if sealErr != nil {
-			return TaskAcceptance{}, sealErr
-		}
-		detached.Fresh = receipt.Fresh
-		return detached, nil
+		return checkedTaskAcceptance(receipt, digest)
 	})
+}
+
+func checkedTaskAcceptance(receipt TaskAcceptance, digest string) (TaskAcceptance, error) {
+	if receipt.Validate() != nil || receipt.RequestDigest != digest {
+		return TaskAcceptance{}, ErrInvalidTaskAcceptance
+	}
+	detached, err := SealTaskAcceptance(receipt)
+	if err != nil {
+		return TaskAcceptance{}, err
+	}
+	detached.Fresh = receipt.Fresh
+	return detached, nil
 }

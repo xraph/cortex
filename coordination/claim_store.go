@@ -73,7 +73,11 @@ func ValidateClaimSuccessor(previous, next Claim) error {
 	case ClaimDispatching:
 		rebuilt, err = BeginDispatch(previous, previous.Token(), next.RunID, next.At)
 	case ClaimCompleted:
-		rebuilt, err = CompleteClaim(previous, previous.Token(), *next.AcceptanceID, next.At)
+		if next.RecoveryDigest != "" {
+			rebuilt, err = completeRecoveredClaim(previous, previous.Token(), *next.AcceptanceID, next.RecoveryDigest, next.At)
+		} else {
+			rebuilt, err = CompleteClaim(previous, previous.Token(), *next.AcceptanceID, next.At)
+		}
 	case ClaimReleased, ClaimRecovering:
 		rebuilt, err = ExpireClaim(previous, previous.Revision, next.At)
 	default:

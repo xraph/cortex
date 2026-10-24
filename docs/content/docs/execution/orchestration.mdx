@@ -560,8 +560,54 @@ that path. The crash fixture kills a worker after its adapter fsyncs an external
 write but before it returns, then recovers the exact bound request through a new
 engine and SQLite connection. A second recovery pass reads the retained receipt
 without another mutation. Claims, local call returns, task results and shared
-reservations stay unchanged. Installed adapters and guarded claim adoption still
+reservations stay unchanged. Installed adapters and the guarded claim adoption described below still
 need separate qualification.
+
+### Adopt a verified result after lease expiry
+
+Use `coordination.NewTaskRecoveryAdopter(store, fence, authorizer)` with a built-in
+store and explicit `TaskRecoveryFence` and `TaskRecoveryAuthorizer` ports. Call
+`Adopt` with a `TaskAcceptanceRequest` whose `Recovery` field identifies your
+quiescence proof. The claim must already be recovering, and the original child
+run must have a committed verifier result and submitted assignment. Ordinary
+`TaskAcceptor.Accept` rejects recovery requests.
+
+Your proof binds the exact recovering claim digest, retained run seal and complete
+`RunRecoverySnapshot` digest. Include an issuer, revision, retained proof reference
+and digest, observation time and adoption expiry. `Freeze` checks this metadata;
+your authorizer authenticates its contents against the original dispatch identity,
+provider/account routing and effect receipts. It must establish permanent shutdown
+of the original worker incarnation and all its tools, including delayed delivery.
+A seal, expired lease or empty journal cannot establish that shutdown.
+
+Hold current grants, source revisions and the quiescence guarantee through the
+fence's synchronous callback. Authenticate the actor and the complete prerequisite
+chain. The guarded operation has a thirty-second deadline, including host callbacks.
+Retrieve external proof before entering storage; no network call should run inside
+the database transaction. All journal writers must use the guarded protocol.
+
+Storage locks the current plan, child run and journal, checks the snapshot again,
+and validates the retained assignment, result and prerequisite evidence. Every
+model call needs terminal provider proof consistent with any local return. Every
+effect needs a terminal receipt and its original guarded call binding. Legacy
+unbound effects require separate adjudication. A changed snapshot, unresolved
+operation, stale claim or expired proof rejects adoption without completing ownership.
+
+The transaction writes the completed claim, acceptance receipt and metadata outbox
+intent together. `Claim.RecoveryDigest` retains the proof digest; the original
+lease expiry, worker identity, fence and run ID stay intact. Adoption does not
+invoke work, fabricate local returns or settle shared reservations.
+
+Retry an uncertain commit with the identical request ID and contents. You still
+need current host access, but an acknowledged historical receipt remains readable
+after the proof's adoption window expires. That window limits when adoption may
+commit; it does not limit the promised worker shutdown. When you consume the
+accepted output as a dependency, storage rechecks its journal digest and current
+verifier evidence. Late contradictory or changed evidence prevents that use.
+
+Real SQLite, PostgreSQL and MongoDB tests exercise these transactions and denial
+paths with fixture proofs. Concrete host authenticators, installed recovery flows
+and process-crash qualification of adoption remain integration work.
 
 ### Sweep expired claims
 

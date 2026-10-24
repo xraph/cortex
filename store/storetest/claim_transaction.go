@@ -286,3 +286,7 @@ func (d claimWriteTx) InsertTaskRun(ctx context.Context, child *run.Run) error {
 	}
 	return err
 }
+
+func (d claimWriteTx) LockRunCalls(ctx context.Context, runID id.AgentRunID) error {
+	return lockRecoveryJournal(ctx, d.Driver, runID)
+}

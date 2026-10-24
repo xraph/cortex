@@ -100,6 +100,7 @@ type Claim struct {
 	PreviousDigest string        `json:"previous_digest,omitempty"`
 	Digest         string        `json:"digest"`
 	AcceptanceID   *id.ID        `json:"acceptance_id,omitempty"`
+	RecoveryDigest string        `json:"recovery_digest,omitempty"`
 }
 
 // Token identifies this exact immutable observation of ownership.
@@ -119,7 +120,7 @@ func sealClaim(c Claim) (Claim, error) {
 		if c.AcceptanceID == nil || c.AcceptanceID.IsNil() || c.AcceptanceID.Prefix() != PrefixTaskAcceptance {
 			return Claim{}, ErrInvalidClaim
 		}
-	} else if c.AcceptanceID != nil {
+	} else if c.AcceptanceID != nil || c.RecoveryDigest != "" {
 		return Claim{}, ErrInvalidClaim
 	}
 	switch c.State {
@@ -127,8 +128,19 @@ func sealClaim(c Claim) (Claim, error) {
 		if !c.RunID.IsNil() || !c.At.Before(c.ExpiresAt) {
 			return Claim{}, ErrInvalidClaim
 		}
-	case ClaimDispatching, ClaimCompleted:
+	case ClaimDispatching:
 		if c.RunID.IsNil() || c.RunID.Prefix() != id.PrefixAgentRun || !c.At.Before(c.ExpiresAt) {
+			return Claim{}, ErrInvalidClaim
+		}
+	case ClaimCompleted:
+		if c.RunID.IsNil() || c.RunID.Prefix() != id.PrefixAgentRun {
+			return Claim{}, ErrInvalidClaim
+		}
+		if c.RecoveryDigest == "" {
+			if !c.At.Before(c.ExpiresAt) {
+				return Claim{}, ErrInvalidClaim
+			}
+		} else if !evidence.ValidDigest(c.RecoveryDigest) || c.At.Before(c.ExpiresAt) || !c.At.Before(c.Deadline) {
 			return Claim{}, ErrInvalidClaim
 		}
 	case ClaimRecovering:

@@ -10,11 +10,12 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/verification"
 )
 
-func taskAcceptanceFixture(t *testing.T) coordination.TaskAcceptance {
+func taskAcceptanceFixture(t *testing.T, recovery ...bool) coordination.TaskAcceptance {
 	t.Helper()
 	_, assignment, binding, p, now := reviewFixture(t)
 	h := assignment.Handoff
@@ -23,9 +24,24 @@ func taskAcceptanceFixture(t *testing.T) coordination.TaskAcceptance {
 	claim, err = coordination.BeginDispatch(claim, claim.Token(), binding.RunID, now)
 	require.NoError(t, err)
 	req := coordination.TaskAcceptanceRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixTaskAcceptance), Claim: claim.Token(), AssignmentID: h.AssignmentID, AssignmentRevision: assignment.Revision, AssignmentDigest: assignment.Digest, Result: verification.ResultReadRequest{SchemaVersion: 1, RunID: binding.RunID, ResultID: id.New(verification.PrefixResult), ReceiptDigest: evidence.Digest([]byte("receipt"))}, Current: binding, Actor: h.Sender.Principal, Reason: "verified"}
+	if len(recovery) > 0 && recovery[0] {
+		claim, err = coordination.ExpireClaim(claim, claim.Revision, claim.ExpiresAt)
+		require.NoError(t, err)
+		now = claim.At
+		req.Claim = claim.Token()
+		sealReq := execution.RunCallSealRequest{SchemaVersion: 1, Scope: claim.Scope, RunID: claim.RunID, Actor: "recovery", Reason: "closed"}
+		_, sealDigest, sealErr := sealReq.Freeze()
+		require.NoError(t, sealErr)
+		req.Recovery = &coordination.TaskRecoveryProof{SchemaVersion: 1, ClaimDigest: claim.Digest, Seal: execution.RunCallSeal{Request: sealReq, RequestDigest: sealDigest, At: now}, SnapshotDigest: evidence.Digest([]byte("snapshot")), Issuer: "fixture", Revision: "1", ProofRef: "stopped-worker", ProofDigest: evidence.Digest([]byte("proof")), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+	}
 	req, digest, err := req.Freeze()
 	require.NoError(t, err)
-	completed, err := coordination.CompleteClaim(claim, req.Claim, req.ID, now)
+	var completed coordination.Claim
+	if req.Recovery != nil {
+		completed, err = coordination.AdoptRecoveredClaim(claim, req.Claim, req.ID, *req.Recovery, now)
+	} else {
+		completed, err = coordination.CompleteClaim(claim, req.Claim, req.ID, now)
+	}
 	require.NoError(t, err)
 	accepted, err := coordination.SealTaskAcceptance(coordination.TaskAcceptance{SchemaVersion: 1, Request: req, RequestDigest: digest, Claim: completed, ObservedAt: now, Outbox: coordination.TaskAcceptanceOutbox{EventID: id.New(coordination.PrefixTaskAcceptedEvent), Type: "task_result_accepted", AcceptanceID: req.ID, PlanID: p.ID, TaskID: h.TaskID, RunID: binding.RunID}})
 	require.NoError(t, err)

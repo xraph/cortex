@@ -70,6 +70,7 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("TaskRecoveryAdoption", func(t *testing.T) { storetest.TaskRecoveryAdoption(t, s, assuranceDriver{store: s}) })
 	t.Run("RunRecoveryTransactions", func(t *testing.T) { storetest.RunRecoveryTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("RunCallTransactions", func(t *testing.T) { storetest.RunCallTransactions(t, assuranceDriver{store: s}) })
 	t.Run("TaskRunTransactions", func(t *testing.T) {

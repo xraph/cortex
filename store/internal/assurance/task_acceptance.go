@@ -20,9 +20,28 @@ const (
 )
 
 var _ coordination.TaskAcceptanceStore = (*Repository)(nil)
+var _ coordination.TaskRecoveryStore = (*Repository)(nil)
 
 // AcceptTaskResult validates retained evidence and completes ownership atomically.
 func (s *Repository) AcceptTaskResult(ctx context.Context, request coordination.TaskAcceptanceRequest) (coordination.TaskAcceptance, error) {
+	if request.Recovery != nil {
+		return coordination.TaskAcceptance{}, coordination.ErrInvalidTaskAcceptance
+	}
+	return s.acceptTaskResult(ctx, request)
+}
+
+// AdoptTaskResult requires authenticated recovery proof in addition to all
+// ordinary acceptance evidence. It never renews ownership or releases capacity.
+func (s *Repository) AdoptTaskResult(ctx context.Context, request coordination.TaskAcceptanceRequest) (coordination.TaskAcceptance, error) {
+	if request.Recovery == nil {
+		return coordination.TaskAcceptance{}, coordination.ErrInvalidTaskAcceptance
+	}
+	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return s.acceptTaskResult(bounded, request)
+}
+
+func (s *Repository) acceptTaskResult(ctx context.Context, request coordination.TaskAcceptanceRequest) (coordination.TaskAcceptance, error) {
 	if err := require(ctx, request.Current.Scope); err != nil {
 		return coordination.TaskAcceptance{}, err
 	}
@@ -60,7 +79,7 @@ func (s *Repository) AcceptTaskResult(ctx context.Context, request coordination.
 			return readErr
 		}
 		started := s.clock.Now()
-		if _, claimErr := coordination.CompleteClaim(claim, req.Claim, req.ID, started); claimErr != nil {
+		if _, claimErr := completeTaskAcceptanceClaim(claim, req, started); claimErr != nil {
 			return claimErr
 		}
 		if claim.PlanDigest != p.Digest || claim.PlanRevision != p.Revision || claim.RunID != req.Result.RunID {
@@ -77,7 +96,7 @@ func (s *Repository) AcceptTaskResult(ctx context.Context, request coordination.
 		if checkErr := validateTaskAcceptanceMaterials(p, req.Claim.TaskID, materials, observed); checkErr != nil {
 			return checkErr
 		}
-		completed, claimErr := coordination.CompleteClaim(claim, req.Claim, req.ID, observed)
+		completed, claimErr := completeTaskAcceptanceClaim(claim, req, observed)
 		if claimErr != nil {
 			return claimErr
 		}
@@ -107,8 +126,11 @@ func (s *Repository) AcceptTaskResult(ctx context.Context, request coordination.
 			return writeErr
 		}
 		finished := s.clock.Now()
-		if finished.Before(observed) || !finished.Before(claim.ExpiresAt) {
+		if finished.Before(observed) {
 			return coordination.ErrClaimConflict
+		}
+		if _, claimErr := completeTaskAcceptanceClaim(claim, req, finished); claimErr != nil {
+			return claimErr
 		}
 		if checkErr := validateTaskAcceptanceMaterials(p, req.Claim.TaskID, materials, finished); checkErr != nil {
 			return checkErr
@@ -122,6 +144,9 @@ func (s *Repository) AcceptTaskResult(ctx context.Context, request coordination.
 	}
 	if err != nil {
 		return coordination.TaskAcceptance{}, err
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return coordination.TaskAcceptance{}, contextErr
 	}
 	return result, nil
 }
@@ -209,7 +234,7 @@ func validateTaskMaterials(materials []taskAcceptanceMaterial, at time.Time) ([]
 }
 
 func (s *Repository) taskAcceptanceMaterials(ctx context.Context, p planning.Plan, req coordination.TaskAcceptanceRequest, claim coordination.Claim) ([]taskAcceptanceMaterial, error) {
-	own, used, err := s.loadTaskAcceptanceMaterial(ctx, p, req, claim, 8<<20)
+	own, used, err := s.loadTaskAcceptanceMaterial(ctx, p, req, claim, 8<<20, s.clock.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +290,7 @@ func (s *Repository) acceptedPrerequisiteMaterials(ctx context.Context, p planni
 		}
 		request := accepted.Request
 		request.Current = dep.Current
-		material, bytes, loadErr := s.loadTaskAcceptanceMaterial(ctx, p, request, original, min(remaining, 8<<20))
+		material, bytes, loadErr := s.loadTaskAcceptanceMaterial(ctx, p, request, original, min(remaining, 8<<20), accepted.ObservedAt)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -275,13 +300,17 @@ func (s *Repository) acceptedPrerequisiteMaterials(ctx context.Context, p planni
 	return materials, nil
 }
 
-func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.Plan, req coordination.TaskAcceptanceRequest, claim coordination.Claim, limit int) (taskAcceptanceMaterial, int, error) {
+func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.Plan, req coordination.TaskAcceptanceRequest, claim coordination.Claim, limit int, recoveryAt time.Time) (taskAcceptanceMaterial, int, error) {
 	assignment, err := s.GetAssignment(ctx, req.AssignmentID)
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err
 	}
 	h, pins := assignment.Handoff, assignment.Submission
-	if assignment.State != coordination.AssignmentSubmitted || assignment.Revision != req.AssignmentRevision || assignment.Digest != req.AssignmentDigest || pins == nil || h.PlanID != p.ID || h.PlanDigest != p.Digest || h.PlanRevision != p.Revision || h.TaskID != claim.TaskID || h.Fence != claim.Fence || h.Receiver != claim.Worker || h.GrantRef != claim.GrantRef || req.Actor != h.Sender.Principal || claim.Token() != req.Claim || claim.State != coordination.ClaimDispatching || claim.RunID != req.Result.RunID || pins.RunID != claim.RunID {
+	expectedState := coordination.ClaimDispatching
+	if req.Recovery != nil {
+		expectedState = coordination.ClaimRecovering
+	}
+	if assignment.State != coordination.AssignmentSubmitted || assignment.Revision != req.AssignmentRevision || assignment.Digest != req.AssignmentDigest || pins == nil || h.PlanID != p.ID || h.PlanDigest != p.Digest || h.PlanRevision != p.Revision || h.TaskID != claim.TaskID || h.Fence != claim.Fence || h.Receiver != claim.Worker || h.GrantRef != claim.GrantRef || (req.Recovery == nil && req.Actor != h.Sender.Principal) || claim.Token() != req.Claim || claim.State != expectedState || claim.RunID != req.Result.RunID || pins.RunID != claim.RunID {
 		return taskAcceptanceMaterial{}, 0, coordination.ErrInvalidTaskAcceptance
 	}
 	reader, ok := s.driver.(SubmissionRunReader)
@@ -310,11 +339,31 @@ func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.
 	if checkErr := s.validateSubmissionRunState(ctx, current, job); checkErr != nil {
 		return taskAcceptanceMaterial{}, 0, checkErr
 	}
-	snapshot, bytes, err := s.resultSnapshotForRun(ctx, req.Result, current, limit)
+	dispatch, err := s.taskDispatchClaim(ctx, claim)
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err
 	}
-	dispatch, err := s.taskDispatchClaim(ctx, claim)
+	deadline := h.Deadline
+	if req.Recovery != nil {
+		if current.AgentID.String() != claim.Worker.Agent || current.Provenance.TaskClaimID != claim.ID.String() || current.Provenance.PreparedDigest != req.Current.Context.PreparedDigest {
+			return taskAcceptanceMaterial{}, 0, coordination.ErrInvalidTaskAcceptance
+		}
+		journal, lockErr := s.LockRunRecoverySnapshot(ctx, req.Recovery.Seal, req.Recovery.SnapshotDigest)
+		if lockErr != nil {
+			return taskAcceptanceMaterial{}, 0, lockErr
+		}
+		for _, entry := range journal.Calls {
+			if entry.Call.StartedAt.Before(dispatch.At) {
+				return taskAcceptanceMaterial{}, 0, coordination.ErrTaskAcceptanceConflict
+			}
+		}
+		if proofErr := coordination.ValidateTaskRecoverySnapshot(*req.Recovery, journal, claim, h, req.Current, recoveryAt); proofErr != nil {
+			return taskAcceptanceMaterial{}, 0, proofErr
+		}
+		deadline = minAcceptanceDeadline(deadline, req.Recovery.ExpiresAt)
+		deadline = minAcceptanceDeadline(deadline, claim.Deadline)
+	}
+	snapshot, bytes, err := s.resultSnapshotForRun(ctx, req.Result, current, limit)
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err
 	}
@@ -322,7 +371,7 @@ func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.
 		return taskAcceptanceMaterial{}, 0, coordination.ErrInvalidTaskAcceptance
 	}
 	state := planning.TaskState{TaskID: claim.TaskID, PlanDigest: p.Digest, Status: planning.StatusSucceeded, Current: req.Current, Reports: snapshot.Reports, Contract: &snapshot.Contract}
-	return taskAcceptanceMaterial{snapshot: snapshot, state: state, deadline: h.Deadline}, bytes, nil
+	return taskAcceptanceMaterial{snapshot: snapshot, state: state, deadline: deadline}, bytes, nil
 }
 
 func (s *Repository) taskDispatchClaim(ctx context.Context, claim coordination.Claim) (coordination.Claim, error) {
@@ -335,4 +384,17 @@ func (s *Repository) taskDispatchClaim(ctx context.Context, claim coordination.C
 		return coordination.Claim{}, coordination.ErrInvalidClaim
 	}
 	return dispatch, nil
+}
+
+func completeTaskAcceptanceClaim(claim coordination.Claim, req coordination.TaskAcceptanceRequest, at time.Time) (coordination.Claim, error) {
+	if req.Recovery != nil {
+		return coordination.AdoptRecoveredClaim(claim, req.Claim, req.ID, *req.Recovery, at)
+	}
+	return coordination.CompleteClaim(claim, req.Claim, req.ID, at)
+}
+func minAcceptanceDeadline(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }

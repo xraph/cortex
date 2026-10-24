@@ -5534,3 +5534,39 @@ post-format recovery and run-journal transaction rerun passed in 8.964, 8.123 an
 The first docs command used the repository root and found no package manifest;
 the rerun used `docs/` and succeeded. Claim adoption, authenticated quiescence
 proof and usage settlement remain unimplemented integration work.
+
+
+### S3.2 guarded recovering-claim adoption
+
+Added explicit recovery proof, fence and authorizer contracts plus a guarded
+`TaskRecoveryAdopter`. Ordinary acceptance cannot authorize this transition.
+The store reuses the acceptance transaction, current verifier checks and complete
+prerequisite validation, locks the sealed journal through commit, and binds every
+call to the original worker, claim, prepared execution and assignment. Unresolved
+provider calls, unbound/pending effects and contradictory evidence reject adoption.
+
+Successful adoption retains its proof digest in the completed claim and preserves
+the expired lease, fence, run and shared reservation. Identical retries recover
+historical receipts after uncertain commits. Proof expiry bounds the adoption
+window; authenticated worker/tool shutdown must be permanent. Dependent tasks
+recheck the recovered journal and current verifier evidence, even after that window.
+
+Initial tests failed on the missing claim transition, store adoption method and
+host facade. The first three-backend run found a PostgreSQL fixture foreign-key
+violation: the generated worker ID had no agent record. Creating that record fixed
+the fixture. Docker was responsive, so no restart was needed. Tests also cover
+rollback, lost acknowledgment, expiry during writes and late-receipt serialization.
+Final validation follows.
+
+Host authentication and fencing implementations, installed engine adoption,
+process-crash qualification and shared provider/verifier settlement remain open.
+Live Linux sandbox qualification remains deferred to the user's worker selection.
+
+Final formatting and all-module lint passed after removing one trailing blank
+line. The full coordination, execution and assurance race suites passed in
+25.191, 19.984 and 1.217 seconds. The broader adoption/acceptance/claim regression
+run passed on SQLite, PostgreSQL and MongoDB in 36.540, 45.893 and 54.071 seconds.
+After final formatting, focused adoption tests passed on all three in 12.156,
+17.488 and 19.842 seconds, with no skips, and coordination transition/facade tests
+passed in 1.798 seconds. Root build and docs type/lint checks passed. CI for the
+preceding commit 119f708 remains in progress; this packet's CI is separate.

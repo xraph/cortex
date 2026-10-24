@@ -47,6 +47,7 @@ type TaskAcceptanceRequest struct {
 	Dependencies       []AcceptedDependency           `json:"dependencies,omitempty"`
 	Actor              string                         `json:"actor"`
 	Reason             string                         `json:"reason"`
+	Recovery           *TaskRecoveryProof             `json:"recovery,omitempty"`
 }
 
 // Freeze detaches bounded trusted host input. Digests are not credentials.
@@ -56,6 +57,13 @@ func (r TaskAcceptanceRequest) Freeze() (TaskAcceptanceRequest, string, error) {
 	}
 	if !validAcceptedDependencies(r.Dependencies, r.Current.Scope, r.ID) {
 		return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
+	}
+	if r.Recovery != nil {
+		proof, _, proofErr := r.Recovery.Freeze()
+		if proofErr != nil || proof.Seal.Request.RunID != r.Result.RunID || proof.Seal.Request.Scope.Canonical() != r.Current.Scope.Canonical() {
+			return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
+		}
+		r.Recovery = &proof
 	}
 	data, err := json.Marshal(r)
 	if err != nil || len(data) > 1<<20 {
@@ -98,6 +106,16 @@ func SealTaskAcceptance(a TaskAcceptance) (TaskAcceptance, error) {
 	req, digest, err := a.Request.Freeze()
 	if err != nil || a.SchemaVersion != 1 || digest != a.RequestDigest || a.Claim.Validate() != nil || a.Claim.State != ClaimCompleted || (a.Claim.AcceptanceID == nil || *a.Claim.AcceptanceID != req.ID) || a.Claim.ID != req.Claim.ClaimID || a.Claim.PlanID != req.Claim.PlanID || a.Claim.TaskID != req.Claim.TaskID || a.Claim.Worker != req.Claim.Worker || a.Claim.Fence != req.Claim.Fence || a.Claim.Revision != req.Claim.Revision+1 || a.Claim.RunID != req.Result.RunID || a.Claim.Scope.Canonical() != req.Current.Scope.Canonical() || !a.ObservedAt.Equal(a.Claim.At) || a.Outbox.EventID.IsNil() || a.Outbox.EventID.Prefix() != PrefixTaskAcceptedEvent || a.Outbox.Type != "task_result_accepted" || a.Outbox.AcceptanceID != req.ID || a.Outbox.PlanID != a.Claim.PlanID || a.Outbox.TaskID != a.Claim.TaskID || a.Outbox.RunID != a.Claim.RunID {
 		return TaskAcceptance{}, ErrInvalidTaskAcceptance
+	}
+	if req.Recovery == nil {
+		if a.Claim.RecoveryDigest != "" {
+			return TaskAcceptance{}, ErrInvalidTaskAcceptance
+		}
+	} else {
+		_, proofDigest, proofErr := req.Recovery.Freeze()
+		if proofErr != nil || a.Claim.RecoveryDigest != proofDigest || a.Claim.PreviousDigest != req.Recovery.ClaimDigest || a.ObservedAt.Before(req.Recovery.ObservedAt) || !a.ObservedAt.Before(req.Recovery.ExpiresAt) {
+			return TaskAcceptance{}, ErrInvalidTaskAcceptance
+		}
 	}
 	a.Request, a.Digest, a.Fresh = req, "", false
 	data, err := json.Marshal(a)

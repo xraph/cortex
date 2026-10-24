@@ -287,9 +287,8 @@ S3.2 recovery snapshot progress: the built-in stores expose a bounded atomic
 snapshot of sealed call and effect journals. Terminal provider/effect writers now
 share the journal transaction guard with local completions. The digest retains
 unresolved and contradictory evidence and pins complete call bindings. Guarded
-claim adoption still needs an atomic current-evidence recheck, authenticated
-quiescence proof and the explicit recovering-to-completed transition. Reading a
-snapshot alone cannot accept a task or release its reservation.
+claim adoption uses the transaction and explicit proof contracts described below.
+Reading a snapshot alone cannot accept a task or release its reservation.
 
 
 Recovery adoption transaction support: SQLite, PostgreSQL and MongoDB now let an
@@ -299,12 +298,16 @@ requires a live transaction, keeps the journal lock until the outer commit or
 rollback and returns no evidence when the seal or expected digest differs.
 Standalone snapshot reads share the same decoding and validation code.
 
-The next adoption change must use this primitive while validating the current
-claim, assignment, committed result and prerequisite chain. It also needs an
-explicit recovery proof bound to the original claim and snapshot, host-authenticated
-worker/tool quiescence, and terminal provider/effect evidence. Ordinary live-claim
-acceptance must remain separate. Recovered acceptances need a durable proof marker
-in the completed claim and must revalidate journal evidence when later consumed
-as prerequisites. No snapshot count, missing effect row or expired lease can
-stand in for quiescence proof. Provider and verifier usage settlement remains a
-separate atomic accounting operation.
+Guarded adoption now uses that primitive to validate the current claim,
+assignment, committed result and prerequisite chain. `TaskRecoveryAdopter` requires
+separate host recovery fencing and authentication ports. Its proof binds the
+original claim, seal and snapshot, with permanent worker/tool quiescence and
+terminal provider/effect evidence. The completed claim retains a recovery digest
+without renewing its expired lease. Ordinary live-claim acceptance rejects recovery
+requests. Later prerequisite use rechecks the journal and current verifier evidence.
+
+Shared storage tests cover transaction rollback, lost acknowledgment, proof expiry
+at commit, invocation binding, contradictory and late evidence, and dependency use
+after the adoption window. These fixtures do not authenticate real quiescence.
+Concrete host proof/fence implementations, engine-installed recovery adoption,
+process-fault qualification and provider/verifier usage settlement remain open.
