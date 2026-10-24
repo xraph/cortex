@@ -27,27 +27,20 @@ func (d assuranceDriver) TransactRunCalls(ctx context.Context, runID id.AgentRun
 }
 
 func (d assuranceDriver) transactAssuranceRecord(ctx context.Context, kind string, identifier id.ID, missing, unavailable error, callback func(context.Context, assurance.Driver) error) error {
-	filter, err := assuranceFilter(ctx)
-	if err != nil {
+	if _, err := assuranceFilter(ctx); err != nil {
 		return err
 	}
-	filter["kind"], filter["id"], filter["deleted"] = kind, identifier.String(), false
 	session, err := d.store.mdb.Client().StartSession()
 	if err != nil {
 		return err
 	}
 	defer session.EndSession(ctx)
 	_, err = session.WithTransaction(ctx, func(sc context.Context) (any, error) {
-		// A real write fences concurrent revisions even though their immutable rows
-		// differ. Snapshot reads alone would permit both transactions to commit.
-		result, lockErr := d.store.mdb.Collection(colAssurance).UpdateOne(sc, filter, bson.M{"$inc": bson.M{"coordination_fence": int64(1)}})
-		if lockErr != nil {
+		transactional := assuranceDriver{store: d.store, resultTransaction: true}
+		if lockErr := transactional.lockAssuranceRecord(sc, kind, identifier, missing); lockErr != nil {
 			return nil, lockErr
 		}
-		if result.MatchedCount != 1 {
-			return nil, missing
-		}
-		return true, callback(sc, assuranceDriver{store: d.store, resultTransaction: true})
+		return true, callback(sc, transactional)
 	}, options.Transaction().SetReadConcern(readconcern.Snapshot()).SetWriteConcern(writeconcern.Majority()))
 	if err != nil {
 		var commandErr mongo.CommandError
@@ -56,4 +49,34 @@ func (d assuranceDriver) transactAssuranceRecord(ctx context.Context, kind strin
 		}
 	}
 	return err
+}
+
+// LockRunCalls requires the same active session as the enclosing transaction.
+func (d assuranceDriver) LockRunCalls(ctx context.Context, runID id.AgentRunID) error {
+	session := mongo.SessionFromContext(ctx)
+	if !d.resultTransaction || session == nil || !session.TransactionRunning() {
+		return execution.ErrRunCallUnavailable
+	}
+	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun {
+		return execution.ErrInvalidRunCall
+	}
+	return d.lockAssuranceRecord(ctx, assurance.KindRunCallGuard, runID, execution.ErrInvalidRunCall)
+}
+
+func (d assuranceDriver) lockAssuranceRecord(ctx context.Context, kind string, identifier id.ID, missing error) error {
+	filter, err := assuranceFilter(ctx)
+	if err != nil {
+		return err
+	}
+	filter["kind"], filter["id"], filter["deleted"] = kind, identifier.String(), false
+	// A real write fences concurrent revisions even when their immutable rows
+	// differ. Snapshot reads alone would permit both transactions to commit.
+	result, err := d.store.mdb.Collection(colAssurance).UpdateOne(ctx, filter, bson.M{"$inc": bson.M{"coordination_fence": int64(1)}})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount != 1 {
+		return missing
+	}
+	return nil
 }

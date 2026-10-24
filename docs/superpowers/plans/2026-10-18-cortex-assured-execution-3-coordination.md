@@ -290,3 +290,21 @@ unresolved and contradictory evidence and pins complete call bindings. Guarded
 claim adoption still needs an atomic current-evidence recheck, authenticated
 quiescence proof and the explicit recovering-to-completed transition. Reading a
 snapshot alone cannot accept a task or release its reservation.
+
+
+Recovery adoption transaction support: SQLite, PostgreSQL and MongoDB now let an
+existing plan transaction lock a run journal and compare the complete retained
+snapshot. `assurance.LockRunRecoverySnapshot` is internal storage machinery. It
+requires a live transaction, keeps the journal lock until the outer commit or
+rollback and returns no evidence when the seal or expected digest differs.
+Standalone snapshot reads share the same decoding and validation code.
+
+The next adoption change must use this primitive while validating the current
+claim, assignment, committed result and prerequisite chain. It also needs an
+explicit recovery proof bound to the original claim and snapshot, host-authenticated
+worker/tool quiescence, and terminal provider/effect evidence. Ordinary live-claim
+acceptance must remain separate. Recovered acceptances need a durable proof marker
+in the completed claim and must revalidate journal evidence when later consumed
+as prerequisites. No snapshot count, missing effect row or expired lease can
+stand in for quiescence proof. Provider and verifier usage settlement remains a
+separate atomic accounting operation.

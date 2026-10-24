@@ -21,6 +21,14 @@ type RunCallDriver interface {
 	TransactRunCalls(context.Context, id.AgentRunID, func(context.Context, Driver) error) error
 }
 
+// RunCallLocker adds a journal guard to an existing database transaction.
+// The driver must reject calls outside a live transaction. Hold a plan guard
+// before journal guards when changing plan state; never acquire a plan guard
+// while holding only a journal guard. Callbacks contain storage operations only.
+type RunCallLocker interface {
+	LockRunCalls(context.Context, id.AgentRunID) error
+}
+
 var _ execution.RunCallSealStore = (*Repository)(nil)
 
 func (s *Repository) runCallTransaction(ctx context.Context, runID id.AgentRunID, callback func(context.Context, *Repository) error) error {
@@ -46,12 +54,8 @@ func (s *Repository) runCallTransaction(ctx context.Context, runID id.AgentRunID
 	}
 	err = driver.TransactRunCalls(ctx, runID, func(tc context.Context, tx Driver) error {
 		repo := &Repository{driver: tx, clock: s.clock}
-		row, readErr := repo.get(tc, Query{Kind: KindRunCallGuard, ID: runID.String()})
-		if readErr != nil {
-			return readErr
-		}
-		if row.Deleted || row.Kind != anchor.Kind || row.ID != anchor.ID || row.RunID != anchor.RunID || row.Body != anchor.Body || row.Digest != anchor.Digest {
-			return execution.ErrInvalidRunCall
+		if guardErr := repo.requireRunCallGuard(tc, runID); guardErr != nil {
+			return guardErr
 		}
 		if callbackErr := callback(tc, repo); callbackErr != nil {
 			return callbackErr
@@ -129,4 +133,15 @@ func (s *Repository) GetRunCallSeal(ctx context.Context, runID id.AgentRunID) (*
 		return nil, execution.ErrInvalidRunCall
 	}
 	return &sealed, nil
+}
+
+func (s *Repository) requireRunCallGuard(ctx context.Context, runID id.AgentRunID) error {
+	row, err := s.get(ctx, Query{Kind: KindRunCallGuard, ID: runID.String()})
+	if err != nil {
+		return err
+	}
+	if row.Deleted || row.Kind != KindRunCallGuard || row.ID != runID.String() || row.RunID != runID.String() || row.Body != "{}" || row.Digest != evidence.Digest([]byte("{}")) {
+		return execution.ErrInvalidRunCall
+	}
+	return nil
 }

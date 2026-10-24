@@ -5502,3 +5502,35 @@ Broader SQLite and engine test runs were interrupted and are not counted as full
 suite passes. The engine stack was in SQLite fixture migration; the SQLite run
 was within existing private-candidate conformance. CI for the preceding commit
 8777671 completed successfully (run 40064472930). New-commit CI remains separate.
+
+
+### S3.2 recovery evidence inside plan transactions
+
+Initial tests failed on the missing transaction-local snapshot API. The internal
+repository now offers `LockRunRecoverySnapshot`: it joins the enclosing database
+transaction, verifies the retained journal guard and seal, reads all evidence,
+and compares the expected snapshot digest. It cannot start an independent
+transaction or succeed without a live transaction. The snapshot remains
+provisional until the enclosing commit is acknowledged.
+
+Each database driver reuses its anchor-lock implementation for transaction
+startup and journal locking. MongoDB checks the active
+session and performs a write to the guard so snapshot isolation cannot permit
+concurrent receipt writes to commit unnoticed. SQL uses the existing transaction
+object. Standalone snapshots and locked reads share their full evidence reader.
+
+Real-store tests cover missing capabilities, use after transaction completion,
+wrong scope, changed seal/digest, cancellation, rollback of a plan-side write,
+and all three late receipt writers waiting until the outer transaction commits.
+These fixtures exercise storage transactions and do not authenticate external
+proof or complete recovering claims. Final checks follow.
+
+
+Final formatting and all-module lint passed. Full assurance and execution race
+suites passed in 1.213 and 17.008 seconds. The broader transaction regression run
+passed on SQLite, PostgreSQL and MongoDB in 46.569, 36.996 and 41.731 seconds. The
+post-format recovery and run-journal transaction rerun passed in 8.964, 8.123 and
+9.487 seconds, with no database skips. Root build and docs type/lint checks passed.
+The first docs command used the repository root and found no package manifest;
+the rerun used `docs/` and succeeded. Claim adoption, authenticated quiescence
+proof and usage settlement remain unimplemented integration work.

@@ -31,24 +31,71 @@ func (s *Repository) SnapshotRunRecovery(ctx context.Context, seal execution.Run
 	var result execution.RunRecoverySnapshot
 	err = s.runCallTransaction(bounded, seal.Request.RunID, func(tc context.Context, tx *Repository) error {
 		result = execution.RunRecoverySnapshot{}
-		retained, readErr := tx.GetRunCallSeal(tc, seal.Request.RunID)
-		if readErr != nil {
-			return readErr
-		}
-		if retained == nil || retained.RequestDigest != seal.RequestDigest || !retained.At.Equal(seal.At) {
-			return execution.ErrRunCallConflict
-		}
-		candidate := execution.RunRecoverySnapshot{SchemaVersion: 1, Seal: *retained}
-		if scanErr := tx.readRecoveryEvidence(tc, &candidate); scanErr != nil {
-			return scanErr
-		}
-		result, readErr = execution.SealRunRecoverySnapshot(candidate)
+		var readErr error
+		result, readErr = tx.readRunRecoverySnapshot(tc, seal)
 		return readErr
 	})
 	if err != nil {
 		return execution.RunRecoverySnapshot{}, err
 	}
 	return result, nil
+}
+
+// LockRunRecoverySnapshot compares complete evidence while joining the caller's
+// active transaction. It is an internal storage primitive, not an adoption API.
+// The caller must already hold the plan guard, bound the outer transaction and
+// authenticate proof. Locks survive this read until the outer commit or rollback.
+// A returned snapshot is provisional until that outer commit is acknowledged.
+func (s *Repository) LockRunRecoverySnapshot(ctx context.Context, seal execution.RunCallSeal, expected string) (execution.RunRecoverySnapshot, error) {
+	if err := require(ctx, seal.Request.Scope); err != nil {
+		return execution.RunRecoverySnapshot{}, err
+	}
+	if seal.Validate() != nil || !evidence.ValidDigest(expected) {
+		return execution.RunRecoverySnapshot{}, execution.ErrInvalidRunCall
+	}
+	frozen, _, err := seal.Request.Freeze()
+	if err != nil {
+		return execution.RunRecoverySnapshot{}, err
+	}
+	seal.Request = frozen
+	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	locker, ok := s.driver.(RunCallLocker)
+	if !ok {
+		return execution.RunRecoverySnapshot{}, execution.ErrRunCallUnavailable
+	}
+	if lockErr := locker.LockRunCalls(bounded, seal.Request.RunID); lockErr != nil {
+		return execution.RunRecoverySnapshot{}, lockErr
+	}
+	if guardErr := s.requireRunCallGuard(bounded, seal.Request.RunID); guardErr != nil {
+		return execution.RunRecoverySnapshot{}, guardErr
+	}
+	snapshot, err := s.readRunRecoverySnapshot(bounded, seal)
+	if err != nil {
+		return execution.RunRecoverySnapshot{}, err
+	}
+	if snapshot.Digest != expected {
+		return execution.RunRecoverySnapshot{}, execution.ErrRunCallConflict
+	}
+	if contextErr := bounded.Err(); contextErr != nil {
+		return execution.RunRecoverySnapshot{}, contextErr
+	}
+	return snapshot, nil
+}
+
+func (s *Repository) readRunRecoverySnapshot(ctx context.Context, seal execution.RunCallSeal) (execution.RunRecoverySnapshot, error) {
+	retained, err := s.GetRunCallSeal(ctx, seal.Request.RunID)
+	if err != nil {
+		return execution.RunRecoverySnapshot{}, err
+	}
+	if retained == nil || retained.RequestDigest != seal.RequestDigest || !retained.At.Equal(seal.At) {
+		return execution.RunRecoverySnapshot{}, execution.ErrRunCallConflict
+	}
+	candidate := execution.RunRecoverySnapshot{SchemaVersion: 1, Seal: *retained}
+	if readErr := s.readRecoveryEvidence(ctx, &candidate); readErr != nil {
+		return execution.RunRecoverySnapshot{}, readErr
+	}
+	return execution.SealRunRecoverySnapshot(candidate)
 }
 
 func (s *Repository) readRecoveryEvidence(ctx context.Context, result *execution.RunRecoverySnapshot) error {
