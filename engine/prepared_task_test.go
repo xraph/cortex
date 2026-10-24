@@ -200,13 +200,14 @@ func (a preparedTaskAuthorizer) AuthorizeTaskRun(ctx context.Context, r coordina
 	return a(ctx, r)
 }
 
-func preparedTaskRuntimeFixture(t *testing.T) (workerFixture, *engine.Engine, *requiredClient, *engine.PreparedAgent, coordination.TaskRunRequest, coordination.TaskRunAdmitter) {
+func preparedTaskRuntimeFixture(t *testing.T, configure ...func(*engine.Engine, *engine.RunOverrides)) (workerFixture, *engine.Engine, *requiredClient, *engine.PreparedAgent, coordination.TaskRunRequest, coordination.TaskRunAdmitter) {
 	t.Helper()
 	f := newWorkerFixture(t)
 	client := &requiredClient{}
 	var p planning.Plan
 	var taskID id.ID
 	e, ag, overrides := requiredSetup(t, f, client, func(c *engine.RequiredVerificationConfig) {
+		c.HandoffAuthorizer = &requiredToolAuthority{}
 		base := c.Builder
 		c.Builder = requiredBuilder(func(ctx context.Context, in engine.VerificationIntentInput) (verification.CaptureIntent, error) {
 			intent, err := base.BuildVerificationIntent(ctx, in)
@@ -218,6 +219,9 @@ func preparedTaskRuntimeFixture(t *testing.T) (workerFixture, *engine.Engine, *r
 		})
 	})
 	overrides.Budget.MaxToolCalls = 1
+	for _, change := range configure {
+		change(e, overrides)
+	}
 	opts := preparedTaskOptions(t, f, ag, *overrides.Budget)
 	contract, err := f.storage.GetContract(f.ctx, f.request.Job.ContractID)
 	require.NoError(t, err)

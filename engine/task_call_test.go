@@ -55,7 +55,7 @@ func taskCallFixture(t *testing.T) (context.Context, *run.Run) {
 	r := &run.Run{ID: id.NewAgentRunID(), AgentID: id.NewAgentID(), Scope: scopeA(), Budget: execution.Budget{Deadline: time.Now().Add(time.Minute)}, Provenance: run.ExecutionProvenance{TaskClaimID: id.New("tclaim").String(), AssignmentDigest: evidence.Digest([]byte("handoff")), ParentRunID: id.NewAgentRunID().String(), PreparedDigest: evidence.Digest([]byte("prepared"))}}
 	ctx, cancel := context.WithDeadline(cortex.WithScope(context.Background(), r.Scope), r.Budget.Deadline)
 	t.Cleanup(cancel)
-	return withExecutionProvenance(ctx, r.Provenance), r
+	return withTaskCallIndex(withExecutionProvenance(ctx, r.Provenance), 0), r
 }
 
 func TestTaskCallGenerationRequiresLease(t *testing.T) {
@@ -94,7 +94,7 @@ func TestTaskCallGenerationRequiresLease(t *testing.T) {
 				req.Payload[0] = '!'
 				return lease, nil
 			})
-			e := &Engine{llm: taskCallClient{complete: func(_ context.Context, req *llm.Request) (*llm.Response, error) {
+			e := &Engine{store: newTaskCallJournalStub(), llm: taskCallClient{complete: func(_ context.Context, req *llm.Request) (*llm.Response, error) {
 				calls++
 				require.Equal(t, "work", req.Messages[0].Content)
 				return &llm.Response{Content: "done", Usage: llm.Usage{TotalTokens: 7}}, nil
@@ -130,7 +130,7 @@ func TestTaskCallLeaseRevokesInflightGeneration(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	revoked, entered := make(chan struct{}), make(chan struct{})
 	var releases atomic.Int32
-	e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, err := req.Freeze()
 		require.NoError(t, err)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: revoked, Release: func() error { releases.Add(1); return nil }}, nil
@@ -156,7 +156,7 @@ func TestTaskCallStreamRetainsLeaseThroughConsumption(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	releases := 0
 	source := &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { return nil, io.EOF }}
-	e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, err := req.Freeze()
 		require.NoError(t, err)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { releases++; return nil }}, nil
@@ -176,7 +176,7 @@ func TestTaskCallStreamRetainsLeaseThroughConsumption(t *testing.T) {
 func TestTaskCallStreamReleaseFailureIsNotEOF(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	source := &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { return nil, io.EOF }}
-	e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, err := req.Freeze()
 		require.NoError(t, err)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { return errors.New("release failed") }}, nil
@@ -193,7 +193,7 @@ func TestTaskCallToolDispatchAndResumeRequireCurrentLease(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx, r := taskCallFixture(t)
 			calls, releases := 0, 0
-			e := &Engine{tools: []registeredTool{{def: llm.Tool{Name: "probe"}, handler: func(context.Context, cortex.Invocation) (string, error) { calls++; return "result", nil }}}}
+			e := &Engine{store: newTaskCallJournalStub(), tools: []registeredTool{{def: llm.Tool{Name: "probe"}, handler: func(context.Context, cortex.Invocation) (string, error) { calls++; return "result", nil }}}}
 			if mode != "missing" {
 				e.taskCallGuard = taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 					if mode == "denied" {
@@ -239,7 +239,7 @@ func TestTaskCallStreamRevocationCancelsConsumption(t *testing.T) {
 	revoked, entered := make(chan struct{}), make(chan struct{})
 	var releases atomic.Int32
 	source := &taskCallStream{next: func(ctx context.Context) (*llm.Chunk, error) { close(entered); <-ctx.Done(); return nil, io.EOF }}
-	e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, err := req.Freeze()
 		require.NoError(t, err)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: revoked, Release: func() error { releases.Add(1); return nil }}, nil
@@ -264,7 +264,7 @@ func TestTaskCallLeaseReleasedOnProviderPanic(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		ctx, r := taskCallFixture(t)
 		releases := 0
-		e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+		e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 			_, digest, err := req.Freeze()
 			require.NoError(t, err)
 			return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { releases++; return nil }}, nil
@@ -310,8 +310,8 @@ func TestTaskCallLoopsDoNotBypassMissingGuard(t *testing.T) {
 }
 
 func TestTaskCallRequestRejectsInvalidIdentity(t *testing.T) {
-	_, r := taskCallFixture(t)
-	valid, err := taskCallRequest(r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallComplete, &llm.Request{Model: "model"})
+	ctx, r := taskCallFixture(t)
+	valid, err := taskCallRequest(ctx, r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallComplete, &llm.Request{Model: "model"})
 	require.NoError(t, err)
 	for name, change := range map[string]func(*TaskCallRequest){
 		"schema":   func(r *TaskCallRequest) { r.SchemaVersion++ },
@@ -354,7 +354,7 @@ func TestTaskCallStreamNextPanicReleasesLease(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	releases := 0
 	source := &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { panic("provider next") }}
-	e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, err := req.Freeze()
 		require.NoError(t, err)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { releases++; return nil }}, nil
@@ -376,7 +376,7 @@ func TestTaskCallStreamScannerPanicReleasesLease(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	releases := 0
 	source := &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { return nil, io.EOF }}
-	e, err := New(WithStore(scopespy.New()), WithPublicationGate(&taskCallPanicGate{}), WithPublicationPolicy(safety.Policy{Mode: safety.ModeCheckedSegments}), WithLLM(taskCallClient{stream: func(context.Context, *llm.Request) (llm.Stream, error) { return source, nil }}), WithTaskCallGuard(taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+	e, err := New(WithStore(newTaskCallJournalStub()), WithPublicationGate(&taskCallPanicGate{}), WithPublicationPolicy(safety.Policy{Mode: safety.ModeCheckedSegments}), WithLLM(taskCallClient{stream: func(context.Context, *llm.Request) (llm.Stream, error) { return source, nil }}), WithTaskCallGuard(taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 		_, digest, freezeErr := req.Freeze()
 		require.NoError(t, freezeErr)
 		return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { releases++; return nil }}, nil
@@ -398,7 +398,7 @@ func TestTaskCallSynchronousRevocationCannotReturnSuccess(t *testing.T) {
 			ctx, r := taskCallFixture(t)
 			revoked := make(chan struct{})
 			releases := 0
-			e := &Engine{taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+			e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
 				_, digest, err := req.Freeze()
 				require.NoError(t, err)
 				return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: revoked, Release: func() error { releases++; return nil }}, nil

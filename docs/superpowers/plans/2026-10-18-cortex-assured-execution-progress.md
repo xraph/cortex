@@ -28,7 +28,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
 | S3.2 | active | this chat | Durable ownership, atomic readiness/capacity admission, guarded host admission, renewal, dispatch intent, expiry, verified completion and immutable history implemented; concrete grant providers, runtime scheduling, event delivery and recovery qualification remain open |
-| S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; runtime binding and bounded replan policy remain open |
+| S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; bounded proposal policy and shared-account validation implemented; runtime accounting and automatic replan execution remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -4674,3 +4674,85 @@ remain open. The storage capability alone does not protect provider calls.
 
 Final `make f`, all-module `make l`, root build, docs types/lint/build and
 diff checks passed. The storage packet is complete; runtime wiring remains next.
+
+### S3.2 runtime call journal integration
+
+Ruling: reserve a stable logical slot under the current authority lease before
+invoking a callback. Generation uses the ReAct step index, shared by sync and
+stream modes. Tools use their originating generation index and tool-call ID.
+Approval resume retains that index. Changing an attempt ID or payload cannot
+create a fresh slot for the same logical call.
+
+Task-marked generation and local tool dispatch require `execution.RunCallStore`.
+Only a confirmed fresh start permits invocation. Journal errors, historical
+records and withdrawal during the write prevent the callback. The journal binds
+the exact private request digest accepted by the lease, including a narrower
+caller deadline, and the provider receives detached correlation metadata.
+
+Normal returns are recorded while the lease is held. Streams hash the ordered
+JSON chunk sequence and record a completion only after a clean EOF and successful
+close. Early close, cancellation, callback failure and panic leave an unresolved
+reservation. A joined EOF error cannot hide another failure. Usage observations
+remain separate from provider billing and shared settlement. Uncertain tool starts
+or returns stop further effects. Lease-release failure remains uncertain even
+when a local return was recorded.
+
+The first runtime test failed because calls bypassed the journal. The corrected
+race matrix passed in 57.797s, covering missing storage, historical starts, write
+errors, correlation metadata, stable slots, stream completion boundaries,
+cancellation, revocation, panic cleanup and tool uncertainty. Real SQLite tests
+cover sync and stream completion, a committed start whose acknowledgment was
+lost, return-write failure, and direct versus approved tool execution. Approval
+resume produced the same logical tool slot as direct dispatch; both retained
+three completed records for two generations and one tool.
+
+Additional race regressions passed in 16.155s for the narrowed lease request
+digest, storage-input detachment and a return committed before its acknowledgment
+was lost. The last case retains a local completion while keeping output private
+and withholding verification.
+
+The whole-engine race run reached its thirty-minute package limit after 633
+passing cases (334 top-level tests), with no individual assertion or race failure
+reported before the timeout. The host load average was observed near 300 during
+that run. The lower-parallelism follow-up passed all 26 remaining top-level tests under
+the race detector in 134.753 seconds, including the later-added binding regression.
+The union covers all 360 current top-level engine tests. The additional lost-return
+acknowledgement regression also passed separately. The original log is retained;
+these passing batches do not turn the original timeout into a passing suite.
+Runtime recovery, provider evidence,
+shared settlement, scheduler lifecycle and installed host qualification remain
+open. No journal observation grants automatic retry or task acceptance.
+
+
+### S3.5 bounded replanning proposals
+
+`c5742c5` adds `planning.ProposeReplan` with versioned progress snapshots,
+normalized policy bounds and deterministic action/reason output. Defaults allow
+two proposal attempts, trigger on two equivalent failures or three attempts
+without progress, and observe five-minute idle/wait bounds with thirty seconds
+of deadline reserve. Hosts can change the defaults within finite hard bounds.
+
+The policy reuses `execution.BudgetSnapshot` for conservative charges, including
+outstanding replan holds. It rejects an account allowance wider than the policy
+ceiling. There is no second attempt counter. Unknown effects require reconciliation
+even after a deadline. Other decisions honor shared capacity and absolute time;
+waiting cannot reset a deadline. Every attempt and conflict binds the current
+plan digest, so a revised graph rejects its predecessor's observations.
+
+This helper selects a proposal and performs no I/O. Automatic execution still
+needs current host authorization, durable fresh admission, one reserved replan
+unit and proposal resources before a model call. Failed or rejected proposals
+retain their charges. Apply resulting graph changes through `ApplyRevision` and
+the expected-revision store commit; acceptance and authority checks are shared.
+Scheduler integration and provider-qualified settlement remain open.
+
+The first tests failed on the missing API. Race tests now cover repetition,
+progress, waits, deadline pressure, contradictions, malformed observations,
+policy limits, graph binding, deterministic decisions, unchanged inputs and
+rejection of acceptance or budget weakening. Eight concurrent reservations admit
+only two replan units; unknown usage and a subsequent plan revision preserve the
+charges. The final matrix passed against SQLite (13.405s), PostgreSQL (13.778s)
+and MongoDB (24.072s), with real containers and no skips. Focused planning race
+tests passed in 1.618s; the complete planning race suite passed during development.
+Final formatting, all-module lint, root build, docs types/lint/build and diff
+checks passed.

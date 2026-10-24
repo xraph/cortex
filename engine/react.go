@@ -179,6 +179,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 
 		stepStart := time.Now().UTC()
 		ctx, stepSpan = e.startStep(runCtx, st.stepIndex)
+		ctx = withTaskCallIndex(ctx, st.stepIndex)
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		// Built once per step and threaded to both authorizer calls
@@ -457,6 +458,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 
 		stepStart := time.Now().UTC()
 		ctx, stepSpan = e.startStep(runCtx, st.stepIndex)
+		ctx = withTaskCallIndex(ctx, st.stepIndex)
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		stepID := id.NewStepID()

@@ -302,6 +302,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		st.usage.ReportedTokens = st.tokensUsed
 	}
 	ctx = withExecutionProvenance(ctx, st.provenance)
+	ctx = withTaskCallIndex(ctx, st.stepIndex-1)
 	r.Provenance = st.provenance
 	r.Usage = st.usage
 	if snap != nil {

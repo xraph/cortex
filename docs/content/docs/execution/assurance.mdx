@@ -1862,7 +1862,8 @@ Task-marked runs reject legacy continuations that could discard the marker.
 
 `TaskCallGuard.AcquireTaskCall` receives a detached `TaskCallRequest` with exact
 scope, run and agent IDs, claim and parent identities, handoff and prepared
-digests, operation kind, deadline and the private invocation payload. Authenticate
+digests, logical operation digest, operation kind, deadline and the private
+invocation payload. Authenticate
 the context principal, resolve the current durable records and check ownership,
 parent state, grants, prerequisites and reserved capacity. The payload is the
 exact LLM request or tool call. Do not log it.
@@ -1889,8 +1890,8 @@ Reported usage remains available for conservative accounting. A tool whose call
 or release becomes uncertain stops further effect execution through the existing
 uncertain-outcome path.
 
-This guard does not settle shared usage, journal provider dispatch or authorize a
-retry. Its fixture tests do not qualify an installed identity or lease service.
+This guard does not settle shared usage or authorize a retry.
+The runtime records task calls in the durable journal described below. Its fixture tests do not qualify an installed identity or lease service.
 The admitted-task entry points above use this guard. Durable recovery and
 installed host qualification still need integration.
 
@@ -1898,8 +1899,8 @@ installed host qualification still need integration.
 
 `execution.RunCallStore` is an optional durable journal, implemented by SQLite,
 PostgreSQL and MongoDB. It stores invocation metadata and local return digests
-without retaining prompts, tool arguments or output bytes. Runtime wiring is
-still required before this journal protects task execution.
+without retaining prompts, tool arguments or output bytes. Task-marked runs
+require this capability before invoking a provider or local tool.
 
 `BeginRunCall` returns `true` only for a confirmed first insert. The exact scope,
 run ID and logical operation digest identify the slot. An identical replay
@@ -1923,3 +1924,25 @@ must not delete an unresolved reservation.
 `WithRunCallContext` and `RunCallFromContext` carry detached correlation metadata
 for provider adapters. These values are neither credentials nor proof that a
 provider supports idempotency.
+
+
+The runtime reserves a slot after acquiring and checking the current call lease,
+then requires a confirmed fresh insert before invoking the callback. Generation
+slots follow the ReAct step index. Sync and streaming generation share the same
+slot; local tools use the originating generation index and tool-call ID, including
+dispatch after approval. Missing or invalid slot identity fails closed. The private
+lease request binds the operation digest, and provider correlation metadata binds
+the exact request digest accepted by that lease.
+
+Normal synchronous returns retain a digest of the response and observed usage.
+Tool returns retain a result digest. Streams hash the ordered JSON chunk sequence
+with explicit separators and record a completion only after a clean EOF and
+successful close. Early close, cancellation, callback failure or panic leaves the
+reservation unresolved. A joined EOF error is a failure, so another error cannot
+be hidden behind the end-of-stream marker.
+
+Journal errors stop execution. A tool with an ambiguous start or return stops
+further effects through the uncertain-outcome path. Completion is written while
+the lease is held, but it only describes the local callback: later lease-release
+failure still makes execution uncertain. Provider recovery, shared settlement
+and scheduler recovery remain separate work.

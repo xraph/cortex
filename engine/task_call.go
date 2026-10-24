@@ -2,8 +2,11 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"sync"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/llm"
@@ -39,6 +43,7 @@ type TaskCallRequest struct {
 	ParentRunID      id.AgentRunID   `json:"parent_run_id"`
 	AssignmentDigest string          `json:"assignment_digest"`
 	PreparedDigest   string          `json:"prepared_digest"`
+	OperationDigest  string          `json:"operation_digest"`
 	Kind             TaskCallKind    `json:"kind"`
 	Payload          json.RawMessage `json:"payload"`
 	Deadline         time.Time       `json:"deadline"`
@@ -46,7 +51,7 @@ type TaskCallRequest struct {
 
 // Freeze detaches a bounded invocation and returns its complete binding digest.
 func (r TaskCallRequest) Freeze() (TaskCallRequest, string, error) {
-	if r.SchemaVersion != 1 || r.ID.IsNil() || r.ID.Prefix() != "tcallguard" || cortex.ValidateScope(r.Scope) != nil || r.ClaimID.IsNil() || r.ClaimID.Prefix() != coordination.PrefixClaim || r.RunID.IsNil() || r.RunID.Prefix() != id.PrefixAgentRun || r.AgentID.IsNil() || r.AgentID.Prefix() != id.PrefixAgent || r.ParentRunID.IsNil() || r.ParentRunID.Prefix() != id.PrefixAgentRun || r.ParentRunID == r.RunID || !evidence.ValidDigest(r.AssignmentDigest) || !evidence.ValidDigest(r.PreparedDigest) || (r.Kind != TaskCallComplete && r.Kind != TaskCallStream && r.Kind != TaskCallTool) || r.Deadline.IsZero() || len(r.Payload) == 0 || len(r.Payload) > 8<<20 || !json.Valid(r.Payload) {
+	if r.SchemaVersion != 1 || r.ID.IsNil() || r.ID.Prefix() != execution.PrefixRunCall || cortex.ValidateScope(r.Scope) != nil || r.ClaimID.IsNil() || r.ClaimID.Prefix() != coordination.PrefixClaim || r.RunID.IsNil() || r.RunID.Prefix() != id.PrefixAgentRun || r.AgentID.IsNil() || r.AgentID.Prefix() != id.PrefixAgent || r.ParentRunID.IsNil() || r.ParentRunID.Prefix() != id.PrefixAgentRun || r.ParentRunID == r.RunID || !evidence.ValidDigest(r.AssignmentDigest) || !evidence.ValidDigest(r.PreparedDigest) || !evidence.ValidDigest(r.OperationDigest) || (r.Kind != TaskCallComplete && r.Kind != TaskCallStream && r.Kind != TaskCallTool) || r.Deadline.IsZero() || len(r.Payload) == 0 || len(r.Payload) > 8<<20 || !json.Valid(r.Payload) {
 		return TaskCallRequest{}, "", cortex.ErrTaskCallUnavailable
 	}
 	data, err := json.Marshal(r)
@@ -93,9 +98,9 @@ func WithTaskCallGuard(guard TaskCallGuard) Option {
 	}
 }
 
-func (e *Engine) beginTaskCall(ctx context.Context, r TaskCallRequest) (context.Context, func() error, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+func (e *Engine) beginTaskCall(ctx context.Context, r TaskCallRequest) (result context.Context, cleanup func() error, err error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, nil, ctxErr
 	}
 	if hostport.IsNil(e.taskCallGuard) {
 		return nil, nil, cortex.ErrTaskCallUnavailable
@@ -115,6 +120,7 @@ func (e *Engine) beginTaskCall(ctx context.Context, r TaskCallRequest) (context.
 	if err != nil || lease.RequestDigest != digest || lease.Release == nil || lease.Revoked == nil || !time.Now().Before(lease.ExpiresAt) || lease.ExpiresAt.After(frozen.Deadline) {
 		return nil, nil, errors.Join(cortex.ErrTaskCallUnavailable, releaseUnusedTaskLease(lease.Release))
 	}
+	transferred := false
 	var once sync.Once
 	var releaseErr error
 	callCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
@@ -127,6 +133,11 @@ func (e *Engine) beginTaskCall(ctx context.Context, r TaskCallRequest) (context.
 		})
 		return releaseErr
 	}
+	defer func() {
+		if !transferred {
+			err = errors.Join(err, release())
+		}
+	}()
 	select {
 	case <-lease.Revoked:
 		return nil, nil, errors.Join(cortex.ErrTaskCallUnavailable, releaseUnusedTaskLease(release))
@@ -142,7 +153,12 @@ func (e *Engine) beginTaskCall(ctx context.Context, r TaskCallRequest) (context.
 		case <-callCtx.Done():
 		}
 	}()
-	return taskLeaseContext{Context: callCtx, revoked: lease.Revoked, cancel: cancel}, release, nil
+	journalCtx, journalErr := e.journalTaskCall(taskLeaseContext{Context: callCtx, revoked: lease.Revoked, cancel: cancel}, frozen, digest, lease.ExpiresAt)
+	if journalErr != nil {
+		return nil, nil, errors.Join(journalErr, release())
+	}
+	transferred = true
+	return journalCtx, release, nil
 }
 
 // Err observes withdrawal synchronously at invocation boundaries. The watcher
@@ -163,7 +179,11 @@ func (c taskLeaseContext) Err() error {
 	return c.Context.Err()
 }
 
-func taskCallRequest(scope cortex.Scope, runID id.AgentRunID, agentID id.AgentID, p run.ExecutionProvenance, deadline time.Time, kind TaskCallKind, payload any) (TaskCallRequest, error) {
+func taskCallRequest(ctx context.Context, scope cortex.Scope, runID id.AgentRunID, agentID id.AgentID, p run.ExecutionProvenance, deadline time.Time, kind TaskCallKind, payload any) (TaskCallRequest, error) {
+	operation, err := taskCallOperation(ctx, kind, payload)
+	if err != nil {
+		return TaskCallRequest{}, err
+	}
 	claim, err := id.Parse(p.TaskClaimID)
 	if err != nil {
 		return TaskCallRequest{}, cortex.ErrTaskCallUnavailable
@@ -176,7 +196,7 @@ func taskCallRequest(scope cortex.Scope, runID id.AgentRunID, agentID id.AgentID
 	if err != nil {
 		return TaskCallRequest{}, cortex.ErrTaskCallUnavailable
 	}
-	request := TaskCallRequest{SchemaVersion: 1, ID: id.New("tcallguard"), Scope: scope, ClaimID: claim, RunID: runID, AgentID: agentID, ParentRunID: parent, AssignmentDigest: p.AssignmentDigest, PreparedDigest: p.PreparedDigest, Kind: kind, Payload: data, Deadline: deadline}
+	request := TaskCallRequest{SchemaVersion: 1, ID: id.New(execution.PrefixRunCall), Scope: scope, ClaimID: claim, RunID: runID, AgentID: agentID, ParentRunID: parent, AssignmentDigest: p.AssignmentDigest, PreparedDigest: p.PreparedDigest, Kind: kind, OperationDigest: operation, Payload: data, Deadline: deadline}
 	frozen, _, err := request.Freeze()
 	return frozen, err
 }
@@ -185,7 +205,7 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 	if r.Provenance.TaskClaimID == "" {
 		return e.llm.Complete(ctx, request)
 	}
-	binding, err := taskCallRequest(r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallComplete, request)
+	binding, err := taskCallRequest(ctx, r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallComplete, request)
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +222,9 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 	if err == nil {
 		err = callCtx.Err()
 	}
+	if err == nil && response != nil {
+		err = e.recordTaskCallValue(callCtx, response, &response.Usage)
+	}
 	return response, err
 }
 
@@ -209,7 +232,7 @@ func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Re
 	if r.Provenance.TaskClaimID == "" {
 		return e.llm.CompleteStream(ctx, request)
 	}
-	binding, err := taskCallRequest(r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallStream, request)
+	binding, err := taskCallRequest(ctx, r.Scope, r.ID, r.AgentID, r.Provenance, r.Budget.Deadline, TaskCallStream, request)
 	if err != nil {
 		return nil, err
 	}
@@ -238,10 +261,12 @@ func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Re
 		return nil, err
 	}
 	transferred = true
-	return &taskLeaseStream{source: stream, ctx: callCtx, release: release, done: make(chan struct{})}, nil
+	return &taskLeaseStream{source: stream, ctx: callCtx, release: release, done: make(chan struct{}), digest: sha256.New(), record: e.recordTaskCallReturn}, nil
 }
 
 type taskLeaseStream struct {
+	digest   hash.Hash
+	record   func(context.Context, string, *llm.Usage) error
 	source   llm.Stream
 	ctx      context.Context
 	release  func() error
@@ -282,8 +307,14 @@ func (s *taskLeaseStream) Next(ctx context.Context) (*llm.Chunk, error) {
 	if cancellation := nextCtx.Err(); cancellation != nil {
 		err = cancellation
 	}
+	if cancellation := ctx.Err(); cancellation != nil {
+		err = cancellation
+	}
+	if errors.Is(err, io.EOF) && !cleanTaskStreamEOF(err) {
+		err = cortex.ErrTaskCallUncertain
+	}
 	if err != nil {
-		closeErr := s.Close()
+		closeErr := s.close(cleanTaskStreamEOF(err))
 		if errors.Is(err, io.EOF) {
 			if closeErr != nil {
 				return nil, closeErr
@@ -292,9 +323,16 @@ func (s *taskLeaseStream) Next(ctx context.Context) (*llm.Chunk, error) {
 		}
 		return nil, errors.Join(err, closeErr)
 	}
+	if chunk != nil {
+		if encodeErr := json.NewEncoder(s.digest).Encode(chunk); encodeErr != nil {
+			return nil, errors.Join(cortex.ErrTaskCallUncertain, s.Close())
+		}
+	}
 	return chunk, nil
 }
-func (s *taskLeaseStream) Close() error {
+func (s *taskLeaseStream) Close() error { return s.close(false) }
+
+func (s *taskLeaseStream) close(normalEOF bool) error {
 	s.once.Do(func() {
 		defer close(s.done)
 		defer func() { s.closeErr = errors.Join(s.closeErr, s.release()) }()
@@ -304,6 +342,9 @@ func (s *taskLeaseStream) Close() error {
 		}
 		if s.source.Close() != nil {
 			s.closeErr = cortex.ErrTaskCallUncertain
+		}
+		if normalEOF && s.closeErr == nil {
+			s.closeErr = s.record(s.ctx, hex.EncodeToString(s.digest.Sum(nil)), s.usage)
 		}
 	})
 	return s.closeErr
@@ -332,12 +373,15 @@ func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call 
 	if !ok {
 		return "", outcomeFailed, cortex.ErrTaskCallUnavailable
 	}
-	binding, err := taskCallRequest(subject.Scope, subject.RunID, subject.AgentID, provenance, deadline, TaskCallTool, call)
+	binding, err := taskCallRequest(ctx, subject.Scope, subject.RunID, subject.AgentID, provenance, deadline, TaskCallTool, call)
 	if err != nil {
 		return "", outcomeFailed, err
 	}
 	callCtx, release, err := e.beginTaskCall(ctx, binding)
 	if err != nil {
+		if errors.Is(err, cortex.ErrTaskCallUncertain) {
+			return "", outcomeUncertain, err
+		}
 		return "", outcomeFailed, err
 	}
 	defer func() {
@@ -349,7 +393,10 @@ func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call 
 	}()
 	subject.Scope.Levels = append([]cortex.Level(nil), subject.Scope.Levels...)
 	result, outcome, err = e.dispatchAuthorizedTool(callCtx, subject, call)
-	if callCtx.Err() != nil {
+	if err == nil && outcome == outcomeCompleted && callCtx.Err() == nil {
+		err = e.recordTaskCallValue(callCtx, result, nil)
+	}
+	if err != nil || outcome != outcomeCompleted || callCtx.Err() != nil {
 		result = ""
 		outcome = outcomeUncertain
 		err = errors.Join(err, cortex.ErrTaskCallUncertain)
@@ -362,4 +409,8 @@ func releaseUnusedTaskLease(release func() error) error {
 		return cortex.ErrTaskCallUnavailable
 	}
 	return nil
+}
+
+func cleanTaskStreamEOF(err error) bool {
+	return err == io.EOF //nolint:errorlint // A joined EOF error cannot certify a normal return.
 }

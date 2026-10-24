@@ -86,7 +86,11 @@ Task-bound provider and tool calls now require an explicit `TaskCallGuard` lease
 The lease binds the exact private invocation, lasts through stream consumption,
 and cancels on expiry or revocation. The shared tool-dispatch path also covers
 approved resume calls. Host writer fencing, installed lease-service qualification,
-provider journaling and shared usage settlement remain integration requirements.
+and shared usage settlement remain integration requirements. Provider and local
+tool calls now reserve a durable logical slot under the lease and retain normal
+local-return observations. Replay, ambiguous writes and incomplete streams do not
+grant reinvocation. These observations do not settle shared usage or qualify
+provider recovery.
 
 `RunPreparedTask` and `StreamPreparedTask` now admit the saved request and execute
 its captured inputs through the original prepared snapshot and ReAct loop.
@@ -171,8 +175,11 @@ Interfaces: `Reserve(ctx, execution.ReservationRequest) (execution.Reservation, 
 S3.5 progress: shared parent/child accounting, idempotent reserve/settle,
 conservative unknown usage, overrun propagation, integer monetary bounds and
 replan-safe account retention are implemented. Atomic claim/capacity acquisition
-and budget checks on claim renewal/dispatch are implemented. Runtime accounting,
-provider usage qualification and the bounded replan policy remain open.
+and budget checks on claim renewal/dispatch are implemented. The deterministic bounded replan proposal policy now consumes the existing shared
+account, binds progress observations to the current graph and rejects a cap wider
+than its configured ceiling. Unknown charges and plan revisions cannot reset the
+allowance. Runtime accounting, provider usage qualification, durable proposal
+admission and automatic replan execution remain open.
 
 ## S3.6: Team review UI and recovery qualification
 

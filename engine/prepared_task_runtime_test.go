@@ -9,9 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/run"
@@ -296,4 +298,136 @@ func TestRequiredResumeRejectsAliasedInputScope(t *testing.T) {
 	require.Equal(t, r.Revision, saved.Revision)
 	require.Equal(t, run.StatePaused, saved.State)
 	require.Equal(t, 1, client.calls)
+}
+
+type runtimeTaskJournalStore struct {
+	*sqlite.Store
+	loseStartAck  bool
+	failReturn    bool
+	loseReturnAck bool
+}
+
+func (s runtimeTaskJournalStore) BeginRunCall(ctx context.Context, r execution.RunCallRequest) (bool, error) {
+	fresh, err := s.Store.BeginRunCall(ctx, r)
+	if err == nil && s.loseStartAck {
+		return fresh, errors.New("lost call start acknowledgment")
+	}
+	return fresh, err
+}
+func (s runtimeTaskJournalStore) CompleteRunCall(ctx context.Context, r execution.RunCallRequest, c execution.RunCallCompletion) error {
+	if s.failReturn {
+		return errors.New("call return unavailable")
+	}
+	err := s.Store.CompleteRunCall(ctx, r, c)
+	if err == nil && s.loseReturnAck {
+		return errors.New("lost call return acknowledgment")
+	}
+	return err
+}
+
+func TestPreparedTaskRuntimeJournalPersistence(t *testing.T) {
+	for _, mode := range []string{"complete", "stream", "lost_start_ack", "failed_return", "lost_return_ack"} {
+		t.Run(mode, func(t *testing.T) {
+			f, e, client, p, req, admitter := preparedTaskRuntimeFixture(t)
+			require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+			require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+			require.NoError(t, engine.WithStore(runtimeTaskJournalStore{Store: f.storage, loseStartAck: mode == "lost_start_ack", failReturn: mode == "failed_return", loseReturnAck: mode == "lost_return_ack"})(e))
+			if mode == "stream" {
+				client.chunks = []llm.Chunk{{Content: "done", FinishReason: "stop"}}
+				events := make(chan engine.StreamEvent, 16)
+				require.NoError(t, e.StreamPreparedTask(f.ctx, p, req, events))
+				for event := range events {
+					require.NotEqual(t, engine.EventError, event.Type)
+				}
+			} else {
+				_, err := e.RunPreparedTask(f.ctx, p, req)
+				if mode == "complete" {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+				}
+			}
+			calls, err := f.storage.ListRunCalls(f.ctx, execution.RunCallListRequest{RunID: req.Run.ID, Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, calls, 1)
+			require.NoError(t, calls[0].Validate())
+			require.Equal(t, req.Claim.ClaimID, calls[0].Request.ClaimID)
+			require.Equal(t, req.Run.Provenance.PreparedDigest, calls[0].Request.PreparedDigest)
+			if mode == "complete" || mode == "stream" {
+				require.NotNil(t, calls[0].Completion)
+			} else {
+				if mode == "lost_return_ack" {
+					require.NotNil(t, calls[0].Completion)
+				} else {
+					require.Nil(t, calls[0].Completion)
+				}
+				child, readErr := f.storage.GetRun(f.ctx, req.Run.ID)
+				require.NoError(t, readErr)
+				require.Empty(t, child.Output)
+				require.Zero(t, f.adapter.evaluations)
+			}
+			if mode == "lost_start_ack" {
+				require.Zero(t, client.calls)
+			}
+			fresh, err := f.storage.BeginRunCall(f.ctx, calls[0].Request)
+			require.NoError(t, err)
+			require.False(t, fresh)
+		})
+	}
+}
+
+func TestPreparedTaskJournalToolApprovalKeepsOriginSlot(t *testing.T) {
+	var operation string
+	for _, approval := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "approved_resume"}[approval], func(t *testing.T) {
+			client := &requiredToolClient{}
+			calls := 0
+			var toolMetadata execution.RunCallRequest
+			f, e, _, p, req, admitter := preparedTaskRuntimeFixture(t, func(runtime *engine.Engine, overrides *engine.RunOverrides) {
+				overrides.Tools = []string{"probe"}
+				require.NoError(t, engine.WithLLM(client)(runtime))
+				require.NoError(t, engine.WithToolRevision("probe", "1")(runtime))
+				require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{approval: approval})(runtime))
+				require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
+					calls++
+					var ok bool
+					toolMetadata, ok = execution.RunCallFromContext(ctx)
+					require.True(t, ok)
+					return "private result", nil
+				})(runtime))
+			})
+			require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+			require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+			r, err := e.RunPreparedTask(f.ctx, p, req)
+			require.NoError(t, err)
+			if approval {
+				require.Equal(t, run.StatePaused, r.State)
+				require.Zero(t, calls)
+				before, listErr := f.storage.ListRunCalls(f.ctx, execution.RunCallListRequest{RunID: r.ID, Limit: 10})
+				require.NoError(t, listErr)
+				require.Len(t, before, 1)
+				pending, readErr := e.ListPendingCheckpoints(f.ctx, nil)
+				require.NoError(t, readErr)
+				require.Len(t, pending, 1)
+				require.NoError(t, e.ResolveCheckpoint(f.ctx, pending[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}))
+				r, err = f.storage.GetRun(f.ctx, r.ID)
+				require.NoError(t, err)
+			}
+			require.Equal(t, verification.StatusPassed, r.VerificationStatus)
+			require.Equal(t, 1, calls)
+			require.Equal(t, execution.RunCallTool, toolMetadata.Kind)
+			if operation == "" {
+				operation = toolMetadata.OperationDigest
+			} else {
+				require.Equal(t, operation, toolMetadata.OperationDigest, "approval resume must retain the original generation slot")
+			}
+			records, err := f.storage.ListRunCalls(f.ctx, execution.RunCallListRequest{RunID: r.ID, Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, records, 3)
+			for _, record := range records {
+				require.NoError(t, record.Validate())
+				require.NotNil(t, record.Completion)
+			}
+		})
+	}
 }
