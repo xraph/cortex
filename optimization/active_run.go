@@ -62,6 +62,9 @@ func (o *Optimizer) RunActive(ctx context.Context, request ActiveRunRequest) (*r
 	if err != nil {
 		return nil, err
 	}
+	if version.Orchestration != nil {
+		return nil, ErrUnavailable
+	}
 	if evidenceErr := o.verifyActivationArtifacts(resolved, decision); evidenceErr != nil {
 		return nil, evidenceErr
 	}

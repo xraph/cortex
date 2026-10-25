@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
-	github.com/xraph/cortex v1.8.1-0.20261025170844-e03e71ca03f4
+	github.com/xraph/cortex v1.8.1-0.20261025221238-6172989503ed
 	github.com/xraph/grove v1.9.0
 	github.com/xraph/grove/drivers/mongodriver v1.9.0
 	github.com/xraph/grove/drivers/pgdriver v1.9.0

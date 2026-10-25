@@ -26,23 +26,24 @@ const (
 // HarnessVersion contains immutable execution content and separate display metadata.
 // Persisted digests are checked before deriving or executing another version.
 type HarnessVersion struct {
-	ID             id.ID                 `json:"id"`
-	HarnessID      id.ID                 `json:"harness_id"`
-	ParentID       id.ID                 `json:"parent_id,omitempty"`
-	SchemaVersion  int                   `json:"schema_version"`
-	Kind           HarnessKind           `json:"kind"`
-	Scope          cortex.Scope          `json:"scope"`
-	AgentID        id.AgentID            `json:"agent_id"`
-	Prepared       *engine.PreparedAgent `json:"prepared,omitempty"`
-	Controller     *ControllerSpec       `json:"controller,omitempty"`
-	RuntimeVersion string                `json:"runtime_version,omitempty"`
-	Policy         EditPolicy            `json:"policy"`
-	PolicyDigest   string                `json:"policy_digest"`
-	Sources        []run.Revision        `json:"sources"`
-	Digest         string                `json:"digest"`
-	Name           string                `json:"name,omitempty"`
-	CreatedAt      time.Time             `json:"created_at"`
-	CreatedBy      string                `json:"created_by"`
+	Orchestration  *OrchestrationSelection `json:"orchestration,omitempty"`
+	ID             id.ID                   `json:"id"`
+	HarnessID      id.ID                   `json:"harness_id"`
+	ParentID       id.ID                   `json:"parent_id,omitempty"`
+	SchemaVersion  int                     `json:"schema_version"`
+	Kind           HarnessKind             `json:"kind"`
+	Scope          cortex.Scope            `json:"scope"`
+	AgentID        id.AgentID              `json:"agent_id"`
+	Prepared       *engine.PreparedAgent   `json:"prepared,omitempty"`
+	Controller     *ControllerSpec         `json:"controller,omitempty"`
+	RuntimeVersion string                  `json:"runtime_version,omitempty"`
+	Policy         EditPolicy              `json:"policy"`
+	PolicyDigest   string                  `json:"policy_digest"`
+	Sources        []run.Revision          `json:"sources"`
+	Digest         string                  `json:"digest"`
+	Name           string                  `json:"name,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	CreatedBy      string                  `json:"created_by"`
 }
 
 // CanonicalVersion encodes behavior, policy and provenance without row identities,
@@ -64,8 +65,18 @@ func CanonicalVersion(version HarnessVersion) ([]byte, error) {
 	var preparedDigest string
 	switch version.Kind {
 	case HarnessExecution:
-		if version.Prepared == nil || version.Controller != nil || version.RuntimeVersion == "" {
+		if (version.Prepared == nil) == (version.Orchestration == nil) || version.Controller != nil || version.RuntimeVersion == "" {
 			return nil, fmt.Errorf("%w: execution version requires prepared runtime", ErrInvalidSpec)
+		}
+		if version.Orchestration != nil {
+			preparedDigest, err = validateOrchestrationVersion(version)
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+		if len(version.Policy.OrchestrationPresets) != 0 {
+			return nil, ErrPolicyDenied
 		}
 		view, inspectErr := version.Prepared.Inspect()
 		if inspectErr != nil {
@@ -87,7 +98,7 @@ func CanonicalVersion(version HarnessVersion) ([]byte, error) {
 		}
 		preparedDigest = version.Prepared.Digest()
 	case HarnessImprovement:
-		if version.Controller == nil || version.Prepared != nil {
+		if version.Controller == nil || version.Prepared != nil || version.Orchestration != nil || len(version.Policy.OrchestrationPresets) != 0 {
 			return nil, fmt.Errorf("%w: improvement version requires controller", ErrInvalidSpec)
 		}
 		controller := version.Controller
@@ -107,17 +118,22 @@ func CanonicalVersion(version HarnessVersion) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("%w: invalid harness kind", ErrInvalidSpec)
 	}
+	presetName := ""
+	if version.Orchestration != nil {
+		presetName = version.Orchestration.Preset
+	}
 	content := struct {
-		SchemaVersion  int             `json:"schema_version"`
-		Kind           HarnessKind     `json:"kind"`
-		Scope          string          `json:"scope"`
-		AgentID        id.AgentID      `json:"agent_id"`
-		PreparedDigest string          `json:"prepared_digest"`
-		Controller     *ControllerSpec `json:"controller,omitempty"`
-		RuntimeVersion string          `json:"runtime_version"`
-		Policy         EditPolicy      `json:"policy"`
-		Sources        []run.Revision  `json:"sources"`
-	}{version.SchemaVersion, version.Kind, scope, version.AgentID, preparedDigest, version.Controller, version.RuntimeVersion, version.Policy, version.Sources}
+		OrchestrationPreset string          `json:"orchestration_preset,omitempty"`
+		SchemaVersion       int             `json:"schema_version"`
+		Kind                HarnessKind     `json:"kind"`
+		Scope               string          `json:"scope"`
+		AgentID             id.AgentID      `json:"agent_id"`
+		PreparedDigest      string          `json:"prepared_digest"`
+		Controller          *ControllerSpec `json:"controller,omitempty"`
+		RuntimeVersion      string          `json:"runtime_version"`
+		Policy              EditPolicy      `json:"policy"`
+		Sources             []run.Revision  `json:"sources"`
+	}{presetName, version.SchemaVersion, version.Kind, scope, version.AgentID, preparedDigest, version.Controller, version.RuntimeVersion, version.Policy, version.Sources}
 	data, err := canonical.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidSpec, err)

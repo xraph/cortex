@@ -36,7 +36,7 @@ passed its full qualification gate.
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
 | 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
 | 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
-| 15: orchestration presets | Runtime prepared teams, durable continuation and expiry are available | Approved preset selection, isolated trial execution and child trace conversion |
+| 15: orchestration presets | Sealed approved preset catalog and selection; runtime prepared teams and continuation | Guidance edits, isolated trial execution, child trace conversion and qualification |
 | 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
@@ -1619,3 +1619,44 @@ Both modules build, scoped `make f` and the whitespace check pass. All-module
 module but reports formatting in the runtime owner's concurrent root edits. The
 full optimization race suite is running. Broader phase completion remains
 unproven until that suite and the plan audit finish.
+
+## Approved orchestration preset contracts
+
+Task 15 now has a sealed host preset catalog in the edit policy. Each entry binds
+its immutable prepared team, shared ceilings and declared participant guidance
+sections. Selection derives another execution version through the existing
+proposal validator. It preserves the policy digest, scope and owning agent, and
+refuses unlisted presets or changes to the host catalog. Agent and team content
+cannot coexist in one version. Optional fields preserve existing agent digests.
+
+Tests use real SQLite source snapshots and change live participant instructions
+after preparation. The selected presets retain their original content. They also
+cover detached inspection, catalog tampering, duplicate names, missing budgets,
+unsupported monetary ceilings, excessive fan-out, unknown guidance sections and
+foreign participants. Team policies reject agent-level edit fields. The agent-only
+production compatibility and execution paths report team versions unavailable.
+
+The root requirement advances to published commit `6172989`, which contains the
+prepared-team APIs. Module tidying propagates that minimum through Sentinel,
+Fabriq, the Forge extension and integration tests. The Go proxy resolves the exact
+commit. A temporary consumer modfile removes the local root replacement for
+build and race verification; it is not committed.
+
+Participant guidance derivation remains with the runtime owner. Isolated team
+trial dispatch, explicit orchestration execution identity, child capture and
+original-cost conversion remain to be implemented. Task 15 is not complete.
+
+The earlier full optimization suite reported one MongoDB infrastructure failure:
+`TestDiscoveryInheritance` lost the Docker socket during container startup. After
+Docker health recovered, that test passed in 22.936s. The remaining PostgreSQL and
+SQLite packages are still running in the original suite. This is a targeted retry,
+not a clean full-suite result.
+
+The preset packet passes core races (27.234s), published-root core races
+(31.253s), the full Sentinel race suite (277.396s), Forge extension races
+(1.736s), Fabriq races (11.570s) and Docker-backed integration tests (13.964s).
+Both optimization and Sentinel build. A stored agent fixture generated with
+published optimization commit `eca1461` checks backward-compatible version and
+policy digests; the final preset and legacy-fixture race group passes in 8.688s.
+Scoped formatting, whitespace checks and the final all-module `make l` pass,
+including the runtime owner's coordinator changes.

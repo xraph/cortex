@@ -49,6 +49,9 @@ func (c *EngineCompatibility) Check(ctx context.Context, version HarnessVersion)
 	if sealed.Kind != HarnessExecution || sealed.RuntimeVersion != c.config.RuntimeVersion {
 		return empty, ErrStaleVersion
 	}
+	if sealed.Orchestration != nil {
+		return empty, ErrUnavailable
+	}
 	detached, err := copyModelJSON(&sealed, 16<<20)
 	if err != nil {
 		return empty, err

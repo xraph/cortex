@@ -13,24 +13,26 @@ import (
 
 // EditPolicy is a frozen host allowlist. Bounds must be positive and finite.
 type EditPolicy struct {
-	MutableSections         []string `json:"mutable_sections"`
-	MutableToolDescriptions []string `json:"mutable_tool_descriptions"`
-	AllowToolSubset         bool     `json:"allow_tool_subset"`
-	TemperatureMin          *float64 `json:"temperature_min,omitempty"`
-	TemperatureMax          *float64 `json:"temperature_max,omitempty"`
-	MaxBodyBytes            int      `json:"max_body_bytes"`
-	MaxPatchBytes           int      `json:"max_patch_bytes"`
-	MaxEdits                int      `json:"max_edits"`
+	OrchestrationPresets    []OrchestrationPreset `json:"orchestration_presets,omitempty"`
+	MutableSections         []string              `json:"mutable_sections"`
+	MutableToolDescriptions []string              `json:"mutable_tool_descriptions"`
+	AllowToolSubset         bool                  `json:"allow_tool_subset"`
+	TemperatureMin          *float64              `json:"temperature_min,omitempty"`
+	TemperatureMax          *float64              `json:"temperature_max,omitempty"`
+	MaxBodyBytes            int                   `json:"max_body_bytes"`
+	MaxPatchBytes           int                   `json:"max_patch_bytes"`
+	MaxEdits                int                   `json:"max_edits"`
 }
 
 // EditKind enumerates the only fields a candidate may propose changing.
 type EditKind string
 
 const (
-	EditSectionBody     EditKind = "section_body"
-	EditToolDescription EditKind = "tool_description"
-	EditToolSubset      EditKind = "tool_subset"
-	EditTemperature     EditKind = "temperature"
+	EditOrchestrationPreset EditKind = "orchestration_preset"
+	EditSectionBody         EditKind = "section_body"
+	EditToolDescription     EditKind = "tool_description"
+	EditToolSubset          EditKind = "tool_subset"
+	EditTemperature         EditKind = "temperature"
 )
 
 // Edit carries one typed change. A non-nil empty Tools list means deny all tools.
@@ -62,6 +64,12 @@ func DecodeProposal(data []byte) (Proposal, error) {
 }
 
 func (policy EditPolicy) validate() error {
+	if err := validateOrchestrationCatalog(policy.OrchestrationPresets); err != nil {
+		return err
+	}
+	if len(policy.OrchestrationPresets) > 0 && (len(policy.MutableSections)+len(policy.MutableToolDescriptions) > 0 || policy.AllowToolSubset || policy.TemperatureMin != nil || policy.TemperatureMax != nil) {
+		return fmt.Errorf("%w: orchestration policy cannot contain agent edits", ErrInvalidSpec)
+	}
 	if policy.MaxBodyBytes <= 0 || policy.MaxPatchBytes <= 0 || policy.MaxEdits <= 0 {
 		return fmt.Errorf("%w: edit bounds must be positive", ErrInvalidSpec)
 	}
@@ -130,6 +138,14 @@ func ValidateProposal(base HarnessVersion, proposal Proposal, policy EditPolicy)
 	}
 	if len(patch) > policy.MaxPatchBytes {
 		return HarnessVersion{}, fmt.Errorf("%w: patch too large", ErrPolicyDenied)
+	}
+	if base.Orchestration != nil {
+		selected, selectionErr := selectOrchestrationProposal(sealed, proposal)
+		if selectionErr != nil {
+			return HarnessVersion{}, selectionErr
+		}
+		selected.ID, selected.ParentID = id.New(PrefixVersion), base.ID
+		return SealVersion(selected)
 	}
 	edits := engine.PreparedEdits{SectionBodies: map[string]string{}, ToolDescriptions: map[string]string{}}
 	seen := map[string]bool{}

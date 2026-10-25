@@ -368,3 +368,25 @@ not rewrite an existing experiment. Hosts authorize resolution with
 `optimization.resolve_controller` on `controller_activation` and on the source
 parent and child experiments. Activation, rollback and deactivation keep their
 existing actions and use the `controller_activation` resource kind.
+
+### Approved orchestration preset contracts
+
+Use `SealOrchestrationPreset` to freeze each approved team with its shared token,
+step, tool-call and fan-out ceilings. Prepare every participant with explicit
+budgets first, including any aggregator or judge. `Guidance` names the existing,
+unlocked participant sections the host permits editing. The preset digest binds
+that allowlist, the prepared team and its ceilings.
+
+Place the sealed catalog in `EditPolicy.OrchestrationPresets` and select its
+initial entry through `HarnessVersion.Orchestration`. A proposal with
+`EditOrchestrationPreset` and a preset name in `Target` selects another entry.
+The catalog stays fixed in the policy digest. Team policies reject agent-level
+edit fields, and every preset must retain the version's exact scope and include
+its owning agent. Normal agent versions keep their existing digest format.
+
+This is the preset contract and selection layer. Participant guidance derivation,
+isolated team trial execution and child trace conversion are still pending.
+`EngineCompatibility` and `RunActive` return `ErrUnavailable` for team versions
+until a dedicated production team path is available. Current preset validation
+supports token ceilings; monetary team ceilings and messaging tools require
+further runtime support.

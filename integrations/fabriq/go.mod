@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/xraph/cortex => ../../
 
 require (
-	github.com/xraph/cortex v1.8.1-0.20261025170844-e03e71ca03f4
+	github.com/xraph/cortex v1.8.1-0.20261025221238-6172989503ed
 	github.com/xraph/fabriq/core v1.8.2
 	github.com/xraph/go-utils v1.4.1
 	github.com/xraph/grove v1.9.0
