@@ -27,3 +27,5 @@ func testDiscovery(t *testing.T, verify func(*testing.T, storetest.Factory)) {
 		return s
 	})
 }
+
+func TestDiscoveryReflection(t *testing.T) { testDiscovery(t, storetest.DiscoveryReflection) }

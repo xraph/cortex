@@ -2,6 +2,7 @@ package optimization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/xraph/cortex/id"
@@ -31,6 +32,18 @@ func (h *ControllerPhaseHandler) Execute(ctx context.Context, item WorkItem) (Tr
 		return Transition{}, ErrUnavailable
 	}
 	phase := item.Experiment.Phase
+	if phase == PhaseValidate && item.Experiment.Spec.Parent != nil {
+		parent, err := h.repository.GetExperiment(ctx, item.Experiment.Spec.Parent.ExperimentID)
+		if err != nil {
+			return Transition{}, err
+		}
+		if parent.Phase == PhaseBaseline {
+			if reflectionErr := h.reflectDiscovery(ctx, item); reflectionErr != nil {
+				return Transition{}, reflectionErr
+			}
+			return Transition{}, ErrConflict
+		}
+	}
 	if phase != PhasePropose && phase != PhaseCompose && phase != PhaseReflect {
 		if h.trials == nil {
 			return Transition{}, ErrUnavailable
@@ -204,4 +217,46 @@ func (h *ControllerPhaseHandler) reflect(ctx context.Context, item WorkItem, con
 		change.Publications = append(change.Publications, PublicationRequest{ExperimentID: item.Experiment.ID, Lease: item.Lease, Actor: item.Experiment.Spec.Requester, Lesson: lesson, RemoteAggregateID: fmt.Sprintf("optimization/%s", lesson.ID)})
 	}
 	return change, nil
+}
+
+// reflectDiscovery persists learning before the parent opens paired validation.
+// A saved result is acknowledged without replaying its metered model call.
+func (h *ControllerPhaseHandler) reflectDiscovery(ctx context.Context, item WorkItem) error {
+	controller, err := h.models.forWork(ctx, item, true)
+	if err != nil {
+		return err
+	}
+	prior, err := h.repository.GetDiscoveryLessons(ctx, item.Experiment.ID)
+	var drafts []LessonDraft
+	switch {
+	case err == nil:
+		if prior.Domain != h.domain {
+			return ErrConflict
+		}
+		drafts = prior.Lessons
+	case errors.Is(err, ErrNotFound):
+		evidence, evidenceErr := h.discovery(ctx, item.Experiment)
+		if evidenceErr != nil {
+			return evidenceErr
+		}
+		candidates, candidateErr := h.candidates(ctx, item.Experiment)
+		if candidateErr != nil {
+			return candidateErr
+		}
+		drafts, err = controller.Reflect(ctx, ReflectionInput{Evidence: evidence, Candidates: candidates, Domain: h.domain})
+		if err != nil {
+			return err
+		}
+	default:
+		return err
+	}
+	resolved, done, authErr := h.models.meter.authorize(ctx, item.Experiment.ID)
+	if authErr != nil {
+		return authErr
+	}
+	defer done()
+	return h.repository.Transact(resolved, func(tx Transaction) error {
+		_, putErr := tx.PutDiscoveryLessons(DiscoveryLessonsRequest{ExperimentID: item.Experiment.ID, Lease: item.Lease, Domain: h.domain, Lessons: drafts})
+		return putErr
+	})
 }

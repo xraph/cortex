@@ -15,3 +15,8 @@ func TestDiscoveryInheritance(t *testing.T) { storetest.DiscoveryInheritance(t, 
 func TestDiscoveryInheritanceRecovery(t *testing.T) {
 	testRecovery(t, storetest.DiscoveryInheritanceRecovery)
 }
+
+func TestDiscoveryReflection(t *testing.T) { storetest.DiscoveryReflection(t, conformanceFactory(t)) }
+func TestDiscoveryReflectionRecovery(t *testing.T) {
+	testRecovery(t, storetest.DiscoveryReflectionRecovery)
+}

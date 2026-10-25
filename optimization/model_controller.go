@@ -60,6 +60,14 @@ func NewControllerFactory(repo Repository, auth Authorizer, resolver IdentityRes
 
 // ForWork resolves the frozen controller and refuses unsupported model revisions.
 func (f *ControllerFactory) ForWork(ctx context.Context, item WorkItem) (Controller, error) {
+	controller, err := f.forWork(ctx, item, false)
+	if err != nil {
+		return nil, err
+	}
+	return controller, nil
+}
+
+func (f *ControllerFactory) forWork(ctx context.Context, item WorkItem, discovery bool) (*modelController, error) {
 	resolved, done, err := f.meter.authorize(ctx, item.Experiment.ID)
 	if err != nil {
 		return nil, err
@@ -71,6 +79,18 @@ func (f *ControllerFactory) ForWork(ctx context.Context, item WorkItem) (Control
 	}
 	if experiment.Revision != item.Experiment.Revision || experiment.State != StateRunning || experiment.Lease.Owner != item.Lease.Owner || experiment.Lease.Generation != item.Lease.Generation || item.Lease.ExperimentID != experiment.ID {
 		return nil, ErrConflict
+	}
+	if discovery {
+		if experiment.Spec.Parent == nil || experiment.Phase != PhaseValidate {
+			return nil, ErrPolicyDenied
+		}
+		parent, parentErr := f.repository.GetExperiment(resolved, experiment.Spec.Parent.ExperimentID)
+		if parentErr != nil {
+			return nil, parentErr
+		}
+		if parent.Spec.Improvement == nil || parent.Phase != PhaseBaseline {
+			return nil, ErrPolicyDenied
+		}
 	}
 	version, err := f.repository.GetVersion(resolved, experiment.Spec.Controller.ID)
 	if err != nil {
@@ -91,10 +111,11 @@ func (f *ControllerFactory) ForWork(ctx context.Context, item WorkItem) (Control
 	if !exists {
 		return nil, ErrUnavailable
 	}
-	return &modelController{factory: f, experiment: experiment, lease: item.Lease, spec: spec, binding: binding}, nil
+	return &modelController{factory: f, experiment: experiment, lease: item.Lease, spec: spec, binding: binding, discovery: discovery}, nil
 }
 
 type modelController struct {
+	discovery  bool
 	factory    *ControllerFactory
 	experiment Experiment
 	lease      WorkLease
@@ -103,6 +124,9 @@ type modelController struct {
 }
 
 func (c *modelController) Propose(ctx context.Context, input ProposalInput) ([]Proposal, error) {
+	if c.discovery {
+		return nil, ErrPolicyDenied
+	}
 	if err := c.proposalInput(ctx, input); err != nil {
 		return nil, err
 	}
@@ -119,6 +143,9 @@ func (c *modelController) Propose(ctx context.Context, input ProposalInput) ([]P
 }
 
 func (c *modelController) Compose(ctx context.Context, input CompositionInput) (Proposal, error) {
+	if c.discovery {
+		return Proposal{}, ErrPolicyDenied
+	}
 	if err := c.proposalInput(ctx, input.ProposalInput); err != nil {
 		return Proposal{}, err
 	}
@@ -147,7 +174,11 @@ func (c *modelController) Reflect(ctx context.Context, input ReflectionInput) ([
 	var result struct {
 		Lessons []LessonDraft `json:"lessons"`
 	}
-	if err := c.call(ctx, OperationReflection, "reflect", input, &result); err != nil {
+	name := "reflect"
+	if c.discovery {
+		name = "discovery-reflect"
+	}
+	if err := c.call(ctx, OperationReflection, name, input, &result); err != nil {
 		return nil, err
 	}
 	if result.Lessons == nil || len(result.Lessons) > c.factory.limits.MaxLessons {

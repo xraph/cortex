@@ -1398,3 +1398,42 @@ separately.
 Task 14 still needs metered discovery-reflection scheduling, the parent worker,
 aggregate controller comparison and controller adoption. Tasks 15 onward remain
 tracked in the implementation plan.
+
+
+## Metered discovery reflection
+
+The controller phase handler now reflects when a child has finished discovery
+and the parent is still in its baseline phase. It uses the child's existing
+worker lease and heartbeat, saves the private result, then leaves the child at
+validation until the parent opens its paired allocation. It does not publish a
+lesson or create a decision at that point.
+
+The call key is `controller/discovery-reflect/<round>`, separate from final
+reflection. Repeated handler calls acknowledge the saved result without another
+model invocation. Empty results persist. If the answer is lost, the durable call
+marker and debit remain, and a retry returns `ErrUnknownAttempt`. A late receipt
+can settle the original charge, but it cannot recover the missing answer or
+permit another call.
+
+Before saving, the handler rechecks current caller and requester authority for
+both child and parent. A regression revoked authority immediately after model
+usage settlement and reproduced an unauthorized reflection write. The new check
+refuses that write. The store still checks the lease, discovery evidence and
+parent phase in the transaction.
+
+Tests cover real worker execution, successful and empty results, lost answers,
+separate final-reflection keys, withholding during validation, database reopen,
+lease takeover and late-receipt settlement without answer replay. The first
+late-receipt matrix passed all four stores. The final matrix with the authority
+regression passes all four stores, including MongoDB in 91.495s. Normal controller
+and paired-worker regressions and the optimization build pass. The full Sentinel
+optimization suite passed in 310.927s before the final private-write authority
+check; that check is covered by the final four-store matrix. Final formatting
+and all-module lint pass. The runtime chat corrected the two findings reported
+during its concurrent edits, and the clean rerun completed before this commit.
+
+The preceding inheritance verification is complete: its broader memory race
+suite passed in 349.024s, and its core and internal-state packages also passed.
+Task 14 still needs parent scheduling, aggregate comparison and controller
+adoption. Discovery storage, inheritance and the metered child handler are now
+implemented.

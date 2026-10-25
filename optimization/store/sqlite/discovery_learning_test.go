@@ -26,3 +26,12 @@ func TestDiscoveryInheritance(t *testing.T) {
 func TestDiscoveryInheritanceRecovery(t *testing.T) {
 	testRecovery(t, storetest.DiscoveryInheritanceRecovery)
 }
+
+func TestDiscoveryReflection(t *testing.T) {
+	storetest.DiscoveryReflection(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "reflection.db"), now)
+	})
+}
+func TestDiscoveryReflectionRecovery(t *testing.T) {
+	testRecovery(t, storetest.DiscoveryReflectionRecovery)
+}
