@@ -32,6 +32,9 @@ type SourceSnapshot struct {
 // ExecutionProvenance identifies the inputs behind a run without copying prompt
 // or evidence bytes into metadata. Empty fields mean unavailable, not verified.
 type ExecutionProvenance struct {
+	OrchestrationID            string `json:"orchestration_id,omitempty"`
+	OrchestrationDigest        string `json:"orchestration_digest,omitempty"`
+	OrchestrationReservationID string `json:"orchestration_reservation_id,omitempty"`
 	// TaskClaimID requires live task-call leases, including after resume.
 	TaskClaimID           string `json:"task_claim_id,omitempty"`
 	ExecutionInputsDigest string `json:"execution_inputs_digest,omitempty"`

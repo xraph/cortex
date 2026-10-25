@@ -18,7 +18,7 @@ import (
 
 func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *preparedSnapshot, error) {
 	if cont.SchemaVersion == 0 {
-		if cont.Config.Publication != (safety.Policy{}) || cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Provenance.TaskClaimID != "" || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
+		if cont.Config.Publication != (safety.Policy{}) || cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Provenance.TaskClaimID != "" || hasOrchestrationBinding(cont.Provenance) || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
 			return nil, nil, fmt.Errorf("cortex: legacy continuation contains unsupported policy: %w", cortex.ErrInvalidContinuation)
 		}
 		return nil, nil, nil
@@ -42,7 +42,7 @@ func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *prepared
 
 func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnapshot, r *run.Run) error {
 	if snap == nil {
-		if r.Provenance.PreparedDigest != "" || r.Provenance.TaskClaimID != "" {
+		if r.Provenance.PreparedDigest != "" || r.Provenance.TaskClaimID != "" || hasOrchestrationBinding(r.Provenance) {
 			return fmt.Errorf("cortex: prepared run cannot resume legacy continuation: %w", cortex.ErrInvalidContinuation)
 		}
 		return nil

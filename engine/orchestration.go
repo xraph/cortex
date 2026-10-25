@@ -17,6 +17,10 @@ type agentRunnerAdapter struct{ eng *Engine }
 
 func (a agentRunnerAdapter) RunAgent(ctx context.Context, agentName, input string, opts *orchestration.RunOpts) (*orchestration.AgentResult, error) {
 	r, err := a.eng.RunAgent(ctx, agentName, input, mapRunOpts(opts))
+	return orchestrationAgentResult(agentName, r, err)
+}
+
+func orchestrationAgentResult(agentName string, r *run.Run, err error) (*orchestration.AgentResult, error) {
 	if r == nil {
 		if err == nil {
 			err = cortex.ErrRunIncomplete

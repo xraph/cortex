@@ -92,3 +92,25 @@ func TestOrchestrationBudgetPolicyRejectsInvalidBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestOrchestrationBudgetParticipantDigests(t *testing.T) {
+	p, _ := teamBudgetFixture()
+	original := evidence.Digest([]byte("worker-v1"))
+	p.ParticipantDigests = map[string]string{"worker": original}
+	frozen, digest, err := p.Freeze()
+	require.NoError(t, err)
+	p.ParticipantDigests["worker"] = evidence.Digest([]byte("worker-v2"))
+	require.Equal(t, original, frozen.ParticipantDigests["worker"])
+	_, changed, err := p.Freeze()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changed)
+	for _, pins := range []map[string]string{
+		{"worker": "bad"},
+		{"outsider": original},
+		{"worker": original, "outsider": original},
+	} {
+		p.ParticipantDigests = pins
+		_, _, err = p.Freeze()
+		require.ErrorIs(t, err, execution.ErrInvalidReservation)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
@@ -20,10 +21,13 @@ import (
 // PreparedRunOptions contains trusted per-execution identity. It cannot replace
 // the frozen prompt, model, tool allowlist or budget.
 type PreparedRunOptions struct {
-	SessionID     id.SessionID
-	Purpose       run.ExecutionPurpose
-	Provenance    run.ExecutionProvenance
-	AcceptanceRef string
+	// OrchestrationBudget applies only to RunPreparedOrchestration. Individual
+	// execution rejects this field; child allowances remain frozen in artifacts.
+	OrchestrationBudget *orchestration.BudgetPolicy
+	SessionID           id.SessionID
+	Purpose             run.ExecutionPurpose
+	Provenance          run.ExecutionProvenance
+	AcceptanceRef       string
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
@@ -117,7 +121,7 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	if e.llm == nil {
 		return nil, nil, cortex.ErrNoLLM
 	}
-	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun || p == nil {
+	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun || p == nil || opts.OrchestrationBudget != nil {
 		return nil, nil, cortex.ErrInvalidPrepared
 	}
 	p = &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}
@@ -156,6 +160,9 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	}
 	if deadline, ok := ctx.Deadline(); ok && (cfg.Budget.Deadline.IsZero() || deadline.Before(cfg.Budget.Deadline)) {
 		cfg.Budget.Deadline = deadline
+	}
+	if bindingErr := e.checkOrchestrationBinding(ctx, runID, snap, provenance, cfg.Budget); bindingErr != nil {
+		return nil, nil, bindingErr
 	}
 	sessionID, err := e.resolveSession(ctx, snap.Agent.ID, opts.SessionID)
 	if err != nil {
@@ -202,6 +209,9 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 	r, snap, cfg, messages, intent := draft.run, draft.snapshot, draft.cfg, draft.messages, draft.intent
 	now := *r.StartedAt
 	input := r.Input
+	if bindingErr := e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, cfg.Budget); bindingErr != nil {
+		return ctx, nil, bindingErr
+	}
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return ctx, nil, &PreparedStartError{runID: r.ID, cause: err}
 	}
@@ -290,6 +300,12 @@ func preparedRunProvenance(p *PreparedAgent, snap *preparedSnapshot, opts Prepar
 		}
 	}
 	provenance.AssignmentDigest = opts.Provenance.AssignmentDigest
+	if hasOrchestrationBinding(opts.Provenance) && !validOrchestrationBinding(opts.Provenance) {
+		return run.ExecutionProvenance{}, cortex.ErrInvalidPrepared
+	}
+	provenance.OrchestrationID = opts.Provenance.OrchestrationID
+	provenance.OrchestrationDigest = opts.Provenance.OrchestrationDigest
+	provenance.OrchestrationReservationID = opts.Provenance.OrchestrationReservationID
 	provenance.ParentRunID = opts.Provenance.ParentRunID
 	provenance.ExperimentID = opts.Provenance.ExperimentID
 	provenance.CandidateID = opts.Provenance.CandidateID

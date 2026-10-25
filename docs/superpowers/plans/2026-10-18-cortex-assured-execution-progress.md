@@ -6209,3 +6209,37 @@ type/lint/build checks passed.
 Prepared team dispatch still needs durable team provenance, isolated child
 sessions and restricted A2A routing. The activation seam grants no retry or
 shared-budget authority by itself.
+
+### Prepared team execution with retained authority
+
+`Engine.RunPreparedOrchestration` executes all five strategies through frozen
+participants and the shared ReAct loop. Every invocation reserves its complete
+allowance, including required verifier tokens, and persists its exact child ID
+before activation. The account pins participant digests. Children get fresh
+nondefault sessions and retain purpose, experiment and team provenance.
+
+Account and reservation checks run before preparation, activation and resume.
+A regression closed the account after child linkage but before activation; the
+fixed path retains the ID without creating a run or calling the provider.
+Concurrent duplicate starts cannot close an active account. A closed account
+refuses paused-child resume before consuming its suspension claim. A second
+regression reproduced resume after a failed account-closure write; checking the
+stored team status blocks that path even while the account remains open. Provider
+overruns retain observed usage and stop further admission.
+
+This implementation accepts token-only policies and rejects global messaging
+tools. Your host still owns authenticated settlement, environment isolation and
+external-effect reconciliation. Reserved charges remain until settlement, and
+closing admission does not prove that already-running calls have stopped.
+Restricted A2A routing, monetary execution and durable team continuation remain
+open.
+
+Validation passes: scoped formatting, all ten modules of lint, root build,
+docs types/lint/build and real SQLite/PostgreSQL/MongoDB budget races without
+skips. The broader root suite passed with the documented local scopespy
+exclusion. After the closure-failure fix, all prepared-team tests passed, and
+the prepared/required/atomic-preparation race suite passed in 1002.793s
+(engine) and 1.241s (orchestration). Its first run reached the ten-minute suite
+timeout while progressing through tests; the successful rerun used thirty
+minutes. These results qualify the local implementation, not deployed provider
+recovery or the deferred Linux sandbox.

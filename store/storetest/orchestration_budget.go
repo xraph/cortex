@@ -22,7 +22,7 @@ func orchestrationBudgetFixture(t *testing.T, backend store.Store) (context.Cont
 	s := resultCapability[orchestration.BudgetStore](t, backend)
 	ctx := ctxWithScope("orchestration-budget")
 	allocation := execution.Resources{Steps: 2, Tokens: 600, ToolCalls: 2, FanOut: 1}
-	p := orchestration.BudgetPolicy{SchemaVersion: 1, ExecutionID: id.NewOrchestrationID(), PreparedDigest: evidence.Digest([]byte("prepared-team")), Scope: cortex.ScopeFromContext(ctx), Limits: execution.Resources{Steps: 10, Tokens: 1000, ToolCalls: 10, FanOut: 8}, Participants: map[string]execution.Resources{"worker": allocation}, Deadline: time.Now().Add(time.Hour), TokenOnly: true}
+	p := orchestration.BudgetPolicy{SchemaVersion: 1, ExecutionID: id.NewOrchestrationID(), PreparedDigest: evidence.Digest([]byte("prepared-team")), Scope: cortex.ScopeFromContext(ctx), Limits: execution.Resources{Steps: 10, Tokens: 1000, ToolCalls: 10, FanOut: 8}, Participants: map[string]execution.Resources{"worker": allocation}, ParticipantDigests: map[string]string{"worker": evidence.Digest([]byte("worker-v1"))}, Deadline: time.Now().Add(time.Hour), TokenOnly: true}
 	r := execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), PlanID: p.ExecutionID, PlanDigest: p.PreparedDigest, Scope: p.Scope, TaskID: id.NewAgentRunID(), OwnerRef: "worker", Kind: execution.ReservationLeaf, Allocation: allocation, Deadline: p.Deadline}
 	require.NoError(t, s.CreateOrchestrationBudget(ctx, p))
 	return ctx, s, p, r
@@ -92,6 +92,7 @@ func testOrchestrationBudgetLifecycle(t *testing.T, newStore func(*testing.T) st
 	snapshot, err := s.GetOrchestrationBudgetSnapshot(ctx, p.ExecutionID)
 	require.NoError(t, err)
 	require.True(t, snapshot.Closed)
+	require.Equal(t, p.ParticipantDigests, snapshot.Policy.ParticipantDigests)
 	require.EqualValues(t, 700, snapshot.Charged.Tokens)
 	list, err := s.ListOrchestrationReservations(ctx, execution.ReservationListRequest{PlanID: p.ExecutionID, Limit: 1})
 	require.NoError(t, err)

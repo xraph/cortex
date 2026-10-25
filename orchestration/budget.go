@@ -16,15 +16,16 @@ import (
 // Each participant may run several times, consuming another fan-out slot each
 // time. This account is independent of task plans and grants no execution access.
 type BudgetPolicy struct {
-	SchemaVersion   int                            `json:"schema_version"`
-	ExecutionID     id.OrchestrationID             `json:"execution_id"`
-	PreparedDigest  string                         `json:"prepared_digest"`
-	Scope           cortex.Scope                   `json:"scope"`
-	Limits          execution.Resources            `json:"limits"`
-	Participants    map[string]execution.Resources `json:"participants"`
-	Deadline        time.Time                      `json:"deadline"`
-	TokenOnly       bool                           `json:"token_only"`
-	PricingRevision string                         `json:"pricing_revision,omitempty"`
+	SchemaVersion      int                            `json:"schema_version"`
+	ExecutionID        id.OrchestrationID             `json:"execution_id"`
+	PreparedDigest     string                         `json:"prepared_digest"`
+	Scope              cortex.Scope                   `json:"scope"`
+	Limits             execution.Resources            `json:"limits"`
+	Participants       map[string]execution.Resources `json:"participants"`
+	ParticipantDigests map[string]string              `json:"participant_digests,omitempty"`
+	Deadline           time.Time                      `json:"deadline"`
+	TokenOnly          bool                           `json:"token_only"`
+	PricingRevision    string                         `json:"pricing_revision,omitempty"`
 }
 
 // Freeze validates and detaches the immutable policy.
@@ -38,6 +39,16 @@ func (p BudgetPolicy) Freeze() (BudgetPolicy, string, error) {
 	for name, limit := range p.Participants {
 		if !localRosterName(name) || !utf8.ValidString(name) || limit.FanOut != 1 || !p.Limits.Covers(limit) {
 			return BudgetPolicy{}, "", execution.ErrInvalidReservation
+		}
+	}
+	if len(p.ParticipantDigests) != 0 {
+		if len(p.ParticipantDigests) != len(p.Participants) {
+			return BudgetPolicy{}, "", execution.ErrInvalidReservation
+		}
+		for name := range p.Participants {
+			if !evidence.ValidDigest(p.ParticipantDigests[name]) {
+				return BudgetPolicy{}, "", execution.ErrInvalidReservation
+			}
 		}
 	}
 	data, err := json.Marshal(p)

@@ -40,9 +40,55 @@ before dispatch; they do not limit the combined cost of several children alone.
 
 Preparation establishes content identity, not approval or execution authority.
 External retrieval and model/tool implementations need their own qualification.
-This API prepares the team only. Execution with shared child budgets, isolated
-sessions and a restricted A2A roster remains separate work; `RunOrchestration`
-continues to load its configuration normally.
+`RunOrchestration` continues to load its configuration normally. Use the
+prepared execution API below when you need the captured participants.
+
+## Execute a prepared team
+
+Call `Engine.RunPreparedOrchestration(ctx, prepared, input, opts)` with
+`PreparedRunOptions.OrchestrationBudget` set to an `orchestration.BudgetPolicy`.
+Use a fresh orchestration ID, the prepared team's digest and exact scope, shared
+resource limits, a future deadline, and one per-invocation ceiling for every
+captured participant. Set `TokenOnly: true`; monetary policies are currently
+rejected.
+
+The engine pins each participant digest in the durable policy. Sequential,
+parallel, router, hierarchical and debate execution all use the captured
+participants through the existing ReAct loop. Each invocation reserves its full
+frozen allowance, including required-verification tokens, and saves its child ID
+before activation. Repeated manager and judge calls each consume another
+reservation and fan-out slot.
+
+You cannot supply a session ID. Every child receives a fresh nondefault session,
+while execution purpose, experiment identity and environment receipt metadata
+propagate through its provenance. A new session isolates conversation history;
+it does not provision an isolated filesystem, network or tool environment.
+Your host must supply and qualify those controls.
+
+The engine checks the account and reservation before preparing and activating
+the child. It also checks them before claiming a paused child for resume and
+again after the claim. The stored team must still be running, so a failed
+account-closure write cannot authorize resume after team termination. A closed
+account cannot authorize resume. Legacy
+continuations cannot discard team provenance, and an individual prepared run
+cannot borrow a reservation bound to another child ID.
+
+Once team execution ends, the engine closes admission, including on failure or
+panic. A concurrent duplicate start cannot close the active team's account.
+Reported child usage above its allowance closes admission and remains on the
+child record; calls already running may still finish. These checks do not
+establish worker quiescence or atomic revocation of external effects.
+
+Keep the account and child records for reconciliation. Reservations retain
+their full charge until your host settles authenticated final usage, so the
+account snapshot may exceed reported child usage. A failed startup may leave a
+reserved identity without a run row. Neither retrying the team ID nor resuming
+a paused child bypasses the closed account.
+
+Captured `agent_send`, `agent_ask` and `agent_inbox` tools are rejected because
+the global bus cannot provide isolation between experiments. Team-isolated A2A
+routing, monetary pricing, durable team continuation and deployed provider
+recovery remain unfinished.
 
 ## Execution records
 
@@ -92,8 +138,8 @@ a fresh team ID when you do not need to choose one beforehand.
 
 These writes retain child linkage if execution is interrupted. They do not prove
 that the child has started, authenticate its usage or authorize replay. Prepared
-agent execution, isolated sessions and restricted messaging still require the
-engine integration.
+agent execution and isolated sessions use the engine API below. Restricted
+messaging still requires an isolated route.
 
 ## Durable team capacity
 

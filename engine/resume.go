@@ -245,6 +245,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if err != nil {
 		return nil, nil, fmt.Errorf("load run to resume: %w", err)
 	}
+	if bindingErr := e.checkPreparedTeamResume(ctx, snapshot, preview); bindingErr != nil {
+		return nil, nil, bindingErr
+	}
 
 	if previewErr == nil {
 		if policyErr := e.checkRequiredResume(ctx, snapshot, preview); policyErr != nil {
@@ -286,6 +289,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 	if err := validateFrozenContinuation(susp.Cont, snap, r); err != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, err)
+	}
+	if bindingErr := e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, r.Budget); bindingErr != nil {
+		return nil, nil, e.failResume(ctx, r, ag.ID, bindingErr)
 	}
 	if snap != nil {
 		if err := e.checkPreparedRevisions(snap); err != nil {
