@@ -1660,3 +1660,36 @@ published optimization commit `eca1461` checks backward-compatible version and
 policy digests; the final preset and legacy-fixture race group passes in 8.688s.
 Scoped formatting, whitespace checks and the final all-module `make l` pass,
 including the runtime owner's coordinator changes.
+
+## Declared participant guidance
+
+Task 15 now supports `EditParticipantGuidance` for the sections declared in each
+approved preset. Preset selection and guidance can share a proposal, independent
+of edit order. Selection clears earlier overrides; resetting a section restores
+its original content identity. Repeating the same edit preserves the digest.
+
+Candidates are reconstructed from the original approved preset. Sealing repeats
+that reconstruction and compares the prepared digest with the declared edits.
+Tests reject substituted tool subsets, tool descriptions and sampling settings,
+unknown participants and sections, duplicate targets, oversized bodies and
+participant qualifiers on agent edits. Wire round trips preserve the digest and
+detach maps; altered declarations and redundant empty overrides fail validation.
+
+The root requirement advances to published commit `4fb3e49`, which supplies
+prepared-team derivation. Tidying propagates that minimum through Sentinel,
+Fabriq, the Forge extension and integration tests. Core race tests pass against
+the local runtime (33.333s) and that published dependency without a local root
+replacement (39.774s). Team trial dispatch, original child capture, cost evidence
+and trace conversion remain pending. Task 15 is not complete.
+
+The original broader optimization race suite has now passed PostgreSQL in
+804.078s. SQLite is still running. The MongoDB infrastructure failure and its
+successful targeted retry remain recorded above.
+
+After scoped `make f`, the complete core race suite passes again in 51.797s.
+The Sentinel capture and controller comparison/reopen regressions pass in
+63.862s. Optimization builds, and the whitespace check passes.
+Metered judge, late-receipt and cost-provenance regressions pass in 1.611s.
+Forge extension races pass in 1.710s, Fabriq races in 10.486s (its optimization
+adapter in 1.143s), and Docker-backed integration tests in 12.638s. Final
+all-module `make l` passes with the runtime dispatch fix present.

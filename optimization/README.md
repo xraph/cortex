@@ -384,8 +384,17 @@ The catalog stays fixed in the policy digest. Team policies reject agent-level
 edit fields, and every preset must retain the version's exact scope and include
 its owning agent. Normal agent versions keep their existing digest format.
 
-This is the preset contract and selection layer. Participant guidance derivation,
-isolated team trial execution and child trace conversion are still pending.
+Use `EditParticipantGuidance` with `Participant`, the section ID in `Target`,
+and its replacement body in `Text`. Only sections declared in that preset's
+`Guidance` allowlist can change. A preset selection and its guidance edits can
+share one proposal. Selecting a preset clears the previous selection's overrides.
+Restoring an original body removes its override and restores its content identity.
+
+Every candidate is rebuilt from the original approved preset. Sealing checks the
+declared overrides against that result, so a derived snapshot cannot carry
+undeclared tool, sampling, budget or scope changes. The policy catalog stays fixed.
+
+Isolated team trial execution and child trace conversion are still pending.
 `EngineCompatibility` and `RunActive` return `ErrUnavailable` for team versions
 until a dedicated production team path is available. Current preset validation
 supports token ceilings; monetary team ceilings and messaging tools require

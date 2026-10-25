@@ -23,6 +23,7 @@ type OrchestrationPreset struct {
 type OrchestrationSelection struct {
 	Preset   string                        `json:"preset"`
 	Prepared *engine.PreparedOrchestration `json:"prepared"`
+	Guidance map[string]map[string]string  `json:"guidance,omitempty"`
 }
 
 // SealOrchestrationPreset validates and detaches an approved configuration.
@@ -123,7 +124,11 @@ func validateOrchestrationVersion(version HarnessVersion) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if selected.Prepared == nil || selected.Prepared.Digest() != preset.Prepared.Digest() {
+	derived, err := derivePresetGuidance(preset, selected.Guidance, version.Policy.MaxBodyBytes)
+	if err != nil {
+		return "", err
+	}
+	if selected.Prepared == nil || selected.Prepared.Digest() != derived.Digest() {
 		return "", ErrPolicyDenied
 	}
 	for _, approved := range version.Policy.OrchestrationPresets {
@@ -147,20 +152,4 @@ func validateOrchestrationVersion(version HarnessVersion) (string, error) {
 		}
 	}
 	return selected.Prepared.Digest(), nil
-}
-
-func selectOrchestrationProposal(base HarnessVersion, proposal Proposal) (HarnessVersion, error) {
-	if len(proposal.Edits) != 1 {
-		return HarnessVersion{}, ErrInvalidSpec
-	}
-	edit := proposal.Edits[0]
-	if edit.Kind != EditOrchestrationPreset || edit.Text != "" || edit.Tools != nil || edit.Number != nil {
-		return HarnessVersion{}, ErrPolicyDenied
-	}
-	preset, err := orchestrationPreset(base.Policy, edit.Target)
-	if err != nil {
-		return HarnessVersion{}, err
-	}
-	base.Orchestration = &OrchestrationSelection{Preset: preset.Name, Prepared: preset.Prepared}
-	return base, nil
 }

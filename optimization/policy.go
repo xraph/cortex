@@ -29,6 +29,7 @@ type EditKind string
 
 const (
 	EditOrchestrationPreset EditKind = "orchestration_preset"
+	EditParticipantGuidance EditKind = "participant_guidance"
 	EditSectionBody         EditKind = "section_body"
 	EditToolDescription     EditKind = "tool_description"
 	EditToolSubset          EditKind = "tool_subset"
@@ -37,11 +38,12 @@ const (
 
 // Edit carries one typed change. A non-nil empty Tools list means deny all tools.
 type Edit struct {
-	Kind   EditKind  `json:"kind"`
-	Target string    `json:"target,omitempty"`
-	Text   string    `json:"text,omitempty"`
-	Tools  *[]string `json:"tools,omitempty"`
-	Number *float64  `json:"number,omitempty"`
+	Participant string    `json:"participant,omitempty"`
+	Kind        EditKind  `json:"kind"`
+	Target      string    `json:"target,omitempty"`
+	Text        string    `json:"text,omitempty"`
+	Tools       *[]string `json:"tools,omitempty"`
+	Number      *float64  `json:"number,omitempty"`
 }
 
 // Proposal contains candidate edits and their explanation, never host settings.
@@ -140,7 +142,7 @@ func ValidateProposal(base HarnessVersion, proposal Proposal, policy EditPolicy)
 		return HarnessVersion{}, fmt.Errorf("%w: patch too large", ErrPolicyDenied)
 	}
 	if base.Orchestration != nil {
-		selected, selectionErr := selectOrchestrationProposal(sealed, proposal)
+		selected, selectionErr := deriveOrchestrationProposal(sealed, proposal)
 		if selectionErr != nil {
 			return HarnessVersion{}, selectionErr
 		}
@@ -150,6 +152,9 @@ func ValidateProposal(base HarnessVersion, proposal Proposal, policy EditPolicy)
 	edits := engine.PreparedEdits{SectionBodies: map[string]string{}, ToolDescriptions: map[string]string{}}
 	seen := map[string]bool{}
 	for _, edit := range proposal.Edits {
+		if edit.Participant != "" {
+			return HarnessVersion{}, ErrPolicyDenied
+		}
 		key := string(edit.Kind) + "/" + edit.Target
 		if seen[key] {
 			return HarnessVersion{}, fmt.Errorf("%w: duplicate edit target", ErrInvalidSpec)
