@@ -34,7 +34,7 @@ type TaskBillingProof struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 }
 
-// TaskUsageSettlementRequest binds final accounting to accepted or terminated work,
+// TaskUsageSettlementRequest binds final accounting to accepted, terminated or rejected work,
 // closed admission, one complete usage observation and the original allocation.
 type TaskUsageSettlementRequest struct {
 	SchemaVersion     int              `json:"schema_version"`

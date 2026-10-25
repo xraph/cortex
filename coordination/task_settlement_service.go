@@ -45,7 +45,9 @@ type TaskUsageSettlementResolver interface {
 type TaskSettlementServiceConfig struct {
 	Store TaskSettlementStore
 	// UnsuccessfulRuns enables discovery of sealed recovering claims and closure
-	// of their failed, cancelled or incomplete child runs. Nil preserves accepted-only discovery.
+	// of their failed, cancelled or incomplete child runs. It also settles explicitly
+	// rejected completed runs whose closure already exists; it never infers rejection.
+	// Nil preserves accepted-only discovery.
 	UnsuccessfulRuns  TaskSettlementRunReader
 	Discovery         TaskPlanSource
 	AuthorizeScan     func(context.Context, Claim, execution.RunCallSeal) error

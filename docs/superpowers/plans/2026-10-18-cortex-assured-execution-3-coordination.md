@@ -300,8 +300,12 @@ settlement service. It interleaves them with accepted history under the same
 concurrency and shutdown limits, authorizes current-run reads, waits on active
 runs and replays committed accounting without another billing query. Existing
 call seals are required for recovering work. Engine lifecycle tests cover lost
-acknowledgments and restart on all three stores. Completed-but-unaccepted
-disposition and governed claim retirement remain open.
+acknowledgments and restart on all three stores. An explicit `Rejection` binding
+now closes completed-but-unaccepted work under the same authority and transaction.
+It retains the exact run revision, completion, result reference and verification
+status, blocks later acceptance, and leaves the run, artifacts and recovering
+claim intact. The managed service settles retained rejections without inferring
+them from completed state. Governed claim retirement remains open.
 
 `TaskSettlementService` and `engine.WithTaskSettlement` connect authorized
 discovery of completed, already sealed claims to admission closure, proof
@@ -320,7 +324,7 @@ replacement claim cannot hide earlier accepted debt. Historical accounting and
 ordinary call sealing check the original claim revision, acceptance and dispatch;
 replacement ownership and its reserved capacity remain unchanged. Host discovery
 must still include completed/cancelled plans with debt. Concrete billing adapters,
-completed-but-unaccepted disposition, governed retry and deployment qualification remain open.
+governed retirement/retry, compensation and deployment qualification remain open.
 
 ## S3.6: Team review UI and recovery qualification
 

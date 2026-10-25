@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 func TestTaskUsageClosureTerminationIsBoundAndDetached(t *testing.T) {
@@ -141,4 +143,65 @@ func TestTaskUsageClosureRejectsMissingPortsAndInvalidBinding(t *testing.T) {
 	require.Error(t, err)
 	receipt.At = receipt.At.Add(-1)
 	require.Error(t, receipt.Validate())
+}
+
+func TestTaskUsageClosureRejectionBindsDecisionAndDetaches(t *testing.T) {
+	_, request, original := usageClosureFixture(t)
+	request.Rejection = &coordination.TaskUsageRejection{RunRevision: 3, CompletedAt: original.At, ResultRef: "retained-result", VerificationStatus: verification.StatusPassed}
+	frozen, digest, err := request.Freeze()
+	require.NoError(t, err)
+	request.Rejection.ResultRef = "other"
+	require.Equal(t, "retained-result", frozen.Rejection.ResultRef)
+	_, changed, err := request.Freeze()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changed)
+	receipt, err := coordination.SealTaskUsageClosure(coordination.TaskUsageClosure{SchemaVersion: 1, Request: frozen, RequestDigest: digest, At: original.At})
+	require.NoError(t, err)
+	frozen.Rejection.RunRevision = 4
+	require.EqualValues(t, 3, receipt.Request.Rejection.RunRevision)
+	receipt.At = original.At.Add(-1)
+	require.Error(t, receipt.Validate())
+	request.Termination = &coordination.TaskUsageTermination{RunRevision: 3, CompletedAt: original.At, State: run.StateFailed}
+	_, _, err = request.Freeze()
+	require.ErrorIs(t, err, coordination.ErrInvalidTaskUsage)
+	request.Termination = nil
+	for _, mode := range []string{"revision", "time", "pending", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			candidate, _, freezeErr := request.Freeze()
+			require.NoError(t, freezeErr)
+			switch mode {
+			case "revision":
+				candidate.Rejection.RunRevision = 0
+			case "time":
+				candidate.Rejection.CompletedAt = time.Time{}
+			case "pending":
+				candidate.Rejection.VerificationStatus = verification.StatusPending
+			case "unknown":
+				candidate.Rejection.VerificationStatus = "unknown"
+			}
+			_, _, freezeErr = candidate.Freeze()
+			require.ErrorIs(t, freezeErr, coordination.ErrInvalidTaskUsage)
+		})
+	}
+}
+
+func TestTaskUsageRejectionRequiresExplicitAuthority(t *testing.T) {
+	ctx, request, base := usageClosureFixture(t)
+	request.Rejection = &coordination.TaskUsageRejection{RunRevision: 3, CompletedAt: base.At, VerificationStatus: verification.StatusUnchecked}
+	fence := usageClosureFence(func(_ context.Context, r coordination.TaskUsageClosureRequest, next func(coordination.TaskUsageClosureRequest) error) error {
+		return next(r)
+	})
+	denied := errors.New("rejection denied")
+	authorizer := usageClosureAuthorizer(func(_ context.Context, r coordination.TaskUsageClosureRequest) error {
+		require.NotNil(t, r.Rejection)
+		return denied
+	})
+	storage := usageClosureStore{close: func(context.Context, coordination.TaskUsageClosureRequest) (coordination.TaskUsageClosure, error) {
+		t.Fatal("unauthorized rejection persisted")
+		return coordination.TaskUsageClosure{}, nil
+	}}
+	closer, err := coordination.NewTaskUsageCloser(storage, fence, authorizer)
+	require.NoError(t, err)
+	_, err = closer.Close(ctx, request)
+	require.ErrorIs(t, err, denied)
 }

@@ -6020,3 +6020,29 @@ prepared/atomic-preparation race suite passed (64.647s). Root build and docs typ
 lint and build checks passed. Final focused races passed (26.231s), and all ten
 modules passed lint after scoped formatting. Concurrent optimizer files remain
 with their owner. Runtime pins do not establish live provider qualification.
+
+### Explicit rejection of completed task work
+
+`TaskUsageClosureRequest.Rejection` retains a host-authorized decision to decline
+acceptance of a completed run. It binds the run revision, persisted completion
+time, result reference and verification status, using the existing closure actor,
+reason, fence and authorizer. Termination and rejection are mutually exclusive.
+The shared plan/run/journal transaction verifies original dispatch and current
+ownership, requires terminal verifier jobs and closes future admission. Later
+acceptance checks the retained rejection under the same guards. Only one can win.
+
+Accounting preserves the run, artifacts and recovering claim. Fresh settlement
+rechecks the rejected revision and uses existing billing proofs and conservative
+unknown-usage charges. With recovering discovery enabled, managed settlement
+consumes an explicit rejected closure and recovers lost acknowledgments after
+restart. It never infers rejection from completion or releases ownership for retry.
+
+The regression first failed at closure because completed unaccepted work had no
+supported disposition. Initial SQLite, PostgreSQL and MongoDB race tests passed,
+including exact binding, rollback, lost acknowledgment, concurrent acceptance and
+managed lifecycle. The full acceptance/recovery race matrix passed on SQLite
+(79.630s), PostgreSQL (53.163s) and MongoDB (79.746s), with no database skips.
+Coordination/assurance races, the full root suite with the documented local
+scopespy exclusion, all-module lint, scoped formatting, root build and docs
+checks passed. Governed retirement, retries, compensation and live qualification
+remain open.

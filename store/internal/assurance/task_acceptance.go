@@ -321,6 +321,13 @@ func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err
 	}
+	closed, err := s.GetTaskUsageClosure(ctx, claim.RunID)
+	if err != nil {
+		return taskAcceptanceMaterial{}, 0, err
+	}
+	if closed != nil && closed.Request.Rejection != nil {
+		return taskAcceptanceMaterial{}, 0, coordination.ErrTaskUsageClosed
+	}
 	job, err := s.GetVerificationJob(ctx, pins.JobID)
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err

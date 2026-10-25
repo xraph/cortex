@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/verification"
 )
 
 var (
@@ -29,6 +30,29 @@ func (t TaskUsageTermination) valid() bool {
 	return t.RunRevision > 0 && !t.CompletedAt.IsZero() && (t.State == run.StateFailed || t.State == run.StateCancelled || t.State == run.StateIncomplete)
 }
 
+// TaskUsageRejection permanently declines task acceptance of a completed run.
+// The closure's Actor and Reason identify the authorized decision. Rejection
+// preserves the run and its artifacts; it does not release ownership or permit
+// retries, compensation or deletion. Verification may have passed independently.
+type TaskUsageRejection struct {
+	RunRevision        int64               `json:"run_revision"`
+	CompletedAt        time.Time           `json:"completed_at"`
+	ResultRef          string              `json:"result_ref"`
+	VerificationStatus verification.Status `json:"verification_status"`
+}
+
+func (r TaskUsageRejection) valid() bool {
+	if r.RunRevision < 1 || r.CompletedAt.IsZero() || (r.ResultRef != "" && !handoffText(r.ResultRef, 4096)) {
+		return false
+	}
+	switch r.VerificationStatus {
+	case "", verification.StatusUnchecked, verification.StatusPassed, verification.StatusFailed, verification.StatusInconclusive, verification.StatusStale:
+		return true
+	default:
+		return false
+	}
+}
+
 // TaskUsageClosureRequest permanently closes new verification admission against
 // an exact usage observation. It does not authorize refunds or assert final bills.
 type TaskUsageClosureRequest struct {
@@ -38,6 +62,7 @@ type TaskUsageClosureRequest struct {
 	Actor         string                `json:"actor"`
 	Reason        string                `json:"reason"`
 	Termination   *TaskUsageTermination `json:"termination,omitempty"`
+	Rejection     *TaskUsageRejection   `json:"rejection,omitempty"`
 }
 
 // Freeze validates and detaches closure input without authenticating its actor.
@@ -53,6 +78,13 @@ func (r TaskUsageClosureRequest) Freeze() (TaskUsageClosureRequest, string, erro
 		detached := *r.Termination
 		r.Termination = &detached
 	}
+	if r.Rejection != nil {
+		if r.Termination != nil || !r.Rejection.valid() {
+			return TaskUsageClosureRequest{}, "", ErrInvalidTaskUsage
+		}
+		detached := *r.Rejection
+		r.Rejection = &detached
+	}
 	r.Usage = usage
 	data, err := json.Marshal(r)
 	if err != nil || len(data) > 32<<10 {
@@ -67,7 +99,11 @@ func (r TaskUsageClosureRequest) MatchesClaim(c Claim) bool {
 	if c.Token() != r.Usage.Claim || c.RunID != r.Usage.Seal.Request.RunID || c.Scope.Canonical() != r.Usage.Seal.Request.Scope.Canonical() {
 		return false
 	}
-	return (c.State == ClaimCompleted && r.Termination == nil) || (c.State == ClaimRecovering && r.Termination != nil && r.Termination.valid())
+	if r.Termination != nil && r.Rejection != nil {
+		return false
+	}
+	return (c.State == ClaimCompleted && r.Termination == nil && r.Rejection == nil) ||
+		(c.State == ClaimRecovering && ((r.Termination != nil && r.Termination.valid()) || (r.Rejection != nil && r.Rejection.valid())))
 }
 
 // TaskUsageClosure retains permanent local admission closure. Fresh is true
@@ -84,7 +120,7 @@ type TaskUsageClosure struct {
 // SealTaskUsageClosure validates and detaches a closure receipt.
 func SealTaskUsageClosure(c TaskUsageClosure) (TaskUsageClosure, error) {
 	r, digest, err := c.Request.Freeze()
-	if err != nil || c.SchemaVersion != 1 || digest != c.RequestDigest || c.At.IsZero() || c.At.Before(r.Usage.Seal.At) || (r.Termination != nil && c.At.Before(r.Termination.CompletedAt)) {
+	if err != nil || c.SchemaVersion != 1 || digest != c.RequestDigest || c.At.IsZero() || c.At.Before(r.Usage.Seal.At) || (r.Termination != nil && c.At.Before(r.Termination.CompletedAt)) || (r.Rejection != nil && c.At.Before(r.Rejection.CompletedAt)) {
 		return TaskUsageClosure{}, ErrInvalidTaskUsage
 	}
 	c.Request, c.Digest = r, ""
@@ -121,6 +157,7 @@ type TaskUsageClosureFence interface {
 
 // TaskUsageClosureAuthorizer authenticates Actor and authorizes permanent local
 // closure for the exact run, claim and evidence, including historical retries.
+// When Rejection is present it must also authorize permanent task-result rejection.
 type TaskUsageClosureAuthorizer interface {
 	AuthorizeTaskUsageClosure(context.Context, TaskUsageClosureRequest) error
 }

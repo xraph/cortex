@@ -732,6 +732,29 @@ release task ownership or permit another attempt. You can invoke this path direc
 or enable `UnsuccessfulRuns` on the managed settlement service below. Governed
 ownership retirement and retry remain separate integration work.
 
+### Reject a completed task result
+
+To permanently decline acceptance of completed work, pass
+`TaskUsageClosureRequest.Rejection` with the saved run revision, completion time,
+result reference and verification status. Set `Actor` and `Reason` to the host's
+decision and use `NewTaskUsageCloser` with a fence and an authorizer that explicitly
+permit rejection. A completed run alone does not authorize this decision. A passed
+verification report can remain valid even when you reject the result for this task.
+
+Rejection and termination are mutually exclusive. The claim must still be
+recovering, its call journal sealed and all verifier jobs terminal. Storage checks
+the original dispatch and exact run binding before retaining the decision in the
+closure. Acceptance and rejection share transaction guards, so only one can win.
+Fresh settlement rechecks the rejected run; retries recover the original receipts.
+
+The record closes local verification admission and blocks later task acceptance.
+It preserves the run, artifacts and recovering claim, and grants no authority to
+retry, compensate or delete anything. Billing still uses the existing authenticated
+settlement path, including conservative charges when usage is unknown. With
+`UnsuccessfulRuns` enabled, the managed service settles an existing rejected closure
+and recovers lost acknowledgments after restart. It never infers rejection from a
+completed run or creates that decision automatically.
+
 ### Settle task usage
 
 Use `coordination.NewTaskUsageSettler(store, fence, authorizer).Settle(ctx, request)`
@@ -793,8 +816,10 @@ accepted-only discovery.
 Recovering claims need an existing call seal. Accepted-task sealing ports cannot
 seal them. After `AuthorizeScan`, the service reads current run metadata and closes
 usage only for failed, cancelled or incomplete runs with a valid terminal binding.
-Running, paused and completed runs wait. The closure and settlement stores recheck
-the observed metadata under their guards before writing.
+Running, paused and completed runs wait unless an explicitly rejected closure
+already exists. The service can settle that retained rejection, but cannot create
+it. Closure and settlement stores recheck observed metadata under their guards
+before writing.
 
 To seal ordinary accepted runs automatically, also supply `CallSealFence` and
 `CallSealAuthorizer`. Both are required together, and `Store` must implement

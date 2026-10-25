@@ -51,6 +51,8 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 	contract := config.Contract(p)
 	_, working, change, job := submissionFixtureForHandoffBudget(ctx, t, backend, p, h, contract, option.VerifierBudget, func(r *run.Run, _ *verification.Binding) {
 		r.AgentID = worker
+		ended := time.Now().UTC()
+		r.CompletedAt = &ended
 		r.Provenance.TaskClaimID = claimID.String()
 	})
 	claimOption := acceptanceClaimFixture{ID: claimID, Duration: 10 * time.Second}
@@ -142,6 +144,8 @@ func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Dr
 	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })
 	t.Run("guarded usage settlement", func(t *testing.T) { testTaskUsageSettlement(t, backend, driver) })
 	t.Run("terminal usage settlement", func(t *testing.T) { testTaskTerminalUsage(t, backend, driver) })
+	t.Run("rejected usage settlement", func(t *testing.T) { testTaskRejectedUsage(t, backend, driver) })
+	t.Run("managed rejected settlement", func(t *testing.T) { testManagedRejectedTaskSettlement(t, backend, driver) })
 	t.Run("historical usage settlement", func(t *testing.T) { testTaskSettlementHistory(t, backend, driver) })
 	t.Run("usage admission closure", func(t *testing.T) { testTaskUsageClosure(t, backend, driver) })
 	t.Run("complete usage snapshot", func(t *testing.T) { testTaskUsageSnapshot(t, backend, driver) })

@@ -18,6 +18,17 @@ import (
 
 func testManagedTerminalTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver) {
 	f, _ := terminalUsageFixture(t, backend, driver, run.StateFailed)
+	testManagedClosedTaskSettlement(t, backend, driver, f, false)
+}
+
+func testManagedRejectedTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver) {
+	f, request := rejectedUsageFixture(t, backend, driver)
+	_, err := f.repo.CloseTaskUsage(f.ctx, request)
+	require.NoError(t, err)
+	testManagedClosedTaskSettlement(t, backend, driver, f, true)
+}
+
+func testManagedClosedTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver, f taskRecoveryFixture, rejected bool) {
 	claim, err := f.repo.GetTaskClaim(f.ctx, f.request.Claim.PlanID, f.request.Claim.TaskID)
 	require.NoError(t, err)
 	original, err := backend.GetRun(f.ctx, claim.RunID)
@@ -33,8 +44,13 @@ func testManagedTerminalTaskSettlement(t *testing.T, backend store.Store, driver
 		Resolver: settlementLifecycleResolver(func(_ context.Context, snapshot coordination.TaskUsageSnapshot, closed coordination.TaskUsageClosure, _ execution.Reservation) (*coordination.TaskUsageSettlementRequest, error) {
 			resolutions.Add(1)
 			require.Equal(t, claim, snapshot.Claim)
-			require.NotNil(t, closed.Request.Termination)
-			require.Equal(t, original.Revision, closed.Request.Termination.RunRevision)
+			if rejected {
+				require.NotNil(t, closed.Request.Rejection)
+				require.Equal(t, original.Revision, closed.Request.Rejection.RunRevision)
+			} else {
+				require.NotNil(t, closed.Request.Termination)
+				require.Equal(t, original.Revision, closed.Request.Termination.RunRevision)
+			}
 			r := terminalSettlementRequest(t, f, closed.Request, closed)
 			return &r, nil
 		}),
