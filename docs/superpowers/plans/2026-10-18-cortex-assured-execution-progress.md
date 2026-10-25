@@ -6243,3 +6243,33 @@ the prepared/required/atomic-preparation race suite passed in 1002.793s
 timeout while progressing through tests; the successful rerun used thirty
 minutes. These results qualify the local implementation, not deployed provider
 recovery or the deferred Linux sandbox.
+
+### Durable A2A routing partitions
+
+A2A buses and direct store adapters can bind to one orchestration ID. Every
+message, conversation, delivery and pending ask retains that partition in
+SQLite, PostgreSQL and MongoDB. Global access matches only global records.
+The partition applies to peer-context lookup, updates, read markers, claims,
+inbox reads, expired asks, queue discovery and stale-delivery reclaim.
+
+Regressions reproduced cross-team message access and a bus ignoring its
+configured partition. Background redrive also failed because delivery scope
+was restored after claiming; it is now restored before the claim. All three
+backends pass the A2A conformance matrix, including bus reopening and global
+dispatch exclusion. SQL upgrades retain old rows globally and replay an
+unrecorded migration; MongoDB retains missing-field documents globally.
+SQL downgrade is refused to prevent merging private traffic into global access.
+
+This is storage and bus isolation. Prepared participant dispatch, roster
+authorization, shared-budget admission, durable continuation and safe effect
+recovery still need the engine integration. Its messaging gate remains closed.
+Validation passes: scoped formatting, all ten modules of lint, root build,
+docs types/lint/build, the complete A2A and remote-module race suites, engine
+A2A races, and routing/upgrade races on all three databases without skips.
+The broader root run passed every package except a PostgreSQL fixture that
+left legacy global messages queued between tests. Its cleanup omitted all
+four A2A tables. After fixing that cleanup, the full PostgreSQL package passed
+in 111.764s, and its routing/upgrade races passed in 29.627s. MongoDB routing
+races passed in 40.056s and SQLite in 28.027s. Only scopespy was excluded from
+the broader local run for its documented macOS behavior. Docker recovered
+without a restart. Live Linux sandbox qualification remains deferred.

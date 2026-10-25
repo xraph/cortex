@@ -60,6 +60,12 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	t.Run("A2ARoutingUpgrade", func(t *testing.T) {
+		if clearErr := truncateConformanceTables(ctx, s); clearErr != nil {
+			t.Fatal(clearErr)
+		}
+		storetest.A2ASQLRoutingUpgrade(t, s, func(query string) error { _, execErr := s.pgdb.Exec(ctx, query); return execErr })
+	})
 	// One container serves the whole run: spinning up a fresh postgres
 	// instance per subtest would make this suite minutes slower for no
 	// isolation benefit truncateAll doesn't already provide.
@@ -139,7 +145,11 @@ func truncateConformanceTables(ctx context.Context, s *Store) error {
 		cortex_suspensions,
 		cortex_overlays,
 		cortex_orchestration_configs,
-		cortex_orchestration_runs
+		cortex_orchestration_runs,
+        cortex_a2a_messages,
+        cortex_a2a_conversations,
+        cortex_a2a_deliveries,
+        cortex_a2a_pending_asks
 	RESTART IDENTITY CASCADE`
 	if _, err := s.pgdb.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("truncate conformance tables: %w", err)

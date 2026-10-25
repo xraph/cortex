@@ -200,3 +200,41 @@ Three plugin hooks fire alongside the ones you already have: `MessageSent`,
 `MessageDelivered` and `MessageRefused`. `AgentHandoff` is untouched and still
 means what it always did, because an orchestration handoff and an agent
 addressing a peer are different events.
+
+
+## Isolate orchestration traffic
+
+Set `a2a.BusConfig.OrchestrationID` when you build a bus for one team. The
+SQLite, PostgreSQL and MongoDB stores persist that ID on messages, conversations,
+deliveries and pending asks. A zero ID selects global traffic. It never means
+all teams.
+
+For direct storage access, use `a2a.NewRoutingStore(store, teamID)`. The returned
+store fixes the routing partition while preserving the caller's scope,
+cancellation and deadline. IDs, inbox reads, peer-context lookup, claims and
+updates all remain inside that partition. Queue discovery and stale-delivery
+reclaim can cross scopes, but cannot cross orchestration partitions. Expired-ask
+queries still require a host scope.
+
+A bus fixes its partition at construction, including when its supplied store
+was previously bound to another team. Reopening a bus with the same ID restores
+access to its retained queue. Background delivery restores each row's scope
+before claiming it. A global bus cannot consume a team's queue.
+
+Custom stores must implement `a2a.RoutingBackend` and enforce
+`a2a.RoutingOrchestration(ctx)` on every messaging operation before reporting
+support. The returned value is backend routing metadata, not participant
+authorization. Unsupported stores reject nonzero orchestration IDs.
+
+SQL migration `20261025000001` preserves existing rows in the global partition
+and can replay after its schema changes committed without their migration
+record. Its downgrade is refused because removing the partition would expose
+private traffic globally. MongoDB reads documents without the field as global
+traffic; new writes always persist the field.
+
+You still need a runner and resolver restricted to the team's frozen roster,
+shared-budget admission and authorized recovery before enabling agent execution.
+The prepared-team engine continues to reject messaging tools while that
+integration is unfinished. A storage partition does not authorize remote peers,
+provide an isolated tool environment or make stale delivery replay safe for
+external effects.

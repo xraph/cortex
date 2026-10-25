@@ -33,6 +33,7 @@ var ErrDeliveryNotFound = errors.New("cortex: a2a: delivery not found")
 // to five agents is five deliveries, which is what makes "unread for agent
 // B" an answerable question.
 type Delivery struct {
+	OrchestrationID string `json:"orchestration_id,omitempty"`
 	cortex.Entity
 	ID        id.DeliveryID `json:"id"`
 	Scope     cortex.Scope  `json:"scope"`

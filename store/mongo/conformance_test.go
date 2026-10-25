@@ -110,6 +110,7 @@ func clearConformanceCollections(ctx context.Context, s *Store) error {
 		colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
 		colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colOverlays,
 		colOrchestrationConfigs, colOrchestrationRuns,
+		colA2AMessages, colA2AConversations, colA2ADeliveries, colA2APendingAsks,
 	}
 	for _, col := range collections {
 		if _, err := s.mdb.Collection(col).DeleteMany(ctx, bson.M{}); err != nil {
@@ -167,4 +168,15 @@ func newConformanceStore(t *testing.T, replicaSet bool) *Store {
 	}
 
 	return s
+}
+
+func TestA2ARoutingUpgrade(t *testing.T) {
+	s := newConformanceStore(t, false)
+	storetest.A2ARoutingUpgrade(t, s, func() {
+		for _, collection := range []string{colA2AMessages, colA2AConversations, colA2ADeliveries, colA2APendingAsks} {
+			if _, err := s.mdb.Collection(collection).UpdateMany(context.Background(), bson.M{}, bson.M{"$unset": bson.M{"orchestration_id": ""}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
 }

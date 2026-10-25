@@ -37,6 +37,8 @@ var (
 // BusConfig builds a Bus. Store and Runner are required; everything else
 // has a working default. Structured handoffs require HandoffHandler explicitly.
 type BusConfig struct {
+	// OrchestrationID fixes this bus to one routing partition. Zero is global.
+	OrchestrationID id.OrchestrationID
 	// HandoffHandler is required for structured assignments. No ordinary agent
 	// fallback is permitted. The host owns current authority and durable intake.
 	HandoffHandler HandoffHandler
@@ -117,9 +119,13 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = systemClock{}
 	}
+	routing, routingErr := NewRoutingStore(cfg.Store, cfg.OrchestrationID)
+	if routingErr != nil {
+		return nil, routingErr
+	}
 	b := &Bus{
 		handoffHandler: cfg.HandoffHandler,
-		store:          cfg.Store,
+		store:          routing,
 		runner:         cfg.Runner,
 		resumer:        cfg.Resumer,
 		resolver:       cfg.Resolver,

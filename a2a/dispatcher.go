@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
 
@@ -163,7 +164,7 @@ func (b *Bus) Drain(ctx context.Context) (int, error) {
 			return n, nil
 		}
 		for _, row := range rows {
-			err := b.deliverOne(ctx, row.ID)
+			err := b.deliverOne(cortex.WithScope(ctx, row.Scope), row.ID)
 			switch {
 			case errors.Is(err, ErrDeliveryAlreadyClaimed):
 				continue

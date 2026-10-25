@@ -58,6 +58,7 @@ func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
 	e.CreatedAt = now
 	e.UpdatedAt = now
 	e.Scope = scope
+	e.OrchestrationID = a2a.RoutingOrchestration(ctx)
 	if _, err := s.pgdb.NewInsert(a2aMessageToModel(e)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("cortex: create a2a message: %w", cortex.ErrAlreadyExists)
@@ -73,7 +74,7 @@ func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelo
 		return nil, scopeErr
 	}
 	m := new(a2aMessageModel)
-	q := s.pgdb.NewSelect(m).Where("id = ?", msgID.String())
+	q := s.pgdb.NewSelect(m).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).Where("id = ?", msgID.String())
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -94,7 +95,7 @@ func (s *Store) ListMessages(ctx context.Context, filter *a2a.MessageListFilter)
 		return nil, scopeErr
 	}
 	var models []a2aMessageModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC, id ASC")
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).OrderExpr("created_at ASC, id ASC")
 	exact := filter != nil && filter.Exact
 	for _, p := range scopePredicates(scope, exact) {
 		q = q.Where(p.Column+" = ?", p.Value)
@@ -137,6 +138,7 @@ func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) err
 	c.CreatedAt = now
 	c.UpdatedAt = now
 	c.Scope = scope
+	c.OrchestrationID = a2a.RoutingOrchestration(ctx)
 	if _, err := s.pgdb.NewInsert(a2aConversationToModel(c)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("cortex: create a2a conversation: %w", cortex.ErrAlreadyExists)
@@ -152,7 +154,7 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 		return nil, scopeErr
 	}
 	m := new(a2aConversationModel)
-	q := s.pgdb.NewSelect(m).Where("id = ?", convID.String())
+	q := s.pgdb.NewSelect(m).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).Where("id = ?", convID.String())
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -181,7 +183,7 @@ func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerCont
 	}
 
 	m := new(a2aConversationModel)
-	q := s.pgdb.NewSelect(m).
+	q := s.pgdb.NewSelect(m).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("peer_node = ?", node).
 		Where("peer_context = ?", peerContext)
 	for _, p := range scopePredicates(scope, false) {
@@ -202,7 +204,7 @@ func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) err
 		return scopeErr
 	}
 	c.UpdatedAt = time.Now().UTC()
-	q := s.pgdb.NewUpdate(a2aConversationToModel(c)).
+	q := s.pgdb.NewUpdate(a2aConversationToModel(c)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Column(mutableA2AConversationColumns...).
 		Where("id = ?", c.ID.String())
 	for _, p := range scopePredicates(scope, true) {
@@ -228,7 +230,7 @@ func (s *Store) ListConversations(ctx context.Context, filter *a2a.ConversationL
 		return nil, scopeErr
 	}
 	var models []a2aConversationModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).OrderExpr("created_at DESC, id DESC")
 	exact := filter != nil && filter.Exact
 	for _, p := range scopePredicates(scope, exact) {
 		q = q.Where(p.Column+" = ?", p.Value)
@@ -271,6 +273,7 @@ func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	d.CreatedAt = now
 	d.UpdatedAt = now
 	d.Scope = scope
+	d.OrchestrationID = a2a.RoutingOrchestration(ctx)
 	if _, err := s.pgdb.NewInsert(a2aDeliveryToModel(d)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("cortex: create a2a delivery: %w", cortex.ErrAlreadyExists)
@@ -295,7 +298,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 		return scopeErr
 	}
 	d.UpdatedAt = time.Now().UTC()
-	q := s.pgdb.NewUpdate(a2aDeliveryToModel(d)).
+	q := s.pgdb.NewUpdate(a2aDeliveryToModel(d)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Column(mutableA2ADeliveryColumns...).
 		Where("id = ?", d.ID.String())
 	for _, p := range scopePredicates(scope, true) {
@@ -325,7 +328,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		return nil, scopeErr
 	}
 	now := time.Now().UTC()
-	q := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).
+	q := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Set("state = ?", a2a.DeliveryDelivering).
 		Set("claimed_at = ?", now).
 		Set("updated_at = ?", now).
@@ -367,7 +370,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, filter a2a.Inbo
 		return nil, scopeErr
 	}
 	var models []a2aDeliveryModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("receiver_agent = ?", agentName).
 		Where("state = ?", a2a.DeliveryDelivered).
 		OrderExpr("created_at ASC, id ASC")
@@ -411,7 +414,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, filter a2a.Inbo
 // mirrors the sweeper's cross-scope read of expired suspensions.
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
 	var models []a2aDeliveryModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("state = ?", a2a.DeliveryQueued).
 		OrderExpr("created_at ASC, id ASC")
 	if limit > 0 {
@@ -444,7 +447,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	// sqlite implementation. The claim predicate stays on the update, so
 	// a worker that comes back to life still wins its own row.
 	var models []a2aDeliveryModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("state = ?", a2a.DeliveryDelivering).
 		Where("claimed_at IS NOT NULL").
 		Where("claimed_at < ?", olderThan.UTC()).
@@ -459,7 +462,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	var n int
 	now := time.Now().UTC()
 	for i := range models {
-		res, err := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).
+		res, err := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 			Set("state = ?", a2a.DeliveryQueued).
 			Set("claimed_at = ?", nil).
 			Set("updated_at = ?", now).
@@ -484,7 +487,7 @@ func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) 
 		return scopeErr
 	}
 	now := time.Now().UTC()
-	q := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).
+	q := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Set("read_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("id = ?", deliveryID.String()).
@@ -527,6 +530,7 @@ func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
 	a.CreatedAt = now
 	a.UpdatedAt = now
 	a.Scope = scope
+	a.OrchestrationID = a2a.RoutingOrchestration(ctx)
 	if _, err := s.pgdb.NewInsert(a2aPendingAskToModel(a)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("cortex: create a2a pending ask: %w", cortex.ErrAlreadyExists)
@@ -546,7 +550,7 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 		return nil, scopeErr
 	}
 	now := time.Now().UTC()
-	q := s.pgdb.NewUpdate((*a2aPendingAskModel)(nil)).
+	q := s.pgdb.NewUpdate((*a2aPendingAskModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Set("claimed_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("reply_with = ?", replyWith).
@@ -583,7 +587,7 @@ func (s *Store) ListExpiredAsks(ctx context.Context, now time.Time, limit int) (
 		return nil, scopeErr
 	}
 	var models []a2aPendingAskModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("claimed_at IS NULL").
 		Where("deadline IS NOT NULL").
 		Where("deadline <= ?", now.UTC()).
@@ -606,7 +610,7 @@ func (s *Store) ListPendingAsksByConversation(ctx context.Context, convID id.Con
 		return nil, scopeErr
 	}
 	var models []a2aPendingAskModel
-	q := s.pgdb.NewSelect(&models).
+	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("conversation_id = ?", convID.String()).
 		Where("claimed_at IS NULL").
 		OrderExpr("created_at ASC")
@@ -637,7 +641,7 @@ func a2aPendingAsksFromModels(models []a2aPendingAskModel) ([]*a2a.PendingAsk, e
 
 func (s *Store) getDelivery(ctx context.Context, scope cortex.Scope, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
 	m := new(a2aDeliveryModel)
-	q := s.pgdb.NewSelect(m).Where("id = ?", deliveryID.String())
+	q := s.pgdb.NewSelect(m).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).Where("id = ?", deliveryID.String())
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -664,7 +668,7 @@ func (s *Store) deliveryExists(ctx context.Context, scope cortex.Scope, delivery
 
 func (s *Store) getPendingAsk(ctx context.Context, scope cortex.Scope, replyWith string) (*a2a.PendingAsk, error) {
 	m := new(a2aPendingAskModel)
-	q := s.pgdb.NewSelect(m).Where("reply_with = ?", replyWith)
+	q := s.pgdb.NewSelect(m).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).Where("reply_with = ?", replyWith)
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -688,3 +692,6 @@ func (s *Store) pendingAskExists(ctx context.Context, scope cortex.Scope, replyW
 		return false, err
 	}
 }
+
+// SupportsOrchestrationRouting reports durable A2A partition support.
+func (s *Store) SupportsOrchestrationRouting() bool { return true }

@@ -219,6 +219,8 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// guarantee rests entirely on it, so it is raced here against each
 	// real backend. The inbox and redrive reads are the other two: one
 	// filters by scope, and the other deliberately does not.
+	t.Run("A2ARoutingBus", func(t *testing.T) { testA2ARoutingBus(t, newStore) })
+	t.Run("A2ARoutingIsolation", func(t *testing.T) { testA2ARoutingIsolation(t, newStore) })
 	t.Run("A2ARoundTrip", func(t *testing.T) { testA2ARoundTrip(t, newStore) })
 	t.Run("A2AClaimPendingAskConcurrency", func(t *testing.T) { testA2AClaimPendingAskConcurrency(t, newStore) })
 	t.Run("A2AClaimDeliveryConcurrency", func(t *testing.T) { testA2AClaimDeliveryConcurrency(t, newStore) })
@@ -4240,23 +4242,21 @@ func testAgentSections(t *testing.T, newStore func(t *testing.T) store.Store) {
 // ──────────────────────────────────────────────────
 
 // newA2AEnvelope builds a valid envelope on the given conversation.
-func newA2AEnvelope(convID id.ConversationID, sender, receiver string) *a2a.Envelope {
+func newA2AEnvelope(convID id.ConversationID, sender string) *a2a.Envelope {
 	return &a2a.Envelope{
 		Entity:         cortex.NewEntity(),
 		ID:             id.NewMessageID(),
 		Performative:   a2a.Request,
 		Sender:         a2a.Address{Agent: sender},
-		Receivers:      []a2a.Address{{Agent: receiver}},
+		Receivers:      []a2a.Address{{Agent: "worker"}},
 		Content:        "do the thing",
 		ConversationID: convID,
-		ReplyWith:      "rw-" + receiver,
+		ReplyWith:      "rw-worker",
 		Hops:           1,
 	}
 }
 
-// parameter is what stops the next one having to change the helper.
-//
-//nolint:unparam // every current case initiates as planner; the
+// newA2AConversation creates an open conversation for the supplied initiator.
 func newA2AConversation(initiator string) *a2a.Conversation {
 	return &a2a.Conversation{
 		Entity:     cortex.NewEntity(),
@@ -4275,7 +4275,7 @@ func testA2ARoundTrip(t *testing.T, newStore func(t *testing.T) store.Store) {
 	if err := s.CreateConversation(ctx, conv); err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	e := newA2AEnvelope(conv.ID, "planner", "worker")
+	e := newA2AEnvelope(conv.ID, "planner")
 	e.Ontology = "ops"
 	e.Protocol = "fipa-request"
 	e.Metadata = map[string]any{"trace": "abc"}
@@ -4537,7 +4537,7 @@ func testA2AScopeIsolation(t *testing.T, newStore func(t *testing.T) store.Store
 	if err := s.CreateConversation(acme, conv); err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	e := newA2AEnvelope(conv.ID, "planner", "worker")
+	e := newA2AEnvelope(conv.ID, "planner")
 	if err := s.CreateMessage(acme, e); err != nil {
 		t.Fatalf("CreateMessage: %v", err)
 	}

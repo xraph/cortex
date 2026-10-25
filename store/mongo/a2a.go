@@ -27,6 +27,7 @@ func (s *Store) CreateMessage(ctx context.Context, e *a2a.Envelope) error {
 	e.CreatedAt = t
 	e.UpdatedAt = t
 	e.Scope = scope
+	e.OrchestrationID = a2a.RoutingOrchestration(ctx)
 
 	if _, err := s.mdb.NewInsert(a2aMessageToModel(e)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
@@ -45,6 +46,7 @@ func (s *Store) GetMessage(ctx context.Context, msgID id.MessageID) (*a2a.Envelo
 	var m a2aMessageModel
 
 	filter := bson.M{"_id": msgID.String()}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -68,6 +70,7 @@ func (s *Store) ListMessages(ctx context.Context, f *a2a.MessageListFilter) ([]*
 
 	exact := f != nil && f.Exact
 	filter := bson.M{}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, exact) {
 		filter[k] = v
 	}
@@ -111,6 +114,7 @@ func (s *Store) CreateConversation(ctx context.Context, c *a2a.Conversation) err
 	c.CreatedAt = t
 	c.UpdatedAt = t
 	c.Scope = scope
+	c.OrchestrationID = a2a.RoutingOrchestration(ctx)
 
 	if _, err := s.mdb.NewInsert(a2aConversationToModel(c)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
@@ -129,6 +133,7 @@ func (s *Store) GetConversation(ctx context.Context, convID id.ConversationID) (
 	var m a2aConversationModel
 
 	filter := bson.M{"_id": convID.String()}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -162,6 +167,7 @@ func (s *Store) GetConversationByPeerContext(ctx context.Context, node, peerCont
 
 	var m a2aConversationModel
 	filter := bson.M{"peer_node": node, "peer_context": peerContext}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -183,6 +189,7 @@ func (s *Store) UpdateConversation(ctx context.Context, c *a2a.Conversation) err
 	m := a2aConversationToModel(c)
 
 	filter := bson.M{"_id": m.ID}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -220,6 +227,7 @@ func (s *Store) ListConversations(ctx context.Context, f *a2a.ConversationListFi
 
 	exact := f != nil && f.Exact
 	filter := bson.M{}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, exact) {
 		filter[k] = v
 	}
@@ -263,6 +271,7 @@ func (s *Store) CreateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	d.CreatedAt = t
 	d.UpdatedAt = t
 	d.Scope = scope
+	d.OrchestrationID = a2a.RoutingOrchestration(ctx)
 
 	if _, err := s.mdb.NewInsert(a2aDeliveryToModel(d)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
@@ -291,6 +300,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	m := a2aDeliveryToModel(d)
 
 	filter := bson.M{"_id": m.ID}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -330,6 +340,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 	}
 	t := now()
 	filter := bson.M{"_id": deliveryID.String(), "state": a2a.DeliveryQueued}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -368,6 +379,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, f a2a.InboxFilt
 		return nil, scopeErr
 	}
 	filter := bson.M{"receiver_agent": agentName, "state": a2a.DeliveryDelivered}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -414,7 +426,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, f a2a.InboxFilt
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
 	var models []a2aDeliveryModel
 	q := s.mdb.NewFind(&models).
-		Filter(bson.M{"state": a2a.DeliveryQueued}).
+		Filter(a2aRoutingFilter(ctx, bson.M{"state": a2a.DeliveryQueued})).
 		Sort(bson.D{{Key: "created_at", Value: 1}, {Key: "_id", Value: 1}})
 	if limit > 0 {
 		q = q.Limit(int64(limit))
@@ -437,6 +449,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 		"state":      a2a.DeliveryDelivering,
 		"claimed_at": bson.M{"$ne": nil, "$lt": olderThan.UTC()},
 	}
+	filter = a2aRoutingFilter(ctx, filter)
 
 	// UpdateMany has no limit, so the batch is bounded by reading the ids
 	// first. The state filter stays on the update, so a worker that comes
@@ -453,7 +466,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	var n int
 	for i := range models {
 		res, err := s.mdb.NewUpdate((*a2aDeliveryModel)(nil)).
-			Filter(bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering}).
+			Filter(a2aRoutingFilter(ctx, bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering})).
 			SetUpdate(bson.M{"$set": bson.M{
 				"state":      a2a.DeliveryQueued,
 				"claimed_at": nil,
@@ -475,6 +488,7 @@ func (s *Store) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) 
 	}
 	t := now()
 	filter := bson.M{"_id": deliveryID.String()}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -505,6 +519,7 @@ func (s *Store) CreatePendingAsk(ctx context.Context, a *a2a.PendingAsk) error {
 	a.CreatedAt = t
 	a.UpdatedAt = t
 	a.Scope = scope
+	a.OrchestrationID = a2a.RoutingOrchestration(ctx)
 
 	if _, err := s.mdb.NewInsert(a2aPendingAskToModel(a)).Exec(ctx); err != nil {
 		if isUniqueViolation(err) {
@@ -530,6 +545,7 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 	}
 	t := now()
 	filter := bson.M{"_id": replyWith, "claimed_at": nil}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -564,6 +580,7 @@ func (s *Store) ListExpiredAsks(ctx context.Context, at time.Time, limit int) ([
 		"claimed_at": nil,
 		"deadline":   bson.M{"$ne": nil, "$lte": at.UTC()},
 	}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -585,6 +602,7 @@ func (s *Store) ListPendingAsksByConversation(ctx context.Context, convID id.Con
 		return nil, scopeErr
 	}
 	filter := bson.M{"conversation_id": convID.String(), "claimed_at": nil}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -627,6 +645,7 @@ func a2aPendingAsksFromModels(models []a2aPendingAskModel) ([]*a2a.PendingAsk, e
 func (s *Store) getDelivery(ctx context.Context, scope cortex.Scope, deliveryID id.DeliveryID) (*a2a.Delivery, error) {
 	var m a2aDeliveryModel
 	filter := bson.M{"_id": deliveryID.String()}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -654,6 +673,7 @@ func (s *Store) deliveryExists(ctx context.Context, scope cortex.Scope, delivery
 func (s *Store) getPendingAsk(ctx context.Context, scope cortex.Scope, replyWith string) (*a2a.PendingAsk, error) {
 	var m a2aPendingAskModel
 	filter := bson.M{"_id": replyWith}
+	filter = a2aRoutingFilter(ctx, filter)
 	for k, v := range scopeFilter(scope, false) {
 		filter[k] = v
 	}
@@ -676,4 +696,18 @@ func (s *Store) pendingAskExists(ctx context.Context, scope cortex.Scope, replyW
 	default:
 		return false, err
 	}
+}
+
+// SupportsOrchestrationRouting reports durable A2A partition support.
+func (s *Store) SupportsOrchestrationRouting() bool { return true }
+
+// a2aRoutingFilter preserves pre-partition documents as global traffic.
+func a2aRoutingFilter(ctx context.Context, filter bson.M) bson.M {
+	key := a2a.RoutingOrchestration(ctx)
+	if key == "" {
+		filter["$or"] = bson.A{bson.M{"orchestration_id": ""}, bson.M{"orchestration_id": bson.M{"$exists": false}}}
+	} else {
+		filter["orchestration_id"] = key
+	}
+	return filter
 }

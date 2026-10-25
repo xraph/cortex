@@ -73,6 +73,7 @@ func ParseAddress(s string) Address {
 // Envelope is one FIPA-ACL message. The first block is the ACL parameter
 // set, verbatim; the second is cortex's own additions, kept apart from it.
 type Envelope struct {
+	OrchestrationID string `json:"orchestration_id,omitempty"`
 	cortex.Entity
 	ID    id.MessageID `json:"id"`
 	Scope cortex.Scope `json:"scope"`

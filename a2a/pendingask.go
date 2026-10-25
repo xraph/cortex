@@ -21,6 +21,7 @@ var (
 // by ReplyWith, which is FIPA's own correlation token, so a reply carrying
 // InReplyTo finds exactly one row.
 type PendingAsk struct {
+	OrchestrationID string `json:"orchestration_id,omitempty"`
 	cortex.Entity
 	Scope          cortex.Scope      `json:"scope"`
 	ReplyWith      string            `json:"reply_with"`

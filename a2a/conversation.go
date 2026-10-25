@@ -21,6 +21,7 @@ const (
 // containment budget: every derived message increments HopsUsed, and the
 // bus refuses delivery once HopsUsed would exceed HopCeiling.
 type Conversation struct {
+	OrchestrationID string `json:"orchestration_id,omitempty"`
 	cortex.Entity
 	ID           id.ConversationID `json:"id"`
 	Scope        cortex.Scope      `json:"scope"`

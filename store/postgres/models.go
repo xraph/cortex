@@ -1363,6 +1363,7 @@ func stringsOrEmpty(v []string) []string {
 // ──────────────────────────────────────────────────
 
 type a2aMessageModel struct {
+	OrchestrationID string `grove:"orchestration_id,notnull"`
 	grove.BaseModel `grove:"table:cortex_a2a_messages"`
 	ID              string            `grove:"id,pk"`
 	Performative    string            `grove:"performative,notnull"`
@@ -1394,31 +1395,32 @@ type a2aMessageModel struct {
 func a2aMessageToModel(e *a2a.Envelope) *a2aMessageModel {
 	l0, l1, l2, extra := scopeColumns(e.Scope)
 	return &a2aMessageModel{
-		ID:             e.ID.String(),
-		Performative:   string(e.Performative),
-		SenderAgent:    e.Sender.Agent,
-		SenderNode:     e.Sender.Node,
-		Receivers:      mustJSON(e.Receivers),
-		ReplyTo:        mustJSON(e.ReplyTo),
-		Content:        e.Content,
-		Language:       e.Language,
-		Encoding:       e.Encoding,
-		Ontology:       e.Ontology,
-		Protocol:       e.Protocol,
-		ConversationID: e.ConversationID.String(),
-		ReplyWith:      e.ReplyWith,
-		InReplyTo:      e.InReplyTo,
-		ReplyBy:        e.ReplyBy,
-		Hops:           e.Hops,
-		OriginRunID:    e.OriginRunID.String(),
-		Metadata:       mustJSON(e.Metadata),
-		ScopeL0:        l0,
-		ScopeL1:        l1,
-		ScopeL2:        l2,
-		ScopeExtra:     extra,
-		ScopeCanon:     e.Scope.Canonical(),
-		CreatedAt:      e.CreatedAt,
-		UpdatedAt:      e.UpdatedAt,
+		OrchestrationID: e.OrchestrationID,
+		ID:              e.ID.String(),
+		Performative:    string(e.Performative),
+		SenderAgent:     e.Sender.Agent,
+		SenderNode:      e.Sender.Node,
+		Receivers:       mustJSON(e.Receivers),
+		ReplyTo:         mustJSON(e.ReplyTo),
+		Content:         e.Content,
+		Language:        e.Language,
+		Encoding:        e.Encoding,
+		Ontology:        e.Ontology,
+		Protocol:        e.Protocol,
+		ConversationID:  e.ConversationID.String(),
+		ReplyWith:       e.ReplyWith,
+		InReplyTo:       e.InReplyTo,
+		ReplyBy:         e.ReplyBy,
+		Hops:            e.Hops,
+		OriginRunID:     e.OriginRunID.String(),
+		Metadata:        mustJSON(e.Metadata),
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      e.Scope.Canonical(),
+		CreatedAt:       e.CreatedAt,
+		UpdatedAt:       e.UpdatedAt,
 	}
 }
 
@@ -1432,20 +1434,21 @@ func a2aMessageFromModel(m *a2aMessageModel) (*a2a.Envelope, error) {
 		return nil, fmt.Errorf("a2a message %s: %w", msgID, err)
 	}
 	e := &a2a.Envelope{
-		Entity:       cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:           msgID,
-		Scope:        scope,
-		Performative: a2a.Performative(m.Performative),
-		Sender:       a2a.Address{Agent: m.SenderAgent, Node: m.SenderNode},
-		Content:      m.Content,
-		Language:     m.Language,
-		Encoding:     m.Encoding,
-		Ontology:     m.Ontology,
-		Protocol:     m.Protocol,
-		ReplyWith:    m.ReplyWith,
-		InReplyTo:    m.InReplyTo,
-		ReplyBy:      m.ReplyBy,
-		Hops:         m.Hops,
+		OrchestrationID: m.OrchestrationID,
+		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:              msgID,
+		Scope:           scope,
+		Performative:    a2a.Performative(m.Performative),
+		Sender:          a2a.Address{Agent: m.SenderAgent, Node: m.SenderNode},
+		Content:         m.Content,
+		Language:        m.Language,
+		Encoding:        m.Encoding,
+		Ontology:        m.Ontology,
+		Protocol:        m.Protocol,
+		ReplyWith:       m.ReplyWith,
+		InReplyTo:       m.InReplyTo,
+		ReplyBy:         m.ReplyBy,
+		Hops:            m.Hops,
 	}
 	if m.ConversationID != "" {
 		convID, convErr := id.ParseWithPrefix(m.ConversationID, id.PrefixConversation)
@@ -1478,6 +1481,7 @@ func a2aMessageFromModel(m *a2aMessageModel) (*a2a.Envelope, error) {
 }
 
 type a2aConversationModel struct {
+	OrchestrationID string `grove:"orchestration_id,notnull"`
 	grove.BaseModel `grove:"table:cortex_a2a_conversations"`
 	ID              string            `grove:"id,pk"`
 	Protocol        string            `grove:"protocol,notnull"`
@@ -1502,24 +1506,25 @@ type a2aConversationModel struct {
 func a2aConversationToModel(c *a2a.Conversation) *a2aConversationModel {
 	l0, l1, l2, extra := scopeColumns(c.Scope)
 	return &a2aConversationModel{
-		ID:             c.ID.String(),
-		Protocol:       c.Protocol,
-		InitiatorAgent: c.Initiator.Agent,
-		InitiatorNode:  c.Initiator.Node,
-		Participants:   mustJSON(c.Participants),
-		Status:         c.Status,
-		HopCeiling:     c.HopCeiling,
-		HopsUsed:       c.HopsUsed,
-		Deadline:       c.Deadline,
-		PeerNode:       c.PeerNode,
-		PeerContext:    c.PeerContext,
-		ScopeL0:        l0,
-		ScopeL1:        l1,
-		ScopeL2:        l2,
-		ScopeExtra:     extra,
-		ScopeCanon:     c.Scope.Canonical(),
-		CreatedAt:      c.CreatedAt,
-		UpdatedAt:      c.UpdatedAt,
+		OrchestrationID: c.OrchestrationID,
+		ID:              c.ID.String(),
+		Protocol:        c.Protocol,
+		InitiatorAgent:  c.Initiator.Agent,
+		InitiatorNode:   c.Initiator.Node,
+		Participants:    mustJSON(c.Participants),
+		Status:          c.Status,
+		HopCeiling:      c.HopCeiling,
+		HopsUsed:        c.HopsUsed,
+		Deadline:        c.Deadline,
+		PeerNode:        c.PeerNode,
+		PeerContext:     c.PeerContext,
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      c.Scope.Canonical(),
+		CreatedAt:       c.CreatedAt,
+		UpdatedAt:       c.UpdatedAt,
 	}
 }
 
@@ -1533,17 +1538,18 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 		return nil, fmt.Errorf("a2a conversation %s: %w", convID, err)
 	}
 	c := &a2a.Conversation{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          convID,
-		Scope:       scope,
-		Protocol:    m.Protocol,
-		Initiator:   a2a.Address{Agent: m.InitiatorAgent, Node: m.InitiatorNode},
-		Status:      m.Status,
-		HopCeiling:  m.HopCeiling,
-		HopsUsed:    m.HopsUsed,
-		Deadline:    m.Deadline,
-		PeerNode:    m.PeerNode,
-		PeerContext: m.PeerContext,
+		OrchestrationID: m.OrchestrationID,
+		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:              convID,
+		Scope:           scope,
+		Protocol:        m.Protocol,
+		Initiator:       a2a.Address{Agent: m.InitiatorAgent, Node: m.InitiatorNode},
+		Status:          m.Status,
+		HopCeiling:      m.HopCeiling,
+		HopsUsed:        m.HopsUsed,
+		Deadline:        m.Deadline,
+		PeerNode:        m.PeerNode,
+		PeerContext:     m.PeerContext,
 	}
 	if err := unmarshalField("participants", m.Participants, &c.Participants); err != nil {
 		return nil, err
@@ -1552,6 +1558,7 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 }
 
 type a2aDeliveryModel struct {
+	OrchestrationID string `grove:"orchestration_id,notnull"`
 	grove.BaseModel `grove:"table:cortex_a2a_deliveries"`
 	ID              string            `grove:"id,pk"`
 	MessageID       string            `grove:"message_id,notnull"`
@@ -1575,22 +1582,23 @@ type a2aDeliveryModel struct {
 func a2aDeliveryToModel(d *a2a.Delivery) *a2aDeliveryModel {
 	l0, l1, l2, extra := scopeColumns(d.Scope)
 	return &a2aDeliveryModel{
-		ID:            d.ID.String(),
-		MessageID:     d.MessageID.String(),
-		ReceiverAgent: d.Receiver.Agent,
-		ReceiverNode:  d.Receiver.Node,
-		State:         d.State,
-		Error:         d.Error,
-		DeliveredAt:   d.DeliveredAt,
-		ReadAt:        d.ReadAt,
-		RunID:         d.RunID.String(),
-		ScopeL0:       l0,
-		ScopeL1:       l1,
-		ScopeL2:       l2,
-		ScopeExtra:    extra,
-		ScopeCanon:    d.Scope.Canonical(),
-		CreatedAt:     d.CreatedAt,
-		UpdatedAt:     d.UpdatedAt,
+		OrchestrationID: d.OrchestrationID,
+		ID:              d.ID.String(),
+		MessageID:       d.MessageID.String(),
+		ReceiverAgent:   d.Receiver.Agent,
+		ReceiverNode:    d.Receiver.Node,
+		State:           d.State,
+		Error:           d.Error,
+		DeliveredAt:     d.DeliveredAt,
+		ReadAt:          d.ReadAt,
+		RunID:           d.RunID.String(),
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      d.Scope.Canonical(),
+		CreatedAt:       d.CreatedAt,
+		UpdatedAt:       d.UpdatedAt,
 	}
 }
 
@@ -1608,16 +1616,17 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 		return nil, fmt.Errorf("a2a delivery %s: message id: %w", dlvID, err)
 	}
 	d := &a2a.Delivery{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          dlvID,
-		Scope:       scope,
-		MessageID:   msgID,
-		Receiver:    a2a.Address{Agent: m.ReceiverAgent, Node: m.ReceiverNode},
-		State:       m.State,
-		Error:       m.Error,
-		ClaimedAt:   m.ClaimedAt,
-		DeliveredAt: m.DeliveredAt,
-		ReadAt:      m.ReadAt,
+		OrchestrationID: m.OrchestrationID,
+		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:              dlvID,
+		Scope:           scope,
+		MessageID:       msgID,
+		Receiver:        a2a.Address{Agent: m.ReceiverAgent, Node: m.ReceiverNode},
+		State:           m.State,
+		Error:           m.Error,
+		ClaimedAt:       m.ClaimedAt,
+		DeliveredAt:     m.DeliveredAt,
+		ReadAt:          m.ReadAt,
 	}
 	if m.RunID != "" {
 		runID, runErr := id.ParseWithPrefix(m.RunID, id.PrefixAgentRun)
@@ -1630,6 +1639,7 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 }
 
 type a2aPendingAskModel struct {
+	OrchestrationID string `grove:"orchestration_id,notnull"`
 	grove.BaseModel `grove:"table:cortex_a2a_pending_asks"`
 	ReplyWith       string            `grove:"reply_with,pk"`
 	ConversationID  string            `grove:"conversation_id,notnull"`
@@ -1653,23 +1663,24 @@ type a2aPendingAskModel struct {
 func a2aPendingAskToModel(a *a2a.PendingAsk) *a2aPendingAskModel {
 	l0, l1, l2, extra := scopeColumns(a.Scope)
 	return &a2aPendingAskModel{
-		ReplyWith:      a.ReplyWith,
-		ConversationID: a.ConversationID.String(),
-		MessageID:      a.MessageID.String(),
-		AskerRunID:     a.AskerRunID.String(),
-		AskerAgent:     a.AskerAgent,
-		ToolCallID:     a.ToolCallID,
-		ExpectedAgent:  a.Expected.Agent,
-		ExpectedNode:   a.Expected.Node,
-		Deadline:       a.Deadline,
-		ClaimedAt:      a.ClaimedAt,
-		ScopeL0:        l0,
-		ScopeL1:        l1,
-		ScopeL2:        l2,
-		ScopeExtra:     extra,
-		ScopeCanon:     a.Scope.Canonical(),
-		CreatedAt:      a.CreatedAt,
-		UpdatedAt:      a.UpdatedAt,
+		OrchestrationID: a.OrchestrationID,
+		ReplyWith:       a.ReplyWith,
+		ConversationID:  a.ConversationID.String(),
+		MessageID:       a.MessageID.String(),
+		AskerRunID:      a.AskerRunID.String(),
+		AskerAgent:      a.AskerAgent,
+		ToolCallID:      a.ToolCallID,
+		ExpectedAgent:   a.Expected.Agent,
+		ExpectedNode:    a.Expected.Node,
+		Deadline:        a.Deadline,
+		ClaimedAt:       a.ClaimedAt,
+		ScopeL0:         l0,
+		ScopeL1:         l1,
+		ScopeL2:         l2,
+		ScopeExtra:      extra,
+		ScopeCanon:      a.Scope.Canonical(),
+		CreatedAt:       a.CreatedAt,
+		UpdatedAt:       a.UpdatedAt,
 	}
 }
 
@@ -1679,14 +1690,15 @@ func a2aPendingAskFromModel(m *a2aPendingAskModel) (*a2a.PendingAsk, error) {
 		return nil, fmt.Errorf("a2a pending ask %s: %w", m.ReplyWith, err)
 	}
 	a := &a2a.PendingAsk{
-		Entity:     cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		Scope:      scope,
-		ReplyWith:  m.ReplyWith,
-		AskerAgent: m.AskerAgent,
-		ToolCallID: m.ToolCallID,
-		Expected:   a2a.Address{Agent: m.ExpectedAgent, Node: m.ExpectedNode},
-		Deadline:   m.Deadline,
-		ClaimedAt:  m.ClaimedAt,
+		OrchestrationID: m.OrchestrationID,
+		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		Scope:           scope,
+		ReplyWith:       m.ReplyWith,
+		AskerAgent:      m.AskerAgent,
+		ToolCallID:      m.ToolCallID,
+		Expected:        a2a.Address{Agent: m.ExpectedAgent, Node: m.ExpectedNode},
+		Deadline:        m.Deadline,
+		ClaimedAt:       m.ClaimedAt,
 	}
 	if m.ConversationID != "" {
 		convID, convErr := id.ParseWithPrefix(m.ConversationID, id.PrefixConversation)
