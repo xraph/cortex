@@ -6304,3 +6304,39 @@ already bound to executions, and callbacks mutating their returned reservation.
 The bus copies admission values before callbacks, and final mutation races pass
 on all backends. These checks qualify the local admission implementation;
 deployed recovery and the deferred Linux sandbox remain unverified.
+
+### Atomic orchestration child retention
+
+The reserved service uses `orchestration.ChildRunStore` before dispatch when the
+store provides it. SQLite, PostgreSQL and MongoDB implement single-use linkage
+at the parent's exact scope. Revision-checked updates merge retained child IDs,
+so stale strategy finalization cannot erase children admitted asynchronously.
+Terminal parents reject new links and cannot be reopened by stale updates.
+Custom stores keep the serialized snapshot fallback until they implement this
+capability; it does not authorize asynchronous admission for them.
+
+Regressions reproduced lost children and full-row admission before the fixes.
+The shared conformance suite covers duplicate and concurrent links, completion
+races, stale finalization and a lost acknowledgment after a committed link.
+The service retains the attempted identity and refuses execution on that error.
+Fault tests also bound contention retries and reject exhausted revisions.
+SQL upgrades retain historical children and replay unrecorded schema changes;
+MongoDB accepts historical documents without a revision. Older writers must be
+stopped during rollout because they do not participate in revision checks.
+
+The user approved restarting Docker, and the daemon recovered. Final formatting,
+all-ten-module lint, root build, docs types/lint/build, state-machine and full
+orchestration races pass. Final orchestration conformance and upgrade races pass
+without skips: SQLite 41.789s, PostgreSQL 12.329s, MongoDB 39.089s. Prepared runtime
+races pass in 132.202s. The broader root run hit a scheduler-renewal deadline;
+three focused repeats passed unchanged, followed by the complete engine package
+in 139.026s. The broad PostgreSQL and SQLite suites passed. MongoDB also hit a
+verifier-renewal cancellation; three isolated repeats passed unchanged, followed
+by the complete MongoDB package in 1229.936s without skips. These reruns needed
+no source or timeout changes. Only scopespy was excluded for its documented
+local macOS behavior.
+
+Private prepared-team messaging remains disabled. Frozen roster dispatch,
+durable team continuation, authenticated settlement and deployed recovery still
+need their integrations and qualification. Live Linux sandbox selection remains
+deferred by the user.

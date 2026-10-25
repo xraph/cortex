@@ -220,6 +220,10 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// real backend. The inbox and redrive reads are the other two: one
 	// filters by scope, and the other deliberately does not.
 	t.Run("A2ARoutingBus", func(t *testing.T) { testA2ARoutingBus(t, newStore) })
+	t.Run("OrchestrationStaleChildren", func(t *testing.T) { testOrchestrationStaleChildren(t, newStore) })
+	t.Run("OrchestrationChildLinks", func(t *testing.T) { testOrchestrationChildLinks(t, newStore) })
+	t.Run("OrchestrationLinkedService", func(t *testing.T) { testOrchestrationLinkedService(t, newStore) })
+	t.Run("OrchestrationLinkCompletionRace", func(t *testing.T) { testOrchestrationLinkCompletionRace(t, newStore) })
 	t.Run("A2ABoundDeliveryCannotBeReclaimed", func(t *testing.T) { testA2ABoundDeliveryCannotBeReclaimed(t, newStore) })
 	t.Run("A2ADeliveryRunBinding", func(t *testing.T) { testA2ADeliveryRunBinding(t, newStore) })
 	t.Run("A2AReservedDispatch", func(t *testing.T) { testA2AReservedDispatch(t, newStore) })

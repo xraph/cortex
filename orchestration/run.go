@@ -40,6 +40,13 @@ type RunStore interface {
 	CountOrchestrationRuns(ctx context.Context, filter *RunListFilter) (int64, error)
 }
 
+// ChildRunStore atomically links one reserved child while its parent is running.
+// A link is single-use. Duplicate or uncertain acknowledgments never authorize
+// another execution. Implementations preserve linked IDs through later updates.
+type ChildRunStore interface {
+	LinkOrchestrationChild(context.Context, id.OrchestrationID, id.AgentRunID) error
+}
+
 // RunListFilter controls pagination and filtering for orchestration run
 // listing. Scope arrives on the context; Exact narrows to rows stored at
 // precisely that depth instead of everything beneath it.

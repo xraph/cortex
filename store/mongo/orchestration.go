@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
+	"github.com/xraph/cortex/store/internal/orchestrationstate"
 )
 
 // CreateOrchestration persists a new orchestration config, stamping the
@@ -303,45 +304,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 // AppID field (fix round 1). created_at is included, matching
 // mutableOrchestrationRunColumns on postgres/sqlite.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
-	scope, scopeErr := cortex.RequireScope(ctx)
-	if scopeErr != nil {
-		return scopeErr
-	}
-	r.UpdatedAt = now()
-	m := orchestrationRunToModel(r)
-
-	filter := bson.M{"_id": m.ID}
-	for k, v := range scopeFilter(scope, true) {
-		filter[k] = v
-	}
-
-	set := bson.M{
-		"config_id":     m.ConfigID,
-		"strategy":      m.Strategy,
-		"status":        m.Status,
-		"input":         m.Input,
-		"output":        m.Output,
-		"error":         m.Error,
-		"agent_run_ids": m.AgentRunIDs,
-		"started_at":    m.StartedAt,
-		"completed_at":  m.CompletedAt,
-		"created_at":    m.CreatedAt,
-		"updated_at":    m.UpdatedAt,
-	}
-
-	res, err := s.mdb.NewUpdate((*orchestrationRunModel)(nil)).
-		Filter(filter).
-		SetUpdate(bson.M{"$set": set}).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("cortex/mongo: update orchestration run: %w", err)
-	}
-
-	if res.MatchedCount() == 0 {
-		return cortex.ErrOrchestrationRunNotFound
-	}
-
-	return nil
+	return orchestrationstate.Update(ctx, orchestrationRunDriver{store: s}, r)
 }
 
 // ListOrchestrationRuns returns orchestration runs within the caller's

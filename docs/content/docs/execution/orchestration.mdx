@@ -141,6 +141,32 @@ that the child has started, authenticate its usage or authorize replay. Prepared
 agent execution and isolated sessions use the engine API below. Restricted
 messaging still requires an isolated route.
 
+### Preserve children across concurrent writes
+
+SQLite, PostgreSQL and MongoDB implement `orchestration.ChildRunStore`.
+`LinkOrchestrationChild(ctx, teamID, childID)` records one child at the team's
+exact scope while its status is running. A duplicate returns `ErrAlreadyExists`.
+A completed or failed parent returns `ErrOrchestrationRunClosed`.
+
+The reserved service uses this capability before dispatch. If you supply a
+custom store without it, the service retains its serialized snapshot writes;
+you must implement atomic linkage before admitting children asynchronously.
+A lost acknowledgment is a failure even when the link reached storage. Reading
+that identity back does not authorize another execution.
+
+Each built-in store compares a private revision when updating the parent and
+retains the union of recorded child IDs. Finalizing an old snapshot therefore
+keeps children linked by another worker. A race between completion and linkage
+either retains the admitted child or refuses its admission after completion.
+Stale updates cannot reopen a terminal parent or change its terminal status.
+You can still update metadata under the same terminal status. This is child
+retention, not conflict resolution for every output or metadata field.
+
+Run migrations before starting these writers. SQL adds a revision column and
+supports replay after an unrecorded schema change. MongoDB treats old documents
+without the field as revision zero. Stop older writers during rollout because
+they do not participate in revision checks. SQL downgrade is refused.
+
 ## Durable team capacity
 
 `orchestration.BudgetStore` accounts for a team independently of task plans and
@@ -172,8 +198,8 @@ historical receipt does not authorize another provider call. Use
 `GetOrchestrationBudgetSnapshot` for consistent charges and closure status, and
 `ListOrchestrationReservations` for bounded recovery discovery.
 
-This is the durable accounting API. Automatic prepared-team dispatch and session
-or A2A isolation still need their runtime integration. Creating an account alone
+This is the durable accounting API. Prepared-team dispatch and fresh sessions
+use the engine API above; private A2A dispatch still needs integration. Creating an account alone
 does not create an orchestration run, execute a child or prove a result correct.
 
 ## Strategies

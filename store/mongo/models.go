@@ -962,6 +962,7 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 // ──────────────────────────────────────────────────
 
 type orchestrationRunModel struct {
+	Revision        int64 `grove:"revision" bson:"revision"`
 	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
 	ID              string            `grove:"id,pk"         bson:"_id"`
 	ConfigID        string            `grove:"config_id"     bson:"config_id"`

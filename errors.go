@@ -22,6 +22,8 @@ var (
 	ErrCheckpointNotFound       = errors.New("cortex: checkpoint not found")
 	ErrOrchestrationNotFound    = errors.New("cortex: orchestration not found")
 	ErrOrchestrationRunNotFound = errors.New("cortex: orchestration run not found")
+	ErrOrchestrationRunConflict = errors.New("cortex: orchestration run revision conflict")
+	ErrOrchestrationRunClosed   = errors.New("cortex: orchestration run is closed")
 	ErrWorkingMemoryNotFound    = errors.New("cortex: working memory not found")
 	ErrOverlayNotFound          = errors.New("cortex: prompt overlay not found")
 

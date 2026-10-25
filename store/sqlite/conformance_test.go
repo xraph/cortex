@@ -12,6 +12,10 @@ import (
 // against sqlite. No docker involved: newTestStore opens a fresh
 // temp-file-backed database per subtest via the existing harness.
 func TestConformance(t *testing.T) {
+	t.Run("OrchestrationRevisionUpgrade", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.OrchestrationSQLRevisionUpgrade(t, s, func(query string) error { _, err := s.sdb.Exec(context.Background(), query); return err })
+	})
 	t.Run("A2ARoutingUpgrade", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.A2ASQLRoutingUpgrade(t, s, func(query string) error { _, err := s.sdb.Exec(context.Background(), query); return err })

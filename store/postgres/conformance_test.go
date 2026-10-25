@@ -66,6 +66,12 @@ func TestConformance(t *testing.T) {
 		}
 		storetest.A2ASQLRoutingUpgrade(t, s, func(query string) error { _, execErr := s.pgdb.Exec(ctx, query); return execErr })
 	})
+	t.Run("OrchestrationRevisionUpgrade", func(t *testing.T) {
+		if clearErr := truncateConformanceTables(ctx, s); clearErr != nil {
+			t.Fatal(clearErr)
+		}
+		storetest.OrchestrationSQLRevisionUpgrade(t, s, func(query string) error { _, execErr := s.pgdb.Exec(ctx, query); return execErr })
+	})
 	// One container serves the whole run: spinning up a fresh postgres
 	// instance per subtest would make this suite minutes slower for no
 	// isolation benefit truncateAll doesn't already provide.

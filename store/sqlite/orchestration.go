@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
+	"github.com/xraph/cortex/store/internal/orchestrationstate"
 )
 
 // mutableOrchestrationConfigColumns is every cortex_orchestration_configs
@@ -42,6 +43,7 @@ var mutableOrchestrationConfigColumns = []string{
 // for cortex_orchestration_runs: everything except the five scope columns
 // and (for the same reason as above) app_id.
 var mutableOrchestrationRunColumns = []string{
+	"revision",
 	"config_id",
 	"strategy",
 	"status",
@@ -272,28 +274,7 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 // fields within the caller's scope. Scope is immutable after creation,
 // same as UpdateOrchestration above.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
-	scope, scopeErr := cortex.RequireScope(ctx)
-	if scopeErr != nil {
-		return scopeErr
-	}
-	r.UpdatedAt = time.Now().UTC()
-	m := orchestrationRunToModel(r)
-	q := s.sdb.NewUpdate(m).Column(mutableOrchestrationRunColumns...).WherePK()
-	for _, p := range scopePredicates(scope, true) {
-		q = q.Where(p.Column+" = ?", p.Value)
-	}
-	res, err := q.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("cortex/sqlite: update orchestration run: %w", err)
-	}
-	n, rowsErr := res.RowsAffected()
-	if rowsErr != nil {
-		return fmt.Errorf("cortex/sqlite: update orchestration run rows affected: %w", rowsErr)
-	}
-	if n == 0 {
-		return cortex.ErrOrchestrationRunNotFound
-	}
-	return nil
+	return orchestrationstate.Update(ctx, orchestrationRunDriver{store: s}, r)
 }
 
 func (s *Store) ListOrchestrationRuns(ctx context.Context, filter *orchestration.RunListFilter) ([]*orchestration.Run, error) {

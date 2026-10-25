@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -60,7 +61,7 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 			reserveErr = errors.Join(reserveErr, cortex.ErrRunIncomplete)
 		} else {
 			r.record.AgentRunIDs = append(r.record.AgentRunIDs, inv.RunID)
-			reserveErr = errors.Join(reserveErr, persistOrchestrationRun(ctx, r.runs, r.record))
+			reserveErr = errors.Join(reserveErr, r.persistChild(ctx, inv.RunID))
 		}
 	}
 	if !validID || inv.Execute == nil {
@@ -96,4 +97,16 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 	}
 	result.Err = errors.Join(result.Err, runErr, r.writeErr)
 	return result, result.Err
+}
+
+func (r *persistingRunner) persistChild(ctx context.Context, child id.AgentRunID) error {
+	links, ok := r.runs.(ChildRunStore)
+	if !ok {
+		// Legacy stores retain the service's serialized snapshot behavior.
+		// Asynchronous admission requires the atomic capability explicitly.
+		return persistOrchestrationRun(ctx, r.runs, r.record)
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return links.LinkOrchestrationChild(writeCtx, r.record.ID, child)
 }

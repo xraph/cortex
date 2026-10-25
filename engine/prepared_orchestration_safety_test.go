@@ -172,14 +172,14 @@ type teamCloseBeforeActivation struct {
 	closed bool
 }
 
-func (s *teamCloseBeforeActivation) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
-	if !s.closed && r.Status == orchestration.StatusRunning && len(r.AgentRunIDs) > 0 {
+func (s *teamCloseBeforeActivation) LinkOrchestrationChild(ctx context.Context, team id.OrchestrationID, child id.AgentRunID) error {
+	if !s.closed {
 		s.closed = true
-		if err := s.CloseOrchestrationBudget(ctx, r.ID); err != nil {
+		if err := s.CloseOrchestrationBudget(ctx, team); err != nil {
 			return err
 		}
 	}
-	return s.Store.UpdateOrchestrationRun(ctx, r)
+	return s.Store.LinkOrchestrationChild(ctx, team, child)
 }
 
 func TestPreparedTeamRechecksAccountBeforeActivation(t *testing.T) {

@@ -180,3 +180,12 @@ func TestA2ARoutingUpgrade(t *testing.T) {
 		}
 	})
 }
+
+func TestOrchestrationRevisionUpgrade(t *testing.T) {
+	s := newConformanceStore(t, false)
+	storetest.OrchestrationRevisionUpgrade(t, s, func() {
+		if _, err := s.mdb.Collection(colOrchestrationRuns).UpdateMany(context.Background(), bson.M{}, bson.M{"$unset": bson.M{"revision": ""}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
