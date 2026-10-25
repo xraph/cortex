@@ -6639,9 +6639,9 @@ identity rejection and timed-out shutdown with an undrained callback. The focuse
 engine lifecycle and prepared/task-call regression passed in 27.325s. Full
 coordination and orchestration races passed in 22.227s and 2.181s. Root build and
 docs types/lint/build passed. The final focused recovery recheck passed in 16.872s.
-Scoped formatting and root lint pass. The all-module lint pass is currently
-blocked by three findings in concurrent, uncommitted optimizer work; the other
-nine modules pass. Those files are outside this packet's ownership.
+Scoped formatting and all-ten-module lint pass. Three findings in concurrent
+optimizer work initially blocked the full lint pass; its owner fixed them before
+the final rerun. The runtime packet is committed and pushed as `e540ac8`.
 
 Durable handoff events, private prepared A2A tools, installed-provider recovery
 and live Linux sandbox qualification remain open. This packet does not complete
@@ -6668,5 +6668,7 @@ Tests commit an auxiliary-agent change between reads to prove one snapshot, then
 observe the conflict on the next pass. Missing store and snapshot capabilities,
 an incomplete team view, wrong receipt scope, cancellation after capture and
 missing auxiliary model bindings all fail closed. Scoped formatting, root lint,
-root build and docs types/lint/build pass. All-module lint still reports the same
-three findings in the concurrent optimizer work; its other nine modules pass.
+root build and docs types/lint/build pass. All-ten-module lint passes after the
+optimizer owner's fixes. The compatibility packet is committed and pushed as
+`d0eb82f`. CI for that commit is still running; local checks do not establish its
+result.
