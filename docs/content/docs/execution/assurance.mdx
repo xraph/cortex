@@ -40,6 +40,26 @@ Unsupported stores, failed transactions and any nonempty skill knowledge referen
 
 An atomic store receipt covers source collection only. Model and tool revisions, contextual correctness, authorization, external state and evaluation isolation still need their own checks. Keep reproducibility-required evaluation disabled whenever any required guarantee is missing.
 
+### Check stored sources before adoption
+
+Call `Engine.CheckPreparedSources(ctx, prepared)` when you need to compare an
+existing artifact with current source records. It reads the retained agent,
+persona, skill, trait and overlay digests in one new store snapshot, including
+overlays that were absent at preparation. Derived prompt edits retain this source
+read set, so you can check an edited candidate without replacing its content.
+
+The result binds `PreparedDigest` to a new `Snapshot` receipt and `SourceCount`.
+Changed or missing records return `ErrPreparationConflict`. An incomplete read
+set, unsupported snapshot provider, failed transaction or scope mismatch returns
+an error without a result. The check runs no model, scanner, tool or execution
+calls and requires `PreparationSnapshotter` even when the artifact was originally
+prepared with independent reads.
+
+Use this as the stored-source part of your compatibility policy. Model and tool
+implementation pins, external knowledge, policy revisions and current grants
+still need their own validation. The receipt describes one observation; it does
+not lock those sources through a later activation or authorize execution.
+
 ## Observe failures
 
 `plugin.RunTerminated` receives a content-free summary after the terminal store update succeeds. It includes incomplete and cancelled runs. `plugin.PublicationRejected` reports a bounded policy reason, including rejection before a run exists. Its run ID is then empty.

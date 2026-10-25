@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
@@ -103,6 +104,31 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 	if err != nil || after.SystemPrompt != "after" {
 		t.Fatalf("writer did not commit: %v %v", after, err)
 	}
+	t.Run("current prepared sources", func(t *testing.T) {
+		ag.PersonaRef, ag.InlineSkills, ag.InlineTraits = p.Name, []string{sk.Name}, []string{tr.Name}
+		if updateErr := s.Update(ctx, ag); updateErr != nil {
+			t.Fatal(updateErr)
+		}
+		e, engineErr := engine.New(engine.WithStore(s), engine.WithAtomicPreparation())
+		if engineErr != nil {
+			t.Fatal(engineErr)
+		}
+		prepared, prepareErr := e.PrepareAgent(ctx, ag.ID, nil)
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		checked, checkErr := e.CheckPreparedSources(ctx, prepared)
+		if checkErr != nil || checked == nil || checked.PreparedDigest != prepared.Digest() || checked.SourceCount != 6 || checked.Snapshot.Scope != scope.Canonical() {
+			t.Fatalf("current source check failed: %+v %v", checked, checkErr)
+		}
+		overlay.Model = "changed ancestor"
+		if updateErr := s.UpdateOverlay(parentCtx, overlay); updateErr != nil {
+			t.Fatal(updateErr)
+		}
+		if checked, checkErr = e.CheckPreparedSources(ctx, prepared); checked != nil || !errors.Is(checkErr, cortex.ErrPreparationConflict) {
+			t.Fatalf("changed ancestor accepted: %+v %v", checked, checkErr)
+		}
+	})
 	sentinel := errors.New("collection rejected")
 	receipt, err = provider.CapturePreparation(ctx, func(store.PreparationSources) error { return sentinel })
 	if receipt != nil || !errors.Is(err, sentinel) {

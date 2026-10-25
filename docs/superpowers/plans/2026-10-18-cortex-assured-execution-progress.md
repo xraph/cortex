@@ -5899,3 +5899,34 @@ Host plan discovery must still include completed/cancelled plans with debt.
 Unaccepted terminal-task accounting, concrete billing authentication and live
 qualification remain open. CI for the preceding `1ce462c` passed its security job,
 confirming the crash-harness file-access fix.
+
+The database retry passed on PostgreSQL (41.530s) and MongoDB (54.937s), with no
+skips. Docker was responding again, so no restart was needed. CI for `1ce462c`
+finished successfully across every job, including Linux tests and security.
+
+### S4.5 prepared source compatibility observation
+
+`Engine.CheckPreparedSources` compares an artifact's retained source digests with
+current records in one read-only store snapshot. Its receipt binds the exact
+prepared digest and source count to that capture. Derived edits keep their source
+read set, and absent ancestor overlays are checked too. Changes, missing records,
+malformed manifests and unsupported snapshot providers return no result.
+
+The capture contract is shared with atomic preparation. Both reject ignored
+callback errors, duplicate or missing callbacks, invalid receipts, transaction
+failure and cancellation. The source check does not invoke scanners, models or
+tools and creates no run. It covers stored sources only; implementation pins,
+external knowledge, host policy and grants remain separate compatibility checks.
+No lock survives into a later activation.
+
+Tests first failed because the new read API was absent. The preparation regression
+suite passed in 49.224s, followed by the final source-check and atomic-preparation
+race rerun in 19.764s. SQLite, PostgreSQL and MongoDB passed the capture conformance
+fixture with the new engine check, including a changed ancestor overlay. The
+SQLite concurrent-write test confirms one consistent observation and rejection of
+the committed edit on the next check. Malformed capture and manifest tests passed.
+
+Root build, docs type/lint/build and scoped formatting passed. The final shared
+lint run passed the root and every module except optimization, which reported two
+formatting issues in its concurrent packet. Publication remains pending that
+shared check. Optimizer adapter wiring and the remaining four-stage gates are open.

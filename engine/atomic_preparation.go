@@ -56,37 +56,23 @@ func (e *Engine) prepareAtomicAgent(ctx context.Context, agentID id.AgentID, ove
 		return nil, cortex.ErrPreparationUnavailable
 	}
 	var snap *preparedSnapshot
-	calls := 0
-	var collectionErr error
-	receipt, err := provider.CapturePreparation(ctx, func(sources store.PreparationSources) error {
-		calls++
-		if calls != 1 || sources == nil {
-			collectionErr = cortex.ErrPreparationUnavailable
-			return collectionErr
-		}
+	receipt, err := capturePreparation(ctx, provider, func(sources store.PreparationSources) error {
 		captureCtx := context.WithValue(ctx, preparationSourcesKey{}, sources)
 		ag, readErr := sources.Get(captureCtx, agentID)
 		if readErr != nil {
-			collectionErr = readErr
 			return readErr
 		}
 		if ag == nil || ag.ID != agentID {
-			collectionErr = cortex.ErrInvalidPrepared
-			return collectionErr
+			return cortex.ErrInvalidPrepared
 		}
-		snap, collectionErr = e.collectPreparedAgent(captureCtx, ag, overrides)
-		return collectionErr
+		var err error
+		snap, err = e.collectPreparedAgent(captureCtx, ag, overrides)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	if collectionErr != nil {
-		return nil, collectionErr
-	}
-	if contextErr := ctx.Err(); contextErr != nil {
-		return nil, contextErr
-	}
-	if calls != 1 || snap == nil || receipt == nil || receipt.ID == "" || receipt.Provider == "" || receipt.Isolation == "" || receipt.Scope != cortex.ScopeFromContext(ctx).Canonical() {
+	if snap == nil {
 		return nil, cortex.ErrPreparationUnavailable
 	}
 	snap.Provenance.SourceValidation = "atomic_store_snapshot"
