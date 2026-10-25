@@ -257,6 +257,15 @@ than its configured ceiling. Unknown charges and plan revisions cannot reset the
 allowance. Runtime accounting, provider usage qualification, durable proposal
 admission and automatic replan execution remain open.
 
+`SnapshotTaskUsage` now reads the current recovering/completed claim, its exact
+sealed call journal and the complete verifier-job history under one plan/run/journal
+transaction. It rejects stale ownership, changed journals and oversized or malformed
+history. `SummarizeTaskUsage` combines provider and verifier observations, includes
+failed work, preserves known lower bounds when other usage is missing and marks
+saturated dimensions as inexact. It does not settle a reservation. Closing future
+verifier admission, authenticating final billing and committing settlement against
+this exact evidence remain required before capacity can be refunded.
+
 ## S3.6: Team review UI and recovery qualification
 
 Depends on S3.1 through S3.5. Owner: integration coordinator and UI owner.

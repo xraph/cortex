@@ -650,6 +650,30 @@ PostgreSQL and MongoDB. They use fixture authority ports. You still need concret
 host proof validation and deployment qualification before enabling this service
 for real workers.
 
+### Inspect combined usage
+
+The built-in stores implement `coordination.TaskUsageSnapshotStore`. After you
+authorize the read, pass `SnapshotTaskUsage` the current recovering/completed claim
+token, retained journal seal and expected journal digest. The store locks the plan,
+run and journal, reads every verifier job for that run, and returns a detached
+snapshot. A changed claim or journal, a failed transaction, or cancellation returns
+no snapshot. The read is bounded to thirty seconds, 256 verifier jobs and sixteen
+MiB of encoded evidence. Oversized history fails instead of being truncated.
+
+`coordination.SummarizeTaskUsage` totals usage fields from provider
+receipts and verifier completions, including failed work and earlier attempts.
+`Observed` is a lower bound when a dimension is missing from `Known`. Missing
+receipts and unmetered jobs never imply free work. Overflow saturates the affected
+dimension and removes it from `Known`; local token estimates cannot replace
+provider evidence. `OpenJobs` identifies verifier work that has not reached a
+terminal state.
+
+This is an observation of retained records. You still need to authenticate their
+provenance and pricing, close future verifier admission, establish billing finality
+and revalidate the exact evidence when settling. The snapshot and summary do not
+refund capacity or authorize additional work. Tool and external-effect fees are
+outside this provider/verifier summary.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in

@@ -23,7 +23,9 @@ type submissionFenceDriver struct {
 	release      chan struct{}
 	once         sync.Once
 	afterRead    func()
+	afterSelect  func(context.Context, assurance.Query, []assurance.Record) ([]assurance.Record, error)
 	beforeFinish func(context.Context, assurance.Driver) error
+	afterCommit  func()
 	failInsert   bool
 	lostAck      bool
 }
@@ -32,6 +34,9 @@ func (d *submissionFenceDriver) TransactPlan(ctx context.Context, identifier id.
 	err := d.plans.TransactPlan(ctx, identifier, func(tc context.Context, tx assurance.Driver) error {
 		return callback(tc, submissionFenceTx{Driver: tx, owner: d})
 	})
+	if err == nil && d.afterCommit != nil {
+		d.afterCommit()
+	}
 	if err == nil && d.lostAck {
 		return errAssignmentInjected
 	}
@@ -52,6 +57,9 @@ func (d submissionFenceTx) LockSubmissionRun(ctx context.Context, identifier id.
 }
 func (d submissionFenceTx) Select(ctx context.Context, query assurance.Query) ([]assurance.Record, error) {
 	rows, err := d.Driver.Select(ctx, query)
+	if err == nil && d.owner.afterSelect != nil {
+		rows, err = d.owner.afterSelect(ctx, query, rows)
+	}
 	if err != nil || query.Kind != assurance.KindEvidence {
 		return rows, err
 	}

@@ -144,6 +144,7 @@ var (
 	ErrReservationNotFound    = errors.New("cortex: budget reservation not found")
 	ErrSharedBudgetExceeded   = errors.New("cortex: shared budget exceeded")
 	ErrInvalidTaskAcceptance  = errors.New("cortex: invalid task acceptance")
+	ErrInvalidTaskUsage       = errors.New("cortex: invalid task usage snapshot")
 	ErrTaskAcceptanceConflict = errors.New("cortex: task acceptance conflict")
 	ErrTaskAcceptanceNotFound = errors.New("cortex: task acceptance not found")
 	ErrInvalidClaim           = errors.New("cortex: invalid task claim")

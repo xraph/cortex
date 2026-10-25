@@ -5654,3 +5654,39 @@ Full `make l` passed after the other chat formatted two concurrent optimizer tes
 that the initial lint pass had caught mid-edit. No optimizer files are included in
 this packet. Live host authority and Linux sandbox qualification remain separate
 gates; these crash tests make no deployment-readiness claim.
+
+### S3.5 complete provider/verifier usage observations
+
+New tests first failed on the missing task-usage snapshot and store APIs. The
+implementation now reads current ownership, the sealed provider/tool journal and
+all verifier jobs in one bounded transaction. It holds the existing plan, run and
+journal guards through commit, reuses the existing decoders and rejects truncated
+history. Built-in stores expose the optional API through their shared repository.
+
+The summary includes failed provider calls and prior verifier attempts. It retains
+observed lower bounds when another receipt is missing, distinguishes known zero,
+rejects contradictory provider returns and reports overflow without treating a
+saturated value as exact usage. It does not refund capacity or close verification.
+Final billing authentication, verifier-admission closure and guarded settlement
+against the retained evidence remain open.
+
+Fixture corrections during the first run fixed a local completion field name and
+the required SQLite scope-extra JSON encoding for inserted historical test data.
+Focused race tests then passed coordination and SQLite in 1.459 and 2.940 seconds.
+The same storage checks passed PostgreSQL in 7.211 seconds and MongoDB in 5.346
+seconds without skips. They cover stale claims/journals, scope denial, corrupt or
+oversized history, lost acknowledgments and a verifier writer blocked through the
+snapshot transaction. Final formatting, lint and broader regression checks follow.
+
+After final formatting, the full coordination race suite passed in 32.188 seconds.
+Adoption, usage, submission and SQLite process-crash regressions passed SQLite in
+34.303 seconds, PostgreSQL in 23.097 seconds and MongoDB in 30.259 seconds, with no
+skips. Root build and docs type/lint/build checks passed. Aggregate lint passed
+the changed root code but caught formatting and lint issues in the other chat's
+in-progress Fabriq, inttest and optimizer fixtures. Those files remain outside
+this packet; the final aggregate rerun follows their owner's corrections.
+
+The final aggregate `make l` rerun passed after those corrections. The scoped
+formatter used `make f FORMAT_PATHS='errors.go coordination/task_usage.go coordination/task_usage_test.go store/internal/assurance/task_usage.go store/storetest/task_usage.go store/storetest/task_recovery.go store/storetest/submission_transaction.go'`.
+The packet includes no Fabriq, inttest or optimizer edits. Shared settlement and
+the other four-stage gates remain incomplete.
