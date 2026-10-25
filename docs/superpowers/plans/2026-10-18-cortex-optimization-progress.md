@@ -953,3 +953,39 @@ double; they establish local outbox recovery, not Fabriq delivery semantics.
 The Fabriq sink, authoritative remote reconciliation, filtered recall and an
 operator retry command remain open in Task 12. The broader implementation plan
 is still in progress.
+
+## Fabriq lesson adapter and persistent integration
+
+`integrations/fabriq/optimization` now supplies `LessonSpec`,
+`LessonWritePolicy` and an adapter implementing both `LessonStore` and
+`PublicationSink`. You provide the tenant mapper, local repository and host
+authorization services. Provision the dynamic table before starting a worker.
+The schema indexes eligibility and provenance fields and embeds only the lesson
+statement.
+
+Publication uses the outbox's stable aggregate ID and create with expected
+version zero. An authoritative lookup verifies the full payload digest and
+indexed metadata after either success or a lost acknowledgement. Withdrawal
+uses a version-checked update. If withdrawal arrives before publication, it
+creates a tombstone at the same ID, so an older create cannot revive the lesson.
+An unchanged source row after a failed withdrawal remains retryable.
+
+Recall applies exact scope, domain, schema, active, expiry and creation-cutoff
+filters in Fabriq, then checks local evidence and current authorization. Missing
+channels and token-truncated results return incomplete evidence. Semantic recall
+returns a bounded result set; a nonempty cursor is rejected because the search
+ranking does not provide a stable continuation.
+
+The integration test uses real Fabriq/Postgres with a non-superuser tenant role
+and a persistent SQLite optimizer store. It verifies lost write replies, local
+store reopen, vector indexing and recall, local revocation against stale remote
+content, durable retry during a destination outage and eventual withdrawal.
+The module race suite and build pass with local replacements removed, using
+published optimization commit `37b94d6`. All-module lint and the full integration
+race suite pass. Fabriq v1.8.2 already contains the generic duplicate-create,
+expected-version and filtered-hydration regression tests; no upstream production
+change was needed for this adapter.
+
+Task 12 still needs an authorized operator retry command, capability readiness
+checks and the host-facing recall-to-frozen-lesson creation flow. Dashboard
+application flows and the remaining implementation phases are also open.

@@ -45,49 +45,7 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	ctx := context.Background()
 	const entity = "agent_memory"
 
-	superDSN := fabriqtest.StartPostgres(t)
-
-	// Registry with the memory entity.
-	reg := registry.New()
-	reg.MustRegister(fabriqbrain.MemorySpec(entity))
-	if err := reg.Validate(); err != nil {
-		t.Fatalf("registry validate: %v", err)
-	}
-
-	// Migrate fabriq's internal schema (creates fabriq_embeddings/pgvector).
-	orch, closeFn, err := migrations.OpenOrchestrator(ctx, superDSN)
-	if err != nil {
-		t.Fatalf("OpenOrchestrator: %v", err)
-	}
-	if _, checkErr := orch.Migrate(ctx); checkErr != nil {
-		t.Fatalf("migrate: %v", checkErr)
-	}
-	_ = closeFn()
-
-	// Create the dynamic table as the schema owner BEFORE the app role exists,
-	// so DEFAULT PRIVILEGES cover it (mirrors fabriq's dynamic E2E tests).
-	owner, err := postgres.Open(ctx, superDSN, reg)
-	if err != nil {
-		t.Fatalf("postgres.Open (owner): %v", err)
-	}
-	ent, ok := reg.Get(entity)
-	if !ok {
-		t.Fatalf("entity %q not registered", entity)
-	}
-	if checkErr := owner.EnsureDynamic(ctx, ent); checkErr != nil {
-		t.Fatalf("EnsureDynamic: %v", checkErr)
-	}
-	_ = owner.Close()
-
-	// Open fabriq with the app role (Postgres only — no Redis needed).
-	appDSN := fabriqtest.CreateAppRole(t, superDSN)
-	f, _, err := fabriq.Open(ctx, reg, fabriq.Config{
-		Postgres: fabriq.PostgresConfig{DSN: appDSN},
-	})
-	if err != nil {
-		t.Fatalf("fabriq.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = f.Close() })
+	f := openLearningFabric(t, fabriqbrain.MemorySpec(entity))
 
 	tctx, err := tenant.WithTenant(ctx, "acme")
 	if err != nil {
@@ -145,4 +103,58 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 	if !strings.Contains(top.Content, "replace the pump seal") {
 		t.Fatalf("top recalled chunk content = %q, want it to contain the run output", top.Content)
 	}
+}
+
+func openLearningFabric(t *testing.T, specs ...registry.EntitySpec) *fabriq.Fabriq {
+	t.Helper()
+	ctx := context.Background()
+	superDSN := fabriqtest.StartPostgres(t)
+
+	// Registry with the memory entity.
+	reg := registry.New()
+	for _, spec := range specs {
+		reg.MustRegister(spec)
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("registry validate: %v", err)
+	}
+
+	// Migrate fabriq's internal schema (creates fabriq_embeddings/pgvector).
+	orch, closeFn, err := migrations.OpenOrchestrator(ctx, superDSN)
+	if err != nil {
+		t.Fatalf("OpenOrchestrator: %v", err)
+	}
+	if _, checkErr := orch.Migrate(ctx); checkErr != nil {
+		t.Fatalf("migrate: %v", checkErr)
+	}
+	_ = closeFn()
+
+	// Create the dynamic table as the schema owner BEFORE the app role exists,
+	// so DEFAULT PRIVILEGES cover it (mirrors fabriq's dynamic E2E tests).
+	owner, err := postgres.Open(ctx, superDSN, reg)
+	if err != nil {
+		t.Fatalf("postgres.Open (owner): %v", err)
+	}
+	for _, spec := range specs {
+		ent, ok := reg.Get(spec.Name)
+		if !ok {
+			t.Fatal("missing registered entity")
+		}
+		if schemaErr := owner.EnsureDynamic(ctx, ent); schemaErr != nil {
+			t.Fatal(schemaErr)
+		}
+	}
+	_ = owner.Close()
+
+	// Open fabriq with the app role (Postgres only — no Redis needed).
+	appDSN := fabriqtest.CreateAppRole(t, superDSN)
+	f, _, err := fabriq.Open(ctx, reg, fabriq.Config{
+		Postgres: fabriq.PostgresConfig{DSN: appDSN},
+	})
+	if err != nil {
+		t.Fatalf("fabriq.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	return f
 }
