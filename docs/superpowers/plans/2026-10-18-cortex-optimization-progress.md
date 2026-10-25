@@ -34,7 +34,7 @@ passed its full qualification gate.
 | 10: validation and decisions | Frozen holdout allocations, deterministic comparison and decision gates | End-to-end acceptance audit |
 | 11: activation | Review commands, append-only deactivation and bound production execution pass module verification | Built-in current-source compatibility adapter and product capability wiring |
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
-| 13: parallel and task-local | Storage limits exist; trial handler still accepts sequential mode only | Implement bounded scheduling and task-local service |
+| 13: parallel and task-local | Bounded parallel trial batches, partial-result commits and persistent recovery | Task-local service, artifact adoption and product capability wiring |
 | 14: controller improvement | Paired allocation storage exists | Implement controller comparison and parent/child execution |
 | 15: orchestration presets | Runtime integration contract planned | Implement approved preset execution and trace conversion |
 | 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
@@ -1078,3 +1078,39 @@ against the published root dependency. Full store suites passed memory, SQLite,
 PostgreSQL and Mongo without backend skips. Separate restart and suspension tests
 passed on all durable backends. The initial default-cache lint findings in
 unchanged nil-guarded tests did not reproduce with a clean private cache.
+
+
+## Bounded parallel trials
+
+`TrialPhaseHandler` now accepts `ModeParallel`. Each step admits at most
+`Limits.Concurrency` operations, with existing attempts ahead of queued trials.
+Unknown effects keep their slot. Admission and result assembly use stable trial
+identity order; external calls still require their own durable dispatch marker
+and share the experiment budget.
+
+A mixed batch commits successful sibling captures or evaluations under the
+worker's current lease and returns the batch error. You can resume the unresolved
+work without replaying completed calls. A budget refusal cannot close a batch
+that contains an unknown attempt. Cancellation or lost authority prevents the
+batch commit and retains dispatch markers for recovery.
+
+MongoDB integration exposed contention at the scope fence before simultaneous
+reservations could dispatch. The adapter now retries fence acquisition with
+bounded backoff, before reading state or invoking the caller. It never retries
+a callback or an ambiguous commit. Existing cross-connection fence tests still
+pass.
+
+The new conformance tests cover opposite completion orders, charged concurrency,
+partial results, mixed budget and unknown outcomes, and cancellation. Restart
+tests reopen SQLite, PostgreSQL and MongoDB and take over the lease without
+repeating either remote dispatch. Sentinel's SQLite loop now runs parallel
+proposal, composition and validation with both deterministic and metered judges.
+It recovers lost open, execution and evaluation acknowledgments, keeps judge
+charges separate, and preserves the expected measured cost ratio.
+
+Scoped formatting, all-module lint, targeted races on all four stores, the full
+optimization and Sentinel race suites, module builds and a consumer build/race
+check against published Cortex v1.8.0 pass. The full store suites took 132.758s
+for memory, 332.893s for SQLite, 318.979s for PostgreSQL and 445.600s for MongoDB.
+Task 13 remains open for task-local selection, explicit artifact adoption and
+product capability wiring. No phase completion claim is made.

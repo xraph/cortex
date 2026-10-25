@@ -194,7 +194,13 @@ allocation and records exposure before executing the held-out cases. Sentinel
 supplies the paired statistics; Cortex checks the frozen selection thresholds and
 stored evidence before committing a decision for reflection and review.
 
-This handler currently accepts sequential mode. Parallel controller experiments
-and task-local selection need their own scheduling adapters. You can bind the
+You can run trials in sequential or parallel mode. Parallel mode admits at most
+`Limits.Concurrency` operations per step, counts unresolved attempts against that
+limit, and uses the same durable budget ledger. Calls overlap only after each has
+its own dispatch marker. The worker commits successful sibling results before
+returning a batch error, so you can resume uncertain work without replaying a
+completed call. Cancellation or lost authority leaves the batch recoverable.
+
+Task-local selection still needs its service adapter. You can bind the
 Sentinel implementation from `github.com/xraph/cortex/sentinel/optimization`;
 see its [adapter guide](../sentinel/optimization/README.md).

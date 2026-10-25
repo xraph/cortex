@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -187,6 +188,26 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 	if err != nil {
 		return err
 	}
+	for attempt := range 8 {
+		var fenced bool
+		err = b.updateOnce(ctx, scope, update, &fenced)
+		if err == nil || fenced || !errors.Is(err, optimization.ErrConflict) || attempt == 7 {
+			return err
+		}
+		// Retry only fence acquisition, before reading state or invoking the
+		// caller. An unknown commit or a failed callback must never be replayed.
+		timer := time.NewTimer(5 * time.Millisecond * time.Duration(1<<attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
+}
+
+func (b *backend) updateOnce(ctx context.Context, scope scoped.Index, update func([]state.Record) ([]state.Mutation, error), fenced *bool) error {
 	return b.transact(ctx, func(session context.Context) error {
 		var fence struct {
 			Canon string `bson:"scope_canon"`
@@ -198,6 +219,7 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 		if err != nil {
 			return databaseError("fence scope", err)
 		}
+		*fenced = true
 		if fence.Canon != scope.Canon {
 			return fmt.Errorf("%w: stored scope digest collision", optimization.ErrUnavailable)
 		}

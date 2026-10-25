@@ -10,7 +10,7 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
-// WorkerConfig bounds a serial worker's lease, renewal and idle polling.
+// WorkerConfig bounds an experiment worker's lease, renewal and idle polling.
 type WorkerConfig struct{ LeaseDuration, HeartbeatInterval, PollInterval time.Duration }
 
 // DefaultWorkerConfig uses a thirty-second lease with ten-second renewal.
@@ -72,7 +72,8 @@ func (o *Optimizer) Work(ctx context.Context) error {
 }
 
 // WorkOnce claims one experiment, renews authority while executing one phase,
-// and commits its transition. Failed or interrupted phases retain durable state.
+// and commits its transition. A failed parallel batch can commit successful
+// siblings while returning its error; interrupted phases retain durable markers.
 func (o *Optimizer) WorkOnce(ctx context.Context, experimentID id.ID) error {
 	if !o.work.TryLock() {
 		return ErrConflict
@@ -129,7 +130,10 @@ func (o *Optimizer) WorkOnce(ctx context.Context, experimentID id.ID) error {
 	phaseErr := phaseCtx.Err()
 	cancel()
 	renewErr := <-heartbeat
-	if phaseErr != nil || renewErr != nil || (runErr != nil && !errors.Is(runErr, ErrBudgetExceeded)) {
+	var batchErr *trialBatchError
+	batchFailed := errors.As(runErr, &batchErr)
+	partial := batchFailed && len(change.TrialUpdates)+len(change.Evaluations) > 0
+	if phaseErr != nil || renewErr != nil || (runErr != nil && !partial && (batchFailed || !errors.Is(runErr, ErrBudgetExceeded))) {
 		return errors.Join(runErr, phaseErr, renewErr)
 	}
 	current, done, err := o.meter.authorizeAction(ctx, experimentID, ActionStart)
@@ -137,7 +141,7 @@ func (o *Optimizer) WorkOnce(ctx context.Context, experimentID id.ID) error {
 		return err
 	}
 	defer done()
-	if errors.Is(runErr, ErrBudgetExceeded) {
+	if errors.Is(runErr, ErrBudgetExceeded) && !batchFailed {
 		change = Transition{NextState: StateBudgetExhausted}
 	}
 	change.ExperimentID, change.ExpectedRevision, change.Lease, change.Actor = experimentID, experiment.Revision, lease, experiment.Spec.Requester

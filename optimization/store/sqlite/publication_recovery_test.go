@@ -17,6 +17,10 @@ func TestActivationRecovery(t *testing.T) {
 	testRecovery(t, storetest.ActivationRecovery)
 }
 
+func TestParallelRecovery(t *testing.T) {
+	testRecovery(t, storetest.ParallelRecovery)
+}
+
 func testRecovery(t *testing.T, verify func(*testing.T, func(*testing.T, func() time.Time) store.Store)) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "publication.db")

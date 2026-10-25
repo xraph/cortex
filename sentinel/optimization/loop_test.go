@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,6 +70,7 @@ func (loopCounter) Bound(context.Context, *llm.Request) (opt.InputTokenBound, er
 
 // This file-backed host is a recovery fixture, not a qualified sandbox provider.
 type loopHost struct {
+	mu         sync.Mutex
 	dir, base  string
 	executions int
 	lost       bool
@@ -82,6 +84,8 @@ type loopEnvironment struct {
 }
 
 func (h *loopHost) Open(_ context.Context, r opt.TrialRequest) (opt.TrialEnvironment, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	receipt := opt.EnvironmentReceipt{ID: r.AttemptID.String(), Provider: "fixture", EnvironmentID: r.AttemptID.String(), Scope: r.Scope, AttemptID: r.AttemptID, Snapshot: r.Task.EnvironmentSnapshot, Fence: r.Fence, CreatedAt: r.Deadline.Add(-time.Minute), Capabilities: opt.IsolationCapabilities{Isolated: true, Resettable: true, Recoverable: true, Stoppable: true, FrozenRetrieval: true, AtomicSources: true, DeterministicApproval: true}}
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -124,6 +128,8 @@ func (e *loopEnvironment) Inspect(_ context.Context, attempt cid.ID) (opt.Attemp
 	return opt.AttemptStatus{AttemptID: attempt, State: opt.TrialCompleted, Execution: &execution, ObservedAt: time.Now().UTC()}, nil
 }
 func (e *loopEnvironment) Execute(_ context.Context, p *engine.PreparedAgent, _ string, options engine.PreparedRunOptions) (*opt.ExecutionRecord, error) {
+	e.host.mu.Lock()
+	defer e.host.mu.Unlock()
 	if options.Purpose != run.PurposeOptimizationTrial || options.SessionID.IsNil() {
 		return nil, opt.ErrInvalidSpec
 	}
@@ -163,11 +169,14 @@ func (e *loopEnvironment) Execute(_ context.Context, p *engine.PreparedAgent, _ 
 
 type lostEvaluation struct {
 	opt.Evaluator
+	mu   sync.Mutex
 	lost bool
 }
 
 func (e *lostEvaluation) Evaluate(ctx context.Context, r opt.EvaluationRequest) (opt.Evaluation, error) {
 	v, err := e.Evaluator.Evaluate(ctx, r)
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if err == nil && e.lost {
 		e.lost = false
 		return opt.Evaluation{}, opt.ErrUnknownAttempt
@@ -190,13 +199,20 @@ func loopDB(t *testing.T, path string) *grove.DB {
 func TestSentinelOptimizationLoopRecoversAcrossReopen(t *testing.T) {
 	for _, composition := range []bool{false, true} {
 		for _, metered := range []bool{false, true} {
-			t.Run(fmt.Sprint("composition=", composition, "/metered=", metered), func(t *testing.T) { testSentinelLoop(t, composition, metered) })
+			t.Run(fmt.Sprint("composition=", composition, "/metered=", metered), func(t *testing.T) { testSentinelLoop(t, composition, metered, opt.ModeSequential) })
 		}
 	}
 }
-func testSentinelLoop(t *testing.T, composition, metered bool) {
+func TestSentinelParallelOptimizationLoopRecoversAcrossReopen(t *testing.T) {
+	for _, metered := range []bool{false, true} {
+		t.Run(fmt.Sprint("metered=", metered), func(t *testing.T) { testSentinelLoop(t, true, metered, opt.ModeParallel) })
+	}
+}
+
+func testSentinelLoop(t *testing.T, composition, metered bool, mode opt.Mode) {
 	t.Helper()
 	bundle := storetest.Fixture(t, "sentinel-loop")
+	bundle.Experiment.Spec.Mode = mode
 	view, err := bundle.Versions[0].Prepared.Inspect()
 	if err != nil {
 		t.Fatal(err)
@@ -429,9 +445,14 @@ func testSentinelLoop(t *testing.T, composition, metered bool) {
 	t.Fatal("optimization loop did not finish")
 }
 
-type loopJudgeModel struct{ calls int }
+type loopJudgeModel struct {
+	mu    sync.Mutex
+	calls int
+}
 
 func (p *loopJudgeModel) Complete(_ context.Context, r *llm.Request) (*llm.Response, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls++
 	var data struct{ Actual string }
 	if err := json.Unmarshal([]byte(r.Messages[0].Content), &data); err != nil {

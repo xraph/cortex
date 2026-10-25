@@ -48,7 +48,7 @@ func NewTrialPhaseHandler(config TrialConfig) (*TrialPhaseHandler, error) {
 	return &TrialPhaseHandler{config: config, meter: meter}, nil
 }
 
-// Execute performs at most one trial operation or returns a phase transition.
+// Execute advances one serial operation or a bounded parallel batch.
 func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transition, error) {
 	if item.Experiment.Phase != PhaseBaseline && item.Experiment.Phase != PhaseProbe && item.Experiment.Phase != PhaseValidate && item.Experiment.Phase != PhaseDecide {
 		return Transition{}, ErrUnavailable
@@ -66,7 +66,7 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 		return Transition{}, ErrConflict
 	}
 	item.Experiment = current
-	if current.Spec.Mode != ModeSequential {
+	if current.Spec.Mode != ModeSequential && current.Spec.Mode != ModeParallel {
 		return Transition{}, ErrUnavailable
 	}
 	if !current.Spec.Budget.TokenOnly && (h.config.Allowance.MaxUSDMicros <= 0 || h.config.Allowance.PricingRevision != current.Spec.Budget.PricingRevision) {
@@ -86,12 +86,14 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 	if len(scheduled.Trials) > 0 {
 		return scheduled, nil
 	}
+	if current.Spec.Mode == ModeParallel {
+		if batch, pending := parallelTrials(trials, current.Phase, current.Spec.Limits.Concurrency); pending {
+			return h.parallelStep(ctx, item, batch)
+		}
+	}
 
 	for _, trial := range trials {
-		if !trialInPhase(trial, item.Experiment.Phase) {
-			continue
-		}
-		if trial.Execution != nil && trial.EvaluationID != "" || trial.Execution == nil && trial.Error != "" && (trial.State == TrialBlocked || trial.State == TrialFailed || trial.State == TrialCancelled) {
+		if !trialPending(trial, item.Experiment.Phase) {
 			continue
 		}
 		return h.step(ctx, item, trial)
@@ -103,6 +105,19 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 		return Transition{NextState: StateRunning, NextPhase: PhaseDecide}, nil
 	}
 	return h.afterProbe(ctx, item.Experiment)
+}
+
+func trialPending(trial Trial, phase Phase) bool {
+	if !trialInPhase(trial, phase) {
+		return false
+	}
+	if trial.Execution != nil {
+		return trial.EvaluationID == ""
+	}
+	if trial.Error == "" {
+		return true
+	}
+	return trial.State != TrialBlocked && trial.State != TrialFailed && trial.State != TrialCancelled
 }
 
 func trialInPhase(t Trial, p Phase) bool {

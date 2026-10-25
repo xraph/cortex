@@ -37,6 +37,7 @@ func Run(t *testing.T, factory Factory) {
 	trials(t, factory)
 	trialEvidence(t, factory)
 	trialAdapters(t, factory)
+	parallelTrials(t, factory)
 	trialAdapterLoop(t, factory)
 	evaluations(t, factory)
 	evaluationIntegrity(t, factory)
