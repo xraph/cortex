@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,8 @@ var (
 // BusConfig builds a Bus. Store and one runner are required. Structured
 // handoffs require HandoffHandler explicitly.
 type BusConfig struct {
+	// Roster restricts a non-global bus to captured local participant identities.
+	Roster *Roster
 	// ReservedRunner replaces Runner for partitioned execution with durable admission.
 	ReservedRunner cortex.ReservedAgentRunner
 	// OrchestrationID fixes this bus to one routing partition. Zero is global.
@@ -64,6 +67,7 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
+	roster          *frozenRoster
 	reserved        cortex.ReservedAgentRunner
 	binder          DeliveryRunBinder
 	orchestrationID id.OrchestrationID
@@ -112,6 +116,10 @@ func (b *Bus) transportFor(addr Address) Transport {
 
 // NewBus builds a Bus from cfg.
 func NewBus(cfg BusConfig) (*Bus, error) {
+	roster, rosterErr := freezeRoster(cfg.Roster, cfg.OrchestrationID)
+	if rosterErr != nil {
+		return nil, rosterErr
+	}
 	if cfg.Store == nil {
 		return nil, ErrNoStore
 	}
@@ -132,11 +140,12 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = systemClock{}
 	}
-	routing, routingErr := NewRoutingStore(cfg.Store, cfg.OrchestrationID)
+	routing, routingErr := newBusRoutingStore(cfg.Store, cfg.OrchestrationID, roster)
 	if routingErr != nil {
 		return nil, routingErr
 	}
 	b := &Bus{
+		roster:          roster,
 		reserved:        cfg.ReservedRunner,
 		orchestrationID: cfg.OrchestrationID,
 		handoffHandler:  cfg.HandoffHandler,
@@ -240,8 +249,8 @@ func (b *Bus) prepare(ctx context.Context, p SendParams) (*Envelope, *Conversati
 		Scope:        scope,
 		Performative: p.Performative,
 		Sender:       p.Sender,
-		Receivers:    p.Receivers,
-		ReplyTo:      p.ReplyTo,
+		Receivers:    slices.Clone(p.Receivers),
+		ReplyTo:      slices.Clone(p.ReplyTo),
 		Content:      p.Content,
 		Language:     p.Language,
 		Encoding:     p.Encoding,
@@ -254,6 +263,12 @@ func (b *Bus) prepare(ctx context.Context, p SendParams) (*Envelope, *Conversati
 		Metadata:     p.Metadata,
 	}
 	if err := e.Validate(); err != nil {
+		return nil, nil, err
+	}
+	if b.roster != nil && (p.PeerNode != "" || p.PeerContext != "") {
+		return nil, nil, ErrRosterDenied
+	}
+	if err := b.checkRosterEnvelope(ctx, e); err != nil {
 		return nil, nil, err
 	}
 	if handoffErr := b.handoff(ctx, e); handoffErr != nil {
@@ -350,6 +365,9 @@ func (b *Bus) record(ctx context.Context, e *Envelope, conv *Conversation) error
 // step that can set another run going, so it is the one Ask holds back
 // until the asker is ready to hear the answer.
 func (b *Bus) route(ctx context.Context, e *Envelope) (*SendResult, error) {
+	if err := b.checkRosterEnvelope(ctx, e); err != nil {
+		return nil, err
+	}
 	res := &SendResult{MessageID: e.ID, ConversationID: e.ConversationID}
 
 	// A reply that answers a waiting ask reaches its asker through the
@@ -573,7 +591,7 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		return false, nil
 	}
 
-	ready, replies, err := b.tallyAnswers(ctx, e)
+	pending, ready, replies, err := b.tallyAnswers(ctx, e)
 	if err != nil {
 		return false, err
 	}
@@ -590,6 +608,9 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 	case err != nil:
 		return false, err
 	}
+	if !sameAskBinding(pending, ask) {
+		return false, ErrReplyBinding
+	}
 	if b.resumer == nil {
 		return false, nil
 	}
@@ -602,49 +623,6 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// tallyAnswers reads what an ask has collected so far and says whether
-// that is everyone.
-//
-// The expected count is the recipient count on the ask's own message, and
-// the answers are the messages carrying its reply-with token. Both are
-// stored already, so a tender keeps no state of its own: the count is a
-// read of the conversation rather than a table to hold in step with it.
-func (b *Bus) tallyAnswers(ctx context.Context, latest *Envelope) (bool, []AskReplyItem, error) {
-	msgs, err := b.store.ListMessages(ctx, &MessageListFilter{ConversationID: latest.ConversationID})
-	if err != nil {
-		return false, nil, err
-	}
-
-	var expected int
-	replies := make([]AskReplyItem, 0, len(msgs))
-	answered := make(map[string]bool, len(msgs))
-
-	for _, m := range msgs {
-		if m.ReplyWith == latest.InReplyTo {
-			expected = len(m.Receivers)
-			continue
-		}
-		if m.InReplyTo != latest.InReplyTo || !m.Performative.AnswersAsk() {
-			continue
-		}
-		// One answer per agent. A participant that says two things has
-		// still answered once, and counting both would resume an
-		// initiator while somebody else was still thinking.
-		if answered[m.Sender.String()] {
-			continue
-		}
-		answered[m.Sender.String()] = true
-		replies = append(replies, askReplyItem(m))
-	}
-
-	if expected == 0 {
-		// The ask's own message is not in this conversation, so this
-		// reply answers something else. Ordinary mail.
-		return false, nil, nil
-	}
-	return len(replies) >= expected, replies, nil
 }
 
 func askReplyItem(e *Envelope) AskReplyItem {
@@ -671,6 +649,9 @@ type InboxItem struct {
 // as read. Reading is the acknowledgement: an agent that already saw a
 // message in a tool result must not be handed it again next turn.
 func (b *Bus) Inbox(ctx context.Context, agentName string, f InboxFilter) ([]InboxItem, error) {
+	if err := b.checkRosterAddress(ctx, Address{Agent: agentName}); err != nil {
+		return nil, err
+	}
 	rows, err := b.store.ListInbox(ctx, agentName, f)
 	if err != nil {
 		return nil, err
@@ -680,6 +661,12 @@ func (b *Bus) Inbox(ctx context.Context, agentName string, f InboxFilter) ([]Inb
 		e, err := b.store.GetMessage(ctx, d.MessageID)
 		if err != nil {
 			return nil, err
+		}
+		if rosterErr := b.checkRosterEnvelope(ctx, e); rosterErr != nil {
+			return nil, rosterErr
+		}
+		if b.roster != nil && (d.Scope.Canonical() != b.roster.scope || d.Receiver != (Address{Agent: agentName}) || !slices.Contains(e.Receivers, d.Receiver)) {
+			return nil, ErrRosterDenied
 		}
 		item := InboxItem{
 			DeliveryID:     d.ID.String(),
@@ -693,6 +680,8 @@ func (b *Bus) Inbox(ctx context.Context, agentName string, f InboxFilter) ([]Inb
 			item.ReceivedAt = d.DeliveredAt.Format(time.RFC3339)
 		}
 		items = append(items, item)
+	}
+	for _, d := range rows {
 		if err := b.store.MarkDeliveryRead(ctx, d.ID); err != nil {
 			return nil, err
 		}

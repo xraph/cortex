@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
 
@@ -18,6 +19,44 @@ type RoutingBackend interface {
 }
 
 type routingKey struct{}
+
+type routingDiscoveryKey struct{}
+
+// ScopedRoutingBackend also restricts queue discovery, reclaim and ask expiry
+// when RoutingDiscoveryScope is present. Roster-bound buses require it.
+type ScopedRoutingBackend interface {
+	RoutingBackend
+	SupportsScopedOrchestrationDiscovery() bool
+}
+
+// RoutingDiscoveryScope returns the exact scope selected for background work.
+// Without a binding, existing global queue discovery retains its scope policy.
+func RoutingDiscoveryScope(ctx context.Context) (cortex.Scope, bool, error) {
+	bound, ok := ctx.Value(routingDiscoveryKey{}).(bool)
+	if !ok || !bound {
+		return cortex.Scope{}, false, nil
+	}
+	scope, err := cortex.RequireScope(ctx)
+	return scope, true, err
+}
+
+func newBusRoutingStore(store Store, team id.OrchestrationID, roster *frozenRoster) (Store, error) {
+	wrapped, err := NewRoutingStore(store, team)
+	if err != nil || roster == nil {
+		return wrapped, err
+	}
+	bound, ok := wrapped.(*routingStore)
+	if !ok {
+		return nil, ErrRoutingUnavailable
+	}
+	backend, ok := bound.inner.(ScopedRoutingBackend)
+	if !ok || !backend.SupportsScopedOrchestrationDiscovery() {
+		return nil, ErrRoutingUnavailable
+	}
+	scope := roster.discoveryScope
+	bound.discoveryScope = &scope
+	return bound, nil
+}
 
 // RoutingOrchestration is the partition selected by NewRoutingStore.
 // Backends must apply it to every read, mutation and dispatcher query.
@@ -50,8 +89,17 @@ func NewRoutingStore(s Store, key id.OrchestrationID) (Store, error) {
 }
 
 type routingStore struct {
-	inner         Store
-	orchestration string
+	discoveryScope *cortex.Scope
+	inner          Store
+	orchestration  string
+}
+
+func (s *routingStore) discoveryContext(ctx context.Context) context.Context {
+	ctx = s.context(ctx)
+	if s.discoveryScope == nil {
+		return ctx
+	}
+	return context.WithValue(cortex.WithScope(ctx, *s.discoveryScope), routingDiscoveryKey{}, true)
 }
 
 var _ Store = (*routingStore)(nil)
@@ -113,7 +161,7 @@ func (s *routingStore) ListInbox(ctx context.Context, agentName string, filter I
 }
 
 func (s *routingStore) ListQueuedDeliveries(ctx context.Context, limit int) ([]*Delivery, error) {
-	return s.inner.ListQueuedDeliveries(s.context(ctx), limit)
+	return s.inner.ListQueuedDeliveries(s.discoveryContext(ctx), limit)
 }
 
 func (s *routingStore) MarkDeliveryRead(ctx context.Context, deliveryID id.DeliveryID) error {
@@ -121,7 +169,7 @@ func (s *routingStore) MarkDeliveryRead(ctx context.Context, deliveryID id.Deliv
 }
 
 func (s *routingStore) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) {
-	return s.inner.ReclaimStaleDeliveries(s.context(ctx), olderThan, limit)
+	return s.inner.ReclaimStaleDeliveries(s.discoveryContext(ctx), olderThan, limit)
 }
 
 func (s *routingStore) CreatePendingAsk(ctx context.Context, a *PendingAsk) error {
@@ -133,7 +181,7 @@ func (s *routingStore) ClaimPendingAsk(ctx context.Context, replyWith string) (*
 }
 
 func (s *routingStore) ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*PendingAsk, error) {
-	return s.inner.ListExpiredAsks(s.context(ctx), now, limit)
+	return s.inner.ListExpiredAsks(s.discoveryContext(ctx), now, limit)
 }
 
 func (s *routingStore) ListPendingAsksByConversation(ctx context.Context, convID id.ConversationID) ([]*PendingAsk, error) {

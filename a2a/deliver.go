@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -38,6 +39,12 @@ func (b *Bus) carry(ctx context.Context, d *Delivery, tr *deliveryTrace) error {
 	e, err := b.store.GetMessage(ctx, d.MessageID)
 	if err != nil {
 		return b.failDelivery(ctx, d, err)
+	}
+	if rosterErr := b.checkRosterEnvelope(ctx, e); rosterErr != nil {
+		return b.failDelivery(ctx, d, rosterErr)
+	}
+	if b.roster != nil && (d.Scope.Canonical() != b.roster.scope || !slices.Contains(e.Receivers, d.Receiver)) {
+		return b.failDelivery(ctx, d, ErrRosterDenied)
 	}
 	tr.envelope(e)
 	if IsHandoffProtocol(e.Protocol, e.Language) {
@@ -204,23 +211,8 @@ func (b *Bus) handleControl(ctx context.Context, e *Envelope) error {
 // collected reads the answers an ask already has, so a failure or a
 // timeout hands back what arrived rather than throwing it away.
 func (b *Bus) collected(ctx context.Context, ask *PendingAsk) ([]AskReplyItem, error) {
-	if ask.ConversationID.IsNil() {
-		return nil, nil
-	}
-	msgs, err := b.store.ListMessages(ctx, &MessageListFilter{ConversationID: ask.ConversationID})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]AskReplyItem, 0, len(msgs))
-	seen := make(map[string]bool, len(msgs))
-	for _, m := range msgs {
-		if m.InReplyTo != ask.ReplyWith || !m.Performative.AnswersAsk() || seen[m.Sender.String()] {
-			continue
-		}
-		seen[m.Sender.String()] = true
-		out = append(out, askReplyItem(m))
-	}
-	return out, nil
+	_, replies, err := b.answersForAsk(ctx, ask)
+	return replies, err
 }
 
 // resolveAskWithFailure un-pauses a waiting ask with a failure the asking
@@ -236,6 +228,9 @@ func (b *Bus) resolveAskWithFailure(ctx context.Context, replyWith, reason strin
 		return nil
 	case err != nil:
 		return err
+	}
+	if rosterErr := b.checkRosterAddress(ctx, Address{Agent: ask.AskerAgent}); rosterErr != nil {
+		return rosterErr
 	}
 	if b.resumer == nil {
 		return nil

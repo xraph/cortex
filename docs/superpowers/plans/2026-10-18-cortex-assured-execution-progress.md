@@ -6340,3 +6340,38 @@ Private prepared-team messaging remains disabled. Frozen roster dispatch,
 durable team continuation, authenticated settlement and deployed recovery still
 need their integrations and qualification. Live Linux sandbox selection remains
 deferred by the user.
+
+### Frozen A2A rosters and recipient-bound replies
+
+A partitioned bus can capture a local participant roster and exact scope.
+It copies names, agent IDs and scope at construction, rejects unsupported
+background-discovery backends, and checks sends, held asks, redelivery and
+inbox reads against that snapshot. ParticipantAddress resolves the captured
+agent ID without consulting mutable names. Hosts still authenticate callers;
+roster membership does not establish identity, authority or result correctness.
+
+Reply collection now reads the original message through the durable pending
+ask. Only its requested recipients can answer, in the same conversation and
+to the original asker. Duplicate recipients count once. A second question or
+another conversation cannot replace that binding by reusing a token. Timeout
+and cancellation results use the same membership checks. Inbox validation
+finishes before any row on the page is marked read.
+
+SQLite, PostgreSQL and MongoDB restrict roster-bound queue discovery, reclaim
+and ask expiry to the captured exact scope. This also isolates two scopes
+that reuse an orchestration ID. Expiry restores the retained scope before
+claiming and resuming the ask. Ordinary partition-only discovery keeps its
+existing cross-scope policy.
+
+Regressions failed before these fixes for outsider replies, wrong destinations,
+remote identities, duplicate questions, cross-conversation tokens, poisoned
+inboxes and background discovery across scopes. Final formatting, all-ten-module
+lint, root build, full A2A races, engine messaging races, remote-module races
+and docs types/lint/build pass. The broader A2A backend matrix passed without
+skips: SQLite 121.557s, PostgreSQL 9.048s, MongoDB 14.717s. Final roster, reply
+and reserved-dispatch regressions also passed without skips on all three.
+
+Prepared-team engine messaging remains disabled until captured dispatch,
+shared-budget admission and durable team continuation are integrated. These
+checks qualify this local bus boundary. They do not qualify deployed recovery
+or the Linux sandbox, whose worker selection remains deferred by the user.

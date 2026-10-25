@@ -190,9 +190,16 @@ GET  /cortex/v1/agents/:name/inbox        what is waiting for an agent
 POST /cortex/v1/agents/:name/messages     send an agent a message
 ```
 
-That last one is how a person answers an agent. Post a message carrying
-`in_reply_to` set to the waiting ask's reply-with token and the run behind it
-resumes, exactly as it would have on a peer's reply.
+A reply counts only when it comes from an original recipient and addresses the
+original asker in the same conversation. The pending ask's saved message fixes
+that recipient set. Reusing a reply token on another message or conversation
+cannot replace it. Duplicate replies count once, including when the original
+request repeated a recipient. Timeout and cancellation results use the same
+checks when collecting partial answers.
+
+Your host must authenticate the sender before calling `Send`. A matching address
+and correlation token establish message membership; they do not verify who
+submitted the message or whether its answer is correct.
 
 ## Hooks
 
@@ -238,6 +245,45 @@ The prepared-team engine continues to reject messaging tools while that
 integration is unfinished. A storage partition does not authorize remote peers,
 provide an isolated tool environment or make stale delivery replay safe for
 external effects.
+
+## Freeze a local participant roster
+
+Pass `BusConfig.Roster` with the team's exact scope and captured agent identities:
+
+```go
+roster := &a2a.Roster{
+    Scope: scope,
+    Participants: []a2a.RosterParticipant{
+        {Name: "planner", AgentID: plannerID},
+        {Name: "reviewer", AgentID: reviewerID},
+    },
+}
+```
+
+Supply a nonzero `OrchestrationID` too. The bus accepts 1 to 256 participants,
+rejects repeated names or agent IDs, and copies the roster at construction.
+Remote addresses are not supported in a roster. Sender, receiver and reply-to
+addresses must belong to it. Inbox reads, held-ask release and queued delivery
+recheck those restrictions before exposing content or invoking a runner.
+
+Use `ParticipantAddress(ctx, agentID)` to resolve a captured agent's original
+name without reading its current stored name. Your host must first authenticate
+the invoking run and its agent identity. The roster does not authorize a caller
+to impersonate another member, pin executable agent versions or grant capacity.
+Keep those checks in the prepared runner and host authorization path.
+
+Normal message calls require the exact captured scope. Background queue reads,
+reclaim and expired-ask discovery use that same scope even with an unscoped
+lifecycle context. Another scope using the same orchestration ID keeps its queue
+and pending asks. The bus restores each discovered ask's scope before claiming it.
+
+A roster requires `ScopedRoutingBackend`, implemented by all three built-in
+stores. Custom backends must honor `RoutingDiscoveryScope(ctx)` on queue reads,
+reclaim reads and writes, and expired-ask queries before reporting support.
+Without a roster, routing retains its existing discovery scope rules.
+
+This is a bus-level identity restriction. Prepared-team tools still need their
+private bus wiring and durable continuation before the engine enables them.
 
 ## Reserve directive execution before dispatch
 

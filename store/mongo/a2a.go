@@ -428,19 +428,17 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, f a2a.InboxFilt
 	return a2aDeliveriesFromModels(models)
 }
 
-// ListQueuedDeliveries deliberately does NOT filter by scope.
-//
-// It is the dispatcher's read, and the dispatcher runs per process rather
-// than per tenant: a delivery queued under one scope has to be carried
-// even when nobody from that scope is currently calling in. Every document
-// it returns carries its own scope, and the caller puts that scope back on
-// the context before touching anything, so isolation is preserved by the
-// caller instead of by the query. This mirrors the sweeper's cross-scope
-// read of expired suspensions.
+// ListQueuedDeliveries discovers work within the selected routing partition.
+// Roster-bound buses also select their exact captured scope. Other dispatchers
+// discover across scopes and restore each delivery's scope before claiming it.
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
+	filter, filterErr := a2aDiscoveryFilter(ctx, bson.M{"state": a2a.DeliveryQueued, "$and": bson.A{a2aOptionalString("run_id", "")}})
+	if filterErr != nil {
+		return nil, filterErr
+	}
 	var models []a2aDeliveryModel
 	q := s.mdb.NewFind(&models).
-		Filter(a2aRoutingFilter(ctx, bson.M{"state": a2a.DeliveryQueued, "$and": bson.A{a2aOptionalString("run_id", "")}})).
+		Filter(filter).
 		Sort(bson.D{{Key: "created_at", Value: 1}, {Key: "_id", Value: 1}})
 	if limit > 0 {
 		q = q.Limit(int64(limit))
@@ -451,19 +449,18 @@ func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Del
 	return a2aDeliveriesFromModels(models)
 }
 
-// ReclaimStaleDeliveries puts abandoned deliveries back in the queue.
-//
-// Like the queued read it crosses scopes deliberately: the dispatcher
-// runs per process rather than per tenant, and a document stranded by a
-// dead worker belongs to whoever is alive now. The claimed_at filter is
-// what keeps a delivery somebody is still carrying out of it, which is
-// the difference between recovering a message and delivering it twice.
+// ReclaimStaleDeliveries requeues abandoned deliveries without a bound run.
+// It uses the same partition and optional exact scope as queue discovery.
+// The cutoff and claim token are rechecked on each update.
 func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) {
 	filter := bson.M{
 		"state":      a2a.DeliveryDelivering,
 		"claimed_at": bson.M{"$ne": nil, "$lt": olderThan.UTC()},
 	}
-	filter = a2aRoutingFilter(ctx, filter)
+	filter, filterErr := a2aDiscoveryFilter(ctx, filter)
+	if filterErr != nil {
+		return 0, filterErr
+	}
 	filter["$and"] = bson.A{a2aOptionalString("run_id", "")}
 
 	// UpdateMany has no limit, so the batch is bounded by reading the ids
@@ -480,8 +477,12 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 
 	var n int
 	for i := range models {
+		updateFilter, updateErr := a2aDiscoveryFilter(ctx, bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering, "claimed_at": bson.M{"$lt": olderThan.UTC()}, "$and": bson.A{a2aOptionalString("run_id", ""), a2aOptionalString("claim_token", models[i].ClaimToken)}})
+		if updateErr != nil {
+			return n, updateErr
+		}
 		res, err := s.mdb.NewUpdate((*a2aDeliveryModel)(nil)).
-			Filter(a2aRoutingFilter(ctx, bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering, "claimed_at": bson.M{"$lt": olderThan.UTC()}, "$and": bson.A{a2aOptionalString("run_id", ""), a2aOptionalString("claim_token", models[i].ClaimToken)}})).
+			Filter(updateFilter).
 			SetUpdate(bson.M{"$set": bson.M{
 				"state":       a2a.DeliveryQueued,
 				"claimed_at":  nil,
@@ -588,6 +589,10 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 // documents are excluded, which is what makes sweeping the same backlog
 // twice safe.
 func (s *Store) ListExpiredAsks(ctx context.Context, at time.Time, limit int) ([]*a2a.PendingAsk, error) {
+	_, scoped, discoveryErr := a2a.RoutingDiscoveryScope(ctx)
+	if discoveryErr != nil {
+		return nil, discoveryErr
+	}
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return nil, scopeErr
@@ -597,7 +602,7 @@ func (s *Store) ListExpiredAsks(ctx context.Context, at time.Time, limit int) ([
 		"deadline":   bson.M{"$ne": nil, "$lte": at.UTC()},
 	}
 	filter = a2aRoutingFilter(ctx, filter)
-	for k, v := range scopeFilter(scope, false) {
+	for k, v := range scopeFilter(scope, scoped) {
 		filter[k] = v
 	}
 
@@ -726,4 +731,21 @@ func a2aRoutingFilter(ctx context.Context, filter bson.M) bson.M {
 		filter["orchestration_id"] = key
 	}
 	return filter
+}
+
+// SupportsScopedOrchestrationDiscovery reports exact-scope background routing.
+func (s *Store) SupportsScopedOrchestrationDiscovery() bool { return true }
+
+func a2aDiscoveryFilter(ctx context.Context, filter bson.M) (bson.M, error) {
+	scope, bound, err := a2a.RoutingDiscoveryScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter = a2aRoutingFilter(ctx, filter)
+	if bound {
+		for key, value := range scopeFilter(scope, true) {
+			filter[key] = value
+		}
+	}
+	return filter, nil
 }

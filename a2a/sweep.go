@@ -3,6 +3,8 @@ package a2a
 import (
 	"context"
 	"fmt"
+
+	"github.com/xraph/cortex"
 )
 
 // sweepBatch caps one pass so a large backlog cannot hold a worker forever.
@@ -36,7 +38,8 @@ func (b *Bus) SweepExpiredAsks(ctx context.Context) (int, error) {
 	}
 	var n int
 	for _, a := range asks {
-		if err := b.resolveAskWithFailure(ctx, a.ReplyWith, b.timeoutReason(ctx, a)); err != nil {
+		askCtx := cortex.WithScope(ctx, a.Scope)
+		if err := b.resolveAskWithFailure(askCtx, a.ReplyWith, b.timeoutReason(askCtx, a)); err != nil {
 			return n, err
 		}
 		n++

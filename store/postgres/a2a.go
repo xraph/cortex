@@ -417,20 +417,23 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, filter a2a.Inbo
 	return out, nil
 }
 
-// ListQueuedDeliveries deliberately does NOT filter by scope.
-//
-// It is the dispatcher's read, and the dispatcher runs per process rather
-// than per tenant: a delivery queued under one scope has to be carried
-// even when nobody from that scope is currently calling in. Every row it
-// returns carries its own scope, and deliverOne puts that scope back on
-// the context before touching anything, so the isolation the rest of this
-// file enforces is preserved by the caller instead of by the query. This
-// mirrors the sweeper's cross-scope read of expired suspensions.
+// ListQueuedDeliveries discovers work within the selected routing partition.
+// Roster-bound buses also select their exact captured scope. Other dispatchers
+// discover across scopes and restore each delivery's scope before claiming it.
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
+	discoveryScope, scoped, scopeErr := a2a.RoutingDiscoveryScope(ctx)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
 	var models []a2aDeliveryModel
 	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("state = ?", a2a.DeliveryQueued).Where("run_id = ?", "").
 		OrderExpr("created_at ASC, id ASC")
+	if scoped {
+		for _, predicate := range scopePredicates(discoveryScope, true) {
+			q = q.Where(predicate.Column+" = ?", predicate.Value)
+		}
+	}
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -448,15 +451,14 @@ func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Del
 	return out, nil
 }
 
-// ReclaimStaleDeliveries puts abandoned deliveries back in the queue.
-//
-// Like ListQueuedDeliveries it crosses scopes deliberately: the
-// dispatcher runs per process rather than per tenant, and a row stranded
-// by a dead worker belongs to whoever is alive now. The claimed_at
-// predicate is what keeps a delivery somebody is still carrying out of
-// it, which is the difference between recovering a message and
-// delivering it twice.
+// ReclaimStaleDeliveries requeues abandoned deliveries without a bound run.
+// It uses the same partition and optional exact scope as queue discovery.
+// The cutoff and claim token are rechecked on each update.
 func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time, limit int) (int, error) {
+	discoveryScope, scoped, scopeErr := a2a.RoutingDiscoveryScope(ctx)
+	if scopeErr != nil {
+		return 0, scopeErr
+	}
 	// The rows are selected first and updated by id, mirroring the
 	// sqlite implementation. The claim predicate stays on the update, so
 	// a worker that comes back to life still wins its own row.
@@ -467,6 +469,11 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 		Where("claimed_at IS NOT NULL").
 		Where("claimed_at < ?", olderThan.UTC()).
 		OrderExpr("claimed_at ASC")
+	if scoped {
+		for _, predicate := range scopePredicates(discoveryScope, true) {
+			q = q.Where(predicate.Column+" = ?", predicate.Value)
+		}
+	}
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -477,7 +484,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	var n int
 	now := time.Now().UTC()
 	for i := range models {
-		res, err := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
+		update := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 			Set("state = ?", a2a.DeliveryQueued).
 			Set("claimed_at = ?", nil).
 			Set("claim_token = ?", "").
@@ -486,8 +493,13 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 			Where("state = ?", a2a.DeliveryDelivering).
 			Where("run_id = ?", "").
 			Where("claim_token = ?", models[i].ClaimToken).
-			Where("claimed_at < ?", olderThan.UTC()).
-			Exec(ctx)
+			Where("claimed_at < ?", olderThan.UTC())
+		if scoped {
+			for _, predicate := range scopePredicates(discoveryScope, true) {
+				update = update.Where(predicate.Column+" = ?", predicate.Value)
+			}
+		}
+		res, err := update.Exec(ctx)
 		if err != nil {
 			return n, fmt.Errorf("cortex: reclaim a2a delivery: %w", err)
 		}
@@ -601,6 +613,10 @@ func (s *Store) ClaimPendingAsk(ctx context.Context, replyWith string) (*a2a.Pen
 // ListExpiredAsks returns unclaimed asks past their deadline. Claimed rows
 // are excluded, which is what makes sweeping the same backlog twice safe.
 func (s *Store) ListExpiredAsks(ctx context.Context, now time.Time, limit int) ([]*a2a.PendingAsk, error) {
+	_, scoped, discoveryErr := a2a.RoutingDiscoveryScope(ctx)
+	if discoveryErr != nil {
+		return nil, discoveryErr
+	}
 	scope, scopeErr := cortex.RequireScope(ctx)
 	if scopeErr != nil {
 		return nil, scopeErr
@@ -611,7 +627,7 @@ func (s *Store) ListExpiredAsks(ctx context.Context, now time.Time, limit int) (
 		Where("deadline IS NOT NULL").
 		Where("deadline <= ?", now.UTC()).
 		OrderExpr("deadline ASC")
-	for _, p := range scopePredicates(scope, false) {
+	for _, p := range scopePredicates(scope, scoped) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
 	if limit > 0 {
@@ -714,3 +730,6 @@ func (s *Store) pendingAskExists(ctx context.Context, scope cortex.Scope, replyW
 
 // SupportsOrchestrationRouting reports durable A2A partition support.
 func (s *Store) SupportsOrchestrationRouting() bool { return true }
+
+// SupportsScopedOrchestrationDiscovery reports exact-scope background routing.
+func (s *Store) SupportsScopedOrchestrationDiscovery() bool { return true }

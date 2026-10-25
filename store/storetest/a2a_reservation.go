@@ -144,7 +144,7 @@ func testA2AReservedDispatch(t *testing.T, newStore func(*testing.T) store.Store
 			return &cortex.AgentResult{RunID: child, AgentName: name, Output: "checked"}, nil
 		}}, nil
 	}}
-	bus, err := a2a.NewBus(a2a.BusConfig{Store: backend, ReservedRunner: runner, OrchestrationID: team, Synchronous: true})
+	bus, err := a2a.NewBus(a2a.BusConfig{Store: backend, ReservedRunner: runner, OrchestrationID: team, Roster: &a2a.Roster{Scope: cortex.ScopeFromContext(ctx), Participants: []a2a.RosterParticipant{{Name: "planner", AgentID: id.NewAgentID()}, {Name: "worker", AgentID: id.NewAgentID()}}}, Synchronous: true})
 	require.NoError(t, err)
 	sent, err := bus.Send(ctx, a2a.SendParams{Sender: a2a.Address{Agent: "planner"}, Receivers: []a2a.Address{{Agent: "worker"}}, Performative: a2a.Request, Content: "evaluate"})
 	require.NoError(t, err)
