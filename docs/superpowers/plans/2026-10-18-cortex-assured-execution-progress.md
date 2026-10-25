@@ -6593,3 +6593,22 @@ live-source mutation, unchanged participants, round trips, nil input and rejecte
 participant/tool expansion. Preparation plus derivation races passed in 26.703s;
 the final derivation rerun passed in 3.508s. Formatting, all-module lint and root
 build passed before the focused three-file commit was pushed.
+
+### Current account authority after independent child resume
+
+Independent child resumes now retain the authenticated frozen team binding in
+process-local context. Provider and tool dispatch reuse the same account,
+reservation, deadline and parent-state checks as activation. A binding missing
+from context, or mismatching the child or its prepared provenance, grants no call.
+This also applies to streamed continuations. Coordinator-owned passes retain
+their current lease checks.
+
+The regression first reproduced a resumed child continuing after account closure.
+It now covers closure during a provider response and inside a tool, in both sync
+and stream modes. The closed account prevents the next dispatch while preserving
+the effect that completed before closure. No continuation payload gains authority
+from the new context value; it is installed only after frozen binding validation.
+
+Validation: prepared-team and task-call race tests passed in 65.200s. The final
+sync/stream regression passed in 6.552s and verifies a terminal streaming error.
+Scoped formatting, all-module lint, root build and docs types/lint/build pass.

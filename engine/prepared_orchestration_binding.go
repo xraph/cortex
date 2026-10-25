@@ -101,3 +101,32 @@ func (e *Engine) checkPreparedTeamResume(ctx context.Context, r *run.Run, s *sus
 	}
 	return e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, r.Budget)
 }
+
+type teamCallContextKey struct{}
+
+type teamCallBinding struct {
+	runID      id.AgentRunID
+	snapshot   *preparedSnapshot
+	provenance run.ExecutionProvenance
+	budget     execution.Budget
+}
+
+// Retain the authenticated frozen binding through independent child resumes.
+// This is process-local authority context, never serialized continuation data.
+func withTeamCallBinding(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget) context.Context {
+	if !hasOrchestrationBinding(p) {
+		return ctx
+	}
+	return context.WithValue(ctx, teamCallContextKey{}, teamCallBinding{runID: key, snapshot: snap, provenance: p, budget: budget})
+}
+
+func (e *Engine) checkTeamCall(ctx context.Context, key id.AgentRunID, p run.ExecutionProvenance) error {
+	if !hasOrchestrationBinding(p) {
+		return orchestration.CheckCoordinator(ctx)
+	}
+	binding, ok := ctx.Value(teamCallContextKey{}).(teamCallBinding)
+	if !ok || key != binding.runID || p.PreparedDigest != binding.provenance.PreparedDigest || p.OrchestrationID != binding.provenance.OrchestrationID || p.OrchestrationDigest != binding.provenance.OrchestrationDigest || p.OrchestrationReservationID != binding.provenance.OrchestrationReservationID {
+		return cortex.ErrInvalidPrepared
+	}
+	return e.checkOrchestrationBinding(ctx, key, binding.snapshot, binding.provenance, binding.budget)
+}

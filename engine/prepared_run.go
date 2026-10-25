@@ -212,6 +212,7 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 	if bindingErr := e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, cfg.Budget); bindingErr != nil {
 		return ctx, nil, bindingErr
 	}
+	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, cfg.Budget)
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return ctx, nil, &PreparedStartError{runID: r.ID, cause: err}
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/llm"
-	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/run"
 )
 
@@ -203,7 +202,7 @@ func taskCallRequest(ctx context.Context, scope cortex.Scope, runID id.AgentRunI
 }
 
 func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.Request) (response *llm.Response, err error) {
-	if checkErr := orchestration.CheckCoordinator(ctx); checkErr != nil {
+	if checkErr := e.checkTeamCall(ctx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	if r.Provenance.TaskClaimID == "" {
@@ -222,7 +221,7 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	if checkErr := orchestration.CheckCoordinator(callCtx); checkErr != nil {
+	if checkErr := e.checkTeamCall(callCtx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	response, err = e.llm.Complete(callCtx, &detached)
@@ -236,7 +235,7 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 }
 
 func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Request) (result llm.Stream, err error) {
-	if checkErr := orchestration.CheckCoordinator(ctx); checkErr != nil {
+	if checkErr := e.checkTeamCall(ctx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	if r.Provenance.TaskClaimID == "" {
@@ -260,7 +259,7 @@ func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Re
 			err = errors.Join(err, release())
 		}
 	}()
-	if checkErr := orchestration.CheckCoordinator(callCtx); checkErr != nil {
+	if checkErr := e.checkTeamCall(callCtx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	stream, err := e.llm.CompleteStream(callCtx, &detached)
@@ -378,10 +377,10 @@ func (s *taskLeaseStream) Usage() *llm.Usage {
 // dispatchTool also serves approved resume dispatch, so neither path can bypass
 // live task authority after the ordinary tool authorizer has allowed a call.
 func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call llm.ToolCall) (result string, outcome toolOutcome, err error) {
-	if checkErr := orchestration.CheckCoordinator(ctx); checkErr != nil {
+	provenance, _ := ExecutionProvenanceFromContext(ctx)
+	if checkErr := e.checkTeamCall(ctx, subject.RunID, provenance); checkErr != nil {
 		return "", outcomeFailed, checkErr
 	}
-	provenance, _ := ExecutionProvenanceFromContext(ctx)
 	if provenance.TaskClaimID == "" {
 		return e.dispatchAuthorizedTool(ctx, subject, call)
 	}
@@ -408,7 +407,7 @@ func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call 
 		}
 	}()
 	subject.Scope.Levels = append([]cortex.Level(nil), subject.Scope.Levels...)
-	if checkErr := orchestration.CheckCoordinator(callCtx); checkErr != nil {
+	if checkErr := e.checkTeamCall(callCtx, subject.RunID, provenance); checkErr != nil {
 		return "", outcomeFailed, checkErr
 	}
 	result, outcome, err = e.dispatchAuthorizedTool(callCtx, subject, call)

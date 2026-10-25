@@ -310,6 +310,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	ctx = withExecutionProvenance(ctx, st.provenance)
 	ctx = withTaskCallIndex(ctx, st.stepIndex-1)
 	r.Provenance = st.provenance
+	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, r.Budget)
 	r.Usage = st.usage
 	if snap != nil {
 		sourceStatus, checkErr := e.validatePreparedPublication(ctx, snap)

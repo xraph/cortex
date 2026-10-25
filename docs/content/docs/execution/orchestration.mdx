@@ -75,7 +75,10 @@ Your host must supply and qualify those controls.
 
 The engine checks the account and reservation before preparing and activating
 the child. It also checks them before claiming a paused child for resume and
-again after the claim. The stored team must still be running or waiting, so a failed
+again after the claim. The authenticated frozen binding stays in the execution
+context, including independent child resumes. Every later provider and tool call
+rechecks the account and reservation in both synchronous and streaming execution.
+The stored team must still be running or waiting, so a failed
 account-closure write cannot authorize resume after team termination. A closed
 account cannot authorize resume. Legacy
 continuations cannot discard team provenance, and an individual prepared run
