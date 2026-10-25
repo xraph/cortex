@@ -57,3 +57,8 @@ func (d orchestrationRunDriver) CompareAndSwap(ctx context.Context, before orche
 	n, err := result.RowsAffected()
 	return n == 1, err
 }
+
+// ClaimOrchestrationContinuation elects one waiting team pass at the exact scope.
+func (s *Store) ClaimOrchestrationContinuation(ctx context.Context, team id.OrchestrationID) (*orchestration.Run, error) {
+	return orchestrationstate.ClaimContinuation(ctx, orchestrationRunDriver{store: s}, team)
+}

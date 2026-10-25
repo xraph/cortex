@@ -35,6 +35,12 @@ func Update(ctx context.Context, driver Driver, record *orchestration.Run) error
 	}
 	incoming := clone(record)
 	updated, err := mutate(ctx, driver, incoming.ID, func(current *orchestration.Run) (*orchestration.Run, error) {
+		if incoming.ContinuationGeneration != current.ContinuationGeneration {
+			return nil, cortex.ErrOrchestrationRunConflict
+		}
+		if current.Status == orchestration.StatusWaiting && incoming.Status != orchestration.StatusWaiting && incoming.Status != orchestration.StatusFailed {
+			return nil, cortex.ErrOrchestrationRunConflict
+		}
 		if (current.Status == orchestration.StatusCompleted || current.Status == orchestration.StatusFailed) && incoming.Status != current.Status {
 			return nil, cortex.ErrOrchestrationRunClosed
 		}
@@ -138,4 +144,18 @@ func mergeChildren(first, retained []id.AgentRunID) ([]id.AgentRunID, error) {
 		}
 	}
 	return result, nil
+}
+
+// ClaimContinuation elects one strategy pass from a durable waiting state.
+func ClaimContinuation(ctx context.Context, driver Driver, team id.OrchestrationID) (*orchestration.Run, error) {
+	return mutate(ctx, driver, team, func(current *orchestration.Run) (*orchestration.Run, error) {
+		if current.Status != orchestration.StatusWaiting || current.ContinuationGeneration < 1 || current.ContinuationGeneration == math.MaxInt64 {
+			return nil, cortex.ErrOrchestrationRunConflict
+		}
+		current.Status = orchestration.StatusRunning
+		current.ContinuationGeneration++
+		current.Error = ""
+		current.CompletedAt = nil
+		return current, nil
+	})
 }

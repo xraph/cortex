@@ -29,6 +29,12 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 	if e.llm == nil {
 		return nil, cortex.ErrNoLLM
 	}
+	if _, ok := e.store.(orchestration.ContinuationStore); !ok {
+		return nil, cortex.ErrOrchestrationContinuationUnavailable
+	}
+	if _, ok := e.store.(orchestration.ContinuationRunStore); !ok {
+		return nil, cortex.ErrOrchestrationContinuationUnavailable
+	}
 	budget, ok := e.store.(orchestration.BudgetStore)
 	if !ok {
 		return nil, cortex.ErrBudgetUnavailable
@@ -36,6 +42,9 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 	view, policy, err := e.preparedTeamPolicy(ctx, p, opts)
 	if err != nil {
 		return nil, err
+	}
+	if limit, limited := ctx.Deadline(); limited && limit.Before(policy.Deadline) {
+		policy.Deadline = limit
 	}
 	if createErr := budget.CreateOrchestrationBudget(ctx, policy); createErr != nil {
 		return nil, createErr
@@ -47,7 +56,7 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 	hooks := &preparedTeamHooks{registryHookEmitter: registryHookEmitter{eng: e}}
 	defer func() {
 		recovered := recover()
-		if hooks.started {
+		if hooks.started && (rec == nil || rec.Status != orchestration.StatusWaiting) {
 			writeCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			err = errors.Join(err, budget.CloseOrchestrationBudget(writeCtx, policy.ExecutionID))
 			finish()
@@ -59,7 +68,11 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 		e.finishOrchestration(span, rec, err)
 	}()
 	runner := &preparedTeamRunner{eng: e, budget: budget, policy: policy, view: view, opts: opts}
-	return orchestration.NewReservedService(runner, e.store, hooks).RunConfigWithID(ctx, view.Config, input, policy.ExecutionID)
+	payload, payloadErr := preparedTeamPayload(p, opts)
+	if payloadErr != nil {
+		return nil, payloadErr
+	}
+	return orchestration.NewContinuableService(runner, runner, e.store, hooks).StartContinuation(ctx, orchestration.Continuation{SchemaVersion: 1, OrchestrationID: policy.ExecutionID, Scope: policy.Scope, Config: view.Config, Input: input, Payload: payload})
 }
 
 type preparedTeamHooks struct {
@@ -203,11 +216,9 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 			return nil, execution.ErrBudgetExceeded
 		}
 		record, runErr := r.execute(execCtx, draft)
-		if record != nil && (int64(record.Usage.Tokens) > allocation.Tokens || int64(record.Usage.Steps) > allocation.Steps || int64(record.Usage.ToolCalls) > allocation.ToolCalls) {
-			r.closed.Store(true)
-			closeCtx, finish := context.WithTimeout(context.WithoutCancel(execCtx), 5*time.Second)
-			runErr = errors.Join(runErr, execution.ErrBudgetExceeded, r.budget.CloseOrchestrationBudget(closeCtx, team))
-			finish()
+		runErr = errors.Join(runErr, r.checkUsage(execCtx, record, allocation))
+		if runErr == nil && record != nil && record.State == run.StatePaused {
+			return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
 		}
 		return orchestrationAgentResult(name, record, runErr)
 	}
@@ -234,4 +245,14 @@ func (r *preparedTeamRunner) execute(ctx context.Context, draft *preparedRunDraf
 		return nil, err
 	}
 	return r.eng.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
+}
+
+func (r *preparedTeamRunner) checkUsage(ctx context.Context, record *run.Run, allocation execution.Resources) error {
+	if record == nil || (int64(record.Usage.Tokens) <= allocation.Tokens && int64(record.Usage.Steps) <= allocation.Steps && int64(record.Usage.ToolCalls) <= allocation.ToolCalls) {
+		return nil
+	}
+	r.closed.Store(true)
+	closeCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer finish()
+	return errors.Join(execution.ErrBudgetExceeded, r.budget.CloseOrchestrationBudget(closeCtx, r.policy.ExecutionID))
 }

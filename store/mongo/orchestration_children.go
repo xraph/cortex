@@ -53,10 +53,15 @@ func (d orchestrationRunDriver) CompareAndSwap(ctx context.Context, before orche
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
-	set := bson.M{"revision": before.Revision + 1, "config_id": model.ConfigID, "strategy": model.Strategy, "status": model.Status, "input": model.Input, "output": model.Output, "error": model.Error, "agent_run_ids": model.AgentRunIDs, "started_at": model.StartedAt, "completed_at": model.CompletedAt, "created_at": model.CreatedAt, "updated_at": model.UpdatedAt}
+	set := bson.M{"continuation_generation": model.ContinuationGeneration, "revision": before.Revision + 1, "config_id": model.ConfigID, "strategy": model.Strategy, "status": model.Status, "input": model.Input, "output": model.Output, "error": model.Error, "agent_run_ids": model.AgentRunIDs, "started_at": model.StartedAt, "completed_at": model.CompletedAt, "created_at": model.CreatedAt, "updated_at": model.UpdatedAt}
 	result, err := d.store.mdb.NewUpdate((*orchestrationRunModel)(nil)).Filter(filter).SetUpdate(bson.M{"$set": set}).Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("cortex: update orchestration run revision: %w", err)
 	}
 	return result.MatchedCount() == 1, nil
+}
+
+// ClaimOrchestrationContinuation elects one waiting team pass at the exact scope.
+func (s *Store) ClaimOrchestrationContinuation(ctx context.Context, team id.OrchestrationID) (*orchestration.Run, error) {
+	return orchestrationstate.ClaimContinuation(ctx, orchestrationRunDriver{store: s}, team)
 }

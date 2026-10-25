@@ -80,7 +80,8 @@ func TestPreparedTeamPausedChildCannotResumeAfterClosure(t *testing.T) {
 		return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "call-probe", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil
 	}
 	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
-	require.ErrorIs(t, err, cortex.ErrRunIncomplete)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	require.NoError(t, f.s.CloseOrchestrationBudget(f.ctx, team.ID))
 	require.Len(t, team.AgentRunIDs, 1)
 	key := team.AgentRunIDs[0]
 	paused, err := f.s.GetRun(f.ctx, key)
@@ -211,8 +212,10 @@ func TestPreparedTeamTerminalRecordBlocksResumeWhenClosureFails(t *testing.T) {
 		return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "probe-call", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil
 	}
 	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
-	require.Error(t, err)
-	require.Equal(t, orchestration.StatusFailed, team.Status)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	team.Status = orchestration.StatusFailed
+	require.NoError(t, f.s.UpdateOrchestrationRun(f.ctx, team))
+	require.Error(t, wrapper.CloseOrchestrationBudget(f.ctx, team.ID))
 	account, err := f.s.GetOrchestrationBudgetSnapshot(f.ctx, team.ID)
 	require.NoError(t, err)
 	require.False(t, account.Closed)

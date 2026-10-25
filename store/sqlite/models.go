@@ -1065,26 +1065,27 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 // ──────────────────────────────────────────────────
 
 type orchestrationRunModel struct {
-	Revision        int64 `grove:"revision,notnull"`
-	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string     `grove:"id,pk"`
-	ConfigID        string     `grove:"config_id"`
-	AppID           string     `grove:"app_id,notnull"`
-	Strategy        string     `grove:"strategy"`
-	Status          string     `grove:"status,notnull"`
-	Input           string     `grove:"input"`
-	Output          string     `grove:"output"`
-	Error           string     `grove:"error"`
-	AgentRunIDs     string     `grove:"agent_run_ids"`
-	ScopeL0         string     `grove:"scope_l0,notnull"`
-	ScopeL1         string     `grove:"scope_l1,notnull"`
-	ScopeL2         string     `grove:"scope_l2,notnull"`
-	ScopeExtra      string     `grove:"scope_extra,notnull"`
-	ScopeCanon      string     `grove:"scope_canon,notnull"`
-	StartedAt       time.Time  `grove:"started_at"`
-	CompletedAt     *time.Time `grove:"completed_at"`
-	CreatedAt       time.Time  `grove:"created_at"`
-	UpdatedAt       time.Time  `grove:"updated_at"`
+	ContinuationGeneration int64 `grove:"continuation_generation,notnull"`
+	Revision               int64 `grove:"revision,notnull"`
+	grove.BaseModel        `grove:"table:cortex_orchestration_runs"`
+	ID                     string     `grove:"id,pk"`
+	ConfigID               string     `grove:"config_id"`
+	AppID                  string     `grove:"app_id,notnull"`
+	Strategy               string     `grove:"strategy"`
+	Status                 string     `grove:"status,notnull"`
+	Input                  string     `grove:"input"`
+	Output                 string     `grove:"output"`
+	Error                  string     `grove:"error"`
+	AgentRunIDs            string     `grove:"agent_run_ids"`
+	ScopeL0                string     `grove:"scope_l0,notnull"`
+	ScopeL1                string     `grove:"scope_l1,notnull"`
+	ScopeL2                string     `grove:"scope_l2,notnull"`
+	ScopeExtra             string     `grove:"scope_extra,notnull"`
+	ScopeCanon             string     `grove:"scope_canon,notnull"`
+	StartedAt              time.Time  `grove:"started_at"`
+	CompletedAt            *time.Time `grove:"completed_at"`
+	CreatedAt              time.Time  `grove:"created_at"`
+	UpdatedAt              time.Time  `grove:"updated_at"`
 }
 
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
@@ -1094,8 +1095,9 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	}
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &orchestrationRunModel{
-		ID:       r.ID.String(),
-		ConfigID: r.ConfigID.String(),
+		ContinuationGeneration: r.ContinuationGeneration,
+		ID:                     r.ID.String(),
+		ConfigID:               r.ConfigID.String(),
 		// app_id is vestigial for the same reason as
 		// orchestrationConfigToModel's: orchestration.Run dropped AppID
 		// this round, and the column stays empty rather than reading a
@@ -1129,16 +1131,17 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 		return nil, fmt.Errorf("orchestration run %s: %w", runID, err)
 	}
 	r := &orchestration.Run{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          runID,
-		Scope:       scope,
-		Strategy:    m.Strategy,
-		Status:      m.Status,
-		Input:       m.Input,
-		Output:      m.Output,
-		Error:       m.Error,
-		StartedAt:   m.StartedAt,
-		CompletedAt: m.CompletedAt,
+		ContinuationGeneration: m.ContinuationGeneration,
+		Entity:                 cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:                     runID,
+		Scope:                  scope,
+		Strategy:               m.Strategy,
+		Status:                 m.Status,
+		Input:                  m.Input,
+		Output:                 m.Output,
+		Error:                  m.Error,
+		StartedAt:              m.StartedAt,
+		CompletedAt:            m.CompletedAt,
 	}
 	if m.ConfigID != "" {
 		cfgID, cerr := id.ParseOrchestrationConfigID(m.ConfigID)

@@ -15,6 +15,7 @@ import (
 // persistingRunner serializes evidence writes without serializing agent work.
 // An acknowledgment failure closes admission even if a later write succeeds.
 type persistingRunner struct {
+	observer ChildObserver
 	runner   AgentRunner
 	reserved ReservedAgentRunner
 	runs     RunStore
@@ -29,6 +30,12 @@ func (r *persistingRunner) RunAgent(ctx context.Context, name, input string, opt
 	r.mu.Unlock()
 	if admissionErr != nil {
 		return nil, admissionErr
+	}
+	if r.observer != nil {
+		result, replayed, err := r.replay(ctx, name, input, opts)
+		if replayed {
+			return result, err
+		}
 	}
 	if !hostport.IsNil(r.reserved) {
 		return r.runReserved(ctx, name, input, opts)
@@ -114,6 +121,15 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 		runErr = errors.Join(runErr, actual.Err)
 	default:
 		*result = *actual
+	}
+	if r.observer != nil && journaled && runErr == nil && r.writeErr == nil {
+		r.writeErr = errors.Join(r.writeErr, intent.ValidateResult(result))
+		storage, ok := r.runs.(ContinuationStore)
+		if !ok {
+			r.writeErr = errors.Join(r.writeErr, cortex.ErrOrchestrationContinuationUnavailable)
+		} else if r.writeErr == nil {
+			r.writeErr = errors.Join(r.writeErr, storage.PutOrchestrationInvocationResult(ctx, intent, *result))
+		}
 	}
 	result.Err = errors.Join(result.Err, runErr, r.writeErr)
 	return result, result.Err

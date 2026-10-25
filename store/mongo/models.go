@@ -962,26 +962,27 @@ func orchestrationConfigFromModel(m *orchestrationConfigModel) (*orchestration.C
 // ──────────────────────────────────────────────────
 
 type orchestrationRunModel struct {
-	Revision        int64 `grove:"revision" bson:"revision"`
-	grove.BaseModel `grove:"table:cortex_orchestration_runs"`
-	ID              string            `grove:"id,pk"         bson:"_id"`
-	ConfigID        string            `grove:"config_id"     bson:"config_id"`
-	AppID           string            `grove:"app_id"        bson:"app_id"`
-	Strategy        string            `grove:"strategy"      bson:"strategy"`
-	Status          string            `grove:"status"        bson:"status"`
-	Input           string            `grove:"input"         bson:"input"`
-	Output          string            `grove:"output"        bson:"output"`
-	Error           string            `grove:"error"         bson:"error"`
-	AgentRunIDs     []string          `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
-	ScopeL0         string            `grove:"scope_l0"      bson:"scope_l0"`
-	ScopeL1         string            `grove:"scope_l1"      bson:"scope_l1"`
-	ScopeL2         string            `grove:"scope_l2"      bson:"scope_l2"`
-	ScopeExtra      map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
-	ScopeCanon      string            `grove:"scope_canon"   bson:"scope_canon"`
-	StartedAt       time.Time         `grove:"started_at"    bson:"started_at"`
-	CompletedAt     *time.Time        `grove:"completed_at"  bson:"completed_at,omitempty"`
-	CreatedAt       time.Time         `grove:"created_at"    bson:"created_at"`
-	UpdatedAt       time.Time         `grove:"updated_at"    bson:"updated_at"`
+	ContinuationGeneration int64 `grove:"continuation_generation" bson:"continuation_generation"`
+	Revision               int64 `grove:"revision" bson:"revision"`
+	grove.BaseModel        `grove:"table:cortex_orchestration_runs"`
+	ID                     string            `grove:"id,pk"         bson:"_id"`
+	ConfigID               string            `grove:"config_id"     bson:"config_id"`
+	AppID                  string            `grove:"app_id"        bson:"app_id"`
+	Strategy               string            `grove:"strategy"      bson:"strategy"`
+	Status                 string            `grove:"status"        bson:"status"`
+	Input                  string            `grove:"input"         bson:"input"`
+	Output                 string            `grove:"output"        bson:"output"`
+	Error                  string            `grove:"error"         bson:"error"`
+	AgentRunIDs            []string          `grove:"agent_run_ids" bson:"agent_run_ids,omitempty"`
+	ScopeL0                string            `grove:"scope_l0"      bson:"scope_l0"`
+	ScopeL1                string            `grove:"scope_l1"      bson:"scope_l1"`
+	ScopeL2                string            `grove:"scope_l2"      bson:"scope_l2"`
+	ScopeExtra             map[string]string `grove:"scope_extra"   bson:"scope_extra,omitempty"`
+	ScopeCanon             string            `grove:"scope_canon"   bson:"scope_canon"`
+	StartedAt              time.Time         `grove:"started_at"    bson:"started_at"`
+	CompletedAt            *time.Time        `grove:"completed_at"  bson:"completed_at,omitempty"`
+	CreatedAt              time.Time         `grove:"created_at"    bson:"created_at"`
+	UpdatedAt              time.Time         `grove:"updated_at"    bson:"updated_at"`
 }
 
 func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
@@ -991,8 +992,9 @@ func orchestrationRunToModel(r *orchestration.Run) *orchestrationRunModel {
 	}
 	l0, l1, l2, extra := scopeColumns(r.Scope)
 	return &orchestrationRunModel{
-		ID:       r.ID.String(),
-		ConfigID: r.ConfigID.String(),
+		ContinuationGeneration: r.ContinuationGeneration,
+		ID:                     r.ID.String(),
+		ConfigID:               r.ConfigID.String(),
 		// app_id is vestigial for the same reason as
 		// orchestrationConfigToModel's: orchestration.Run dropped AppID
 		// this round, and the field stays empty rather than reading a
@@ -1026,16 +1028,17 @@ func orchestrationRunFromModel(m *orchestrationRunModel) (*orchestration.Run, er
 		return nil, fmt.Errorf("orchestration run %s: %w", runID, err)
 	}
 	r := &orchestration.Run{
-		Entity:      cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
-		ID:          runID,
-		Scope:       scope,
-		Strategy:    m.Strategy,
-		Status:      m.Status,
-		Input:       m.Input,
-		Output:      m.Output,
-		Error:       m.Error,
-		StartedAt:   m.StartedAt,
-		CompletedAt: m.CompletedAt,
+		ContinuationGeneration: m.ContinuationGeneration,
+		Entity:                 cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
+		ID:                     runID,
+		Scope:                  scope,
+		Strategy:               m.Strategy,
+		Status:                 m.Status,
+		Input:                  m.Input,
+		Output:                 m.Output,
+		Error:                  m.Error,
+		StartedAt:              m.StartedAt,
+		CompletedAt:            m.CompletedAt,
 	}
 	if m.ConfigID != "" {
 		cfgID, cerr := id.ParseOrchestrationConfigID(m.ConfigID)

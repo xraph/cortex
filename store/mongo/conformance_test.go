@@ -189,3 +189,12 @@ func TestOrchestrationRevisionUpgrade(t *testing.T) {
 		}
 	})
 }
+
+func TestOrchestrationContinuationUpgrade(t *testing.T) {
+	s := newConformanceStore(t, false)
+	storetest.OrchestrationContinuationUpgrade(t, s, func() {
+		if _, err := s.mdb.Collection(colOrchestrationRuns).UpdateMany(context.Background(), bson.M{}, bson.M{"$unset": bson.M{"continuation_generation": ""}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

@@ -67,14 +67,14 @@ Your host must supply and qualify those controls.
 
 The engine checks the account and reservation before preparing and activating
 the child. It also checks them before claiming a paused child for resume and
-again after the claim. The stored team must still be running, so a failed
+again after the claim. The stored team must still be running or waiting, so a failed
 account-closure write cannot authorize resume after team termination. A closed
 account cannot authorize resume. Legacy
 continuations cannot discard team provenance, and an individual prepared run
 cannot borrow a reservation bound to another child ID.
 
 Once team execution ends, the engine closes admission, including on failure or
-panic. A concurrent duplicate start cannot close the active team's account.
+a panic in the initial pass. A waiting team retains its account and reservations. A concurrent duplicate start cannot close the active team's account.
 Reported child usage above its allowance closes admission and remains on the
 child record; calls already running may still finish. These checks do not
 establish worker quiescence or atomic revocation of external effects.
@@ -87,8 +87,47 @@ a paused child bypasses the closed account.
 
 Captured `agent_send`, `agent_ask` and `agent_inbox` tools are rejected because
 the global bus cannot provide isolation between experiments. Team-isolated A2A
-routing, monetary pricing, durable team continuation and deployed provider
+routing, monetary pricing, coordinator crash takeover and deployed provider
 recovery remain unfinished.
+
+## Continue a waiting prepared team
+
+When a prepared child suspends, the team returns `ErrOrchestrationWaiting` with
+status `waiting` and no completion timestamp. Its shared account stays open.
+Parallel strategies retain completed siblings while waiting for the remaining
+children. A real failure or cancellation still fails the team and closes
+admission, even when another child is waiting.
+
+Resume each paused child through the existing authorized `Engine.Resume` path.
+Then call `Engine.ResumePreparedOrchestration(ctx, teamID)` to continue the team.
+You can construct a new engine against the same store first. No prepared object,
+replacement input or live strategy config is supplied: the engine loads the
+original captured participants, input, purpose and options from its private
+continuation record. The original caller deadline also bounds the saved account.
+
+Only one caller can claim a waiting team. The strategy reconstructs its context
+from immutable completed results, checks them against the original child records
+and current team authority, and reserves only slots that have never been admitted.
+A completed child's authenticated usage may already be settled. That permits
+reading its result, but never executing it again. New results are bounded to
+4 MiB; the serialized strategy and host snapshot are bounded to 16 MiB.
+
+SQLite, PostgreSQL and MongoDB implement `ContinuationStore` and
+`ContinuationRunStore`. Custom stores must provide both for prepared execution.
+The snapshot and result records use the existing assurance table. Run SQL
+migrations before starting the new writers: each continuation claim advances a
+persisted generation so an older pass cannot overwrite the new coordinator.
+Legacy records retain generation zero and cannot claim continuation authority.
+Drain older writers before relying on these claims; they do not enforce this fence. Reconstructed handoff callbacks are suppressed on resumed passes.
+Completion hooks run after a terminal record is saved, not when a team waits.
+
+This path resumes an acknowledged waiting team. It does not take over a team
+whose coordinator died while marked `running`. A lost claim acknowledgment,
+missing reserved child or unknown invocation outcome requires reconciliation;
+repeating the request cannot authorize execution. Automatic coordinator lease
+recovery, waiting-team expiry cleanup and private A2A tool wiring remain open.
+Saved outputs retain their original assurance level. Replaying one does not
+independently verify its correctness.
 
 ## Execution records
 
@@ -167,9 +206,9 @@ reconciliation, and allocations remain charged until their outcome is known.
 Custom stores without this capability retain the previous child-link behavior.
 They cannot provide durable logical invocation identity. Older binaries also
 bypass this journal, so drain them before relying on it for recovery. The
-journal does not yet resume an orchestration, retain strategy results or keep
-a paused team's budget open. Prepared-team messaging remains disabled until
-that continuation path is implemented.
+journal supplies the identities used by prepared-team continuation below. The
+ordinary reserved service keeps its terminal behavior; use the prepared engine
+API for waiting teams. Private team messaging remains disabled.
 
 ### Preserve children across concurrent writes
 

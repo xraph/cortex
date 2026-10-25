@@ -11,12 +11,16 @@ import (
 // Orchestration run status values.
 const (
 	StatusRunning   = "running"
+	StatusWaiting   = "waiting"
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 )
 
 // Run is the persisted execution record of one orchestration.
 type Run struct {
+	// ContinuationGeneration fences coordinator snapshots across waiting passes.
+	// It is internal storage state and is not accepted through JSON APIs.
+	ContinuationGeneration int64 `json:"-"`
 	cortex.Entity
 	ID          id.OrchestrationID       `json:"id"`
 	ConfigID    id.OrchestrationConfigID `json:"config_id,omitempty"` // empty for programmatic runs

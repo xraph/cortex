@@ -43,6 +43,7 @@ var mutableOrchestrationConfigColumns = []string{
 // for cortex_orchestration_runs: everything except the five scope columns
 // and (for the same reason as above) app_id.
 var mutableOrchestrationRunColumns = []string{
+	"continuation_generation",
 	"revision",
 	"config_id",
 	"strategy",

@@ -28,6 +28,10 @@ var (
 	ErrWorkingMemoryNotFound           = errors.New("cortex: working memory not found")
 	ErrOverlayNotFound                 = errors.New("cortex: prompt overlay not found")
 
+	// Continuation errors.
+	ErrOrchestrationWaiting                 = errors.New("cortex: orchestration is waiting for a child")
+	ErrOrchestrationContinuationUnavailable = errors.New("cortex: orchestration continuation unavailable")
+
 	// Conflict errors.
 	ErrAlreadyExists = errors.New("cortex: resource already exists")
 	// ErrPreparationUnavailable means the requested consistency guarantee cannot be provided.

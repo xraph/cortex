@@ -432,7 +432,7 @@ type GetOrchestrationRunRequest struct {
 
 // ListOrchestrationRunsRequest paginates and filters orchestration runs.
 type ListOrchestrationRunsRequest struct {
-	Status string `query:"status" description:"Filter by status: running|completed|failed"`
+	Status string `query:"status" description:"Filter by status: running|waiting|completed|failed"`
 	Limit  int    `query:"limit"`
 	Offset int    `query:"offset"`
 }

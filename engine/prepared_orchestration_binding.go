@@ -25,6 +25,16 @@ func validOrchestrationBinding(p run.ExecutionProvenance) bool {
 }
 
 func (e *Engine) checkOrchestrationBinding(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget) error {
+	return e.checkOrchestrationAuthority(ctx, key, snap, p, budget, false)
+}
+
+// Completed observations may read a settled reservation, but execution and
+// paused-child resume still require an unsettled reservation.
+func (e *Engine) checkOrchestrationObservation(ctx context.Context, child *run.Run, snap *preparedSnapshot) error {
+	return e.checkOrchestrationAuthority(ctx, child.ID, snap, child.Provenance, child.Budget, child.State == run.StateCompleted)
+}
+
+func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget, completedObservation bool) error {
 	if !hasOrchestrationBinding(p) {
 		return nil
 	}
@@ -54,7 +64,7 @@ func (e *Engine) checkOrchestrationBinding(ctx context.Context, key id.AgentRunI
 	if teamErr != nil {
 		return errors.Join(cortex.ErrInvalidPrepared, teamErr)
 	}
-	if teamRun.Status != orchestration.StatusRunning || teamRun.Scope.Canonical() != account.Policy.Scope.Canonical() {
+	if (teamRun.Status != orchestration.StatusRunning && teamRun.Status != orchestration.StatusWaiting) || teamRun.Scope.Canonical() != account.Policy.Scope.Canonical() {
 		return cortex.ErrInvalidPrepared
 	}
 	reservation, err := storage.GetReservation(ctx, reservationID)
@@ -66,7 +76,7 @@ func (e *Engine) checkOrchestrationBinding(ctx context.Context, key id.AgentRunI
 	if err != nil {
 		return err
 	}
-	if account.Policy.ValidateReservation(req) != nil || reservation.Settlement != nil || req.TaskID != key || req.OwnerRef != snap.Agent.Name || !req.Allocation.Covers(allocation) || budget.Deadline.IsZero() || budget.Deadline.After(req.Deadline) || !time.Now().Before(req.Deadline) {
+	if account.Policy.ValidateReservation(req) != nil || (reservation.Settlement != nil && !completedObservation) || req.TaskID != key || req.OwnerRef != snap.Agent.Name || !req.Allocation.Covers(allocation) || budget.Deadline.IsZero() || budget.Deadline.After(req.Deadline) || !time.Now().Before(req.Deadline) {
 		return cortex.ErrInvalidPrepared
 	}
 	return nil

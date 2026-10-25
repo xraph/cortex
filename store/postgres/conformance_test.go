@@ -66,6 +66,12 @@ func TestConformance(t *testing.T) {
 		}
 		storetest.A2ASQLRoutingUpgrade(t, s, func(query string) error { _, execErr := s.pgdb.Exec(ctx, query); return execErr })
 	})
+	t.Run("OrchestrationContinuationUpgrade", func(t *testing.T) {
+		if clearErr := truncateConformanceTables(ctx, s); clearErr != nil {
+			t.Fatal(clearErr)
+		}
+		storetest.OrchestrationSQLContinuationUpgrade(t, s, func(query string) error { _, execErr := s.pgdb.Exec(ctx, query); return execErr })
+	})
 	t.Run("OrchestrationRevisionUpgrade", func(t *testing.T) {
 		if clearErr := truncateConformanceTables(ctx, s); clearErr != nil {
 			t.Fatal(clearErr)

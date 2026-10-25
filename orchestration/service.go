@@ -29,6 +29,7 @@ func (noopHooks) AgentHandoff(context.Context, id.OrchestrationID, string, strin
 
 // Service runs stored orchestration configs end to end.
 type Service struct {
+	observer ChildObserver
 	runner   AgentRunner
 	reserved ReservedAgentRunner
 	configs  ConfigStore
@@ -73,6 +74,24 @@ func (s *Service) runConfig(ctx context.Context, cfg Config, input string, team 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if s.observer != nil {
+		storage, ok := s.runs.(ContinuationStore)
+		if !ok {
+			return nil, cortex.ErrOrchestrationContinuationUnavailable
+		}
+		captured, readErr := storage.GetOrchestrationContinuation(ctx, team)
+		if readErr != nil {
+			return nil, readErr
+		}
+		desired := captured
+		desired.Config = cfg
+		desired.Input = input
+		_, want, freezeErr := desired.Freeze()
+		_, got, captureErr := captured.Freeze()
+		if freezeErr != nil || captureErr != nil || want != got {
+			return nil, cortex.ErrInvalidContinuation
+		}
+	}
 	cfg.Participants = slices.Clone(cfg.Participants)
 	for i := range cfg.Participants {
 		cfg.Participants[i].Skills = slices.Clone(cfg.Participants[i].Skills)
@@ -82,25 +101,36 @@ func (s *Service) runConfig(ctx context.Context, cfg Config, input string, team 
 		ID: team, ConfigID: cfg.ID, Strategy: cfg.Strategy,
 		Status: StatusRunning, Input: input, StartedAt: nowUTC(),
 	}
-	runner := &persistingRunner{runner: s.runner, reserved: s.reserved, runs: s.runs, record: rec}
-
-	orch, err := Build(cfg.Strategy, runner, cfg.Participants, cfg.Settings)
-	if err != nil {
+	if s.observer != nil {
+		rec.ContinuationGeneration = 1
+	}
+	if _, err := Build(cfg.Strategy, nil, cfg.Participants, cfg.Settings); err != nil {
 		return nil, err
 	}
-
-	started := rec.StartedAt
 	if err := s.runs.CreateOrchestrationRun(ctx, rec); err != nil {
 		return nil, err
 	}
-	orchID := rec.ID
-	s.hooks.OrchestrationStarted(ctx, orchID, cfg.Strategy)
+	s.hooks.OrchestrationStarted(ctx, rec.ID, cfg.Strategy)
+	return s.executeConfig(ctx, cfg, input, rec, false)
+}
 
+func (s *Service) executeConfig(ctx context.Context, cfg Config, input string, rec *Run, replay bool) (*Run, error) {
+	runner := &persistingRunner{runner: s.runner, reserved: s.reserved, runs: s.runs, record: rec, observer: s.observer}
+	orch, err := Build(cfg.Strategy, runner, cfg.Participants, cfg.Settings)
+	if err != nil {
+		return rec, err
+	}
+	started, orchID := rec.StartedAt, rec.ID
 	bb := NewBlackboard(orchID, cfg.Participants, func(hctx context.Context, h Handoff) {
-		s.hooks.AgentHandoff(hctx, orchID, h.From, h.To, h.Payload)
+		if !replay {
+			s.hooks.AgentHandoff(hctx, orchID, h.From, h.To, h.Payload)
+		}
 	})
 
 	result, runErr := orch.Run(ctx, input, bb)
+	if ctx.Err() != nil {
+		runErr = errors.Join(runErr, ctx.Err())
+	}
 
 	completed := nowUTC()
 	rec.CompletedAt = &completed
@@ -121,16 +151,24 @@ func (s *Service) runConfig(ctx context.Context, cfg Config, input string, team 
 			}
 		}
 	}
-	if runErr != nil {
+	switch {
+	case s.observer != nil && onlyWaiting(runErr):
+		rec.Status = StatusWaiting
+		rec.CompletedAt = nil
+		rec.Error = ""
+		rec.Output = ""
+	case runErr != nil:
 		rec.Status = StatusFailed
 		rec.Error = runErr.Error()
-	} else {
+	default:
 		rec.Status = StatusCompleted
 	}
 	if err := persistOrchestrationRun(ctx, s.runs, rec); err != nil {
 		return rec, errors.Join(runErr, err)
 	}
-	s.hooks.OrchestrationCompleted(ctx, orchID, completed.Sub(started))
+	if rec.Status != StatusWaiting {
+		s.hooks.OrchestrationCompleted(ctx, orchID, completed.Sub(started))
+	}
 
 	return rec, runErr
 }

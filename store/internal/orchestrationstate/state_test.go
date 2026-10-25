@@ -62,3 +62,35 @@ func TestRevisionExhaustionAndContentionFailClosed(t *testing.T) {
 		require.Empty(t, d.snapshot.Run.AgentRunIDs)
 	}
 }
+
+func TestContinuationClaimLostAcknowledgmentCannotRetry(t *testing.T) {
+	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "claim"}}}
+	ctx := cortex.WithScope(t.Context(), scope)
+	team := &orchestration.Run{ID: id.NewOrchestrationID(), Scope: scope, Status: orchestration.StatusWaiting, ContinuationGeneration: 1}
+	d := &faultDriver{snapshot: Snapshot{Run: team}}
+	lost := errors.New("acknowledgment lost")
+	d.write = func(after *orchestration.Run) (bool, error) {
+		d.snapshot = Snapshot{Run: clone(after), Revision: 1}
+		return false, lost
+	}
+	claimed, err := ClaimContinuation(ctx, d, team.ID)
+	require.ErrorIs(t, err, lost)
+	require.Nil(t, claimed)
+	require.Equal(t, orchestration.StatusRunning, d.snapshot.Run.Status)
+	claimed, err = ClaimContinuation(ctx, d, team.ID)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationRunConflict)
+	require.Nil(t, claimed)
+	require.Equal(t, 1, d.writes)
+}
+
+func TestContinuationGenerationExhaustionFailsClosed(t *testing.T) {
+	scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "generation"}}}
+	ctx := cortex.WithScope(t.Context(), scope)
+	for _, generation := range []int64{-1, 0, math.MaxInt64} {
+		d := &faultDriver{snapshot: Snapshot{Run: &orchestration.Run{ID: id.NewOrchestrationID(), Scope: scope, Status: orchestration.StatusWaiting, ContinuationGeneration: generation}}}
+		claimed, err := ClaimContinuation(ctx, d, d.snapshot.Run.ID)
+		require.ErrorIs(t, err, cortex.ErrOrchestrationRunConflict)
+		require.Nil(t, claimed)
+		require.Zero(t, d.writes)
+	}
+}

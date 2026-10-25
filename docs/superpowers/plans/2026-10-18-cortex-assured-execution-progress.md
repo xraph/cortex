@@ -6411,3 +6411,57 @@ remains deferred by the user.
 Final scoped formatting, all-ten-module lint, root build, complete orchestration
 and assurance race suites, and docs types/lint/build pass. These checks qualify
 local journal behavior, not a resumable team or installed recovery worker.
+
+### Waiting prepared teams and durable strategy continuation
+
+Prepared execution now retains a waiting parent and its shared account when a
+child suspends. The saved continuation contains the original strategy, input,
+prepared participants and host options. A caller deadline narrows the immutable
+account deadline before admission. Real failures and cancellation still make the
+team terminal, including mixed parallel waiting/failure results.
+
+`Engine.ResumePreparedOrchestration` reloads the snapshot after paused children
+use their existing authorized resume path. All five strategies reconstruct their
+context from retained invocation results. Existing slots are observed through
+their original child identity, never reserved or executed again. Current account,
+participant, reservation and parent linkage checks apply before using results.
+Completed children may have authenticated usage settlements; paused execution
+still requires an unsettled reservation. Usage overruns close admission.
+
+SQLite, PostgreSQL and MongoDB share immutable continuation/result storage.
+Their revision-checked parent adapters elect one waiting-to-running transition.
+Each claim advances a persisted generation. Stale waiting, failed and completed
+snapshots from an earlier pass cannot overwrite the new coordinator. SQL
+migration `20261025000004` adds that fence; historical records retain generation
+zero and cannot claim continuation authority. Upgrade tests cover existing rows
+and replay after an unrecorded schema change. Duplicate and uncertain claim
+acknowledgments grant no execution. Ordinary updates cannot reopen a waiting parent. A claimed parent whose input disagrees
+with its snapshot becomes failed without calling a provider. Completed results
+are bounded to 4 MiB and serialized snapshots to 16 MiB. Older writers must be
+drained before relying on waiting-state claims.
+
+Behavioral regressions reproduced premature team closure, widened caller
+deadlines, rejection of settled completed children, changed-input rejection
+leaving a running parent and stale snapshots overwriting a newly claimed pass. Engine fixtures resume all five strategies through a
+new engine, preserve completed siblings, reject duplicate starts/resumes and keep
+losing callers from closing the winner's account. SQLite close/reopen, concurrent
+claims, exact scopes, lost acknowledgments and corrupted immutable records are
+covered. The final backend matrix passed without skips: SQLite 18.144s,
+PostgreSQL 3.525s, MongoDB 4.360s. Prepared runtime races passed in 36.601s before
+the final changed-input status fix; that focused rerun passed, and the complete
+engine race suite passed in 569.731s. After generation fencing and scoped
+formatting, prepared runtime races passed in 31.279s, with complete orchestration,
+assurance and state suites also passing. SQLite (23.477s), PostgreSQL (8.957s)
+and MongoDB (12.840s) passed the final backend matrix without skips after the
+authorized Docker restart. Root build and docs types/lint/build pass. Final all-module
+lint reports zero issues after the concurrent optimization and Sentinel fixes.
+The API race suite passed in 32.005s, including the updated waiting-status
+filter description.
+
+This resumes acknowledged waiting teams. Automatic takeover after coordinator
+crash or lost claim acknowledgment, waiting-team expiry cleanup, durable handoff
+event delivery and private A2A tool wiring remain open. Handoff callbacks are
+suppressed while reconstructing resumed strategies. A running parent with an
+unknown coordinator outcome requires reconciliation, and this API refuses to
+claim it. Outputs keep their existing assurance level. Live Linux sandbox
+qualification remains deferred by the user.
