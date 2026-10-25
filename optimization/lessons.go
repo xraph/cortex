@@ -93,6 +93,10 @@ const (
 
 // Publication is the durable outbox entry committed with its local decision.
 type Publication struct {
+	DeliveryLease     PublicationLease     `json:"delivery_lease"`
+	DeliveryActor     IdentityRef          `json:"delivery_actor"`
+	Receipt           *PublicationReceipt  `json:"receipt,omitempty"`
+	LastErrorCode     string               `json:"last_error_code,omitempty"`
 	CreatedAt         time.Time            `json:"created_at"`
 	ExperimentID      id.ID                `json:"experiment_id"`
 	SupersededAt      time.Time            `json:"superseded_at,omitempty"`
@@ -116,4 +120,23 @@ type PublicationReceipt struct {
 	AggregateID    string    `json:"aggregate_id"`
 	Version        int64     `json:"version"`
 	AcknowledgedAt time.Time `json:"acknowledged_at"`
+}
+
+// PublicationClaim acquires one outbox payload independently of experiment work.
+// Delivery continues after review or completion without reopening the experiment.
+type PublicationClaim struct {
+	LessonID      id.ID         `json:"lesson_id"`
+	LocalRevision int64         `json:"local_revision"`
+	Owner         string        `json:"owner"`
+	Duration      time.Duration `json:"duration"`
+	Actor         IdentityRef   `json:"actor"`
+}
+
+// PublicationLease fences acknowledgements to one delivery attempt.
+type PublicationLease struct {
+	LessonID      id.ID     `json:"lesson_id"`
+	LocalRevision int64     `json:"local_revision"`
+	Owner         string    `json:"owner"`
+	Generation    int64     `json:"generation"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }

@@ -62,6 +62,9 @@ type Transaction interface {
 	ReleaseValidation(ValidationAccess) error
 	CompareAndSwapActivation(ActivationChange) (Activation, error)
 	PutPublication(PublicationRequest) error
+	ClaimPublication(PublicationClaim) (Publication, error)
+	CompletePublication(PublicationLease, PublicationReceipt) error
+	FailPublication(PublicationLease, string, time.Time, bool) error
 	RevokeLesson(LessonRevocation) error
 }
 

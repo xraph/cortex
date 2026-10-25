@@ -928,3 +928,28 @@ from Cortex v1.8.0, which the consumer check caught after local replacements wer
 removed. The integration test module follows the same root pin. This closes the
 ordinary-memory feedback path; governed lesson delivery and the full learning
 phase remain in progress.
+
+## Fenced lesson publication delivery
+
+You can run `Publisher.Work` with an exact scoped context and a host-supplied
+`PublicationSink`. The worker claims existing outbox records, rechecks caller and
+requester authority after delivery, and acknowledges the destination's aggregate
+ID, payload digest and version under the current lease. Publishing does not
+reopen the experiment or change its decision.
+
+Claims, retries and acknowledgements share the existing store transaction and
+audit trail. Stale workers cannot acknowledge a replacement's claim, and local
+revocation supersedes an unfinished publication. Delivery failures retain a
+bounded error code and retry time. Eight dispatched attempts are allowed, including
+attempts that lose their lease before they can record a failure. Exhausted or
+invalid deliveries remain visible as terminal records.
+
+Race tests cover all four backends, competing claims, rollback, retry delay,
+receipt mismatch, cancellation, revoked authority and lost acknowledgements.
+SQLite, Postgres and Mongo also close and reopen their databases between claim,
+takeover and acknowledgement checks. These tests use an idempotent destination
+double; they establish local outbox recovery, not Fabriq delivery semantics.
+
+The Fabriq sink, authoritative remote reconciliation, filtered recall and an
+operator retry command remain open in Task 12. The broader implementation plan
+is still in progress.
