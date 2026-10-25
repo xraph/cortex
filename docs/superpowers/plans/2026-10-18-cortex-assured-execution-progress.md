@@ -6076,3 +6076,36 @@ This completes preparation only. `RunPreparedOrchestration`, shared child-budget
 enforcement, isolated child sessions, experiment-limited A2A routing and persisted
 partial execution evidence remain required for the prepared execution path. The
 optimizer owns its preset approval and trace adapters. No optimizer types enter root.
+
+### Shared orchestration execution and partial evidence
+
+`Service.RunConfig` executes supplied strategy/config through the same service
+used by named orchestration. Participants and routing settings are detached
+before lifecycle hooks run, so later edits cannot change the selected roster.
+This is the service seam for prepared execution; its injected runner still owns
+participant pinning, authorization, budgets and isolation.
+
+The service persists returned child IDs during execution, including failed
+children, and serializes those writes while agents run concurrently. A failed
+write closes later admission. Already admitted calls can finish and retain their
+IDs, but a later write cannot erase the earlier failure. The final write keeps
+scope and gets five seconds even after caller cancellation. Persistence errors
+remain visible alongside execution errors, and the completion hook requires a
+successful final write.
+
+Behavioral regressions first showed missing intermediate child IDs, a cancelled
+team left running and dispatch continuing after a failed evidence write. All
+five strategies now pass captured-config mutation tests. Cancellation, parallel
+in-flight evidence and final-write error retention tests pass. SQLite,
+PostgreSQL and MongoDB conformance races passed with actual containers and no
+skips. Final database races passed in 3.273s, 5.284s and 6.574s. Focused engine
+and strategy races, scoped formatting, all ten modules' lint, root build and
+docs type/lint/build checks passed. The broader root run passed every package
+except an existing engine verification fixture whose SQLite terminal write hit
+its deadline. That fixture passed on retry, followed by the full engine suite
+(55.354s). No timeout or production behavior was weakened for the retry. The
+documented local `store/scopespy` exclusion applies to the broader root run.
+
+Prepared runtime dispatch, shared child budgets, isolated sessions and restricted
+A2A routing remain open. Returned-child persistence does not close the crash
+window before a child returns or before its first evidence write.

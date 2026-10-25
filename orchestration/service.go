@@ -3,8 +3,11 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"time"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
 
@@ -46,21 +49,38 @@ func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg == nil {
+		return nil, cortex.ErrOrchestrationNotFound
+	}
+	return s.RunConfig(ctx, *cfg, input)
+}
 
-	orch, err := Build(cfg.Strategy, s.runner, cfg.Participants, cfg.Settings)
+// RunConfig executes the supplied config without reading ConfigStore. Execution
+// fields are detached before hooks or agents run. The injected runner remains
+// responsible for participant preparation, authorization and shared budgets.
+// Child identities are persisted as each invocation returns. A failed write
+// stops subsequent admission; already admitted parallel calls retain their IDs.
+func (s *Service) RunConfig(ctx context.Context, cfg Config, input string) (*Run, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cfg.Participants = slices.Clone(cfg.Participants)
+	for i := range cfg.Participants {
+		cfg.Participants[i].Skills = slices.Clone(cfg.Participants[i].Skills)
+	}
+	cfg.Settings.RouterRules = maps.Clone(cfg.Settings.RouterRules)
+	rec := &Run{
+		ID: id.NewOrchestrationID(), ConfigID: cfg.ID, Strategy: cfg.Strategy,
+		Status: StatusRunning, Input: input, StartedAt: nowUTC(),
+	}
+	runner := &persistingRunner{runner: s.runner, runs: s.runs, record: rec}
+
+	orch, err := Build(cfg.Strategy, runner, cfg.Participants, cfg.Settings)
 	if err != nil {
 		return nil, err
 	}
 
-	started := nowUTC()
-	rec := &Run{
-		ID:        id.NewOrchestrationID(),
-		ConfigID:  cfg.ID,
-		Strategy:  cfg.Strategy,
-		Status:    StatusRunning,
-		Input:     input,
-		StartedAt: started,
-	}
+	started := rec.StartedAt
 	if err := s.runs.CreateOrchestrationRun(ctx, rec); err != nil {
 		return nil, err
 	}
@@ -77,9 +97,18 @@ func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
 	rec.CompletedAt = &completed
 	if result != nil {
 		rec.Output = result.Output
+		observed := rec.AgentRunIDs
+		rec.AgentRunIDs = nil
 		for _, ar := range result.AgentResults {
 			if !ar.RunID.IsNil() {
 				rec.AgentRunIDs = append(rec.AgentRunIDs, ar.RunID)
+			}
+		}
+		// Keep strategy ordering while retaining any observed child the result
+		// omitted. Partial evidence must not depend on successful synthesis.
+		for _, child := range observed {
+			if !slices.Contains(rec.AgentRunIDs, child) {
+				rec.AgentRunIDs = append(rec.AgentRunIDs, child)
 			}
 		}
 	}
@@ -89,10 +118,16 @@ func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
 	} else {
 		rec.Status = StatusCompleted
 	}
-	if err := s.runs.UpdateOrchestrationRun(ctx, rec); err != nil {
+	if err := persistOrchestrationRun(ctx, s.runs, rec); err != nil {
 		return rec, errors.Join(runErr, err)
 	}
 	s.hooks.OrchestrationCompleted(ctx, orchID, completed.Sub(started))
 
 	return rec, runErr
+}
+
+func persistOrchestrationRun(ctx context.Context, runs RunStore, rec *Run) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return runs.UpdateOrchestrationRun(writeCtx, rec)
 }

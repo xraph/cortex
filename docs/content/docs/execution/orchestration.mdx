@@ -36,6 +36,26 @@ This API prepares the team only. Execution with shared child budgets, isolated
 sessions and a restricted A2A roster remains separate work; `RunOrchestration`
 continues to load its configuration normally.
 
+## Execution records
+
+The service saves each returned child run ID before allowing that invocation to
+contribute to the next step. This includes failed children. Parallel agents can
+keep running while these writes are serialized. If a write fails, subsequent
+admission stops and the team fails; calls already admitted still retain their
+returned IDs. A later successful write does not clear the earlier failure.
+
+Cancellation still permits a final record write, with the same scope and a
+five-second timeout. If that write fails, you receive both the execution error
+and persistence error, plus the in-memory run. The completion hook fires only
+after the final write succeeds. A crash before a child returns or before its ID
+is saved still needs recovery; these writes do not prove process-crash recovery.
+
+For a host that already has a config, `Service.RunConfig(ctx, config, input)`
+uses the same strategy and persistence path without a config lookup. It detaches
+participants and settings before invoking hooks. You must supply a runner that
+enforces your participant versions, authorization and shared budgets. Passing a
+config does not provide those guarantees by itself.
+
 ## Strategies
 
 | Strategy | Behavior |
