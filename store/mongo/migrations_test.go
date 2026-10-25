@@ -71,6 +71,7 @@ func TestMigrate_backfillDefaultSessions(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	s := New(db)
+	requireMongoPrimary(t, s)
 	if err = s.Migrate(ctx); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}

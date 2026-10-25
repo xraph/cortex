@@ -108,6 +108,7 @@ func TestRescope(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	s := New(db)
+	requireMongoPrimary(t, s)
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

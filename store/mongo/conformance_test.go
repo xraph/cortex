@@ -161,6 +161,7 @@ func newConformanceStore(t *testing.T, replicaSet bool) *Store {
 	t.Cleanup(func() { _ = db.Close() })
 
 	s := New(db)
+	requireMongoPrimary(t, s)
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
