@@ -13,6 +13,8 @@ import (
 	opt "github.com/xraph/cortex/optimization"
 )
 
+const recallTokenBudget = 128000
+
 // Toolkit is the guarded Fabriq command and recall boundary.
 type Toolkit interface {
 	Remember(context.Context, agent.RememberRequest) (command.Result, error)

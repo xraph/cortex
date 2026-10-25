@@ -63,6 +63,7 @@ type Transaction interface {
 	CompareAndSwapActivation(ActivationChange) (Activation, error)
 	PutPublication(PublicationRequest) error
 	ClaimPublication(PublicationClaim) (Publication, error)
+	RetryPublication(PublicationRetry) error
 	CompletePublication(PublicationLease, PublicationReceipt) error
 	FailPublication(PublicationLease, string, time.Time, bool) error
 	RevokeLesson(LessonRevocation) error
@@ -129,6 +130,7 @@ type TrialUpdate struct {
 
 // ExperimentBundle atomically creates a draft and its frozen version content.
 type ExperimentBundle struct {
-	Experiment Experiment       `json:"experiment"`
-	Versions   []HarnessVersion `json:"versions"`
+	ExpectedLessons []LessonRef      `json:"expected_lessons,omitempty"`
+	Experiment      Experiment       `json:"experiment"`
+	Versions        []HarnessVersion `json:"versions"`
 }

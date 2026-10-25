@@ -144,8 +144,9 @@ func (p *Publisher) deliver(ctx context.Context, value Publication, actor Identi
 	}
 	// Keep the lease separately from the detached value passed to the destination.
 	lease := claimed.DeliveryLease
-	if claimed.Attempts > 8 {
-		return p.recordFailure(resolved, lease, claimed.Attempts, "remote_unavailable", true)
+	attempts := claimed.Attempts - claimed.RetryAttemptBase
+	if attempts > 8 {
+		return p.recordFailure(resolved, lease, attempts, "remote_unavailable", true)
 	}
 	callCtx, cancel := context.WithTimeout(resolved, lease.ExpiresAt.Sub(p.config.Now()))
 	receipt, deliveryErr := p.config.Sink.Deliver(callCtx, claimed)
@@ -160,7 +161,7 @@ func (p *Publisher) deliver(ctx context.Context, value Publication, actor Identi
 		if !errors.Is(err, ErrIncompleteEvidence) {
 			return err
 		}
-		return p.recordFailure(current, lease, claimed.Attempts, "invalid_receipt", true)
+		return p.recordFailure(current, lease, attempts, "invalid_receipt", true)
 	}
 	terminal := errors.Is(deliveryErr, ErrConflict) || errors.Is(deliveryErr, ErrPolicyDenied) || errors.Is(deliveryErr, ErrIncompleteEvidence)
 	code := "remote_unavailable"
@@ -172,7 +173,7 @@ func (p *Publisher) deliver(ctx context.Context, value Publication, actor Identi
 	case errors.Is(deliveryErr, ErrConflict):
 		code = "conflict"
 	}
-	return p.recordFailure(current, lease, claimed.Attempts, code, terminal)
+	return p.recordFailure(current, lease, attempts, code, terminal)
 }
 
 func (p *Publisher) recordFailure(ctx context.Context, lease PublicationLease, attempts int, code string, terminal bool) error {
@@ -187,4 +188,44 @@ func (p *Publisher) recordFailure(ctx context.Context, lease PublicationLease, a
 		return err
 	}
 	return ErrUnavailable
+}
+
+// Retry starts another bounded delivery cycle after current host authorization.
+func (p *Publisher) Retry(ctx context.Context, request PublicationRetry) (Publication, error) {
+	var empty Publication
+	if err := ctx.Err(); err != nil {
+		return empty, err
+	}
+	if cortex.ScopeFromContext(ctx).IsZero() {
+		return empty, cortex.ErrNoScope
+	}
+	actor, err := p.config.Caller.Current(copyScopeContext(ctx))
+	if err != nil {
+		return empty, err
+	}
+	if !ValidOpaqueKey(actor.Subject) {
+		return empty, ErrPolicyDenied
+	}
+	request.Actor = actor
+	value, err := p.config.Repository.GetPublication(copyScopeContext(ctx), request.LessonID, request.LocalRevision)
+	if err != nil {
+		return empty, err
+	}
+	resource := Resource{Scope: copyScope(cortex.ScopeFromContext(ctx)), ID: request.LessonID, Kind: "lesson"}
+	if authErr := p.config.Authorizer.Authorize(copyScopeContext(ctx), ActionRetryPublication, resource); authErr != nil {
+		return empty, authErr
+	}
+	action := ActionPublishLesson
+	if value.Operation == PublicationRevoke {
+		action = ActionRevokeLesson
+	}
+	resolved, cleanup, err := p.meter.authorizeAction(ctx, value.ExperimentID, action)
+	if err != nil {
+		return empty, err
+	}
+	defer cleanup()
+	if retryErr := p.config.Repository.Transact(resolved, func(tx Transaction) error { return tx.RetryPublication(request) }); retryErr != nil {
+		return empty, retryErr
+	}
+	return p.config.Repository.GetPublication(resolved, request.LessonID, request.LocalRevision)
 }

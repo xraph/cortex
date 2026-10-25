@@ -48,7 +48,7 @@ func (a *Adapter) Recall(ctx context.Context, request opt.RecallQuery) (opt.Less
 	if err != nil {
 		return result, err
 	}
-	pack, err := a.toolkit.Recall(mapped, agent.RecallRequest{Query: request.Query, Budget: 128000, K: request.Limit, Entities: []string{a.config.Entity}, Filters: query.Where{
+	pack, err := a.toolkit.Recall(mapped, agent.RecallRequest{Query: request.Query, Budget: recallTokenBudget, K: request.Limit, Entities: []string{a.config.Entity}, Filters: query.Where{
 		query.Eq("scope_key", key), query.Eq("domain", request.Domain), query.Eq("harness_schema", request.HarnessSchema), query.Eq("active", true), query.Lte("created_at", request.Cutoff), query.Or(query.IsNull("expires_at"), query.Gt("expires_at", now)),
 	}})
 	if err != nil {

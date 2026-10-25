@@ -282,6 +282,9 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if err != nil {
 		return err
 	}
+	if bundle.ExpectedLessons != nil && !same(bundle.ExpectedLessons, e.FrozenLessons) {
+		return optimization.ErrConflict
+	}
 	versions, err := tx.validateVersions(e.Spec.AgentID, bundle.Versions)
 	if err != nil {
 		return err

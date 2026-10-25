@@ -21,6 +21,7 @@ type OptimizerConfig struct {
 	Authorizer       Authorizer
 	IdentityResolver IdentityResolver
 	Caller           CallerIdentity
+	Lessons          LessonStore
 	Handler          PhaseHandler
 	UsageRecovery    *UsageRecovery
 	Worker           WorkerConfig
@@ -69,25 +70,33 @@ func (o *Optimizer) caller(ctx context.Context) (IdentityRef, error) {
 
 // Create saves a host-frozen bundle, including its immutable versions and plan.
 func (o *Optimizer) Create(ctx context.Context, bundle ExperimentBundle) (Experiment, error) {
-	actor, err := o.caller(ctx)
+	copyBundle, err := o.creationBundle(ctx, bundle)
 	if err != nil {
 		return Experiment{}, err
-	}
-	copyBundle, err := copyModelJSON(&bundle, 16<<20)
-	if err != nil {
-		return Experiment{}, err
-	}
-	if copyBundle.Experiment.Spec.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() || copyBundle.Experiment.Spec.Requester != actor {
-		return Experiment{}, ErrPolicyDenied
-	}
-	resource := Resource{Scope: copyScope(copyBundle.Experiment.Spec.Scope), AgentID: copyBundle.Experiment.Spec.AgentID, ID: copyBundle.Experiment.ID, Kind: "experiment"}
-	if authErr := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionCreate, resource); authErr != nil {
-		return Experiment{}, authErr
 	}
 	if createErr := o.config.Repository.Transact(ctx, func(tx Transaction) error { return tx.CreateExperiment(*copyBundle) }); createErr != nil {
 		return Experiment{}, createErr
 	}
 	return o.config.Repository.GetExperiment(ctx, copyBundle.Experiment.ID)
+}
+
+func (o *Optimizer) creationBundle(ctx context.Context, bundle ExperimentBundle) (*ExperimentBundle, error) {
+	actor, err := o.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	copyBundle, err := copyModelJSON(&bundle, 16<<20)
+	if err != nil {
+		return nil, err
+	}
+	if copyBundle.Experiment.Spec.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() || copyBundle.Experiment.Spec.Requester != actor {
+		return nil, ErrPolicyDenied
+	}
+	resource := Resource{Scope: copyScope(copyBundle.Experiment.Spec.Scope), AgentID: copyBundle.Experiment.Spec.AgentID, ID: copyBundle.Experiment.ID, Kind: "experiment"}
+	if authErr := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionCreate, resource); authErr != nil {
+		return nil, authErr
+	}
+	return copyBundle, nil
 }
 
 // Get reads one experiment after checking its exact scope and current authority.

@@ -93,6 +93,9 @@ const (
 
 // Publication is the durable outbox entry committed with its local decision.
 type Publication struct {
+	RetryAttemptBase  int                  `json:"retry_attempt_base"`
+	LastRetry         *PublicationRetry    `json:"last_retry,omitempty"`
+	RetriedAt         time.Time            `json:"retried_at,omitempty"`
 	DeliveryLease     PublicationLease     `json:"delivery_lease"`
 	DeliveryActor     IdentityRef          `json:"delivery_actor"`
 	Receipt           *PublicationReceipt  `json:"receipt,omitempty"`
@@ -139,4 +142,14 @@ type PublicationLease struct {
 	Owner         string    `json:"owner"`
 	Generation    int64     `json:"generation"`
 	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+// PublicationRetry requests another bounded delivery cycle after a failed one.
+// The service stamps Actor from the authenticated caller.
+type PublicationRetry struct {
+	LessonID           id.ID       `json:"lesson_id"`
+	LocalRevision      int64       `json:"local_revision"`
+	ExpectedGeneration int64       `json:"expected_generation"`
+	Actor              IdentityRef `json:"actor"`
+	Reason             string      `json:"reason"`
 }

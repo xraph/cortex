@@ -25,6 +25,12 @@ import (
 	learning "github.com/xraph/cortex/integrations/fabriq/optimization"
 )
 
+type learningPhase struct{}
+
+func (learningPhase) Execute(context.Context, opt.WorkItem) (opt.Transition, error) {
+	return opt.Transition{}, opt.ErrUnavailable
+}
+
 type learningAuthority struct{}
 
 func (learningAuthority) Authorize(context.Context, opt.Action, opt.Resource) error { return nil }
@@ -36,7 +42,7 @@ func (learningAuthority) Current(context.Context) (opt.IdentityRef, error) {
 }
 
 type lostLearningReply struct {
-	learning.Toolkit
+	*learning.LessonToolkit
 	lose   bool
 	outage bool
 }
@@ -45,7 +51,7 @@ func (tk *lostLearningReply) Remember(ctx context.Context, request agent.Remembe
 	if tk.outage {
 		return command.Result{}, errors.New("destination unavailable")
 	}
-	result, err := tk.Toolkit.Remember(ctx, request)
+	result, err := tk.LessonToolkit.Remember(ctx, request)
 	if err == nil && tk.lose {
 		tk.lose = false
 		return command.Result{}, errors.New("lost write reply")
@@ -80,11 +86,11 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 	fabric := openLearningFabric(t, learning.LessonSpec(entity))
 	path := filepath.Join(t.TempDir(), "optimization.db")
 	local, ctx, request := storetest.PublishedLesson(t, func(t *testing.T, _ func() time.Time) store.Store { return openOptimizationStore(t, path) })
-	toolkit, err := agent.NewToolkit(fabric, fabric.Registry(), hashEmbedder{}, agent.Config{VectorDims: 768, Write: learning.LessonWritePolicy(entity)})
+	toolkit, err := learning.NewLessonToolkit(fabric, fabric.Registry(), hashEmbedder{}, entity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &lostLearningReply{Toolkit: toolkit, lose: true}
+	sink := &lostLearningReply{LessonToolkit: toolkit, lose: true}
 	mapper := learning.ScopeMapperFunc(func(_ context.Context, scope cortex.Scope) (learning.ScopeBinding, error) {
 		return learning.ScopeBinding{Tenant: "acme", Scope: scope}, nil
 	})
@@ -92,6 +98,9 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 	adapter, err := learning.NewLessonStore(sink, fabric, mapper, config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if readyErr := adapter.CheckReady(ctx); readyErr != nil {
+		t.Fatal(readyErr)
 	}
 	publisher, err := opt.NewPublisher(opt.PublisherConfig{Repository: local, Authorizer: learningAuthority{}, IdentityResolver: learningAuthority{}, Caller: learningAuthority{}, Sink: adapter})
 	if err != nil {
@@ -133,6 +142,16 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 	if err != nil || len(page.Items) != 1 {
 		t.Fatalf("recall: %+v %v", page, err)
 	}
+	consumerBundle := storetest.Fixture(t, "candidate")
+	consumerBundle.Experiment.Spec.LessonCutoff = recall.Cutoff
+	optimizer, createErr := opt.NewOptimizer(opt.OptimizerConfig{Repository: local, Authorizer: learningAuthority{}, IdentityResolver: learningAuthority{}, Caller: learningRequester{actor: consumerBundle.Experiment.Spec.Requester}, Handler: learningPhase{}, Worker: opt.DefaultWorkerConfig(), Lessons: adapter})
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	consumer, createErr := optimizer.CreateWithLessons(ctx, consumerBundle, recall)
+	if createErr != nil || len(consumer.FrozenLessons) != 1 || consumer.FrozenLessons[0].Digest != delivered.PayloadDigest {
+		t.Fatalf("frozen recall creation: %+v %v", consumer, createErr)
+	}
 	before, err := local.GetExperiment(ctx, request.ExperimentID)
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +160,10 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 		return tx.RevokeLesson(opt.LessonRevocation{LessonID: request.Lesson.ID, ExpectedRevision: 1, Actor: opt.IdentityRef{Subject: "reviewer"}, Reason: "source withdrawn"})
 	}); err != nil {
 		t.Fatal(err)
+	}
+	invalidated, invalidateErr := local.GetExperiment(ctx, consumer.ID)
+	if invalidateErr != nil || invalidated.State != opt.StatePaused || invalidated.Failure != "lesson_revoked" {
+		t.Fatalf("recalled consumer remained eligible: %+v %v", invalidated, invalidateErr)
 	}
 	// The vector index and destination still contain the old active payload.
 	sink.outage = true
@@ -182,6 +205,22 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 	if len(rows) != 1 || rows[0]["active"] != false {
 		t.Fatalf("remote withdrawal: %+v", rows)
 	}
+	missing := "unprovisioned_lessons"
+	fabric.Registry().MustRegister(learning.LessonSpec(missing))
+	missingToolkit, missingErr := learning.NewLessonToolkit(fabric, fabric.Registry(), hashEmbedder{}, missing)
+	if missingErr != nil {
+		t.Fatal(missingErr)
+	}
+	missingConfig := config
+	missingConfig.Entity = missing
+	missingAdapter, missingErr := learning.NewLessonStore(missingToolkit, fabric, mapper, missingConfig)
+	if missingErr != nil {
+		t.Fatal(missingErr)
+	}
+	if missingErr = missingAdapter.CheckReady(ctx); !errors.Is(missingErr, opt.ErrUnavailable) {
+		t.Fatalf("unprovisioned schema reported ready: %v", missingErr)
+	}
+
 	foreign, err := tenant.WithTenant(ctx, "foreign")
 	if err != nil {
 		t.Fatal(err)
@@ -191,3 +230,10 @@ func TestOptimizationLearningPersistsAndRevokes(t *testing.T) {
 		t.Fatalf("tenant isolation: %+v %v", rows, err)
 	}
 }
+
+type learningRequester struct {
+	learningAuthority
+	actor opt.IdentityRef
+}
+
+func (a learningRequester) Current(context.Context) (opt.IdentityRef, error) { return a.actor, nil }

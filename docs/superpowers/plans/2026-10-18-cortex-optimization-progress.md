@@ -989,3 +989,37 @@ change was needed for this adapter.
 Task 12 still needs an authorized operator retry command, capability readiness
 checks and the host-facing recall-to-frozen-lesson creation flow. Dashboard
 application flows and the remaining implementation phases are also open.
+
+## Learning creation, operator retry and readiness
+
+You can now configure `OptimizerConfig.Lessons` and call `CreateWithLessons`.
+The query uses the specification's fixed cutoff, exact scope and a bounded
+result set. Creation rejects partial results, duplicate IDs, changed content,
+revoked evidence and lost authority. The store checks the recalled revisions
+and digests again in the creation transaction before freezing them into the
+experiment. No draft is persisted when recall fails.
+
+`Publisher.Retry` requires the dedicated `optimization.lesson.retry` permission
+and current delivery authority for both the caller and original requester.
+It opens another bounded delivery cycle while retaining total attempts and
+lease generations. Repeating the same request is idempotent. Each retry event
+retains the operator, reason and expected generation; active, completed and
+superseded deliveries cannot be reset.
+
+Use `NewLessonToolkit` to bind the guarded write policy and strict retrieval,
+then call `Adapter.CheckReady` to verify provisioned columns and semantic
+retrieval. The probe performs no writes. Actual delivery still exercises the
+destination's write grants. An arbitrary toolkit without the bound policy,
+failed embedding or a registered entity without its physical table returns
+unavailable.
+
+Creation and retry race tests pass on memory, SQLite, Postgres and Mongo.
+The real non-superuser Fabriq integration now creates an experiment from recalled
+evidence and checks that local revocation pauses it. Provisioned readiness passes;
+an unprovisioned table fails. The optimizer and Fabriq module builds and race
+checks pass. The broader plan remains open, including activation service wiring,
+task-local refinement and authenticated API/dashboard flows.
+
+Final scoped `make f` and all-module `make l` pass. Retry audit and dedicated
+permission checks pass with the race detector on all four stores. The Fabriq
+module also passes race tests and build with local replacements removed.

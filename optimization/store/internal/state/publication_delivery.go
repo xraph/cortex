@@ -2,10 +2,13 @@ package state
 
 import (
 	"math"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
+	"github.com/xraph/cortex/optimization/internal/canonical"
 )
 
 func (tx *transaction) ClaimPublication(request optimization.PublicationClaim) (optimization.Publication, error) {
@@ -33,11 +36,8 @@ func (tx *transaction) ClaimPublication(request optimization.PublicationClaim) (
 	if value.Attempts == math.MaxInt || value.DeliveryLease.Generation == math.MaxInt64 {
 		return empty, optimization.ErrConflict
 	}
-	if value.Operation == optimization.PublicationPublish {
-		ref := optimization.LessonRef{ID: value.LessonID, Revision: value.LocalRevision, Digest: value.PayloadDigest}
-		if err := checkLessonBindings(tx.data, optimization.Experiment{LessonIDs: []id.ID{value.LessonID}, FrozenLessons: []optimization.LessonRef{ref}}, tx.now); err != nil {
-			return empty, err
-		}
+	if err := tx.checkPublicationEligibility(value); err != nil {
+		return empty, err
 	}
 	value.Attempts++
 	value.DeliveryLease = optimization.PublicationLease{LessonID: value.LessonID, LocalRevision: value.LocalRevision, Owner: request.Owner, Generation: value.DeliveryLease.Generation + 1, ExpiresAt: tx.now.Add(request.Duration)}
@@ -124,8 +124,56 @@ func (tx *transaction) publicationDelivery(lease optimization.PublicationLease) 
 	return value, nil
 }
 
-func (tx *transaction) publicationEvent(value optimization.Publication, eventType string) {
+func (tx *transaction) publicationEvent(value optimization.Publication, eventType string) *optimization.Event {
 	experiment := tx.data.Experiments[value.ExperimentID.String()]
 	event := tx.appendEvent(experiment, eventType, value.DeliveryActor)
 	event.Resources = append(event.Resources, value.LessonID)
+	return event
+}
+
+func (tx *transaction) RetryPublication(request optimization.PublicationRetry) error {
+	if !tx.active {
+		return optimization.ErrConflict
+	}
+	if err := tx.ctx.Err(); err != nil {
+		return err
+	}
+	if request.LocalRevision < 1 || request.ExpectedGeneration < 1 || !optimization.ValidOpaqueKey(request.Actor.Subject) || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 512 || !utf8.ValidString(request.Reason) {
+		return optimization.ErrInvalidSpec
+	}
+	key := publicationKey(request.LessonID, request.LocalRevision)
+	value, ok := tx.data.Publications[key]
+	if !ok {
+		return optimization.ErrNotFound
+	}
+	if value.LastRetry != nil && same(*value.LastRetry, request) {
+		return nil
+	}
+	if !value.CompletedAt.IsZero() || !value.SupersededAt.IsZero() || value.DeliveryLease.Generation != request.ExpectedGeneration || tx.now.Before(value.DeliveryLease.ExpiresAt) || value.TerminalError == "" && value.NextRetry.IsZero() {
+		return optimization.ErrConflict
+	}
+	if err := tx.checkPublicationEligibility(value); err != nil {
+		return err
+	}
+	payload, err := canonical.Marshal(request)
+	if err != nil {
+		return err
+	}
+	value.RetryAttemptBase = value.Attempts
+	value.LastRetry = &request
+	value.RetriedAt = tx.now
+	value.NextRetry = time.Time{}
+	value.TerminalError = ""
+	value.DeliveryActor = request.Actor
+	tx.data.Publications[key] = value
+	tx.publicationEvent(value, "lesson_publication_retry_requested").Payload = payload
+	return nil
+}
+
+func (tx *transaction) checkPublicationEligibility(value optimization.Publication) error {
+	if value.Operation != optimization.PublicationPublish {
+		return nil
+	}
+	ref := optimization.LessonRef{ID: value.LessonID, Revision: value.LocalRevision, Digest: value.PayloadDigest}
+	return checkLessonBindings(tx.data, optimization.Experiment{LessonIDs: []id.ID{value.LessonID}, FrozenLessons: []optimization.LessonRef{ref}}, tx.now)
 }
