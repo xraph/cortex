@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -18,6 +19,15 @@ func (s *Store) GetActivation(ctx context.Context, agentID id.AgentID, channel s
 		return optimization.Activation{}, err
 	}
 	return s.readActivation(ctx, func(data *scopeData) id.ID { return data.ActivationHeads[key] })
+}
+
+// ResolveActivation checks retained evidence and lesson eligibility for a pinned
+// generation without resolving the current head again.
+func (s *Store) ResolveActivation(ctx context.Context, activationID id.ID) (optimization.Activation, error) {
+	if _, err := optimization.ParseID(activationID.String(), optimization.PrefixActivation); err != nil {
+		return optimization.Activation{}, err
+	}
+	return s.readActivation(ctx, func(*scopeData) id.ID { return activationID })
 }
 
 // GetActivationGeneration reads an immutable historical activation by ID.
@@ -60,6 +70,9 @@ func (s *Store) readActivation(ctx context.Context, selectID func(*scopeData) id
 	}
 	if data != nil {
 		if value, exists := data.Activations[selectID(data).String()]; exists {
+			if value.Deactivated {
+				return empty, optimization.ErrInactiveActivation
+			}
 			decision, found := data.Decisions[value.DecisionID.String()]
 			if !found {
 				return empty, optimization.ErrIncompleteEvidence
@@ -102,7 +115,7 @@ func (tx *transaction) CompareAndSwapActivation(change optimization.ActivationCh
 	if _, err := optimization.ParseID(change.ID.String(), optimization.PrefixActivation); err != nil {
 		return empty, err
 	}
-	if change.ExpectedGeneration < 0 || strings.TrimSpace(change.Actor.Subject) == "" {
+	if change.ExpectedGeneration < 0 || !optimization.ValidOpaqueKey(change.Actor.Subject) || len(change.Reason) > 512 || !utf8.ValidString(change.Reason) {
 		return empty, optimization.ErrInvalidSpec
 	}
 	key, err := activationKey(change.AgentID, change.Channel)
@@ -114,7 +127,10 @@ func (tx *transaction) CompareAndSwapActivation(change optimization.ActivationCh
 		return empty, err
 	}
 	if prior, exists := tx.data.Activations[change.ID.String()]; exists {
-		original := optimization.ActivationChange{ID: prior.ID, AgentID: prior.AgentID, Channel: prior.Channel, Version: prior.Version, ExpectedGeneration: prior.ExpectedGeneration, Actor: prior.Actor, PolicyDigest: prior.PolicyDigest, DecisionID: prior.DecisionID, RollbackTo: prior.RollbackTo}
+		if prior.Deactivated {
+			return empty, optimization.ErrConflict
+		}
+		original := optimization.ActivationChange{Reason: prior.Reason, ID: prior.ID, AgentID: prior.AgentID, Channel: prior.Channel, Version: prior.Version, ExpectedGeneration: prior.ExpectedGeneration, Actor: prior.Actor, PolicyDigest: prior.PolicyDigest, DecisionID: prior.DecisionID, RollbackTo: prior.RollbackTo}
 		if original != change {
 			return empty, optimization.ErrConflict
 		}
@@ -147,16 +163,75 @@ func (tx *transaction) CompareAndSwapActivation(change optimization.ActivationCh
 	}
 	if !change.RollbackTo.IsNil() {
 		previous, found := tx.data.Activations[change.RollbackTo.String()]
-		if !found || previous.AgentID != change.AgentID || previous.Channel != change.Channel || previous.Version != change.Version || previous.DecisionID != change.DecisionID || previous.Generation > current.Generation || previous.PolicyDigest != change.PolicyDigest {
+		if !found || previous.Deactivated || previous.AgentID != change.AgentID || previous.Channel != change.Channel || previous.Version != change.Version || previous.DecisionID != change.DecisionID || previous.Generation > current.Generation || previous.PolicyDigest != change.PolicyDigest {
 			return empty, optimization.ErrIncompleteEvidence
 		}
 	}
-	value := optimization.Activation{ID: change.ID, Scope: cortex.ScopeFromContext(tx.ctx), AgentID: change.AgentID, Channel: change.Channel, Version: change.Version, Generation: current.Generation + 1, ExpectedGeneration: change.ExpectedGeneration, Actor: change.Actor, PolicyDigest: change.PolicyDigest, DecisionID: change.DecisionID, RollbackTo: change.RollbackTo, CreatedAt: tx.now}
+	value := optimization.Activation{Reason: change.Reason, ID: change.ID, Scope: cortex.ScopeFromContext(tx.ctx), AgentID: change.AgentID, Channel: change.Channel, Version: change.Version, Generation: current.Generation + 1, ExpectedGeneration: change.ExpectedGeneration, Actor: change.Actor, PolicyDigest: change.PolicyDigest, DecisionID: change.DecisionID, RollbackTo: change.RollbackTo, CreatedAt: tx.now}
+	eventType := "activated"
+	if !value.RollbackTo.IsNil() {
+		eventType = "activation_rolled_back"
+	}
+	return tx.saveActivation(key, current.ID, value, experiment, eventType)
+}
+
+func (tx *transaction) Deactivate(change optimization.DeactivationChange) (optimization.Activation, error) {
+	var empty optimization.Activation
+	if !tx.active {
+		return empty, optimization.ErrConflict
+	}
+	if err := tx.ctx.Err(); err != nil {
+		return empty, err
+	}
+	if _, err := optimization.ParseID(change.ID.String(), optimization.PrefixActivation); err != nil {
+		return empty, err
+	}
+	if change.ExpectedGeneration < 1 || !optimization.ValidOpaqueKey(change.Actor.Subject) || strings.TrimSpace(change.Reason) == "" || len(change.Reason) > 512 || !utf8.ValidString(change.Reason) {
+		return empty, optimization.ErrInvalidSpec
+	}
+	key, err := activationKey(change.AgentID, change.Channel)
+	if err != nil {
+		return empty, err
+	}
+	change.Channel, err = optimization.ActivationChannel(change.Channel)
+	if err != nil {
+		return empty, err
+	}
+	if prior, exists := tx.data.Activations[change.ID.String()]; exists {
+		if !prior.Deactivated || prior.AgentID != change.AgentID || prior.Channel != change.Channel || prior.ExpectedGeneration != change.ExpectedGeneration || prior.Actor != change.Actor || prior.Reason != change.Reason {
+			return empty, optimization.ErrConflict
+		}
+		return clone(prior)
+	}
+	current, exists := tx.data.Activations[tx.data.ActivationHeads[key].String()]
+	if !exists {
+		return empty, optimization.ErrNotFound
+	}
+	if current.Deactivated || current.Generation != change.ExpectedGeneration || current.Generation == math.MaxInt64 {
+		return empty, optimization.ErrConflict
+	}
+	decision, exists := tx.data.Decisions[current.DecisionID.String()]
+	if !exists {
+		return empty, optimization.ErrIncompleteEvidence
+	}
+	experiment, exists := tx.data.Experiments[decision.ExperimentID.String()]
+	if !exists {
+		return empty, optimization.ErrIncompleteEvidence
+	}
+	value := current
+	value.ID, value.Actor, value.Reason = change.ID, change.Actor, change.Reason
+	value.ExpectedGeneration, value.Generation = change.ExpectedGeneration, current.Generation+1
+	value.Deactivated, value.RollbackTo, value.CreatedAt = true, id.Nil, tx.now
+	return tx.saveActivation(key, current.ID, value, experiment, "activation_deactivated")
+}
+
+func (tx *transaction) saveActivation(key string, previous id.ID, value optimization.Activation, experiment optimization.Experiment, eventType string) (optimization.Activation, error) {
+	var empty optimization.Activation
 	detached, err := clone(value)
 	if err != nil {
 		return empty, err
 	}
-	payload, err := canonical.Marshal(map[string]any{"activation_id": value.ID, "channel": value.Channel, "generation": value.Generation, "previous_activation_id": current.ID, "rollback_to": value.RollbackTo})
+	payload, err := canonical.Marshal(map[string]any{"activation_id": value.ID, "channel": value.Channel, "generation": value.Generation, "previous_activation_id": previous, "rollback_to": value.RollbackTo, "deactivated": value.Deactivated, "reason": value.Reason})
 	if err != nil {
 		return empty, err
 	}
@@ -168,11 +243,7 @@ func (tx *transaction) CompareAndSwapActivation(change optimization.ActivationCh
 	}
 	tx.data.Activations[value.ID.String()] = detached
 	tx.data.ActivationHeads[key] = value.ID
-	eventType := "activated"
-	if !value.RollbackTo.IsNil() {
-		eventType = "activation_rolled_back"
-	}
-	event := tx.appendEvent(experiment, eventType, change.Actor)
+	event := tx.appendEvent(experiment, eventType, value.Actor)
 	event.Resources = append(event.Resources, value.ID, value.Version.ID, value.DecisionID)
 	event.Payload = payload
 	return value, nil

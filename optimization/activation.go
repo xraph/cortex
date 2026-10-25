@@ -10,6 +10,7 @@ import (
 // scope and creation time come from the transaction, and generation is assigned
 // by the store. The service must recheck current grants and evidence availability.
 type ActivationChange struct {
+	Reason             string      `json:"reason,omitempty"`
 	ID                 id.ID       `json:"id"`
 	AgentID            id.AgentID  `json:"agent_id"`
 	Channel            string      `json:"channel"`

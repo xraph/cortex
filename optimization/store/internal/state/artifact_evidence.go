@@ -18,7 +18,7 @@ func decisionTrials(data *scopeData, decision optimization.Decision) []optimizat
 }
 
 func checkTrialArtifacts(data *scopeData, trial optimization.Trial, now time.Time) error {
-	for _, ref := range trialArtifactRefs(trial) {
+	for _, ref := range optimization.TrialArtifactRefs(trial) {
 		key, err := ref.BindingDigest()
 		if err != nil || ref.ExperimentID != trial.ExperimentID {
 			return optimization.ErrIncompleteEvidence
@@ -51,26 +51,13 @@ func checkDecisionArtifacts(data *scopeData, decision optimization.Decision, now
 }
 
 func trialUsesArtifact(trial optimization.Trial, binding string) bool {
-	for _, ref := range trialArtifactRefs(trial) {
+	for _, ref := range optimization.TrialArtifactRefs(trial) {
 		key, err := ref.BindingDigest()
 		if err == nil && key == binding {
 			return true
 		}
 	}
 	return false
-}
-
-func trialArtifactRefs(trial optimization.Trial) []optimization.ArtifactRef {
-	var refs []optimization.ArtifactRef
-	if trial.Execution != nil {
-		refs = append(refs, trial.Execution.Artifacts...)
-	}
-	for _, attempt := range trial.Attempts {
-		if attempt.Execution != nil {
-			refs = append(refs, attempt.Execution.Artifacts...)
-		}
-	}
-	return refs
 }
 
 func (tx *transaction) revokeArtifactLessons(binding string, request optimization.ArtifactDeletion) error {

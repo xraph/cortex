@@ -4,6 +4,7 @@ import "errors"
 
 // Stable errors let adapters distinguish refusal, conflict and unavailable evidence.
 var (
+	ErrInactiveActivation = errors.New("cortex: optimization: activation is disabled")
 	ErrInvalidSpec        = errors.New("cortex: optimization: invalid specification")
 	ErrPolicyDenied       = errors.New("cortex: optimization: edit denied by policy")
 	ErrConflict           = errors.New("cortex: optimization: conflicting revision or content")

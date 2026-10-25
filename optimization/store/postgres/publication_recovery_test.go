@@ -14,8 +14,17 @@ import (
 )
 
 func TestPublicationRecovery(t *testing.T) {
+	testRecovery(t, storetest.PublicationRecovery)
+}
+
+func TestActivationRecovery(t *testing.T) {
+	testRecovery(t, storetest.ActivationRecovery)
+}
+
+func testRecovery(t *testing.T, verify func(*testing.T, func(*testing.T, func() time.Time) store.Store)) {
+	t.Helper()
 	database := testDatabase(t)
-	storetest.PublicationRecovery(t, func(t *testing.T, now func() time.Time) store.Store {
+	verify(t, func(t *testing.T, now func() time.Time) store.Store {
 		t.Helper()
 		driver := pgdriver.New()
 		if err := driver.Open(context.Background(), database); err != nil {

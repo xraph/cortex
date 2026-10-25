@@ -44,6 +44,8 @@ const (
 	ActionCancel           Action = "optimization.cancel"
 	ActionResume           Action = "optimization.resume"
 	ActionReconcileUsage   Action = "optimization.usage.reconcile"
+	ActionRunActive        Action = "optimization.run_active"
+	ActionDeactivate       Action = "optimization.deactivate"
 	ActionActivate         Action = "optimization.activate"
 	ActionRollback         Action = "optimization.rollback"
 	ActionPublishLesson    Action = "optimization.lesson.publish"

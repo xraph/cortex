@@ -24,6 +24,7 @@ type Repository interface {
 	GetEvaluation(context.Context, string) (Evaluation, error)
 	GetDecision(context.Context, id.ID) (Decision, error)
 	GetActivation(context.Context, id.AgentID, string) (Activation, error)
+	ResolveActivation(context.Context, id.ID) (Activation, error)
 	GetActivationGeneration(context.Context, id.ID) (Activation, error)
 	GetLesson(context.Context, id.ID) (Lesson, error)
 	ResolveLesson(context.Context, LessonRef) (Lesson, error)
@@ -60,6 +61,7 @@ type Transaction interface {
 	AllocateValidation(ValidationAllocationRequest) (ValidationAllocation, error)
 	ExposeValidation(ValidationAccess) error
 	ReleaseValidation(ValidationAccess) error
+	Deactivate(DeactivationChange) (Activation, error)
 	CompareAndSwapActivation(ActivationChange) (Activation, error)
 	PutPublication(PublicationRequest) error
 	ClaimPublication(PublicationClaim) (Publication, error)

@@ -16,15 +16,30 @@ Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-u
 
 ## Current state
 
-| Task                                                                         | State                                                         | Next gate                                                                     |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 1: prepared execution | Published foundation; source consistency qualification remains | Qualified atomic snapshot contract |
-| 6: Sentinel foundation | Published as v1.9.2, including job-set comparison | Adapter integration remains Task 7 |
-| 2: optimization contracts | Harness contracts `8f3f91b` and experiment contracts `cd89669` pushed; CI includes optimization | Wire constructor validation after storage ports |
-| 3: atomic memory storage | Drafts, leases, accounting, allocations, trials and evaluation gates; decisions pushed in `3769466`; activation storage checks pass | Lesson/outbox pushed as `6b7e1f6`; scoped readers verified; durable-store work follows |
-| 4: durable persistence | Durable backends, concurrent database operations and indexed resource reads verified | Artifact storage, database pagination, selective transaction loading and throughput qualification |
-| 5: durable worker recovery | Metered controller, scoped service, worker leases and late receipts implemented | Complete trial/evaluator adapters, output recovery and end-to-end qualification |
-| 7-21: adapters, optimizer, activation, learning, dashboard and qualification | Pending, except Fabriq prerequisites below | Follow dependency gates |
+This table summarizes the implementation. The sections below retain the checks
+and limitations recorded for each commit. Implemented does not mean a phase has
+passed its full qualification gate.
+
+| Task | Implementation | Remaining gate |
+| --- | --- | --- |
+| 1: prepared execution | Published prepared execution and current runtime snapshot contracts | Host/source consistency qualification with the runtime owner |
+| 2: optimization contracts | Sealed versions, specifications, policies and validated service configuration | Final public API and release audit |
+| 3: atomic memory storage | Transactional leases, usage, trials, decisions, activation and lesson records | Final conformance audit against all plan requirements |
+| 4: durable persistence | SQLite, PostgreSQL and Mongo; indexed reads, retention and deletion recovery | Throughput and full-system qualification |
+| 5: durable worker recovery | Call reservations, controller execution, scoped workers and late receipts | Full-system crash/reconnect qualification |
+| 6: Sentinel foundation | Published v1.9.2 recorded evaluation and comparison | Deployment qualification with persistent queues and workers |
+| 7: Sentinel bridge | Captured evaluation, metered judges and cost provenance | Live-provider and product-flow qualification |
+| 8: isolated trials | Trial execution, environment receipts, recovery and recorded scoring | Production environment qualification |
+| 9: sequential refinement | Controller proposal/composition/reflection and phase handlers | Full persistent workflow qualification |
+| 10: validation and decisions | Frozen holdout allocations, deterministic comparison and decision gates | End-to-end acceptance audit |
+| 11: activation | Review commands, append-only deactivation and bound production execution pass module verification | Built-in current-source compatibility adapter and product capability wiring |
+| 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
+| 13: parallel and task-local | Storage limits exist; trial handler still accepts sequential mode only | Implement bounded scheduling and task-local service |
+| 14: controller improvement | Paired allocation storage exists | Implement controller comparison and parent/child execution |
+| 15: orchestration presets | Runtime integration contract planned | Implement approved preset execution and trace conversion |
+| 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
+| 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
+| 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
 
 ## Sentinel evidence
 
@@ -1023,3 +1038,43 @@ task-local refinement and authenticated API/dashboard flows.
 Final scoped `make f` and all-module `make l` pass. Retry audit and dedicated
 permission checks pass with the race detector on all four stores. The Fabriq
 module also passes race tests and build with local replacements removed.
+
+## Activation commands and explicit production execution
+
+You can now call `Activate`, `Rollback` and `Deactivate` through the optimizer.
+Activation and rollback require current caller and requester authority, the exact
+qualifying decision, a matching sealed version, freshly read artifacts and a
+host-supplied `Compatibility.Check`. The compatibility report must match both
+the version digest and current policy digest. Missing compatibility or artifact
+verification returns unavailable.
+
+`Deactivate` appends a disabled generation with the authenticated actor and
+reason. It can disable a route whose evidence has expired. Repeating a command
+returns its original record without moving a newer head; rollback and
+reactivation append generations rather than rewinding history. Disabled records
+cannot be rollback targets.
+
+Bind the production engine with `NewOptimizer(config,
+WithActiveEngine(productionEngine))` before calling `RunActive`. The execution
+uses that engine's `RunPrepared` and normal production purpose. The selected
+harness version stays pinned when another command changes the route. The ordinary
+`RunAgent` path remains independent, and an unbound optimizer cannot execute an
+active route. Model/tool revision checks still run inside the production engine.
+
+A regression test exposed evidence withdrawal during an external content read.
+`ResolveActivation` now rechecks the selected generation's retained artifacts and
+lesson eligibility before dispatch, without resolving a different current head.
+Historical reads remain available for audit. Artifact traversal is shared with
+store retention checks and includes every prior execution attempt.
+
+The source and policy compatibility implementation is an explicit host dependency.
+A built-in engine compatibility adapter and dashboard capability wiring remain
+to be finished before Task 11 can be marked complete. A dedicated suspension
+test now checks that resume retains the selected snapshot after deactivation. The broader implementation goal is still open.
+
+Final verification passes: scoped `make f`, all-module `make l` with a private
+cache, the full optimization race suite, module build and consumer race/build
+against the published root dependency. Full store suites passed memory, SQLite,
+PostgreSQL and Mongo without backend skips. Separate restart and suspension tests
+passed on all durable backends. The initial default-cache lint findings in
+unchanged nil-guarded tests did not reproduce with a clean private cache.

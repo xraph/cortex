@@ -10,6 +10,15 @@ import (
 )
 
 func TestPublicationRecovery(t *testing.T) {
+	testRecovery(t, storetest.PublicationRecovery)
+}
+
+func TestActivationRecovery(t *testing.T) {
+	testRecovery(t, storetest.ActivationRecovery)
+}
+
+func testRecovery(t *testing.T, verify func(*testing.T, func(*testing.T, func() time.Time) store.Store)) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "publication.db")
-	storetest.PublicationRecovery(t, func(t *testing.T, now func() time.Time) store.Store { return openTestStore(t, path, now) })
+	verify(t, func(t *testing.T, now func() time.Time) store.Store { return openTestStore(t, path, now) })
 }

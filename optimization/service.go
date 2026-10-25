@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 )
 
@@ -22,6 +23,8 @@ type OptimizerConfig struct {
 	IdentityResolver IdentityResolver
 	Caller           CallerIdentity
 	Lessons          LessonStore
+	Compatibility    Compatibility
+	ArtifactVerifier *ArtifactVerifier
 	Handler          PhaseHandler
 	UsageRecovery    *UsageRecovery
 	Worker           WorkerConfig
@@ -29,15 +32,16 @@ type OptimizerConfig struct {
 
 // Optimizer provides experiment commands and a bounded, host-started worker.
 type Optimizer struct {
-	config OptimizerConfig
-	meter  *LedgerMeter
-	owner  string
-	work   sync.Mutex
+	activeEngine *engine.Engine
+	config       OptimizerConfig
+	meter        *LedgerMeter
+	owner        string
+	work         sync.Mutex
 }
 
 // NewOptimizer never starts background work. The host runs Work with an exact
 // scoped context and cancels it during shutdown. Each instance has a unique owner.
-func NewOptimizer(config OptimizerConfig) (*Optimizer, error) {
+func NewOptimizer(config OptimizerConfig, options ...Option) (*Optimizer, error) {
 	if config.Repository == nil || config.Caller == nil || config.Handler == nil || config.Worker.validate() != nil {
 		return nil, ErrInvalidSpec
 	}
@@ -45,7 +49,16 @@ func NewOptimizer(config OptimizerConfig) (*Optimizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Optimizer{config: config, meter: meter, owner: id.New(PrefixEvent).String()}, nil
+	value := &Optimizer{config: config, meter: meter, owner: id.New(PrefixEvent).String()}
+	for _, option := range options {
+		if option == nil {
+			return nil, ErrInvalidSpec
+		}
+		if err := option(value); err != nil {
+			return nil, err
+		}
+	}
+	return value, nil
 }
 
 func (o *Optimizer) caller(ctx context.Context) (IdentityRef, error) {
