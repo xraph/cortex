@@ -6180,3 +6180,32 @@ recovery or the complete prepared-team runtime.
 The engine still needs to start the exact reserved child through its prepared
 run path, persist team provenance across suspension, create isolated sessions
 and constrain A2A routing. This service does not settle usage or authorize retry.
+
+### Prepared activation and startup evidence
+
+Prepared startup separates draft construction from activation. The draft owns a
+detached artifact and reserved run ID; activation creates that exact run and
+initializes the existing ReAct state. Replacing the caller's prepared object
+cannot change the continuation artifact. Invalid run IDs fail before creation,
+and cancellation before activation creates no child.
+
+`RunPrepared` retains an acknowledged run when capture-intent registration or
+history validation later fails. `PreparedStartError.RunIdentity()` identifies
+the creation attempt for sync and stream callers, including a lost creation
+acknowledgment. Its public text omits private storage details. Error matching
+retains startup and terminal-write causes, and callers must inspect durable
+state before recovery. An in-memory failure is not proof that its terminal write
+committed. Streaming startup errors close the channel without publishing content.
+
+Regressions first reproduced missing run identities, private creation-error text,
+a replaced continuation artifact and invalid reserved IDs. The targeted race
+suite passes. A real SQLite activation test keeps the reserved ID and refuses
+duplicate creation after completion. Final prepared, required-verification and
+atomic-preparation races passed (264.508s). The broader root suite passed with
+the documented local scopespy exclusion, including the full engine suite
+(66.503s). Scoped formatting, all ten modules' lint, root build and docs
+type/lint/build checks passed.
+
+Prepared team dispatch still needs durable team provenance, isolated child
+sessions and restricted A2A routing. The activation seam grants no retry or
+shared-budget authority by itself.

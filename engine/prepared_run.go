@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,8 @@ type PreparedRunOptions struct {
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
+// A failure after acknowledged creation returns the run alongside the error.
+// PreparedStartError also identifies uncertain creation attempts.
 func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, false)
 	defer func() {
@@ -41,6 +44,9 @@ func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string
 func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (*run.Run, error) {
 	ctx, rz, err := e.startPrepared(ctx, p, input, opts)
 	if err != nil {
+		if rz != nil {
+			return rz.run, err
+		}
 		return nil, err
 	}
 	return e.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
@@ -94,6 +100,7 @@ func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, event
 
 type preparedRunDraft struct {
 	run      *run.Run
+	prepared *PreparedAgent
 	snapshot *preparedSnapshot
 	cfg      resolvedConfig
 	messages []llm.Message
@@ -110,6 +117,10 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	if e.llm == nil {
 		return nil, nil, cortex.ErrNoLLM
 	}
+	if runID.IsNil() || runID.Prefix() != id.PrefixAgentRun || p == nil {
+		return nil, nil, cortex.ErrInvalidPrepared
+	}
+	p = &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}
 	snap, err := p.snapshot()
 	if err != nil {
 		return nil, nil, err
@@ -170,7 +181,7 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 		return nil, nil, intentErr
 	}
 	ctx = withExecutionProvenance(ctx, r.Provenance)
-	return ctx, &preparedRunDraft{run: r, snapshot: snap, cfg: cfg, messages: messages, intent: intent}, nil
+	return ctx, &preparedRunDraft{run: r, prepared: p, snapshot: snap, cfg: cfg, messages: messages, intent: intent}, nil
 }
 
 func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (context.Context, *resumption, error) {
@@ -178,33 +189,50 @@ func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input stri
 	if err != nil {
 		return nil, nil, err
 	}
+	return e.activatePrepared(ctx, draft)
+}
+
+// activatePrepared creates the exact draft identity and initializes loop state.
+// Callers must check err before using the returned resumption: on startup failure
+// only its run and execution metadata are available for reconciliation.
+func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) (context.Context, *resumption, error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, nil, err
+	}
 	r, snap, cfg, messages, intent := draft.run, draft.snapshot, draft.cfg, draft.messages, draft.intent
 	now := *r.StartedAt
-	input = r.Input
-	if err = e.store.CreateRun(ctx, r); err != nil {
-		return nil, nil, fmt.Errorf("cortex: create prepared run: %w", err)
+	input := r.Input
+	if err := e.store.CreateRun(ctx, r); err != nil {
+		return ctx, nil, &PreparedStartError{runID: r.ID, cause: err}
 	}
+	rz := &resumption{ag: &snap.Agent, cfg: cfg, run: r, startedAt: now}
+	runTraceFrom(ctx).bind(r, cfg.Model)
 	if cfg.Verification != nil {
 		storage, captureOK := e.store.(requiredVerificationStore)
 		if !captureOK || r.Revision != 1 {
-			return nil, nil, cortex.ErrVerificationUnavailable
+			return ctx, rz, e.failPreparedStart(ctx, r)
 		}
 		if registerErr := storage.CreateCaptureIntent(ctx, intent); registerErr != nil {
-			e.failRun(ctx, r, r.AgentID, cortex.ErrVerificationUnavailable, now)
-			return nil, nil, cortex.ErrVerificationUnavailable
+			return ctx, rz, e.failPreparedStart(ctx, r)
 		}
 	}
-	runTraceFrom(ctx).bind(r, cfg.Model)
 	e.extensions.EmitRunStarted(ctx, r.AgentID, r.ID, input)
 	if cfg.Verification == nil {
+		var err error
 		messages, err = e.loadPreparedHistory(ctx, snap, r)
 		if err != nil {
-			return nil, nil, e.stopPublication(ctx, r, &reactState{}, err)
+			return ctx, rz, &PreparedStartError{runID: r.ID, cause: e.stopPublication(ctx, r, &reactState{}, err)}
 		}
 	}
-	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: r.SessionID, newMessagesFrom: len(messages), prepared: &PreparedAgent{payload: append([]byte(nil), p.payload...), digest: p.digest}, preparedSnapshot: snap, provenance: r.Provenance}
+	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: r.SessionID, newMessagesFrom: len(messages), prepared: draft.prepared, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
-	return ctx, &resumption{ag: &snap.Agent, cfg: cfg, run: r, state: st, startedAt: now}, nil
+	rz.state = st
+	return ctx, rz, nil
+}
+
+func (e *Engine) failPreparedStart(ctx context.Context, r *run.Run) error {
+	writeErr := e.persistFailure(ctx, r, r.AgentID, cortex.ErrVerificationUnavailable)
+	return &PreparedStartError{runID: r.ID, cause: errors.Join(cortex.ErrVerificationUnavailable, writeErr)}
 }
 
 func (e *Engine) checkPreparedRevisions(snap *preparedSnapshot) error {

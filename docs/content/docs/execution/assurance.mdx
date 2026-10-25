@@ -30,6 +30,25 @@ Content screening covers input, output, retrieved content, tool results and publ
 Automatic contextual verification at publication remains unavailable. The explicit
 `VerifyRun` worker below can verify saved candidates. Default preparation freezes collected inputs and checks its source read set for observed changes. Those independent reads are not one transaction.
 
+## Prepared startup failures
+
+If startup fails after the store acknowledges run creation, `RunPrepared`
+returns that run alongside the error. The run identifies the attempted work;
+read its durable state before deciding whether cleanup or recovery is safe.
+A failed terminal write can leave the stored run running even when the returned
+in-memory record describes a failure.
+
+Use `errors.As` with `*engine.PreparedStartError` and call `RunIdentity()` to get
+the attempted run ID. This works for `StreamPrepared` startup errors too. The
+stream closes without publishing content when startup fails. The error's text
+omits private storage details, while `errors.Is` and `errors.As` preserve its
+underlying causes for host-side handling.
+
+A creation error may be a lost acknowledgment. The returned run is nil in that
+case, but `PreparedStartError` still carries the attempted ID for lookup. Do not
+treat nil as proof that no row exists, or retry generation from this error.
+Failures before a creation attempt do not carry a startup identity.
+
 ## Atomic preparation
 
 Use `engine.WithAtomicPreparation()` when collection must read one consistent database snapshot. This requires the optional `store.PreparationSnapshotter` capability. The built-in PostgreSQL, SQLite and MongoDB stores implement it. PostgreSQL uses a read-only repeatable-read transaction, SQLite uses a read-only transaction request with serializable isolation, and MongoDB uses explicit snapshot read concern with majority commit concern. MongoDB needs transaction support, such as a replica set. Configure SQLite with WAL and a busy timeout when writers need to proceed during capture.
