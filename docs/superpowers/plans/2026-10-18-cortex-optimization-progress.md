@@ -1816,3 +1816,31 @@ before the function existed. Fresh focused runs of both backends passed above.
 This is not a clean full-suite result. The next broad run compiles all race test
 binaries before executing them, preventing concurrent source edits from mixing
 new callers with earlier helper builds.
+
+## Authenticated operator read models
+
+Task 16 starts with shared optimizer service reads, so HTTP and dashboard handlers
+can use the same authority checks. The service exposes candidates, original
+trials, recorded comparisons, versions, lessons, publication state, activation
+history and events. Child detail reads bind both parent and resource identity.
+Collection reads check current resource grants and return no partial page when
+an item is denied.
+
+Operator pages default to 25 records, cap at 100 and expose explicit completion
+without inventing totals. Event cursors bind the exact scope and experiment while
+retaining the durable sequence position. Existing `Get` and `List` delegate to
+the shared checks. Execution contexts tagged as evaluation, optimization trial
+or optimization controller cannot use this operator path to read private evidence.
+
+The first populated read and paging tests pass on memory, SQLite, PostgreSQL and
+MongoDB. A real prepared runtime test confirms that normal authorized reads work
+and the three private execution purposes are denied. Final checks are running
+after adding populated lesson reads. HTTP routes, dashboard contracts, creation
+catalogs and capability probes are still being implemented.
+
+Final populated operator read and paging checks pass memory (11.368s), SQLite
+(26.046s), PostgreSQL (25.837s) and MongoDB (32.565s). The prepared execution
+boundary and worker regressions pass in 1.637s, followed by the complete core
+race suite in 52.446s. Scoped `make f`, full `make l`, the optimization build and
+whitespace checks pass. The preceding production team's frozen database race
+binaries remain active and are reported separately.

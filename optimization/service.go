@@ -135,22 +135,13 @@ func (o *Optimizer) authorizeCreation(ctx context.Context, experiment Experiment
 
 // Get reads one experiment after checking its exact scope and current authority.
 func (o *Optimizer) Get(ctx context.Context, experimentID id.ID) (Experiment, error) {
-	value, _, err := o.authorizeCommand(ctx, experimentID, ActionRead)
-	if err != nil {
-		return Experiment{}, err
-	}
-	return value, nil
+	return o.readExperiment(ctx, experimentID)
 }
 
 // List reads one bounded page in an explicitly authorized exact scope.
 func (o *Optimizer) List(ctx context.Context, query ListQuery) (Page[Experiment], error) {
-	if _, err := o.caller(ctx); err != nil {
-		return Page[Experiment]{}, err
-	}
-	if err := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionRead, Resource{Scope: copyScope(cortex.ScopeFromContext(ctx)), AgentID: query.AgentID, Kind: "experiments"}); err != nil {
-		return Page[Experiment]{}, err
-	}
-	return o.config.Repository.ListExperiments(ctx, query)
+	page, err := o.ListExperiments(ctx, query)
+	return Page[Experiment]{Items: page.Items, NextCursor: page.NextCursor}, err
 }
 
 // Start queues a frozen draft and returns without running the controller.

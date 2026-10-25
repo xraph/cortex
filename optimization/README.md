@@ -446,3 +446,27 @@ preset requires a fresh version.
 `RunActive` remains the agent execution path and returns `ErrUnavailable` for
 team versions. Current presets support token ceilings. Monetary team ceilings
 and messaging tools require further runtime support.
+
+### Operator resource reads
+
+Use the optimizer's read methods when you expose experiments through an API or
+review UI. `ListExperiments`, `ListCandidates`, `ListTrials`, `GetComparison`,
+`ListVersions`, `ListLessons`, `ListPublications` and `ListActivations` return a
+`ResourcePage` with `items`, `next_cursor` and `complete`. Pages default to 25
+records and reject limits above 100. `complete` describes pagination, not the
+experiment's execution state.
+
+`GetCandidate` and `GetTrial` require the parent experiment ID as well as the
+resource ID. Reads check the current caller and resource grants in the exact
+scope. A denied item fails the page without returning a partial result. An empty
+configured scope returns an empty array and `complete: true`.
+
+Use `ListEvents` for reconnects. Its opaque cursor binds the exact scope and
+experiment, and continues after the last returned event sequence. Keep that
+cursor separate from the repository's internal sequence cursor.
+
+These methods read existing records. They do not run models, evaluate trials or
+activate versions. Evaluation, trial and optimization-controller execution
+contexts cannot use the operator read path to access private evidence. The
+existing `Get` and `List` methods use the same checks; `List` retains its original
+response type and uses the operator page limits.

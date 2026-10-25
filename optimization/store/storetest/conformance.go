@@ -72,6 +72,8 @@ func Run(t *testing.T, factory Factory) {
 	publicationRetryPermission(t, factory)
 	lessonCreation(t, factory)
 	readers(t, factory)
+	operatorReads(t, factory)
+	operatorReadPages(t, factory)
 	artifacts(t, factory)
 	artifactWork(t, factory)
 	t.Run("ScopeIsolation", func(t *testing.T) {
