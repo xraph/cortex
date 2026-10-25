@@ -6646,3 +6646,27 @@ nine modules pass. Those files are outside this packet's ownership.
 Durable handoff events, private prepared A2A tools, installed-provider recovery
 and live Linux sandbox qualification remain open. This packet does not complete
 the four-stage plan.
+
+### Prepared-team compatibility observations
+
+`CheckPreparedOrchestrationSources` now compares the frozen configuration and
+every participant's original source read set inside one atomic store snapshot.
+Derived guidance retains its original source identity. The result binds the team
+digest, total read count and new snapshot receipt. Configuration, participant,
+auxiliary-agent and absent-overlay changes invalidate the observation.
+
+`CheckPreparedOrchestrationBindings` checks the complete roster through the
+existing strict model and tool compatibility path. It runs no providers or tools.
+The source check runs no publication scanners. Neither method grants adoption,
+execution or host approval, and the two checks do not form an atomic transaction
+with remote implementations. The optimizer still owns its production adoption
+route and policy.
+
+The missing-API test failed first. Compatibility races passed in 51.911s, including
+the existing single-agent checks after extraction of the shared source comparator.
+Tests commit an auxiliary-agent change between reads to prove one snapshot, then
+observe the conflict on the next pass. Missing store and snapshot capabilities,
+an incomplete team view, wrong receipt scope, cancellation after capture and
+missing auxiliary model bindings all fail closed. Scoped formatting, root lint,
+root build and docs types/lint/build pass. All-module lint still reports the same
+three findings in the concurrent optimizer work; its other nine modules pass.

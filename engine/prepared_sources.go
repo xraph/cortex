@@ -51,25 +51,29 @@ func (e *Engine) CheckPreparedSources(ctx context.Context, p *PreparedAgent) (*P
 		return nil, cortex.ErrPreparationUnavailable
 	}
 	receipt, err := capturePreparation(ctx, provider, func(sources store.PreparationSources) error {
-		for _, revision := range snap.Provenance.SourceReads {
-			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
-			}
-			value, readErr := currentPreparedSource(ctx, sources, snap, revision.Name)
-			if readErr != nil {
-				return errors.Join(cortex.ErrPreparationConflict, readErr)
-			}
-			data, encodeErr := json.Marshal(value)
-			if encodeErr != nil || contentDigest(data) != revision.Digest {
-				return cortex.ErrPreparationConflict
-			}
-		}
-		return nil
+		return checkPreparedSourceReads(ctx, sources, snap)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &PreparedSourceCheck{PreparedDigest: p.Digest(), SourceCount: len(snap.Provenance.SourceReads), Snapshot: *receipt}, nil
+}
+
+func checkPreparedSourceReads(ctx context.Context, sources store.PreparationSources, snap *preparedSnapshot) error {
+	for _, revision := range snap.Provenance.SourceReads {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		value, readErr := currentPreparedSource(ctx, sources, snap, revision.Name)
+		if readErr != nil {
+			return errors.Join(cortex.ErrPreparationConflict, readErr)
+		}
+		data, encodeErr := json.Marshal(value)
+		if encodeErr != nil || contentDigest(data) != revision.Digest {
+			return cortex.ErrPreparationConflict
+		}
+	}
+	return nil
 }
 
 func validatePreparedReadSet(snap *preparedSnapshot) error {

@@ -51,6 +51,25 @@ never added. Unedited participants keep their digests, and edited participants
 record their original digest in `DerivedFrom`. Your host still decides which
 participants and sections an experiment may edit. Derivation grants no approval.
 
+Use `Engine.CheckPreparedOrchestrationSources(ctx, prepared)` when you need to
+compare a candidate with current stored sources. It reads the configuration and
+every participant's original source manifest in one read-only snapshot, including
+auxiliary agents and absent overlays. Derived guidance retains those source
+identities. Changed or missing records return `ErrPreparationConflict`; missing
+atomic team-read capability returns `ErrPreparationUnavailable`.
+
+The returned `PreparedSourceCheck` binds the team's digest to the new observation
+receipt. `SourceCount` includes the configuration and each participant's read set;
+shared sources count once per participant that reads them. This check runs no
+publication scanner, model or tool. It observes stored configuration only.
+
+Call `Engine.CheckPreparedOrchestrationBindings(ctx, prepared)` separately to
+check host-declared model and selected-tool revisions for the complete roster.
+It reuses `CheckPreparedBindings`, including executable-tool and schema checks.
+The two checks are point-in-time observations, not one transaction across storage
+and remote implementations. They grant no execution or adoption authority. Your
+host still applies its approval, freshness, authorization and deployment policy.
+
 ## Execute a prepared team
 
 Call `Engine.RunPreparedOrchestration(ctx, prepared, input, opts)` with
