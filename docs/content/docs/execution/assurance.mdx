@@ -60,6 +60,25 @@ implementation pins, external knowledge, policy revisions and current grants
 still need their own validation. The receipt describes one observation; it does
 not lock those sources through a later activation or authorize execution.
 
+### Check runtime bindings before adoption
+
+Use `Engine.CheckPreparedBindings(ctx, prepared)` to require a current model
+provider and matching host-declared revision pins for the model and every
+selected tool. Each selected tool also needs one unambiguous definition, an
+executable implementation and the frozen parameter schema. Derived descriptions
+and narrower tool lists are supported. Schema comparison preserves large integers.
+
+Missing or changed pins, ambiguous registrations and missing implementations
+fail the check. An external tool declaration alone cannot prove that a caller-side
+implementation is available. The check requires the artifact's exact scope, makes
+no store or provider calls and does not authorize execution. Normal prepared
+execution keeps its existing support for unpinned bindings.
+
+These pins are the host's declarations, not independent measurements of remote
+providers. Combine this observation with `CheckPreparedSources` and your current
+policy, grants and external-source checks. Recheck at the activation boundary;
+neither method locks external state through a later run.
+
 ## Observe failures
 
 `plugin.RunTerminated` receives a content-free summary after the terminal store update succeeds. It includes incomplete and cancelled runs. `plugin.PublicationRejected` reports a bounded policy reason, including rejection before a run exists. Its run ID is then empty.

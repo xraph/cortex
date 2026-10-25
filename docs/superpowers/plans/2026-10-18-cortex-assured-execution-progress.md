@@ -5998,3 +5998,25 @@ All-module lint, scoped formatting, root build and docs checks passed. Completed
 but unaccepted outcomes still need an explicit disposition protocol, and accounting
 does not release recovering ownership or authorize retries. Live host and billing
 qualification remain open.
+
+### Runtime binding checks for prepared adoption
+
+`Engine.CheckPreparedBindings` requires matching host-declared model and selected
+tool revision pins, a configured model provider, unambiguous tool definitions and
+present implementations. It compares parameter schemas without rounding large
+integers, permits derived descriptions and tool subsets, and checks exact scope.
+External declarations alone do not establish implementation availability. It
+reuses prepared revision checking and the shared typed-nil host-port check.
+
+The check makes no store, model, scanner or tool calls and grants no authority.
+Pins remain host declarations; current policy, grants, external sources and live
+provider identity need separate checks. Normal prepared execution retains its
+existing behavior for unpinned bindings.
+
+A failing implementation admitted changed, missing and malformed bindings; the
+new regression suite rejects those cases, including builtin dispatch precedence,
+typed-nil services, duplicate registrations and altered schema integers. The
+prepared/atomic-preparation race suite passed (64.647s). Root build and docs type,
+lint and build checks passed. Final focused races passed (26.231s), and all ten
+modules passed lint after scoped formatting. Concurrent optimizer files remain
+with their owner. Runtime pins do not establish live provider qualification.
