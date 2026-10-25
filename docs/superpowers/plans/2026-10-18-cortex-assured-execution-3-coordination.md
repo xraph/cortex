@@ -281,6 +281,15 @@ and blocks new admission throughout its account. These accounting fields do not
 authenticate billing or authorize final settlement; the guarded task operation
 and its host proof integration remain open.
 
+`TaskUsageSettler` now gates settlement through explicit host billing authority
+and a synchronous fence. Storage verifies the original budgeted claim binding,
+accepted ownership, admission closure and exact current combined usage under
+plan/run/journal guards. It derives the charge and writes both accounting and the
+guarded receipt in the same transaction, reusing ordinary budget settlement.
+Historical retries retain the first receipt and require current authorization.
+Live billing authentication, enforced bounds for unknown external work, concrete
+host integration and runtime scheduling of settlement remain open.
+
 ## S3.6: Team review UI and recovery qualification
 
 Depends on S3.1 through S3.5. Owner: integration coordinator and UI owner.

@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/internal/assurance"
@@ -27,8 +28,18 @@ type taskRecoveryFixture struct {
 	effect  execution.EffectRequest
 }
 
-func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, mode string) taskRecoveryFixture {
+type taskRecoveryOptions struct {
+	Acquire        func(context.Context, coordination.ClaimRequest, planning.Plan) (coordination.Claim, error)
+	ProviderUsage  execution.ReservationUsage
+	VerifierBudget *verification.EvaluationBudget
+}
+
+func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, mode string, options ...taskRecoveryOptions) taskRecoveryFixture {
 	t.Helper()
+	var option taskRecoveryOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
 	config := taskContractConfig(t)
 	ctx, p, h := assignmentFixture(t, backend, config.Plan)
 	worker, claimID := mustCreateAgent(t, backend, ctx, "recovery-worker"), id.New(coordination.PrefixClaim)
@@ -37,11 +48,17 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 	h, err = coordination.SealHandoff(h)
 	require.NoError(t, err)
 	contract := config.Contract(p)
-	_, working, change, job := submissionFixtureForHandoff(ctx, t, backend, p, h, contract, func(r *run.Run, _ *verification.Binding) {
+	_, working, change, job := submissionFixtureForHandoffBudget(ctx, t, backend, p, h, contract, option.VerifierBudget, func(r *run.Run, _ *verification.Binding) {
 		r.AgentID = worker
 		r.Provenance.TaskClaimID = claimID.String()
 	})
-	req := finishTaskAcceptanceFixture(ctx, t, backend, working, change, job, acceptanceClaimFixture{ID: claimID, Duration: 10 * time.Second})
+	claimOption := acceptanceClaimFixture{ID: claimID, Duration: 10 * time.Second}
+	if option.Acquire != nil {
+		claimOption.Acquire = func(ctx context.Context, req coordination.ClaimRequest) (coordination.Claim, error) {
+			return option.Acquire(ctx, req, p)
+		}
+	}
+	req := finishTaskAcceptanceFixture(ctx, t, backend, working, change, job, claimOption)
 	repo := assurance.New(driver)
 	claim, err := repo.GetTaskClaim(ctx, req.Claim.PlanID, req.Claim.TaskID)
 	require.NoError(t, err)
@@ -71,6 +88,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 	require.NoError(t, err)
 	if mode != "missing provider" {
 		proof := snapshotProof(t, model)
+		proof.Usage = option.ProviderUsage
 		if mode == "future provider" {
 			proof.ObservedAt = claim.ExpiresAt.Add(2 * time.Second)
 		}
@@ -116,6 +134,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 // ownership records. Fixture proof references do not qualify a host authenticator.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("guarded usage settlement", func(t *testing.T) { testTaskUsageSettlement(t, backend, driver) })
 	t.Run("usage admission closure", func(t *testing.T) { testTaskUsageClosure(t, backend, driver) })
 	t.Run("complete usage snapshot", func(t *testing.T) { testTaskUsageSnapshot(t, backend, driver) })
 	t.Run("engine managed adoption", func(t *testing.T) { testManagedTaskAdoption(t, backend, driver) })

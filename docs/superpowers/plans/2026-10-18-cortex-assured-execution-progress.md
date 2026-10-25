@@ -5751,3 +5751,36 @@ edits. The final `make l` passed every module after the owner's corrections.
 
 Formatting used `make f FORMAT_PATHS='execution/reservation.go execution/reservation_account.go execution/budget_store.go execution/settlement_minimum_test.go store/storetest/budget.go store/storetest/budget_partial_usage.go'`.
 Guarded task settlement and live billing proof remain open.
+
+### S3.5 guarded task usage settlement
+
+Domain and store tests first failed on the missing settlement APIs. The guarded
+settler now requires explicit current host authority and billing proof. The store
+revalidates accepted ownership, the original budgeted claim, closed admission and
+the complete usage snapshot under one plan/run/journal transaction. Ordinary and
+guarded accounting share the same settlement helper. Both accounting and the
+guarded receipt commit together; an independently settled allocation cannot be
+adopted. Unknown usage retains its charge and observed overruns.
+
+Initial domain and SQLite race tests pass. Coverage includes actual metered
+verifier records, provider and verifier totals, partial usage, expiry, stale
+evidence, denied authority, rollback after accounting, lost acknowledgments,
+cancellation after commit, concurrent settlement and journal writes blocked
+through settlement. Cross-store regressions and final lint/build checks follow.
+Fixture billing references establish no live provider authority. Installed host
+billing adapters, external finality qualification and the remaining four-stage
+gates stay open.
+
+Final coordination and execution race suites passed in 44.390 and 36.931 seconds.
+The broader settlement, recovery, budget, acceptance and submission regressions
+passed SQLite in 134.578 seconds, PostgreSQL in 78.976 seconds and MongoDB in
+277.063 seconds without skips. SQLite also ran both adoption process-crash cases.
+Final late-observation tests passed all three stores: stale evidence is rejected,
+while a refreshed snapshot and billing proof can include receipts after closure.
+Missing closure/budget bindings, independent reservations and a missing paired
+accounting record are refused.
+
+Root build, docs type/lint/build checks and final all-module `make l` passed.
+Formatting used `make f FORMAT_PATHS='errors.go coordination/task_usage_settlement.go coordination/task_usage_settlement_test.go store/internal/assurance/budget.go store/internal/assurance/task_usage_settlement.go store/storetest/task_usage_settlement.go store/storetest/task_recovery.go store/storetest/task_acceptance.go store/storetest/submission.go store/storetest/submission_transaction.go'`.
+The packet contains no optimizer edits. Runtime settlement scheduling and concrete
+host billing qualification remain open.

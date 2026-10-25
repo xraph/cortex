@@ -147,6 +147,8 @@ var (
 	ErrInvalidTaskUsage       = errors.New("cortex: invalid task usage")
 	ErrTaskUsageConflict      = errors.New("cortex: task usage conflict")
 	ErrTaskUsageClosed        = errors.New("cortex: task usage admission closed")
+	ErrInvalidTaskSettlement  = errors.New("cortex: invalid task usage settlement")
+	ErrTaskSettlementConflict = errors.New("cortex: task usage settlement conflict")
 	ErrTaskAcceptanceConflict = errors.New("cortex: task acceptance conflict")
 	ErrTaskAcceptanceNotFound = errors.New("cortex: task acceptance not found")
 	ErrInvalidClaim           = errors.New("cortex: invalid task claim")

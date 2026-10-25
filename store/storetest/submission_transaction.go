@@ -26,6 +26,7 @@ type submissionFenceDriver struct {
 	afterSelect  func(context.Context, assurance.Query, []assurance.Record) ([]assurance.Record, error)
 	beforeFinish func(context.Context, assurance.Driver) error
 	afterCommit  func()
+	afterInsert  func(context.Context, assurance.Record) error
 	failInsert   bool
 	lostAck      bool
 }
@@ -84,6 +85,11 @@ func (d submissionFenceTx) Select(ctx context.Context, query assurance.Query) ([
 func (d submissionFenceTx) Insert(ctx context.Context, row assurance.Record) error {
 	if err := d.Driver.Insert(ctx, row); err != nil {
 		return err
+	}
+	if d.owner.afterInsert != nil {
+		if err := d.owner.afterInsert(ctx, row); err != nil {
+			return err
+		}
 	}
 	if d.owner.failInsert {
 		return errAssignmentInjected

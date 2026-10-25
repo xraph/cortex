@@ -31,6 +31,7 @@ func taskAcceptanceFixture(t *testing.T, backend store.Store, configs ...submiss
 type acceptanceClaimFixture struct {
 	ID       id.ID
 	Duration time.Duration
+	Acquire  func(context.Context, coordination.ClaimRequest) (coordination.Claim, error)
 }
 
 func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend store.Store, working coordination.Assignment, change coordination.AssignmentChange, job verification.Job, options ...acceptanceClaimFixture) coordination.TaskAcceptanceRequest {
@@ -41,7 +42,11 @@ func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend stor
 	if len(options) > 0 {
 		fixture = options[0]
 	}
-	claim, err := claims.AcquireTaskClaim(ctx, coordination.ClaimRequest{SchemaVersion: 1, ID: fixture.ID, PlanID: h.PlanID, PlanRevision: h.PlanRevision, PlanDigest: h.PlanDigest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: fixture.Duration})
+	acquire := claims.AcquireTaskClaim
+	if fixture.Acquire != nil {
+		acquire = fixture.Acquire
+	}
+	claim, err := acquire(ctx, coordination.ClaimRequest{SchemaVersion: 1, ID: fixture.ID, PlanID: h.PlanID, PlanRevision: h.PlanRevision, PlanDigest: h.PlanDigest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: fixture.Duration})
 	require.NoError(t, err)
 	dispatch, err := claims.BeginTaskDispatch(ctx, claim.Token(), job.Request.Binding.RunID)
 	require.NoError(t, err)
@@ -59,7 +64,16 @@ func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend stor
 	}
 	report, err := verification.SealReport(verification.Report{SchemaVersion: 1, ID: id.New(verification.PrefixReport), Binding: job.Request.Binding, CheckedAt: now, ExpiresAt: now.Add(2 * time.Minute), Outcomes: outcomes})
 	require.NoError(t, err)
-	job, err = jobs.SaveVerificationJobReport(ctx, *job.Lease, report)
+	if job.Request.EvaluationBudget == nil {
+		job, err = jobs.SaveVerificationJobReport(ctx, *job.Lease, report)
+	} else {
+		calls := resultCapability[verification.CallStore](t, backend)
+		lease := *job.Lease
+		call := callFor(report, 20, 20)
+		_, err = calls.BeginVerificationCall(ctx, lease, call)
+		require.NoError(t, err)
+		job, err = calls.CompleteVerificationCall(ctx, lease, verification.CallResult{CallID: call.ID, Report: &report, Usage: verification.EvaluationUsage{Tokens: 7, USDMicros: 3, TokensKnown: true, MoneyKnown: true, Receipt: "fixture-verifier-usage"}})
+	}
 	require.NoError(t, err)
 	receipt, err := resultCapability[verification.CommitStore](t, backend).CommitVerifiedResult(ctx, jobCommitRequest(job))
 	require.NoError(t, err)

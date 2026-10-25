@@ -43,6 +43,11 @@ func configuredSubmissionFixture(t *testing.T, s store.Store, config submissionF
 
 func submissionFixtureForHandoff(ctx context.Context, t *testing.T, s store.Store, p planning.Plan, h coordination.Handoff, contract verification.Contract, alter ...func(*run.Run, *verification.Binding)) (context.Context, coordination.Assignment, coordination.AssignmentChange, verification.Job) {
 	t.Helper()
+	return submissionFixtureForHandoffBudget(ctx, t, s, p, h, contract, nil, alter...)
+}
+
+func submissionFixtureForHandoffBudget(ctx context.Context, t *testing.T, s store.Store, p planning.Plan, h coordination.Handoff, contract verification.Contract, budget *verification.EvaluationBudget, alter ...func(*run.Run, *verification.Binding)) (context.Context, coordination.Assignment, coordination.AssignmentChange, verification.Job) {
+	t.Helper()
 	journal := resultCapability[coordination.AssignmentStore](t, s)
 	current, err := journal.ProposeAssignment(ctx, h)
 	require.NoError(t, err)
@@ -67,7 +72,7 @@ func submissionFixtureForHandoff(ctx context.Context, t *testing.T, s store.Stor
 		require.NoError(t, s.UpdateRun(ctx, r))
 	}
 	require.NoError(t, resultCapability[verification.Store](t, s).CreateContract(ctx, contract))
-	job, err := resultCapability[verification.CaptureStore](t, s).CaptureVerificationJob(ctx, verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: r.Revision, ContractID: contract.ID, Binding: binding, Deadline: h.Deadline, MaxAttempts: 2})
+	job, err := resultCapability[verification.CaptureStore](t, s).CaptureVerificationJob(ctx, verification.JobRequest{SchemaVersion: 1, ID: id.New(verification.PrefixJob), ExpectedRunRevision: r.Revision, ContractID: contract.ID, Binding: binding, Deadline: h.Deadline, MaxAttempts: 2, EvaluationBudget: budget})
 	require.NoError(t, err)
 	digest, err := binding.Digest()
 	require.NoError(t, err)

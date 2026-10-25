@@ -310,56 +310,65 @@ func (s *Repository) Settle(ctx context.Context, settlement execution.Settlement
 		return err
 	}
 	err = s.planTransaction(ctx, initial.Request.PlanID, func(tc context.Context, tx *Repository) error {
-		current, readErr := tx.GetReservation(tc, req.ReservationID)
-		if readErr != nil {
-			return readErr
-		}
-		if current.Settlement != nil {
-			if current.Settlement.Digest != digest {
-				return execution.ErrReservationConflict
-			}
-			return nil
-		}
-		if current.RequestDigest != req.RequestDigest {
-			return execution.ErrReservationConflict
-		}
-		policy, readErr := tx.GetReservationPolicy(tc, initial.Request.PlanID)
-		if readErr != nil {
-			return readErr
-		}
-		reservations, readErr := tx.accountReservations(tc, initial.Request.PlanID)
-		if readErr != nil {
-			return readErr
-		}
-		receipt := execution.SettlementReceipt{Request: req, Digest: digest, At: s.clock.Now()}
-		found := false
-		for i := range reservations {
-			if reservations[i].Request.ID == req.ReservationID {
-				reservations[i].Settlement = &receipt
-				found = true
-				break
-			}
-		}
-		if !found {
-			return execution.ErrReservationNotFound
-		}
-		if _, checkErr := execution.AccountReservations(policy, reservations); checkErr != nil {
-			return checkErr
-		}
-		data, encodeErr := json.Marshal(receipt)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		row, buildErr := record(kindSettlement, req.ReservationID.String(), evidence.Digest(data), initial.Request.PlanID.String(), initial.Request.Scope, receipt)
-		if buildErr != nil {
-			return buildErr
-		}
-		return tx.driver.Insert(tc, row)
+		_, settleErr := tx.settleInTransaction(tc, req, digest)
+		return settleErr
 	})
 	if errors.Is(err, ErrExists) {
 		return execution.ErrReservationConflict
 	}
 	return err
+}
+
+// settleInTransaction requires a frozen request and the reservation's plan lock.
+func (s *Repository) settleInTransaction(ctx context.Context, req execution.Settlement, digest string) (execution.SettlementReceipt, error) {
+	current, err := s.GetReservation(ctx, req.ReservationID)
+	if err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	if current.Settlement != nil {
+		if current.Settlement.Digest != digest {
+			return execution.SettlementReceipt{}, execution.ErrReservationConflict
+		}
+		return *current.Settlement, nil
+	}
+	if current.RequestDigest != req.RequestDigest {
+		return execution.SettlementReceipt{}, execution.ErrReservationConflict
+	}
+	policy, err := s.GetReservationPolicy(ctx, current.Request.PlanID)
+	if err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	reservations, err := s.accountReservations(ctx, current.Request.PlanID)
+	if err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	receipt := execution.SettlementReceipt{Request: req, Digest: digest, At: s.clock.Now()}
+	found := false
+	for i := range reservations {
+		if reservations[i].Request.ID == req.ReservationID {
+			reservations[i].Settlement = &receipt
+			found = true
+			break
+		}
+	}
+	if !found {
+		return execution.SettlementReceipt{}, execution.ErrReservationNotFound
+	}
+	if _, err = execution.AccountReservations(policy, reservations); err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	row, err := record(kindSettlement, req.ReservationID.String(), evidence.Digest(data), current.Request.PlanID.String(), current.Request.Scope, receipt)
+	if err != nil {
+		return execution.SettlementReceipt{}, err
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return execution.SettlementReceipt{}, insertErr
+	}
+	return receipt, nil
 }
 
 // ListReservations is bounded discovery, not a transactional accounting view.

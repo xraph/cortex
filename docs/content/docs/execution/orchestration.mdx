@@ -714,6 +714,44 @@ its final bill, or refund any reservation. Late observations remain available fo
 reconciliation. Settlement still needs final billing authority and a fresh check
 of the complete evidence. Reverification after closure needs a new run and budget.
 
+### Settle accepted task usage
+
+Use `coordination.NewTaskUsageSettler(store, fence, authorizer).Settle(ctx, request)`
+after closing verifier admission. Your request pins the completed claim, current
+sealed journal and complete usage digest, closure receipt, original reservation
+and billing proof. Refresh the usage snapshot before requesting that proof: late
+observations can arrive after closure, and settlement checks the exact current
+evidence again.
+
+The store holds the plan, run and journal guards while it derives provider and
+verifier charges and commits both accounting and the guarded receipt. It requires
+the reservation created by `AcquireBudgetedTaskClaim`; an independently created
+or already settled reservation cannot be adopted. Known unused capacity can be
+refunded. Missing usage retains the allocation or observed minimum, whichever is
+larger, and overflow continues to block admission. Steps, tool calls, fan-out and
+replan capacity remain charged. Token-only reservations make no monetary claim.
+
+You supply the billing authenticator. It must check original provider accounts
+and routing, every verifier attempt, the pinned pricing revision, and the proof's
+binding to the scope, ownership, closure, usage and reservation. Known charges
+must be final. Unknown charges need an enforced upper bound no larger than the
+retained charge, including delayed work. Other work cannot add unaccounted fees
+to a refunded dimension. If you cannot establish those facts, leave the
+reservation open. A digest or fixture proof reference is not billing evidence.
+
+The synchronous fence holds current host authority through the transaction.
+Proof windows last at most thirty minutes, and each settle attempt is bounded
+to thirty seconds. The store checks proof expiry again after its writes, before
+returning from the transaction callback. Host authority must remain valid through
+commit. These ports do not fetch provider bills or qualify a live deployment.
+
+`GetTaskUsageSettlement` reads the historical receipt. An identical guarded retry
+still requires current host authorization, then returns the original receipt with
+`Fresh: false`, including after a lost acknowledgment or cancellation following
+commit. A changed request conflicts. Historical retries do not require the old
+proof window to remain open and do not replace settled accounting with later
+observations. Preserve the proof and source receipts for reconciliation.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in
