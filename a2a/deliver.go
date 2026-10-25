@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
 )
 
@@ -77,7 +78,20 @@ func (b *Bus) carry(ctx context.Context, d *Delivery, tr *deliveryTrace) error {
 // runDirective starts the recipient's run and turns its outcome into a
 // reply on the same conversation.
 func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error {
-	out, runErr := b.runner.RunAgent(ctx, d.Receiver.Agent, RenderInput(e), nil)
+	var out *cortex.AgentResult
+	var runErr error
+	if b.reserved != nil {
+		var admissionErr error
+		out, runErr, admissionErr = b.reserveDirective(ctx, d, e)
+		if admissionErr != nil {
+			return admissionErr
+		}
+	} else {
+		out, runErr = b.runner.RunAgent(ctx, d.Receiver.Agent, RenderInput(e), nil)
+	}
+	if out == nil && runErr == nil {
+		runErr = cortex.ErrRunIncomplete
+	}
 
 	reply := SendParams{
 		Sender:         d.Receiver,
@@ -87,14 +101,20 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 		Protocol:       e.Protocol,
 		Ontology:       e.Ontology,
 	}
-	var runID id.AgentRunID
+	runID := d.RunID
+	if out != nil && b.reserved == nil {
+		runID = out.RunID
+	}
 	if runErr != nil {
 		reply.Performative = Failure
-		reply.Content = fmt.Sprintf("%s could not answer: %v", d.Receiver.Agent, runErr)
+		publicErr := runErr
+		if b.reserved != nil {
+			publicErr = cortex.ErrRunIncomplete
+		}
+		reply.Content = fmt.Sprintf("%s could not answer: %v", d.Receiver.Agent, publicErr)
 	} else {
 		reply.Performative = Inform
 		reply.Content = out.Output
-		runID = out.RunID
 	}
 
 	if err := b.finishDelivery(ctx, d, e, runID); err != nil {

@@ -296,11 +296,15 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	if scopeErr != nil {
 		return scopeErr
 	}
+	if !d.RunID.IsNil() && d.State == a2a.DeliveryQueued {
+		return a2a.ErrDeliveryClaimLost
+	}
 	d.UpdatedAt = now()
 	m := a2aDeliveryToModel(d)
 
 	filter := bson.M{"_id": m.ID}
 	filter = a2aRoutingFilter(ctx, filter)
+	filter["$and"] = bson.A{a2aOptionalString("claim_token", d.ClaimToken), bson.M{"$or": bson.A{a2aOptionalString("run_id", ""), bson.M{"run_id": d.RunID.String()}}}}
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -322,7 +326,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 		return fmt.Errorf("cortex/mongo: update a2a delivery: %w", err)
 	}
 	if res.MatchedCount() == 0 {
-		return a2a.ErrDeliveryNotFound
+		return s.deliveryMutationMiss(ctx, scope, d.ID)
 	}
 	return nil
 }
@@ -339,15 +343,18 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		return nil, scopeErr
 	}
 	t := now()
+	token := id.New(id.PrefixDeliveryClaim).String()
 	filter := bson.M{"_id": deliveryID.String(), "state": a2a.DeliveryQueued}
 	filter = a2aRoutingFilter(ctx, filter)
+	filter["$and"] = bson.A{a2aOptionalString("run_id", "")}
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
 	update := bson.M{"$set": bson.M{
-		"state":      a2a.DeliveryDelivering,
-		"claimed_at": t,
-		"updated_at": t,
+		"state":       a2a.DeliveryDelivering,
+		"claim_token": token,
+		"claimed_at":  t,
+		"updated_at":  t,
 	}}
 
 	res := s.mdb.Collection(colA2ADeliveries).FindOneAndUpdate(ctx, filter, update)
@@ -367,7 +374,14 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		}
 		return nil, fmt.Errorf("cortex/mongo: claim a2a delivery: %w", err)
 	}
-	return s.getDelivery(ctx, scope, deliveryID)
+	claimed, readErr := s.getDelivery(ctx, scope, deliveryID)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if claimed.ClaimToken != token || claimed.State != a2a.DeliveryDelivering {
+		return nil, a2a.ErrDeliveryClaimLost
+	}
+	return claimed, nil
 }
 
 // ListInbox returns messages that have ARRIVED for an agent. A queued
@@ -426,7 +440,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, f a2a.InboxFilt
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
 	var models []a2aDeliveryModel
 	q := s.mdb.NewFind(&models).
-		Filter(a2aRoutingFilter(ctx, bson.M{"state": a2a.DeliveryQueued})).
+		Filter(a2aRoutingFilter(ctx, bson.M{"state": a2a.DeliveryQueued, "$and": bson.A{a2aOptionalString("run_id", "")}})).
 		Sort(bson.D{{Key: "created_at", Value: 1}, {Key: "_id", Value: 1}})
 	if limit > 0 {
 		q = q.Limit(int64(limit))
@@ -450,6 +464,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 		"claimed_at": bson.M{"$ne": nil, "$lt": olderThan.UTC()},
 	}
 	filter = a2aRoutingFilter(ctx, filter)
+	filter["$and"] = bson.A{a2aOptionalString("run_id", "")}
 
 	// UpdateMany has no limit, so the batch is bounded by reading the ids
 	// first. The state filter stays on the update, so a worker that comes
@@ -466,11 +481,12 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	var n int
 	for i := range models {
 		res, err := s.mdb.NewUpdate((*a2aDeliveryModel)(nil)).
-			Filter(a2aRoutingFilter(ctx, bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering})).
+			Filter(a2aRoutingFilter(ctx, bson.M{"_id": models[i].ID, "state": a2a.DeliveryDelivering, "claimed_at": bson.M{"$lt": olderThan.UTC()}, "$and": bson.A{a2aOptionalString("run_id", ""), a2aOptionalString("claim_token", models[i].ClaimToken)}})).
 			SetUpdate(bson.M{"$set": bson.M{
-				"state":      a2a.DeliveryQueued,
-				"claimed_at": nil,
-				"updated_at": now(),
+				"state":       a2a.DeliveryQueued,
+				"claimed_at":  nil,
+				"claim_token": "",
+				"updated_at":  now(),
 			}}).
 			Exec(ctx)
 		if err != nil {

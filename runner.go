@@ -30,3 +30,19 @@ type AgentResult struct {
 type AgentRunner interface {
 	RunAgent(ctx context.Context, agentName, input string, opts *RunOpts) (*AgentResult, error)
 }
+
+// ReservedInvocation identifies a child before execution. Execute must start
+// that exact run at most once. Unused allocations remain reserved until the
+// host can prove that releasing them is safe.
+type ReservedInvocation struct {
+	RunID   id.AgentRunID
+	Execute func(context.Context) (*AgentResult, error)
+}
+
+// ReservedAgentRunner reserves capacity and identity without executing tools
+// or calling a provider. Return the invocation with an error when its identity
+// needs reconciliation. Callers must persist the identity before execution and
+// must never execute an invocation returned with an error.
+type ReservedAgentRunner interface {
+	ReserveAgent(context.Context, id.OrchestrationID, string, string, *RunOpts) (*ReservedInvocation, error)
+}

@@ -43,6 +43,7 @@ const (
 	PrefixMessage             Prefix = "msg"
 	PrefixConversation        Prefix = "conv"
 	PrefixDelivery            Prefix = "dlv"
+	PrefixDeliveryClaim       Prefix = "dclaim"
 )
 
 // ID is the primary identifier type for all Cortex entities.

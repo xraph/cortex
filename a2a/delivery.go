@@ -29,10 +29,15 @@ var ErrDeliveryAlreadyClaimed = errors.New("cortex: a2a: delivery already claime
 // ErrDeliveryNotFound means no delivery row carries that id.
 var ErrDeliveryNotFound = errors.New("cortex: a2a: delivery not found")
 
+// ErrDeliveryClaimLost means a worker's claim no longer permits a mutation.
+var ErrDeliveryClaimLost = errors.New("cortex: a2a: delivery claim lost")
+
 // Delivery is one envelope's arrival at one receiver. A message addressed
 // to five agents is five deliveries, which is what makes "unread for agent
 // B" an answerable question.
 type Delivery struct {
+	// ClaimToken identifies the current claim, independently of clock precision.
+	ClaimToken      string `json:"claim_token,omitempty"`
 	OrchestrationID string `json:"orchestration_id,omitempty"`
 	cortex.Entity
 	ID        id.DeliveryID `json:"id"`

@@ -238,3 +238,43 @@ The prepared-team engine continues to reject messaging tools while that
 integration is unfinished. A storage partition does not authorize remote peers,
 provide an isolated tool environment or make stale delivery replay safe for
 external effects.
+
+## Reserve directive execution before dispatch
+
+Use `BusConfig.ReservedRunner` with an orchestration ID when your runner needs
+durable admission. Supply either `Runner` or `ReservedRunner`. Reserved buses
+require a store implementing `a2a.DeliveryRunBinder`; all three built-in
+backends support it. Your runner implements `cortex.ReservedAgentRunner`, the
+same contract exposed through aliases in `orchestration`.
+
+`ReserveAgent` allocates bounded capacity and returns a unique child ID plus an
+`Execute` callback. It must not call a model or execute tools. The bus binds
+that ID to the claimed delivery before calling `Execute`. The callback must
+start that exact child at most once. Your runner still owns frozen-roster
+authorization, shared-budget admission and linkage to the parent orchestration.
+The bus copies the admission values before invoking storage or execution
+callbacks, so changing the returned reservation cannot change the bound ID.
+
+Each claim has a unique token. Binding and delivery updates reject a stale
+token, and binding can succeed only once. Reclaim checks the token again when
+it writes, so a worker cannot reclaim a newer claim from an earlier query.
+Once a delivery has a run ID, timeout-based reclaim leaves it alone. You must
+reconcile the run and any external effects before deciding how to recover it.
+
+If reservation returns an identity with an error, the bus records the identity
+and refuses execution. Cancellation after reservation follows the same rule.
+A failed binding, including a lost acknowledgment, also prevents execution.
+`a2a.DeliveryAdmissionError` exposes `RunIdentity()` and `DeliveryIdentity()`
+for reconciliation while its public error text omits private diagnostics.
+Neither identity grants permission to retry. Mismatched execution IDs retain
+the reserved ID and record the unexpected ID as a failed delivery; their
+output is withheld. Reserved execution failures produce a generic peer reply.
+
+SQL migration `20261025000002` adds claim tokens and supports replay after an
+unrecorded schema change. MongoDB accepts missing tokens on legacy records;
+new claims always receive a token. Stop older dispatchers before upgrading:
+older binaries do not enforce these fences. SQL downgrade is refused.
+
+This admission contract does not enable prepared-team messaging by itself.
+Frozen participant routing, parent linkage and durable suspension continuation
+still need the engine integration described above.

@@ -34,9 +34,11 @@ var (
 	ErrUnknownReceiver = errors.New("cortex: a2a: receiver does not resolve")
 )
 
-// BusConfig builds a Bus. Store and Runner are required; everything else
-// has a working default. Structured handoffs require HandoffHandler explicitly.
+// BusConfig builds a Bus. Store and one runner are required. Structured
+// handoffs require HandoffHandler explicitly.
 type BusConfig struct {
+	// ReservedRunner replaces Runner for partitioned execution with durable admission.
+	ReservedRunner cortex.ReservedAgentRunner
 	// OrchestrationID fixes this bus to one routing partition. Zero is global.
 	OrchestrationID id.OrchestrationID
 	// HandoffHandler is required for structured assignments. No ordinary agent
@@ -62,16 +64,19 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
-	handoffHandler HandoffHandler
-	store          Store
-	runner         cortex.AgentRunner
-	resumer        Resumer
-	resolver       Resolver
-	hooks          HookEmitter
-	clock          Clock
-	opts           Options
-	dispatch       *dispatcher
-	metrics        busMetrics
+	reserved        cortex.ReservedAgentRunner
+	binder          DeliveryRunBinder
+	orchestrationID id.OrchestrationID
+	handoffHandler  HandoffHandler
+	store           Store
+	runner          cortex.AgentRunner
+	resumer         Resumer
+	resolver        Resolver
+	hooks           HookEmitter
+	clock           Clock
+	opts            Options
+	dispatch        *dispatcher
+	metrics         busMetrics
 
 	// mu guards transports, which AddTransport appends to after the bus
 	// exists. Registration happens at startup and reads happen once per
@@ -110,8 +115,16 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	if cfg.Store == nil {
 		return nil, ErrNoStore
 	}
-	if cfg.Runner == nil {
+	if cfg.Runner == nil && cfg.ReservedRunner == nil {
 		return nil, ErrNoRunner
+	}
+	if cfg.ReservedRunner != nil {
+		if cfg.Runner != nil || cfg.OrchestrationID.IsNil() {
+			return nil, cortex.ErrInvalidPrepared
+		}
+		if _, supported := deliveryRunBinder(cfg.Store); !supported {
+			return nil, ErrDeliveryBindingUnavailable
+		}
 	}
 	if cfg.Hooks == nil {
 		cfg.Hooks = noopHooks{}
@@ -124,16 +137,25 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		return nil, routingErr
 	}
 	b := &Bus{
-		handoffHandler: cfg.HandoffHandler,
-		store:          routing,
-		runner:         cfg.Runner,
-		resumer:        cfg.Resumer,
-		resolver:       cfg.Resolver,
-		hooks:          cfg.Hooks,
-		clock:          cfg.Clock,
-		transports:     cfg.Transports,
-		opts:           cfg.Options.withDefaults(),
-		metrics:        newBusMetrics(cfg.Metrics),
+		reserved:        cfg.ReservedRunner,
+		orchestrationID: cfg.OrchestrationID,
+		handoffHandler:  cfg.HandoffHandler,
+		store:           routing,
+		runner:          cfg.Runner,
+		resumer:         cfg.Resumer,
+		resolver:        cfg.Resolver,
+		hooks:           cfg.Hooks,
+		clock:           cfg.Clock,
+		transports:      cfg.Transports,
+		opts:            cfg.Options.withDefaults(),
+		metrics:         newBusMetrics(cfg.Metrics),
+	}
+	if cfg.ReservedRunner != nil {
+		var supported bool
+		b.binder, supported = routing.(DeliveryRunBinder)
+		if !supported {
+			return nil, ErrDeliveryBindingUnavailable
+		}
 	}
 	if len(b.transports) == 0 {
 		b.transports = []Transport{inProcess{}}

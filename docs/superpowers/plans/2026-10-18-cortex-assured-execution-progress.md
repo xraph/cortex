@@ -6273,3 +6273,34 @@ in 111.764s, and its routing/upgrade races passed in 29.627s. MongoDB routing
 races passed in 40.056s and SQLite in 28.027s. Only scopespy was excluded from
 the broader local run for its documented macOS behavior. Docker recovered
 without a restart. Live Linux sandbox qualification remains deferred.
+
+### Reserved A2A dispatch and claim fencing
+
+The bus can use the shared `cortex.ReservedAgentRunner` contract through
+`BusConfig.ReservedRunner`. It records the reserved child ID before executing
+the callback. A unique claim token fences binding and delivery updates in all
+three backends. Reclaim rechecks the token and cutoff at mutation time and
+leaves every delivery with a run ID for reconciliation. SQL delivery updates
+also retain `ClaimedAt`, which their model conversion previously dropped.
+
+Admission failures retain the attempted child and delivery identities without
+publishing private diagnostics. Lost acknowledgments, cancellation and partial
+reservation failures refuse dispatch. Mismatched result IDs retain both IDs
+in the delivery record and withhold output. The orchestration package keeps
+source-compatible aliases for the shared reservation types.
+
+The runtime messaging gate remains closed until frozen roster resolution,
+parent-child linkage and durable suspension continuation are integrated.
+This change does not authorize automatic replay or settle reserved capacity.
+Validation passes: scoped formatting, all ten modules of lint, root build,
+docs types/lint/build, A2A and orchestration race suites, targeted engine races
+and the complete remote-module race suite. The broader root suite passed with
+the documented local scopespy exclusion; MongoDB took 425.681s, PostgreSQL
+230.130s and SQLite 94.228s. Final routing, upgrade, admission and fault races
+passed on all three databases without skips.
+
+Review regressions also covered exact-scope error matching, legacy queued rows
+already bound to executions, and callbacks mutating their returned reservation.
+The bus copies admission values before callbacks, and final mutation races pass
+on all backends. These checks qualify the local admission implementation;
+deployed recovery and the deferred Linux sandbox remain unverified.

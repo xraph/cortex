@@ -50,6 +50,12 @@ func A2ARoutingUpgrade(t *testing.T, s store.Store, legacy func()) {
 	claimed, err := s.ClaimPendingAsk(ctx, ask.ReplyWith)
 	require.NoError(t, err)
 	require.Empty(t, claimed.OrchestrationID)
+	claimedDelivery, err := s.ClaimDelivery(ctx, delivery.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, claimedDelivery.ClaimToken)
+	binder, ok := s.(a2a.DeliveryRunBinder)
+	require.True(t, ok)
+	require.NoError(t, binder.BindDeliveryRun(ctx, claimedDelivery, id.NewAgentRunID()))
 }
 
 // A2ASQLRoutingUpgrade recreates the schema before routing partitions, then
@@ -57,6 +63,8 @@ func A2ARoutingUpgrade(t *testing.T, s store.Store, legacy func()) {
 func A2ASQLRoutingUpgrade(t *testing.T, s store.Store, exec func(string) error) {
 	t.Helper()
 	A2ARoutingUpgrade(t, s, func() {
+		require.NoError(t, exec("ALTER TABLE cortex_a2a_deliveries DROP COLUMN claim_token"))
+		require.NoError(t, exec("DELETE FROM grove_migrations WHERE version = '20261025000002' AND \"group\" = 'cortex'"))
 		for _, name := range []string{"idx_a2a_routing_queue", "idx_a2a_routing_claim", "idx_a2a_routing_asks"} {
 			require.NoError(t, exec("DROP INDEX "+name))
 		}
@@ -68,5 +76,6 @@ func A2ASQLRoutingUpgrade(t *testing.T, s store.Store, exec func(string) error) 
 		require.NoError(t, exec("DELETE FROM grove_migrations WHERE version = '20261025000001' AND \"group\" = 'cortex'"))
 	})
 	require.NoError(t, exec("DELETE FROM grove_migrations WHERE version = '20261025000001' AND \"group\" = 'cortex'"))
+	require.NoError(t, exec("DELETE FROM grove_migrations WHERE version = '20261025000002' AND \"group\" = 'cortex'"))
 	require.NoError(t, s.Migrate(context.Background()))
 }

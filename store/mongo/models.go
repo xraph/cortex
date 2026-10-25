@@ -1440,6 +1440,7 @@ func a2aConversationFromModel(m *a2aConversationModel) (*a2a.Conversation, error
 }
 
 type a2aDeliveryModel struct {
+	ClaimToken      string `grove:"claim_token" bson:"claim_token"`
 	OrchestrationID string `grove:"orchestration_id" bson:"orchestration_id"`
 	grove.BaseModel `grove:"table:cortex_a2a_deliveries"`
 	ID              string            `grove:"id,pk"          bson:"_id"`
@@ -1464,6 +1465,7 @@ type a2aDeliveryModel struct {
 func a2aDeliveryToModel(d *a2a.Delivery) *a2aDeliveryModel {
 	l0, l1, l2, extra := scopeColumns(d.Scope)
 	return &a2aDeliveryModel{
+		ClaimToken:      d.ClaimToken,
 		OrchestrationID: d.OrchestrationID,
 		ID:              d.ID.String(),
 		MessageID:       d.MessageID.String(),
@@ -1499,6 +1501,7 @@ func a2aDeliveryFromModel(m *a2aDeliveryModel) (*a2a.Delivery, error) {
 		return nil, fmt.Errorf("a2a delivery %s: message id: %w", dlvID, err)
 	}
 	d := &a2a.Delivery{
+		ClaimToken:      m.ClaimToken,
 		OrchestrationID: m.OrchestrationID,
 		Entity:          cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:              dlvID,

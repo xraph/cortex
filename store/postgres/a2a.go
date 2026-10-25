@@ -297,10 +297,15 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 	if scopeErr != nil {
 		return scopeErr
 	}
+	if !d.RunID.IsNil() && d.State == a2a.DeliveryQueued {
+		return a2a.ErrDeliveryClaimLost
+	}
 	d.UpdatedAt = time.Now().UTC()
 	q := s.pgdb.NewUpdate(a2aDeliveryToModel(d)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Column(mutableA2ADeliveryColumns...).
-		Where("id = ?", d.ID.String())
+		Where("id = ?", d.ID.String()).
+		Where("claim_token = ?", d.ClaimToken).
+		Where("(run_id = ? OR run_id = ?)", "", d.RunID.String())
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -313,7 +318,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, d *a2a.Delivery) error {
 		return fmt.Errorf("cortex: update a2a delivery rows affected: %w", rowsErr)
 	}
 	if n == 0 {
-		return a2a.ErrDeliveryNotFound
+		return s.deliveryMutationMiss(ctx, scope, d.ID)
 	}
 	return nil
 }
@@ -328,12 +333,14 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		return nil, scopeErr
 	}
 	now := time.Now().UTC()
+	token := id.New(id.PrefixDeliveryClaim).String()
 	q := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Set("state = ?", a2a.DeliveryDelivering).
+		Set("claim_token = ?", token).
 		Set("claimed_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("id = ?", deliveryID.String()).
-		Where("state = ?", a2a.DeliveryQueued)
+		Where("state = ?", a2a.DeliveryQueued).Where("run_id = ?", "")
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -358,7 +365,14 @@ func (s *Store) ClaimDelivery(ctx context.Context, deliveryID id.DeliveryID) (*a
 		}
 		return nil, a2a.ErrDeliveryNotFound
 	}
-	return s.getDelivery(ctx, scope, deliveryID)
+	claimed, readErr := s.getDelivery(ctx, scope, deliveryID)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if claimed.ClaimToken != token || claimed.State != a2a.DeliveryDelivering {
+		return nil, a2a.ErrDeliveryClaimLost
+	}
+	return claimed, nil
 }
 
 // ListInbox returns messages that have ARRIVED for an agent. A queued
@@ -415,7 +429,7 @@ func (s *Store) ListInbox(ctx context.Context, agentName string, filter a2a.Inbo
 func (s *Store) ListQueuedDeliveries(ctx context.Context, limit int) ([]*a2a.Delivery, error) {
 	var models []a2aDeliveryModel
 	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
-		Where("state = ?", a2a.DeliveryQueued).
+		Where("state = ?", a2a.DeliveryQueued).Where("run_id = ?", "").
 		OrderExpr("created_at ASC, id ASC")
 	if limit > 0 {
 		q = q.Limit(limit)
@@ -449,6 +463,7 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 	var models []a2aDeliveryModel
 	q := s.pgdb.NewSelect(&models).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 		Where("state = ?", a2a.DeliveryDelivering).
+		Where("run_id = ?", "").
 		Where("claimed_at IS NOT NULL").
 		Where("claimed_at < ?", olderThan.UTC()).
 		OrderExpr("claimed_at ASC")
@@ -465,9 +480,13 @@ func (s *Store) ReclaimStaleDeliveries(ctx context.Context, olderThan time.Time,
 		res, err := s.pgdb.NewUpdate((*a2aDeliveryModel)(nil)).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx)).
 			Set("state = ?", a2a.DeliveryQueued).
 			Set("claimed_at = ?", nil).
+			Set("claim_token = ?", "").
 			Set("updated_at = ?", now).
 			Where("id = ?", models[i].ID).
 			Where("state = ?", a2a.DeliveryDelivering).
+			Where("run_id = ?", "").
+			Where("claim_token = ?", models[i].ClaimToken).
+			Where("claimed_at < ?", olderThan.UTC()).
 			Exec(ctx)
 		if err != nil {
 			return n, fmt.Errorf("cortex: reclaim a2a delivery: %w", err)
