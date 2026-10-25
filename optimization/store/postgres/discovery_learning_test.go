@@ -28,3 +28,13 @@ func TestImprovementWorkerLoop(t *testing.T) {
 func TestImprovementWorkerRecovery(t *testing.T) {
 	testRecovery(t, storetest.ImprovementWorkerRecovery)
 }
+
+func TestControllerDecisions(t *testing.T) {
+	storetest.ControllerDecisions(t, conformanceFactory(t))
+}
+func TestControllerDecisionArtifacts(t *testing.T) {
+	storetest.ControllerDecisionArtifacts(t, conformanceFactory(t))
+}
+func TestControllerDecisionRecovery(t *testing.T) {
+	testRecovery(t, storetest.ControllerDecisionRecovery)
+}

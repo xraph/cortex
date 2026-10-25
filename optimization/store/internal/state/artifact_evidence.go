@@ -13,6 +13,13 @@ func decisionTrials(data *scopeData, decision optimization.Decision) []optimizat
 	for _, trial := range data.Trials {
 		if trial.ExperimentID == decision.ExperimentID && (experiment.Spec.Mode == optimization.ModeTaskLocal || trial.Split == optimization.SplitValidation && trial.AllocationID == decision.AllocationID) {
 			trials = append(trials, trial)
+		} else if experiment.Spec.Improvement != nil && decision.SelectionKind == string(optimization.HarnessImprovement) && trial.Split == optimization.SplitValidation && trial.AllocationID == decision.AllocationID {
+			allocation, exists := data.Allocations[decision.AllocationID.String()]
+			if exists && allocation.ExperimentID == experiment.ID && slices.ContainsFunc(allocation.PairedRoster, func(arm optimization.ValidationArm) bool {
+				return arm.ExperimentID == trial.ExperimentID && (trial.Version == arm.Baseline || trial.Version == arm.Finalist)
+			}) {
+				trials = append(trials, trial)
+			}
 		}
 	}
 	return trials
@@ -33,17 +40,19 @@ func checkTrialArtifacts(data *scopeData, trial optimization.Trial, now time.Tim
 }
 
 func checkDecisionArtifacts(data *scopeData, decision optimization.Decision, now time.Time) error {
+	trials := decisionTrials(data, decision)
 	for _, evaluationID := range decision.EvaluationIDs {
 		evaluation, exists := data.Evaluations[evaluationID]
 		if !exists {
 			return optimization.ErrIncompleteEvidence
 		}
-		trial, exists := data.Trials[evaluation.TrialID.String()]
-		if !exists || trial.ExperimentID != decision.ExperimentID {
+		if !slices.ContainsFunc(trials, func(trial optimization.Trial) bool {
+			return trial.ID == evaluation.TrialID && trial.ExperimentID == evaluation.ExperimentID && trial.EvaluationID == evaluationID
+		}) {
 			return optimization.ErrIncompleteEvidence
 		}
 	}
-	for _, trial := range decisionTrials(data, decision) {
+	for _, trial := range trials {
 		if err := checkTrialArtifacts(data, trial, now); err != nil {
 			return err
 		}

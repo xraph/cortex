@@ -165,6 +165,14 @@ Aggregate controller comparison and reviewed controller adoption are still
 pending. You can run discovery and paired validation, but this handler cannot yet
 recommend or adopt a controller version.
 
+`ReadControllerEvidence` and `BuildControllerComparison` assemble selected child
+captures into frozen plan groups. `ValidateControllerDecisionEvidence` checks
+their original experiment, execution and evaluation identities, then applies the
+same case arithmetic and selection rules used for execution-harness decisions.
+The store accepts controller decisions through `CommitTransition` and checks
+child artifact retention again before review. Hosts still need the parent
+comparison adapter and scheduling step to produce these decisions automatically.
+
 ## Late receipts and takeover
 
 `UsageRecovery.Recover` checks the caller and original requester's current

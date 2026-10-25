@@ -105,6 +105,7 @@ type CaseDelta struct {
 
 // Comparison reports evidence completeness separately from selection policy.
 type Comparison struct {
+	Plans                []ContentRef       `json:"plans,omitempty"`
 	BaselineIDs          []string           `json:"baseline_ids"`
 	CandidateIDs         []string           `json:"candidate_ids"`
 	PlanDigest           string             `json:"plan_digest"`

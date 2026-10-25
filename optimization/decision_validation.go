@@ -28,43 +28,13 @@ func ValidateDecisionEvidence(experiment Experiment, decision Decision, evidence
 	if experiment.Spec.Mode == ModeTaskLocal {
 		return ValidateTaskDecision(experiment, decision, evidence)
 	}
-	if decision.TaskSelection != nil {
+	if experiment.Spec.Improvement != nil || len(decision.Comparison.Plans) != 0 || decision.Comparison.PlanDigest != experiment.EvaluationPlan.Ref.Digest {
 		return ErrIncompleteEvidence
 	}
-	if len(decision.Reasons) == 0 || slices.ContainsFunc(decision.Reasons, func(reason string) bool { return strings.TrimSpace(reason) == "" }) {
-		return ErrIncompleteEvidence
-	}
-	switch decision.Outcome {
-	case DecisionRecommend, DecisionRetain, DecisionInconclusive, DecisionReject:
-	default:
-		return ErrInvalidSpec
-	}
-	switch decision.EvidenceClass {
-	case EvidenceValidated, EvidenceExploratory, EvidenceContrastive:
-	default:
-		return ErrInvalidSpec
-	}
-	if decision.Outcome == DecisionInconclusive && decision.EvidenceClass != EvidenceExploratory {
-		return ErrIncompleteEvidence
+	if err := validateDecisionSummary(experiment, decision); err != nil {
+		return err
 	}
 	comparison := decision.Comparison
-	objective := experiment.Spec.Objective
-	if comparison.PlanDigest != experiment.EvaluationPlan.Ref.Digest || comparison.Confidence != objective.Confidence || comparison.BootstrapSamples != objective.BootstrapSamples || comparison.BootstrapSeed != objective.BootstrapSeed {
-		return ErrIncompleteEvidence
-	}
-	if !finite(comparison.MeanDelta) || !finite(comparison.LowerBound) || !finite(comparison.UpperBound) || comparison.MeanDelta < -1 || comparison.MeanDelta > 1 || comparison.LowerBound < -1 || comparison.UpperBound > 1 || comparison.LowerBound > comparison.UpperBound {
-		return ErrIncompleteEvidence
-	}
-	for _, ratio := range []*float64{comparison.CostRatio, comparison.LatencyRatio} {
-		if ratio != nil && (!finite(*ratio) || *ratio < 0) {
-			return ErrIncompleteEvidence
-		}
-	}
-	for _, reason := range comparison.MissingReasons {
-		if strings.TrimSpace(reason) == "" {
-			return ErrIncompleteEvidence
-		}
-	}
 	baseline := make(map[string]DecisionEvidence)
 	candidate := make(map[string]DecisionEvidence)
 	allIDs := make(map[string]bool)
@@ -116,6 +86,52 @@ func ValidateDecisionEvidence(experiment Experiment, decision Decision, evidence
 	if err != nil {
 		return err
 	}
+	return validateDecisionStatistics(experiment, decision, stats)
+}
+
+func validateDecisionSummary(experiment Experiment, decision Decision) error {
+	if decision.TaskSelection != nil {
+		return ErrIncompleteEvidence
+	}
+	if len(decision.Reasons) == 0 || slices.ContainsFunc(decision.Reasons, func(reason string) bool { return strings.TrimSpace(reason) == "" }) {
+		return ErrIncompleteEvidence
+	}
+	switch decision.Outcome {
+	case DecisionRecommend, DecisionRetain, DecisionInconclusive, DecisionReject:
+	default:
+		return ErrInvalidSpec
+	}
+	switch decision.EvidenceClass {
+	case EvidenceValidated, EvidenceExploratory, EvidenceContrastive:
+	default:
+		return ErrInvalidSpec
+	}
+	if decision.Outcome == DecisionInconclusive && decision.EvidenceClass != EvidenceExploratory {
+		return ErrIncompleteEvidence
+	}
+	comparison := decision.Comparison
+	objective := experiment.Spec.Objective
+	if comparison.Confidence != objective.Confidence || comparison.BootstrapSamples != objective.BootstrapSamples || comparison.BootstrapSeed != objective.BootstrapSeed {
+		return ErrIncompleteEvidence
+	}
+	if !finite(comparison.MeanDelta) || !finite(comparison.LowerBound) || !finite(comparison.UpperBound) || comparison.MeanDelta < -1 || comparison.MeanDelta > 1 || comparison.LowerBound < -1 || comparison.UpperBound > 1 || comparison.LowerBound > comparison.UpperBound {
+		return ErrIncompleteEvidence
+	}
+	for _, ratio := range []*float64{comparison.CostRatio, comparison.LatencyRatio} {
+		if ratio != nil && (!finite(*ratio) || *ratio < 0) {
+			return ErrIncompleteEvidence
+		}
+	}
+	for _, reason := range comparison.MissingReasons {
+		if strings.TrimSpace(reason) == "" {
+			return ErrIncompleteEvidence
+		}
+	}
+	return nil
+}
+
+func validateDecisionStatistics(experiment Experiment, decision Decision, stats decisionStats) error {
+	comparison, objective := decision.Comparison, experiment.Spec.Objective
 	if !sameEvidenceIDs(comparison.RequiredFailures, stats.failures) {
 		return ErrIncompleteEvidence
 	}

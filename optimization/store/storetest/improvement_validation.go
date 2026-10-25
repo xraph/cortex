@@ -216,9 +216,12 @@ func validationFamilyBundles(t *testing.T, pairs int) (parent optimization.Exper
 	return parent, children
 }
 
-func frozenValidationFamily(t *testing.T, factory Factory, pairs int) validationFamily {
+func frozenValidationFamily(t *testing.T, factory Factory, pairs int, configure ...func(*optimization.ExperimentBundle, []optimization.ExperimentBundle)) validationFamily {
 	t.Helper()
 	parent, children := validationFamilyBundles(t, pairs)
+	for _, apply := range configure {
+		apply(&parent, children)
+	}
 	f := validationFamily{s: factory(t, time.Now), ctx: scoped(parent.Experiment.Spec.Scope), parent: parent, children: children, leases: make([]optimization.WorkLease, len(children)+1)}
 	if err := f.s.Transact(f.ctx, func(tx store.Tx) error {
 		var err error

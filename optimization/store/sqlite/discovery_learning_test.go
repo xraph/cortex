@@ -49,3 +49,17 @@ func TestImprovementWorkerLoop(t *testing.T) {
 func TestImprovementWorkerRecovery(t *testing.T) {
 	testRecovery(t, storetest.ImprovementWorkerRecovery)
 }
+
+func TestControllerDecisions(t *testing.T) {
+	storetest.ControllerDecisions(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "controller-decisions.db"), now)
+	})
+}
+func TestControllerDecisionArtifacts(t *testing.T) {
+	storetest.ControllerDecisionArtifacts(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "controller-artifacts.db"), now)
+	})
+}
+func TestControllerDecisionRecovery(t *testing.T) {
+	testRecovery(t, storetest.ControllerDecisionRecovery)
+}

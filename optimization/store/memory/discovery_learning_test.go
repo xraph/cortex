@@ -33,3 +33,9 @@ func TestDiscoveryReflection(t *testing.T) { testDiscovery(t, storetest.Discover
 func TestImprovementWorker(t *testing.T) { testDiscovery(t, storetest.ImprovementWorker) }
 
 func TestImprovementWorkerLoop(t *testing.T) { testDiscovery(t, storetest.ImprovementWorkerLoop) }
+
+func TestControllerDecisions(t *testing.T) { testDiscovery(t, storetest.ControllerDecisions) }
+
+func TestControllerDecisionArtifacts(t *testing.T) {
+	testDiscovery(t, storetest.ControllerDecisionArtifacts)
+}

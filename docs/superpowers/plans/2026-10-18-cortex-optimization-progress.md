@@ -1523,3 +1523,28 @@ contract tests in 25.084s. Both modules build, scoped `make f` and final all-mod
 This supplies the statistical primitive for parent controller decisions. Cortex
 still needs the comparison adapter, transactional evidence validation and
 reviewed adoption.
+
+## Parent controller decision evidence
+
+Controller comparison requests now group selected child evaluations by their
+frozen plans. `ReadControllerEvidence` loads the original records, and
+`BuildControllerComparison` checks the exact child templates, paired allocation,
+case assignments and terminal trial evidence. The request retains the parent
+spec digest and each plan reference without changing child ownership or execution
+versions.
+
+`ValidateControllerDecisionEvidence` validates controller-version decisions
+using the shared execution-decision arithmetic and policy checks. The transaction
+reloads each child's selected evidence, rechecks the complete paired roster and
+bound lessons, and persists the decision with its original evaluation IDs.
+Invalid scores, unknown cost ratios, substituted plans and incomplete job lists
+are rejected. Artifact checks follow child validation trials both when recording
+a qualified decision and when moving the parent into review.
+
+The final race matrix passes memory (16.362s), SQLite (57.526s), PostgreSQL
+(55.832s) and MongoDB (68.771s), including reopen recovery and stale parent
+fences. Decision, artifact and review regressions pass in memory and SQLite.
+Sentinel recovery, metered judge and cost-provenance regressions pass in
+136.284s. The optimization build, scoped `make f` and final all-module `make l`
+pass. The parent scheduler still stops before comparison; Sentinel adapter
+wiring, the decision phase and reviewed controller adoption remain pending.

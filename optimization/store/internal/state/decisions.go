@@ -48,6 +48,9 @@ func (tx *transaction) prepareDecision(experiment optimization.Experiment, chang
 	if _, exists := tx.data.Decisions[value.ID.String()]; exists {
 		return nil, optimization.ErrConflict
 	}
+	if experiment.Spec.Improvement != nil {
+		return tx.prepareControllerDecision(experiment, change, value)
+	}
 	if value.ExperimentID != experiment.ID || value.SpecDigest != experiment.SpecDigest || value.Baseline != experiment.Spec.Baseline || value.SelectionKind != string(optimization.HarnessExecution) {
 		return nil, optimization.ErrIncompleteEvidence
 	}
@@ -114,6 +117,59 @@ func (tx *transaction) prepareDecision(experiment optimization.Experiment, chang
 		return nil, err
 	}
 	return &detached, nil
+}
+
+func (tx *transaction) prepareControllerDecision(experiment optimization.Experiment, change optimization.Transition, value optimization.Decision) (*optimization.Decision, error) {
+	baseline, exists := tx.data.Versions[value.Baseline.ID.String()]
+	if !exists || baseline.Kind != optimization.HarnessImprovement || baseline.Digest != value.Baseline.Digest || value.PolicyDigest != baseline.PolicyDigest {
+		return nil, optimization.ErrPolicyDenied
+	}
+	allocation, exists := tx.data.Allocations[value.AllocationID.String()]
+	if !exists || allocation.ExperimentID != experiment.ID {
+		return nil, optimization.ErrIncompleteEvidence
+	}
+	validationExperiment, validationChange := experiment, change
+	validationExperiment.Phase, validationChange.NextPhase = optimization.PhaseValidate, optimization.PhaseDecide
+	if err := tx.validatePhaseEvidence(validationExperiment, validationChange, candidateResources{}, nil); err != nil {
+		return nil, err
+	}
+	children := make([]optimization.ControllerEvidence, 0, len(allocation.PairedRoster))
+	for _, arm := range allocation.PairedRoster {
+		child, found := tx.data.Experiments[arm.ExperimentID.String()]
+		if !found {
+			return nil, optimization.ErrIncompleteEvidence
+		}
+		if err := checkLessonBindings(tx.data, child, tx.now); err != nil {
+			return nil, err
+		}
+		item := optimization.ControllerEvidence{Experiment: child}
+		for _, trial := range tx.data.Trials {
+			if trial.ExperimentID != child.ID || trial.Split != optimization.SplitValidation || trial.AllocationID != allocation.ID || trial.Version != arm.Finalist {
+				continue
+			}
+			evidence := optimization.DecisionEvidence{Trial: trial}
+			if trial.EvaluationID != "" {
+				evaluation, recorded := tx.data.Evaluations[trial.EvaluationID]
+				if !recorded {
+					return nil, optimization.ErrIncompleteEvidence
+				}
+				evidence.Evaluation = &evaluation
+			}
+			item.Trials = append(item.Trials, evidence)
+		}
+		children = append(children, item)
+	}
+	if err := optimization.ValidateControllerDecisionEvidence(experiment, allocation, value, children); err != nil {
+		return nil, err
+	}
+	if value.Outcome != optimization.DecisionInconclusive {
+		if err := checkDecisionArtifacts(tx.data, value, tx.now); err != nil {
+			return nil, err
+		}
+	}
+	value.CreatedAt = tx.now
+	detached, err := clone(value)
+	return &detached, err
 }
 
 func (tx *transaction) prepareTaskDecision(experiment optimization.Experiment, value optimization.Decision) (*optimization.Decision, error) {
