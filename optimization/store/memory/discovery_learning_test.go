@@ -10,7 +10,14 @@ import (
 )
 
 func TestDiscoveryLearning(t *testing.T) {
-	storetest.DiscoveryLearning(t, func(t *testing.T, now func() time.Time) store.Store {
+	testDiscovery(t, storetest.DiscoveryLearning)
+}
+
+func TestDiscoveryInheritance(t *testing.T) { testDiscovery(t, storetest.DiscoveryInheritance) }
+
+func testDiscovery(t *testing.T, verify func(*testing.T, storetest.Factory)) {
+	t.Helper()
+	verify(t, func(t *testing.T, now func() time.Time) store.Store {
 		t.Helper()
 		s, err := memory.New(memory.WithClock(now))
 		if err != nil {

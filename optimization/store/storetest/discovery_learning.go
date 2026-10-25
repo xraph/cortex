@@ -13,8 +13,13 @@ import (
 
 func discoveryFamily(t *testing.T, factory Factory) validationFamily {
 	t.Helper()
-	parent, children := improvementFixture(t)
-	f := validationFamily{s: factory(t, time.Now), ctx: scoped(parent.Experiment.Spec.Scope), parent: parent, children: children, leases: make([]optimization.WorkLease, 3)}
+	return discoveryStream(t, factory, 1)
+}
+
+func discoveryStream(t *testing.T, factory Factory, pairs int, setup ...func(store.Store, optimization.ExperimentBundle, optimization.WorkLease) []optimization.ArtifactRef) validationFamily {
+	t.Helper()
+	parent, children := validationFamilyBundles(t, pairs)
+	f := validationFamily{s: factory(t, time.Now), ctx: scoped(parent.Experiment.Spec.Scope), parent: parent, children: children, leases: make([]optimization.WorkLease, len(children)+1)}
 	if err := f.s.Transact(f.ctx, func(tx store.Tx) error {
 		var err error
 		f.leases[0], err = startFixture(tx, parent, "parent")
@@ -22,9 +27,15 @@ func discoveryFamily(t *testing.T, factory Factory) validationFamily {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for i := range children {
+	for i := range 2 {
 		children[i].ParentLease = &f.leases[0]
-		f.leases[i+1] = validationExperiment(f.ctx, t, f.s, children[i])
+		f.leases[i+1] = validationExperiment(f.ctx, t, f.s, children[i], func(lease optimization.WorkLease) []optimization.ArtifactRef {
+			refs := make([]optimization.ArtifactRef, 0, len(setup))
+			for _, prepare := range setup {
+				refs = append(refs, prepare(f.s, children[i], lease)...)
+			}
+			return refs
+		})
 	}
 	return f
 }

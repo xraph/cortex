@@ -226,7 +226,7 @@ func candidateBundle(t *testing.T) optimization.ExperimentBundle {
 	return bundle
 }
 
-func proposalExperiment(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle) optimization.WorkLease {
+func proposalExperiment(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, setup ...func(optimization.WorkLease) []optimization.ArtifactRef) optimization.WorkLease {
 	t.Helper()
 	var lease optimization.WorkLease
 	if err := s.Transact(ctx, func(tx store.Tx) error {
@@ -236,7 +236,11 @@ func proposalExperiment(ctx context.Context, t *testing.T, s store.Store, bundle
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fillVersionTrials(ctx, t, s, bundle, lease, bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, nil)
+	artifacts := make([]optimization.ArtifactRef, 0, len(setup))
+	for _, prepare := range setup {
+		artifacts = append(artifacts, prepare(lease)...)
+	}
+	fillVersionTrials(ctx, t, s, bundle, lease, bundle.Experiment.Spec.Baseline, id.ID{}, optimization.SplitDiscovery, id.ID{}, nil, artifacts...)
 	advanceFixture(ctx, t, s, bundle, lease, optimization.PhasePropose)
 	return lease
 }

@@ -31,11 +31,12 @@ type DiscoveryEvidence struct {
 
 // ProposalInput carries the current discovery baseline and frozen lesson set.
 type ProposalInput struct {
-	Baseline HarnessVersion      `json:"baseline"`
-	Round    int                 `json:"round"`
-	Evidence []DiscoveryEvidence `json:"evidence"`
-	Lessons  []Lesson            `json:"lessons"`
-	Policy   EditPolicy          `json:"policy"`
+	Discoveries []DiscoveryLessons  `json:"discoveries,omitempty"`
+	Baseline    HarnessVersion      `json:"baseline"`
+	Round       int                 `json:"round"`
+	Evidence    []DiscoveryEvidence `json:"evidence"`
+	Lessons     []Lesson            `json:"lessons"`
+	Policy      EditPolicy          `json:"policy"`
 }
 
 // CompositionInput combines executed candidates without inheriting their scores.

@@ -112,7 +112,7 @@ func advanceFixture(ctx context.Context, t *testing.T, s store.Store, bundle opt
 	commitTrialChange(ctx, t, s, change)
 }
 
-func fillVersionTrials(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, lease optimization.WorkLease, version optimization.VersionRef, candidate id.ID, split optimization.Split, allocation id.ID, existing []optimization.Trial) {
+func fillVersionTrials(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, lease optimization.WorkLease, version optimization.VersionRef, candidate id.ID, split optimization.Split, allocation id.ID, existing []optimization.Trial, artifacts ...optimization.ArtifactRef) {
 	t.Helper()
 	for taskIndex, task := range bundle.Experiment.Spec.Tasks {
 		if task.Split != split {
@@ -133,7 +133,7 @@ func fillVersionTrials(ctx context.Context, t *testing.T, s store.Store, bundle 
 			trial.Version = version
 			trial.CandidateID = candidate
 			trial.AllocationID = allocation
-			value := captureFixtureTrial(ctx, t, s, bundle, lease, trial)
+			value := captureFixtureTrial(ctx, t, s, bundle, lease, trial, artifacts...)
 			persistFixtureEvaluation(ctx, t, s, bundle, lease, value)
 		}
 	}

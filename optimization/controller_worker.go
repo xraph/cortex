@@ -61,7 +61,15 @@ func (h *ControllerPhaseHandler) Execute(ctx context.Context, item WorkItem) (Tr
 		}
 		lessons = append(lessons, lesson)
 	}
-	input := ProposalInput{Baseline: base, Policy: base.Policy, Round: item.Experiment.Round, Evidence: evidence, Lessons: lessons}
+	discoveries := make([]DiscoveryLessons, 0, len(item.Experiment.Discoveries))
+	for _, ref := range item.Experiment.Discoveries {
+		value, resolveErr := h.repository.ResolveDiscoveryLessons(ctx, item.Experiment.ID, ref)
+		if resolveErr != nil {
+			return Transition{}, resolveErr
+		}
+		discoveries = append(discoveries, value)
+	}
+	input := ProposalInput{Baseline: base, Policy: base.Policy, Round: item.Experiment.Round, Evidence: evidence, Lessons: lessons, Discoveries: discoveries}
 	if phase == PhaseReflect {
 		return h.reflect(ctx, item, controller, evidence, candidates)
 	}

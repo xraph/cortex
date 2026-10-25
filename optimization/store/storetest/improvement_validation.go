@@ -179,10 +179,10 @@ type validationFamily struct {
 	request  optimization.ValidationAllocationRequest
 }
 
-func frozenValidationFamily(t *testing.T, factory Factory, pairs int) validationFamily {
+func validationFamilyBundles(t *testing.T, pairs int) (parent optimization.ExperimentBundle, children []optimization.ExperimentBundle) {
 	t.Helper()
 	parent, initial := improvementFixture(t)
-	children := append([]optimization.ExperimentBundle(nil), initial...)
+	children = append([]optimization.ExperimentBundle(nil), initial...)
 	parent.Experiment.Spec.Tasks = append([]optimization.TaskCase(nil), parent.Experiment.Spec.Tasks...)
 	for sequence := 1; sequence < pairs; sequence++ {
 		for arm := range 2 {
@@ -213,6 +213,12 @@ func frozenValidationFamily(t *testing.T, factory Factory, pairs int) validation
 	for _, child := range children {
 		parent.Experiment.Spec.Improvement.Children = append(parent.Experiment.Spec.Improvement.Children, optimization.ImprovementChild{ExperimentID: child.Experiment.ID, Spec: child.Experiment.Spec, EvaluationPlan: child.Experiment.EvaluationPlan})
 	}
+	return parent, children
+}
+
+func frozenValidationFamily(t *testing.T, factory Factory, pairs int) validationFamily {
+	t.Helper()
+	parent, children := validationFamilyBundles(t, pairs)
 	f := validationFamily{s: factory(t, time.Now), ctx: scoped(parent.Experiment.Spec.Scope), parent: parent, children: children, leases: make([]optimization.WorkLease, len(children)+1)}
 	if err := f.s.Transact(f.ctx, func(tx store.Tx) error {
 		var err error
@@ -224,6 +230,12 @@ func frozenValidationFamily(t *testing.T, factory Factory, pairs int) validation
 	for i := range f.children {
 		f.children[i].ParentLease = &f.leases[0]
 		f.leases[i+1] = validationExperiment(f.ctx, t, f.s, f.children[i])
+		if err := f.s.Transact(f.ctx, func(tx store.Tx) error {
+			_, err := tx.PutDiscoveryLessons(optimization.DiscoveryLessonsRequest{ExperimentID: f.children[i].Experiment.ID, Lease: f.leases[i+1], Domain: "comparison", Lessons: []optimization.LessonDraft{}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	advanceFixture(f.ctx, t, f.s, parent, f.leases[0], optimization.PhaseValidate)
 	f.request = allocationRequest(parent, f.leases[0])

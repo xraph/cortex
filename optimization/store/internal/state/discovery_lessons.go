@@ -73,26 +73,8 @@ func (tx *transaction) PutDiscoveryLessons(request optimization.DiscoveryLessons
 	if err := checkLessonBindings(tx.data, child, tx.now); err != nil {
 		return empty, err
 	}
-	for _, draft := range request.Lessons {
-		for _, trialID := range draft.EvidenceIDs {
-			trial, ok := tx.data.Trials[trialID.String()]
-			if !ok || trial.ExperimentID != child.ID || trial.Split != optimization.SplitDiscovery {
-				return empty, optimization.ErrPolicyDenied
-			}
-			if !optimization.TrialEvidenceReady(trial) || trial.Execution == nil || trial.EvaluationID == "" {
-				return empty, optimization.ErrIncompleteEvidence
-			}
-			evaluation, ok := tx.data.Evaluations[trial.EvaluationID]
-			if !ok {
-				return empty, optimization.ErrIncompleteEvidence
-			}
-			if err := evaluation.ValidateCaptured(child, trial); err != nil {
-				return empty, err
-			}
-			if err := checkTrialArtifacts(tx.data, trial, tx.now); err != nil {
-				return empty, err
-			}
-		}
+	if err := checkDiscoveryEvidence(tx.data, child, request.Lessons, tx.now); err != nil {
+		return empty, err
 	}
 	value := optimization.DiscoveryLessons{ExperimentID: child.ID, ParentExperimentID: parent.ID, Controller: child.Spec.Controller, Arm: link.Arm, Sequence: link.Sequence, Domain: request.Domain, Lessons: request.Lessons, CreatedAt: tx.now}
 	var err error

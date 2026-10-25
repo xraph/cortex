@@ -91,5 +91,5 @@ func checkBoundLessons(data *scopeData, experiment optimization.Experiment, now 
 		delete(visiting, key)
 		verified[key] = true
 	}
-	return nil
+	return checkDiscoveryBindings(data, experiment, now, visiting, verified)
 }

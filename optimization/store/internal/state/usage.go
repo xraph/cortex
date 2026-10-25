@@ -90,6 +90,9 @@ func (tx *transaction) reservationExperiment(request optimization.UsageReservati
 	if !tx.validLease(experiment, request.Lease) {
 		return empty, optimization.ErrConflict
 	}
+	if err := checkLessonBindings(tx.data, experiment, tx.now); err != nil {
+		return empty, err
+	}
 	return experiment, nil
 }
 

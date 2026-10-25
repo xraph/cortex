@@ -10,3 +10,8 @@ func TestDiscoveryLearning(t *testing.T) { storetest.DiscoveryLearning(t, confor
 func TestDiscoveryLearningRecovery(t *testing.T) {
 	testRecovery(t, storetest.DiscoveryLearningRecovery)
 }
+
+func TestDiscoveryInheritance(t *testing.T) { storetest.DiscoveryInheritance(t, conformanceFactory(t)) }
+func TestDiscoveryInheritanceRecovery(t *testing.T) {
+	testRecovery(t, storetest.DiscoveryInheritanceRecovery)
+}

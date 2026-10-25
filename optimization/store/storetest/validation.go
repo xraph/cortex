@@ -218,9 +218,9 @@ func validation(t *testing.T, factory Factory) {
 	})
 }
 
-func validationExperiment(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle) optimization.WorkLease {
+func validationExperiment(ctx context.Context, t *testing.T, s store.Store, bundle optimization.ExperimentBundle, setup ...func(optimization.WorkLease) []optimization.ArtifactRef) optimization.WorkLease {
 	t.Helper()
-	lease := proposalExperiment(ctx, t, s, bundle)
+	lease := proposalExperiment(ctx, t, s, bundle, setup...)
 	change := trialTransition(ctx, t, s, bundle.Experiment.ID, lease, "no-change-proposal", nil, nil)
 	change.NextPhase = optimization.PhaseProbe
 	change.Candidates = []optimization.Candidate{{ID: id.New(optimization.PrefixCandidate), ExperimentID: bundle.Experiment.ID, Origin: optimization.OriginGeneral, Round: 1, Rejection: "No candidate improves this fixture"}}

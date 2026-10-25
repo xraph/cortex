@@ -9,6 +9,12 @@ import (
 	"github.com/xraph/cortex/optimization/internal/canonical"
 )
 
+// DiscoveryRef freezes one earlier task's private reflection content.
+type DiscoveryRef struct {
+	ExperimentID id.ID  `json:"experiment_id"`
+	Digest       string `json:"digest"`
+}
+
 // DiscoveryLessons retains provisional learning from one controller-arm task.
 // It is private to the comparison and cannot enter the published lesson library.
 type DiscoveryLessons struct {

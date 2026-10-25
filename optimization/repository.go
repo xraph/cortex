@@ -13,6 +13,7 @@ type Repository interface {
 	Transact(context.Context, func(Transaction) error) error
 	GetExperiment(context.Context, id.ID) (Experiment, error)
 	GetDiscoveryLessons(context.Context, id.ID) (DiscoveryLessons, error)
+	ResolveDiscoveryLessons(context.Context, id.ID, DiscoveryRef) (DiscoveryLessons, error)
 	GetArtifact(context.Context, ArtifactRef) (ArtifactRetention, error)
 	ListArtifactWork(context.Context, time.Time, PageQuery) (Page[ArtifactRetention], error)
 	ListExperiments(context.Context, ListQuery) (Page[Experiment], error)

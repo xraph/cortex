@@ -1351,3 +1351,50 @@ original SQLite package are still running. The optimization build and record
 codec checks pass. All-module lint passed before the final test additions; the
 post-format rerun reached concurrent A2A lint failures in the runtime chat's
 files. Those diagnostics were sent to that chat, and its files remain untouched.
+
+
+## Frozen discovery inheritance
+
+Later children now inherit every earlier discovery reflection from their own
+controller arm. Storage derives these references from the parent roster and
+includes their digests in the child's specification digest. Creation waits for
+those records, including empty reflections. Callers cannot supply references,
+and the resolver refuses parent, self, other-arm and altered-reference reads.
+
+The controller worker loads these records into proposal and composition input.
+The model adapter checks the complete supplied content against the frozen
+references before calling the provider. It also refuses omitted records and
+changed content under the original digest. Ordinary experiments have no private
+discovery input. The optional digest field preserves existing specification
+hashes when there are no inherited records; old later-position drafts without
+the required references are refused, not silently given new input.
+
+Resolution rechecks captured discovery evaluations, all-attempt artifact
+retention and transitive lesson eligibility. Reservation and dispatch now run
+the same eligibility check inside their transaction. A regression reproduced a
+held reservation dispatching after its source artifact was deleted. That call
+is now refused without adding a dispatch marker or changing the retained debit.
+Another regression reproduced unfrozen discovery content reaching the model;
+the complete-input check now stops it before provider access.
+
+Reopen tests retain the exact source records, references and specification
+hash, then take over parent and child leases and refuse the old worker. Existing
+paired-validation fixtures now save empty discovery reflections before creating
+the next stream position, preserving the original whole-stream feedback barrier.
+
+Final formatting, all-module lint, optimization build, core races, final memory
+boundary checks, and targeted Sentinel cost-provenance, late-judge-receipt and
+comparison-reopen checks pass. The inheritance/reopen matrix passes on all four stores, and the paired-validation
+regressions pass on SQLite, PostgreSQL and MongoDB. The broader memory suite is
+still running.
+
+The preceding verification run also finished: SQLite passed in 1666.639s, and
+the remaining PostgreSQL and MongoDB durability/recovery groups passed in
+421.195s and 599.345s. The full Sentinel optimization race suite passed in
+640.052s. The original broad command still exited with the two database timeout
+failures; its completed packages and the passing follow-up groups are recorded
+separately.
+
+Task 14 still needs metered discovery-reflection scheduling, the parent worker,
+aggregate controller comparison and controller adoption. Tasks 15 onward remain
+tracked in the implementation plan.

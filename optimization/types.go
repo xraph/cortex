@@ -50,6 +50,7 @@ const (
 
 // Experiment combines a frozen specification with revision-fenced work state.
 type Experiment struct {
+	Discoveries    []DiscoveryRef `json:"discoveries,omitempty"`
 	DecisionID     id.ID          `json:"decision_id,omitempty"`
 	ID             id.ID          `json:"id"`
 	Spec           ExperimentSpec `json:"spec"`

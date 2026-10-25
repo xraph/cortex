@@ -282,6 +282,10 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if len(e.FrozenLessons) != 0 {
 		return optimization.ErrInvalidSpec
 	}
+	e.Discoveries, err = tx.freezeDiscoveries(e)
+	if err != nil {
+		return err
+	}
 	e.FrozenLessons, err = tx.freezeLessons(e)
 	if err != nil {
 		return err
@@ -318,7 +322,8 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 		Spec           optimization.ExperimentSpec
 		EvaluationPlan optimization.EvaluationPlan
 		Lessons        []optimization.LessonRef
-	}{e.Spec, e.EvaluationPlan, e.FrozenLessons})
+		Discoveries    []optimization.DiscoveryRef `json:",omitempty"`
+	}{e.Spec, e.EvaluationPlan, e.FrozenLessons, e.Discoveries})
 	if err != nil {
 		return err
 	}

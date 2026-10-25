@@ -162,7 +162,7 @@ func (c *modelController) Reflect(ctx context.Context, input ReflectionInput) ([
 }
 
 func (c *modelController) proposalInput(ctx context.Context, input ProposalInput) error {
-	if input.Round != c.experiment.Round || len(input.Lessons) != len(c.experiment.FrozenLessons) {
+	if input.Round != c.experiment.Round || len(input.Lessons) != len(c.experiment.FrozenLessons) || len(input.Discoveries) != len(c.experiment.Discoveries) {
 		return ErrPolicyDenied
 	}
 	for index, ref := range c.experiment.FrozenLessons {
@@ -171,6 +171,15 @@ func (c *modelController) proposalInput(ctx context.Context, input ProposalInput
 			return err
 		}
 		if !equalControllerData(lesson, input.Lessons[index]) {
+			return ErrPolicyDenied
+		}
+	}
+	for index, ref := range c.experiment.Discoveries {
+		value, err := c.factory.repository.ResolveDiscoveryLessons(ctx, c.experiment.ID, ref)
+		if err != nil {
+			return err
+		}
+		if !equalControllerData(value, input.Discoveries[index]) {
 			return ErrPolicyDenied
 		}
 	}
