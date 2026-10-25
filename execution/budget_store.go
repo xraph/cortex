@@ -38,8 +38,9 @@ func (r Reservation) Validate() error {
 	return nil
 }
 
-// BudgetSnapshot reports conservative charges. Overflow means exact aggregate
-// arithmetic exceeded int64; raw settlement amounts remain retained separately.
+// BudgetSnapshot reports conservative charges. Overflow means aggregation or a
+// leaf's observed usage exceeded int64. Original usage evidence must be retained
+// separately from the saturated charge.
 type BudgetSnapshot struct {
 	Policy       ReservationPolicy `json:"policy"`
 	Charged      Resources         `json:"charged"`

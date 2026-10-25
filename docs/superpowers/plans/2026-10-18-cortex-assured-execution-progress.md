@@ -5722,3 +5722,32 @@ formatting; the final `make l` rerun passed after their owner's corrections.
 Formatting used `make f FORMAT_PATHS='errors.go coordination/task_usage_closure.go coordination/task_usage_closure_test.go store/internal/assurance/task_usage.go store/internal/assurance/task_usage_closure.go store/internal/assurance/jobs.go store/internal/assurance/job_calls.go store/storetest/task_usage_closure.go store/storetest/task_recovery.go'`.
 This packet contains no optimizer or Fabriq edits. Guarded budget settlement,
 external billing qualification and the remaining four-stage gates are still open.
+
+### S3.5 partial usage and overflow settlement accounting
+
+Settlement now carries attributed lower bounds separately from exact usage.
+Unknown dimensions retain the larger of the allocation and observed minimum;
+known dimensions cannot fall below that minimum. Per-dimension overflow remains
+visible in the account even when only one leaf saturated, blocking new admission.
+The optional fields preserve existing receipt digests when absent.
+
+New tests first failed on the missing fields. Domain tests cover partial overrun,
+unknown refunds, exact usage below its lower bound, invalid overflow, branch and
+token-only misuse, pointer detachment and legacy digest stability. Shared store
+tests cover persistence, identical retries, conflicting retries, account totals
+and denied admission after partial overrun or overflow.
+
+Docker was healthy when the pending restart approval arrived. The recovery and
+closure regressions ran against real PostgreSQL and MongoDB containers without
+restarting other workloads: PostgreSQL passed in 19.295 seconds and MongoDB in
+92.813 seconds, with no skips.
+
+Broad budget race regressions passed SQLite in 17.673 seconds, PostgreSQL in
+30.720 seconds and MongoDB in 40.942 seconds. The post-format partial-usage cases
+also passed all three stores, with no skips. Final execution and coordination
+race tests passed in 25.029 and 26.986 seconds. Root build and docs type/lint/build
+checks passed. Initial aggregate lint runs caught only concurrent optimizer
+edits. The final `make l` passed every module after the owner's corrections.
+
+Formatting used `make f FORMAT_PATHS='execution/reservation.go execution/reservation_account.go execution/budget_store.go execution/settlement_minimum_test.go store/storetest/budget.go store/storetest/budget_partial_usage.go'`.
+Guarded task settlement and live billing proof remain open.

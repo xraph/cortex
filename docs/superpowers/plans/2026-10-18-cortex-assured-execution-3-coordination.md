@@ -274,6 +274,13 @@ the original receipt after uncertain commits. This closes the local admission ga
 external quiescence, billing authentication and guarded budget settlement remain
 open. Closure never refunds capacity.
 
+`Settlement.Minimum` now retains authenticated partial overruns even when other
+receipts are missing. Unknown dimensions charge the larger of allocation and
+observed minimum. `Settlement.Overflow` preserves saturation within a single leaf
+and blocks new admission throughout its account. These accounting fields do not
+authenticate billing or authorize final settlement; the guarded task operation
+and its host proof integration remain open.
+
 ## S3.6: Team review UI and recovery qualification
 
 Depends on S3.1 through S3.5. Owner: integration coordinator and UI owner.

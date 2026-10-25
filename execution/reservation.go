@@ -227,13 +227,18 @@ type ReservationUsage struct {
 }
 
 // Settlement is final host-attributed usage. Unknown dimensions retain their
-// allocation. A branch closes only from its stored child charges, not this usage.
+// allocation or the attributed minimum, whichever is larger. A branch closes
+// only from its stored child charges, not this usage.
 type Settlement struct {
 	ReservationID id.ID            `json:"reservation_id"`
 	RequestDigest string           `json:"request_digest"`
 	CloseBranch   bool             `json:"close_branch,omitempty"`
 	Usage         ReservationUsage `json:"usage"`
 	Receipt       string           `json:"receipt,omitempty"`
+	// Minimum retains observed lower bounds when usage is incomplete.
+	Minimum *Resources `json:"minimum,omitempty"`
+	// Overflow marks unknown dimensions whose observed sum exceeded int64.
+	Overflow KnownResources `json:"overflow,omitempty"`
 }
 
 // Freeze validates and fingerprints a settlement without trusting its receipt.
@@ -241,16 +246,31 @@ func (s Settlement) Freeze() (Settlement, string, error) {
 	if s.ReservationID.IsNil() || s.ReservationID.Prefix() != PrefixReservation || !evidence.ValidDigest(s.RequestDigest) || s.Usage.Actual.Validate() != nil || s.Usage.Known & ^KnownAll != 0 || len(s.Receipt) > 4096 {
 		return Settlement{}, "", ErrInvalidReservation
 	}
+	if s.Overflow & ^KnownAll != 0 || s.Overflow&s.Usage.Known != 0 {
+		return Settlement{}, "", ErrInvalidReservation
+	}
+	var minimum [6]int64
+	if s.Minimum != nil {
+		if s.Minimum.Validate() != nil {
+			return Settlement{}, "", ErrInvalidReservation
+		}
+		copyMinimum := *s.Minimum
+		s.Minimum = &copyMinimum
+		minimum = copyMinimum.values()
+	}
 	if s.CloseBranch {
-		if s.Usage != (ReservationUsage{}) || s.Receipt != "" {
+		if s.Usage != (ReservationUsage{}) || s.Receipt != "" || s.Minimum != nil || s.Overflow != 0 {
 			return Settlement{}, "", ErrInvalidReservation
 		}
 	} else {
-		if s.Usage.Known != 0 && !operationText(s.Receipt, 4096) {
+		if (s.Usage.Known != 0 || s.Minimum != nil || s.Overflow != 0) && !operationText(s.Receipt, 4096) {
 			return Settlement{}, "", ErrInvalidReservation
 		}
 		for i, v := range s.Usage.Actual.values() {
 			if s.Usage.Known&(1<<i) == 0 && v != 0 {
+				return Settlement{}, "", ErrInvalidReservation
+			}
+			if (s.Usage.Known&(1<<i) != 0 && v < minimum[i]) || (s.Overflow&(1<<i) != 0 && minimum[i] != math.MaxInt64) {
 				return Settlement{}, "", ErrInvalidReservation
 			}
 		}
@@ -276,6 +296,9 @@ func SettlementCharge(r ReservationRequest, s Settlement) (Resources, error) {
 		return Resources{}, ErrInvalidReservation
 	}
 	charge, actual := r.Allocation.values(), s.Usage.Actual.values()
+	if s.Minimum != nil {
+		charge = r.Allocation.Max(*s.Minimum).values()
+	}
 	for i := range charge {
 		if s.Usage.Known&(1<<i) != 0 {
 			charge[i] = actual[i]

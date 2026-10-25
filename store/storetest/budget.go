@@ -50,6 +50,7 @@ func testConcurrentChildrenCannotOverspend(t *testing.T, newStore func(*testing.
 	require.EqualValues(t, 600, snapshot.Charged.Tokens)
 }
 func testBudgetSettlements(t *testing.T, newStore func(*testing.T) store.Store) {
+	t.Run("partial usage", func(t *testing.T) { testBudgetPartialUsage(t, newStore) })
 	backend := newStore(t)
 	s := resultCapability[execution.BudgetStore](t, backend)
 	ctx, policy, r := budgetFixture(t, backend)

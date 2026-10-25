@@ -64,6 +64,7 @@ func accountReservations(p ReservationPolicy, reservations []Reservation) (*rese
 				if err != nil {
 					return Resources{}, err
 				}
+				a.overflow = a.overflow || r.Settlement.Request.Overflow != 0
 			}
 		} else {
 			used := Resources{FanOut: 1}

@@ -153,6 +153,25 @@ through `planning.ApplyRevision` and the existing expected-revision store commit
 which preserve acceptance criteria and reject expanded authority or budgets.
 The helper does not wire these execution steps into `RunOrchestration`.
 
+## Retain partial usage charges
+
+When you settle a reservation with incomplete usage, set `Settlement.Minimum`
+to the authenticated observed lower bounds. Each unknown dimension retains the
+larger of its allocation and that minimum. For example, a 100-token allocation
+with 250 observed tokens and a missing receipt still charges at least 250 tokens.
+Known dimensions use their exact reported amount, which cannot fall below the
+minimum. Both known usage and minimums require an attributed receipt.
+
+If an observed sum exceeds `int64`, set its `Settlement.Overflow` bit and retain
+`math.MaxInt64` as its minimum. The account preserves that overflow and refuses
+new admission, including when a single leaf overflowed. Branch closure cannot
+report its own minimum or overflow; child charges carry them to the root.
+Token-only policies do not accept monetary charges.
+
+These fields preserve accounting evidence. They do not authenticate a provider
+bill or prove that no further spending can occur. Keep the reservation open
+until your host can authorize final settlement against current evidence.
+
 ## Schedule durable task admissions
 
 Use `coordination.NewScheduler` when your host supplies the current plan state,
