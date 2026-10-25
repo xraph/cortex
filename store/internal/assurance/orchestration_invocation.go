@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
 )
@@ -28,6 +29,21 @@ func orchestrationInvocationKey(team id.OrchestrationID, slot string) string {
 // BeginOrchestrationInvocation records single-use intent before reservation.
 // Duplicate writes, including identical retries, never return fresh admission.
 func (s *Repository) BeginOrchestrationInvocation(ctx context.Context, intent orchestration.InvocationIntent) error {
+	if _, err := s.GetOrchestrationBudget(ctx, intent.OrchestrationID); err == nil {
+		return s.orchestrationBudgetTransaction(ctx, intent.OrchestrationID, func(tc context.Context, tx *Repository) error {
+			if _, ownerErr := tx.GetOrchestrationCoordinator(tc, intent.OrchestrationID); ownerErr == nil {
+				return cortex.ErrOrchestrationRunConflict
+			} else if !errors.Is(ownerErr, cortex.ErrOrchestrationCoordinatorNotFound) {
+				return ownerErr
+			}
+			return tx.beginOrchestrationInvocation(tc, intent)
+		})
+	} else if !errors.Is(err, execution.ErrReservationNotFound) {
+		return err
+	}
+	return s.beginOrchestrationInvocation(ctx, intent)
+}
+func (s *Repository) beginOrchestrationInvocation(ctx context.Context, intent orchestration.InvocationIntent) error {
 	if err := require(ctx, intent.Scope); err != nil {
 		return err
 	}

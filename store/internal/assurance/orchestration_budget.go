@@ -112,42 +112,14 @@ func (s *Repository) ReserveOrchestrationChild(ctx context.Context, request exec
 	}
 	var result execution.Reservation
 	err = s.orchestrationBudgetTransaction(ctx, req.PlanID, func(tc context.Context, tx *Repository) error {
-		policy, readErr := tx.GetOrchestrationBudget(tc, req.PlanID)
-		if readErr != nil {
-			return readErr
+		if _, ownerErr := tx.GetOrchestrationCoordinator(tc, req.PlanID); ownerErr == nil {
+			return cortex.ErrOrchestrationRunConflict
+		} else if !errors.Is(ownerErr, cortex.ErrOrchestrationCoordinatorNotFound) {
+			return ownerErr
 		}
-		if bindErr := policy.ValidateReservation(req); bindErr != nil {
-			return bindErr
-		}
-		cached, readErr := tx.GetReservation(tc, req.ID)
-		if readErr == nil {
-			if cached.RequestDigest != digest {
-				return execution.ErrReservationConflict
-			}
-			result = cached
-			return nil
-		}
-		if !errors.Is(readErr, execution.ErrReservationNotFound) {
-			return readErr
-		}
-		closed, readErr := tx.orchestrationBudgetClosed(tc, policy)
-		if readErr != nil {
-			return readErr
-		}
-		if closed {
-			return execution.ErrBudgetExceeded
-		}
-		reservations, readErr := tx.accountReservations(tc, req.PlanID)
-		if readErr != nil {
-			return readErr
-		}
-		for _, reservation := range reservations {
-			if reservation.Request.TaskID == req.TaskID {
-				return execution.ErrReservationConflict
-			}
-		}
-		result, _, readErr = tx.admitReservationInTransaction(tc, policy.AccountingPolicy(), reservations, req, digest)
-		return readErr
+		var reserveErr error
+		result, reserveErr = tx.reserveOrchestrationChild(tc, req, digest)
+		return reserveErr
 	})
 	if errors.Is(err, ErrExists) {
 		err = execution.ErrReservationConflict
@@ -156,6 +128,44 @@ func (s *Repository) ReserveOrchestrationChild(ctx context.Context, request exec
 		return execution.Reservation{}, err
 	}
 	return result, nil
+}
+
+func (s *Repository) reserveOrchestrationChild(ctx context.Context, req execution.ReservationRequest, digest string) (execution.Reservation, error) {
+	policy, readErr := s.GetOrchestrationBudget(ctx, req.PlanID)
+	if readErr != nil {
+		return execution.Reservation{}, readErr
+	}
+	if bindErr := policy.ValidateReservation(req); bindErr != nil {
+		return execution.Reservation{}, bindErr
+	}
+	cached, readErr := s.GetReservation(ctx, req.ID)
+	if readErr == nil {
+		if cached.RequestDigest != digest {
+			return execution.Reservation{}, execution.ErrReservationConflict
+		}
+		return cached, nil
+	}
+	if !errors.Is(readErr, execution.ErrReservationNotFound) {
+		return execution.Reservation{}, readErr
+	}
+	closed, readErr := s.orchestrationBudgetClosed(ctx, policy)
+	if readErr != nil {
+		return execution.Reservation{}, readErr
+	}
+	if closed {
+		return execution.Reservation{}, execution.ErrBudgetExceeded
+	}
+	reservations, readErr := s.accountReservations(ctx, req.PlanID)
+	if readErr != nil {
+		return execution.Reservation{}, readErr
+	}
+	for _, reservation := range reservations {
+		if reservation.Request.TaskID == req.TaskID {
+			return execution.Reservation{}, execution.ErrReservationConflict
+		}
+	}
+	result, _, readErr := s.admitReservationInTransaction(ctx, policy.AccountingPolicy(), reservations, req, digest)
+	return result, readErr
 }
 
 // SettleOrchestrationChild retains final host usage after expiry or closure too.

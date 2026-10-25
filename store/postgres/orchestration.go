@@ -277,6 +277,20 @@ func (s *Store) GetOrchestrationRun(ctx context.Context, runID id.OrchestrationI
 // fields within the caller's scope. Scope is immutable after creation,
 // same as UpdateOrchestration above.
 func (s *Store) UpdateOrchestrationRun(ctx context.Context, r *orchestration.Run) error {
+	if _, scopeErr := cortex.RequireScope(ctx); scopeErr != nil {
+		return scopeErr
+	}
+	if r == nil {
+		return cortex.ErrInvalidState
+	}
+	detached := *r
+	handled, err := s.UnownedOrchestrationParent(ctx, r.ID, r.Status == orchestration.StatusFailed, func(driver orchestrationstate.Driver) error { return orchestrationstate.Update(ctx, driver, &detached) })
+	if handled {
+		if err == nil {
+			*r = detached
+		}
+		return err
+	}
 	return orchestrationstate.Update(ctx, orchestrationRunDriver{store: s}, r)
 }
 

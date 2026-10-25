@@ -6499,3 +6499,40 @@ SQLite restart-to-parent cleanup also passes with retained child identities and
 rejected stale parent writes. This is deadline cleanup, not coordinator takeover,
 external cancellation or evidence-based usage settlement. Live Linux sandbox
 qualification remains deferred by the user.
+
+### Coordinator ownership storage protocol
+
+The stores now retain immutable coordinator leases and serialize ownership with
+parent generation changes under the team's existing budget transaction. A lease
+lasts at most one minute and cannot extend the team's deadline. Renewal keeps the
+owner and generation. A released or expired lease permits a new owner with a new
+generation; duplicate claims and lost acknowledgments return no execution grant.
+
+Child reservation and parent linkage commit together. Invocation intent,
+reservation, renewal and completion check the current owner. Completion releases
+a waiting pass or closes a terminal parent's account in the same transaction.
+Ordinary parent updates, continuation claims, links and admissions refuse leased
+parents. Deadline cleanup can still fail a parent after its account closes.
+
+SQLite fault tests cover rollback and lost acknowledgments during claims,
+reservation/linkage and completion, including reopening the database after an
+uncertain claim. Regressions reject backward clocks, stale-owner completion,
+corrupt records and invalid history transitions. The shared backend test elects
+one of two concurrent owners, checks scope isolation and rejects unowned mutation
+paths. The backend fixtures now clear assurance records between conformance
+cases, matching their empty-store contract.
+
+After the approved Docker restart, the orchestration backend race matrix passed
+without skips: SQLite 30.777s, PostgreSQL 5.399s and MongoDB 4.806s. Additional SQLite
+fault tests passed in 8.742s. Orchestration, coordination and assurance race suites
+passed, as did the prepared-team engine regressions (52.567s) and root build.
+Final scoped formatting and all-module lint pass. The final coordinator matrix,
+including the ordinary waiting-claim bypass check, passed without skips on
+SQLite (3.035s), PostgreSQL (4.211s) and MongoDB (5.555s).
+
+Runtime takeover remains disabled. Before you enable it, the engine needs
+acknowledged lease renewal, cancellation at the last confirmed expiry, fenced
+activation and atomic owner completion on every exit path. Existing invocation
+records must be reconciled without redispatching uncertain work. Drain older
+writers before adopting this protocol; they can bypass its new guards. Private
+A2A routing and live Linux sandbox qualification remain open.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -14,6 +15,9 @@ import (
 
 // LinkOrchestrationChild atomically admits one child while its parent is running.
 func (s *Store) LinkOrchestrationChild(ctx context.Context, team id.OrchestrationID, child id.AgentRunID) error {
+	if handled, err := s.UnownedOrchestrationParent(ctx, team, false, func(driver orchestrationstate.Driver) error { return orchestrationstate.Link(ctx, driver, team, child) }); handled {
+		return err
+	}
 	return orchestrationstate.Link(ctx, orchestrationRunDriver{store: s}, team, child)
 }
 
@@ -63,5 +67,26 @@ func (d orchestrationRunDriver) CompareAndSwap(ctx context.Context, before orche
 
 // ClaimOrchestrationContinuation elects one waiting team pass at the exact scope.
 func (s *Store) ClaimOrchestrationContinuation(ctx context.Context, team id.OrchestrationID) (*orchestration.Run, error) {
+	var result *orchestration.Run
+	handled, err := s.UnownedOrchestrationParent(ctx, team, false, func(driver orchestrationstate.Driver) error {
+		var claimErr error
+		result, claimErr = orchestrationstate.ClaimContinuation(ctx, driver, team)
+		return claimErr
+	})
+	if handled {
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	return orchestrationstate.ClaimContinuation(ctx, orchestrationRunDriver{store: s}, team)
+}
+
+// CoordinatorParentDriver binds parent CAS to the active budget transaction.
+func (d assuranceDriver) CoordinatorParentDriver(ctx context.Context) (orchestrationstate.Driver, error) {
+	session := mongo.SessionFromContext(ctx)
+	if !d.resultTransaction || session == nil || !session.TransactionRunning() {
+		return nil, cortex.ErrOrchestrationContinuationUnavailable
+	}
+	return orchestrationRunDriver{store: d.store}, nil
 }

@@ -143,6 +143,7 @@ func TestConformance(t *testing.T) {
 // what surfaced the gap; the fix is to stop it recurring for the rest.
 func truncateConformanceTables(ctx context.Context, s *Store) error {
 	const stmt = `TRUNCATE TABLE
+		cortex_assurance_records,
 		cortex_tool_calls,
 		cortex_steps,
 		cortex_checkpoints,

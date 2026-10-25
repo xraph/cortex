@@ -107,6 +107,7 @@ func TestConformance(t *testing.T) {
 // what surfaced the gap; the fix is to stop it recurring for the rest.
 func clearConformanceCollections(ctx context.Context, s *Store) error {
 	collections := []string{
+		colAssurance,
 		colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
 		colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colOverlays,
 		colOrchestrationConfigs, colOrchestrationRuns,
