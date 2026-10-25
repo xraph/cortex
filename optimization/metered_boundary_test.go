@@ -319,3 +319,66 @@ func TestMeteredEngineStreamReportsAccountingFailure(t *testing.T) {
 		t.Fatalf("failed engine run lost dispatch debit: %+v %v", saved, err)
 	}
 }
+
+func TestMeteredDispatchUsesRenewableLeaseIdentity(t *testing.T) {
+	for _, mode := range []string{"renewed", "held-takeover", "parent-generation", "shortened"} {
+		t.Run(mode, func(t *testing.T) {
+			s, ctx, reservation, _ := meterFixture(t)
+			meter := interceptedMeter{CallMeter: allowModelMeter(t, s)}
+			switch mode {
+			case "renewed":
+				fresh := reservation.Lease
+				fresh.ExpiresAt = fresh.ExpiresAt.Add(time.Second)
+				if err := s.Transact(ctx, func(tx optimization.Transaction) error { return tx.RenewLease(fresh) }); err != nil {
+					t.Fatal(err)
+				}
+			case "held-takeover":
+				if _, err := meter.Reserve(ctx, reservation); err != nil {
+					t.Fatal(err)
+				}
+				current, err := s.GetExperiment(ctx, reservation.ExperimentID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = s.Transact(ctx, func(tx optimization.Transaction) error {
+					if pauseErr := tx.CommitTransition(optimization.Transition{ExperimentID: current.ID, ExpectedRevision: current.Revision, Actor: current.Spec.Requester, IdempotencyKey: "pause-held", NextState: optimization.StatePaused}); pauseErr != nil {
+						return pauseErr
+					}
+					if resumeErr := tx.CommitTransition(optimization.Transition{ExperimentID: current.ID, ExpectedRevision: current.Revision + 1, Actor: current.Spec.Requester, IdempotencyKey: "resume-held", NextState: optimization.StateQueued}); resumeErr != nil {
+						return resumeErr
+					}
+					var claimErr error
+					reservation.Lease, claimErr = tx.ClaimWork(optimization.ClaimRequest{ExperimentID: current.ID, Owner: "replacement", Duration: time.Minute})
+					return claimErr
+				}); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				meter.begin = func(saved optimization.Reservation) optimization.Reservation {
+					if mode == "parent-generation" {
+						saved.Call.Lease.ParentGeneration++
+					} else {
+						saved.Call.Lease.ExpiresAt = saved.Call.Lease.ExpiresAt.Add(-time.Second)
+					}
+					return saved
+				}
+			}
+			calls := 0
+			client, err := optimization.NewMeteredClient(modelClient{complete: func(context.Context, *llm.Request) (*llm.Response, error) {
+				calls++
+				return &llm.Response{Content: "answer", Model: "fixture"}, nil
+			}}, meter, modelEstimator(func(context.Context, *llm.Request) (optimization.UsageReservation, error) { return reservation, nil }), nil, modelConfig(ctx, reservation))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Complete(ctx, &llm.Request{Model: "fixture", MaxTokens: 10})
+			if mode == "renewed" || mode == "held-takeover" {
+				if err != nil || calls != 1 {
+					t.Fatalf("authorized dispatch lease rejected: %v calls=%d", err, calls)
+				}
+			} else if !errors.Is(err, optimization.ErrIncompleteEvidence) || calls != 0 {
+				t.Fatalf("invalid %s authority dispatched: %v calls=%d", mode, err, calls)
+			}
+		})
+	}
+}

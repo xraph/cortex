@@ -185,8 +185,12 @@ func (c *MeteredClient) prepare(ctx context.Context, request *llm.Request, strea
 		cancel()
 		return nil, nil, err
 	}
-	left, leftErr := canonical.Marshal(saved.Request)
-	right, rightErr := canonical.Marshal(reservation)
+	// The original reservation retains its creation lease. Dispatch authority
+	// comes from Call.Lease, which can belong to a replacement worker.
+	storedRequest, currentRequest := saved.Request, reservation
+	storedRequest.Lease, currentRequest.Lease = WorkLease{}, WorkLease{}
+	left, leftErr := canonical.Marshal(storedRequest)
+	right, rightErr := canonical.Marshal(currentRequest)
 	if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) || !validModelDispatch(saved, reservation, call.digest) {
 		cancel()
 		return nil, nil, ErrIncompleteEvidence
@@ -203,7 +207,7 @@ func validModelDispatch(saved Reservation, request UsageReservation, digest stri
 		return false
 	}
 	got, want := saved.Call.Lease, request.Lease
-	return got.ExperimentID == want.ExperimentID && got.Owner == want.Owner && got.Generation == want.Generation && got.ExpiresAt.Equal(want.ExpiresAt)
+	return got.ExperimentID == want.ExperimentID && got.Owner == want.Owner && got.Generation == want.Generation && got.ParentGeneration == want.ParentGeneration && !got.ExpiresAt.Before(want.ExpiresAt)
 }
 
 func (c *MeteredClient) checkContext(ctx context.Context) error {
