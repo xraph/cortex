@@ -6375,3 +6375,39 @@ Prepared-team engine messaging remains disabled until captured dispatch,
 shared-budget admission and durable team continuation are integrated. These
 checks qualify this local bus boundary. They do not qualify deployed recovery
 or the Linux sandbox, whose worker selection remains deferred by the user.
+
+### Durable strategy invocation identity
+
+Every built-in strategy assigns each agent call a stable slot. Repeated manager
+planning attempts, synthesis, routing decisions and debate rounds remain distinct.
+`InvocationSlot(ctx)` exposes that position to the runner. It is stable for a
+frozen configuration and prior results, but grants no caller authority.
+
+The reserved service uses `orchestration.InvocationStore` when available. It
+writes single-use intent before reservation, then binds the returned child ID
+before execution. Intent records the exact scope, team, participant and digest
+of input and run options without duplicating private prompts. Failed or uncertain
+writes stop dispatch. An identical retry returns `ErrAlreadyExists`; reading
+saved identity never authorizes another reservation or execution. Unknown
+reservation outcomes remain distinguishable from a known reserved child.
+
+SQLite, PostgreSQL and MongoDB share the immutable journal implementation through
+their existing assurance-record table. No migration is needed. Custom stores
+without the capability retain earlier child-link behavior; older binaries must
+be drained before relying on invocation identity for recovery.
+
+Behavioral regressions reproduced missing strategy slots and dispatch without
+journal writes. Tests cover repeated strategies, hierarchical repair, duplicate
+intent, lost intent/binding acknowledgments, concurrent insertion and binding,
+corrupt records, wrong scope and SQLite reopening. Prepared-engine tests for all
+five strategies require the journal's bound identity before provider dispatch.
+The orchestration backend matrix passes without skips: SQLite 17.777s,
+PostgreSQL 3.887s, MongoDB 4.455s. Prepared runtime races pass in 28.684s.
+
+This retains logical invocation identity. Durable result continuation, paused
+team state, budget lifetime and private tool routing still require integration.
+Prepared-team messaging remains disabled. Live Linux sandbox qualification
+remains deferred by the user.
+Final scoped formatting, all-ten-module lint, root build, complete orchestration
+and assurance race suites, and docs types/lint/build pass. These checks qualify
+local journal behavior, not a resumable team or installed recovery worker.

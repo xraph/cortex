@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -38,7 +39,7 @@ func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Resu
 				results[i] = AgentResult{AgentName: p.AgentName, Err: ctx.Err()}
 				return
 			}
-			ar, err := invokeAgent(ctx, o.runner, o.settings, p.AgentName, composeInput(input, snapshot))
+			ar, err := invokeAgent(ctx, o.runner, o.settings, p.AgentName, composeInput(input, snapshot), "parallel/worker/"+strconv.Itoa(i))
 			ar.Err = err
 			results[i] = ar
 		}(i, p)
@@ -64,7 +65,7 @@ func (o *parallel) Run(ctx context.Context, input string, bb *Blackboard) (*Resu
 
 	// Synthesis requires a valid result from every worker.
 	if o.settings.Aggregator != "" {
-		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.Aggregator, composeInput(input, bb.Snapshot()))
+		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.Aggregator, composeInput(input, bb.Snapshot()), "parallel/aggregate")
 		res.AgentResults = append(res.AgentResults, ar)
 		res.Err = err
 		if err != nil {

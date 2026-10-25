@@ -65,12 +65,13 @@ func boundedConcurrency(n int) int {
 
 // invokeAgent preserves failed run identities and treats missing or contradictory
 // results as failures. Each invocation gets its own options and normal budget.
-func invokeAgent(ctx context.Context, runner AgentRunner, settings Settings, name, input string) (AgentResult, error) {
+func invokeAgent(ctx context.Context, runner AgentRunner, settings Settings, name, input, slot string) (AgentResult, error) {
 	out := AgentResult{AgentName: name}
 	if err := ctx.Err(); err != nil {
 		out.Err = err
 		return out, err
 	}
+	ctx = context.WithValue(ctx, invocationSlotKey{}, slot)
 	ar, err := runner.RunAgent(ctx, name, input, runOptsFromSettings(settings))
 	if ar != nil {
 		out = *ar

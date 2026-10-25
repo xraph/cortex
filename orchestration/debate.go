@@ -30,9 +30,9 @@ func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 
 	last := ""
 	for r := 0; r < rounds; r++ {
-		for _, d := range debaters {
+		for i, d := range debaters {
 			prompt := buildDebatePrompt(input, bb.Snapshot(), r+1)
-			ar, err := invokeAgent(ctx, o.runner, o.settings, d.AgentName, prompt)
+			ar, err := invokeAgent(ctx, o.runner, o.settings, d.AgentName, prompt, "debate/round/"+strconv.Itoa(r)+"/participant/"+strconv.Itoa(i))
 			res.AgentResults = append(res.AgentResults, ar)
 			if err != nil {
 				res.Err = err
@@ -44,7 +44,7 @@ func (o *debate) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 	}
 
 	if judge != "" {
-		ar, err := invokeAgent(ctx, o.runner, o.settings, judge, buildJudgePrompt(input, bb.Snapshot()))
+		ar, err := invokeAgent(ctx, o.runner, o.settings, judge, buildJudgePrompt(input, bb.Snapshot()), "debate/judge")
 		res.AgentResults = append(res.AgentResults, ar)
 		if err != nil {
 			res.Err = err

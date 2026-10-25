@@ -137,6 +137,11 @@ func TestRunPreparedOrchestrationPinsParticipantsAndIsolatesSessions(t *testing.
 					t.Error("child linkage must precede provider dispatch")
 					return nil, cortex.ErrRunIncomplete
 				}
+				invocation, err := f.s.GetOrchestrationInvocation(ctx, team.ID, orchestration.InvocationSlot(ctx))
+				if err != nil || invocation.RunID != child.ID || invocation.Intent.AgentName != reservation.Request.OwnerRef {
+					t.Errorf("invocation identity missing before provider dispatch: %+v %v", invocation, err)
+					return nil, cortex.ErrRunIncomplete
+				}
 				sess, err := f.s.GetSession(ctx, child.SessionID)
 				if err != nil {
 					t.Error(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -40,7 +41,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	prompt := buildPlanPrompt(workers, input)
 	var tasks []delegation
 	for attempt := 0; ; attempt++ {
-		planOut, err := invokeAgent(ctx, o.runner, o.settings, manager, prompt)
+		planOut, err := invokeAgent(ctx, o.runner, o.settings, manager, prompt, "hierarchical/plan/"+strconv.Itoa(attempt))
 		res.AgentResults = append(res.AgentResults, planOut)
 		if err != nil {
 			return fail(err)
@@ -81,7 +82,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 				return
 			}
 			bb.Handoff(ctx, manager, d.Agent, d.Task)
-			workerResult, workerErr := invokeAgent(ctx, o.runner, o.settings, d.Agent, composeInput(d.Task, snapshot))
+			workerResult, workerErr := invokeAgent(ctx, o.runner, o.settings, d.Agent, composeInput(d.Task, snapshot), "hierarchical/worker/"+strconv.Itoa(i))
 			if workerErr != nil {
 				workerResult.Err = workerErr
 			}
@@ -101,7 +102,7 @@ func (o *hierarchical) Run(ctx context.Context, input string, bb *Blackboard) (*
 	if err := errors.Join(workerErrors...); err != nil {
 		return fail(err)
 	}
-	synth, err := invokeAgent(ctx, o.runner, o.settings, manager, buildSynthesisPrompt(input, bb.Snapshot()))
+	synth, err := invokeAgent(ctx, o.runner, o.settings, manager, buildSynthesisPrompt(input, bb.Snapshot()), "hierarchical/synthesis")
 	res.AgentResults = append(res.AgentResults, synth)
 	if err != nil {
 		return fail(err)

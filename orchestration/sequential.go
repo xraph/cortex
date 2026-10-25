@@ -1,6 +1,9 @@
 package orchestration
 
-import "context"
+import (
+	"context"
+	"strconv"
+)
 
 type sequential struct {
 	runner   AgentRunner
@@ -20,7 +23,7 @@ func (o *sequential) Run(ctx context.Context, input string, bb *Blackboard) (*Re
 	last := input
 	for i, p := range o.parts {
 		agentInput := composeInput(input, bb.Snapshot())
-		ar, err := invokeAgent(ctx, o.runner, o.settings, p.AgentName, agentInput)
+		ar, err := invokeAgent(ctx, o.runner, o.settings, p.AgentName, agentInput, "sequential/"+strconv.Itoa(i))
 		res.AgentResults = append(res.AgentResults, ar)
 		if err != nil {
 			res.Err = err

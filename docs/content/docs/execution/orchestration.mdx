@@ -141,6 +141,36 @@ that the child has started, authenticate its usage or authorize replay. Prepared
 agent execution and isolated sessions use the engine API below. Restricted
 messaging still requires an isolated route.
 
+### Retain each logical invocation
+
+Every built-in strategy assigns a stable slot to each agent call. For example,
+`sequential/0` identifies the first participant, and
+`debate/round/1/participant/0` identifies the first debater in the second round.
+Manager planning attempts, synthesis and router selection have distinct slots.
+You can read the current slot with `orchestration.InvocationSlot(ctx)` inside
+your runner. It identifies a position in the captured strategy, not a caller.
+
+When your run store implements `orchestration.InvocationStore`, the reserved
+service writes that slot before calling `ReserveAgent`. The intent binds the
+team, exact scope, agent name and a digest of the input and run options. It
+stores no copy of the private prompt. After reservation, the service binds the
+returned child ID before executing it. SQLite, PostgreSQL and MongoDB provide
+this capability through the existing assurance-record table.
+
+An intent or binding can be written once. Even an identical retry returns
+`ErrAlreadyExists`; a successful read is never permission to dispatch again.
+Use `GetOrchestrationInvocation` to reconcile the saved identity. A zero child
+ID means reservation either did not run or its acknowledgment was lost. A bound
+child ID does not prove execution started or completed. Both cases require
+reconciliation, and allocations remain charged until their outcome is known.
+
+Custom stores without this capability retain the previous child-link behavior.
+They cannot provide durable logical invocation identity. Older binaries also
+bypass this journal, so drain them before relying on it for recovery. The
+journal does not yet resume an orchestration, retain strategy results or keep
+a paused team's budget open. Prepared-team messaging remains disabled until
+that continuation path is implemented.
+
 ### Preserve children across concurrent writes
 
 SQLite, PostgreSQL and MongoDB implement `orchestration.ChildRunStore`.

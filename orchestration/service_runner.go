@@ -47,6 +47,21 @@ func (r *persistingRunner) RunAgent(ctx context.Context, name, input string, opt
 }
 
 func (r *persistingRunner) runReserved(ctx context.Context, name, input string, opts *RunOpts) (*AgentResult, error) {
+	journal, journaled := r.runs.(InvocationStore)
+	var intent InvocationIntent
+	if journaled {
+		var intentErr error
+		intent, intentErr = invocationIntent(ctx, r.record.ID, name, input, opts)
+		if intentErr == nil {
+			intentErr = journal.BeginOrchestrationInvocation(ctx, intent)
+		}
+		if intentErr != nil {
+			r.mu.Lock()
+			r.writeErr = errors.Join(r.writeErr, intentErr)
+			r.mu.Unlock()
+			return &AgentResult{AgentName: name, Err: intentErr}, intentErr
+		}
+	}
 	invocation, reserveErr := r.reserved.ReserveAgent(ctx, r.record.ID, name, input, opts)
 	var inv ReservedInvocation
 	if invocation != nil {
@@ -57,6 +72,11 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 	validID := !inv.RunID.IsNil() && inv.RunID.Prefix() == id.PrefixAgentRun
 	if validID {
 		result.RunID = inv.RunID
+		if journaled {
+			writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			reserveErr = errors.Join(reserveErr, journal.BindOrchestrationInvocation(writeCtx, intent, inv.RunID))
+			cancel()
+		}
 		if slices.Contains(r.record.AgentRunIDs, inv.RunID) {
 			reserveErr = errors.Join(reserveErr, cortex.ErrRunIncomplete)
 		} else {

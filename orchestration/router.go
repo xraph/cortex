@@ -47,7 +47,7 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		}
 	case o.settings.RouterAgent != "":
 		prompt := buildRoutingPrompt(o.parts, input)
-		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.RouterAgent, prompt)
+		ar, err := invokeAgent(ctx, o.runner, o.settings, o.settings.RouterAgent, prompt, "router/select")
 		res.AgentResults = append(res.AgentResults, ar)
 		if err != nil {
 			res.Err = err
@@ -59,7 +59,7 @@ func (o *router) Run(ctx context.Context, input string, bb *Blackboard) (*Result
 		routedBy = o.settings.RouterAgent
 	}
 
-	ar, err := invokeAgent(ctx, o.runner, o.settings, chosen, composeInput(input, bb.Snapshot()))
+	ar, err := invokeAgent(ctx, o.runner, o.settings, chosen, composeInput(input, bb.Snapshot()), "router/worker")
 	res.AgentResults = append(res.AgentResults, ar)
 	if err != nil {
 		res.Err = err
