@@ -15,6 +15,7 @@ type recoveringRunStore interface {
 }
 
 type runRecoveryConfig struct {
+	ClaimState                              ClaimState
 	Discovery                               TaskPlanSource
 	Interval, DiscoveryTimeout, PageTimeout time.Duration
 	PageSize, MaxInFlight, MaxPerScope      int
@@ -24,6 +25,12 @@ type runRecoveryConfig struct {
 type runRecoveryPage func(context.Context, Claim, execution.RunCallSeal, string, int) (string, error)
 
 func newRunRecoveryService(config runRecoveryConfig, storage recoveringRunStore, makeScan func() (runRecoveryPage, error)) (*TaskService, error) {
+	if config.ClaimState == "" {
+		config.ClaimState = ClaimRecovering
+	}
+	if config.ClaimState != ClaimRecovering && config.ClaimState != ClaimCompleted {
+		return nil, ErrInvalidScheduler
+	}
 	if config.PageSize == 0 {
 		config.PageSize = 64
 	}
@@ -71,7 +78,7 @@ func (s *runRecoveryScheduler) Tick(ctx context.Context, planID id.ID) error {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
-			if claim.State == ClaimRecovering {
+			if claim.State == s.config.ClaimState {
 				if recoveryErr := s.recoverRun(ctx, claim); recoveryErr != nil {
 					if firstFailure == nil {
 						firstFailure = recoveryErr
@@ -159,3 +166,20 @@ func (s *runRecoveryScheduler) recoverRun(ctx context.Context, claim Claim) erro
 
 // The enclosing service cancels the shared lifetime and joins every Tick.
 func (*runRecoveryScheduler) Shutdown(context.Context) error { return nil }
+
+// authorizeRunScan detaches metadata before a host callback and checks its lifetime.
+func authorizeRunScan(ctx context.Context, authorize func(context.Context, Claim, execution.RunCallSeal) error, claim Claim, seal execution.RunCallSeal) error {
+	frozenClaim, err := sealClaim(claim)
+	if err != nil {
+		return err
+	}
+	frozenRequest, _, err := seal.Request.Freeze()
+	if err != nil {
+		return err
+	}
+	seal.Request = frozenRequest
+	if err := authorize(ctx, frozenClaim, seal); err != nil {
+		return err
+	}
+	return ctx.Err()
+}

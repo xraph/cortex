@@ -46,6 +46,7 @@ type Engine struct {
 	providerRecovery      *coordination.ProviderRecoveryService
 	effectRecovery        *coordination.EffectRecoveryService
 	taskAdoption          *coordination.TaskAdoptionService
+	taskSettlement        *coordination.TaskSettlementService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard

@@ -5784,3 +5784,43 @@ Root build, docs type/lint/build checks and final all-module `make l` passed.
 Formatting used `make f FORMAT_PATHS='errors.go coordination/task_usage_settlement.go coordination/task_usage_settlement_test.go store/internal/assurance/budget.go store/internal/assurance/task_usage_settlement.go store/storetest/task_usage_settlement.go store/storetest/task_recovery.go store/storetest/task_acceptance.go store/storetest/submission.go store/storetest/submission_transaction.go'`.
 The packet contains no optimizer edits. Runtime settlement scheduling and concrete
 host billing qualification remain open.
+
+### S3.5 managed task settlement lifecycle
+
+`TaskSettlementService` now traverses completed, already sealed claims through the
+shared recovery scheduler. Explicit scan authority precedes accounting reads.
+The service validates the original budgeted claim, snapshots combined usage,
+closes verifier admission, resolves host billing proof and calls the guarded
+settler. Pending proof and open verifier jobs retain the reservation. A retained
+receipt uses its original request under current authorization without another
+proof resolution.
+
+`engine.WithTaskSettlement` joins the shared engine and Forge extension lifecycle.
+Tests cover detached callback inputs, denied scans/closure/billing, changed proof
+bindings, pending proof, timeout and a resolver that ignores cancellation. Stop
+keeps ownership until that resolver returns and refuses premature restart.
+
+The database lifecycle test closes admission, settles real retained provider and
+verifier usage, injects a lost acknowledgment after commit, then starts a new
+engine after the proof window expires. Accounting stays unchanged and the billing
+resolver runs once. Recovery/adoption regressions passed under the race detector
+on SQLite (24.482s), PostgreSQL (17.463s) and MongoDB (21.630s), with no skips.
+Docker was healthy when the approved restart was reconsidered, so these checks
+ran without interrupting other containers.
+
+Coordination race tests passed (16.945s), as did the focused engine lifecycle
+suite (5.612s) and extension shutdown regression (1.688s). Root build, docs
+type/lint/build checks and final all-module `make l` passed. The optimizer owner
+fixed both findings from the first lint pass. Formatting used `make f` with
+`FORMAT_PATHS` restricted to this packet's twelve Go files, followed by a clean
+diff check.
+
+The broad engine race suite reached its six-minute timeout while setting up
+`TestVerificationWorkerRejectsUnreadableIntent/wrong_scope`; that subtest had
+been running for one second. There was no earlier assertion failure. The test
+passed independently in 5.993s. The full engine suite remains unverified by that
+run; the focused lifecycle and database checks above passed.
+
+This packet does not change optimizer files. Automatic journal sealing for ordinary completed runs,
+historical-debt discovery across superseded claims, concrete host billing and live
+qualification remain open.

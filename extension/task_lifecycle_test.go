@@ -31,7 +31,7 @@ func (*lifecycleShutdown) Name() string                       { return "lifecycl
 func (h *lifecycleShutdown) OnShutdown(context.Context) error { h.calls.Add(1); return nil }
 
 func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
-	for _, kind := range []string{"execution", "recovery", "provider", "effect"} {
+	for _, kind := range []string{"execution", "recovery", "provider", "effect", "settlement"} {
 		t.Run(kind, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -56,6 +56,20 @@ func TestTaskLifecycleStopTimeoutPreservesStartedState(t *testing.T) {
 				}
 				options := []engine.Option{engine.WithExtension(hook), engine.WithSuspensionTTL(0)}
 				switch kind {
+				case "settlement":
+					options = append(options, engine.WithTaskSettlement(coordination.TaskSettlementServiceConfig{Discovery: cfg.Service.Discovery, Store: struct {
+						coordination.TaskSettlementStore
+					}{}, ClosureActor: "accounting", ClosureFence: struct {
+						coordination.TaskUsageClosureFence
+					}{}, ClosureAuthorizer: struct {
+						coordination.TaskUsageClosureAuthorizer
+					}{}, Resolver: struct {
+						coordination.TaskUsageSettlementResolver
+					}{}, Fence: struct {
+						coordination.TaskUsageSettlementFence
+					}{}, Authorizer: struct {
+						coordination.TaskUsageSettlementAuthorizer
+					}{}, AuthorizeScan: func(context.Context, coordination.Claim, execution.RunCallSeal) error { return nil }}))
 				case "execution":
 					options = append(options, engine.WithTaskScheduling(cfg), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}))
 				case "provider":

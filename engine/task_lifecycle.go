@@ -75,6 +75,9 @@ func (e *Engine) taskServices() []taskLifecycleService {
 	if e.taskAdoption != nil {
 		services = append(services, e.taskAdoption)
 	}
+	if e.taskSettlement != nil {
+		services = append(services, e.taskSettlement)
+	}
 	return services
 }
 

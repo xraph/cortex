@@ -288,7 +288,17 @@ plan/run/journal guards. It derives the charge and writes both accounting and th
 guarded receipt in the same transaction, reusing ordinary budget settlement.
 Historical retries retain the first receipt and require current authorization.
 Live billing authentication, enforced bounds for unknown external work, concrete
-host integration and runtime scheduling of settlement remain open.
+host integration and live qualification remain open.
+
+`TaskSettlementService` and `engine.WithTaskSettlement` connect authorized
+discovery of completed, already sealed claims to admission closure, proof
+resolution and guarded accounting. They reuse the recovery scheduler and engine
+lifecycle, retain pending debt, and retry committed receipts with current
+authorization after a lost acknowledgment or restart. Attempt timeouts bound
+cooperative callbacks; shutdown retains ownership until every callback returns.
+Store tests exercise this path on SQLite, PostgreSQL and MongoDB with fixture
+authority. Automatic sealing for ordinary completed runs, historical-debt
+discovery across superseded claims and concrete billing adapters remain open.
 
 ## S3.6: Team review UI and recovery qualification
 

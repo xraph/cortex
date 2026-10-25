@@ -752,6 +752,44 @@ commit. A changed request conflicts. Historical retries do not require the old
 proof window to remain open and do not replace settled accounting with later
 observations. Preserve the proof and source receipts for reconciliation.
 
+### Run settlement with the engine lifecycle
+
+Pass `engine.WithTaskSettlement(coordination.TaskSettlementServiceConfig{...})`
+before `Start`, or use `coordination.NewTaskSettlementService` directly. Supply
+`Store`, `Discovery`, `AuthorizeScan`, `ClosureActor`, `ClosureFence`,
+`ClosureAuthorizer`, `Resolver`, `Fence` and `Authorizer`. You can pass the engine
+option through Forge's extension lifecycle too.
+
+The service visits completed claims with an existing call-journal seal. It checks
+scan authority before reading budgets, usage or settlement receipts, then closes
+verifier admission through `TaskUsageCloser` and asks your resolver for billing
+proof against the exact snapshot, closure and original allocation. Unbudgeted
+claims, open verifier jobs and a resolver returning nil wait for a later pass.
+No capacity is refunded while proof is pending.
+
+`ResolveTaskUsageSettlement` receives detached metadata and returns a
+`TaskUsageSettlementRequest`. It must honor cancellation and resolve proof without
+executing or retrying task work. The service checks the returned bindings, then
+calls the guarded settler. The settlement fence and authorizer still control the
+write. If a receipt already exists, the service retries its original request under
+current authorization without requesting another bill, including after restart
+or a lost acknowledgment.
+
+Defaults are four concurrent plan passes, one per exact scope, 64 claims per page,
+five seconds per claim-page or seal read, and one second between pages. A complete
+settlement attempt defaults to thirty seconds; `AttemptTimeout` accepts one
+millisecond to thirty seconds. Discovery retains its separate timeout. Callbacks
+must return before `Stop` reports drainage. A timed-out stop preserves service
+ownership and prevents restart until the callbacks finish. `TaskSettlementStatus`
+reports running/stopping state, active passes and failures without billing data.
+
+Your discovery source must retain completed or cancelled plans with outstanding
+debt. Traversal uses current task claims, so you also need to preserve access to
+unsettled historical ownership when replanning supersedes a claim. This service
+does not seal ordinary completed runs, establish worker quiescence or authenticate
+provider bills. Those host integrations and their live qualification remain
+required.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in

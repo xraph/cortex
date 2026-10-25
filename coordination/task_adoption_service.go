@@ -84,22 +84,8 @@ func NewTaskAdoptionService(config TaskAdoptionServiceConfig) (*TaskAdoptionServ
 func adoptRecoveredRun(ctx context.Context, config TaskAdoptionServiceConfig, adopter TaskRecoveryAdopter, claim Claim, seal execution.RunCallSeal) error {
 	bounded, cancel := context.WithTimeout(ctx, config.AttemptTimeout)
 	defer cancel()
-	// Host callbacks receive detached metadata, never the scheduler's retained copy.
-	scanClaim, err := sealClaim(claim)
-	if err != nil {
-		return err
-	}
-	scanRequest, _, err := seal.Request.Freeze()
-	if err != nil {
-		return err
-	}
-	scanSeal := seal
-	scanSeal.Request = scanRequest
-	if authorizeErr := config.AuthorizeScan(bounded, scanClaim, scanSeal); authorizeErr != nil {
+	if authorizeErr := authorizeRunScan(bounded, config.AuthorizeScan, claim, seal); authorizeErr != nil {
 		return authorizeErr
-	}
-	if contextErr := bounded.Err(); contextErr != nil {
-		return contextErr
 	}
 	snapshot, err := config.Store.SnapshotRunRecovery(bounded, seal)
 	if err != nil {

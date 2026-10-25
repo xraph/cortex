@@ -19,7 +19,7 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-func usageSettlementStoreFixture(t *testing.T, backend store.Store, driver assurance.Driver, metered bool) (taskRecoveryFixture, coordination.TaskUsageSettlementRequest) {
+func budgetedTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, metered bool) taskRecoveryFixture {
 	t.Helper()
 	option := taskRecoveryOptions{ProviderUsage: execution.ReservationUsage{Actual: execution.Resources{Tokens: 11, USDMicros: 5}, Known: execution.KnownTokens | execution.KnownMoney}}
 	if metered {
@@ -33,7 +33,12 @@ func usageSettlementStoreFixture(t *testing.T, backend store.Store, driver assur
 		got, err := repo.AcquireBudgetedTaskClaim(ctx, coordination.BudgetedClaimRequest{Claim: claim, Reservation: reserved})
 		return got.Claim, err
 	}
-	f := newTaskRecoveryFixture(t, backend, driver, "", option)
+	return newTaskRecoveryFixture(t, backend, driver, "", option)
+}
+
+func usageSettlementStoreFixture(t *testing.T, backend store.Store, driver assurance.Driver, metered bool) (taskRecoveryFixture, coordination.TaskUsageSettlementRequest) {
+	t.Helper()
+	f := budgetedTaskRecoveryFixture(t, backend, driver, metered)
 	accepted, err := f.repo.AdoptTaskResult(f.ctx, f.request)
 	require.NoError(t, err)
 	usage := coordination.TaskUsageRequest{Claim: accepted.Claim.Token(), Seal: f.request.Recovery.Seal, SnapshotDigest: f.request.Recovery.SnapshotDigest}

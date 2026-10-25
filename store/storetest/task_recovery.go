@@ -138,6 +138,7 @@ func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Dr
 	t.Run("usage admission closure", func(t *testing.T) { testTaskUsageClosure(t, backend, driver) })
 	t.Run("complete usage snapshot", func(t *testing.T) { testTaskUsageSnapshot(t, backend, driver) })
 	t.Run("engine managed adoption", func(t *testing.T) { testManagedTaskAdoption(t, backend, driver) })
+	t.Run("engine managed settlement", func(t *testing.T) { testManagedTaskSettlement(t, backend, driver) })
 	t.Run("adopts without renewing or reinvoking", func(t *testing.T) {
 		f := newTaskRecoveryFixture(t, backend, driver, "")
 		before, err := backend.GetRun(f.ctx, f.request.Result.RunID)
