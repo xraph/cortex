@@ -1237,3 +1237,42 @@ same subtraction-based family budget check. After those fixes, the affected
 accounting, attempt and recovery race tests passed on all four stores, along
 with core races, Sentinel judge/cost tests, module build, scoped formatting and
 all-module lint. Persistent recovery tests reopen all three database backends.
+
+## Paired validation across the controller task stream
+
+A comparison now reserves one allocation for its entire frozen child roster.
+The store derives each child's held-out case assignment from its saved spec and
+checks the controller arm, stream position, scorer revisions, criteria and
+objective. A child cannot reserve a separate allocation. Unrelated experiments
+cannot form a paired roster, including through the older two-child shortcut.
+Changed assignments, reordered children and repeated holdouts at later stream
+positions are refused. The parent's trial plan includes both controller arms.
+
+The parent enters validation only after all children freeze their discovery
+outputs. Child workers reuse that allocation, schedule their own assigned arm
+and wait for the whole stream before entering selection. The store rechecks the
+same roster before decisions can be published, which keeps reflections behind
+the barrier too. Failed trials remain recorded outcomes; missing evaluations
+and unresolved attempts keep the barrier closed.
+
+The shared conformance tests use four children across two stream positions.
+They cover immutable assignments, partial progress, foreign-child refusal,
+worker scheduling without replay and parent/child phase gates. Recovery closes
+and reopens each persistent store, takes over parent and child leases, reuses the
+same exposed allocation and completes the remaining cases without changing its
+roster or exposure history.
+
+Task 14 still needs the comparison creation/scheduling API, discovery-only lesson
+advancement within each controller arm, controller-level aggregate comparison
+and controller adoption. The current ordinary handlers still refuse parent
+execution. Child validation and its persisted feedback barrier are implemented.
+
+Final checks passed for optimization core, memory, SQLite and PostgreSQL, the full
+Sentinel race suite, extension and Fabriq race suites, Docker-backed integration,
+module builds, scoped formatting and all-module lint. SQLite completed in
+528.524s and PostgreSQL in 461.778s. The first MongoDB package run reached its
+final recovery test but exceeded Go's default ten-minute package limit. Only that
+finished package was rerun with an explicit thirty-minute timeout.
+That full MongoDB race run passed in 741.784s. All optimization packages passed
+across the original run and this targeted rerun; the original run itself exited
+with the MongoDB timeout failure.

@@ -292,7 +292,8 @@ its arm and sequence. Creation requires the current parent lease, and both
 controller arms consume the parent's aggregate token and money budget. Late
 receipts update the original reservations, including after cancellation.
 
-This API currently provides storage and accounting only. The comparison
-scheduler, isolated lesson advancement, validation feedback barrier across the
-whole stream and controller adoption are still pending. Ordinary phase handlers
-return `ErrUnavailable` for comparison parents.
+Controller comparisons have durable storage, shared accounting and paired
+validation. The scheduler, isolated lesson advancement, controller-level comparison
+and controller adoption are still pending. Child validation uses one parent
+allocation with frozen case assignments, and selection waits for the whole stream. Ordinary
+phase handlers return `ErrUnavailable` for comparison parents.

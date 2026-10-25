@@ -46,6 +46,12 @@ func validateImprovement(spec ExperimentSpec) error {
 	if spec.Mode == ModeTaskLocal || len(plan.Children) == 0 || len(plan.Children)%2 != 0 || len(plan.Children) > spec.Limits.MaxTrials || plan.Controllers[0] != spec.Controller || plan.Controllers[0].ID == plan.Controllers[1].ID {
 		return ErrInvalidSpec
 	}
+	registered := make(map[string]TaskCase, len(spec.Tasks))
+	for _, task := range spec.Tasks {
+		registered[task.Digest] = task
+	}
+	covered := map[string]bool{}
+	positions := map[string]int{}
 	seen := map[string]bool{}
 	total := 0
 	for i, child := range plan.Children {
@@ -62,6 +68,17 @@ func validateImprovement(spec ExperimentSpec) error {
 		}
 		if c.Budget.TokenOnly != spec.Budget.TokenOnly || c.Budget.PricingRevision != spec.Budget.PricingRevision || c.Budget.MaxTokens > spec.Budget.MaxTokens || c.Budget.MaxUSDMicros > spec.Budget.MaxUSDMicros || c.Limits.ExperimentTimeout > spec.Limits.ExperimentTimeout {
 			return ErrInvalidSpec
+		}
+		for _, task := range c.Tasks {
+			original, exists := registered[task.Digest]
+			if !exists || !equalImprovementTemplate(original, task) {
+				return ErrInvalidSpec
+			}
+			if sequence, exists := positions[task.InputDigest]; exists && sequence != p.Sequence {
+				return ErrInvalidSpec
+			}
+			positions[task.InputDigest] = p.Sequence
+			covered[task.Digest] = true
 		}
 		childPlan, err := Preflight(c)
 		if err != nil {
@@ -83,6 +100,9 @@ func validateImprovement(spec ExperimentSpec) error {
 				return ErrInvalidSpec
 			}
 		}
+	}
+	if len(covered) != len(spec.Tasks) {
+		return ErrInvalidSpec
 	}
 	return nil
 }

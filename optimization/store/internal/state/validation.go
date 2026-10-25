@@ -51,52 +51,24 @@ func (tx *transaction) AllocateValidation(request optimization.ValidationAllocat
 	if !tx.validLease(owner, request.Lease) || owner.Phase != optimization.PhaseValidate {
 		return empty, optimization.ErrConflict
 	}
+	roster, tasks, rosterErr := tx.freezeValidationRoster(owner, request.PairedRoster)
+	if rosterErr != nil {
+		if _, exists := tx.data.Allocations[request.ID.String()]; exists {
+			return empty, optimization.ErrConflict
+		}
+		return empty, rosterErr
+	}
+	request.PairedRoster = roster
 	if previous, found := tx.data.Allocations[request.ID.String()]; found {
 		if previous.ExperimentID != request.ExperimentID || !previous.ReleasedAt.IsZero() || !same(previous.PairedRoster, request.PairedRoster) {
 			return empty, optimization.ErrConflict
 		}
 		return clone(previous)
 	}
-	tasks := validationTasks(owner.Spec)
-	if len(tasks) == 0 || len(request.PairedRoster) < 1 || len(request.PairedRoster) > 2 {
-		return empty, optimization.ErrInvalidSpec
-	}
-	if len(request.PairedRoster) == 1 && request.PairedRoster[0].ExperimentID != owner.ID {
-		return empty, optimization.ErrInvalidSpec
-	}
-	seen := make(map[string]bool)
 	for _, arm := range request.PairedRoster {
-		if seen[arm.ExperimentID.String()] || (len(request.PairedRoster) == 2 && arm.ExperimentID == owner.ID) {
-			return empty, optimization.ErrInvalidSpec
-		}
-		seen[arm.ExperimentID.String()] = true
-		child, found := tx.data.Experiments[arm.ExperimentID.String()]
-		if !found {
-			return empty, optimization.ErrNotFound
-		}
-		if child.Spec.AgentID != owner.Spec.AgentID || !same(validationTasks(child.Spec), tasks) || child.Spec.Controller != arm.Controller || child.Spec.Baseline != arm.Baseline {
-			return empty, optimization.ErrPolicyDenied
-		}
-		if child.Spec.Evaluation != owner.Spec.Evaluation || !same(child.Spec.Objective, owner.Spec.Objective) || child.Spec.Limits.Repetitions != owner.Spec.Limits.Repetitions {
-			return empty, optimization.ErrPolicyDenied
-		}
+		child := tx.data.Experiments[arm.ExperimentID.String()]
 		if child.State != optimization.StateRunning || child.Phase != optimization.PhaseValidate {
 			return empty, optimization.ErrConflict
-		}
-		if !tx.executionVersion(arm.Finalist, owner.Spec.AgentID) {
-			return empty, optimization.ErrStaleVersion
-		}
-		if arm.Finalist != child.Spec.Baseline {
-			owned := false
-			for _, candidate := range tx.data.Candidates {
-				if candidate.ExperimentID == child.ID && candidate.Accepted && candidate.Version == arm.Finalist {
-					owned = true
-					break
-				}
-			}
-			if !owned {
-				return empty, optimization.ErrNotFound
-			}
 		}
 	}
 	allocation := optimization.ValidationAllocation{CreatedAt: tx.now, ID: request.ID, Scope: owner.Spec.Scope, AgentID: owner.Spec.AgentID, ExperimentID: owner.ID, PairedRoster: request.PairedRoster, Revision: 1, CaseDigests: []string{}, InputDigests: []string{}, DatasetItems: []optimization.ContentRef{}}
@@ -149,6 +121,9 @@ func (tx *transaction) updateValidation(access optimization.ValidationAccess, re
 	}
 	if !tx.validLease(experiment, access.Lease) || experiment.Phase != optimization.PhaseValidate {
 		return optimization.ErrConflict
+	}
+	if rosterErr := tx.checkValidationRoster(allocation); rosterErr != nil {
+		return rosterErr
 	}
 	if release {
 		if experiment.ID != allocation.ExperimentID {

@@ -90,6 +90,12 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return optimization.ErrConflict
 		}
 		allowed = nextPhase(experiment.Phase, change.NextPhase)
+		if experiment.Spec.Improvement != nil {
+			allowed = experiment.Phase == optimization.PhaseBaseline && change.NextPhase == optimization.PhaseValidate || experiment.Phase == optimization.PhaseValidate && change.NextPhase == optimization.PhaseDecide || experiment.Phase == optimization.PhaseDecide && change.NextPhase == optimization.PhaseReflect
+			if len(change.Trials)+len(change.TrialUpdates)+len(change.Candidates)+len(change.Versions)+len(change.Evaluations) > 0 {
+				return optimization.ErrPolicyDenied
+			}
+		}
 		if experiment.Spec.Mode == optimization.ModeTaskLocal {
 			allowed = allowed && change.NextPhase != optimization.PhaseValidate || experiment.Phase == optimization.PhaseProbe && change.NextPhase == optimization.PhaseDecide
 		}

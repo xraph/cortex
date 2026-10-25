@@ -113,6 +113,13 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 		return Transition{NextState: StateRunning, NextPhase: PhasePropose}, nil
 	}
 	if item.Experiment.Phase == PhaseValidate {
+		allocation, allocationErr := h.allocation(ctx, item, trials)
+		if allocationErr != nil {
+			return Transition{}, allocationErr
+		}
+		if readinessErr := h.pairedValidationReady(ctx, item.Experiment, allocation); readinessErr != nil {
+			return Transition{}, readinessErr
+		}
 		return Transition{NextState: StateRunning, NextPhase: PhaseDecide}, nil
 	}
 	return h.afterProbe(ctx, item.Experiment)

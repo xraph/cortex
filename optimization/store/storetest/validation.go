@@ -101,22 +101,9 @@ func validation(t *testing.T, factory Factory) {
 		}
 	})
 	t.Run("ValidationPairedRoster", func(t *testing.T) {
-		s := factory(t, time.Now)
-		parent := Fixture(t, "paired-holdout")
-		ctx := scoped(parent.Experiment.Spec.Scope)
-		parentLease := validationExperiment(ctx, t, s, parent)
-		arms := make([]optimization.ValidationArm, 0, 2)
-		leases := make([]optimization.WorkLease, 0, 2)
-		for range 2 {
-			child := parent
-			child.Experiment.ID = id.New(optimization.PrefixExperiment)
-			child.Versions = nil
-			lease := validationExperiment(ctx, t, s, child)
-			arms = append(arms, allocationRequest(child, lease).PairedRoster[0])
-			leases = append(leases, lease)
-		}
-		request := allocationRequest(parent, parentLease)
-		request.PairedRoster = arms
+		f := frozenValidationFamily(t, factory, 1)
+		s, ctx, parent, request := f.s, f.ctx, f.parent, f.request
+		arms, leases := request.PairedRoster, f.leases[1:]
 		allocation := allocate(ctx, t, s, request)
 		for index, arm := range arms {
 			access := optimization.ValidationAccess{AllocationID: allocation.ID, ExperimentID: arm.ExperimentID, Lease: leases[index]}
@@ -125,6 +112,7 @@ func validation(t *testing.T, factory Factory) {
 			}
 		}
 		outsider := parent
+		outsider.Experiment.Spec.Improvement = nil
 		outsider.Experiment.ID = id.New(optimization.PrefixExperiment)
 		outsider.Versions = nil
 		outsiderLease := validationExperiment(ctx, t, s, outsider)
@@ -220,23 +208,11 @@ func validation(t *testing.T, factory Factory) {
 	})
 	t.Run("ValidationPairedEvaluationMustMatch", func(t *testing.T) {
 		s := factory(t, time.Now)
-		parent := Fixture(t, "paired-evaluation")
-		ctx := scoped(parent.Experiment.Spec.Scope)
-		parentLease := validationExperiment(ctx, t, s, parent)
-		request := allocationRequest(parent, parentLease)
-		request.PairedRoster = make([]optimization.ValidationArm, 0, 2)
-		for index := range 2 {
-			child := parent
-			child.Experiment.ID = id.New(optimization.PrefixExperiment)
-			child.Versions = nil
-			if index == 1 {
-				child.Experiment.Spec.Evaluation.Revision = "different-scorer"
-				child.Experiment.EvaluationPlan = fixtureEvaluationPlan(child.Experiment.Spec)
-			}
-			lease := validationExperiment(ctx, t, s, child)
-			request.PairedRoster = append(request.PairedRoster, allocationRequest(child, lease).PairedRoster[0])
-		}
-		if err := s.Transact(ctx, func(tx store.Tx) error { _, err := tx.AllocateValidation(request); return err }); !errors.Is(err, optimization.ErrPolicyDenied) {
+		parent, _ := improvementFixture(t)
+		child := &parent.Experiment.Spec.Improvement.Children[1]
+		child.Spec.Evaluation.Revision = "different-scorer"
+		child.EvaluationPlan = fixtureEvaluationPlan(child.Spec)
+		if err := s.Transact(scoped(parent.Experiment.Spec.Scope), func(tx store.Tx) error { return tx.CreateExperiment(parent) }); !errors.Is(err, optimization.ErrInvalidSpec) {
 			t.Fatalf("paired arms used different evaluation bindings: %v", err)
 		}
 	})

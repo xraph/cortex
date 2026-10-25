@@ -266,6 +266,21 @@ func Preflight(spec ExperimentSpec) (TrialPlan, error) {
 		return plan, err
 	}
 	plan.TotalTrials = plan.ValidationTrials + plan.DiscoveryTrials
+	if spec.Improvement != nil {
+		plan.DiscoveryTrials, plan.ValidationTrials, plan.TotalTrials = 0, 0, 0
+		for _, child := range spec.Improvement.Children {
+			childPlan, childErr := Preflight(child.Spec)
+			if childErr != nil {
+				return TrialPlan{}, childErr
+			}
+			if childPlan.TotalTrials > spec.Limits.MaxTrials-plan.TotalTrials {
+				return TrialPlan{}, ErrBudgetExceeded
+			}
+			plan.DiscoveryTrials += childPlan.DiscoveryTrials
+			plan.ValidationTrials += childPlan.ValidationTrials
+			plan.TotalTrials += childPlan.TotalTrials
+		}
+	}
 	return plan, nil
 }
 

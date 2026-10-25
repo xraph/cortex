@@ -182,12 +182,18 @@ func (tx *transaction) validateTrialAllocation(experiment optimization.Experimen
 	if !exists {
 		return optimization.ErrIncompleteEvidence
 	}
+	if rosterErr := tx.checkValidationRoster(allocation); rosterErr != nil {
+		return rosterErr
+	}
 	if allocation.AgentID != experiment.Spec.AgentID || !allocation.ReleasedAt.IsZero() || !slices.Contains(allocation.CaseDigests, trial.CaseDigest) {
 		return optimization.ErrPolicyDenied
 	}
 	for _, arm := range allocation.PairedRoster {
 		if arm.ExperimentID != experiment.ID {
 			continue
+		}
+		if arm.CaseDigests != nil && !slices.Contains(arm.CaseDigests, trial.CaseDigest) {
+			return optimization.ErrPolicyDenied
 		}
 		if arm.Controller != experiment.Spec.Controller || arm.Baseline != experiment.Spec.Baseline || (trial.Version != arm.Baseline && trial.Version != arm.Finalist) {
 			return optimization.ErrPolicyDenied

@@ -219,6 +219,7 @@ type ValidationAllocation struct {
 
 // ValidationArm pins the only child allowed to use an arm of a paired allocation.
 type ValidationArm struct {
+	CaseDigests  []string   `json:"case_digests,omitempty"`
 	Controller   VersionRef `json:"controller"`
 	ExperimentID id.ID      `json:"experiment_id"`
 	Baseline     VersionRef `json:"baseline"`

@@ -2,7 +2,6 @@ package state
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
@@ -14,6 +13,15 @@ func (tx *transaction) validatePhaseEvidence(experiment optimization.Experiment,
 	}
 	switch experiment.Phase {
 	case optimization.PhaseBaseline:
+		if experiment.Spec.Improvement != nil {
+			for _, child := range experiment.Spec.Improvement.Children {
+				current, exists := tx.data.Experiments[child.ExperimentID.String()]
+				if !exists || current.State != optimization.StateRunning || current.Phase != optimization.PhaseValidate {
+					return optimization.ErrIncompleteEvidence
+				}
+			}
+			return nil
+		}
 		return tx.requireVersionTrials(experiment, experiment.Spec.Baseline, optimization.SplitDiscovery, id.ID{}, trials)
 	case optimization.PhasePropose, optimization.PhaseCompose:
 		if len(candidates.candidates) == 0 {
@@ -44,6 +52,9 @@ func (tx *transaction) validatePhaseEvidence(experiment optimization.Experiment,
 			if !member {
 				continue
 			}
+			if rosterErr := tx.checkValidationRoster(allocation); rosterErr != nil {
+				return rosterErr
+			}
 			for _, arm := range allocation.PairedRoster {
 				child, exists := tx.data.Experiments[arm.ExperimentID.String()]
 				if !exists {
@@ -70,7 +81,7 @@ func (tx *transaction) requireVersionTrials(experiment optimization.Experiment, 
 	}
 	ready := make(map[caseRepetition]bool)
 	tx.anyTrial(pending, func(trial optimization.Trial) bool {
-		if trial.ExperimentID == experiment.ID && trial.Version == version && trial.Split == split && trial.AllocationID == allocation && trialReady(trial) {
+		if trial.ExperimentID == experiment.ID && trial.Version == version && trial.Split == split && trial.AllocationID == allocation && optimization.TrialEvidenceReady(trial) {
 			ready[caseRepetition{trial.CaseDigest, trial.Repetition}] = true
 		}
 		return false
@@ -91,18 +102,4 @@ func (tx *transaction) requireVersionTrials(experiment optimization.Experiment, 
 		return optimization.ErrIncompleteEvidence
 	}
 	return nil
-}
-
-func trialReady(trial optimization.Trial) bool {
-	switch trial.State {
-	case optimization.TrialCompleted:
-		return trial.Execution != nil && trial.EvaluationID != ""
-	case optimization.TrialFailed, optimization.TrialCancelled, optimization.TrialBlocked:
-		if trial.Execution != nil {
-			return trial.EvaluationID != ""
-		}
-		return strings.TrimSpace(trial.Error) != ""
-	default:
-		return false
-	}
 }

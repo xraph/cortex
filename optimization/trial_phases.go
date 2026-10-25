@@ -63,7 +63,10 @@ func (h *TrialPhaseHandler) schedule(ctx context.Context, item WorkItem, trials 
 		if err != nil {
 			return change, err
 		}
-		arm := allocation.PairedRoster[0]
+		arm, armErr := assignedValidationArm(item.Experiment, allocation)
+		if armErr != nil {
+			return change, armErr
+		}
 		change.Trials = scheduleTrials(item.Experiment, trials, arm.Baseline, id.ID{}, allocation.ID, SplitValidation)
 		if arm.Finalist != arm.Baseline {
 			candidates, getErr := h.candidates(ctx, item.Experiment)
@@ -122,10 +125,13 @@ func (h *TrialPhaseHandler) allocation(ctx context.Context, item WorkItem, trial
 	var allocation ValidationAllocation
 	if len(page.Items) == 1 {
 		allocation = page.Items[0]
-		if len(allocation.PairedRoster) != 1 || allocation.PairedRoster[0].ExperimentID != item.Experiment.ID || !allocation.ReleasedAt.IsZero() {
-			return allocation, ErrUnavailable
+		if _, armErr := assignedValidationArm(item.Experiment, allocation); armErr != nil {
+			return allocation, armErr
 		}
 	} else {
+		if item.Experiment.Spec.Parent != nil {
+			return allocation, ErrConflict
+		}
 		finalist, selectErr := h.finalist(ctx, item.Experiment, trials)
 		if selectErr != nil {
 			return allocation, selectErr
@@ -221,11 +227,17 @@ func (h *TrialPhaseHandler) decide(ctx context.Context, item WorkItem, trials []
 	if err != nil {
 		return Transition{}, err
 	}
-	if len(page.Items) != 1 || page.NextCursor != "" || len(page.Items[0].PairedRoster) != 1 {
+	if len(page.Items) != 1 || page.NextCursor != "" {
 		return Transition{}, ErrIncompleteEvidence
 	}
 	allocation := page.Items[0]
-	arm := allocation.PairedRoster[0]
+	arm, armErr := assignedValidationArm(e, allocation)
+	if armErr != nil {
+		return Transition{}, armErr
+	}
+	if readinessErr := h.pairedValidationReady(ctx, e, allocation); readinessErr != nil {
+		return Transition{}, readinessErr
+	}
 	base, err := h.config.Repository.GetVersion(ctx, e.Spec.Baseline.ID)
 	if err != nil {
 		return Transition{}, err
