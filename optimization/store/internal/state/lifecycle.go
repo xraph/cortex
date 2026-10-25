@@ -153,10 +153,24 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	}
 	experiment.Revision++
 	experiment.UpdatedAt = tx.now
+	if change.NextState == optimization.StateQueued && experiment.Spec.Parent != nil {
+		if _, err := tx.liveParent(experiment); err != nil {
+			return err
+		}
+	}
 	if change.NextState == optimization.StateQueued && previousState == optimization.StateDraft {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
 		if experiment.Spec.Task != nil && experiment.Spec.Task.Deadline.Before(experiment.Deadline) {
 			experiment.Deadline = experiment.Spec.Task.Deadline
+		}
+		if experiment.Spec.Parent != nil {
+			parent, parentErr := tx.liveParent(experiment)
+			if parentErr != nil {
+				return parentErr
+			}
+			if parent.Deadline.Before(experiment.Deadline) {
+				experiment.Deadline = parent.Deadline
+			}
 		}
 		if !tx.now.Before(experiment.Deadline) {
 			return optimization.ErrBudgetExceeded

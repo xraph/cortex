@@ -128,9 +128,8 @@ func (tx *transaction) startAttempt(experiment optimization.Experiment, trial *o
 	if active >= experiment.Spec.Limits.Concurrency {
 		return optimization.ErrConflict
 	}
-	tokens, money := debits(tx.data.Reservations[experiment.ID.String()])
-	if tokens > experiment.Spec.Budget.MaxTokens || (!experiment.Spec.Budget.TokenOnly && money > experiment.Spec.Budget.MaxUSDMicros) {
-		return optimization.ErrBudgetExceeded
+	if budgetErr := tx.checkFamilyBudget(experiment, 0, 0); budgetErr != nil {
+		return budgetErr
 	}
 	attempt := optimization.Attempt{ID: update.StartAttemptID, State: optimization.TrialRunning, Revision: 1, Fence: optimization.Fence{Owner: lease.Owner, Generation: lease.Generation}, StartedAt: tx.now}
 	if len(trial.Attempts) == 0 {

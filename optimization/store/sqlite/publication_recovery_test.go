@@ -26,3 +26,5 @@ func testRecovery(t *testing.T, verify func(*testing.T, func(*testing.T, func() 
 	path := filepath.Join(t.TempDir(), "publication.db")
 	verify(t, func(t *testing.T, now func() time.Time) store.Store { return openTestStore(t, path, now) })
 }
+
+func TestImprovementRecovery(t *testing.T) { testRecovery(t, storetest.ImprovementRecovery) }

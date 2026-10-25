@@ -32,7 +32,11 @@ func (tx *transaction) ClaimWork(request optimization.ClaimRequest) (optimizatio
 	if experiment.Deadline.IsZero() || !tx.now.Before(experiment.Deadline) {
 		return empty, optimization.ErrBudgetExceeded
 	}
-	if experiment.State == optimization.StateRunning && tx.now.Before(experiment.Lease.ExpiresAt) {
+	parent, err := tx.liveParent(experiment)
+	if err != nil {
+		return empty, err
+	}
+	if experiment.State == optimization.StateRunning && tx.validLease(experiment, experiment.Lease) {
 		if experiment.Lease.Owner != request.Owner {
 			return empty, optimization.ErrConflict
 		}
@@ -45,7 +49,7 @@ func (tx *transaction) ClaimWork(request optimization.ClaimRequest) (optimizatio
 	if expires.After(experiment.Deadline) {
 		expires = experiment.Deadline
 	}
-	lease := optimization.WorkLease{ExperimentID: experiment.ID, Owner: request.Owner, Generation: experiment.Lease.Generation + 1, ExpiresAt: expires}
+	lease := optimization.WorkLease{ExperimentID: experiment.ID, Owner: request.Owner, Generation: experiment.Lease.Generation + 1, ExpiresAt: expires, ParentGeneration: parent.Lease.Generation}
 	if experiment.State == optimization.StateQueued && experiment.Phase == "" {
 		experiment.Phase = optimization.PhaseBaseline
 	}
@@ -83,5 +87,9 @@ func (tx *transaction) RenewLease(lease optimization.WorkLease) error {
 }
 
 func (tx *transaction) validLease(experiment optimization.Experiment, lease optimization.WorkLease) bool {
+	parent, err := tx.liveParent(experiment)
+	if err != nil || lease.ParentGeneration != parent.Lease.Generation || experiment.Lease.ParentGeneration != lease.ParentGeneration {
+		return false
+	}
 	return experiment.State == optimization.StateRunning && lease.ExperimentID == experiment.ID && lease.Owner != "" && lease.Owner == experiment.Lease.Owner && lease.Generation == experiment.Lease.Generation && lease.Generation > 0 && tx.now.Before(experiment.Lease.ExpiresAt) && tx.now.Before(experiment.Deadline)
 }

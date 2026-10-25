@@ -71,10 +71,11 @@ type Experiment struct {
 
 // WorkLease fences persisted writes from replaced workers.
 type WorkLease struct {
-	ExperimentID id.ID     `json:"experiment_id"`
-	Owner        string    `json:"owner"`
-	Generation   int64     `json:"generation"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ParentGeneration int64     `json:"parent_generation,omitempty"`
+	ExperimentID     id.ID     `json:"experiment_id"`
+	Owner            string    `json:"owner"`
+	Generation       int64     `json:"generation"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 // CandidateOrigin distinguishes proposed instructions from executed composition.

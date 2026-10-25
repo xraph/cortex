@@ -132,6 +132,7 @@ type TrialUpdate struct {
 
 // ExperimentBundle atomically creates a draft and its frozen version content.
 type ExperimentBundle struct {
+	ParentLease     *WorkLease       `json:"parent_lease,omitempty"`
 	ExpectedLessons []LessonRef      `json:"expected_lessons,omitempty"`
 	Experiment      Experiment       `json:"experiment"`
 	Versions        []HarnessVersion `json:"versions"`

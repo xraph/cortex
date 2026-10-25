@@ -121,20 +121,22 @@ func DefaultObjective() Objective {
 // ExperimentSpec is frozen before work begins. Host authorization must still
 // validate its requested limits and references before persistence or dispatch.
 type ExperimentSpec struct {
-	Task          *TaskPolicy  `json:"task,omitempty"`
-	SchemaVersion int          `json:"schema_version"`
-	Scope         cortex.Scope `json:"scope"`
-	AgentID       id.AgentID   `json:"agent_id"`
-	Baseline      VersionRef   `json:"baseline"`
-	Controller    VersionRef   `json:"controller"`
-	Mode          Mode         `json:"mode"`
-	Tasks         []TaskCase   `json:"tasks"`
-	Evaluation    ContentRef   `json:"evaluation"`
-	Objective     Objective    `json:"objective"`
-	Limits        Limits       `json:"limits"`
-	Budget        Budget       `json:"budget"`
-	LessonCutoff  time.Time    `json:"lesson_cutoff"`
-	Requester     IdentityRef  `json:"requester"`
+	Improvement   *ImprovementPlan  `json:"improvement,omitempty"`
+	Parent        *ParentExperiment `json:"parent,omitempty"`
+	Task          *TaskPolicy       `json:"task,omitempty"`
+	SchemaVersion int               `json:"schema_version"`
+	Scope         cortex.Scope      `json:"scope"`
+	AgentID       id.AgentID        `json:"agent_id"`
+	Baseline      VersionRef        `json:"baseline"`
+	Controller    VersionRef        `json:"controller"`
+	Mode          Mode              `json:"mode"`
+	Tasks         []TaskCase        `json:"tasks"`
+	Evaluation    ContentRef        `json:"evaluation"`
+	Objective     Objective         `json:"objective"`
+	Limits        Limits            `json:"limits"`
+	Budget        Budget            `json:"budget"`
+	LessonCutoff  time.Time         `json:"lesson_cutoff"`
+	Requester     IdentityRef       `json:"requester"`
 }
 
 // TrialPlan reserves final validation capacity before discovery is scheduled.
@@ -338,5 +340,8 @@ func validateSpecFields(spec ExperimentSpec) error {
 	if err := uniqueNames(o.ProtectedCriteria); err != nil {
 		return err
 	}
-	return uniqueNames(o.RequiredCriteria)
+	if err := uniqueNames(o.RequiredCriteria); err != nil {
+		return err
+	}
+	return validateImprovement(spec)
 }

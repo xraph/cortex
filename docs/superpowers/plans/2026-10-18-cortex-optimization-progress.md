@@ -1199,3 +1199,41 @@ PostgreSQL 82.116s and MongoDB 101.707s. Full Sentinel races pass in 233.560s.
 Extension and Fabriq races, Docker-backed integration tests, module builds, scoped
 formatting and final all-module lint pass. Product capability wiring and Tasks
 14-21 remain open.
+
+## Controller comparison family foundation
+
+Task 14 now has a frozen two-arm roster with complete child templates. Child
+creation requires a live parent lease and an exact match for the stored template,
+controller, evaluation plan and initial lessons. Parent creation rejects existing
+child IDs, changed arm positions, incompatible accounting and nested comparisons.
+The roster survives database reopen, so recovery does not reconstruct child
+assignments from current controller output.
+
+Every reservation checks both the child's ceiling and the parent's aggregate
+ceiling in the same transaction. Aggregate spend comes from the original parent
+and child reservations, including all operation classes and conservative unknown
+usage. A recovered receipt changes that original debit. A late overrun blocks a
+sibling's held dispatch, and one receipt cannot settle calls in both arms.
+
+Child leases record the parent's generation. Parent pause, cancellation, expiry
+or takeover stops child execution writes, while a replacement worker can claim a fresh
+child generation and reconcile existing dispatch markers. Child deadlines cannot
+outlive the parent. Metered operations recheck caller and original requester
+grants against both experiment resources.
+
+This is the storage and accounting foundation. The comparison scheduler,
+arm-isolated lesson advancement, parent-owned validation across the full task
+stream and controller adoption remain open. Ordinary trial and controller phase
+handlers refuse comparison parents until that scheduler is available. Initial
+child lessons must currently match the parent's frozen lesson IDs.
+
+The full optimization race suite passed: memory 138.773s, SQLite 433.448s,
+PostgreSQL 334.206s and MongoDB 460.235s. The full Sentinel race suite passed in
+219.076s, with extension and Fabriq races and Docker-backed integration tests
+also passing. Final review then reproduced two accounting gaps: a saturated
+aggregate could admit a held call at the maximum integer ceiling, and trial
+attempt creation checked only its own experiment's budget. Both now use the
+same subtraction-based family budget check. After those fixes, the affected
+accounting, attempt and recovery race tests passed on all four stores, along
+with core races, Sentinel judge/cost tests, module build, scoped formatting and
+all-module lint. Persistent recovery tests reopen all three database backends.

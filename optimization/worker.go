@@ -88,10 +88,18 @@ func (o *Optimizer) WorkOnce(ctx context.Context, experimentID id.ID) error {
 	if err != nil {
 		return err
 	}
-	if prior.State == StateRunning && time.Now().UTC().Before(prior.Lease.ExpiresAt) && prior.Lease.Owner != o.owner {
+	parentChanged := false
+	if prior.Spec.Parent != nil {
+		parent, parentErr := o.config.Repository.GetExperiment(resolved, prior.Spec.Parent.ExperimentID)
+		if parentErr != nil {
+			return parentErr
+		}
+		parentChanged = parent.Lease.Generation != prior.Lease.ParentGeneration
+	}
+	if !parentChanged && prior.State == StateRunning && time.Now().UTC().Before(prior.Lease.ExpiresAt) && prior.Lease.Owner != o.owner {
 		return ErrConflict
 	}
-	if prior.State == StateRunning && (prior.Lease.Owner != o.owner || !time.Now().UTC().Before(prior.Lease.ExpiresAt)) || prior.State == StateQueued && prior.Lease.Generation > 0 {
+	if parentChanged || prior.State == StateRunning && (prior.Lease.Owner != o.owner || !time.Now().UTC().Before(prior.Lease.ExpiresAt)) || prior.State == StateQueued && prior.Lease.Generation > 0 {
 		if recoveryErr := o.reconcileUsage(ctx, prior); recoveryErr != nil {
 			return recoveryErr
 		}

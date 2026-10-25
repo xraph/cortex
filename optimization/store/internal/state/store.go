@@ -269,10 +269,13 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if err != nil {
 		return err
 	}
+	if familyErr := tx.validateFamily(bundle); familyErr != nil {
+		return familyErr
+	}
 	if e.State != "" && e.State != optimization.StateDraft {
 		return optimization.ErrInvalidSpec
 	}
-	if !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
+	if !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.ParentGeneration != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
 	if len(e.FrozenLessons) != 0 {
@@ -289,12 +292,19 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if err != nil {
 		return err
 	}
-	for _, required := range []struct {
+	requiredVersions := []struct {
 		ref  optimization.VersionRef
 		kind optimization.HarnessKind
 	}{
 		{e.Spec.Baseline, optimization.HarnessExecution}, {e.Spec.Controller, optimization.HarnessImprovement},
-	} {
+	}
+	if e.Spec.Improvement != nil {
+		requiredVersions = append(requiredVersions, struct {
+			ref  optimization.VersionRef
+			kind optimization.HarnessKind
+		}{e.Spec.Improvement.Controllers[1], optimization.HarnessImprovement})
+	}
+	for _, required := range requiredVersions {
 		version, exists := versions[required.ref.ID.String()]
 		if !exists {
 			version, exists = tx.data.Versions[required.ref.ID.String()]

@@ -27,6 +27,9 @@ func NewControllerPhaseHandler(repo Repository, models *ControllerFactory, trial
 
 // Execute returns a transition whose resources the worker commits atomically.
 func (h *ControllerPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transition, error) {
+	if item.Experiment.Spec.Improvement != nil {
+		return Transition{}, ErrUnavailable
+	}
 	phase := item.Experiment.Phase
 	if phase != PhasePropose && phase != PhaseCompose && phase != PhaseReflect {
 		if h.trials == nil {

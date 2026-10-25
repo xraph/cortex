@@ -65,6 +65,9 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 	if current.State != StateRunning || current.Revision != item.Experiment.Revision || current.Phase != item.Experiment.Phase || current.Lease.Owner != item.Lease.Owner || current.Lease.Generation != item.Lease.Generation || item.Lease.ExperimentID != current.ID || !time.Now().Before(current.Lease.ExpiresAt) || !time.Now().Before(current.Deadline) {
 		return Transition{}, ErrConflict
 	}
+	if current.Spec.Improvement != nil {
+		return Transition{}, ErrUnavailable
+	}
 	item.Experiment = current
 	if current.Spec.Mode == ModeTaskLocal {
 		if qualificationErr := verifyTaskPlan(ctx, h.config.Evaluator, current); qualificationErr != nil {

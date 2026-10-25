@@ -3,7 +3,6 @@ package state
 import (
 	"bytes"
 	"context"
-	"math"
 	"time"
 
 	"github.com/xraph/cortex/id"
@@ -54,10 +53,8 @@ func (tx *transaction) Reserve(request optimization.UsageReservation) (optimizat
 		}
 		return clone(previous)
 	}
-	tokens, money := debits(entries)
-	budget := experiment.Spec.Budget
-	if tokens > budget.MaxTokens || request.MaxTokens > budget.MaxTokens-tokens || (!budget.TokenOnly && (money > budget.MaxUSDMicros || request.MaxUSDMicros > budget.MaxUSDMicros-money)) {
-		return empty, optimization.ErrBudgetExceeded
+	if budgetErr := tx.checkFamilyBudget(experiment, request.MaxTokens, request.MaxUSDMicros); budgetErr != nil {
+		return empty, budgetErr
 	}
 	value := optimization.Reservation{Request: request, State: optimization.ReservationHeld, Revision: 1, History: []optimization.UsageSettlement{}, DebitedTokens: request.MaxTokens, DebitedUSDMicros: request.MaxUSDMicros, CreatedAt: tx.now}
 	detached, err := clone(value)
@@ -133,7 +130,7 @@ func (tx *transaction) Settle(settlement optimization.UsageSettlement) error {
 }
 
 func (tx *transaction) ReconcileUsage(recovery optimization.UsageReconciliation) error {
-	if !optimization.ValidOpaqueKey(recovery.Actor.Subject) || recovery.ExpectedRevision < 1 || !recovery.Settlement.Lease.ExperimentID.IsNil() || recovery.Settlement.Lease.Generation != 0 || recovery.Settlement.Lease.Owner != "" || !recovery.Settlement.Lease.ExpiresAt.IsZero() {
+	if !optimization.ValidOpaqueKey(recovery.Actor.Subject) || recovery.ExpectedRevision < 1 || !recovery.Settlement.Lease.ExperimentID.IsNil() || recovery.Settlement.Lease.Generation != 0 || recovery.Settlement.Lease.ParentGeneration != 0 || recovery.Settlement.Lease.Owner != "" || !recovery.Settlement.Lease.ExpiresAt.IsZero() {
 		return optimization.ErrInvalidSpec
 	}
 	return tx.settleUsage(recovery.Settlement, &recovery)
@@ -182,7 +179,7 @@ func (tx *transaction) settleUsage(settlement optimization.UsageSettlement, reco
 		return optimization.ErrInvalidSpec
 	}
 	receipts := tx.data.Receipts[key]
-	if callKey, found := receipts[settlement.Receipt]; found && callKey != settlement.CallKey {
+	if tx.familyReceiptConflict(experiment, settlement.Receipt, settlement.CallKey) {
 		return optimization.ErrConflict
 	}
 	for _, prior := range reserved.History {
@@ -270,21 +267,6 @@ func (tx *transaction) appendUsageEvent(experiment optimization.Experiment, even
 	event.Resources = append(event.Resources, value.Request.AttemptID)
 	event.Payload = encoded
 	return nil
-}
-
-func debits(entries map[string]optimization.Reservation) (tokens, money int64) {
-	for _, value := range entries {
-		tokens = addDebit(tokens, value.DebitedTokens)
-		money = addDebit(money, value.DebitedUSDMicros)
-	}
-	return tokens, money
-}
-
-func addDebit(a, b int64) int64 {
-	if a > math.MaxInt64-b {
-		return math.MaxInt64
-	}
-	return a + b
 }
 
 func same(a, b any) bool {

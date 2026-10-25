@@ -283,3 +283,16 @@ engine from `RunActive` is rejected during optimizer construction.
 These are point-in-time checks and make no model or tool calls. Your host still
 owns current grants, policy, remote provider routing and external knowledge
 revisions. It must return incompatible when it cannot establish those bindings.
+
+### Controller comparison storage
+
+You can persist an `ImprovementPlan` with two pinned controller versions and
+ordered pairs of complete child templates. A child's `ParentExperiment` binds
+its arm and sequence. Creation requires the current parent lease, and both
+controller arms consume the parent's aggregate token and money budget. Late
+receipts update the original reservations, including after cancellation.
+
+This API currently provides storage and accounting only. The comparison
+scheduler, isolated lesson advancement, validation feedback barrier across the
+whole stream and controller adoption are still pending. Ordinary phase handlers
+return `ErrUnavailable` for comparison parents.

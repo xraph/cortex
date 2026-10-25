@@ -117,9 +117,24 @@ func (m *LedgerMeter) authorizeAction(ctx context.Context, experimentID id.ID, a
 	if experiment.ID != experimentID || experiment.Spec.Scope.Canonical() != key {
 		return nil, nil, ErrPolicyDenied
 	}
+	resources := []Resource{{Scope: copyScope(scope), AgentID: experiment.Spec.AgentID, ID: experimentID, Kind: "experiment"}}
+	if experiment.Spec.Parent != nil {
+		parent, readErr := m.repository.GetExperiment(copyScopeContext(ctx), experiment.Spec.Parent.ExperimentID)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		if parent.ID != experiment.Spec.Parent.ExperimentID || parent.Spec.Scope.Canonical() != key || parent.Spec.Requester != experiment.Spec.Requester || parent.Spec.Parent != nil || parent.Spec.Improvement == nil {
+			return nil, nil, ErrPolicyDenied
+		}
+		resources = append(resources, Resource{Scope: copyScope(scope), AgentID: parent.Spec.AgentID, ID: parent.ID, Kind: "experiment"})
+	}
 	authorize := func(current context.Context) error {
-		resource := Resource{Scope: copyScope(scope), AgentID: experiment.Spec.AgentID, ID: experimentID, Kind: "experiment"}
-		return m.authorizer.Authorize(copyScopeContext(current), action, resource)
+		for _, resource := range resources {
+			if authErr := m.authorizer.Authorize(copyScopeContext(current), action, resource); authErr != nil {
+				return authErr
+			}
+		}
+		return nil
 	}
 	if authorizeErr := authorize(ctx); authorizeErr != nil {
 		return nil, nil, authorizeErr

@@ -53,3 +53,5 @@ func testRecovery(t *testing.T, verify func(*testing.T, func(*testing.T, func() 
 		return s
 	})
 }
+
+func TestImprovementRecovery(t *testing.T) { testRecovery(t, storetest.ImprovementRecovery) }

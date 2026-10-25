@@ -23,9 +23,8 @@ func (tx *transaction) BeginUsageCall(request optimization.UsageReservation, dig
 	}
 	// A different call may have reported an overrun since this reservation was
 	// created. Existing reservations do not exempt dispatch from that stop.
-	tokens, money := debits(tx.data.Reservations[experiment.ID.String()])
-	if tokens > experiment.Spec.Budget.MaxTokens || !experiment.Spec.Budget.TokenOnly && money > experiment.Spec.Budget.MaxUSDMicros {
-		return empty, optimization.ErrBudgetExceeded
+	if budgetErr := tx.checkFamilyBudget(experiment, 0, 0); budgetErr != nil {
+		return empty, budgetErr
 	}
 	reserved, err := tx.Reserve(request)
 	if err != nil {

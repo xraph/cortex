@@ -111,6 +111,13 @@ func (o *Optimizer) creationBundle(ctx context.Context, bundle ExperimentBundle)
 	if authErr := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionCreate, resource); authErr != nil {
 		return nil, authErr
 	}
+	if copyBundle.Experiment.Spec.Parent != nil {
+		_, done, authErr := o.meter.authorizeAction(ctx, copyBundle.Experiment.Spec.Parent.ExperimentID, ActionCreate)
+		if authErr != nil {
+			return nil, authErr
+		}
+		done()
+	}
 	return copyBundle, nil
 }
 
