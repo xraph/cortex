@@ -285,22 +285,41 @@ func ConvertExecution(r opt.ExecutionRecord) (se.RecordedCase, error) {
 	case run.StateCancelled:
 		outcome = recorded.Cancelled
 	}
-	value := se.RecordedCase{InputDigest: r.InputDigest, Outcome: outcome, Output: r.Outcome.Output, Duration: r.Duration, SourceRunID: r.RunID.String(), Usage: evalrun.Usage{Tokens: r.Usage.Tokens, TokensQuality: evalrun.Quality(r.Usage.TokenQuality), Cost: float64(r.Usage.USDMicros) / 1e6, CostQuality: evalrun.Quality(r.Usage.MoneyQuality)}}
+	value := se.RecordedCase{InputDigest: r.InputDigest, Outcome: outcome, Output: r.Outcome.Output, Duration: r.Duration, SourceRunID: r.ExecutionID().String(), Usage: evalrun.Usage{Tokens: r.Usage.Tokens, TokensQuality: evalrun.Quality(r.Usage.TokenQuality), Cost: float64(r.Usage.USDMicros) / 1e6, CostQuality: evalrun.Quality(r.Usage.MoneyQuality)}}
 	if r.Usage.MoneyQuality == opt.UsageKnown || r.Usage.MoneyQuality == opt.UsageEstimated {
 		value.Usage.Currency = "USD"
 	}
-	for _, ref := range r.Artifacts {
+	for _, ref := range opt.ExecutionArtifactRefs(r) {
 		digest, bindingErr := ref.BindingDigest()
 		if bindingErr != nil {
 			return se.RecordedCase{}, bindingErr
 		}
 		value.ArtifactRefs = append(value.ArtifactRefs, "artifact/"+digest)
 	}
-	for _, step := range r.StepIDs {
-		value.ArtifactRefs = append(value.ArtifactRefs, "cortex/step/"+step.String())
+	traces := []opt.ExecutionRecord{r}
+	if r.Orchestration != nil {
+		value.ArtifactRefs = append(value.ArtifactRefs, "cortex/orchestration/"+r.ExecutionID().String())
+		for _, child := range r.Orchestration.Children {
+			value.ArtifactRefs = append(value.ArtifactRefs, "cortex/reservation/"+child.Reservation.Request.ID.String())
+			if child.Reservation.Settlement != nil {
+				value.ArtifactRefs = append(value.ArtifactRefs, "cortex/settlement/"+child.Reservation.Settlement.Digest)
+			}
+			if child.Execution != nil {
+				traces = append(traces, *child.Execution)
+				value.ArtifactRefs = append(value.ArtifactRefs, "cortex/run/"+child.Execution.RunID.String())
+			}
+		}
+		if outcome == recorded.Completed && !opt.ExecutionCompleted(r) {
+			value.Outcome = recorded.Incomplete
+		}
 	}
-	for _, tool := range r.ToolCallIDs {
-		value.ArtifactRefs = append(value.ArtifactRefs, "cortex/tool-call/"+tool.String())
+	for _, trace := range traces {
+		for _, step := range trace.StepIDs {
+			value.ArtifactRefs = append(value.ArtifactRefs, "cortex/step/"+step.String())
+		}
+		for _, tool := range trace.ToolCallIDs {
+			value.ArtifactRefs = append(value.ArtifactRefs, "cortex/tool-call/"+tool.String())
+		}
 	}
 	return value, nil
 }
@@ -374,7 +393,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, r opt.EvaluationRequest) (opt.
 		return empty, fmt.Errorf("%w: evaluation job pending", opt.ErrUnknownAttempt)
 	}
 	entry := job.Results[0]
-	out := opt.Evaluation{ID: job.ID.String(), ReportID: job.RunID.String(), ExperimentID: r.ExperimentID, TrialID: r.TrialID, CaseID: r.CaseID, CaseDigest: r.CaseDigest, Repetition: r.Repetition, PlanDigest: p.Digest, ExecutionDigest: r.Execution.Digest, Scorers: plan.Scorers, StartedAt: job.CreatedAt, CompletedAt: job.UpdatedAt, Complete: r.Execution.State == run.StateCompleted && job.State == recorded.JobCompleted && entry.ExecutionError == "" && entry.ScoringError == ""}
+	out := opt.Evaluation{ID: job.ID.String(), ReportID: job.RunID.String(), ExperimentID: r.ExperimentID, TrialID: r.TrialID, CaseID: r.CaseID, CaseDigest: r.CaseDigest, Repetition: r.Repetition, PlanDigest: p.Digest, ExecutionDigest: r.Execution.Digest, Scorers: plan.Scorers, StartedAt: job.CreatedAt, CompletedAt: job.UpdatedAt, Complete: opt.ExecutionCompleted(r.Execution) && job.State == recorded.JobCompleted && entry.ExecutionError == "" && entry.ScoringError == ""}
 	values := map[string]evalrun.ScorerResult{}
 	for _, v := range entry.Result.ScorerResults {
 		if _, ok := values[v.CriterionID]; ok {

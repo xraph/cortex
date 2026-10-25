@@ -127,3 +127,10 @@ and commits the parent worker's decision without dispatching another judge.
 Its model and environment are fixtures. Live sandbox qualification, hosted model
 calls, destination artifact adoption, Fabriq publication and dashboard application
 flows require their own integration checks.
+
+Captured orchestration trials retain their original team ID and child run, step,
+tool, reservation and settlement references. Conversion and recorded evaluation
+do not execute the team. Missing child captures and partial execution remain
+incomplete evidence. Usage comes from original host-authenticated settlements;
+conservative reserved capacity cannot supply a measured cost or cost ratio.
+Token-only teams keep monetary usage unknown.

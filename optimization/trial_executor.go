@@ -3,10 +3,8 @@ package optimization
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
-	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization/internal/canonical"
 	"github.com/xraph/cortex/run"
@@ -277,8 +275,12 @@ func (h *TrialPhaseHandler) step(ctx context.Context, item WorkItem, trial Trial
 			return Transition{}, getErr
 		}
 		sealed, sealErr := SealVersion(version)
-		if sealErr != nil || sealed.Digest != trial.Version.Digest || sealed.Prepared == nil {
+		if sealErr != nil || sealed.Digest != trial.Version.Digest {
 			return Transition{}, ErrStaleVersion
+		}
+		execute, prepareErr := trialExecutionCall(environment, sealed, request, trial.CandidateID, item.Experiment.Spec.Budget.TokenOnly)
+		if prepareErr != nil {
+			return Transition{}, prepareErr
 		}
 		reservation := UsageReservation{ExperimentID: item.Experiment.ID, AttemptID: attempt.ID, CallKey: key, Operation: trialOperation(item.Experiment.Phase), Lease: item.Lease, ExpiresAt: deadline, MaxTokens: h.config.Allowance.MaxTokens, MaxUSDMicros: h.config.Allowance.MaxUSDMicros, PricingRevision: h.config.Allowance.PricingRevision}
 		encoded, encodeErr := canonical.Marshal(request)
@@ -288,16 +290,19 @@ func (h *TrialPhaseHandler) step(ctx context.Context, item WorkItem, trial Trial
 		if _, err = h.meter.BeginCall(ctx, reservation, digestBytes(encoded)); err != nil {
 			return Transition{}, err
 		}
-		sessionID, parseErr := id.ParseSessionID("ses_" + strings.SplitN(attempt.ID.String(), "_", 2)[1])
-		if parseErr != nil {
-			return Transition{}, parseErr
-		}
 		callCtx, cancel := context.WithDeadline(ctx, deadline)
-		record, err = environment.Execute(callCtx, sealed.Prepared, task.Input, engine.PreparedRunOptions{SessionID: sessionID, Purpose: run.PurposeOptimizationTrial, Provenance: run.ExecutionProvenance{ExperimentID: item.Experiment.ID.String(), TrialID: trial.ID.String(), CandidateID: trial.CandidateID.String(), EnvironmentReceiptID: attempt.Receipt.ID, HarnessID: sealed.HarnessID.String(), HarnessVersion: sealed.ID.String()}})
+		record, err = execute(callCtx)
 		cancel()
 		if err != nil || record == nil {
 			return Transition{}, errors.Join(ErrUnknownAttempt, err, h.stopAttempt(ctx, item, *attempt.Receipt))
 		}
+	}
+	capturedVersion, versionErr := h.config.Repository.GetVersion(ctx, trial.Version.ID)
+	if versionErr != nil {
+		return Transition{}, versionErr
+	}
+	if capturedVersion.Digest != trial.Version.Digest || ValidateExecutionVersion(*record, capturedVersion) != nil {
+		return Transition{}, errors.Join(ErrIncompleteEvidence, h.stopAttempt(ctx, item, *attempt.Receipt))
 	}
 	sealed, err := SealExecution(*record)
 	if err != nil || sealed.Digest != record.Digest || !equalControllerData(record.Environment, *attempt.Receipt) || record.InputDigest != task.InputDigest {

@@ -3,6 +3,7 @@ package state
 import (
 	"strings"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/run"
 )
@@ -225,7 +226,7 @@ func (tx *transaction) attachExecution(experiment optimization.Experiment, trial
 	if err != nil {
 		return err
 	}
-	for _, ref := range sealed.Artifacts {
+	for _, ref := range optimization.ExecutionArtifactRefs(sealed) {
 		if ref.ExperimentID != experiment.ID {
 			return optimization.ErrIncompleteEvidence
 		}
@@ -235,7 +236,7 @@ func (tx *transaction) attachExecution(experiment optimization.Experiment, trial
 		return optimization.ErrInvalidSpec
 	}
 	version := tx.data.Versions[trial.Version.ID.String()]
-	if sealed.Digest != record.Digest || record.InputDigest != task.InputDigest || version.Prepared == nil || record.PreparedDigest != version.Prepared.Digest() || !same(attempt.Receipt, &record.Environment) {
+	if sealed.Digest != record.Digest || record.InputDigest != task.InputDigest || optimization.ValidateExecutionVersion(record, version) != nil || !same(attempt.Receipt, &record.Environment) {
 		return optimization.ErrIncompleteEvidence
 	}
 	expected := optimization.TrialFailed
@@ -248,10 +249,18 @@ func (tx *transaction) attachExecution(experiment optimization.Experiment, trial
 	if state != expected {
 		return optimization.ErrIncompleteEvidence
 	}
+	identities := map[id.ID]bool{}
+	for _, key := range optimization.ExecutionRunIDs(record) {
+		identities[key] = true
+	}
 	if tx.anyTrial(pending, func(value optimization.Trial) bool {
 		for _, prior := range value.Attempts {
-			if prior.Execution != nil && prior.Execution.RunID == record.RunID {
-				return true
+			if prior.Execution != nil {
+				for _, key := range optimization.ExecutionRunIDs(*prior.Execution) {
+					if identities[key] {
+						return true
+					}
+				}
 			}
 		}
 		return false

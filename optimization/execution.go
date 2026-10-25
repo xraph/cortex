@@ -50,7 +50,11 @@ func (receipt StopReceipt) Validate() error {
 // It checks internal consistency, not whether referenced artifacts still exist.
 func SealExecution(record ExecutionRecord) (ExecutionRecord, error) {
 	var empty ExecutionRecord
-	if _, err := ParseID(record.RunID.String(), id.PrefixAgentRun); err != nil {
+	if record.Orchestration == nil {
+		if _, err := ParseID(record.RunID.String(), id.PrefixAgentRun); err != nil {
+			return empty, err
+		}
+	} else if err := validateOrchestrationCapture(record); err != nil {
 		return empty, err
 	}
 	if !validDigest(record.PreparedDigest) || !validDigest(record.InputDigest) || record.StartedAt.IsZero() || record.CompletedAt.Before(record.StartedAt) || record.Duration < 0 || record.Duration != record.CompletedAt.Sub(record.StartedAt) {

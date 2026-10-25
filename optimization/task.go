@@ -193,7 +193,7 @@ func (o *Optimizer) GetTaskResult(ctx context.Context, experimentID id.ID) (*Tas
 		if value.Trial.ID == decision.TaskSelection.TrialID {
 			result.Trial = value.Trial
 			result.Output = value.Trial.Execution.Outcome.Output
-			result.Artifacts = value.Trial.Execution.Artifacts
+			result.Artifacts = ExecutionArtifactRefs(*value.Trial.Execution)
 		}
 	}
 	_, recheck, err := o.meter.authorizeAction(ctx, experimentID, ActionRead)

@@ -394,7 +394,32 @@ Every candidate is rebuilt from the original approved preset. Sealing checks the
 declared overrides against that result, so a derived snapshot cannot carry
 undeclared tool, sampling, budget or scope changes. The policy catalog stays fixed.
 
-Isolated team trial execution and child trace conversion are still pending.
+`TrialPhaseHandler` dispatches teams through the optional
+`OrchestrationTrialEnvironment`. The adapter receives the selected frozen team,
+a stable orchestration ID for the attempt, the trial purpose and provenance,
+and a shared policy bounded by the approved preset. The configured trial token
+allowance must cover that preset. The runtime creates isolated child sessions;
+the host remains responsible for isolating the environment and external effects.
+Unsupported adapters and monetary team trials fail before a charged call begins.
+
+`CaptureOrchestration` reads a terminal team from the host's runtime store. It
+retains the original team ID, closed account, every reservation and available
+terminal child capture. Missing captures on a failed team remain explicit. The
+helper makes no execution or resume calls. Pass a store whose scope, isolation
+and usage-receipt authentication the host has already established.
+
+`OrchestrationChildUsage` and `OrchestrationUsage` read original settlements.
+Reserved capacity is never measured usage. Missing dimensions stay unknown;
+overflow saturates the aggregate and marks that dimension unknown while keeping
+the original receipts. Current token-only teams do not claim known monetary cost.
+Sentinel receives the original team output and child run, step, tool, reservation
+and settlement references. Partial execution cannot produce a complete evaluation.
+
+Recovery uses the same environment receipt and original captured team. It does
+not dispatch another team after a call has been recorded. Store writes bind the
+capture to the frozen version and reject reused parent or child run identities.
+Retention and task-result reads include child artifacts from prior attempts.
+
 `EngineCompatibility` and `RunActive` return `ErrUnavailable` for team versions
 until a dedicated production team path is available. Current preset validation
 supports token ceilings; monetary team ceilings and messaging tools require

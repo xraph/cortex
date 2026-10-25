@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/xraph/cortex => ../
 
 require (
-	github.com/xraph/cortex v1.8.1-0.20261025222601-4fb3e492683a
+	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/cortex/optimization v0.0.0-20261023143543-32be891b7757
 	github.com/xraph/grove v1.9.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.9.0

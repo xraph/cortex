@@ -102,18 +102,19 @@ type AttemptStatus struct {
 
 // ExecutionRecord captures the original run and accounting for later evaluation.
 type ExecutionRecord struct {
-	RunID          id.AgentRunID      `json:"run_id"`
-	StepIDs        []id.ID            `json:"step_ids"`
-	ToolCallIDs    []id.ID            `json:"tool_call_ids"`
-	PreparedDigest string             `json:"prepared_digest"`
-	InputDigest    string             `json:"input_digest"`
-	Outcome        run.Outcome        `json:"outcome"`
-	State          run.State          `json:"state"`
-	Usage          Usage              `json:"usage"`
-	StartedAt      time.Time          `json:"started_at"`
-	CompletedAt    time.Time          `json:"completed_at"`
-	Duration       time.Duration      `json:"duration"`
-	Environment    EnvironmentReceipt `json:"environment"`
-	Artifacts      []ArtifactRef      `json:"artifacts"`
-	Digest         string             `json:"digest"`
+	RunID          id.AgentRunID           `json:"run_id"`
+	Orchestration  *OrchestrationExecution `json:"orchestration,omitempty"`
+	StepIDs        []id.ID                 `json:"step_ids"`
+	ToolCallIDs    []id.ID                 `json:"tool_call_ids"`
+	PreparedDigest string                  `json:"prepared_digest"`
+	InputDigest    string                  `json:"input_digest"`
+	Outcome        run.Outcome             `json:"outcome"`
+	State          run.State               `json:"state"`
+	Usage          Usage                   `json:"usage"`
+	StartedAt      time.Time               `json:"started_at"`
+	CompletedAt    time.Time               `json:"completed_at"`
+	Duration       time.Duration           `json:"duration"`
+	Environment    EnvironmentReceipt      `json:"environment"`
+	Artifacts      []ArtifactRef           `json:"artifacts"`
+	Digest         string                  `json:"digest"`
 }

@@ -1693,3 +1693,67 @@ Metered judge, late-receipt and cost-provenance regressions pass in 1.611s.
 Forge extension races pass in 1.710s, Fabriq races in 10.486s (its optimization
 adapter in 1.143s), and Docker-backed integration tests in 12.638s. Final
 all-module `make l` passes with the runtime dispatch fix present.
+
+
+## Team trial capture and receipt provenance
+
+Task 15 now has explicit orchestration execution records. An optional team
+payload retains the original orchestration run, closed account and all original
+child reservations. Each available terminal child keeps its agent-run identity,
+prepared digest, outcome, timing and step/tool references. Agent wire fields stay
+unchanged when the optional team payload is absent.
+
+The trial handler checks host team support and token allowance before recording
+a charged call. It supplies the approved shared limits, frozen participant
+digests, trial provenance and a stable team ID derived from the attempt. The
+runtime owns child sessions. Unsupported adapters and monetary team trials are
+unavailable. Recovery reads the original capture after a lost response and does
+not replay the team. Transactional attachment checks the selected version and
+rejects reused team or child identities. Child artifacts join prior-attempt
+retention checks and task-result reads.
+
+`CaptureOrchestration` reads original runtime rows and receipts without executing
+anything. Receipt-derived accounting stays separate from conservative charges.
+Missing dimensions remain unknown. Aggregate overflow keeps the original receipts
+and a saturated lower bound, rather than claiming an exact total. Failed teams
+retain reservations even when a terminal child capture is unavailable.
+
+A real parallel strategy test keeps 200 reserved tokens distinct from unknown
+usage. Host-authenticated child receipts later establish 14 measured tokens.
+Sentinel conversion preserves the original team output and child evidence
+references; recorded evaluation reuses the same job on retry. Failed-team capture
+and a second SQLite connection preserve the original evidence without replay.
+
+Focused worker recovery, captured-identity and repetition checks pass memory
+(7.175s), SQLite (10.564s), PostgreSQL (10.417s) and MongoDB (13.118s). Three
+baseline repetitions execute three teams and six original children, including a
+lost response recovered without another dispatch. Focused core checks pass in
+19.479s. The full optimization and Sentinel race suites are running.
+
+The earlier full optimization run completed SQLite in 839.552s, after PostgreSQL
+passed in 804.078s. Its only failure was the MongoDB Docker-startup issue recorded
+above; the targeted retry passed. That run predates team capture and does not
+qualify the new changes. Task 15 remains incomplete until its broader gates and
+remaining production integration have been checked.
+
+The root requirement advances to published commit `d0eb82f`, including coordinator
+recovery and team compatibility support. Tests with the local root replacement
+removed pass optimizer team contracts (10.238s), worker recovery (5.339s) and
+Sentinel real parallel capture/evaluation/failure checks (5.080s). Both modules
+build. Forge extension races pass (1.738s, contract package 25.179s), Fabriq races
+pass (11.921s, optimization adapter 1.195s), and Docker-backed integration tests
+pass (14.490s). Scoped formatting, whitespace checks and all-module lint pass.
+
+A final regression substitutes a previously captured child into a different
+team. Storage rejects the reused child identity. Recovery then reads the original
+valid capture without another execution. This passes memory in 5.076s and SQLite
+in 6.749s; the matching database rerun is in progress.
+The reused-child recovery regression also passes PostgreSQL (10.872s) and MongoDB
+(13.027s). The full core optimization race package passes in 43.303s. The broader
+store suite continues from that same process.
+The full Sentinel optimization race suite passes in 287.166s, including the new
+team evaluation and partial-failure cases. The full optimization run has also
+passed memory in 259.832s and continues through the database stores.
+Final all-module `make l` passes after the reused-child test extension, with the
+runtime owner's current messaging changes present. The full optimization database
+suite remains live; this packet does not claim its completion.

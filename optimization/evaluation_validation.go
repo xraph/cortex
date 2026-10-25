@@ -87,7 +87,7 @@ func (evaluation Evaluation) ValidateCaptured(experiment Experiment, trial Trial
 		return ErrIncompleteEvidence
 	}
 	seen := make(map[string]bool, len(evaluation.Criteria))
-	incomplete := len(evaluation.Errors) > 0 || trial.State != TrialCompleted || trial.Execution.State != run.StateCompleted
+	incomplete := len(evaluation.Errors) > 0 || trial.State != TrialCompleted || !ExecutionCompleted(*trial.Execution)
 	for _, message := range evaluation.Errors {
 		if strings.TrimSpace(message) == "" {
 			return ErrInvalidSpec
