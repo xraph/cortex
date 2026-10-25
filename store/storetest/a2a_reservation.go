@@ -167,13 +167,30 @@ func testA2AReservedDispatch(t *testing.T, newStore func(*testing.T) store.Store
 
 type bindingFaultStore struct {
 	store.Store
-	bind func(context.Context, *a2a.Delivery, id.AgentRunID) error
+	commit  func(context.Context, *a2a.Delivery, string, bool) (a2a.ReservedReply, error)
+	replies a2a.ReservedReplyStore
+	bind    func(context.Context, *a2a.Delivery, id.AgentRunID) error
 }
 
 func (*bindingFaultStore) SupportsOrchestrationRouting() bool { return true }
 
 func (s *bindingFaultStore) BindDeliveryRun(ctx context.Context, d *a2a.Delivery, key id.AgentRunID) error {
 	return s.bind(ctx, d, key)
+}
+
+func (s *bindingFaultStore) RecordMessage(ctx context.Context, e *a2a.Envelope) (*a2a.Envelope, error) {
+	return s.replies.RecordMessage(ctx, e)
+}
+
+func (s *bindingFaultStore) CommitReservedReply(ctx context.Context, d *a2a.Delivery, content string, success bool) (a2a.ReservedReply, error) {
+	if s.commit != nil {
+		return s.commit(ctx, d, content, success)
+	}
+	return s.replies.CommitReservedReply(ctx, d, content, success)
+}
+
+func (s *bindingFaultStore) GetReservedReply(ctx context.Context, key id.DeliveryID) (a2a.ReservedReply, error) {
+	return s.replies.GetReservedReply(ctx, key)
 }
 
 func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) store.Store) {
@@ -187,7 +204,9 @@ func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) sto
 			binder, ok := backend.(a2a.DeliveryRunBinder)
 			require.True(t, ok)
 			failure := errors.New("private diagnostic")
-			wrapped := &bindingFaultStore{Store: backend, bind: func(bindCtx context.Context, d *a2a.Delivery, key id.AgentRunID) error {
+			replies, ok := backend.(a2a.ReservedReplyStore)
+			require.True(t, ok)
+			wrapped := &bindingFaultStore{Store: backend, replies: replies, bind: func(bindCtx context.Context, d *a2a.Delivery, key id.AgentRunID) error {
 				if mode == "bind_failure" {
 					return failure
 				}

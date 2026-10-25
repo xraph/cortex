@@ -29,3 +29,14 @@ func TestReservedBusRequiresPartitionAndBinding(t *testing.T) {
 	require.True(t, ok)
 	require.ErrorIs(t, binder.BindDeliveryRun(context.Background(), nil, id.NewAgentRunID()), ErrDeliveryBindingUnavailable)
 }
+
+type bindingOnlyStore struct{ *memStore }
+
+func (bindingOnlyStore) BindDeliveryRun(context.Context, *Delivery, id.AgentRunID) error {
+	return nil
+}
+
+func TestReservedBusRequiresAtomicReplies(t *testing.T) {
+	_, err := NewBus(BusConfig{Store: bindingOnlyStore{newMemStore()}, ReservedRunner: unavailableReservation{}, OrchestrationID: id.NewOrchestrationID()})
+	require.ErrorIs(t, err, ErrReplyCommitUnavailable)
+}

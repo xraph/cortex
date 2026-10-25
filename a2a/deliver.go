@@ -69,6 +69,14 @@ func (b *Bus) carry(ctx context.Context, d *Delivery, tr *deliveryTrace) error {
 
 	switch class {
 	case ClassInformative:
+		resumed, resolveErr := b.resolveAsk(ctx, e)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if resumed {
+			at := b.clock.Now()
+			d.ReadAt = &at
+		}
 		return b.finishDelivery(ctx, d, e, id.AgentRunID{})
 	case ClassControl:
 		if err := b.handleControl(ctx, e); err != nil {
@@ -127,6 +135,19 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 	} else {
 		reply.Performative = Inform
 		reply.Content = out.Output
+	}
+	if b.replyCommitter != nil {
+		committed, commitErr := b.replyCommitter.CommitReservedReply(ctx, d, reply.Content, runErr == nil)
+		if commitErr != nil {
+			return commitErr
+		}
+		d.State, d.DeliveredAt = DeliveryDelivered, &committed.CommittedAt
+		if committed.Fresh {
+			b.hooks.MessageDelivered(ctx, e.ID, d.Receiver.String())
+			b.hooks.MessageSent(ctx, committed.ReplyMessageID, reply.Sender.String(), addressList(reply.Receivers), string(reply.Performative))
+		}
+		b.dispatch.enqueue(committed.ReplyDeliveryID)
+		return nil
 	}
 
 	if err := b.finishDelivery(ctx, d, e, runID); err != nil {

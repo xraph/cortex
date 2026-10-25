@@ -289,8 +289,8 @@ private bus wiring and durable continuation before the engine enables them.
 
 Use `BusConfig.ReservedRunner` with an orchestration ID when your runner needs
 durable admission. Supply either `Runner` or `ReservedRunner`. Reserved buses
-require a store implementing `a2a.DeliveryRunBinder`; all three built-in
-backends support it. Your runner implements `cortex.ReservedAgentRunner`, the
+require a store implementing `a2a.DeliveryRunBinder` and
+`a2a.ReservedReplyStore`; all three built-in backends support them. Your runner implements `cortex.ReservedAgentRunner`, the
 same contract exposed through aliases in `orchestration`.
 
 `ReserveAgent` allocates bounded capacity and returns a unique child ID plus an
@@ -322,8 +322,8 @@ pending. Repeated drains and timeout reclaim cannot dispatch that child again.
 If the result also contains a failure, it follows the failure path. Both A2A and
 orchestration use `cortex.IsOrchestrationWaiting` to classify wrapped and joined
 errors consistently. This preserves suspension; it does not yet recover a later
-child completion or provide a durable reply outbox. Prepared-team messaging
-remains disabled until those paths are integrated.
+child completion. Prepared-team messaging remains disabled until deferred
+completion and durable ask continuation are integrated.
 
 SQL migration `20261025000002` adds claim tokens and supports replay after an
 unrecorded schema change. MongoDB accepts missing tokens on legacy records;
@@ -333,3 +333,35 @@ older binaries do not enforce these fences. SQL downgrade is refused.
 This admission contract does not enable prepared-team messaging by itself.
 Frozen participant routing, parent linkage and durable suspension continuation
 still need the engine integration described above.
+
+## Atomic reserved replies
+
+A reserved recipient's completion, reply envelope, queued reply delivery and
+conversation hop charge commit in one transaction. The retained
+`a2a.ReservedReply` receipt binds the delivery, child run and reply identities.
+An identical retry returns that receipt without another message or hop charge.
+Changed content, outcome or execution binding fails.
+
+If the commit acknowledgment is lost, a fresh bus can drain the retained reply
+without running the recipient again. `GetReservedReply` lets you inspect the
+commit; it grants no execution or resume authority. A transaction error returns
+no receipt, even when the database committed the write. Lifecycle hooks are not
+a durable event outbox and can be missed after an ambiguous acknowledgment.
+
+Native buses also use `AtomicMessageStore.RecordMessage` to serialize ordinary
+message recording with conversation hop admission. Closed conversations and
+exhausted hop limits reject new replies without completing the original delivery.
+That bound delivery needs reconciliation; the bus does not bypass the limit with
+a direct resume. Identical recorded-message retries consume no extra hop. Stop
+older dispatchers before upgrading, since their separate conversation updates can
+overwrite concurrent hop counts. Custom stores without this capability retain
+the legacy ordinary-message path, but cannot run reserved dispatch.
+
+These transactions require a MongoDB replica set or another deployment supporting
+transactions. SQLite and PostgreSQL use native transactions. No provider calls or
+run resumes occur inside database transactions.
+
+The queued reply survives a restart before ask resolution. Claiming the pending
+ask and resuming its run are still separate operations, so a crash or ambiguous
+resume acknowledgment between them needs further recovery work. This change does
+not enable prepared-team messaging or qualify deferred child completion.

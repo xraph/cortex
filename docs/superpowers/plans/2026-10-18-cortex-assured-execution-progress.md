@@ -6693,3 +6693,33 @@ formatting, all-ten-module lint, root build and docs types/lint/build pass.
 
 This fixes suspension semantics in the existing bus. It does not enable private
 prepared-team tools or complete deferred child-result and reply-outbox recovery.
+
+### Atomic reserved replies and hop admission
+
+Reserved A2A delivery completion now commits with an immutable reply, a queued
+reply delivery, its conversation hop charge and a retained receipt. SQLite,
+PostgreSQL and MongoDB implement the transaction through a shared storage
+contract. Identical retries return the existing receipt. Conflicting content or
+bindings fail. An ambiguous acknowledgment returns no receipt to the caller;
+a fresh bus can drain the committed reply without executing the recipient again.
+
+Native buses also record ordinary messages and their hop admission atomically.
+Concurrent messages cannot overwrite each other's hop counts. Older dispatchers
+must be drained before upgrade because their separate updates bypass this
+contract. MongoDB needs transaction support. Reserved dispatch refuses stores
+without the new capability. A closed conversation or exhausted hop limit leaves
+the bound delivery for reconciliation instead of bypassing admission.
+
+The missing-contract regression failed first. Native rollback, lost acknowledgment,
+fresh-bus redrive, duplicate commit, concurrent hop admission and existing A2A
+regressions pass with race detection and no skips: SQLite 48.892s, PostgreSQL
+5.246s and MongoDB 6.405s. The fresh-bus test confirms one recipient execution,
+one sender resume and no unread duplicate. Root, A2A and orchestration races pass;
+engine messaging/recovery regressions pass in 34.307s. Scoped `make f`, all-ten-module
+`make l`, root build and docs types/lint/build pass.
+
+Claiming a pending ask and resuming its run remain separate operations. Durable
+recovery across that boundary, deferred recipient completion and prepared-team
+bus ownership still need implementation. Lifecycle hooks do not form a durable
+event outbox. Private prepared-team messaging remains disabled, and this packet
+does not complete the four-stage plan.

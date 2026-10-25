@@ -67,6 +67,8 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
+	recorder        AtomicMessageStore
+	replyCommitter  ReservedReplyStore
 	roster          *frozenRoster
 	reserved        cortex.ReservedAgentRunner
 	binder          DeliveryRunBinder
@@ -134,6 +136,15 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 			return nil, ErrDeliveryBindingUnavailable
 		}
 	}
+	backend := cfg.Store
+	if bound, ok := backend.(*routingStore); ok {
+		backend = bound.inner
+	}
+	_, atomicMessages := backend.(AtomicMessageStore)
+	_, atomicReplies := backend.(ReservedReplyStore)
+	if cfg.ReservedRunner != nil && !atomicReplies {
+		return nil, ErrReplyCommitUnavailable
+	}
 	if cfg.Hooks == nil {
 		cfg.Hooks = noopHooks{}
 	}
@@ -164,6 +175,17 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		b.binder, supported = routing.(DeliveryRunBinder)
 		if !supported {
 			return nil, ErrDeliveryBindingUnavailable
+		}
+		b.replyCommitter, supported = routing.(ReservedReplyStore)
+		if !supported {
+			return nil, ErrReplyCommitUnavailable
+		}
+	}
+	if atomicMessages {
+		var supported bool
+		b.recorder, supported = routing.(AtomicMessageStore)
+		if !supported {
+			return nil, ErrReplyCommitUnavailable
 		}
 	}
 	if len(b.transports) == 0 {
@@ -348,6 +370,17 @@ func (b *Bus) submit(ctx context.Context, e *Envelope, conv *Conversation) (*Sen
 // can wake anybody: a recorded message that was never routed is a line in
 // the transcript and nothing more.
 func (b *Bus) record(ctx context.Context, e *Envelope, conv *Conversation) error {
+	if b.recorder != nil {
+		committed, err := b.recorder.RecordMessage(ctx, e)
+		if err != nil {
+			return err
+		}
+		if committed == nil {
+			return ErrReplyCommitConflict
+		}
+		*e = *committed
+		return nil
+	}
 	if err := b.store.CreateMessage(ctx, e); err != nil {
 		return err
 	}
