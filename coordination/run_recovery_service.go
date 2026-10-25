@@ -17,6 +17,7 @@ type recoveringRunStore interface {
 type runRecoveryConfig struct {
 	ClaimState                              ClaimState
 	AcceptedClaims                          AcceptedClaimStore
+	IncludeRecovering                       bool
 	Discovery                               TaskPlanSource
 	Interval, DiscoveryTimeout, PageTimeout time.Duration
 	PageSize, MaxInFlight, MaxPerScope      int
@@ -30,7 +31,7 @@ func newRunRecoveryService(config runRecoveryConfig, storage recoveringRunStore,
 	if config.ClaimState == "" {
 		config.ClaimState = ClaimRecovering
 	}
-	if (config.ClaimState != ClaimRecovering && config.ClaimState != ClaimCompleted) || (config.AcceptedClaims != nil && config.ClaimState != ClaimCompleted) {
+	if (config.ClaimState != ClaimRecovering && config.ClaimState != ClaimCompleted) || (config.AcceptedClaims != nil && config.ClaimState != ClaimCompleted) || (config.IncludeRecovering && config.AcceptedClaims == nil) {
 		return nil, ErrInvalidScheduler
 	}
 	if config.PageSize == 0 {
@@ -67,34 +68,66 @@ type runRecoveryScheduler struct {
 }
 
 func (s *runRecoveryScheduler) Tick(ctx context.Context, planID id.ID) error {
-	var after id.ID
+	type traversal struct {
+		scheduler *runRecoveryScheduler
+		after     id.ID
+		done      bool
+	}
+	pages := []traversal{{scheduler: s}}
+	if s.config.IncludeRecovering {
+		recovering := *s
+		recovering.config.ClaimState = ClaimRecovering
+		recovering.config.AcceptedClaims = nil
+		recovering.config.IncludeRecovering = false
+		// Accepted-task sealing cannot authorize sealing a recovering child.
+		recovering.config.SealMissing = nil
+		pages = append(pages, traversal{scheduler: &recovering})
+	}
 	// Keep only one error for this failed pass. A run-specific denial or outage
 	// must not starve later claims or accumulate unbounded error data.
 	var firstFailure error
 	for {
-		claims, err := s.claimPage(ctx, planID, after)
-		if err != nil {
-			return err
-		}
-		for _, claim := range claims {
+		pending := false
+		for i := range pages {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
-			if claim.State == s.config.ClaimState {
-				if recoveryErr := s.recoverRun(ctx, claim); recoveryErr != nil {
-					if firstFailure == nil {
-						firstFailure = recoveryErr
+			page := &pages[i]
+			if page.done {
+				continue
+			}
+			claims, err := page.scheduler.claimPage(ctx, planID, page.after)
+			if err != nil {
+				page.done = true
+				if firstFailure == nil {
+					firstFailure = err
+				}
+				continue
+			}
+			for _, claim := range claims {
+				if contextErr := ctx.Err(); contextErr != nil {
+					return contextErr
+				}
+				if claim.State == page.scheduler.config.ClaimState {
+					if recoveryErr := page.scheduler.recoverRun(ctx, claim); recoveryErr != nil {
+						if firstFailure == nil {
+							firstFailure = recoveryErr
+						}
 					}
 				}
 			}
+			page.done = len(claims) < s.config.PageSize
+			if !page.done {
+				page.after = page.scheduler.claimPageKey(claims[len(claims)-1])
+				pending = true
+			}
 		}
-		if len(claims) < s.config.PageSize {
+		if !pending {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
 			return firstFailure
 		}
-		after = s.claimPageKey(claims[len(claims)-1])
 		if waitErr := waitRecoveryPage(ctx, s.config.Interval); waitErr != nil {
 			return waitErr
 		}

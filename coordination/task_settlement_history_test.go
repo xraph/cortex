@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/planning"
+	"github.com/xraph/cortex/run"
 )
 
 func TestTaskSettlementPagesSuccessiveAcceptancesOfSameTask(t *testing.T) {
@@ -35,7 +36,9 @@ func TestTaskSettlementPagesSuccessiveAcceptancesOfSameTask(t *testing.T) {
 			claims[0], claims[1] = second, first
 		}
 		var cursors []id.ID
+		var pages []string
 		storage.acceptedList = func(_ context.Context, r coordination.TaskAcceptanceListRequest) ([]coordination.Claim, error) {
+			pages = append(pages, "accepted")
 			require.NoError(t, r.Validate())
 			cursors = append(cursors, r.After)
 			for _, claim := range claims {
@@ -55,6 +58,19 @@ func TestTaskSettlementPagesSuccessiveAcceptancesOfSameTask(t *testing.T) {
 			return &execution.RunCallSeal{Request: request, RequestDigest: digest, At: first.At}, nil
 		}
 		storage.noBudget = true
+		storage.list = func(_ context.Context, r coordination.ClaimListRequest) ([]coordination.Claim, error) {
+			pages = append(pages, "current")
+			require.True(t, r.AfterTaskID.IsNil(), "acceptance cursor leaked into task traversal")
+			return nil, nil
+		}
+		cfg.UnsuccessfulRuns = settlementRunReader(nil)
+		// A typed-nil optional port is invalid, not an enabled fallback.
+		_, err = coordination.NewTaskSettlementService(cfg)
+		require.Error(t, err)
+		cfg.UnsuccessfulRuns = settlementRunReader(func(context.Context, id.AgentRunID) (*run.Run, error) {
+			t.Fatal("unbudgeted accepted claims must not read runs")
+			return nil, nil
+		})
 		var listed atomic.Bool
 		cfg.Discovery = taskPlanSource(func(context.Context, coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error) {
 			if !listed.CompareAndSwap(false, true) {
@@ -73,6 +89,7 @@ func TestTaskSettlementPagesSuccessiveAcceptancesOfSameTask(t *testing.T) {
 		require.NoError(t, service.Stop(ctx))
 		require.Equal(t, []id.ID{{}, *claims[0].AcceptanceID, *claims[1].AcceptanceID}, cursors)
 		require.EqualValues(t, 2, storage.seals.Load())
+		require.Equal(t, []string{"accepted", "current", "accepted", "accepted"}, pages)
 		require.Zero(t, service.Status().Failures)
 	})
 }

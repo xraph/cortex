@@ -295,8 +295,13 @@ while its claim remains recovering. Fresh closure and settlement recheck the
 original dispatch and terminal run under the existing guards. Accounting does
 not accept a result, release ownership or grant retry authority. This path uses
 the same authenticated billing and conservative unknown-usage rules as accepted
-work. Managed unsuccessful-run discovery, completed-but-unaccepted disposition
-and governed claim retirement remain open.
+work. Optional `UnsuccessfulRuns` now adds recovering-claim pages to the managed
+settlement service. It interleaves them with accepted history under the same
+concurrency and shutdown limits, authorizes current-run reads, waits on active
+runs and replays committed accounting without another billing query. Existing
+call seals are required for recovering work. Engine lifecycle tests cover lost
+acknowledgments and restart on all three stores. Completed-but-unaccepted
+disposition and governed claim retirement remain open.
 
 `TaskSettlementService` and `engine.WithTaskSettlement` connect authorized
 discovery of completed, already sealed claims to admission closure, proof
@@ -315,7 +320,7 @@ replacement claim cannot hide earlier accepted debt. Historical accounting and
 ordinary call sealing check the original claim revision, acceptance and dispatch;
 replacement ownership and its reserved capacity remain unchanged. Host discovery
 must still include completed/cancelled plans with debt. Concrete billing adapters,
-unaccepted terminal-task accounting and deployment qualification remain open.
+completed-but-unaccepted disposition, governed retry and deployment qualification remain open.
 
 ## S3.6: Team review UI and recovery qualification
 

@@ -66,6 +66,7 @@ func (settlementLifecycleAuthority) AuthorizeTaskUsageSettlement(context.Context
 
 func testManagedTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("unsuccessful", func(t *testing.T) { testManagedTerminalTaskSettlement(t, backend, driver) })
 	t.Run("recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false, false) })
 	t.Run("ordinary", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, true, false) })
 	t.Run("superseded recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false, true) })

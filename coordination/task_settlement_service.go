@@ -8,7 +8,14 @@ import (
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/hostport"
+	"github.com/xraph/cortex/run"
 )
+
+// TaskSettlementRunReader reads current run state under the supplied exact scope.
+// Discovery authorization must cover this read. It grants no execution authority.
+type TaskSettlementRunReader interface {
+	GetRun(context.Context, id.AgentRunID) (*run.Run, error)
+}
 
 // TaskSettlementStore supports scoped discovery and atomic guarded accounting.
 // Journal, verifier and budget writers must share the documented storage guards.
@@ -30,12 +37,16 @@ type TaskUsageSettlementResolver interface {
 	ResolveTaskUsageSettlement(context.Context, TaskUsageSnapshot, TaskUsageClosure, execution.Reservation) (*TaskUsageSettlementRequest, error)
 }
 
-// TaskSettlementServiceConfig connects accepted claims to guarded settlement.
-// Discovery authorizes plan/claim reads; AuthorizeScan covers budget, usage and
-// receipt reads before any proof resolution. ClosureActor names the host identity
-// authorized to close verifier admission. Concrete ports must honor cancellation.
+// TaskSettlementServiceConfig connects accepted and optional unsuccessful work to
+// guarded settlement. Discovery authorizes plan/claim reads; AuthorizeScan covers
+// budget, usage, current run and receipt reads before proof resolution.
+// ClosureActor names the host identity authorized to close verifier admission.
+// Concrete ports must honor cancellation.
 type TaskSettlementServiceConfig struct {
-	Store             TaskSettlementStore
+	Store TaskSettlementStore
+	// UnsuccessfulRuns enables discovery of sealed recovering claims and closure
+	// of their failed, cancelled or incomplete child runs. Nil preserves accepted-only discovery.
+	UnsuccessfulRuns  TaskSettlementRunReader
 	Discovery         TaskPlanSource
 	AuthorizeScan     func(context.Context, Claim, execution.RunCallSeal) error
 	ClosureActor      string
@@ -64,12 +75,12 @@ type TaskSettlementServiceConfig struct {
 type TaskSettlementService struct{ service *TaskService }
 
 // NewTaskSettlementService validates explicit ports without starting work.
-// Defaults are four plan passes, one per scope, 64 acceptances per page, five seconds
-// per acceptance/seal read and one second between pages. Each full attempt defaults to
+// Defaults are four plan passes, one per scope, 64 entries per page, five seconds
+// per page/seal read and one second between rounds. Each full attempt defaults to
 // thirty seconds and cannot exceed it. Unbudgeted claims and pending proof wait
 // without refunds. Discovery must include completed or cancelled plans with debt.
 func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettlementService, error) {
-	if hostport.IsNil(config.Store) || hostport.IsNil(config.Resolver) || config.AuthorizeScan == nil || !handoffText(config.ClosureActor, 512) {
+	if hostport.IsNil(config.Store) || hostport.IsNil(config.Resolver) || config.AuthorizeScan == nil || !handoffText(config.ClosureActor, 512) || (config.UnsuccessfulRuns != nil && hostport.IsNil(config.UnsuccessfulRuns)) {
 		return nil, ErrInvalidScheduler
 	}
 	if config.AttemptTimeout == 0 {
@@ -86,7 +97,7 @@ func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettleme
 	if err != nil {
 		return nil, err
 	}
-	traversal := runRecoveryConfig{ClaimState: ClaimCompleted, AcceptedClaims: config.Store, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}
+	traversal := runRecoveryConfig{ClaimState: ClaimCompleted, AcceptedClaims: config.Store, IncludeRecovering: config.UnsuccessfulRuns != nil, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}
 	if config.CallSealFence != nil || config.CallSealAuthorizer != nil {
 		storage, ok := config.Store.(TaskCallSealStore)
 		if !ok {
@@ -104,7 +115,7 @@ func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettleme
 	}
 	service, err := newRunRecoveryService(traversal, config.Store, func() (runRecoveryPage, error) {
 		return func(ctx context.Context, claim Claim, seal execution.RunCallSeal, _ string, _ int) (string, error) {
-			return "", settleCompletedRun(ctx, config, closer, settler, claim, seal)
+			return "", settleTaskRun(ctx, config, closer, settler, claim, seal)
 		}, nil
 	})
 	if err != nil {
@@ -113,7 +124,7 @@ func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettleme
 	return &TaskSettlementService{service: service}, nil
 }
 
-func settleCompletedRun(ctx context.Context, config TaskSettlementServiceConfig, closer TaskUsageCloser, settler TaskUsageSettler, claim Claim, seal execution.RunCallSeal) error {
+func settleTaskRun(ctx context.Context, config TaskSettlementServiceConfig, closer TaskUsageCloser, settler TaskUsageSettler, claim Claim, seal execution.RunCallSeal) error {
 	bounded, cancel := context.WithTimeout(ctx, config.AttemptTimeout)
 	defer cancel()
 	if err := authorizeRunScan(bounded, config.AuthorizeScan, claim, seal); err != nil {
@@ -158,13 +169,24 @@ func settleCompletedRun(ctx context.Context, config TaskSettlementServiceConfig,
 		return err
 	}
 	if closed == nil {
-		created, closeErr := closer.Close(bounded, TaskUsageClosureRequest{SchemaVersion: 1, Usage: usage, UsageDigest: snapshot.Digest, Actor: config.ClosureActor, Reason: "close accepted task usage for settlement"})
+		closure := TaskUsageClosureRequest{SchemaVersion: 1, Usage: usage, UsageDigest: snapshot.Digest, Actor: config.ClosureActor, Reason: "close accepted task usage for settlement"}
+		if claim.State == ClaimRecovering {
+			termination, terminalErr := settlementTermination(bounded, config.UnsuccessfulRuns, claim)
+			if terminalErr != nil {
+				return terminalErr
+			}
+			if termination == nil {
+				return bounded.Err()
+			}
+			closure.Termination, closure.Reason = termination, "close unsuccessful task usage for settlement"
+		}
+		created, closeErr := closer.Close(bounded, closure)
 		if closeErr != nil {
 			return closeErr
 		}
 		closed = &created
 	}
-	if closed.Validate() != nil || closed.Request.Usage.Claim != claim.Token() || closed.Request.Usage.Seal.RequestDigest != seal.RequestDigest || !closed.Request.Usage.Seal.At.Equal(seal.At) {
+	if closed.Validate() != nil || !closed.Request.MatchesClaim(claim) || closed.Request.Usage.Seal.RequestDigest != seal.RequestDigest || !closed.Request.Usage.Seal.At.Equal(seal.At) {
 		return ErrTaskSettlementConflict
 	}
 	frozenClosure, err := SealTaskUsageClosure(*closed)

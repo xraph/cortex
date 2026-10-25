@@ -5967,3 +5967,34 @@ and MongoDB (173.228s). The documented local scopespy exception was excluded.
 Managed unsuccessful-run discovery, completed-but-unaccepted disposition and
 governed ownership retirement/retry remain open, alongside live billing and host
 qualification. The four-stage plan is not complete.
+
+### S3.5 managed unsuccessful-run settlement
+
+`TaskSettlementServiceConfig.UnsuccessfulRuns` enables current-run reads and
+recovering-claim discovery alongside accepted history. The first engine fixture
+timed out waiting for settlement because the service only visited acceptances.
+The service now interleaves one page from each traversal using separate cursors,
+while retaining the shared plan concurrency, scope fairness and shutdown lifetime.
+One traversal's page failure does not starve the other.
+
+The service requires scan authorization before reading current run metadata. It
+waits on created, running, paused and completed runs, and binds unsuccessful
+closure to the saved revision and completion time. Recovering runs need an existing
+call seal; accepted-task sealing ports cannot close their journal. Nil preserves
+the original accepted-only mode. The same resolver, billing authority, closure
+and settlement operations handle both paths.
+
+SQLite, PostgreSQL and MongoDB lifecycle races passed (5.215s, 5.195s and 6.907s),
+including unsuccessful work, ordinary/recovered acceptance and superseded claims.
+The unsuccessful fixture recovers a lost settlement acknowledgment and restarts
+after proof expiry without another resolver call, preserving the run and claim.
+Unit tests cover interleaving, independent cursors, page errors, typed-nil ports,
+scope/identity checks, active runs, denied authority and drainage of a reader that
+ignores cancellation. Coordination/engine lifecycle races passed (3.947s and
+43.652s), and the Forge stop-timeout regression passed (1.681s).
+
+The full root test run passed with the documented local scopespy exclusion.
+All-module lint, scoped formatting, root build and docs checks passed. Completed
+but unaccepted outcomes still need an explicit disposition protocol, and accounting
+does not release recovering ownership or authorize retries. Live host and billing
+qualification remain open.

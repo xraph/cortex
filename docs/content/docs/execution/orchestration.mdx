@@ -728,10 +728,9 @@ worker or claim blocks closure. Running, paused and completed runs cannot use th
 mode. Accepted tasks continue to omit `Termination`.
 
 Closure and settlement leave the claim in recovery. They do not accept an answer,
-release task ownership or permit another attempt. The managed settlement service
-currently discovers accepted claims only, so your host must invoke this path
-explicitly. Discovery of unsuccessful runs and governed retirement/retry remain
-separate integration work.
+release task ownership or permit another attempt. You can invoke this path directly
+or enable `UnsuccessfulRuns` on the managed settlement service below. Governed
+ownership retirement and retry remain separate integration work.
 
 ### Settle task usage
 
@@ -784,6 +783,19 @@ before `Start`, or use `coordination.NewTaskSettlementService` directly. Supply
 `ClosureAuthorizer`, `Resolver`, `Fence` and `Authorizer`. You can pass the engine
 option through Forge's extension lifecycle too.
 
+To include unsuccessful work, set `UnsuccessfulRuns` to a scoped
+`TaskSettlementRunReader`, such as your built-in Cortex store. The service then
+interleaves accepted-history pages with current-claim pages, using independent
+cursors under the same plan concurrency and shutdown limits. A failed page in
+one traversal does not prevent the other from progressing. Nil preserves
+accepted-only discovery.
+
+Recovering claims need an existing call seal. Accepted-task sealing ports cannot
+seal them. After `AuthorizeScan`, the service reads current run metadata and closes
+usage only for failed, cancelled or incomplete runs with a valid terminal binding.
+Running, paused and completed runs wait. The closure and settlement stores recheck
+the observed metadata under their guards before writing.
+
 To seal ordinary accepted runs automatically, also supply `CallSealFence` and
 `CallSealAuthorizer`. Both are required together, and `Store` must implement
 `TaskCallSealStore`. `ClosureActor` identifies this caller too, but the call seal
@@ -824,8 +836,10 @@ write. If a receipt already exists, the service retries its original request und
 current authorization without requesting another bill, including after restart
 or a lost acknowledgment.
 
-Defaults are four concurrent plan passes, one per exact scope, 64 acceptances per page,
-five seconds per acceptance-page or seal read, and one second between pages. A complete
+Defaults are four concurrent plan passes, one per exact scope, 64 entries per page,
+five seconds per page or seal read, and one second between page rounds. With
+`UnsuccessfulRuns`, each round visits one page from each unfinished traversal.
+A complete
 settlement attempt defaults to thirty seconds; `AttemptTimeout` accepts one
 millisecond to thirty seconds. Optional call sealing has its own attempt with the
 same bound. Discovery retains its separate timeout. Callbacks
