@@ -89,11 +89,11 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 		return nil, err
 	}
 	change.PolicyDigest, change.Actor = version.PolicyDigest, actor
-	if compatibilityErr := o.checkCompatibility(ctx, version); compatibilityErr != nil {
-		return nil, compatibilityErr
-	}
 	if evidenceErr := o.verifyActivationArtifacts(resolved, decision); evidenceErr != nil {
 		return nil, evidenceErr
+	}
+	if compatibilityErr := o.checkCompatibility(ctx, version); compatibilityErr != nil {
+		return nil, compatibilityErr
 	}
 	// External checks may take time. Recheck both identities before the atomic write.
 	if _, err = o.authorizeActivation(ctx, change.AgentID, action); err != nil {

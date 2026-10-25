@@ -247,3 +247,39 @@ and receipt with its effects. An identical retry must reconcile the original
 commit; changed content under that key must conflict. Cortex validates the
 receipt and never retries host effects automatically. The integration tests use
 a receipt-producing host fixture; you still need a qualified destination adapter.
+
+## Production activation compatibility
+
+Bind `NewEngineCompatibility` to the same production engine you pass to
+`WithActiveEngine`. You supply its deployed runtime revision and a host
+`Compatibility` implementation for current policy and external dependencies:
+
+```go
+checker, err := optimization.NewEngineCompatibility(optimization.EngineCompatibilityConfig{
+	Engine:         productionEngine,
+	Host:           hostCompatibility,
+	RuntimeVersion: deploymentRevision,
+})
+if err != nil {
+	return err
+}
+config.Compatibility = checker
+optimizer, err := optimization.NewOptimizer(config, optimization.WithActiveEngine(productionEngine))
+```
+
+The checker verifies the immutable version digest and scope, then checks host
+policy, current model/tool bindings and stored source records. Model and selected
+tool revisions must be pinned. Selected tools must still have executable
+implementations and matching schemas. Source records are read in one current
+store snapshot; a store without that capability returns unavailable. Approved
+prompt and tool-description edits retain their original source identity.
+
+Activation, rollback and `RunActive` perform compatibility checks after reading
+artifact content, so a source edit during that read cannot authorize a stale
+version. Changed sources or runtime bindings require revalidation or deactivation.
+Deactivation remains available for a stale route. A checker bound to a different
+engine from `RunActive` is rejected during optimizer construction.
+
+These are point-in-time checks and make no model or tool calls. Your host still
+owns current grants, policy, remote provider routing and external knowledge
+revisions. It must return incompatible when it cannot establish those bindings.

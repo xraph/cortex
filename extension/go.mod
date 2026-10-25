@@ -8,7 +8,7 @@ replace github.com/xraph/cortex/sentinel => ../sentinel
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/xraph/cortex v1.8.0
+	github.com/xraph/cortex v1.8.1-0.20261025170844-e03e71ca03f4
 	github.com/xraph/cortex/sentinel v1.7.0
 	github.com/xraph/forge v1.12.10
 	github.com/xraph/go-utils v1.4.1

@@ -20,6 +20,9 @@ func WithActiveEngine(runtime *engine.Engine) Option {
 		if runtime == nil {
 			return ErrInvalidSpec
 		}
+		if checker, ok := o.config.Compatibility.(*EngineCompatibility); ok && checker.config.Engine != runtime {
+			return ErrInvalidSpec
+		}
 		o.activeEngine = runtime
 		return nil
 	}
@@ -59,11 +62,11 @@ func (o *Optimizer) RunActive(ctx context.Context, request ActiveRunRequest) (*r
 	if err != nil {
 		return nil, err
 	}
-	if compatibilityErr := o.checkCompatibility(ctx, version); compatibilityErr != nil {
-		return nil, compatibilityErr
-	}
 	if evidenceErr := o.verifyActivationArtifacts(resolved, decision); evidenceErr != nil {
 		return nil, evidenceErr
+	}
+	if compatibilityErr := o.checkCompatibility(ctx, version); compatibilityErr != nil {
+		return nil, compatibilityErr
 	}
 	if _, err = o.authorizeActivation(ctx, request.AgentID, ActionRunActive); err != nil {
 		return nil, err

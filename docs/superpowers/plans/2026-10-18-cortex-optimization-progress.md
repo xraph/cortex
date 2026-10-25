@@ -1166,3 +1166,36 @@ retention fix, all four focused task suites, Sentinel task/criteria races, both
 module builds and the published-root consumer build/core/task races pass. Scoped
 `make f`, all-module `make l` with a private cache and `git diff --check` pass.
 No database backend was skipped in the focused conformance runs.
+
+## Current source and runtime compatibility
+
+`NewEngineCompatibility` binds the production engine, its deployed runtime revision
+and a host checker for current policy and external dependencies. It validates the
+sealed version and exact scope, gives the host a detached copy, then checks pinned
+model/tool implementations and stored sources in a current atomic snapshot. A
+missing provider or snapshot capability is unavailable; changed source content,
+runtime bindings or policy is stale. The original cause remains inspectable.
+
+The optimizer requires this built-in checker and `RunActive` to use the same
+engine. Approved derived prompt content keeps its source identity. No model or
+tool executes during compatibility checks, and the host still owns provider
+routing, external knowledge revisions and current grants.
+
+The real-store integration reproduced an edit during an artifact read reaching
+the model. Activation and execution now check compatibility after content reads.
+The tests cover both paths, stale rollback refusal, unchanged activation history
+and deactivation of a stale route, using a real SQLite runtime source store with
+each optimization backend. Core tests cover changes during host checks, source
+edits, model/tool/runtime pins, foreign scope, tampering, host denial, detached
+host inputs, snapshotless stores, cancellation and engine mismatch.
+
+The runtime API is published in `e03e71c`, and the optimizer pins the verified
+module version `v1.8.1-0.20261025170844-e03e71ca03f4`. Module tidying propagates
+that root requirement to Sentinel, the extension, Fabriq and integration tests.
+A temporary consumer without the local root replacement passes its build, core
+races and stale-source activation tests. Core races and the full activation/recovery
+group pass on all four optimization stores: memory 32.998s, SQLite 82.252s,
+PostgreSQL 82.116s and MongoDB 101.707s. Full Sentinel races pass in 233.560s.
+Extension and Fabriq races, Docker-backed integration tests, module builds, scoped
+formatting and final all-module lint pass. Product capability wiring and Tasks
+14-21 remain open.

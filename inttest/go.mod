@@ -11,7 +11,7 @@ replace github.com/xraph/cortex => ..
 replace github.com/xraph/cortex/integrations/fabriq => ../integrations/fabriq
 
 require (
-	github.com/xraph/cortex v1.8.1-0.20261024054512-7d7f56675086
+	github.com/xraph/cortex v1.8.1-0.20261025170844-e03e71ca03f4
 	github.com/xraph/cortex/integrations/fabriq v0.0.0-20260827002006-bb2528ddd778
 	github.com/xraph/fabriq v1.8.2
 	github.com/xraph/fabriq/core v1.8.2
