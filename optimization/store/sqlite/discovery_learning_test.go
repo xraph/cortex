@@ -63,3 +63,9 @@ func TestControllerDecisionArtifacts(t *testing.T) {
 func TestControllerDecisionRecovery(t *testing.T) {
 	testRecovery(t, storetest.ControllerDecisionRecovery)
 }
+
+func TestControllerDecisionWorker(t *testing.T) {
+	storetest.ControllerDecisionWorker(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "controller-worker.db"), now)
+	})
+}

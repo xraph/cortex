@@ -193,3 +193,34 @@ func ValidateControllerDecisionEvidence(parent Experiment, allocation Validation
 	}
 	return validateDecisionStatistics(parent, decision, stats)
 }
+
+// BuildControllerInconclusive preserves terminal failures without inventing
+// scores. A nil result means every selected execution has a complete evaluation
+// and the statistical evaluator must perform the comparison.
+func BuildControllerInconclusive(parent Experiment, allocation ValidationAllocation, children []ControllerEvidence) (*Comparison, error) {
+	request, baseline, candidate, err := controllerComparisonEvidence(parent, allocation, children)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := collectDecisionPairs(parent, baseline, candidate)
+	if err != nil {
+		return nil, err
+	}
+	if stats.complete {
+		return nil, nil
+	}
+	result := &Comparison{Confidence: request.Objective.Confidence, BootstrapSamples: request.Objective.BootstrapSamples, BootstrapSeed: request.Objective.BootstrapSeed, MissingReasons: []string{"Selected child executions do not all have complete scores."}}
+	for _, group := range request.Groups {
+		result.Plans = append(result.Plans, group.Plan.Ref)
+		result.BaselineIDs = append(result.BaselineIDs, group.BaselineIDs...)
+		result.CandidateIDs = append(result.CandidateIDs, group.CandidateIDs...)
+	}
+	if len(request.Groups) == 1 {
+		result.PlanDigest = request.Groups[0].Plan.Ref.Digest
+	}
+	for failure := range stats.failures {
+		result.RequiredFailures = append(result.RequiredFailures, failure)
+	}
+	slices.Sort(result.RequiredFailures)
+	return result, nil
+}

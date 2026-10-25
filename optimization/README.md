@@ -160,18 +160,20 @@ both arms have captured all assigned validation outcomes. Unknown controller
 answers stop work, even if a late receipt has settled their cost. Paused children
 stay paused; an exhausted child exhausts the parent.
 
-Parent scheduling currently stops at the decision phase with `ErrUnavailable`.
-Aggregate controller comparison and reviewed controller adoption are still
-pending. You can run discovery and paired validation, but this handler cannot yet
-recommend or adopt a controller version.
+Set `ImprovementEvaluator` to an adapter implementing `ControllerEvaluator` to
+advance the parent through comparison. The Sentinel adapter reloads the original
+child captures and compares the selected execution versions across their frozen
+plans. The parent stops at `PhaseReflect`; review completion and controller
+adoption remain pending.
 
 `ReadControllerEvidence` and `BuildControllerComparison` assemble selected child
 captures into frozen plan groups. `ValidateControllerDecisionEvidence` checks
 their original experiment, execution and evaluation identities, then applies the
 same case arithmetic and selection rules used for execution-harness decisions.
 The store accepts controller decisions through `CommitTransition` and checks
-child artifact retention again before review. Hosts still need the parent
-comparison adapter and scheduling step to produce these decisions automatically.
+child artifact retention again before review. The parent worker rechecks every
+child's authority after comparison and validates the report before returning its
+transition. Missing scores produce an inconclusive decision.
 
 ## Late receipts and takeover
 
@@ -332,8 +334,13 @@ its arm and sequence. Creating a child requires the current parent lease, and bo
 controller arms consume the parent's aggregate token and money budget. Late
 receipts update the original reservations, including after cancellation.
 
-Controller comparisons have durable storage, shared accounting and paired
-validation. The scheduler, isolated lesson advancement, controller-level comparison
-and controller adoption are still pending. Child validation uses one parent
-allocation with frozen case assignments, and selection waits for the whole
-stream. Ordinary phase handlers return `ErrUnavailable` for comparison parents.
+Wrap your child handler with `NewImprovementPhaseHandler` and supply the Sentinel
+adapter as `OptimizerConfig.ImprovementEvaluator`. The parent schedules the frozen
+child stream, isolates discovery lessons by controller arm and allocates paired
+validation once. Its decision phase compares the selected child captures across
+their frozen plans, rechecks child authority and persists a controller decision.
+Missing scores produce an inconclusive result. Comparison makes no model calls.
+
+The parent currently advances through `PhaseDecide` to `PhaseReflect`. Parent
+reflection, review completion and controller adoption remain pending. Ordinary
+trial phase handlers return `ErrUnavailable` for comparison parents.

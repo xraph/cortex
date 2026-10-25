@@ -41,22 +41,11 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 	if !equal(plan, r.Plan) {
 		return out, opt.ErrIncompleteEvidence
 	}
-	parse := func(values []string) ([]sid.ID, error) {
-		ids := make([]sid.ID, 0, len(values))
-		for _, v := range values {
-			parsed, parseErr := sid.Parse(v)
-			if parseErr != nil {
-				return nil, parseErr
-			}
-			ids = append(ids, parsed)
-		}
-		return ids, nil
-	}
-	baseline, err := parse(r.BaselineIDs)
+	baseline, err := parseJobIDs(r.BaselineIDs)
 	if err != nil {
 		return out, err
 	}
-	candidate, err := parse(r.CandidateIDs)
+	candidate, err := parseJobIDs(r.CandidateIDs)
 	if err != nil {
 		return out, err
 	}
@@ -67,11 +56,29 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 	if report.PlanDigest != plan.Ref.Digest {
 		return out, opt.ErrIncompleteEvidence
 	}
-	out = opt.Comparison{BaselineIDs: slices.Clone(r.BaselineIDs), CandidateIDs: slices.Clone(r.CandidateIDs), PlanDigest: report.PlanDigest, Confidence: .95, BootstrapSamples: report.BootstrapSamples, BootstrapSeed: report.Seed, Complete: report.Conclusive, MissingReasons: slices.Clone(report.IncompletenessReasons), ProtectedRegressions: map[string]float64{}}
 	bindings := map[sid.ID]opt.TaskCase{}
 	for _, value := range b.Cases {
 		bindings[value.CaseID] = value.Task
 	}
+	return e.projectComparison(ctx, mapped, r, report, bindings, baseline, candidate, nil)
+}
+
+type comparisonSource struct{ experiment, candidate string }
+
+func parseJobIDs(values []string) ([]sid.ID, error) {
+	ids := make([]sid.ID, 0, len(values))
+	for _, value := range values {
+		parsed, err := sid.Parse(value)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, parsed)
+	}
+	return ids, nil
+}
+
+func (e *Evaluator) projectComparison(ctx, mapped context.Context, r opt.ComparisonRequest, report *comparison.RecordedComparison, bindings map[sid.ID]opt.TaskCase, baseline, candidate []sid.ID, sources map[string]comparisonSource) (opt.Comparison, error) {
+	out := opt.Comparison{BaselineIDs: slices.Clone(r.BaselineIDs), CandidateIDs: slices.Clone(r.CandidateIDs), PlanDigest: report.PlanDigest, Confidence: .95, BootstrapSamples: report.BootstrapSamples, BootstrapSeed: report.Seed, Complete: report.Conclusive, MissingReasons: slices.Clone(report.IncompletenessReasons), ProtectedRegressions: map[string]float64{}}
 	for _, failure := range report.RequiredFailures {
 		task, ok := bindings[failure.CaseID]
 		if !ok {
@@ -93,11 +100,18 @@ func (e *Evaluator) Compare(ctx context.Context, r opt.ComparisonRequest) (opt.C
 			if getErr != nil {
 				return opt.Comparison{}, getErr
 			}
-			if experiment == "" {
-				experiment = job.Request.SourceExperimentID
-			}
-			if experiment == "" || job.Request.SourceExperimentID != experiment || (arm == 0 && job.Request.SourceCandidateID != "") || (arm == 1 && job.Request.SourceCandidateID == "") || (haveCandidate && candidateID != job.Request.SourceCandidateID) {
-				return opt.Comparison{}, opt.ErrIncompleteEvidence
+			if sources != nil {
+				source, exists := sources[key.String()]
+				if !exists || source.experiment != job.Request.SourceExperimentID || source.candidate != job.Request.SourceCandidateID {
+					return opt.Comparison{}, opt.ErrIncompleteEvidence
+				}
+			} else {
+				if experiment == "" {
+					experiment = job.Request.SourceExperimentID
+				}
+				if experiment == "" || job.Request.SourceExperimentID != experiment || (arm == 0 && job.Request.SourceCandidateID != "") || (arm == 1 && job.Request.SourceCandidateID == "") || (haveCandidate && candidateID != job.Request.SourceCandidateID) {
+					return opt.Comparison{}, opt.ErrIncompleteEvidence
+				}
 			}
 			cost, known, costErr := e.executionCost(ctx, job)
 			if costErr != nil {

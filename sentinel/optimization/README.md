@@ -71,7 +71,7 @@ criterion failures and averages repetitions within each case. Protected criterio
 regressions and latency ratios come from the recorded results and original
 execution durations.
 
-Sentinel v1.9.2 implements a 95% interval with 2,000 bootstrap samples. Other frozen
+Sentinel v1.10.0 implements a 95% interval with 2,000 bootstrap samples. Other frozen
 confidence settings return `ErrUnavailable`. Too few distinct cases produce
 inconclusive evidence. Repetitions do not increase the distinct-case count.
 
@@ -81,6 +81,12 @@ experiment and plan identities, and compares the original execution charges only
 when every charge is known and uses the experiment's frozen pricing revision.
 Unknown or estimated charges, token-only budgets and a zero baseline leave the
 ratio unavailable. Conflicting captures fail the comparison.
+
+`CompareControllers` requires `Config.Repository`. It reloads the parent allocation
+and original child records, checks the exact frozen plan groups and compares their
+selected executions through Sentinel's recorded group API. Reports retain all
+plan references; `PlanDigest` is empty when several plans contribute. Missing
+captures or scores produce an inconclusive report without another judge call.
 
 Judge charges remain separate from trial costs. `Evaluation.JudgeUsage` reports
 ledger observations with an aggregate receipt reference; individual provider
@@ -113,6 +119,10 @@ Parallel variants exercise the same recovery boundaries. The task-local variant
 uses one discovery case without an expected answer, recovers twelve recorded
 executions and judge results across database reopen, and returns the selected
 capture without a holdout allocation or a repeated execution.
+
+The controller comparison test records twelve metered judge results across two
+plans and four child experiments. It reopens both stores, rebuilds the same report
+and commits the parent worker's decision without dispatching another judge.
 
 Its model and environment are fixtures. Live sandbox qualification, hosted model
 calls, destination artifact adoption, Fabriq publication and dashboard application

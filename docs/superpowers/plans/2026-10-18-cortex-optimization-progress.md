@@ -1548,3 +1548,37 @@ Sentinel recovery, metered judge and cost-provenance regressions pass in
 136.284s. The optimization build, scoped `make f` and final all-module `make l`
 pass. The parent scheduler still stops before comparison; Sentinel adapter
 wiring, the decision phase and reviewed controller adoption remain pending.
+
+## Parent comparison adapter and decision worker
+
+`ImprovementPhaseHandler` now handles `PhaseDecide` through the configured
+`ControllerEvaluator`. It reads the original selected child evidence, passes a
+detached request to the evaluator, rechecks child authority after comparison and
+validates the result before returning the transaction. Execution and controller
+decisions share the same frozen threshold policy.
+
+The Sentinel adapter reloads the canonical parent allocation and exact plan
+roster, then uses `CompareRecordedGroups`. Case statistics, protected criteria,
+latency and execution-cost provenance share the existing comparison projection.
+A controller arm can select an unchanged execution baseline or a discovered
+candidate; both retain their original child ownership. Missing captures and
+incomplete scores produce an inconclusive report without another provider call.
+
+The SQLite integration records twelve metered judge results across two plans and
+four child experiments, reopens both stores, rebuilds the same report and commits
+the parent worker's decision. The malformed judge-output variant preserves the
+incomplete result and its original charge. Neither comparison nor reopen dispatches
+another judge call. Tests also reject substituted job rosters, changed parent
+specifications, foreign scopes, denied children and authority revoked during
+comparison. Callback mutation cannot change the frozen request.
+
+The full Sentinel optimization race suite passes in 291.737s. After final edits,
+the complete-score and malformed-score reopen tests pass in 68.347s, and the
+parent-worker race test passes in 11.585s. Existing decision and artifact-policy
+regressions pass in memory and SQLite. Both modules build; scoped `make f` and
+final all-module `make l` pass. The controller decision race matrix passes memory
+(36.648s), SQLite (86.604s), PostgreSQL (94.526s) and MongoDB (97.359s),
+including artifact checks, worker authority and reopen recovery.
+
+Parent reflection, review completion and reviewed controller adoption remain
+pending; Task 14 is not complete.

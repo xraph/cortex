@@ -39,3 +39,5 @@ func TestControllerDecisions(t *testing.T) { testDiscovery(t, storetest.Controll
 func TestControllerDecisionArtifacts(t *testing.T) {
 	testDiscovery(t, storetest.ControllerDecisionArtifacts)
 }
+
+func TestControllerDecisionWorker(t *testing.T) { testDiscovery(t, storetest.ControllerDecisionWorker) }

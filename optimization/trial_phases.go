@@ -284,28 +284,33 @@ func (h *TrialPhaseHandler) decide(ctx context.Context, item WorkItem, trials []
 		if err != nil {
 			return Transition{}, err
 		}
-		c := decision.Comparison
-		o := e.Spec.Objective
-		decision.Reasons = []string{"Validation evidence is insufficient for a recommendation."}
-		if c.Complete {
-			decision.Outcome = DecisionRetain
-			decision.EvidenceClass = EvidenceValidated
-			decision.Reasons = []string{"The candidate did not pass every frozen selection threshold."}
-			protected := true
-			for _, criterion := range o.ProtectedCriteria {
-				regression, ok := c.ProtectedRegressions[criterion]
-				protected = protected && ok && regression <= o.MaxProtectedRegression
-			}
-			if c.MeanDelta >= o.MinImprovement && c.LowerBound > 0 && len(c.RequiredFailures) == 0 && protected && ratioPass(o.MaxCostRatio, c.CostRatio) && ratioPass(o.MaxLatencyRatio, c.LatencyRatio) && e.Spec.Mode != ModeTaskLocal {
-				decision.Outcome = DecisionRecommend
-				decision.Reasons = []string{"Paired validation passed the frozen quality and resource thresholds."}
-			}
-		} else {
-			decision.Reasons = append(decision.Reasons, c.MissingReasons...)
-		}
+		selectDecisionOutcome(e.Spec, &decision)
 	}
 	if err = ValidateDecisionEvidence(e, decision, evidence); err != nil {
 		return Transition{}, fmt.Errorf("validate trial decision: %w", err)
 	}
 	return Transition{NextState: StateRunning, NextPhase: PhaseReflect, Decision: &decision}, nil
+}
+
+// selectDecisionOutcome applies the same frozen policy to execution and controller evidence.
+func selectDecisionOutcome(spec ExperimentSpec, decision *Decision) {
+	c := decision.Comparison
+	o := spec.Objective
+	decision.Reasons = []string{"Validation evidence is insufficient for a recommendation."}
+	if c.Complete {
+		decision.Outcome = DecisionRetain
+		decision.EvidenceClass = EvidenceValidated
+		decision.Reasons = []string{"The candidate did not pass every frozen selection threshold."}
+		protected := true
+		for _, criterion := range o.ProtectedCriteria {
+			regression, ok := c.ProtectedRegressions[criterion]
+			protected = protected && ok && regression <= o.MaxProtectedRegression
+		}
+		if c.MeanDelta >= o.MinImprovement && c.LowerBound > 0 && len(c.RequiredFailures) == 0 && protected && ratioPass(o.MaxCostRatio, c.CostRatio) && ratioPass(o.MaxLatencyRatio, c.LatencyRatio) && spec.Mode != ModeTaskLocal {
+			decision.Outcome = DecisionRecommend
+			decision.Reasons = []string{"Paired validation passed the frozen quality and resource thresholds."}
+		}
+	} else {
+		decision.Reasons = append(decision.Reasons, c.MissingReasons...)
+	}
 }

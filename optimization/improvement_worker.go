@@ -45,6 +45,8 @@ func (h *ImprovementPhaseHandler) Execute(ctx context.Context, item WorkItem) (T
 		return h.discover(ctx, item)
 	case PhaseValidate:
 		return h.validate(ctx, item)
+	case PhaseDecide:
+		return h.decide(ctx, item)
 	default:
 		return Transition{}, ErrUnavailable
 	}

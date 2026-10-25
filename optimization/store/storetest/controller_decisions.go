@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -141,7 +142,19 @@ func ControllerDecisions(t *testing.T, factory Factory) {
 	}
 }
 
-type controllerDecisionOptions struct{ qualified, improved, artifacts bool }
+type controllerDecisionOptions struct {
+	qualified, improved, artifacts bool
+	configure                      func(*optimization.ExperimentBundle, []optimization.ExperimentBundle)
+	evaluate                       func(context.Context, optimization.EvaluationRequest) (optimization.Evaluation, error)
+}
+
+// ControllerComparisonFixture records a paired stream using the supplied frozen
+// plans and evaluator, so adapter tests exercise the same transactional fixtures.
+func ControllerComparisonFixture(t *testing.T, factory Factory, configure func(*optimization.ExperimentBundle, []optimization.ExperimentBundle), evaluate func(context.Context, optimization.EvaluationRequest) (optimization.Evaluation, error)) (optimization.Experiment, optimization.ValidationAllocation, []optimization.ControllerEvidence) {
+	t.Helper()
+	f, allocation, evidence, _ := controllerDecisionFixture(t, factory, controllerDecisionOptions{configure: configure, evaluate: evaluate})
+	return f.parent.Experiment, allocation, evidence
+}
 
 func controllerDecisionFixture(t *testing.T, factory Factory, options ...controllerDecisionOptions) (validationFamily, optimization.ValidationAllocation, []optimization.ControllerEvidence, optimization.Decision) {
 	t.Helper()
@@ -150,6 +163,9 @@ func controllerDecisionFixture(t *testing.T, factory Factory, options ...control
 		config = options[0]
 	}
 	f := frozenValidationFamily(t, factory, 2, func(parent *optimization.ExperimentBundle, children []optimization.ExperimentBundle) {
+		if config.configure != nil {
+			config.configure(parent, children)
+		}
 		if config.qualified {
 			parent.Experiment.Spec.Objective.MinValidationCases = 2
 			parent.Experiment.Spec.Objective.RequireReproducibility = false
@@ -190,6 +206,17 @@ func controllerDecisionFixture(t *testing.T, factory Factory, options ...control
 				value.Score = &score
 				for criterion := range value.Criteria {
 					value.Criteria[criterion].Score = &score
+				}
+				if config.evaluate != nil {
+					captured, getErr := f.s.GetTrial(f.ctx, trial.ID)
+					if getErr != nil {
+						t.Fatal(getErr)
+					}
+					var evalErr error
+					value, evalErr = config.evaluate(f.ctx, optimization.EvaluationRequest{ExperimentID: child.Experiment.ID, TrialID: trial.ID, CandidateID: trial.CandidateID, CaseID: trial.CaseID, CaseDigest: trial.CaseDigest, Repetition: repetition, Plan: child.Experiment.EvaluationPlan, Execution: *captured.Execution, Lease: f.leases[index+1], IdempotencyKey: "controller-fixture/" + trial.ID.String()})
+					if evalErr != nil {
+						t.Fatal(evalErr)
+					}
 				}
 				persistFixtureEvaluation(f.ctx, t, f.s, child, f.leases[index+1], value)
 			}
