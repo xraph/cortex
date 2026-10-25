@@ -16,6 +16,7 @@ type recoveringRunStore interface {
 
 type runRecoveryConfig struct {
 	ClaimState                              ClaimState
+	AcceptedClaims                          AcceptedClaimStore
 	Discovery                               TaskPlanSource
 	Interval, DiscoveryTimeout, PageTimeout time.Duration
 	PageSize, MaxInFlight, MaxPerScope      int
@@ -29,7 +30,7 @@ func newRunRecoveryService(config runRecoveryConfig, storage recoveringRunStore,
 	if config.ClaimState == "" {
 		config.ClaimState = ClaimRecovering
 	}
-	if config.ClaimState != ClaimRecovering && config.ClaimState != ClaimCompleted {
+	if (config.ClaimState != ClaimRecovering && config.ClaimState != ClaimCompleted) || (config.AcceptedClaims != nil && config.ClaimState != ClaimCompleted) {
 		return nil, ErrInvalidScheduler
 	}
 	if config.PageSize == 0 {
@@ -66,12 +67,12 @@ type runRecoveryScheduler struct {
 }
 
 func (s *runRecoveryScheduler) Tick(ctx context.Context, planID id.ID) error {
-	request := ClaimListRequest{PlanID: planID, Limit: s.config.PageSize}
+	var after id.ID
 	// Keep only one error for this failed pass. A run-specific denial or outage
 	// must not starve later claims or accumulate unbounded error data.
 	var firstFailure error
 	for {
-		claims, err := s.claimPage(ctx, request)
+		claims, err := s.claimPage(ctx, planID, after)
 		if err != nil {
 			return err
 		}
@@ -87,50 +88,78 @@ func (s *runRecoveryScheduler) Tick(ctx context.Context, planID id.ID) error {
 				}
 			}
 		}
-		if len(claims) < request.Limit {
+		if len(claims) < s.config.PageSize {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
 			return firstFailure
 		}
-		request.AfterTaskID = claims[len(claims)-1].TaskID
+		after = s.claimPageKey(claims[len(claims)-1])
 		if waitErr := waitRecoveryPage(ctx, s.config.Interval); waitErr != nil {
 			return waitErr
 		}
 	}
 }
-func (s *runRecoveryScheduler) claimPage(ctx context.Context, request ClaimListRequest) ([]Claim, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
+func (s *runRecoveryScheduler) claimPage(ctx context.Context, planID, after id.ID) ([]Claim, error) {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return nil, err
 	}
 	bounded, cancel := context.WithTimeout(ctx, s.config.PageTimeout)
 	defer cancel()
-	claims, err := s.storage.ListTaskClaims(bounded, request)
+	var claims []Claim
+	if s.config.AcceptedClaims != nil {
+		request := TaskAcceptanceListRequest{PlanID: planID, After: after, Limit: s.config.PageSize}
+		if requestErr := request.Validate(); requestErr != nil {
+			return nil, requestErr
+		}
+		claims, err = s.config.AcceptedClaims.ListAcceptedTaskClaims(bounded, request)
+	} else {
+		request := ClaimListRequest{PlanID: planID, AfterTaskID: after, Limit: s.config.PageSize}
+		if requestErr := request.Validate(); requestErr != nil {
+			return nil, requestErr
+		}
+		claims, err = s.storage.ListTaskClaims(bounded, request)
+	}
 	if contextErr := bounded.Err(); contextErr != nil {
 		return nil, contextErr
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(claims) > request.Limit {
+	if len(claims) > s.config.PageSize {
 		return nil, ErrInvalidClaim
 	}
 	frozen := make([]Claim, len(claims))
-	previous := request.AfterTaskID
+	previous := after
 	for i, claim := range claims {
-		if claim.Validate() != nil || claim.Scope.Canonical() != scope.Canonical() || claim.PlanID != request.PlanID || (!previous.IsNil() && claim.TaskID.String() <= previous.String()) {
+		key := s.claimPageKey(claim)
+		if s.config.AcceptedClaims != nil && claim.State != ClaimCompleted {
+			return nil, ErrInvalidClaim
+		}
+		if claim.Validate() != nil || key.IsNil() || claim.Scope.Canonical() != scope.Canonical() || claim.PlanID != planID || (!previous.IsNil() && key.String() <= previous.String()) {
 			return nil, ErrInvalidClaim
 		}
 		frozen[i] = claim
 		frozen[i].Scope.Levels = append([]cortex.Level(nil), claim.Scope.Levels...)
-		previous = claim.TaskID
+		if claim.AcceptanceID != nil {
+			accepted := *claim.AcceptanceID
+			frozen[i].AcceptanceID = &accepted
+		}
+		previous = key
 	}
 	return frozen, nil
 }
+func (s *runRecoveryScheduler) claimPageKey(claim Claim) id.ID {
+	if s.config.AcceptedClaims != nil {
+		if claim.AcceptanceID == nil {
+			return id.ID{}
+		}
+		return *claim.AcceptanceID
+	}
+	return claim.TaskID
+}
+
 func (s *runRecoveryScheduler) recoverRun(ctx context.Context, claim Claim) error {
 	bounded, cancel := context.WithTimeout(ctx, s.config.PageTimeout)
 	sealed, err := s.storage.GetRunCallSeal(bounded, claim.RunID)

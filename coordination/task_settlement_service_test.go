@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/verification"
 )
 
@@ -33,6 +34,8 @@ type settlementServiceStore struct {
 	settled                    *coordination.TaskUsageSettlement
 	noBudget                   bool
 	binding                    verification.Binding
+	plan                       planning.Plan
+	acceptedList               func(context.Context, coordination.TaskAcceptanceListRequest) ([]coordination.Claim, error)
 	reads, closes, settlements atomic.Int32
 }
 
@@ -54,6 +57,16 @@ func (s *settlementServiceStore) GetTaskUsageClosure(context.Context, id.AgentRu
 }
 func (s *settlementServiceStore) GetTaskUsageSettlement(context.Context, id.AgentRunID) (*coordination.TaskUsageSettlement, error) {
 	return s.settled, nil
+}
+
+func (s *settlementServiceStore) ListAcceptedTaskClaims(ctx context.Context, r coordination.TaskAcceptanceListRequest) ([]coordination.Claim, error) {
+	if s.acceptedList != nil {
+		return s.acceptedList(ctx, r)
+	}
+	if s.claim.State != coordination.ClaimCompleted || (!r.After.IsNil() && r.After.String() >= s.claim.AcceptanceID.String()) {
+		return nil, nil
+	}
+	return []coordination.Claim{s.claim}, nil
 }
 
 func (s *settlementServiceStore) SealTaskCalls(_ context.Context, r coordination.TaskCallSealRequest) (execution.RunCallSeal, error) {
@@ -152,7 +165,7 @@ func settlementServiceFixture(t *testing.T) (context.Context, *settlementService
 	require.NoError(t, err)
 	allocation, allocationDigest, err := (execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), Scope: held.Scope, PlanID: plan.ID, PlanDigest: plan.Digest, TaskID: held.TaskID, OwnerRef: held.ID.String(), Kind: execution.ReservationLeaf, Allocation: execution.Resources{Tokens: 100, FanOut: 1, USDMicros: 1000}, Deadline: held.Deadline, MoneyBound: true, PricingRevision: "prices-1"}).Freeze()
 	require.NoError(t, err)
-	s := &settlementServiceStore{providerServiceStore: &providerServiceStore{claim: completed, seal: &seal}, snapshot: snapshot, binding: binding, budget: coordination.BudgetedClaim{Claim: held, Reservation: execution.Reservation{Request: allocation, RequestDigest: allocationDigest, CreatedAt: now}}}
+	s := &settlementServiceStore{providerServiceStore: &providerServiceStore{claim: completed, seal: &seal}, snapshot: snapshot, binding: binding, plan: plan, budget: coordination.BudgetedClaim{Claim: held, Reservation: execution.Reservation{Request: allocation, RequestDigest: allocationDigest, CreatedAt: now}}}
 	cfg := coordination.TaskSettlementServiceConfig{Store: s, ClosureActor: "accounting", PageSize: 2, MaxInFlight: 1,
 		ReportError: func(err error) { t.Logf("settlement pass: %v", err) },
 		Discovery: taskPlanSource(func(context.Context, coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error) {

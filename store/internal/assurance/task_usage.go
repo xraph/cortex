@@ -11,6 +11,8 @@ var _ coordination.TaskUsageSnapshotStore = (*Repository)(nil)
 
 // SnapshotTaskUsage reads the full verifier history and sealed journal under
 // plan, run and journal guards. It never refunds capacity or closes job admission.
+// Recovering ownership must be current; completed ownership may be historical
+// when its acceptance, preceding revision and original dispatch remain intact.
 func (s *Repository) SnapshotTaskUsage(ctx context.Context, request coordination.TaskUsageRequest) (coordination.TaskUsageSnapshot, error) {
 	req, err := request.Freeze()
 	if err != nil {
@@ -39,7 +41,15 @@ func (s *Repository) SnapshotTaskUsage(ctx context.Context, request coordination
 
 // readTaskUsageSnapshot requires an existing plan transaction.
 func (s *Repository) readTaskUsageSnapshot(ctx context.Context, req coordination.TaskUsageRequest) (coordination.TaskUsageSnapshot, error) {
-	claim, readErr := s.GetTaskClaim(ctx, req.Claim.PlanID, req.Claim.TaskID)
+	claim, readErr := s.claimRevision(ctx, req.Claim.PlanID, req.Claim.TaskID, req.Claim.Revision)
+	if readErr != nil {
+		return coordination.TaskUsageSnapshot{}, readErr
+	}
+	if claim.State == coordination.ClaimCompleted {
+		claim, _, readErr = s.acceptedTaskClaim(ctx, req.Claim)
+	} else {
+		claim, readErr = s.GetTaskClaim(ctx, req.Claim.PlanID, req.Claim.TaskID)
+	}
 	if readErr != nil {
 		return coordination.TaskUsageSnapshot{}, readErr
 	}

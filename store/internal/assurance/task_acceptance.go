@@ -176,8 +176,8 @@ func decodeTaskAcceptance(row Record) (coordination.TaskAcceptance, error) {
 
 // ListTaskAcceptances supports bounded recovery and metadata outbox discovery.
 func (s *Repository) ListTaskAcceptances(ctx context.Context, req coordination.TaskAcceptanceListRequest) ([]coordination.TaskAcceptance, error) {
-	if req.PlanID.IsNil() || req.PlanID.Prefix() != planning.PrefixPlan || req.Limit < 1 || req.Limit > 256 || (!req.After.IsNil() && req.After.Prefix() != coordination.PrefixTaskAcceptance) {
-		return nil, coordination.ErrInvalidTaskAcceptance
+	if err := req.Validate(); err != nil {
+		return nil, err
 	}
 	if _, err := cortex.RequireScope(ctx); err != nil {
 		return nil, err

@@ -141,6 +141,7 @@ func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Dr
 	t.Helper()
 	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })
 	t.Run("guarded usage settlement", func(t *testing.T) { testTaskUsageSettlement(t, backend, driver) })
+	t.Run("historical usage settlement", func(t *testing.T) { testTaskSettlementHistory(t, backend, driver) })
 	t.Run("usage admission closure", func(t *testing.T) { testTaskUsageClosure(t, backend, driver) })
 	t.Run("complete usage snapshot", func(t *testing.T) { testTaskUsageSnapshot(t, backend, driver) })
 	t.Run("engine managed adoption", func(t *testing.T) { testManagedTaskAdoption(t, backend, driver) })

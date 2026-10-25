@@ -302,8 +302,12 @@ the service seal ordinary accepted runs before settlement. `SealTaskCalls`
 compares the current completed claim, acceptance and committed run under the
 plan/run/journal guards, then reuses the existing journal seal write. Rollback,
 lost acknowledgment and concurrent late admission tests cover all three stores.
-Historical-debt discovery across superseded claims and concrete billing adapters
-remain open.
+Settlement now pages immutable acceptances within each discovered plan, so a
+replacement claim cannot hide earlier accepted debt. Historical accounting and
+ordinary call sealing check the original claim revision, acceptance and dispatch;
+replacement ownership and its reserved capacity remain unchanged. Host discovery
+must still include completed/cancelled plans with debt. Concrete billing adapters,
+unaccepted terminal-task accounting and deployment qualification remain open.
 
 ## S3.6: Team review UI and recovery qualification
 
@@ -366,5 +370,5 @@ now cover death after all adoption writes but before commit, and death after com
 before acknowledgment. A fresh connection and engine resume recovery, retain one
 acceptance/outbox identity, and preserve the original lease, fence, run and absent
 local provider return. Concrete host proof/fence implementations, other backend
-process faults, deployment qualification and provider/verifier usage settlement
-remain open.
+process faults and deployment qualification remain open. Accepted-task usage
+settlement uses the guarded accounting and history traversal described above.

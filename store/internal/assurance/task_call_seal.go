@@ -31,18 +31,14 @@ func (s *Repository) SealTaskCalls(ctx context.Context, request coordination.Tas
 	var result execution.RunCallSeal
 	err = s.planTransaction(bounded, req.Claim.PlanID, func(tc context.Context, tx *Repository) error {
 		result = execution.RunCallSeal{}
-		claim, readErr := tx.GetTaskClaim(tc, req.Claim.PlanID, req.Claim.TaskID)
+		claim, accepted, readErr := tx.acceptedTaskClaim(tc, req.Claim)
 		if readErr != nil {
 			return readErr
 		}
 		if claim.Token() != req.Claim || claim.Digest != req.ClaimDigest || claim.State != coordination.ClaimCompleted || claim.RunID != req.Seal.RunID || claim.Scope.Canonical() != req.Seal.Scope.Canonical() || claim.AcceptanceID == nil {
 			return coordination.ErrClaimConflict
 		}
-		accepted, readErr := tx.GetTaskAcceptance(tc, *claim.AcceptanceID)
-		if readErr != nil {
-			return readErr
-		}
-		if accepted.Claim.Digest != claim.Digest || accepted.Request.Recovery != nil {
+		if accepted.Request.Recovery != nil {
 			return coordination.ErrClaimConflict
 		}
 		reader, ok := tx.driver.(SubmissionRunReader)

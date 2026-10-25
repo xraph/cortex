@@ -13,6 +13,7 @@ import (
 // TaskSettlementStore supports scoped discovery and atomic guarded accounting.
 // Journal, verifier and budget writers must share the documented storage guards.
 type TaskSettlementStore interface {
+	AcceptedClaimStore
 	TaskUsageSettlementStore
 	TaskUsageClosureStore
 	TaskUsageSnapshotStore
@@ -63,8 +64,8 @@ type TaskSettlementServiceConfig struct {
 type TaskSettlementService struct{ service *TaskService }
 
 // NewTaskSettlementService validates explicit ports without starting work.
-// Defaults are four plan passes, one per scope, 64 claims per page, five seconds
-// per claim/seal read and one second between pages. Each full attempt defaults to
+// Defaults are four plan passes, one per scope, 64 acceptances per page, five seconds
+// per acceptance/seal read and one second between pages. Each full attempt defaults to
 // thirty seconds and cannot exceed it. Unbudgeted claims and pending proof wait
 // without refunds. Discovery must include completed or cancelled plans with debt.
 func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettlementService, error) {
@@ -85,7 +86,7 @@ func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettleme
 	if err != nil {
 		return nil, err
 	}
-	traversal := runRecoveryConfig{ClaimState: ClaimCompleted, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}
+	traversal := runRecoveryConfig{ClaimState: ClaimCompleted, AcceptedClaims: config.Store, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}
 	if config.CallSealFence != nil || config.CallSealAuthorizer != nil {
 		storage, ok := config.Store.(TaskCallSealStore)
 		if !ok {

@@ -768,18 +768,24 @@ ports, unsealed runs wait for a later pass.
 
 The guarded sealer checks the exact completed claim, its acceptance record and the
 current completed run's committed result while holding the plan, run and journal
-guards. A changed claim or run prevents closure. Recovery adoption already needs
+guards. Mismatched claim history or a changed run prevents closure. A replacement
+claim can own a later plan revision while the old accepted run is sealed.
+Recovery adoption already needs
 its own journal seal and does not use this ordinary-completion path. Closure
 prevents new calls, including delayed historical admission attempts; previously
 admitted calls can still finish and write their observations.
 
 You can also call `coordination.NewTaskCallSealer(store, fence, authorizer)`
 directly. Pass a `TaskCallSealRequest` with the claim token, full claim digest and
-run seal request. A retry rechecks current authority and ownership before returning
+run seal request. A retry rechecks current authority and retained accepted ownership before returning
 the matching journal seal. An error can follow a committed seal, so retain the
 original request when an acknowledgment is lost.
 
-The service visits completed claims with an existing or newly authorized seal. It checks
+The service pages accepted claims by acceptance ID, including earlier ownership of
+the same task after a replacement claim is acquired. `Store` must implement
+`AcceptedClaimStore.ListAcceptedTaskClaims`. Each entry retains its matching
+acceptance, preceding ownership revision and original dispatch. The service uses
+the old run's existing or newly authorized seal. It checks
 scan authority before reading budgets, usage or settlement receipts, then closes
 verifier admission through `TaskUsageCloser` and asks your resolver for billing
 proof against the exact snapshot, closure and original allocation. Unbudgeted
@@ -794,8 +800,8 @@ write. If a receipt already exists, the service retries its original request und
 current authorization without requesting another bill, including after restart
 or a lost acknowledgment.
 
-Defaults are four concurrent plan passes, one per exact scope, 64 claims per page,
-five seconds per claim-page or seal read, and one second between pages. A complete
+Defaults are four concurrent plan passes, one per exact scope, 64 acceptances per page,
+five seconds per acceptance-page or seal read, and one second between pages. A complete
 settlement attempt defaults to thirty seconds; `AttemptTimeout` accepts one
 millisecond to thirty seconds. Optional call sealing has its own attempt with the
 same bound. Discovery retains its separate timeout. Callbacks
@@ -804,8 +810,13 @@ ownership and prevents restart until the callbacks finish. `TaskSettlementStatus
 reports running/stopping state, active passes and failures without billing data.
 
 Your discovery source must retain completed or cancelled plans with outstanding
-debt. Traversal uses current task claims, so you also need to preserve access to
-unsettled historical ownership when replanning supersedes a claim. Sealing does
+debt. Within each discovered plan, traversal covers accepted history even when a
+later revision replaces ownership. Accounting reads that historical claim and
+settles its original reservation without changing the replacement claim or its
+capacity. Missing acceptance, ownership or dispatch records fail the pass. Keep
+them until accounting and retention requirements are satisfied. Recovering claims
+still require current ownership; this history path grants no retry or execution
+authority. Sealing does
 not establish worker quiescence or authenticate provider bills. Those host
 integrations and their live qualification remain required.
 

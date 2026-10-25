@@ -5863,3 +5863,39 @@ pushed separately as `d015e7f`. Gosec v2.28.0 finished with zero findings and no
 load errors using CI's exclusions plus the ignored local `.superpowers` scratch
 directory, which is absent from the CI checkout. Live billing, historical-debt discovery
 after superseded claims and the remaining four-stage gates are still open.
+
+### S3.5 accepted accounting after ownership replacement
+
+The first lifecycle test acquired a replacement claim under a revised plan and
+failed because settlement no longer discovered the old accepted run.
+`ListAcceptedTaskClaims` now pages immutable acceptances by acceptance ID. The
+shared recovery traversal uses that cursor for settlement and keeps task-ID
+pagination for recovering claims. Multiple accepted revisions of the same task
+can occupy separate pages.
+
+Historical accounting verifies the exact claim revision, its predecessor,
+acceptance and original dispatch. It then snapshots, closes and settles the old
+run under the existing guards and current host authority. Ordinary call sealing
+uses the same accepted-history check. Recovering ownership still has to be
+current, and this history API grants no execution, retry or adoption authority.
+
+Lifecycle tests cover both ordinary completion and recovery adoption after
+replacement ownership. They recover lost settlement acknowledgments and restart
+after proof expiry while preserving the replacement claim and its entire reserved
+capacity. Missing history, acceptance or dispatch records block settlement.
+Pagination and exact-scope tests cover the new read API.
+
+The broader claim, acceptance and recovery race suites passed on SQLite (69.925s),
+PostgreSQL (42.991s) and MongoDB (51.285s), with no skipped database tests.
+Coordination and assurance race suites passed, as did engine lifecycle tests
+(6.037s), the Forge lifecycle regression (1.719s), root build and docs
+type/lint/build checks. Scoped `make f` and the final settlement unit rerun passed.
+All-module `make l` passed the root and every module except the concurrent
+optimizer packet, which still reported six gocritic and six formatting issues.
+Those files remain under the optimizer chat's ownership. This packet contains no
+optimizer edits; the full shared lint check remains open before publication.
+
+Host plan discovery must still include completed/cancelled plans with debt.
+Unaccepted terminal-task accounting, concrete billing authentication and live
+qualification remain open. CI for the preceding `1ce462c` passed its security job,
+confirming the crash-harness file-access fix.

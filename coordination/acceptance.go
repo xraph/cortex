@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/verification"
 )
 
@@ -153,4 +154,19 @@ type TaskAcceptanceListRequest struct {
 	PlanID id.ID
 	After  id.ID
 	Limit  int
+}
+
+// Validate checks bounded acceptance pagination without granting read access.
+func (r TaskAcceptanceListRequest) Validate() error {
+	if r.PlanID.IsNil() || r.PlanID.Prefix() != planning.PrefixPlan || r.Limit < 1 || r.Limit > 256 || (!r.After.IsNil() && r.After.Prefix() != PrefixTaskAcceptance) {
+		return ErrInvalidTaskAcceptance
+	}
+	return nil
+}
+
+// AcceptedClaimStore pages immutable accepted ownership by acceptance ID,
+// including claims superseded by later plan revisions. Every returned claim must
+// retain its matching acceptance and ownership history. Reads grant no authority.
+type AcceptedClaimStore interface {
+	ListAcceptedTaskClaims(context.Context, TaskAcceptanceListRequest) ([]Claim, error)
 }

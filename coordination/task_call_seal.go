@@ -35,7 +35,8 @@ func (r TaskCallSealRequest) Freeze() (TaskCallSealRequest, string, error) {
 }
 
 // TaskCallSealStore checks accepted ownership and the retained run while holding
-// plan, run and journal guards through commit. Retries recheck current ownership.
+// plan, run and journal guards through commit. Retries recheck accepted history;
+// a replacement claim does not authorize calls on the old run.
 type TaskCallSealStore interface {
 	SealTaskCalls(context.Context, TaskCallSealRequest) (execution.RunCallSeal, error)
 }
@@ -64,7 +65,7 @@ type guardedTaskCallSealer struct {
 
 // NewTaskCallSealer requires storage, current authorization and synchronous fencing.
 // A failed acknowledgment can follow commit. Retry the identical request while
-// ownership remains current; never infer that an error means calls remain open.
+// accepted history remains valid; never infer that an error means calls remain open.
 func NewTaskCallSealer(store TaskCallSealStore, fence TaskCallSealFence, authorizer TaskCallSealAuthorizer) (TaskCallSealer, error) {
 	if hostport.IsNil(store) || hostport.IsNil(fence) || hostport.IsNil(authorizer) {
 		return nil, execution.ErrInvalidRunCall

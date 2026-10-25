@@ -12,6 +12,8 @@ import (
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/execution"
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/internal/assurance"
 )
@@ -64,11 +66,13 @@ func (settlementLifecycleAuthority) AuthorizeTaskUsageSettlement(context.Context
 
 func testManagedTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
-	t.Run("recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false) })
-	t.Run("ordinary", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, true) })
+	t.Run("recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false, false) })
+	t.Run("ordinary", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, true, false) })
+	t.Run("superseded recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false, true) })
+	t.Run("superseded ordinary", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, true, true) })
 }
 
-func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver assurance.Driver, ordinary bool) {
+func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver assurance.Driver, ordinary, superseded bool) {
 	t.Helper()
 	f := budgetedTaskFixture(t, backend, driver, true, ordinary)
 	accept := f.repo.AdoptTaskResult
@@ -77,6 +81,10 @@ func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver ass
 	}
 	accepted, err := accept(f.ctx, f.request)
 	require.NoError(t, err)
+	var replacement coordination.BudgetedClaim
+	if superseded {
+		replacement = supersedeAcceptedTask(t, f, accepted.Claim)
+	}
 	original, err := backend.GetRun(f.ctx, accepted.Claim.RunID)
 	require.NoError(t, err)
 	observed := &settlementLifecycleStore{TaskSettlementStore: f.repo, TaskCallSealStore: f.repo, loseFirstAck: true}
@@ -113,8 +121,16 @@ func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver ass
 	require.NoError(t, stored.Validate())
 	account, err := f.repo.GetBudgetSnapshot(f.ctx, accepted.Claim.PlanID)
 	require.NoError(t, err)
-	require.EqualValues(t, 18, account.Charged.Tokens)
-	require.EqualValues(t, 8, account.Charged.USDMicros)
+	require.EqualValues(t, 18+replacement.Reservation.Request.Allocation.Tokens, account.Charged.Tokens)
+	require.EqualValues(t, 8+replacement.Reservation.Request.Allocation.USDMicros, account.Charged.USDMicros)
+	if superseded {
+		current, readErr := f.repo.GetTaskClaim(f.ctx, accepted.Claim.PlanID, accepted.Claim.TaskID)
+		require.NoError(t, readErr)
+		require.Equal(t, replacement.Claim, current)
+		allocation, readErr := f.repo.GetReservation(f.ctx, replacement.Reservation.Request.ID)
+		require.NoError(t, readErr)
+		require.Nil(t, allocation.Settlement, "historical settlement must preserve replacement capacity")
+	}
 	after, err := backend.GetRun(f.ctx, accepted.Claim.RunID)
 	require.NoError(t, err)
 	require.Equal(t, original, after)
@@ -133,4 +149,23 @@ func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver ass
 	require.True(t, configured)
 	require.Zero(t, status.Failures)
 	require.Zero(t, status.Active)
+}
+
+func supersedeAcceptedTask(t *testing.T, f taskRecoveryFixture, claim coordination.Claim) coordination.BudgetedClaim {
+	t.Helper()
+	p, err := f.repo.GetPlan(f.ctx, claim.PlanID)
+	require.NoError(t, err)
+	p.Tasks[0].Instruction = "repeat under the revised plan"
+	_, err = f.repo.CommitRevision(f.ctx, planning.Revision{Plan: p, Actor: "host", Reason: "revise accepted work"}, p.Revision)
+	require.NoError(t, err)
+	p, err = f.repo.GetPlan(f.ctx, claim.PlanID)
+	require.NoError(t, err)
+	old, err := f.repo.GetBudgetedTaskClaim(f.ctx, claim.ID)
+	require.NoError(t, err)
+	next := coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: p.ID, PlanDigest: p.Digest, PlanRevision: p.Revision, TaskID: claim.TaskID, Worker: claim.Worker, GrantRef: claim.GrantRef, Duration: time.Minute, ExpectedRevision: claim.Revision}
+	allocation := old.Reservation.Request
+	allocation.ID, allocation.PlanDigest, allocation.OwnerRef = id.New(execution.PrefixReservation), p.Digest, next.ID.String()
+	replacement, err := f.repo.AcquireBudgetedTaskClaim(f.ctx, coordination.BudgetedClaimRequest{Claim: next, Reservation: allocation})
+	require.NoError(t, err)
+	return replacement
 }
