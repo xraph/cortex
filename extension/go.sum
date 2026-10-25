@@ -388,8 +388,8 @@ github.com/xraph/grove/drivers/sqlitedriver v1.9.0 h1:XXdvbDRS/rcbMrpby9s0Mz5S9r
 github.com/xraph/grove/drivers/sqlitedriver v1.9.0/go.mod h1:ZC2rVcW+ZfWDIiTl1BZ2F9jeIlhl5LayBMyENJoXZSk=
 github.com/xraph/nexus v1.8.0 h1:ck34a5YOvtL4bx64q7h/rth0ToDHInrIptuuMDd018w=
 github.com/xraph/nexus v1.8.0/go.mod h1:6qbQC3bbT/vOqsgnfpjG0pGkJHOsigiCEZlEzgCF+zc=
-github.com/xraph/sentinel v1.9.2 h1:AlwynEn1oggFheVzkG3bzY6IRsKIEeetxEE4hZ7jc/k=
-github.com/xraph/sentinel v1.9.2/go.mod h1:cmoEKmoiu9InWm86MeW0TrrUkrSF7G0Sw6oLqE3Hlhg=
+github.com/xraph/sentinel v1.10.0 h1:P1hx0g7mqWyJOTZpK/vlYbVwXvLJ04wWUVQfCRjVfn0=
+github.com/xraph/sentinel v1.10.0/go.mod h1:cmoEKmoiu9InWm86MeW0TrrUkrSF7G0Sw6oLqE3Hlhg=
 github.com/xraph/shield v1.8.0 h1:h9xISEdL0diHU3Zpw9L2qlk+7P6lC3wSFLW7y2gAIGM=
 github.com/xraph/shield v1.8.0/go.mod h1:5FIg8SMKZqGGIzK5V3C0V20BA1HXLg57lvWiY8BBWEI=
 github.com/xraph/vessel v1.0.4 h1:YVG80hm7bAKTwogwLXZMlp46tMHHJThUcvCUOWao9Yk=

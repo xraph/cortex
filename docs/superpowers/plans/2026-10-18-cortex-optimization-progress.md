@@ -1497,3 +1497,29 @@ above ran both container-backed stores successfully.
 Task 14 still needs aggregate controller comparison and reviewed controller
 adoption. The parent handler currently returns `ErrUnavailable` at the decision
 phase. It does not create a recommendation or adopt a controller.
+
+## Recorded comparison across frozen plans
+
+Sentinel's `CompareRecordedGroups` now accepts explicit paired job sets for each
+frozen plan. It shares the existing evidence loader and paired case bootstrap
+with `CompareRecordedSets`. Reports retain every plan ID/digest and job digest;
+the singular `PlanDigest` stays empty when several plans contribute.
+
+Tests compare the grouped result with the same captures scored under one plan.
+They cover group order, the global distinct-case minimum, pending evaluations,
+required failures, changed plan references and foreign scope. Reusing a case
+across plans is rejected even when the plans contain disjoint repetitions.
+Duplicate input/context pairs under different case IDs are rejected too, while
+distinct frozen contexts remain valid.
+
+Sentinel commit `c59b2f9` is pushed. Its full race suite, final comparison race
+suite, build, `make f` and `make l` pass locally. CI passed, and the normal release
+workflow published `v1.10.0` after its build and race checks. Cortex's Sentinel
+adapter and Forge extension now pin that published version. Their race suites
+pass, including the full Sentinel optimization suite in 236.156s and extension
+contract tests in 25.084s. Both modules build, scoped `make f` and final all-module
+`make l` pass, and tidy changes only the Sentinel version and checksums.
+
+This supplies the statistical primitive for parent controller decisions. Cortex
+still needs the comparison adapter, transactional evidence validation and
+reviewed adoption.

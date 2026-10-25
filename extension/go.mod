@@ -110,7 +110,7 @@ require (
 	github.com/xraph/confy v1.1.0 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.9.0 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.9.0 // indirect
-	github.com/xraph/sentinel v1.9.2 // indirect
+	github.com/xraph/sentinel v1.10.0 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
