@@ -81,7 +81,7 @@ func (s *Store) GetOrchestration(ctx context.Context, orchID id.OrchestrationCon
 		return nil, scopeErr
 	}
 	m := new(orchestrationConfigModel)
-	q := s.sdb.NewSelect(m).Where("id = ?", orchID.String())
+	q := s.preparationQuery().NewSelect(m).Where("id = ?", orchID.String())
 	for _, p := range scopePredicates(scope, false) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

@@ -6046,3 +6046,33 @@ Coordination/assurance races, the full root suite with the documented local
 scopespy exclusion, all-module lint, scoped formatting, root build and docs
 checks passed. Governed retirement, retries, compensation and live qualification
 remain open.
+
+### Immutable orchestration preparation
+
+`PrepareOrchestration` captures config, named participant resolution and every
+participant's stored preparation sources in one database snapshot. The optional
+`OrchestrationPreparationSources` view uses the existing scope and callback-lifetime
+guard. SQLite and PostgreSQL route the new snapshot reads through their transaction
+reader; MongoDB retains its snapshot session. Shared conformance tests prove config
+and named-agent reads cannot observe edits committed during capture or outlive it.
+
+`PreparedOrchestration` retains strategy/config, all executable participants and
+the common receipt. `ExecutionRoster` reuses strategy resolution and hierarchical
+validation, including auxiliary router/judge/aggregator agents. Inspection is
+detached, JSON is bounded and digest checked, and deserialization validates roster,
+scope, capture identity and model settings. Artifact inspection preserves exact JSON
+numbers; it cannot repair numeric precision already lost in store-returned metadata.
+
+The initial regression rejected preparation because the snapshot view lacked team
+reads. The artifact regression then failed without pinning support. Separate
+regressions caught numeric rounding in artifact decoding and inconsistent config
+size validation at import. Prepared/atomic races passed (70.744s), all orchestration
+strategy races passed, and the SQLite/PostgreSQL/MongoDB capture-and-preparation
+matrix passed (2.289s/2.857s/3.548s) with no skips. Root tests, build and docs checks
+passed with the documented local scopespy exclusion. Final boundary races passed
+(11.427s), scoped formatting is complete and all ten modules passed lint.
+
+This completes preparation only. `RunPreparedOrchestration`, shared child-budget
+enforcement, isolated child sessions, experiment-limited A2A routing and persisted
+partial execution evidence remain required for the prepared execution path. The
+optimizer owns its preset approval and trace adapters. No optimizer types enter root.

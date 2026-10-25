@@ -8,6 +8,34 @@ orchestration is a stored config (a strategy plus the participant agents and
 their settings) that you run by name. During a run, agents share a blackboard
 (the roster and prior contributions) and pass work through recorded handoffs.
 
+## Prepare an immutable team
+
+`Engine.PrepareOrchestration(ctx, configID)` freezes the stored config and every
+agent its strategy can invoke. This includes a router, judge or aggregator when
+that strategy uses one. Config, named agent resolution and each agent's stored
+sources share one database snapshot and receipt. Publication checks finish after
+the transaction closes.
+
+Use `Inspect()` to read detached config and participant preparations, `Digest()`
+to identify the artifact, and JSON serialization to retain it. Deserialization
+checks the digest, schema, complete roster, exact scope and common snapshot
+receipt. Inspection preserves numbers already present in the artifact; it cannot
+restore precision lost before the store returned a value.
+
+The store must provide `PreparationSnapshotter` and expose
+`OrchestrationPreparationSources` inside its callback. SQLite, PostgreSQL and
+MongoDB implement these reads. Missing capability, invalid config, unavailable
+participants or scope mismatches fail preparation. There is no fallback to
+independent reads. Prepared configs allow up to 256 listed participants, 256-way
+concurrency and 128 debate rounds, with the existing 64-worker hierarchical limit.
+Artifacts are limited to 16 MiB and use local agent names.
+
+Preparation establishes content identity, not approval or execution authority.
+External retrieval and model/tool implementations need their own qualification.
+This API prepares the team only. Execution with shared child budgets, isolated
+sessions and a restricted A2A roster remains separate work; `RunOrchestration`
+continues to load its configuration normally.
+
 ## Strategies
 
 | Strategy | Behavior |

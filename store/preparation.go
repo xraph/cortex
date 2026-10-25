@@ -6,6 +6,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/run"
@@ -22,6 +23,15 @@ type PreparationSources interface {
 	GetSkillByName(context.Context, string) (*skill.Skill, error)
 	GetTraitByName(context.Context, string) (*trait.Trait, error)
 	GetOverlayForAgentAt(context.Context, id.AgentID, cortex.Scope) (*prompt.Overlay, error)
+}
+
+// OrchestrationPreparationSources adds config and named participant reads to a
+// preparation snapshot. Implementations must use the same transaction, scope and
+// callback lifetime as PreparationSources. These reads grant no execution authority.
+type OrchestrationPreparationSources interface {
+	PreparationSources
+	GetOrchestration(context.Context, id.OrchestrationConfigID) (*orchestration.Config, error)
+	GetByName(context.Context, string) (*agent.Config, error)
 }
 
 // PreparationSnapshotter is an optional store capability. CapturePreparation

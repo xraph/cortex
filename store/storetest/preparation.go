@@ -11,6 +11,7 @@ import (
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/skill"
@@ -39,9 +40,24 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 			t.Fatal(err)
 		}
 	}
+	config := &orchestration.Config{ID: id.NewOrchestrationConfigID(), Name: "atomic-team", Strategy: orchestration.StrategySequential, Participants: []orchestration.Participant{{AgentName: ag.Name}}, Settings: orchestration.Settings{Model: "before"}}
+	if err := s.CreateOrchestration(ctx, config); err != nil {
+		t.Fatal(err)
+	}
 	var expired store.PreparationSources
 	receipt, err := provider.CapturePreparation(ctx, func(view store.PreparationSources) error {
 		expired = view
+		teamView, supports := view.(store.OrchestrationPreparationSources)
+		if !supports {
+			return fmt.Errorf("orchestration snapshot reads unavailable")
+		}
+		originalConfig, readErr := teamView.GetOrchestration(ctx, config.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if originalConfig.Settings.Model != "before" {
+			return fmt.Errorf("unexpected initial orchestration")
+		}
 		// Establish the snapshot before a second connection commits every edit.
 		before, readErr := view.Get(ctx, ag.ID)
 		if readErr != nil {
@@ -55,10 +71,22 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 		sk.Description = "after"
 		tr.Description = "after"
 		overlay.Model = "after"
-		for _, writeErr := range []error{s.Update(ctx, ag), s.UpdatePersona(ctx, p), s.UpdateSkill(ctx, sk), s.UpdateTrait(ctx, tr), s.UpdateOverlay(parentCtx, overlay), s.CreateOverlay(ctx, &prompt.Overlay{ID: id.NewOverlayID(), AgentID: ag.ID, Model: "new"})} {
+		config.Settings.Model = "after"
+		for _, writeErr := range []error{s.UpdateOrchestration(ctx, config), s.Update(ctx, ag), s.UpdatePersona(ctx, p), s.UpdateSkill(ctx, sk), s.UpdateTrait(ctx, tr), s.UpdateOverlay(parentCtx, overlay), s.CreateOverlay(ctx, &prompt.Overlay{ID: id.NewOverlayID(), AgentID: ag.ID, Model: "new"})} {
 			if writeErr != nil {
 				return writeErr
 			}
+		}
+		gotConfig, readErr := teamView.GetOrchestration(ctx, config.ID)
+		if readErr != nil {
+			return readErr
+		}
+		namedAgent, readErr := teamView.GetByName(ctx, ag.Name)
+		if readErr != nil {
+			return readErr
+		}
+		if gotConfig.Settings.Model != "before" || namedAgent.SystemPrompt != "before" {
+			return fmt.Errorf("snapshot mixed orchestration or named agent versions")
 		}
 		gotAgent, readErr := view.Get(ctx, ag.ID)
 		if readErr != nil {
@@ -86,6 +114,12 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 		if _, readErr = view.GetOverlayForAgentAt(ctx, ag.ID, scope); !errors.Is(readErr, cortex.ErrOverlayNotFound) {
 			return fmt.Errorf("snapshot observed new overlay: %w", readErr)
 		}
+		if _, readErr = teamView.GetOrchestration(parentCtx, config.ID); !errors.Is(readErr, cortex.ErrInvalidScope) {
+			return fmt.Errorf("orchestration widened capture scope: %w", readErr)
+		}
+		if _, readErr = teamView.GetByName(parentCtx, ag.Name); !errors.Is(readErr, cortex.ErrInvalidScope) {
+			return fmt.Errorf("named agent widened capture scope: %w", readErr)
+		}
 		if _, readErr = view.Get(parentCtx, ag.ID); !errors.Is(readErr, cortex.ErrInvalidScope) {
 			return fmt.Errorf("view widened capture scope: %w", readErr)
 		}
@@ -99,6 +133,20 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 	}
 	if _, err = expired.Get(ctx, ag.ID); !errors.Is(err, cortex.ErrPreparationUnavailable) {
 		t.Fatalf("view survived callback: %v", err)
+	}
+	expiredTeam, teamOK := expired.(store.OrchestrationPreparationSources)
+	if !teamOK {
+		t.Fatal("missing orchestration preparation view")
+	}
+	if _, err = expiredTeam.GetByName(ctx, ag.Name); !errors.Is(err, cortex.ErrPreparationUnavailable) {
+		t.Fatalf("named agent view survived callback: %v", err)
+	}
+	if _, err = expiredTeam.GetOrchestration(ctx, config.ID); !errors.Is(err, cortex.ErrPreparationUnavailable) {
+		t.Fatalf("orchestration view survived callback: %v", err)
+	}
+	afterConfig, err := s.GetOrchestration(ctx, config.ID)
+	if err != nil || afterConfig.Settings.Model != "after" {
+		t.Fatalf("orchestration writer did not commit: %v %v", afterConfig, err)
 	}
 	after, err := s.Get(ctx, ag.ID)
 	if err != nil || after.SystemPrompt != "after" {
@@ -127,6 +175,27 @@ func testPreparationSnapshot(t *testing.T, newStore func(*testing.T) store.Store
 		}
 		if checked, checkErr = e.CheckPreparedSources(ctx, prepared); checked != nil || !errors.Is(checkErr, cortex.ErrPreparationConflict) {
 			t.Fatalf("changed ancestor accepted: %+v %v", checked, checkErr)
+		}
+	})
+	t.Run("prepared orchestration", func(t *testing.T) {
+		runtime, buildErr := engine.New(engine.WithStore(s))
+		if buildErr != nil {
+			t.Fatal(buildErr)
+		}
+		prepared, prepareErr := runtime.PrepareOrchestration(ctx, config.ID)
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		view, inspectErr := prepared.Inspect()
+		if inspectErr != nil {
+			t.Fatal(inspectErr)
+		}
+		child, inspectErr := view.Participants[ag.Name].Inspect()
+		if inspectErr != nil {
+			t.Fatal(inspectErr)
+		}
+		if len(view.Participants) != 1 || view.Config.ID != config.ID || view.Snapshot.Provider != receipt.Provider || child.Provenance.SourceSnapshot != view.Snapshot {
+			t.Fatalf("team source capture incomplete: %+v", view)
 		}
 	})
 	sentinel := errors.New("collection rejected")

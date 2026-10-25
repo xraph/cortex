@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
 	"github.com/xraph/cortex/prompt"
 	"github.com/xraph/cortex/skill"
@@ -71,6 +72,28 @@ func read[T any](ctx context.Context, v *View, query func(context.Context) (*T, 
 // Get reads an agent from the bound snapshot.
 func (v *View) Get(ctx context.Context, key id.AgentID) (*agent.Config, error) {
 	return read(ctx, v, func(c context.Context) (*agent.Config, error) { return v.source.Get(c, key) })
+}
+
+// GetByName resolves a participant in the bound snapshot.
+func (v *View) GetByName(ctx context.Context, name string) (*agent.Config, error) {
+	return read(ctx, v, func(c context.Context) (*agent.Config, error) {
+		source, ok := v.source.(store.OrchestrationPreparationSources)
+		if !ok {
+			return nil, cortex.ErrPreparationUnavailable
+		}
+		return source.GetByName(c, name)
+	})
+}
+
+// GetOrchestration reads strategy, participants and settings in the bound snapshot.
+func (v *View) GetOrchestration(ctx context.Context, key id.OrchestrationConfigID) (*orchestration.Config, error) {
+	return read(ctx, v, func(c context.Context) (*orchestration.Config, error) {
+		source, ok := v.source.(store.OrchestrationPreparationSources)
+		if !ok {
+			return nil, cortex.ErrPreparationUnavailable
+		}
+		return source.GetOrchestration(c, key)
+	})
 }
 
 // GetPersonaByName reads a persona from the bound snapshot.
