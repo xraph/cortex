@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/readconcern"
 	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
@@ -20,6 +21,10 @@ import (
 
 func (d assuranceDriver) TransactPlan(ctx context.Context, planID id.ID, callback func(context.Context, assurance.Driver) error) error {
 	return d.transactAssuranceRecord(ctx, assurance.KindPlan, planID, planning.ErrNotFound, coordination.ErrAssignmentUnavailable, callback)
+}
+
+func (d assuranceDriver) TransactOrchestrationBudget(ctx context.Context, executionID id.OrchestrationID, callback func(context.Context, assurance.Driver) error) error {
+	return d.transactAssuranceRecord(ctx, assurance.KindOrchestrationBudget, executionID, execution.ErrReservationNotFound, cortex.ErrBudgetUnavailable, callback)
 }
 
 func (d assuranceDriver) TransactRunCalls(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.Driver) error) error {

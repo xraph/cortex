@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/run"
@@ -117,6 +119,31 @@ func validatePreparedOrchestration(s preparedOrchestrationSnapshot) error {
 // never substituted. Publication checks run after the transaction closes.
 // Preparation grants no approval and invokes no strategy, model or tools.
 func (e *Engine) PrepareOrchestration(ctx context.Context, key id.OrchestrationConfigID) (*PreparedOrchestration, error) {
+	return e.prepareOrchestration(ctx, key, nil)
+}
+
+// PrepareOrchestrationWithBudgets freezes explicit per-invocation ceilings in
+// every participant, including auxiliary agents. Steps, tokens and deadline are
+// required. A zero tool limit is allowed only when the captured tool list is
+// empty. Budgets must match the complete execution roster. Shared team capacity
+// still needs its own durable reservation policy before dispatch.
+func (e *Engine) PrepareOrchestrationWithBudgets(ctx context.Context, key id.OrchestrationConfigID, budgets map[string]execution.Budget) (*PreparedOrchestration, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(budgets) < 1 || len(budgets) > 257 {
+		return nil, cortex.ErrInvalidPrepared
+	}
+	budgets = maps.Clone(budgets)
+	for _, budget := range budgets {
+		if budget.Validate() != nil || budget.MaxSteps <= 0 || budget.MaxTokens <= 0 || budget.Deadline.IsZero() {
+			return nil, cortex.ErrInvalidPrepared
+		}
+	}
+	return e.prepareOrchestration(ctx, key, budgets)
+}
+
+func (e *Engine) prepareOrchestration(ctx context.Context, key id.OrchestrationConfigID, budgets map[string]execution.Budget) (*PreparedOrchestration, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -158,6 +185,9 @@ func (e *Engine) PrepareOrchestration(ctx context.Context, key id.OrchestrationC
 		if rosterErr != nil {
 			return fmt.Errorf("cortex: prepare orchestration roster: %w: %w", cortex.ErrInvalidPrepared, rosterErr)
 		}
+		if budgets != nil && len(budgets) != len(names) {
+			return cortex.ErrInvalidPrepared
+		}
 		captured := context.WithValue(ctx, preparationSourcesKey{}, sources)
 		for _, name := range names {
 			ag, agentErr := team.GetByName(captured, name)
@@ -167,9 +197,20 @@ func (e *Engine) PrepareOrchestration(ctx context.Context, key id.OrchestrationC
 			if ag == nil || ag.Name != name {
 				return cortex.ErrInvalidPrepared
 			}
-			child, prepareErr := e.collectPreparedAgent(captured, ag, &RunOverrides{Model: config.Settings.Model})
+			overrides := &RunOverrides{Model: config.Settings.Model}
+			if budgets != nil {
+				budget, exists := budgets[name]
+				if !exists {
+					return cortex.ErrInvalidPrepared
+				}
+				overrides.Budget = &budget
+			}
+			child, prepareErr := e.collectPreparedAgent(captured, ag, overrides)
 			if prepareErr != nil {
 				return prepareErr
+			}
+			if budgets != nil && len(child.Tools) > 0 && child.Config.Budget.MaxToolCalls <= 0 {
+				return cortex.ErrInvalidPrepared
 			}
 			children[name] = child
 		}

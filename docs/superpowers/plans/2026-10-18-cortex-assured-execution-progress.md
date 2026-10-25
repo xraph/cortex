@@ -6109,3 +6109,43 @@ documented local `store/scopespy` exclusion applies to the broader root run.
 Prepared runtime dispatch, shared child budgets, isolated sessions and restricted
 A2A routing remain open. Returned-child persistence does not close the crash
 window before a child returns or before its first evidence write.
+
+### Durable orchestration budget accounts
+
+The existing reservation repository requires real task plans, so team execution
+uses `orchestration.BudgetPolicy` and the optional `BudgetStore` capability. Each
+policy binds exact scope, orchestration ID, prepared digest, deadline, shared
+capacity and participant ceilings. Leaf reservations bind the participant and
+reserved agent run ID. The legacy reservation fields carry these identifiers;
+plan admission and settlement remain separate and reject team accounts.
+
+The implementation reuses reservation arithmetic, immutable records, accounting
+reads, settlement validation and bounded discovery. Each backend reuses its
+existing assurance-record transaction lock with a team-policy anchor. An
+immutable closure record stops new admission without refunding unknown usage.
+Identical retries recover retained records after closure or expiry. Recreating
+the policy cannot reopen admission.
+
+The policy regression first rejected a valid binding; storage regressions then
+failed because the capability was missing. Tests cover competing allocations,
+scope and binding denials, duplicate child identity, immutable retries, unknown
+usage, overruns, plan/team separation, closure races and pagination. SQLite fault
+tests cover rollback, lost acknowledgments and reopening the database, including
+reservation, settlement, expiry and closure. Final reservation races passed on
+SQLite (14.177s), PostgreSQL (4.413s) and MongoDB (4.531s), with no skips. An earlier
+PostgreSQL container setup hit a Docker mapped-port inspection timeout before
+tests began; the serial retry passed.
+
+`PrepareOrchestrationWithBudgets` uses the same atomic capture as ordinary team
+preparation and freezes host-supplied step/token/tool ceilings and deadlines in
+each participant. The complete roster must be covered. Zero tool limits require
+an empty captured tool list, preventing zero from becoming unlimited by accident.
+The new preparation regression first failed because this entry point was absent.
+Final prepared/team races passed (110.005s). The broader root suite passed with
+the documented local scopespy exclusion, as did scoped formatting, all ten
+modules' lint, root build and docs type/lint/build checks.
+
+This completes the accounting foundation only. Prepared runtime dispatch, durable
+child linkage, shared-purpose propagation, isolated sessions and restricted A2A
+routing remain open. Database tests do not establish provider billing accuracy
+or process-crash recovery for the complete team runtime.

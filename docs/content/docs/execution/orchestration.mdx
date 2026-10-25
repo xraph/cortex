@@ -30,6 +30,14 @@ independent reads. Prepared configs allow up to 256 listed participants, 256-way
 concurrency and 128 debate rounds, with the existing 64-worker hierarchical limit.
 Artifacts are limited to 16 MiB and use local agent names.
 
+Use `PrepareOrchestrationWithBudgets(ctx, configID, budgets)` to freeze an explicit
+`execution.Budget` for every name in the execution roster, including auxiliary
+agents. Each budget needs positive step and token limits and an absolute deadline.
+A zero tool limit is accepted only when the captured tool list is empty, since
+zero otherwise means unlimited in a run budget. Missing or extra participants
+fail preparation. These per-invocation ceilings still need a shared team account
+before dispatch; they do not limit the combined cost of several children alone.
+
 Preparation establishes content identity, not approval or execution authority.
 External retrieval and model/tool implementations need their own qualification.
 This API prepares the team only. Execution with shared child budgets, isolated
@@ -55,6 +63,41 @@ uses the same strategy and persistence path without a config lookup. It detaches
 participants and settings before invoking hooks. You must supply a runner that
 enforces your participant versions, authorization and shared budgets. Passing a
 config does not provide those guarantees by itself.
+
+## Durable team capacity
+
+`orchestration.BudgetStore` accounts for a team independently of task plans and
+acceptance contracts. SQLite, PostgreSQL and MongoDB implement it. A
+`BudgetPolicy` fixes the orchestration ID, prepared digest, exact scope, deadline,
+shared capacity and each participant's per-invocation ceiling. Use
+`execution.Resources`: zero permits no consumption. Every invocation consumes a
+fan-out slot, including another manager or judge call.
+
+Create the immutable policy with `CreateOrchestrationBudget`, then reserve each
+child before dispatch through `ReserveOrchestrationChild`. The reservation uses
+the existing accounting format: `PlanID` contains the orchestration ID,
+`PlanDigest` the prepared digest, `TaskID` the reserved agent run ID, and
+`OwnerRef` the participant name. Only leaf reservations are supported. A second
+reservation ID for the same child in that account fails, as do outsiders,
+changed bindings, excess allocations and expired deadlines. The plan reservation
+and settlement methods continue to require a real plan.
+
+Use `SettleOrchestrationChild` with trusted host usage. Missing dimensions retain
+their allocation, and reported overruns remain visible and stop later admission.
+Money limits need a pricing revision and host estimates; `TokenOnly` explicitly
+disables that dimension. The store does not meter providers or authenticate
+billing receipts for you.
+
+`CloseOrchestrationBudget` permanently stops new admission. It does not refund
+pending work, and repeating policy creation cannot reopen it. Settlement and
+identical reservation retries remain available after closure or expiry, but a
+historical receipt does not authorize another provider call. Use
+`GetOrchestrationBudgetSnapshot` for consistent charges and closure status, and
+`ListOrchestrationReservations` for bounded recovery discovery.
+
+This is the durable accounting API. Automatic prepared-team dispatch and session
+or A2A isolation still need their runtime integration. Creating an account alone
+does not create an orchestration run, execute a child or prove a result correct.
 
 ## Strategies
 

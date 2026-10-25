@@ -14,6 +14,10 @@ func (d assuranceDriver) TransactPlan(ctx context.Context, planID id.ID, callbac
 	return d.transactAssuranceRecord(ctx, assurance.KindPlan, planID, planning.ErrNotFound, callback)
 }
 
+func (d assuranceDriver) TransactOrchestrationBudget(ctx context.Context, executionID id.OrchestrationID, callback func(context.Context, assurance.Driver) error) error {
+	return d.transactAssuranceRecord(ctx, assurance.KindOrchestrationBudget, executionID, execution.ErrReservationNotFound, callback)
+}
+
 func (d assuranceDriver) TransactRunCalls(ctx context.Context, runID id.AgentRunID, callback func(context.Context, assurance.Driver) error) error {
 	return d.transactAssuranceRecord(ctx, assurance.KindRunCallGuard, runID, execution.ErrInvalidRunCall, callback)
 }

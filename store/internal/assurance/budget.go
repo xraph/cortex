@@ -279,6 +279,10 @@ func (s *Repository) reserveInTransaction(ctx context.Context, req execution.Res
 	if readErr != nil {
 		return execution.Reservation{}, false, readErr
 	}
+	return s.admitReservationInTransaction(ctx, policy, reservations, req, digest)
+}
+
+func (s *Repository) admitReservationInTransaction(ctx context.Context, policy execution.ReservationPolicy, reservations []execution.Reservation, req execution.ReservationRequest, digest string) (execution.Reservation, bool, error) {
 	at := s.clock.Now()
 	if admitErr := execution.AdmitReservation(policy, reservations, req, at); admitErr != nil {
 		return execution.Reservation{}, false, admitErr
@@ -321,6 +325,10 @@ func (s *Repository) Settle(ctx context.Context, settlement execution.Settlement
 
 // settleInTransaction requires a frozen request and the reservation's plan lock.
 func (s *Repository) settleInTransaction(ctx context.Context, req execution.Settlement, digest string) (execution.SettlementReceipt, error) {
+	return s.settleAccountInTransaction(ctx, req, digest, s.GetReservationPolicy)
+}
+
+func (s *Repository) settleAccountInTransaction(ctx context.Context, req execution.Settlement, digest string, readPolicy func(context.Context, id.ID) (execution.ReservationPolicy, error)) (execution.SettlementReceipt, error) {
 	current, err := s.GetReservation(ctx, req.ReservationID)
 	if err != nil {
 		return execution.SettlementReceipt{}, err
@@ -334,7 +342,7 @@ func (s *Repository) settleInTransaction(ctx context.Context, req execution.Sett
 	if current.RequestDigest != req.RequestDigest {
 		return execution.SettlementReceipt{}, execution.ErrReservationConflict
 	}
-	policy, err := s.GetReservationPolicy(ctx, current.Request.PlanID)
+	policy, err := readPolicy(ctx, current.Request.PlanID)
 	if err != nil {
 		return execution.SettlementReceipt{}, err
 	}
@@ -376,6 +384,10 @@ func (s *Repository) ListReservations(ctx context.Context, req execution.Reserva
 	if req.PlanID.IsNil() || req.PlanID.Prefix() != planning.PrefixPlan || req.Limit < 1 || req.Limit > 256 || (!req.After.IsNil() && req.After.Prefix() != execution.PrefixReservation) {
 		return nil, execution.ErrInvalidReservation
 	}
+	return s.listReservations(ctx, req)
+}
+
+func (s *Repository) listReservations(ctx context.Context, req execution.ReservationListRequest) ([]execution.Reservation, error) {
 	if _, err := cortex.RequireScope(ctx); err != nil {
 		return nil, err
 	}
