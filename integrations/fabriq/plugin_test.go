@@ -3,15 +3,27 @@ package fabriqbrain
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/xraph/fabriq/core/agent"
 	"github.com/xraph/fabriq/core/command"
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/drivers/sqlitedriver"
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 
+	"github.com/xraph/cortex"
+	cagent "github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/plugin"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/store/sqlite"
 )
 
 type fakeRememberer struct {
@@ -121,4 +133,90 @@ func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
 	if meta["failed"] != true || meta["error"] != context.DeadlineExceeded.Error() {
 		t.Fatalf("meta = %v", meta)
 	}
+}
+
+// A trial's output must not become ordinary recall material, including failures
+// and terminal callbacks whose host no longer carries the start context.
+func TestTrialRunsDoNotWriteOrdinaryMemory(t *testing.T) {
+	for _, purpose := range []run.ExecutionPurpose{run.PurposeNormal, run.PurposeEvaluation, run.PurposeOptimizationTrial, run.PurposeOptimizationController} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/failed=%t", purpose, failed), func(t *testing.T) {
+				ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "project", Value: "learning"}}})
+				driver := sqlitedriver.New()
+				if err := driver.Open(ctx, filepath.Join(t.TempDir(), "runs.db")); err != nil {
+					t.Fatal(err)
+				}
+				db, err := grove.Open(driver)
+				if err != nil {
+					t.Fatal(err)
+				}
+				storage := sqlite.New(db)
+				defer storage.Close()
+				if err = storage.Migrate(ctx); err != nil {
+					t.Fatal(err)
+				}
+				config := &cagent.Config{ID: id.NewAgentID(), Name: "worker", Model: "fixture"}
+				if err = storage.Create(ctx, config); err != nil {
+					t.Fatal(err)
+				}
+				rem := &fakeRememberer{}
+				mapped := 0
+				p := NewPlugin(rem, WithTenantMapper(func(ctx context.Context) context.Context { mapped++; return ctx }))
+				model := &provenanceModel{failed: failed}
+				eng, err := engine.New(engine.WithStore(storage), engine.WithLLM(model), engine.WithExtension(p))
+				if err != nil {
+					t.Fatal(err)
+				}
+				prepared, err := eng.PrepareAgent(ctx, config.ID, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = eng.RunPrepared(ctx, prepared, "private trial input", engine.PreparedRunOptions{Purpose: purpose})
+				if (err != nil) != failed {
+					t.Fatalf("run failure=%t: %v", failed, err)
+				}
+				want := 0
+				if purpose == run.PurposeNormal {
+					want = 1
+				}
+				if len(rem.reqs) != want || mapped != want {
+					t.Fatalf("purpose %s wrote %d ordinary memories and mapped %d scopes, want %d", purpose, len(rem.reqs), mapped, want)
+				}
+				runID := id.NewAgentRunID()
+				if err = p.OnRunStarted(model.ctx, config.ID, runID, "private restarted input"); err != nil {
+					t.Fatal(err)
+				}
+				if failed {
+					err = p.OnRunFailed(context.Background(), config.ID, runID, errors.New("private failure"))
+				} else {
+					err = p.OnRunCompleted(context.Background(), config.ID, runID, "private output", time.Second)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(rem.reqs) != 2*want {
+					t.Fatalf("terminal context loss wrote %d memories, want %d", len(rem.reqs), 2*want)
+				}
+				if _, found := p.inflight.Load(runID.String()); found {
+					t.Fatal("terminal callback retained input")
+				}
+			})
+		}
+	}
+}
+
+type provenanceModel struct {
+	ctx    context.Context
+	failed bool
+}
+
+func (p *provenanceModel) Complete(ctx context.Context, _ *llm.Request) (*llm.Response, error) {
+	p.ctx = ctx
+	if p.failed {
+		return nil, errors.New("fixture failure")
+	}
+	return &llm.Response{Content: "private trial output", Model: "fixture", FinishReason: "stop"}, nil
+}
+func (*provenanceModel) CompleteStream(context.Context, *llm.Request) (llm.Stream, error) {
+	return nil, errors.New("unused stream")
 }

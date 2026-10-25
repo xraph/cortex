@@ -907,3 +907,24 @@ checks pass. All-module lint and both module builds pass.
 Sentinel pins the published optimization lease API at `32be891`. Live provider
 qualification, lost model-answer recovery, parallel scheduling, Fabriq
 publication, activation and dashboard application flows remain open.
+
+## Ordinary memory isolation for optimization runs
+
+The Fabriq memory plugin excludes evaluation, trial and controller runs before
+mapping a tenant or writing memory. A small suppression marker carries the
+start-time decision through terminal callbacks that lose their original context;
+the marker retains no private input and is removed on completion or failure.
+Normal runs keep their existing memory behavior.
+
+The regression uses real prepared engine execution and SQLite persistence. All
+six non-normal success/failure cases failed before the fix, then passed, including
+terminal callbacks with missing provenance. Full adapter race tests and builds
+pass against both the checkout and published Cortex commit `7d7f566`. The real
+Postgres/Fabriq integration test and all-module lint also pass.
+
+The adapter requires the proxy-resolved root version
+`v1.8.1-0.20261024054512-7d7f56675086`. Its existing shared telemetry import is absent
+from Cortex v1.8.0, which the consumer check caught after local replacements were
+removed. The integration test module follows the same root pin. This closes the
+ordinary-memory feedback path; governed lesson delivery and the full learning
+phase remain in progress.

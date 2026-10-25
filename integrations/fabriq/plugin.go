@@ -11,8 +11,10 @@ import (
 	"github.com/xraph/fabriq/core/command"
 	log "github.com/xraph/go-utils/log"
 
+	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
+	"github.com/xraph/cortex/run"
 )
 
 // rememberer is the narrow slice of *agent.Toolkit the plugin needs.
@@ -29,7 +31,7 @@ const opCreate = "create"
 type Plugin struct {
 	rem      rememberer
 	cfg      config
-	inflight sync.Map // runID string -> input string
+	inflight sync.Map // runID string -> memoryInput
 	logs     telemetry.Throttle
 }
 
@@ -62,21 +64,23 @@ func NewPlugin(rem rememberer, opts ...Option) *Plugin {
 func (p *Plugin) Name() string { return "fabriq-brain" }
 
 // OnRunStarted stashes the run input so OnRunCompleted can persist the full Q/A.
-func (p *Plugin) OnRunStarted(_ context.Context, _ id.AgentID, runID id.AgentRunID, input string) error {
-	p.inflight.Store(runID.String(), input)
+func (p *Plugin) OnRunStarted(ctx context.Context, _ id.AgentID, runID id.AgentRunID, input string) error {
+	value := memoryInput{suppressed: suppressOrdinaryMemory(ctx)}
+	if !value.suppressed {
+		value.input = input
+	}
+	p.inflight.Store(runID.String(), value)
 	return nil
 }
 
 // OnRunCompleted writes a memory row for the finished run. Write failures are
 // swallowed (logged by the registry) so memory persistence never fails a run.
 func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, output string, elapsed time.Duration) error {
-	ctx = p.cfg.tenant(ctx)
-
-	v, _ := p.inflight.LoadAndDelete(runID.String())
-	var in string
-	if s, ok := v.(string); ok {
-		in = s
+	in, suppressed := p.takeInput(ctx, runID)
+	if suppressed {
+		return nil
 	}
+	ctx = p.cfg.tenant(ctx)
 
 	content := strings.TrimSpace(in + "\n" + output)
 	if content == "" {
@@ -112,12 +116,12 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 // and records the failure as memory so the brain can learn from failed runs.
 // Write/marshal errors are logged and swallowed.
 func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, runErr error) error {
-	ctx = p.cfg.tenant(ctx)
-	v, _ := p.inflight.LoadAndDelete(runID.String())
-	var in string
-	if s, ok := v.(string); ok {
-		in = s
+	in, suppressed := p.takeInput(ctx, runID)
+	if suppressed {
+		return nil
 	}
+	ctx = p.cfg.tenant(ctx)
+
 	errStr := ""
 	if runErr != nil {
 		errStr = runErr.Error()
@@ -150,4 +154,23 @@ func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.A
 		p.warn("fabriq-brain: failure memory write failed", rerr, runID)
 	}
 	return nil
+}
+
+type memoryInput struct {
+	input      string
+	suppressed bool
+}
+
+func suppressOrdinaryMemory(ctx context.Context) bool {
+	provenance, ok := engine.ExecutionProvenanceFromContext(ctx)
+	return ok && provenance.Purpose != "" && provenance.Purpose != run.PurposeNormal
+}
+
+func (p *Plugin) takeInput(ctx context.Context, runID id.AgentRunID) (input string, suppressed bool) {
+	value, _ := p.inflight.LoadAndDelete(runID.String())
+	saved, ok := value.(memoryInput)
+	if !ok {
+		return "", suppressOrdinaryMemory(ctx)
+	}
+	return saved.input, saved.suppressed || suppressOrdinaryMemory(ctx)
 }
