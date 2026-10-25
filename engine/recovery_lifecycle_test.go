@@ -89,14 +89,22 @@ func TestEngineClaimRecoveryCancelsAllServicesBeforeDrain(t *testing.T) {
 			close(effectCancelled)
 			return coordination.TaskPlanPage{}, ctx.Err()
 		}))
+		adoptionEntered, adoptionCancelled := make(chan struct{}), make(chan struct{})
+		adoption := lifecycleAdoptionConfig(lifecyclePlanSource(func(ctx context.Context, _ coordination.TaskPlanListRequest) (coordination.TaskPlanPage, error) {
+			close(adoptionEntered)
+			<-ctx.Done()
+			close(adoptionCancelled)
+			return coordination.TaskPlanPage{}, ctx.Err()
+		}))
 		hook := new(recoveryShutdownHook)
-		e, err := engine.New(engine.WithTaskScheduling(scheduler), engine.WithClaimRecovery(recovery), engine.WithProviderRecovery(provider), engine.WithEffectRecovery(effect), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}), engine.WithExtension(hook), engine.WithSuspensionTTL(0))
+		e, err := engine.New(engine.WithTaskScheduling(scheduler), engine.WithClaimRecovery(recovery), engine.WithProviderRecovery(provider), engine.WithEffectRecovery(effect), engine.WithTaskAdoption(adoption), engine.WithTaskRunAdmitter(struct{ coordination.TaskRunAdmitter }{}), engine.WithTaskCallGuard(struct{ engine.TaskCallGuard }{}), engine.WithExtension(hook), engine.WithSuspensionTTL(0))
 		require.NoError(t, err)
 		require.NoError(t, e.Start(context.Background()))
 		<-executionEntered
 		<-recoveryEntered
 		<-providerEntered
 		<-effectEntered
+		<-adoptionEntered
 		stop, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		require.ErrorIs(t, e.Stop(stop), context.DeadlineExceeded)
@@ -114,6 +122,11 @@ func TestEngineClaimRecoveryCancelsAllServicesBeforeDrain(t *testing.T) {
 		case <-effectCancelled:
 		default:
 			t.Fatal("effect recovery survived another service drain timeout")
+		}
+		select {
+		case <-adoptionCancelled:
+		default:
+			t.Fatal("adoption survived another service drain timeout")
 		}
 		require.Zero(t, hook.calls.Load())
 		require.ErrorIs(t, e.Start(context.Background()), coordination.ErrSchedulerStopped)

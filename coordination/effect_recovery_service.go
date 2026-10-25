@@ -54,7 +54,7 @@ func NewEffectRecoveryService(config EffectRecoveryServiceConfig) (*EffectRecove
 		if makeErr != nil {
 			return nil, makeErr
 		}
-		return func(ctx context.Context, seal execution.RunCallSeal, after string, limit int) (string, error) {
+		return func(ctx context.Context, _ Claim, seal execution.RunCallSeal, after string, limit int) (string, error) {
 			page, scanErr := executor.RecoverSealedPage(ctx, execution.EffectRecoveryPageRequest{Seal: seal, After: after, Limit: limit})
 			return page.NextAfter, scanErr
 		}, nil

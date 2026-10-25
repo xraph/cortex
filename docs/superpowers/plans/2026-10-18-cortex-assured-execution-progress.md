@@ -5570,3 +5570,53 @@ After final formatting, focused adoption tests passed on all three in 12.156,
 17.488 and 19.842 seconds, with no skips, and coordination transition/facade tests
 passed in 1.798 seconds. Root build and docs type/lint checks passed. CI for the
 preceding commit 119f708 remains in progress; this packet's CI is separate.
+
+
+### S3.2 engine-managed recovery adoption
+
+The new service and engine option started with failing API tests. Managed adoption
+now reuses the scoped recovery scheduler for claim traversal and lifecycle ownership.
+It authorizes full snapshot reads before resolution, gives host callbacks detached
+metadata, and checks the returned request against the original claim, seal and
+snapshot before entering the guarded adopter. A nil resolution preserves the claim
+for a later pass. Each attempt includes all callbacks within a maximum thirty-second
+context; cancellation is checked before moving between phases.
+
+Engine lifecycle integration cancels adoption with the other four managed services
+before draining any of them. A late resolver cannot submit after cancellation, and
+a callback that has not returned keeps shutdown and restart fenced. Tests exercise
+these cases, changed evidence, authority denial, timeout and restart. Real SQLite,
+PostgreSQL and MongoDB engine tests complete a stored recovering claim, preserve
+its lease and child run, leave the local call return absent, and skip completed
+claims after restart. Their authority ports accept fixture proof only.
+
+The first service test rerun found two test assumptions: scan counters also advance
+on restart, and a one-entry page delays pass-level failure reporting until the next
+claim-page read. The assertions now cover restart ordering and let the denial pass
+finish before checking its failure count. Production behavior was unchanged.
+Final validation follows. Concrete host adapters, process-crash adoption
+qualification and aggregate provider/verifier settlement remain open.
+
+
+CI run 40067486660 for the preceding guarded-adoption commit failed before its
+MongoDB conformance subtests: the fixture began migrations after replica-set
+initialization but before the member became writable primary. Shared test setup
+now polls `hello.isWritablePrimary` with a thirty-second bound before migration.
+The same check covers migration and rescope fixtures. Deterministic tests exercise
+an election delay, transient probe failure and cancellation; the real standalone
+fixture still passes its unsupported-transaction checks.
+
+After the environment resumed, prior local process handles and temporary logs
+were unavailable. Fresh post-format runs passed the full coordination race suite
+in 23.031 seconds and targeted engine scheduling, recovery, task-worker and crash
+regressions in 42.992 seconds. Database adoption and fixture regression runs passed
+on SQLite, PostgreSQL and MongoDB in 14.607, 26.120 and 33.489 seconds without skips.
+Root build and docs type/lint checks passed. Aggregate lint initially encountered
+an unformatted test in concurrent Fabriq work; that work is outside this packet.
+
+The aggregate lint rerun passed after the concurrent Fabriq formatting and
+integration-test module graph were corrected by their owner. Docs production build
+also passed. The MongoDB readiness fix is committed separately as 4f26f11.
+Managed adoption remains qualified by local lifecycle and real-store fixtures;
+concrete proof adapters, deployment and process-crash adoption qualification,
+shared usage settlement and the remaining four-stage gates are still open.

@@ -116,6 +116,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 // ownership records. Fixture proof references do not qualify a host authenticator.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("engine managed adoption", func(t *testing.T) { testManagedTaskAdoption(t, backend, driver) })
 	t.Run("adopts without renewing or reinvoking", func(t *testing.T) {
 		f := newTaskRecoveryFixture(t, backend, driver, "")
 		before, err := backend.GetRun(f.ctx, f.request.Result.RunID)

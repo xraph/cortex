@@ -309,5 +309,10 @@ requests. Later prerequisite use rechecks the journal and current verifier evide
 Shared storage tests cover transaction rollback, lost acknowledgment, proof expiry
 at commit, invocation binding, contradictory and late evidence, and dependency use
 after the adoption window. These fixtures do not authenticate real quiescence.
-Concrete host proof/fence implementations, engine-installed recovery adoption,
-process-fault qualification and provider/verifier usage settlement remain open.
+`TaskAdoptionService` and `engine.WithTaskAdoption` now connect authorized
+plan discovery, sealed snapshots, proof resolution and guarded adoption. They reuse
+recovery traversal and lifecycle ownership, bound each attempt, and preserve
+unready claims for later passes. Local engine integration tests exercise the
+built-in stores and completed-claim restart behavior. Concrete host proof/fence
+implementations, process-fault qualification and provider/verifier usage settlement
+remain open.

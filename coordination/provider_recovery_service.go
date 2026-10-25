@@ -49,7 +49,7 @@ func NewProviderRecoveryService(config ProviderRecoveryServiceConfig) (*Provider
 		if makeErr != nil {
 			return nil, makeErr
 		}
-		return func(ctx context.Context, seal execution.RunCallSeal, after string, limit int) (string, error) {
+		return func(ctx context.Context, _ Claim, seal execution.RunCallSeal, after string, limit int) (string, error) {
 			page, scanErr := reconciler.ReconcilePage(ctx, execution.ProviderRecoveryPageRequest{Seal: seal, After: after, Limit: limit})
 			return page.NextAfter, scanErr
 		}, nil

@@ -21,7 +21,7 @@ type runRecoveryConfig struct {
 	ReportError                             func(error)
 }
 
-type runRecoveryPage func(context.Context, execution.RunCallSeal, string, int) (string, error)
+type runRecoveryPage func(context.Context, Claim, execution.RunCallSeal, string, int) (string, error)
 
 func newRunRecoveryService(config runRecoveryConfig, storage recoveringRunStore, makeScan func() (runRecoveryPage, error)) (*TaskService, error) {
 	if config.PageSize == 0 {
@@ -143,7 +143,7 @@ func (s *runRecoveryScheduler) recoverRun(ctx context.Context, claim Claim) erro
 	seal.Request.Scope.Levels = append([]cortex.Level(nil), sealed.Request.Scope.Levels...)
 	after := ""
 	for {
-		next, scanErr := s.scan(ctx, seal, after, s.config.PageSize)
+		next, scanErr := s.scan(ctx, claim, seal, after, s.config.PageSize)
 		if scanErr != nil {
 			return scanErr
 		}

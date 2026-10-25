@@ -609,6 +609,47 @@ Real SQLite, PostgreSQL and MongoDB tests exercise these transactions and denial
 paths with fixture proofs. Concrete host authenticators, installed recovery flows
 and process-crash qualification of adoption remain integration work.
 
+### Run adoption with the engine lifecycle
+
+Pass `engine.WithTaskAdoption(coordination.TaskAdoptionServiceConfig{...})` before
+`Start`, or use `coordination.NewTaskAdoptionService` directly when you own the
+lifecycle. You supply the durable store, authorized plan discovery, snapshot
+read authorization, a `TaskRecoveryResolver`, and the same recovery fence and
+authorizer used by `TaskRecoveryAdopter`. Forge hosts can pass the option through
+`extension.WithEngineOption`.
+
+Discovery must authorize plan, claim and seal reads under the service identity.
+The service visits sealed recovering claims and calls `AuthorizeScan` before
+reading their full snapshots. The resolver receives detached original claim and
+snapshot metadata. Return a fully bound acceptance request with retained proof,
+or `nil, nil` while proof or verified output is unavailable. Do not dispatch work
+from resolution. A resolved request still passes through recovery authentication,
+fencing and the atomic current-evidence checks described above.
+
+Defaults are four concurrent plan passes, one per scope, 64 claims per page and
+a one-second polling interval. Claim/seal reads have a five-second default timeout.
+`AttemptTimeout` covers snapshot authorization, snapshot reading, resolution and
+adoption together; it defaults to thirty seconds and cannot exceed that duration.
+All callbacks must honor cancellation. An error on one claim does not prevent
+later claims from being visited, and pending claims remain available to later passes.
+
+`TaskAdoptionStatus` reports local lifecycle counters. Startup context values
+preserve your service identity, while the engine owns cancellation. `Stop` cancels
+all task services before draining any of them. If a callback outlives the stop
+deadline, the service stays in the stopping state and rejects restart until it
+returns. A resolver returning a request after cancellation cannot submit it to
+adoption storage.
+
+Restart begins discovery again. Completed claims are skipped, and uncertain
+commit receipts remain available through the acceptance store. This service does
+not deliver the acceptance outbox. Delivery requires a host-authorized outbox
+consumer.
+
+Local engine integration tests exercise adoption and restart against SQLite,
+PostgreSQL and MongoDB. They use fixture authority ports. You still need concrete
+host proof validation and deployment qualification before enabling this service
+for real workers.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in

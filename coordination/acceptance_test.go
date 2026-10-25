@@ -17,6 +17,12 @@ import (
 
 func taskAcceptanceFixture(t *testing.T, recovery ...bool) coordination.TaskAcceptance {
 	t.Helper()
+	accepted, _ := taskAcceptanceClaimFixture(t, recovery...)
+	return accepted
+}
+
+func taskAcceptanceClaimFixture(t *testing.T, recovery ...bool) (coordination.TaskAcceptance, coordination.Claim) {
+	t.Helper()
 	_, assignment, binding, p, now := reviewFixture(t)
 	h := assignment.Handoff
 	claim, err := coordination.AcquireClaim(nil, coordination.ClaimRequest{SchemaVersion: 1, ID: id.New(coordination.PrefixClaim), PlanID: p.ID, PlanRevision: p.Revision, PlanDigest: p.Digest, TaskID: h.TaskID, Worker: h.Receiver, GrantRef: h.GrantRef, Duration: time.Minute}, p, now)
@@ -33,6 +39,9 @@ func taskAcceptanceFixture(t *testing.T, recovery ...bool) coordination.TaskAcce
 		_, sealDigest, sealErr := sealReq.Freeze()
 		require.NoError(t, sealErr)
 		req.Recovery = &coordination.TaskRecoveryProof{SchemaVersion: 1, ClaimDigest: claim.Digest, Seal: execution.RunCallSeal{Request: sealReq, RequestDigest: sealDigest, At: now}, SnapshotDigest: evidence.Digest([]byte("snapshot")), Issuer: "fixture", Revision: "1", ProofRef: "stopped-worker", ProofDigest: evidence.Digest([]byte("proof")), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+		snapshot, snapshotErr := execution.SealRunRecoverySnapshot(execution.RunRecoverySnapshot{SchemaVersion: 1, Seal: req.Recovery.Seal})
+		require.NoError(t, snapshotErr)
+		req.Recovery.SnapshotDigest = snapshot.Digest
 	}
 	req, digest, err := req.Freeze()
 	require.NoError(t, err)
@@ -45,7 +54,7 @@ func taskAcceptanceFixture(t *testing.T, recovery ...bool) coordination.TaskAcce
 	require.NoError(t, err)
 	accepted, err := coordination.SealTaskAcceptance(coordination.TaskAcceptance{SchemaVersion: 1, Request: req, RequestDigest: digest, Claim: completed, ObservedAt: now, Outbox: coordination.TaskAcceptanceOutbox{EventID: id.New(coordination.PrefixTaskAcceptedEvent), Type: "task_result_accepted", AcceptanceID: req.ID, PlanID: p.ID, TaskID: h.TaskID, RunID: binding.RunID}})
 	require.NoError(t, err)
-	return accepted
+	return accepted, claim
 }
 
 func TestTaskAcceptanceDetachesBindingsAndNeverPersistsFresh(t *testing.T) {
