@@ -5930,3 +5930,40 @@ Root build, docs type/lint/build and scoped formatting passed. The final shared
 lint run passed the root and every module except optimization, which reported two
 formatting issues in its concurrent packet. Publication remains pending that
 shared check. Optimizer adapter wiring and the remaining four-stage gates are open.
+
+The shared lint gate subsequently passed across every module. Accepted-history
+accounting (`db467f3`) and prepared-source checks (`abbf3ce`) were published.
+
+### S3.5 unsuccessful-run accounting
+
+The initial SQLite tests reproduced the accounting gap: closure rejected failed,
+cancelled and incomplete runs even when their call journal was sealed and their
+verifier jobs had ended. `TaskUsageClosureRequest.Termination` now binds the saved
+run revision, state and completion timestamp. Closure checks original dispatch,
+worker, claim and exact current run under the plan/run/journal guards. Fresh
+settlement rechecks this binding and reuses the existing billing authority and
+reservation transaction. Accepted closure continues to omit the optional binding.
+
+Accounting leaves ownership recovering, with no acceptance receipt. It cannot
+authorize another attempt. Running, paused and completed runs, published results,
+passed verification and stale bindings are rejected. Known charges settle normally;
+unknown usage retains its allocation and observed lower bound. A historical retry
+recovers the original receipt even after its proof window closes.
+
+The store tests cover all three unsuccessful states, binding rejection, changed
+run state after closure, rollback, lost acknowledgment and cancellation after
+commit. The first cross-backend run caught two fixture assumptions: PostgreSQL
+requires a persisted worker identity, and MongoDB persists completion timestamps
+at millisecond precision. Fixtures now read the saved run before binding it.
+
+The combined settlement/closure regression passed on SQLite (24.965s), PostgreSQL
+(23.606s) and MongoDB (28.864s). The final terminal-accounting matrix, including
+unknown usage, passed again (12.273s, 19.747s and 27.844s), with no skipped database
+tests. Coordination and assurance race suites passed, as did scoped formatting,
+all-module lint, root build and docs type/lint/build checks. The full root race
+run passed, including engine (442.614s), SQLite (548.754s), PostgreSQL (133.093s)
+and MongoDB (173.228s). The documented local scopespy exception was excluded.
+
+Managed unsuccessful-run discovery, completed-but-unaccepted disposition and
+governed ownership retirement/retry remain open, alongside live billing and host
+qualification. The four-stage plan is not complete.

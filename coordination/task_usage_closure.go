@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/hostport"
+	"github.com/xraph/cortex/run"
 )
 
 var (
@@ -16,14 +17,27 @@ var (
 	ErrTaskUsageClosed   = cortex.ErrTaskUsageClosed
 )
 
+// TaskUsageTermination binds accounting closure to a failed, cancelled or
+// incomplete run. It does not release ownership or grant permission to retry.
+type TaskUsageTermination struct {
+	RunRevision int64     `json:"run_revision"`
+	State       run.State `json:"state"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+
+func (t TaskUsageTermination) valid() bool {
+	return t.RunRevision > 0 && !t.CompletedAt.IsZero() && (t.State == run.StateFailed || t.State == run.StateCancelled || t.State == run.StateIncomplete)
+}
+
 // TaskUsageClosureRequest permanently closes new verification admission against
 // an exact usage observation. It does not authorize refunds or assert final bills.
 type TaskUsageClosureRequest struct {
-	SchemaVersion int              `json:"schema_version"`
-	Usage         TaskUsageRequest `json:"usage"`
-	UsageDigest   string           `json:"usage_digest"`
-	Actor         string           `json:"actor"`
-	Reason        string           `json:"reason"`
+	SchemaVersion int                   `json:"schema_version"`
+	Usage         TaskUsageRequest      `json:"usage"`
+	UsageDigest   string                `json:"usage_digest"`
+	Actor         string                `json:"actor"`
+	Reason        string                `json:"reason"`
+	Termination   *TaskUsageTermination `json:"termination,omitempty"`
 }
 
 // Freeze validates and detaches closure input without authenticating its actor.
@@ -32,12 +46,28 @@ func (r TaskUsageClosureRequest) Freeze() (TaskUsageClosureRequest, string, erro
 	if err != nil || r.SchemaVersion != 1 || !evidence.ValidDigest(r.UsageDigest) || !handoffText(r.Actor, 512) || !handoffText(r.Reason, 4096) {
 		return TaskUsageClosureRequest{}, "", ErrInvalidTaskUsage
 	}
+	if r.Termination != nil {
+		if !r.Termination.valid() {
+			return TaskUsageClosureRequest{}, "", ErrInvalidTaskUsage
+		}
+		detached := *r.Termination
+		r.Termination = &detached
+	}
 	r.Usage = usage
 	data, err := json.Marshal(r)
 	if err != nil || len(data) > 32<<10 {
 		return TaskUsageClosureRequest{}, "", ErrInvalidTaskUsage
 	}
 	return r, evidence.Digest(data), nil
+}
+
+// MatchesClaim checks ownership identity and closure mode. It does not establish
+// current storage state, host authorization or the stated terminal run revision.
+func (r TaskUsageClosureRequest) MatchesClaim(c Claim) bool {
+	if c.Token() != r.Usage.Claim || c.RunID != r.Usage.Seal.Request.RunID || c.Scope.Canonical() != r.Usage.Seal.Request.Scope.Canonical() {
+		return false
+	}
+	return (c.State == ClaimCompleted && r.Termination == nil) || (c.State == ClaimRecovering && r.Termination != nil && r.Termination.valid())
 }
 
 // TaskUsageClosure retains permanent local admission closure. Fresh is true
@@ -54,7 +84,7 @@ type TaskUsageClosure struct {
 // SealTaskUsageClosure validates and detaches a closure receipt.
 func SealTaskUsageClosure(c TaskUsageClosure) (TaskUsageClosure, error) {
 	r, digest, err := c.Request.Freeze()
-	if err != nil || c.SchemaVersion != 1 || digest != c.RequestDigest || c.At.IsZero() || c.At.Before(r.Usage.Seal.At) {
+	if err != nil || c.SchemaVersion != 1 || digest != c.RequestDigest || c.At.IsZero() || c.At.Before(r.Usage.Seal.At) || (r.Termination != nil && c.At.Before(r.Termination.CompletedAt)) {
 		return TaskUsageClosure{}, ErrInvalidTaskUsage
 	}
 	c.Request, c.Digest = r, ""

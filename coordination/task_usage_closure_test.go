@@ -10,7 +10,32 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/evidence"
+	"github.com/xraph/cortex/run"
 )
+
+func TestTaskUsageClosureTerminationIsBoundAndDetached(t *testing.T) {
+	_, request, original := usageClosureFixture(t)
+	request.Termination = &coordination.TaskUsageTermination{RunRevision: 3, State: run.StateFailed, CompletedAt: original.At}
+	frozen, digest, err := request.Freeze()
+	require.NoError(t, err)
+	request.Termination.RunRevision = 4
+	require.EqualValues(t, 3, frozen.Termination.RunRevision)
+	_, changedDigest, err := request.Freeze()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changedDigest)
+	closed, err := coordination.SealTaskUsageClosure(coordination.TaskUsageClosure{SchemaVersion: 1, Request: frozen, RequestDigest: digest, At: original.At})
+	require.NoError(t, err)
+	frozen.Termination.State = run.StateCancelled
+	require.Equal(t, run.StateFailed, closed.Request.Termination.State)
+	closed.At = original.At.Add(-1)
+	_, err = coordination.SealTaskUsageClosure(closed)
+	require.Error(t, err)
+	for _, state := range []run.State{run.StateCreated, run.StateRunning, run.StatePaused, run.StateCompleted, "unknown"} {
+		request.Termination.State = state
+		_, _, err = request.Freeze()
+		require.ErrorIs(t, err, coordination.ErrInvalidTaskUsage)
+	}
+}
 
 func usageClosureFixture(t *testing.T) (context.Context, coordination.TaskUsageClosureRequest, coordination.TaskUsageClosure) {
 	t.Helper()

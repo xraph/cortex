@@ -714,14 +714,38 @@ its final bill, or refund any reservation. Late observations remain available fo
 reconciliation. Settlement still needs final billing authority and a fresh check
 of the complete evidence. Reverification after closure needs a new run and budget.
 
-### Settle accepted task usage
+### Close unsuccessful task usage
+
+For a failed, cancelled or incomplete child whose claim is recovering, set
+`TaskUsageClosureRequest.Termination` from the saved run's revision, state and
+completion time. Read these values from storage, including the persisted timestamp
+precision. The run must have no committed result reference or passed verification
+status. The call journal must already be sealed and every verifier job terminal.
+
+The same guarded closer checks the original dispatch and current run under the
+plan, run and journal transaction. A different run revision, completion time,
+worker or claim blocks closure. Running, paused and completed runs cannot use this
+mode. Accepted tasks continue to omit `Termination`.
+
+Closure and settlement leave the claim in recovery. They do not accept an answer,
+release task ownership or permit another attempt. The managed settlement service
+currently discovers accepted claims only, so your host must invoke this path
+explicitly. Discovery of unsuccessful runs and governed retirement/retry remain
+separate integration work.
+
+### Settle task usage
 
 Use `coordination.NewTaskUsageSettler(store, fence, authorizer).Settle(ctx, request)`
-after closing verifier admission. Your request pins the completed claim, current
+after closing verifier admission. Your request pins the accepted or recovering claim, current
 sealed journal and complete usage digest, closure receipt, original reservation
 and billing proof. Refresh the usage snapshot before requesting that proof: late
 observations can arrive after closure, and settlement checks the exact current
 evidence again.
+
+For an unsuccessful run, fresh settlement also rechecks the closure's terminal
+run binding. A run changed after closure cannot settle against that old revision.
+The billing requirements and conservative handling of unknown charges apply to
+unsuccessful work too.
 
 The store holds the plan, run and journal guards while it derives provider and
 verifier charges and commits both accounting and the guarded receipt. It requires

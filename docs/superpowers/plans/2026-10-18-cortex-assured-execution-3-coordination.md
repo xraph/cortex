@@ -290,6 +290,14 @@ Historical retries retain the first receipt and require current authorization.
 Live billing authentication, enforced bounds for unknown external work, concrete
 host integration and live qualification remain open.
 
+Explicit closure can now bind a failed, cancelled or incomplete run revision
+while its claim remains recovering. Fresh closure and settlement recheck the
+original dispatch and terminal run under the existing guards. Accounting does
+not accept a result, release ownership or grant retry authority. This path uses
+the same authenticated billing and conservative unknown-usage rules as accepted
+work. Managed unsuccessful-run discovery, completed-but-unaccepted disposition
+and governed claim retirement remain open.
+
 `TaskSettlementService` and `engine.WithTaskSettlement` connect authorized
 discovery of completed, already sealed claims to admission closure, proof
 resolution and guarded accounting. They reuse the recovery scheduler and engine

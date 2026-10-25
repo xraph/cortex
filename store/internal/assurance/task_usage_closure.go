@@ -34,9 +34,10 @@ func (s *Repository) GetTaskUsageClosure(ctx context.Context, runID id.AgentRunI
 	return &closed, nil
 }
 
-// CloseTaskUsage closes local verification admission after task acceptance and
-// terminal verifier jobs. Its caller must hold current host authority. Closure
-// preserves unknown usage and does not prove external quiescence or refund funds.
+// CloseTaskUsage closes local verification admission after task acceptance or
+// explicit failed-run binding, with terminal verifier jobs. Its caller must hold
+// current host authority. Closure preserves unknown usage and does not prove
+// external quiescence or refund funds.
 func (s *Repository) CloseTaskUsage(ctx context.Context, request coordination.TaskUsageClosureRequest) (coordination.TaskUsageClosure, error) {
 	req, digest, err := request.Freeze()
 	if err != nil {
@@ -65,8 +66,11 @@ func (s *Repository) CloseTaskUsage(ctx context.Context, request coordination.Ta
 		if readErr != nil {
 			return readErr
 		}
-		if snapshot.Claim.State != coordination.ClaimCompleted || snapshot.Digest != req.UsageDigest {
+		if !req.MatchesClaim(snapshot.Claim) || snapshot.Digest != req.UsageDigest {
 			return coordination.ErrTaskUsageConflict
+		}
+		if terminalErr := tx.checkTaskUsageTermination(tc, snapshot.Claim, req); terminalErr != nil {
+			return terminalErr
 		}
 		for _, job := range snapshot.Jobs {
 			if job.State == verification.JobQueued || job.State == verification.JobRunning || job.State == verification.JobReady {

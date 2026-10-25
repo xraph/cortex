@@ -34,7 +34,7 @@ type TaskBillingProof struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 }
 
-// TaskUsageSettlementRequest binds final accounting to accepted ownership,
+// TaskUsageSettlementRequest binds final accounting to accepted or terminated work,
 // closed admission, one complete usage observation and the original allocation.
 type TaskUsageSettlementRequest struct {
 	SchemaVersion     int              `json:"schema_version"`
@@ -75,7 +75,7 @@ func PrepareTaskUsageSettlement(r TaskUsageSettlementRequest, snapshot TaskUsage
 		return execution.Settlement{}, ErrInvalidTaskSettlement
 	}
 	c, allocation := snapshot.Claim, reservation.Request
-	if c.State != ClaimCompleted || c.Token() != r.Usage.Claim || snapshot.Digest != r.UsageDigest || snapshot.Journal.Digest != r.Usage.SnapshotDigest || snapshot.Journal.Seal.RequestDigest != r.Usage.Seal.RequestDigest || !snapshot.Journal.Seal.At.Equal(r.Usage.Seal.At) || closed.Digest != r.ClosureDigest || closed.Request.Usage.Claim != c.Token() || closed.Request.Usage.Seal.RequestDigest != r.Usage.Seal.RequestDigest || !closed.Request.Usage.Seal.At.Equal(r.Usage.Seal.At) || r.Billing.ObservedAt.Before(closed.At) || r.Billing.ObservedAt.Before(c.At) || at.Before(r.Billing.ObservedAt) || !at.Before(r.Billing.ExpiresAt) || reservation.Settlement != nil || allocation.ID != r.ReservationID || reservation.RequestDigest != r.ReservationDigest || allocation.OwnerRef != c.ID.String() || allocation.Kind != execution.ReservationLeaf || allocation.PlanID != c.PlanID || allocation.PlanDigest != c.PlanDigest || allocation.TaskID != c.TaskID || allocation.Scope.Canonical() != c.Scope.Canonical() || allocation.PricingRevision != r.Billing.PricingRevision {
+	if !closed.Request.MatchesClaim(c) || c.Token() != r.Usage.Claim || snapshot.Digest != r.UsageDigest || snapshot.Journal.Digest != r.Usage.SnapshotDigest || snapshot.Journal.Seal.RequestDigest != r.Usage.Seal.RequestDigest || !snapshot.Journal.Seal.At.Equal(r.Usage.Seal.At) || closed.Digest != r.ClosureDigest || closed.Request.Usage.Claim != c.Token() || closed.Request.Usage.Seal.RequestDigest != r.Usage.Seal.RequestDigest || !closed.Request.Usage.Seal.At.Equal(r.Usage.Seal.At) || r.Billing.ObservedAt.Before(closed.At) || r.Billing.ObservedAt.Before(c.At) || at.Before(r.Billing.ObservedAt) || !at.Before(r.Billing.ExpiresAt) || reservation.Settlement != nil || allocation.ID != r.ReservationID || reservation.RequestDigest != r.ReservationDigest || allocation.OwnerRef != c.ID.String() || allocation.Kind != execution.ReservationLeaf || allocation.PlanID != c.PlanID || allocation.PlanDigest != c.PlanDigest || allocation.TaskID != c.TaskID || allocation.Scope.Canonical() != c.Scope.Canonical() || allocation.PricingRevision != r.Billing.PricingRevision {
 		return execution.Settlement{}, ErrTaskSettlementConflict
 	}
 	for _, entry := range snapshot.Journal.Calls {

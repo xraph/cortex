@@ -77,6 +77,9 @@ func (s *Repository) SettleTaskUsage(ctx context.Context, request coordination.T
 		if closed == nil {
 			return coordination.ErrTaskSettlementConflict
 		}
+		if terminalErr := tx.checkTaskUsageTermination(tc, snapshot.Claim, closed.Request); terminalErr != nil {
+			return terminalErr
+		}
 		binding, readErr := tx.getClaimBudget(tc, snapshot.Claim.ID)
 		if errors.Is(readErr, ErrAbsent) {
 			return coordination.ErrTaskSettlementConflict
