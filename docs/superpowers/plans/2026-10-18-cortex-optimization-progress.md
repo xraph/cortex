@@ -1276,3 +1276,44 @@ finished package was rerun with an explicit thirty-minute timeout.
 That full MongoDB race run passed in 741.784s. All optimization packages passed
 across the original run and this targeted rerun; the original run itself exited
 with the MongoDB timeout failure.
+
+## Controller comparison creation
+
+`CreateImprovementExperiment` now saves a qualified comparison draft from a
+host-frozen `ImprovementSpec`. It preserves the two controller versions, complete
+child templates and ordered stream. Configure `ImprovementEvaluator` explicitly;
+each distinct frozen source is checked once, while paired arms reuse the same
+definition. Creation does not start child workers or make model calls.
+
+Parent and child creation grants are checked before evaluator access and again
+before persistence. Revocation or a changed caller during qualification stops
+creation, including access to the next plan. The evaluator receives a detached
+request, so it cannot change the saved tasks through a shared slice. Task-local
+creation and trial qualification use the same helper. Engine provenance refuses
+recursive creation from trials, controllers and evaluation runs, including the
+generic `Create` entry point. A regression using real prepared-run contexts
+proved that generic creation previously saved drafts from those restricted
+purposes. The shared creation path now rejects them before persistence.
+
+Regression tests reproduced four previously accepted parent/child mismatches:
+objectives, repetition counts, scorers and criteria. Storage now rejects all four
+at creation. The service tests also cover missing adapters, distinct plan sources,
+changed frozen metadata, permission loss and retained immutable templates.
+
+Task 14 still needs parent scheduling, discovery-only lesson advancement within
+each arm, aggregate controller comparison and adoption. Ordinary handlers remain
+unavailable for parent execution.
+
+The Sentinel integration test registers a metered judge, qualifies a comparison,
+reopens both SQLite stores and checks the saved controller roster and plan against
+Sentinel's reopened frozen definition. Creation leaves the judge call count and
+parent reservations at zero. The creation and recursion race matrix passes on
+memory, SQLite, PostgreSQL and MongoDB. Final all-module lint, scoped formatting,
+optimization and Sentinel builds, core races, lesson-backed creation checks and
+the Sentinel creation/reopen test pass after the shared recursion guard. The full
+Sentinel suite passed in 333.284s before that last guard change. The broad
+optimization run passed core and memory, but MongoDB and PostgreSQL each reached
+the thirty-minute package timeout during late conformance cases. Neither log
+reported an assertion or race failure before the timeout. Their remaining
+conformance and recovery checks are being run in smaller groups; the original
+SQLite package is still running. Those broad checks are not recorded as passing.

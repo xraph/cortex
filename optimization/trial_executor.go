@@ -70,7 +70,7 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 	}
 	item.Experiment = current
 	if current.Spec.Mode == ModeTaskLocal {
-		if qualificationErr := verifyTaskPlan(ctx, h.config.Evaluator, current); qualificationErr != nil {
+		if qualificationErr := verifyEvaluationPlan(ctx, h.config.Evaluator, current); qualificationErr != nil {
 			return Transition{}, qualificationErr
 		}
 	}

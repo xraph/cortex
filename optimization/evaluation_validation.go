@@ -51,6 +51,13 @@ func (plan EvaluationPlan) Validate(spec ExperimentSpec) error {
 			return ErrInvalidSpec
 		}
 	}
+	if spec.Improvement != nil {
+		for _, child := range spec.Improvement.Children {
+			if !equalImprovementTemplate(child.EvaluationPlan.Scorers, plan.Scorers) || !equalImprovementTemplate(child.EvaluationPlan.Criteria, plan.Criteria) {
+				return ErrInvalidSpec
+			}
+		}
+	}
 	return nil
 }
 

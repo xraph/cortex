@@ -18,17 +18,18 @@ type CallerIdentity interface {
 // OptimizerConfig supplies explicit persistence, authority and phase execution.
 // A Handler must reconcile durable external attempts before dispatching effects.
 type OptimizerConfig struct {
-	Repository       Repository
-	Authorizer       Authorizer
-	IdentityResolver IdentityResolver
-	Caller           CallerIdentity
-	Lessons          LessonStore
-	Compatibility    Compatibility
-	ArtifactVerifier *ArtifactVerifier
-	TaskEvaluator    Evaluator
-	Handler          PhaseHandler
-	UsageRecovery    *UsageRecovery
-	Worker           WorkerConfig
+	Repository           Repository
+	Authorizer           Authorizer
+	IdentityResolver     IdentityResolver
+	Caller               CallerIdentity
+	Lessons              LessonStore
+	Compatibility        Compatibility
+	ArtifactVerifier     *ArtifactVerifier
+	TaskEvaluator        Evaluator
+	ImprovementEvaluator Evaluator
+	Handler              PhaseHandler
+	UsageRecovery        *UsageRecovery
+	Worker               WorkerConfig
 }
 
 // Optimizer provides experiment commands and a bounded, host-started worker.
@@ -96,29 +97,39 @@ func (o *Optimizer) Create(ctx context.Context, bundle ExperimentBundle) (Experi
 }
 
 func (o *Optimizer) creationBundle(ctx context.Context, bundle ExperimentBundle) (*ExperimentBundle, error) {
-	actor, err := o.caller(ctx)
-	if err != nil {
+	if err := allowOptimizationInvocation(ctx); err != nil {
 		return nil, err
 	}
 	copyBundle, err := copyModelJSON(&bundle, 16<<20)
 	if err != nil {
 		return nil, err
 	}
-	if copyBundle.Experiment.Spec.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() || copyBundle.Experiment.Spec.Requester != actor {
-		return nil, ErrPolicyDenied
-	}
-	resource := Resource{Scope: copyScope(copyBundle.Experiment.Spec.Scope), AgentID: copyBundle.Experiment.Spec.AgentID, ID: copyBundle.Experiment.ID, Kind: "experiment"}
-	if authErr := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionCreate, resource); authErr != nil {
+	if authErr := o.authorizeCreation(ctx, copyBundle.Experiment); authErr != nil {
 		return nil, authErr
 	}
-	if copyBundle.Experiment.Spec.Parent != nil {
-		_, done, authErr := o.meter.authorizeAction(ctx, copyBundle.Experiment.Spec.Parent.ExperimentID, ActionCreate)
+	return copyBundle, nil
+}
+
+func (o *Optimizer) authorizeCreation(ctx context.Context, experiment Experiment) error {
+	actor, err := o.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if experiment.Spec.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() || experiment.Spec.Requester != actor {
+		return ErrPolicyDenied
+	}
+	resource := Resource{Scope: copyScope(experiment.Spec.Scope), AgentID: experiment.Spec.AgentID, ID: experiment.ID, Kind: "experiment"}
+	if authErr := o.config.Authorizer.Authorize(copyScopeContext(ctx), ActionCreate, resource); authErr != nil {
+		return authErr
+	}
+	if experiment.Spec.Parent != nil {
+		_, done, authErr := o.meter.authorizeAction(ctx, experiment.Spec.Parent.ExperimentID, ActionCreate)
 		if authErr != nil {
-			return nil, authErr
+			return authErr
 		}
 		done()
 	}
-	return copyBundle, nil
+	return nil
 }
 
 // Get reads one experiment after checking its exact scope and current authority.

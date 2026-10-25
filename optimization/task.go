@@ -5,9 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/run"
 )
 
 // TaskPolicy freezes host isolation and optional artifact adoption policy.
@@ -41,8 +39,8 @@ type TaskResult struct {
 // OptimizeTask runs bounded task-local work through the configured phase handler.
 // After interruption, the returned experiment ID supports explicit recovery.
 func (o *Optimizer) OptimizeTask(ctx context.Context, request TaskSpec) (*TaskResult, error) {
-	if provenance, ok := engine.ExecutionProvenanceFromContext(ctx); ok && (provenance.Purpose == run.PurposeOptimizationTrial || provenance.Purpose == run.PurposeOptimizationController || provenance.Purpose == run.PurposeEvaluation) {
-		return nil, ErrPolicyDenied
+	if err := allowOptimizationInvocation(ctx); err != nil {
+		return nil, err
 	}
 	if _, err := o.caller(ctx); err != nil {
 		return nil, err
@@ -96,7 +94,7 @@ func (o *Optimizer) OptimizeTask(ctx context.Context, request TaskSpec) (*TaskRe
 	if _, authorityErr := o.creationBundle(ctx, *bundle); authorityErr != nil {
 		return nil, authorityErr
 	}
-	if qualificationErr := verifyTaskPlan(ctx, o.config.TaskEvaluator, bundle.Experiment); qualificationErr != nil {
+	if qualificationErr := verifyEvaluationPlan(ctx, o.config.TaskEvaluator, bundle.Experiment); qualificationErr != nil {
 		return nil, qualificationErr
 	}
 	created, err := o.Create(ctx, *bundle)
@@ -136,23 +134,6 @@ func (o *Optimizer) OptimizeTask(ctx context.Context, request TaskSpec) (*TaskRe
 		case <-timer.C:
 		}
 	}
-}
-
-func verifyTaskPlan(ctx context.Context, evaluator Evaluator, experiment Experiment) error {
-	if evaluator == nil {
-		return ErrUnavailable
-	}
-	plan, err := evaluator.Freeze(copyScopeContext(ctx), EvaluationSpec{Source: experiment.Spec.Evaluation, Tasks: experiment.Spec.Tasks, RequiredCriteria: experiment.Spec.Objective.RequiredCriteria})
-	if err != nil {
-		return err
-	}
-	if validationErr := plan.Validate(experiment.Spec); validationErr != nil {
-		return validationErr
-	}
-	if !equalControllerData(plan, experiment.EvaluationPlan) {
-		return ErrIncompleteEvidence
-	}
-	return nil
 }
 
 func (o *Optimizer) stopCancelledTask(ctx context.Context, experimentID id.ID, cause error) error {

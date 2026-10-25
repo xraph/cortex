@@ -66,6 +66,9 @@ func validateImprovement(spec ExperimentSpec) error {
 		if c.Improvement != nil || p == nil || p.Arm != i%2 || p.Sequence != i/2 || c.Controller != plan.Controllers[i%2] || c.Scope.Canonical() != spec.Scope.Canonical() || c.AgentID != spec.AgentID || c.Requester != spec.Requester || c.Baseline != spec.Baseline {
 			return ErrInvalidSpec
 		}
+		if c.Mode == ModeTaskLocal || c.Limits.Repetitions != spec.Limits.Repetitions || !equalImprovementTemplate(c.Objective, spec.Objective) {
+			return ErrInvalidSpec
+		}
 		if c.Budget.TokenOnly != spec.Budget.TokenOnly || c.Budget.PricingRevision != spec.Budget.PricingRevision || c.Budget.MaxTokens > spec.Budget.MaxTokens || c.Budget.MaxUSDMicros > spec.Budget.MaxUSDMicros || c.Limits.ExperimentTimeout > spec.Limits.ExperimentTimeout {
 			return ErrInvalidSpec
 		}

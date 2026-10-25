@@ -196,7 +196,7 @@ func taskLocal(t *testing.T, factory Factory) {
 		for _, purpose := range []run.ExecutionPurpose{run.PurposeOptimizationTrial, run.PurposeOptimizationController, run.PurposeEvaluation, run.PurposeNormal} {
 			t.Run(string(purpose), func(t *testing.T) {
 				s := factory(t, time.Now)
-				bundle := taskBundle(t)
+				bundle := Fixture(t, "recursive-creation")
 				ctx := scoped(bundle.Experiment.Spec.Scope)
 				authority := &publicationAuthority{actor: bundle.Experiment.Spec.Requester}
 				op, err := optimization.NewOptimizer(optimization.OptimizerConfig{Repository: s, Authorizer: authority, IdentityResolver: authority, Caller: authority, Handler: unusedPhase{}, Worker: optimization.DefaultWorkerConfig()})
@@ -207,12 +207,23 @@ func taskLocal(t *testing.T, factory Factory) {
 				runtime, err := engine.New(engine.WithStore(scopespy.New()), engine.WithLLM(&activePauseModel{}), engine.WithModelRevision("fixture", "1"), engine.WithToolRevision("external", "1"), engine.WithTool(llm.Tool{Name: "external"}, func(toolCtx context.Context, _ cortex.Invocation) (string, error) {
 					called = true
 					_, callErr := op.OptimizeTask(toolCtx, optimization.TaskSpec{})
+					_, improvementErr := op.CreateImprovementExperiment(toolCtx, optimization.ImprovementSpec{Bundle: bundle})
+					_, genericErr := op.Create(toolCtx, bundle)
 					if purpose == run.PurposeNormal {
 						if errors.Is(callErr, optimization.ErrPolicyDenied) {
 							t.Error("normal execution refused as recursive")
 						}
+						if errors.Is(improvementErr, optimization.ErrPolicyDenied) {
+							t.Error("normal execution refused as recursive improvement")
+						}
 					} else if !errors.Is(callErr, optimization.ErrPolicyDenied) {
 						t.Errorf("recursive task admitted: %v", callErr)
+					}
+					if purpose != run.PurposeNormal && !errors.Is(improvementErr, optimization.ErrPolicyDenied) {
+						t.Errorf("recursive improvement admitted: %v", improvementErr)
+					}
+					if purpose != run.PurposeNormal && !errors.Is(genericErr, optimization.ErrPolicyDenied) {
+						t.Errorf("generic creation bypassed recursive guard: %v", genericErr)
 					}
 					return "checked", nil
 				}))
@@ -227,7 +238,11 @@ func taskLocal(t *testing.T, factory Factory) {
 					t.Fatalf("recursive boundary was not exercised: called=%v err=%v", called, err)
 				}
 				page, err := s.ListExperiments(ctx, optimization.ListQuery{Limit: 100})
-				if err != nil || len(page.Items) != 0 {
+				expectedCount := 0
+				if purpose == run.PurposeNormal {
+					expectedCount = 1
+				}
+				if err != nil || len(page.Items) != expectedCount {
 					t.Fatalf("recursive/invalid task persisted: %+v %v", page, err)
 				}
 			})

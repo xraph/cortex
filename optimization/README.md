@@ -284,16 +284,22 @@ These are point-in-time checks and make no model or tool calls. Your host still
 owns current grants, policy, remote provider routing and external knowledge
 revisions. It must return incompatible when it cannot establish those bindings.
 
-### Controller comparison storage
+### Controller comparison creation
+
+Use `CreateImprovementExperiment` with an `ImprovementSpec` containing your frozen
+parent bundle. Set `OptimizerConfig.ImprovementEvaluator` to the Sentinel adapter
+that owns those plans. Creation qualifies each distinct plan, checks permission
+to create the parent and every child, and repeats those checks after external
+qualification. It returns a saved draft. Workers start separately.
 
 You can persist an `ImprovementPlan` with two pinned controller versions and
 ordered pairs of complete child templates. A child's `ParentExperiment` binds
-its arm and sequence. Creation requires the current parent lease, and both
+its arm and sequence. Creating a child requires the current parent lease, and both
 controller arms consume the parent's aggregate token and money budget. Late
 receipts update the original reservations, including after cancellation.
 
 Controller comparisons have durable storage, shared accounting and paired
 validation. The scheduler, isolated lesson advancement, controller-level comparison
 and controller adoption are still pending. Child validation uses one parent
-allocation with frozen case assignments, and selection waits for the whole stream. Ordinary
-phase handlers return `ErrUnavailable` for comparison parents.
+allocation with frozen case assignments, and selection waits for the whole
+stream. Ordinary phase handlers return `ErrUnavailable` for comparison parents.

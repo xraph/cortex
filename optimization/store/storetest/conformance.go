@@ -32,6 +32,7 @@ func Run(t *testing.T, factory Factory) {
 	improvementBindings(t, factory)
 	improvementMoney(t, factory)
 	improvementValidation(t, factory)
+	improvementCreation(t, factory)
 	dispatch(t, factory)
 	reconciliation(t, factory)
 	controllerWorker(t, factory)
