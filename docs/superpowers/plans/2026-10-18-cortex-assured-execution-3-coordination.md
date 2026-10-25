@@ -266,6 +266,14 @@ saturated dimensions as inexact. It does not settle a reservation. Closing futur
 verifier admission, authenticating final billing and committing settlement against
 this exact evidence remain required before capacity can be refunded.
 
+`TaskUsageCloser` now permanently closes verifier admission for an accepted task
+with terminal verifier jobs. Explicit host authorization and fencing precede an
+atomic snapshot comparison and durable closure write. New enqueue, claim, renewal
+and metered-call admission check the closure under the run guard. Retries recover
+the original receipt after uncertain commits. This closes the local admission gap;
+external quiescence, billing authentication and guarded budget settlement remain
+open. Closure never refunds capacity.
+
 ## S3.6: Team review UI and recovery qualification
 
 Depends on S3.1 through S3.5. Owner: integration coordinator and UI owner.

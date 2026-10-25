@@ -14,6 +14,9 @@ func (s *Repository) BeginVerificationCall(ctx context.Context, lease verificati
 		return verification.Job{}, verification.ErrInvalid
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+		if admissionErr := repository.checkTaskUsageAdmission(txctx, job.Request.Binding.RunID); admissionErr != nil {
+			return admissionErr
+		}
 		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}

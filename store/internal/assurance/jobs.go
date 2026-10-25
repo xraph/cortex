@@ -146,6 +146,9 @@ func (s *Repository) enqueueJob(ctx context.Context, tx RunTransaction, req veri
 	if !errors.Is(readErr, verification.ErrJobNotFound) {
 		return verification.Job{}, readErr
 	}
+	if admissionErr := s.checkTaskUsageAdmission(ctx, req.Binding.RunID); admissionErr != nil {
+		return verification.Job{}, admissionErr
+	}
 	current, readErr := tx.GetRun(ctx, req.Binding.RunID)
 	if readErr != nil {
 		return verification.Job{}, readErr
@@ -304,6 +307,9 @@ func (s *Repository) ClaimVerificationJob(ctx context.Context, claim verificatio
 		return verification.Job{}, verification.ErrInvalid
 	}
 	return s.mutateJob(ctx, claim.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+		if admissionErr := repository.checkTaskUsageAdmission(txctx, job.Request.Binding.RunID); admissionErr != nil {
+			return admissionErr
+		}
 		if err := repository.checkJobRun(txctx, tx, *job); err != nil {
 			return err
 		}
@@ -348,6 +354,9 @@ func (s *Repository) RenewVerificationJob(ctx context.Context, lease verificatio
 		return verification.Job{}, verification.ErrInvalid
 	}
 	return s.mutateJob(ctx, lease.JobID, func(txctx context.Context, repository *Repository, tx RunTransaction, job *verification.Job, now time.Time) error {
+		if admissionErr := repository.checkTaskUsageAdmission(txctx, job.Request.Binding.RunID); admissionErr != nil {
+			return admissionErr
+		}
 		if err := job.CheckLease(lease, now); err != nil {
 			return err
 		}

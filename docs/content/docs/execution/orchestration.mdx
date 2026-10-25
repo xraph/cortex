@@ -674,6 +674,27 @@ and revalidate the exact evidence when settling. The snapshot and summary do not
 refund capacity or authorize additional work. Tool and external-effect fees are
 outside this provider/verifier summary.
 
+### Close verifier admission before settlement
+
+After task acceptance and terminal verifier jobs, pass the exact usage request and
+snapshot digest to `coordination.NewTaskUsageCloser(...).Close`. You supply a
+current host authorizer and synchronous authority fence. The built-in store
+rechecks ownership and all retained evidence under the same plan, run and journal
+guards, then writes a permanent closure receipt. An open verifier job, changed
+snapshot or lost authority prevents closure.
+
+Closure blocks new job enqueue, job claims, lease renewal and metered verifier
+dispatch for that run. All enqueue paths share the check. Historical enqueue
+acknowledgments and evidence reads remain available; they grant no new work.
+Use `GetTaskUsageClosure` to inspect the retained receipt. Identical closure retries
+return `Fresh: false`; a different closure request conflicts. An error may follow
+a commit, so retry the original request after an uncertain acknowledgment.
+
+This transition does not stop an external call already dispatched, authenticate
+its final bill, or refund any reservation. Late observations remain available for
+reconciliation. Settlement still needs final billing authority and a fresh check
+of the complete evidence. Reverification after closure needs a new run and budget.
+
 ### Sweep expired claims
 
 Use `coordination.NewClaimSweeper(store, clock)` to expire one page of claims in

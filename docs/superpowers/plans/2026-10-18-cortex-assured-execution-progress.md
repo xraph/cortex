@@ -5690,3 +5690,35 @@ The final aggregate `make l` rerun passed after those corrections. The scoped
 formatter used `make f FORMAT_PATHS='errors.go coordination/task_usage.go coordination/task_usage_test.go store/internal/assurance/task_usage.go store/storetest/task_usage.go store/storetest/task_recovery.go store/storetest/submission_transaction.go'`.
 The packet includes no Fabriq, inttest or optimizer edits. Shared settlement and
 the other four-stage gates remain incomplete.
+
+### S3.5 durable verifier admission closure
+
+Domain and storage tests first failed on the missing closure APIs. The new guarded
+closer authenticates current host authority, detaches port inputs and checks the
+returned receipt. Storage reuses the combined usage reader inside the existing
+plan/run/journal transaction, requires task acceptance and terminal verifier jobs,
+compares the complete snapshot, and writes a permanent closure record.
+
+All verification enqueue paths share the closure check. Job claims, renewals and
+metered dispatch check it under the run guard too. Historical acknowledgments and
+evidence remain readable; closure does not refund funds or prove external billing
+finality. Unfinished jobs, changed evidence and unauthorized requests cannot close
+admission. Identical retries recover the original receipt after lost acknowledgments.
+
+Initial race tests passed coordination and SQLite in 1.399 and 11.310 seconds.
+Expanded tests passed in 2.204 and 13.492 seconds. They cover one fresh receipt
+under concurrent closure, enqueue blocked until closure commits, unfinished-work
+denial, scope isolation, rollback and cancellation after commit. Final cross-store
+regressions, formatting, lint and docs checks follow.
+
+Post-format coordination and verification race suites passed in 130.062 and
+18.894 seconds. The broader adoption, usage, verifier-job/call, private-candidate
+and capture regressions passed SQLite in 364.145 seconds, PostgreSQL in 54.809
+seconds and MongoDB in 33.554 seconds without skips. The SQLite run also exercised
+the coordinator process-crash tests. Root build and docs type/lint/build checks
+passed. Initial full lint caught concurrently edited Fabriq readiness and inttest
+formatting; the final `make l` rerun passed after their owner's corrections.
+
+Formatting used `make f FORMAT_PATHS='errors.go coordination/task_usage_closure.go coordination/task_usage_closure_test.go store/internal/assurance/task_usage.go store/internal/assurance/task_usage_closure.go store/internal/assurance/jobs.go store/internal/assurance/job_calls.go store/storetest/task_usage_closure.go store/storetest/task_recovery.go'`.
+This packet contains no optimizer or Fabriq edits. Guarded budget settlement,
+external billing qualification and the remaining four-stage gates are still open.
