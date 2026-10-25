@@ -173,14 +173,16 @@ type teamCloseBeforeActivation struct {
 	closed bool
 }
 
-func (s *teamCloseBeforeActivation) LinkOrchestrationChild(ctx context.Context, team id.OrchestrationID, child id.AgentRunID) error {
+func (s *teamCloseBeforeActivation) ReserveCoordinatedChild(ctx context.Context, lease orchestration.CoordinatorLease, request execution.ReservationRequest) (execution.Reservation, error) {
+	reserved, err := s.Store.ReserveCoordinatedChild(ctx, lease, request)
+	if err != nil {
+		return reserved, err
+	}
 	if !s.closed {
 		s.closed = true
-		if err := s.CloseOrchestrationBudget(ctx, team); err != nil {
-			return err
-		}
+		err = s.CloseOrchestrationBudget(ctx, lease.TeamID)
 	}
-	return s.Store.LinkOrchestrationChild(ctx, team, child)
+	return reserved, err
 }
 
 func TestPreparedTeamRechecksAccountBeforeActivation(t *testing.T) {
@@ -189,7 +191,7 @@ func TestPreparedTeamRechecksAccountBeforeActivation(t *testing.T) {
 	runtime, err := engine.New(engine.WithStore(wrapper), engine.WithLLM(f.client))
 	require.NoError(t, err)
 	team, err := runtime.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
-	require.ErrorIs(t, err, cortex.ErrInvalidPrepared)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationRunConflict)
 	require.NotNil(t, team)
 	require.Len(t, team.AgentRunIDs, 1)
 	require.Zero(t, f.client.calls)
@@ -204,7 +206,7 @@ func (s *teamFailedClosure) CloseOrchestrationBudget(context.Context, id.Orchest
 	return errors.New("test: closure unavailable")
 }
 
-func TestPreparedTeamTerminalRecordBlocksResumeWhenClosureFails(t *testing.T) {
+func TestPreparedTeamTerminalCompletionClosesAccountAtomically(t *testing.T) {
 	f := newPreparedTeamFixture(t, orchestration.StrategySequential)
 	wrapper := &teamFailedClosure{Store: f.s}
 	refreshPreparedTeam(t, &f, engine.WithStore(wrapper), engine.WithExternalTool(llm.Tool{Name: "probe"}))
@@ -213,12 +215,14 @@ func TestPreparedTeamTerminalRecordBlocksResumeWhenClosureFails(t *testing.T) {
 	}
 	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
 	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
-	team.Status = orchestration.StatusFailed
-	require.NoError(t, f.s.UpdateOrchestrationRun(f.ctx, team))
+	claim, err := f.s.AcquireOrchestrationCoordinator(f.ctx, orchestration.CoordinatorRequest{TeamID: team.ID, Owner: id.New(orchestration.PrefixCoordinator), ExpectedGeneration: team.ContinuationGeneration, Duration: time.Minute})
+	require.NoError(t, err)
+	claim.Run.Status = orchestration.StatusFailed
+	require.NoError(t, f.s.FinishOrchestrationCoordinator(f.ctx, claim.Lease, claim.Run))
 	require.Error(t, wrapper.CloseOrchestrationBudget(f.ctx, team.ID))
 	account, err := f.s.GetOrchestrationBudgetSnapshot(f.ctx, team.ID)
 	require.NoError(t, err)
-	require.False(t, account.Closed)
+	require.True(t, account.Closed)
 	before, err := f.s.GetRun(f.ctx, team.AgentRunIDs[0])
 	require.NoError(t, err)
 	_, err = f.e.Resume(f.ctx, before.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "probe-call", Content: "result"}}})

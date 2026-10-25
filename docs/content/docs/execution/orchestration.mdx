@@ -43,6 +43,14 @@ External retrieval and model/tool implementations need their own qualification.
 `RunOrchestration` continues to load its configuration normally. Use the
 prepared execution API below when you need the captured participants.
 
+Use `prepared.Derive(map[string]engine.PreparedEdits{...})` to edit captured
+participants without resolving live sources. Names must already belong to the
+frozen roster. Each edit uses `PreparedAgent.Derive`, so locked sections, models,
+budgets, scope and implementation pins remain protected. Tools can be narrowed,
+never added. Unedited participants keep their digests, and edited participants
+record their original digest in `DerivedFrom`. Your host still decides which
+participants and sections an experiment may edit. Derivation grants no approval.
+
 ## Execute a prepared team
 
 Call `Engine.RunPreparedOrchestration(ctx, prepared, input, opts)` with
@@ -73,8 +81,11 @@ account cannot authorize resume. Legacy
 continuations cannot discard team provenance, and an individual prepared run
 cannot borrow a reservation bound to another child ID.
 
-Once team execution ends, the engine closes admission, including on failure or
-a panic in the initial pass. A waiting team retains its account and reservations. A concurrent duplicate start cannot close the active team's account.
+An acknowledged coordinator closes admission atomically with terminal completion,
+including failure or a panic. A waiting team retains its account and reservations.
+If ownership expires or becomes uncertain, the old pass cancels and leaves the
+parent for recovery. It cannot close a successor's account. A concurrent duplicate
+start cannot close the active team's account.
 Reported child usage above its allowance closes admission and remains on the
 child record; calls already running may still finish. These checks do not
 establish worker quiescence or atomic revocation of external effects.
@@ -87,8 +98,7 @@ a paused child bypasses the closed account.
 
 Captured `agent_send`, `agent_ask` and `agent_inbox` tools are rejected because
 the global bus cannot provide isolation between experiments. Team-isolated A2A
-routing, monetary pricing, coordinator crash takeover and deployed provider
-recovery remain unfinished.
+routing, monetary pricing and deployed provider recovery remain unfinished.
 
 ## Continue a waiting prepared team
 
@@ -112,8 +122,9 @@ A completed child's authenticated usage may already be settled. That permits
 reading its result, but never executing it again. New results are bounded to
 4 MiB; the serialized strategy and host snapshot are bounded to 16 MiB.
 
-SQLite, PostgreSQL and MongoDB implement `ContinuationStore` and
-`ContinuationRunStore`. Custom stores must provide both for prepared execution.
+SQLite, PostgreSQL and MongoDB implement `ContinuationStore`,
+`ContinuationRunStore` and `CoordinatorStore`. Custom stores must provide these
+capabilities for prepared execution.
 The snapshot and result records use the existing assurance table. Run SQL
 migrations before starting the new writers: each continuation claim advances a
 persisted generation so an older pass cannot overwrite the new coordinator.
@@ -121,12 +132,32 @@ Legacy records retain generation zero and cannot claim continuation authority.
 Drain older writers before relying on these claims; they do not enforce this fence. Reconstructed handoff callbacks are suppressed on resumed passes.
 Completion hooks run after a terminal record is saved, not when a team waits.
 
-This path resumes an acknowledged waiting team. It does not take over a team
-whose coordinator died while marked `running`. A lost claim acknowledgment,
-missing reserved child or unknown invocation outcome requires reconciliation;
-repeating the request cannot authorize execution. Automatic coordinator lease
-recovery and private A2A tool wiring remain open. Configure deadline cleanup
-as described below.
+You can also call `ResumePreparedOrchestration` for a running parent after its
+retained coordinator lease expires. A live lease refuses takeover. Running
+parents without an ownership record remain unavailable for automatic claims.
+There is no background takeover scanner yet; the host initiates recovery.
+
+Each pass acquires a new owner and generation. The engine renews its 30-second
+lease while work runs and cancels the pass if renewal fails or the last
+acknowledged expiry arrives. An independent watchdog handles a stalled renewal.
+Invocation intent, child reservation and linkage, activation, provider calls,
+tool dispatch and terminal completion check ownership. Storage ports must honor
+context cancellation so shutdown can drain their outstanding calls.
+
+Recovery observes existing children. Running or paused children keep the parent
+waiting; completed children can supply authenticated results. An unbound intent,
+missing reserved child or unknown invocation outcome remains a reconciliation
+failure. Lease expiry never proves that an external effect stopped, and a late
+provider response cannot authorize another child or close a successor's account.
+A lost claim acknowledgment grants no dispatch. After its retained lease expires,
+a new owner may claim the parent and inspect the same invocation journal.
+
+For a custom host runner, `NewCoordinatedService` supplies the lease context.
+Use `ReserveCoordinatorChild` for atomic admission and `CheckCoordinator` before
+activation and external calls. Keep that context through execution. Existing
+`NewContinuableService` retains its unleased behavior. Drain all older writers
+before adopting coordinator ownership; mixed versions cannot enforce these guards.
+Private A2A tool wiring remains open. Configure deadline cleanup as described below.
 Saved outputs retain their original assurance level. Replaying one does not
 independently verify its correctness.
 

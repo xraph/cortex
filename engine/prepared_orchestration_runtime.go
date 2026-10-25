@@ -32,7 +32,7 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 	if _, ok := e.store.(orchestration.ContinuationStore); !ok {
 		return nil, cortex.ErrOrchestrationContinuationUnavailable
 	}
-	if _, ok := e.store.(orchestration.ContinuationRunStore); !ok {
+	if _, ok := e.store.(orchestration.CoordinatorStore); !ok {
 		return nil, cortex.ErrOrchestrationContinuationUnavailable
 	}
 	budget, ok := e.store.(orchestration.BudgetStore)
@@ -53,36 +53,21 @@ func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrches
 	ctx, cancel := context.WithDeadline(ctx, policy.Deadline)
 	defer cancel()
 	ctx, span := telemetry.Tracer().Start(ctx, spanRunOrchestration)
-	hooks := &preparedTeamHooks{registryHookEmitter: registryHookEmitter{eng: e}}
+	hooks := registryHookEmitter{eng: e}
 	defer func() {
 		recovered := recover()
-		if hooks.started && (rec == nil || rec.Status != orchestration.StatusWaiting) {
-			writeCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err = errors.Join(err, budget.CloseOrchestrationBudget(writeCtx, policy.ExecutionID))
-			finish()
-		}
 		if recovered != nil {
 			e.finishOrchestration(span, rec, telemetry.ErrPanic)
 			panic(recovered)
 		}
 		e.finishOrchestration(span, rec, err)
 	}()
-	runner := &preparedTeamRunner{eng: e, budget: budget, policy: policy, view: view, opts: opts}
+	runner := &preparedTeamRunner{eng: e, policy: policy, view: view, opts: opts}
 	payload, payloadErr := preparedTeamPayload(p, opts)
 	if payloadErr != nil {
 		return nil, payloadErr
 	}
-	return orchestration.NewContinuableService(runner, runner, e.store, hooks).StartContinuation(ctx, orchestration.Continuation{SchemaVersion: 1, OrchestrationID: policy.ExecutionID, Scope: policy.Scope, Config: view.Config, Input: input, Payload: payload})
-}
-
-type preparedTeamHooks struct {
-	registryHookEmitter
-	started bool
-}
-
-func (h *preparedTeamHooks) OrchestrationStarted(ctx context.Context, key id.OrchestrationID, strategy string) {
-	h.started = true
-	h.registryHookEmitter.OrchestrationStarted(ctx, key, strategy)
+	return orchestration.NewCoordinatedService(runner, runner, e.store, hooks).StartContinuation(ctx, orchestration.Continuation{SchemaVersion: 1, OrchestrationID: policy.ExecutionID, Scope: policy.Scope, Config: view.Config, Input: input, Payload: payload})
 }
 
 func (e *Engine) preparedTeamPolicy(ctx context.Context, p *PreparedOrchestration, opts PreparedRunOptions) (PreparedOrchestrationView, orchestration.BudgetPolicy, error) {
@@ -155,7 +140,6 @@ func preparedTeamAllocation(snap *preparedSnapshot) (execution.Resources, error)
 
 type preparedTeamRunner struct {
 	eng    *Engine
-	budget orchestration.BudgetStore
 	policy orchestration.BudgetPolicy
 	view   PreparedOrchestrationView
 	opts   PreparedRunOptions
@@ -191,7 +175,7 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 	key := id.NewAgentRunID()
 	request := execution.ReservationRequest{SchemaVersion: 1, ID: id.New(execution.PrefixReservation), PlanID: team, PlanDigest: r.policy.PreparedDigest, TaskID: key, Scope: r.policy.Scope, OwnerRef: name, Kind: execution.ReservationLeaf, Allocation: allocation, Deadline: deadline}
 	inv := &orchestration.ReservedInvocation{RunID: key}
-	if _, err = r.budget.ReserveOrchestrationChild(ctx, request); err != nil {
+	if _, err = orchestration.ReserveCoordinatorChild(ctx, request); err != nil {
 		if errors.Is(err, execution.ErrBudgetExceeded) || errors.Is(err, execution.ErrInvalidReservation) {
 			return nil, err
 		}
@@ -216,7 +200,7 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 			return nil, execution.ErrBudgetExceeded
 		}
 		record, runErr := r.execute(execCtx, draft)
-		runErr = errors.Join(runErr, r.checkUsage(execCtx, record, allocation))
+		runErr = errors.Join(runErr, r.checkUsage(record, allocation))
 		if runErr == nil && record != nil && record.State == run.StatePaused {
 			return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
 		}
@@ -247,12 +231,10 @@ func (r *preparedTeamRunner) execute(ctx context.Context, draft *preparedRunDraf
 	return r.eng.continueReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
 }
 
-func (r *preparedTeamRunner) checkUsage(ctx context.Context, record *run.Run, allocation execution.Resources) error {
+func (r *preparedTeamRunner) checkUsage(record *run.Run, allocation execution.Resources) error {
 	if record == nil || (int64(record.Usage.Tokens) <= allocation.Tokens && int64(record.Usage.Steps) <= allocation.Steps && int64(record.Usage.ToolCalls) <= allocation.ToolCalls) {
 		return nil
 	}
 	r.closed.Store(true)
-	closeCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer finish()
-	return errors.Join(execution.ErrBudgetExceeded, r.budget.CloseOrchestrationBudget(closeCtx, r.policy.ExecutionID))
+	return execution.ErrBudgetExceeded
 }

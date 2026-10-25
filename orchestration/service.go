@@ -29,12 +29,13 @@ func (noopHooks) AgentHandoff(context.Context, id.OrchestrationID, string, strin
 
 // Service runs stored orchestration configs end to end.
 type Service struct {
-	observer ChildObserver
-	runner   AgentRunner
-	reserved ReservedAgentRunner
-	configs  ConfigStore
-	runs     RunStore
-	hooks    HookEmitter
+	coordinated bool
+	observer    ChildObserver
+	runner      AgentRunner
+	reserved    ReservedAgentRunner
+	configs     ConfigStore
+	runs        RunStore
+	hooks       HookEmitter
 }
 
 // NewService builds a Service. hooks may be nil (a no-op emitter is used).
@@ -110,6 +111,15 @@ func (s *Service) runConfig(ctx context.Context, cfg Config, input string, team 
 	if err := s.runs.CreateOrchestrationRun(ctx, rec); err != nil {
 		return nil, err
 	}
+	if s.coordinated {
+		ownedCtx, pass, claimed, claimErr := s.acquireCoordinator(ctx, rec, true)
+		if claimErr != nil {
+			return nil, claimErr
+		}
+		// Install cleanup before host hooks, which may panic.
+		defer pass.stop()
+		return s.executeCoordinated(ownedCtx, cfg, input, claimed, false)
+	}
 	s.hooks.OrchestrationStarted(ctx, rec.ID, cfg.Strategy)
 	return s.executeConfig(ctx, cfg, input, rec, false)
 }
@@ -176,5 +186,8 @@ func (s *Service) executeConfig(ctx context.Context, cfg Config, input string, r
 func persistOrchestrationRun(ctx context.Context, runs RunStore, rec *Run) error {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if pass := coordinatorFromContext(ctx); pass != nil {
+		return pass.finish(writeCtx, rec)
+	}
 	return runs.UpdateOrchestrationRun(writeCtx, rec)
 }

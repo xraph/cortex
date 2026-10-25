@@ -31,6 +31,9 @@ func (r *persistingRunner) RunAgent(ctx context.Context, name, input string, opt
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
+	if err := CheckCoordinator(ctx); err != nil {
+		return nil, err
+	}
 	if r.observer != nil {
 		result, replayed, err := r.replay(ctx, name, input, opts)
 		if replayed {
@@ -60,7 +63,11 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 		var intentErr error
 		intent, intentErr = invocationIntent(ctx, r.record.ID, name, input, opts)
 		if intentErr == nil {
-			intentErr = journal.BeginOrchestrationInvocation(ctx, intent)
+			if pass := coordinatorFromContext(ctx); pass != nil {
+				intentErr = pass.begin(ctx, intent)
+			} else {
+				intentErr = journal.BeginOrchestrationInvocation(ctx, intent)
+			}
 		}
 		if intentErr != nil {
 			r.mu.Lock()
@@ -102,6 +109,9 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 		return result, admissionErr
 	}
 
+	if err := CheckCoordinator(ctx); err != nil {
+		return result, err
+	}
 	actual, runErr := inv.Execute(ctx)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -136,6 +146,17 @@ func (r *persistingRunner) runReserved(ctx context.Context, name, input string, 
 }
 
 func (r *persistingRunner) persistChild(ctx context.Context, child id.AgentRunID) error {
+	if coordinatorFromContext(ctx) != nil {
+		// Guarded reservation already linked this identity in its transaction.
+		stored, err := r.runs.GetOrchestrationRun(ctx, r.record.ID)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(stored.AgentRunIDs, child) {
+			return cortex.ErrRunIncomplete
+		}
+		return CheckCoordinator(ctx)
+	}
 	links, ok := r.runs.(ChildRunStore)
 	if !ok {
 		// Legacy stores retain the service's serialized snapshot behavior.

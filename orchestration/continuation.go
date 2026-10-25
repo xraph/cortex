@@ -77,6 +77,11 @@ func NewContinuableService(runner ReservedAgentRunner, observer ChildObserver, r
 
 // StartContinuation persists the frozen snapshot before creating the parent.
 func (s *Service) StartContinuation(ctx context.Context, c Continuation) (*Run, error) {
+	if s.coordinated {
+		if _, ok := s.runs.(CoordinatorStore); !ok {
+			return nil, cortex.ErrOrchestrationContinuationUnavailable
+		}
+	}
 	storage, ok := s.runs.(ContinuationStore)
 	_, claims := s.runs.(ContinuationRunStore)
 	if !ok || !claims || hostport.IsNil(s.observer) {
@@ -109,9 +114,23 @@ func (s *Service) ResumeContinuation(ctx context.Context, team id.OrchestrationI
 		return nil, cortex.ErrInvalidContinuation
 	}
 	c = frozen
-	rec, err := claims.ClaimOrchestrationContinuation(ctx, team)
-	if err != nil {
-		return nil, err
+	var rec *Run
+	if s.coordinated {
+		before, readErr := s.runs.GetOrchestrationRun(ctx, team)
+		if readErr != nil {
+			return nil, readErr
+		}
+		var pass *coordinatorPass
+		ctx, pass, rec, err = s.acquireCoordinator(ctx, before, false)
+		if err != nil {
+			return nil, err
+		}
+		defer pass.stop()
+	} else {
+		rec, err = claims.ClaimOrchestrationContinuation(ctx, team)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if rec == nil {
 		return nil, cortex.ErrInvalidContinuation
@@ -123,6 +142,9 @@ func (s *Service) ResumeContinuation(ctx context.Context, team id.OrchestrationI
 		rec.Output = ""
 		rec.CompletedAt = &completed
 		return rec, errors.Join(cortex.ErrInvalidContinuation, persistOrchestrationRun(ctx, s.runs, rec))
+	}
+	if s.coordinated {
+		return s.executeCoordinated(ctx, c.Config, c.Input, rec, true)
 	}
 	return s.executeConfig(ctx, c.Config, c.Input, rec, true)
 }

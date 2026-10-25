@@ -164,12 +164,13 @@ func TestPreparedTeamContinuationRejectsChangedParentInput(t *testing.T) {
 	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
 	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
 	team.Input = "changed after waiting"
-	require.NoError(t, f.s.UpdateOrchestrationRun(f.ctx, team))
-	failed, err := f.e.ResumePreparedOrchestration(f.ctx, team.ID)
-	require.ErrorIs(t, err, cortex.ErrInvalidContinuation)
-	require.Equal(t, orchestration.StatusFailed, failed.Status)
+	require.ErrorIs(t, f.s.UpdateOrchestrationRun(f.ctx, team), cortex.ErrOrchestrationRunConflict)
+	waiting, err := f.e.ResumePreparedOrchestration(f.ctx, team.ID)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	require.Equal(t, orchestration.StatusWaiting, waiting.Status)
 	stored, err := f.s.GetOrchestrationRun(f.ctx, team.ID)
 	require.NoError(t, err)
-	require.Equal(t, orchestration.StatusFailed, stored.Status)
+	require.Equal(t, orchestration.StatusWaiting, stored.Status)
+	require.Equal(t, "work", stored.Input)
 	require.Equal(t, 1, f.client.calls)
 }

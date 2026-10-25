@@ -35,6 +35,9 @@ func (e *Engine) checkOrchestrationObservation(ctx context.Context, child *run.R
 }
 
 func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget, completedObservation bool) error {
+	if err := orchestration.CheckCoordinator(ctx); err != nil {
+		return err
+	}
 	if !hasOrchestrationBinding(p) {
 		return nil
 	}

@@ -6536,3 +6536,60 @@ activation and atomic owner completion on every exit path. Existing invocation
 records must be reconciled without redispatching uncertain work. Drain older
 writers before adopting this protocol; they can bypass its new guards. Private
 A2A routing and live Linux sandbox qualification remain open.
+
+### Coordinator runtime ownership and explicit recovery
+
+Prepared-team execution now uses the ownership protocol. Each pass acquires an
+acknowledged lease before hooks or child dispatch, renews it while work runs, and
+cancels if renewal fails or its last confirmed expiry arrives. The watchdog runs
+independently of renewal storage calls. A renewal that cannot extend the team's
+immutable deadline waits for expiry instead of repeatedly writing revisions.
+
+Invocation intent and child reservation use the current lease. Reservation links
+the child in the same transaction, and the service checks that linkage before
+execution. Preparation, activation, provider calls and tool dispatch check current
+ownership. Completion releases a waiting pass or closes a terminal account in the
+parent transaction. Engine cleanup no longer closes a budget independently of
+ownership. Late over-limit usage cannot let an expired owner close its successor.
+
+You can call `ResumePreparedOrchestration` after a retained running lease expires.
+A live lease or an unleased running parent refuses takeover. The replacement
+reconstructs the original snapshot, observes existing invocation slots and admits
+only absent slots. Running and paused children remain waiting. Missing or ambiguous
+children remain reconciliation failures. A read after a lost claim acknowledgment
+grants no dispatch, even when it finds a valid lease.
+
+The first runtime test reproduced execution without a coordinator record. Engine
+regressions now cover all five strategies across suspension and restart, stale
+completion after takeover, lost claim recovery, real renewal during a provider
+call, tool denial after closure and owned panic cleanup. Watchdog tests cover
+blocked renewal, uncertain acknowledgments and expiry after an acknowledged
+extension. A behavioral test also reproduced redundant renewal at the immutable
+team deadline and now verifies one attempt.
+
+The broad prepared-team matrix passed in 80.240s. API races passed in 22.941s,
+and docs types, lint and build passed. The complete engine race suite passed in
+597.870s, with orchestration passing in 1.895s. After the final watchdog and cleanup
+changes, focused runtime races passed in 17.027s and coordinator tests in 2.162s.
+Caller cancellation also closes an acknowledged account atomically. Final scoped
+formatting, all-module lint, root build and docs checks pass.
+
+Recovery discovery is still host-driven. Background takeover, durable handoff
+events, private A2A tools and deployed-provider recovery remain open. Cancellation
+is cooperative and does not prove an in-flight effect stopped. Custom storage
+ports must honor cancellation so coordinator shutdown can drain them. Live Linux
+sandbox qualification remains deferred by the user.
+
+### Frozen team derivation
+
+Commit `4fb3e49` adds `PreparedOrchestration.Derive` for existing participants.
+It reuses `PreparedAgent.Derive` and the same validated team freezer as initial
+preparation. The strategy, roster, scope, model, budgets and source snapshot stay
+fixed. Host-approved tool subsets may narrow capability, and participant lineage
+retains the original digest. The host still owns the edit policy and approval.
+
+The missing-method test failed first. Tests then passed for detached edits,
+live-source mutation, unchanged participants, round trips, nil input and rejected
+participant/tool expansion. Preparation plus derivation races passed in 26.703s;
+the final derivation rerun passed in 3.508s. Formatting, all-module lint and root
+build passed before the focused three-file commit was pushed.

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -24,7 +23,8 @@ func preparedTeamPayload(p *PreparedOrchestration, opts PreparedRunOptions) ([]b
 	return json.Marshal(preparedTeamContinuation{SchemaVersion: 1, Prepared: p, Options: opts})
 }
 
-// ResumePreparedOrchestration continues a waiting team from its original snapshot.
+// ResumePreparedOrchestration continues a waiting team or claims an expired
+// coordinator from its original snapshot. Unleased running parents are refused.
 // Resume paused children through their existing authorized resume APIs first.
 // This call never restarts a child with a retained invocation identity.
 func (e *Engine) ResumePreparedOrchestration(ctx context.Context, team id.OrchestrationID) (rec *orchestration.Run, err error) {
@@ -74,15 +74,8 @@ func (e *Engine) ResumePreparedOrchestration(ctx context.Context, team id.Orches
 	ctx, cancel := context.WithDeadline(ctx, policy.Deadline)
 	defer cancel()
 	saved.Options.OrchestrationBudget = nil
-	runner := &preparedTeamRunner{eng: e, budget: budget, policy: policy, view: view, opts: saved.Options}
-	defer func() {
-		if rec != nil && rec.Status != orchestration.StatusWaiting {
-			writeCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err = errors.Join(err, budget.CloseOrchestrationBudget(writeCtx, team))
-			finish()
-		}
-	}()
-	return orchestration.NewContinuableService(runner, runner, e.store, registryHookEmitter{eng: e}).ResumeContinuation(ctx, team)
+	runner := &preparedTeamRunner{eng: e, policy: policy, view: view, opts: saved.Options}
+	return orchestration.NewCoordinatedService(runner, runner, e.store, registryHookEmitter{eng: e}).ResumeContinuation(ctx, team)
 }
 
 func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in orchestration.InvocationRecord) (*orchestration.AgentResult, error) {
@@ -112,7 +105,7 @@ func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in o
 	if err != nil {
 		return nil, err
 	}
-	if usageErr := r.checkUsage(ctx, child, allocation); usageErr != nil {
+	if usageErr := r.checkUsage(child, allocation); usageErr != nil {
 		return nil, usageErr
 	}
 	if child.State == run.StatePaused || child.State == run.StateRunning {
