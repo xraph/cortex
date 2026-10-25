@@ -6612,3 +6612,37 @@ from the new context value; it is installed only after frozen binding validation
 Validation: prepared-team and task-call race tests passed in 65.200s. The final
 sync/stream regression passed in 6.552s and verifies a terminal streaming error.
 Scoped formatting, all-module lint, root build and docs types/lint/build pass.
+
+### Bounded background team recovery
+
+You can now install `WithOrchestrationRecovery` before engine startup. Recovery
+uses the existing bounded scheduler lifecycle and guarded prepared-team resume
+path. Expiry and recovery share their orchestration adapter, concurrency defaults
+and cancellation handling. Neither service starts work during construction.
+
+Discovery carries exact scope but grants no execution permission. An explicit
+host callback checks current recovery authority before metadata reads and again
+before resumed preparation, activation, provider and tool calls. Running teams
+need an expired retained coordinator lease. Waiting teams are observed without
+ownership churn while their children are paused or running. Recovery does not
+resume children, reopen accounts, extend deadlines or redispatch uncertain slots.
+Observations are bounded to 4,096 linked children per waiting team.
+
+The recovery attempt defaults to one minute and can be bounded up to thirty
+minutes. Its timeout includes new child execution. Startup identity survives
+startup-context cancellation; shutdown cancels all services before draining them.
+Only pure waiting outcomes are suppressed. Mixed failures remain observable.
+
+Race tests cover resolved suspension, a lost claim acknowledgment followed by
+expiry, initial denial, revocation between participants, dependency checks,
+identity rejection and timed-out shutdown with an undrained callback. The focused
+engine lifecycle and prepared/task-call regression passed in 27.325s. Full
+coordination and orchestration races passed in 22.227s and 2.181s. Root build and
+docs types/lint/build passed. The final focused recovery recheck passed in 16.872s.
+Scoped formatting and root lint pass. The all-module lint pass is currently
+blocked by three findings in concurrent, uncommitted optimizer work; the other
+nine modules pass. Those files are outside this packet's ownership.
+
+Durable handoff events, private prepared A2A tools, installed-provider recovery
+and live Linux sandbox qualification remain open. This packet does not complete
+the four-stage plan.

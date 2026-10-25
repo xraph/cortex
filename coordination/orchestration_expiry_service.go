@@ -9,7 +9,7 @@ import (
 	"github.com/xraph/cortex/internal/hostport"
 )
 
-// ScheduledOrchestration identifies a team for maintenance, never for execution.
+// ScheduledOrchestration identifies a candidate team. It grants no execution authority.
 type ScheduledOrchestration struct {
 	Scope cortex.Scope       `json:"scope"`
 	ID    id.OrchestrationID `json:"id"`
@@ -62,27 +62,16 @@ func NewOrchestrationExpiryService(config OrchestrationExpiryConfig) (*Orchestra
 	if hostport.IsNil(config.Discovery) || hostport.IsNil(config.Expirer) {
 		return nil, ErrInvalidScheduler
 	}
-	if config.MaxInFlight == 0 {
-		config.MaxInFlight = 4
-	}
-	if config.MaxPerScope == 0 {
-		config.MaxPerScope = 1
-	}
 	if config.AttemptTimeout == 0 {
 		config.AttemptTimeout = 5 * time.Second
 	}
-	if config.MaxPerScope < 1 || config.MaxPerScope > 4096 || config.AttemptTimeout < time.Millisecond || config.AttemptTimeout > time.Minute {
+	if config.AttemptTimeout < time.Millisecond || config.AttemptTimeout > time.Minute {
 		return nil, ErrInvalidScheduler
 	}
-	service, err := newPlanService(TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, func() (serviceScheduler, error) {
-		return orchestrationExpiryScheduler{expirer: config.Expirer, timeout: config.AttemptTimeout}, nil
-	})
+	service, err := newOrchestrationOperation(TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, config.AttemptTimeout, config.Expirer.Expire)
 	if err != nil {
 		return nil, err
 	}
-	// Only this constructor accepts orchestration identities. Ordinary task and
-	// recovery services retain their plan-prefix validation.
-	service.identityPrefix = id.PrefixOrchestration
 	return &OrchestrationExpiryService{service: service}, nil
 }
 
@@ -114,18 +103,3 @@ func (s orchestrationPlanSource) ListScheduledPlans(ctx context.Context, r TaskP
 	}
 	return out, nil
 }
-
-type orchestrationExpiryScheduler struct {
-	expirer OrchestrationExpirer
-	timeout time.Duration
-}
-
-func (s orchestrationExpiryScheduler) Tick(ctx context.Context, team id.ID) error {
-	attempt, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-	if err := s.expirer.Expire(attempt, team); err != nil {
-		return err
-	}
-	return attempt.Err()
-}
-func (orchestrationExpiryScheduler) Shutdown(context.Context) error { return nil }

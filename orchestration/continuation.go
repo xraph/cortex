@@ -149,8 +149,8 @@ func (s *Service) ResumeContinuation(ctx context.Context, team id.OrchestrationI
 	return s.executeConfig(ctx, c.Config, c.Input, rec, true)
 }
 
-// onlyWaiting refuses to mistake a mixed parallel failure for a suspension.
-func onlyWaiting(err error) bool {
+// IsWaiting refuses to mistake a mixed parallel failure for a suspension.
+func IsWaiting(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -159,7 +159,7 @@ func onlyWaiting(err error) bool {
 		for _, child := range children.Unwrap() {
 			if child != nil {
 				found = true
-				if !onlyWaiting(child) {
+				if !IsWaiting(child) {
 					return false
 				}
 			}
@@ -167,7 +167,7 @@ func onlyWaiting(err error) bool {
 		return found
 	}
 	if child, ok := err.(interface{ Unwrap() error }); ok {
-		return onlyWaiting(child.Unwrap())
+		return IsWaiting(child.Unwrap())
 	}
 	return errors.Is(err, cortex.ErrOrchestrationWaiting)
 }

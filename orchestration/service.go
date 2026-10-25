@@ -162,7 +162,7 @@ func (s *Service) executeConfig(ctx context.Context, cfg Config, input string, r
 		}
 	}
 	switch {
-	case s.observer != nil && onlyWaiting(runErr):
+	case s.observer != nil && IsWaiting(runErr):
 		rec.Status = StatusWaiting
 		rec.CompletedAt = nil
 		rec.Error = ""

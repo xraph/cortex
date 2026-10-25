@@ -52,6 +52,9 @@ func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRu
 	if err != nil {
 		return cortex.ErrInvalidPrepared
 	}
+	if authErr := checkTeamRecoveryAuthority(ctx, team); authErr != nil {
+		return authErr
+	}
 	reservationID, err := id.Parse(p.OrchestrationReservationID)
 	if err != nil {
 		return cortex.ErrInvalidPrepared

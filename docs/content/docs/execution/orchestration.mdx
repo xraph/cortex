@@ -138,7 +138,8 @@ Completion hooks run after a terminal record is saved, not when a team waits.
 You can also call `ResumePreparedOrchestration` for a running parent after its
 retained coordinator lease expires. A live lease refuses takeover. Running
 parents without an ownership record remain unavailable for automatic claims.
-There is no background takeover scanner yet; the host initiates recovery.
+You can initiate recovery explicitly or configure the bounded background service
+below.
 
 Each pass acquires a new owner and generation. The engine renews its 30-second
 lease while work runs and cancels the pass if renewal fails or the last
@@ -163,6 +164,42 @@ before adopting coordinator ownership; mixed versions cannot enforce these guard
 Private A2A tool wiring remains open. Configure deadline cleanup as described below.
 Saved outputs retain their original assurance level. Replaying one does not
 independently verify its correctness.
+
+## Recover prepared teams in the background
+
+Install `engine.WithOrchestrationRecovery(engine.OrchestrationRecoveryConfig)`
+before `Engine.Start`. Supply an authorized `Service.Discovery` source and an
+`Authorize(ctx, teamID)` callback that checks your current service identity's
+permission to continue that exact team. Leave `Service.Recoverer` unset. The
+engine installs its guarded prepared-team runner and requires coordinator,
+continuation and budget storage capabilities plus an LLM client.
+
+Recovery skips terminal parents, closed or expired accounts, live coordinator
+leases and running parents without an ownership record. Waiting parents are
+observed without claiming a new generation while their children remain paused or
+running. Once children resolve, or an owner expires, recovery uses
+`ResumePreparedOrchestration` with the original snapshot and invocation journal.
+It never resumes a suspended child itself. Each waiting-team observation reads
+at most 4,096 linked children; larger records fail the pass without dispatch.
+
+The authorization callback runs before metadata reads and again before recovery,
+preparation, activation and each recovered provider or tool call. A discovery
+result cannot bypass it. Scope and ownership are checked again by the existing
+execution path, so an observation racing another coordinator grants no authority.
+Only a pure waiting outcome counts as a normal suspension; mixed failures remain
+visible through `Service.ReportError` and `OrchestrationRecoveryStatus`.
+
+Defaults are four teams in flight, one per exact scope, one-second polling,
+five-second discovery and one minute per recovery attempt. You can set
+`Service.AttemptTimeout` between one millisecond and thirty minutes. It bounds a
+whole coordinator pass, including new child execution. Choose it for your workload;
+a timeout cancels the pass and preserves uncertain invocation outcomes.
+
+The service retains startup identity values but owns its lifetime independently
+of the startup context. `Engine.Stop` cancels discovery and active attempts, then
+joins them before returning success. Callbacks and storage ports must honor
+cancellation. Keep expiry configured separately for deadline cleanup. These local
+tests do not qualify deployed provider recovery or durable event delivery.
 
 ## Expire abandoned prepared teams
 
@@ -197,8 +234,8 @@ claim that a provider stopped, or permit a new execution. A lost account-write
 acknowledgment grants no parent cleanup; a later pass rereads the stored closure.
 Parent writes use the continuation generation fence, so a stale pass cannot
 replace a newer coordinator. Inspect `OrchestrationExpiryStatus` for local
-activity and failure counters. Durable event delivery and recovery of an active
-coordinator before its deadline remain separate work.
+activity and failure counters. Recovery before the deadline uses the separate
+service above; durable event delivery remains open.
 
 ## Execution records
 
