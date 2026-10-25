@@ -248,7 +248,13 @@ func proposalExperiment(ctx context.Context, t *testing.T, s store.Store, bundle
 func candidateVersion(t *testing.T, bundle optimization.ExperimentBundle, body string) (optimization.Candidate, optimization.HarnessVersion) {
 	t.Helper()
 	base := bundle.Versions[0]
-	proposal := optimization.Proposal{Edits: []optimization.Edit{{Kind: optimization.EditSectionBody, Target: base.Policy.MutableSections[0], Text: body}}, Rationale: "Use an explicit evidence check"}
+	edit := optimization.Edit{Kind: optimization.EditSectionBody, Text: body}
+	if base.Orchestration != nil {
+		edit.Kind, edit.Participant, edit.Target = optimization.EditParticipantGuidance, "worker", "role"
+	} else {
+		edit.Target = base.Policy.MutableSections[0]
+	}
+	proposal := optimization.Proposal{Edits: []optimization.Edit{edit}, Rationale: "Use an explicit evidence check"}
 	version, err := optimization.ValidateProposal(base, proposal, base.Policy)
 	if err != nil {
 		t.Fatal(err)

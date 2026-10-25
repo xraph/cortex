@@ -49,9 +49,6 @@ func (c *EngineCompatibility) Check(ctx context.Context, version HarnessVersion)
 	if sealed.Kind != HarnessExecution || sealed.RuntimeVersion != c.config.RuntimeVersion {
 		return empty, ErrStaleVersion
 	}
-	if sealed.Orchestration != nil {
-		return empty, ErrUnavailable
-	}
 	detached, err := copyModelJSON(&sealed, 16<<20)
 	if err != nil {
 		return empty, err
@@ -63,14 +60,30 @@ func (c *EngineCompatibility) Check(ctx context.Context, version HarnessVersion)
 	if !report.Compatible || report.Version != (VersionRef{ID: sealed.ID, Digest: sealed.Digest}) || report.PolicyDigest != sealed.PolicyDigest {
 		return empty, ErrStaleVersion
 	}
-	if err = c.config.Engine.CheckPreparedBindings(copyScopeContext(ctx), sealed.Prepared); err != nil {
+	checkBindings := func() error { return c.config.Engine.CheckPreparedBindings(copyScopeContext(ctx), sealed.Prepared) }
+	checkSources := func() (*engine.PreparedSourceCheck, error) {
+		return c.config.Engine.CheckPreparedSources(copyScopeContext(ctx), sealed.Prepared)
+	}
+	preparedDigest := ""
+	if sealed.Orchestration != nil {
+		preparedDigest = sealed.Orchestration.Prepared.Digest()
+		checkBindings = func() error {
+			return c.config.Engine.CheckPreparedOrchestrationBindings(copyScopeContext(ctx), sealed.Orchestration.Prepared)
+		}
+		checkSources = func() (*engine.PreparedSourceCheck, error) {
+			return c.config.Engine.CheckPreparedOrchestrationSources(copyScopeContext(ctx), sealed.Orchestration.Prepared)
+		}
+	} else {
+		preparedDigest = sealed.Prepared.Digest()
+	}
+	if err = checkBindings(); err != nil {
 		return empty, compatibilityError(err)
 	}
-	checked, err := c.config.Engine.CheckPreparedSources(copyScopeContext(ctx), sealed.Prepared)
+	checked, err := checkSources()
 	if err != nil {
 		return empty, compatibilityError(err)
 	}
-	if checked == nil || checked.PreparedDigest != sealed.Prepared.Digest() || checked.SourceCount < 1 || checked.Snapshot.ID == "" || checked.Snapshot.Scope != sealed.Scope.Canonical() {
+	if checked == nil || checked.PreparedDigest != preparedDigest || checked.SourceCount < 1 || checked.Snapshot.ID == "" || checked.Snapshot.Scope != sealed.Scope.Canonical() {
 		return empty, ErrIncompleteEvidence
 	}
 	if contextErr := ctx.Err(); contextErr != nil {

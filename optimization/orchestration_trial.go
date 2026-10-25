@@ -58,15 +58,31 @@ func orchestrationTrialBudget(version HarnessVersion, request TrialRequest) (orc
 	if preset.Limits.Tokens > request.Allowance.MaxTokens {
 		return empty, ErrPolicyDenied
 	}
-	view, err := version.Orchestration.Prepared.Inspect()
-	if err != nil {
-		return empty, err
-	}
 	key, err := id.ParseOrchestrationID("orch_" + strings.SplitN(request.AttemptID.String(), "_", 2)[1])
 	if err != nil {
 		return empty, err
 	}
-	policy := orchestration.BudgetPolicy{SchemaVersion: 1, ExecutionID: key, PreparedDigest: version.Orchestration.Prepared.Digest(), Scope: version.Scope, Limits: preset.Limits, Deadline: request.Deadline, TokenOnly: true, Participants: map[string]execution.Resources{}, ParticipantDigests: map[string]string{}}
+	policy, err := orchestrationExecutionBudget(version, key, request.Deadline)
+	if err != nil {
+		return empty, err
+	}
+	if !time.Now().Before(policy.Deadline) {
+		return empty, ErrUnknownAttempt
+	}
+	return policy, nil
+}
+
+func orchestrationExecutionBudget(version HarnessVersion, key id.OrchestrationID, deadline time.Time) (orchestration.BudgetPolicy, error) {
+	var empty orchestration.BudgetPolicy
+	preset, err := orchestrationPreset(version.Policy, version.Orchestration.Preset)
+	if err != nil {
+		return empty, err
+	}
+	view, err := version.Orchestration.Prepared.Inspect()
+	if err != nil {
+		return empty, err
+	}
+	policy := orchestration.BudgetPolicy{SchemaVersion: 1, ExecutionID: key, PreparedDigest: version.Orchestration.Prepared.Digest(), Scope: version.Scope, Limits: preset.Limits, Deadline: deadline, TokenOnly: true, Participants: map[string]execution.Resources{}, ParticipantDigests: map[string]string{}}
 	for name, prepared := range view.Participants {
 		child, inspectErr := prepared.Inspect()
 		if inspectErr != nil {
@@ -75,12 +91,9 @@ func orchestrationTrialBudget(version HarnessVersion, request TrialRequest) (orc
 		budget := child.Config.Budget
 		policy.Participants[name] = participantResources(child)
 		policy.ParticipantDigests[name] = prepared.Digest()
-		if budget.Deadline.Before(policy.Deadline) {
+		if policy.Deadline.IsZero() || budget.Deadline.Before(policy.Deadline) {
 			policy.Deadline = budget.Deadline
 		}
-	}
-	if !time.Now().Before(policy.Deadline) {
-		return empty, ErrUnknownAttempt
 	}
 	frozen, _, err := policy.Freeze()
 	return frozen, err

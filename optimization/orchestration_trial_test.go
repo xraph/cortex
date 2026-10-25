@@ -85,3 +85,32 @@ func TestTeamDispatchRequiresHostSupportAndBoundedAllowance(t *testing.T) {
 		t.Fatal("different attempts share a team")
 	}
 }
+
+func TestTeamExecutionBudgetNarrowsDeadlineWithoutChangingPreset(t *testing.T) {
+	_, _, _, _, version := freshOrchestrationFixture(t)
+	original, err := orchestrationExecutionBudget(version, id.NewOrchestrationID(), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original.Deadline.IsZero() {
+		t.Fatal("missing frozen participant deadline")
+	}
+	for _, deadline := range []time.Time{original.Deadline.Add(time.Hour), original.Deadline.Add(-time.Minute)} {
+		policy, buildErr := orchestrationExecutionBudget(version, id.NewOrchestrationID(), deadline)
+		if buildErr != nil {
+			t.Fatal(buildErr)
+		}
+		expected := original.Deadline
+		if deadline.Before(expected) {
+			expected = deadline
+		}
+		if !policy.Deadline.Equal(expected) || policy.Limits != original.Limits || policy.PreparedDigest != original.PreparedDigest || !policy.TokenOnly {
+			t.Fatalf("changed approved policy: %+v", policy)
+		}
+		for name, digest := range original.ParticipantDigests {
+			if policy.ParticipantDigests[name] != digest || policy.Participants[name] != original.Participants[name] {
+				t.Fatal("participant binding changed")
+			}
+		}
+	}
+}

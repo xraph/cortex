@@ -311,7 +311,7 @@ implementations and matching schemas. Source records are read in one current
 store snapshot; a store without that capability returns unavailable. Approved
 prompt and tool-description edits retain their original source identity.
 
-Activation, rollback and `RunActive` perform compatibility checks after reading
+Activation, rollback, `RunActive` and `RunActiveOrchestration` check compatibility after reading
 artifact content, so a source edit during that read cannot authorize a stale
 version. Changed sources or runtime bindings require revalidation or deactivation.
 Deactivation remains available for a stale route. A checker bound to a different
@@ -420,7 +420,29 @@ not dispatch another team after a call has been recorded. Store writes bind the
 capture to the frozen version and reject reused parent or child run identities.
 Retention and task-result reads include child artifacts from prior attempts.
 
-`EngineCompatibility` and `RunActive` return `ErrUnavailable` for team versions
-until a dedicated production team path is available. Current preset validation
-supports token ceilings; monetary team ceilings and messaging tools require
-further runtime support.
+Use `RunActiveOrchestration` for a reviewed team activation:
+
+```go
+result, err := optimizer.RunActiveOrchestration(ctx, optimization.ActiveOrchestrationRequest{
+	AgentID: ownerID,
+	Channel: "default",
+	Input:   "Review this change",
+})
+```
+
+You bind the same production engine through `WithActiveEngine` and
+`EngineCompatibility`. The checker reads the original orchestration config and
+all participant sources in one current snapshot, including participants whose
+guidance was derived from an approved preset.
+
+The invocation pins its activation at entry, then checks retained evidence,
+compatibility and current route and experiment grants. A later deactivation
+blocks the next invocation. Production children use normal execution purpose,
+fresh sessions and the reviewed version's provenance. Shared limits and each
+participant's digest come from the approved preset; callers cannot override them.
+The caller's deadline can shorten the frozen participant deadlines. An expired
+preset requires a fresh version.
+
+`RunActive` remains the agent execution path and returns `ErrUnavailable` for
+team versions. Current presets support token ceilings. Monetary team ceilings
+and messaging tools require further runtime support.

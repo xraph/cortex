@@ -15,9 +15,10 @@ import (
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/orchestration"
+	rootsqlite "github.com/xraph/cortex/store/sqlite"
 )
 
-func orchestrationVersionFixture(t *testing.T) HarnessVersion {
+func freshOrchestrationFixture(t *testing.T) (context.Context, *rootsqlite.Store, *engine.Engine, *agent.Config, HarnessVersion) {
 	t.Helper()
 	ctx, sources, runtime, owner, version := compatibilityFixture(t)
 	second := &agent.Config{ID: id.NewAgentID(), Name: "second", SystemPrompt: "Review the work.", Model: "model"}
@@ -49,8 +50,14 @@ func orchestrationVersionFixture(t *testing.T) HarnessVersion {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return ctx, sources, runtime, owner, frozen
+}
+
+func orchestrationVersionFixture(t *testing.T) HarnessVersion {
+	t.Helper()
+	ctx, sources, _, owner, frozen := freshOrchestrationFixture(t)
 	owner.SystemPrompt = "Live source changed."
-	if err = sources.Update(ctx, owner); err != nil {
+	if err := sources.Update(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
 	return frozen
@@ -194,24 +201,6 @@ func TestPresetRequiresExplicitParticipantBudgets(t *testing.T) {
 	}
 	if _, err = SealOrchestrationPreset(OrchestrationPreset{Name: "unbounded", Prepared: prepared, Limits: execution.Resources{Steps: 2, Tokens: 100, ToolCalls: 2, FanOut: 1}}); err == nil {
 		t.Fatal("accepted unbounded participant")
-	}
-}
-
-func TestPresetProductionCompatibilityUnavailable(t *testing.T) {
-	version := orchestrationVersionFixture(t)
-	runtime, err := engine.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	checker, err := NewEngineCompatibility(EngineCompatibilityConfig{Engine: runtime, RuntimeVersion: version.RuntimeVersion, Host: compatibilityHost(func(context.Context, HarnessVersion) (CompatibilityReport, error) {
-		t.Fatal("unsupported production team reached host checker")
-		return CompatibilityReport{}, nil
-	})})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = checker.Check(cortex.WithScope(context.Background(), version.Scope), version); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("unsupported production route: %v", err)
 	}
 }
 

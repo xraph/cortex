@@ -36,7 +36,7 @@ passed its full qualification gate.
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
 | 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
 | 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
-| 15: orchestration presets | Sealed approved preset catalog and selection; runtime prepared teams and continuation | Guidance edits, isolated trial execution, child trace conversion and qualification |
+| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces and reviewed production routing | Full database gate, private messaging support and final qualification |
 | 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
@@ -1757,3 +1757,62 @@ passed memory in 259.832s and continues through the database stores.
 Final all-module `make l` passes after the reused-child test extension, with the
 runtime owner's current messaging changes present. The full optimization database
 suite remains live; this packet does not claim its completion.
+
+## Reviewed production team execution
+
+You can execute a reviewed team through `RunActiveOrchestration`, using the same
+bound production engine and activation service as agent execution. Its request
+accepts the owner, channel and input. The approved preset supplies shared limits,
+participant digests and deadlines, and the runtime creates fresh child sessions
+with normal execution purpose and the reviewed version's provenance.
+
+`EngineCompatibility` checks the original orchestration configuration and every
+participant source through the runtime's current snapshot API. Derived guidance
+keeps the original source bindings. Source edits during host checks, changed
+runtime revisions, foreign scope and mutation of the host's detached copy are
+covered without executing a model or tool.
+
+Agent and team execution share the activation gate. A regression exposed a
+missing experiment-grant recheck after external compatibility callbacks; both
+paths now repeat that check before dispatch. The existing pin-at-entry contract
+remains: deactivation blocks subsequent invocations, while an invocation already
+resolving retains its selected version and still checks current grants and
+evidence. `ResolveActivation` validates the pinned generation's retained evidence;
+it does not resolve the current head again.
+
+The lifecycle fixture captures real team executions, persists a qualifying
+recommendation and exercises review, production dispatch, grant withdrawal,
+deactivation, rollback and a changed secondary participant. SQLite, PostgreSQL
+and MongoDB reopen the optimizer store and reconstruct the runtime from another
+connection before executing the stored activation. Child purpose, isolated
+sessions, shared policy and original version provenance survive those reads.
+
+Focused team lifecycle, recovery and existing agent/trial regressions pass memory
+(14.165s), SQLite (37.086s), PostgreSQL (41.164s) and MongoDB (49.364s). The complete
+core race suite passes in 55.845s. The production team test also passes against
+the published root dependency with its local replacement removed (7.656s).
+Sentinel metered-judge, late-receipt and cost-provenance regressions pass in
+1.658s. Forge extension races pass in 1.770s (contract package 23.339s), Fabriq in
+11.877s (optimization adapter 1.221s), and Docker integration in 6.234s.
+
+The broader optimization database suite from the preceding team-capture packet
+is still running. It does not qualify these later production changes. Sentinel
+loop checks and final all-module lint remain in progress. Monetary team ceilings,
+private team messaging, API/dashboard wiring and final workflow qualification
+remain outside this packet.
+
+The sequential and parallel Sentinel optimization loops, including metered
+judges, reopen recovery and original team trace conversion, pass in 211.637s.
+After the final cleanup of activation context lifetimes and scoped formatting,
+agent/team routing regressions pass again on memory (10.720s) and SQLite
+(27.060s). Optimization lint is clean; the last whole-tree attempt still saw
+concurrent runtime formatting work.
+
+Final all-module `make l` passes after the runtime owner's formatting fixes.
+The earlier broad suite completed MongoDB in 1074.516s, then failed to compile
+its queued PostgreSQL and SQLite tests: the new recovery callers referenced
+`ActiveTeamRecovery`, while that process retained the helper package compiled
+before the function existed. Fresh focused runs of both backends passed above.
+This is not a clean full-suite result. The next broad run compiles all race test
+binaries before executing them, preventing concurrent source edits from mixing
+new callers with earlier helper builds.

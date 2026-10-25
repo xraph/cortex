@@ -148,7 +148,14 @@ func captureFixtureTrial(ctx context.Context, t *testing.T, s store.Store, bundl
 	}
 	captureBundle := bundle
 	captureBundle.Versions = []optimization.HarnessVersion{version}
-	record := capturedExecution(t, captureBundle, receipt)
+	var record optimization.ExecutionRecord
+	if source, ok := s.(interface {
+		captureTrial(context.Context, *testing.T, optimization.ExperimentBundle, optimization.Trial, optimization.EnvironmentReceipt) optimization.ExecutionRecord
+	}); ok {
+		record = source.captureTrial(ctx, t, captureBundle, trial, receipt)
+	} else {
+		record = capturedExecution(t, captureBundle, receipt)
+	}
 	record.Artifacts = artifacts
 	for _, task := range bundle.Experiment.Spec.Tasks {
 		if task.ID == trial.CaseID {

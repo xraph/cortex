@@ -32,3 +32,7 @@ func TestImprovementRecovery(t *testing.T) { testRecovery(t, storetest.Improveme
 func TestImprovementValidationRecovery(t *testing.T) {
 	testRecovery(t, storetest.ImprovementValidationRecovery)
 }
+
+func TestActiveTeamRecovery(t *testing.T) {
+	testRecovery(t, storetest.ActiveTeamRecovery)
+}
