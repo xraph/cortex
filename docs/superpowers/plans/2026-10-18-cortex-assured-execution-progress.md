@@ -6465,3 +6465,37 @@ suppressed while reconstructing resumed strategies. A running parent with an
 unknown coordinator outcome requires reconciliation, and this API refuses to
 claim it. Outputs keep their existing assurance level. Live Linux sandbox
 qualification remains deferred by the user.
+
+### Prepared-team deadline expiry and lifecycle cleanup
+
+Budget expiry now checks the immutable deadline inside the existing account
+transaction. Explicit closure and expiry share the same storage path. Expiry
+retains every charge and reservation; lost acknowledgments return no cleanup
+authority. All built-in stores expose bounded exact-scope account discovery,
+including closed accounts needed to retry an interrupted parent write.
+
+The expirer closes admission before failing a nonterminal prepared parent. It
+preserves terminal outputs, child identities and unknown outcomes. Generation
+fences reject stale updates; an absent parent does not leave an account open.
+Historical generation-zero parents retain their original state.
+
+The lifecycle service reuses bounded scheduler discovery, per-scope fairness,
+cancellation and drainage. Its constructor admits orchestration IDs only;
+ordinary task services still require plan IDs. A host may provide discovery or
+use the exact-scope adapter with mandatory current authorization before and after
+each page. Engine Start/Stop owns expiry alongside the other background services.
+
+New store, service and engine tests first failed for missing capabilities.
+Focused race tests pass for paused-child expiry, retained charges, SQLite
+close/reopen after lost acknowledgments, identity preservation, bounded attempts
+and shutdown drainage. A behavioral regression also reproduced mutation of a
+store-owned parent before a failed write; cleanup now detaches the parent first.
+Final coordination/orchestration/assurance race suites pass, as do the focused
+engine and SQLite reruns, root build and docs types/lint/build. Broader engine
+lifecycle/prepared regressions passed in 37.455s. The backend matrix passed
+without skips: SQLite 27.671s, PostgreSQL 4.045s, MongoDB 4.628s. The final all-module
+lint run reports zero issues after the concurrent optimization edits settled.
+SQLite restart-to-parent cleanup also passes with retained child identities and
+rejected stale parent writes. This is deadline cleanup, not coordinator takeover,
+external cancellation or evidence-based usage settlement. Live Linux sandbox
+qualification remains deferred by the user.

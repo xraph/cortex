@@ -85,6 +85,10 @@ func (s *Repository) GetOrchestrationBudget(ctx context.Context, key id.Orchestr
 	if err != nil {
 		return orchestration.BudgetPolicy{}, err
 	}
+	return decodeOrchestrationBudget(row, key)
+}
+
+func decodeOrchestrationBudget(row Record, key id.OrchestrationID) (orchestration.BudgetPolicy, error) {
 	var policy orchestration.BudgetPolicy
 	if row.Deleted || len(row.Body) > 128<<10 || json.Unmarshal([]byte(row.Body), &policy) != nil {
 		return policy, execution.ErrInvalidReservation
@@ -206,24 +210,87 @@ func (s *Repository) CloseOrchestrationBudget(ctx context.Context, key id.Orches
 		if err != nil {
 			return err
 		}
-		closed, err := tx.orchestrationBudgetClosed(tc, policy)
-		if err != nil || closed {
-			return err
+		return tx.closeOrchestrationBudget(tc, policy)
+	})
+}
+
+func (s *Repository) closeOrchestrationBudget(ctx context.Context, policy orchestration.BudgetPolicy) error {
+	closed, err := s.orchestrationBudgetClosed(ctx, policy)
+	if err != nil || closed {
+		return err
+	}
+	closure := orchestrationBudgetClosure{ExecutionID: policy.ExecutionID, PreparedDigest: policy.PreparedDigest, At: s.clock.Now()}
+	if closure.At.IsZero() {
+		return execution.ErrInvalidReservation
+	}
+	data, err := json.Marshal(closure)
+	if err != nil {
+		return err
+	}
+	row, err := record(kindOrchestrationBudgetClosed, policy.ExecutionID.String(), evidence.Digest(data), policy.ExecutionID.String(), policy.Scope, closure)
+	if err != nil {
+		return err
+	}
+	return s.driver.Insert(ctx, row)
+}
+
+// ExpireOrchestrationBudget checks the immutable deadline under the same account
+// transaction as reservation admission. Expiry never releases retained charges.
+func (s *Repository) ExpireOrchestrationBudget(ctx context.Context, key id.OrchestrationID) (bool, error) {
+	expired := false
+	err := s.orchestrationBudgetTransaction(ctx, key, func(tc context.Context, tx *Repository) error {
+		policy, readErr := tx.GetOrchestrationBudget(tc, key)
+		if readErr != nil {
+			return readErr
 		}
-		closure := orchestrationBudgetClosure{ExecutionID: key, PreparedDigest: policy.PreparedDigest, At: s.clock.Now()}
-		if closure.At.IsZero() {
+		now := tx.clock.Now()
+		if now.IsZero() {
 			return execution.ErrInvalidReservation
 		}
-		data, err := json.Marshal(closure)
-		if err != nil {
-			return err
+		expired = !now.Before(policy.Deadline)
+		if !expired {
+			return nil
 		}
-		row, err := record(kindOrchestrationBudgetClosed, key.String(), evidence.Digest(data), key.String(), policy.Scope, closure)
-		if err != nil {
-			return err
-		}
-		return tx.driver.Insert(tc, row)
+		return tx.closeOrchestrationBudget(tc, policy)
 	})
+	if err != nil {
+		return false, err
+	}
+	return expired, nil
+}
+
+// ListOrchestrationBudgets returns immutable policies, including closed accounts,
+// at the caller's exact scope. Pagination advances by retained account identity.
+func (s *Repository) ListOrchestrationBudgets(ctx context.Context, req orchestration.BudgetListRequest) ([]orchestration.BudgetPolicy, error) {
+	if _, err := cortex.RequireScope(ctx); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req.Limit < 1 || req.Limit > 256 || !req.After.IsNil() && req.After.Prefix() != id.PrefixOrchestration {
+		return nil, execution.ErrInvalidReservation
+	}
+	rows, err := s.driver.Select(ctx, Query{Kind: KindOrchestrationBudget, After: req.After.String(), Limit: req.Limit})
+	if err != nil {
+		return nil, err
+	}
+	policies := make([]orchestration.BudgetPolicy, 0, len(rows))
+	for _, row := range rows {
+		if checkErr := validateRecord(ctx, row); checkErr != nil {
+			return nil, checkErr
+		}
+		key, parseErr := id.Parse(row.ID)
+		if parseErr != nil || key.Prefix() != id.PrefixOrchestration {
+			return nil, execution.ErrInvalidReservation
+		}
+		policy, decodeErr := decodeOrchestrationBudget(row, key)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
 }
 
 // GetOrchestrationBudgetSnapshot serializes charges with admission and settlement.

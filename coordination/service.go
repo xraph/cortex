@@ -69,10 +69,11 @@ type TaskServiceStatus struct {
 // It never retries an uncertain invocation, accepts outputs or refunds capacity.
 // Stop it before disposing stores. You may restart after complete drainage.
 type TaskService struct {
-	config       TaskServiceConfig
-	newScheduler func() (serviceScheduler, error)
-	mu           sync.Mutex
-	current      *taskServiceRun
+	identityPrefix id.Prefix
+	config         TaskServiceConfig
+	newScheduler   func() (serviceScheduler, error)
+	mu             sync.Mutex
+	current        *taskServiceRun
 }
 
 type serviceScheduler interface {
@@ -119,7 +120,7 @@ func newPlanService(config TaskServiceConfig, factory func() (serviceScheduler, 
 	if hostport.IsNil(config.Discovery) || config.Interval < time.Millisecond || config.Interval > time.Hour || config.DiscoveryTimeout < time.Millisecond || config.DiscoveryTimeout > time.Minute || config.MaxInFlight < 1 || config.MaxInFlight > 4096 {
 		return nil, ErrInvalidScheduler
 	}
-	return &TaskService{config: config, newScheduler: factory}, nil
+	return &TaskService{config: config, newScheduler: factory, identityPrefix: planning.PrefixPlan}, nil
 }
 
 // Start preserves startup context values for the host service identity while
@@ -345,7 +346,7 @@ func (s *TaskService) discover(ctx context.Context, request TaskPlanListRequest)
 				remaining -= len(value)
 			}
 		}
-		if cortex.ValidateScope(plan.Scope) != nil || plan.PlanID.IsNil() || plan.PlanID.Prefix() != planning.PrefixPlan {
+		if cortex.ValidateScope(plan.Scope) != nil || plan.PlanID.IsNil() || plan.PlanID.Prefix() != s.identityPrefix {
 			return TaskPlanPage{}, ErrInvalidScheduler
 		}
 		key := plan.Scope.Canonical() + "/" + plan.PlanID.String()

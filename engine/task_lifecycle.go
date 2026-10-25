@@ -60,6 +60,9 @@ type taskLifecycleService interface {
 
 func (e *Engine) taskServices() []taskLifecycleService {
 	var services []taskLifecycleService
+	if e.orchestrationExpiry != nil {
+		services = append(services, e.orchestrationExpiry)
+	}
 	if e.taskScheduling != nil {
 		services = append(services, e.taskScheduling)
 	}

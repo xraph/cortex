@@ -125,9 +125,46 @@ This path resumes an acknowledged waiting team. It does not take over a team
 whose coordinator died while marked `running`. A lost claim acknowledgment,
 missing reserved child or unknown invocation outcome requires reconciliation;
 repeating the request cannot authorize execution. Automatic coordinator lease
-recovery, waiting-team expiry cleanup and private A2A tool wiring remain open.
+recovery and private A2A tool wiring remain open. Configure deadline cleanup
+as described below.
 Saved outputs retain their original assurance level. Replaying one does not
 independently verify its correctness.
+
+## Expire abandoned prepared teams
+
+Install `engine.WithOrchestrationExpiry` before `Engine.Start` to close expired
+team accounts and finalize their prepared parent records. The service uses the
+same bounded discovery, scope fairness and joined shutdown as task recovery.
+It has no agent dispatch or settlement capability.
+
+Use `orchestration.NewExpirer(storage)` with a built-in store. It checks the
+immutable account deadline inside the reservation transaction, closes admission,
+then marks a nonterminal prepared parent failed. Completed results stay intact.
+A missing parent does not prevent closing an abandoned account. Legacy parents
+with generation zero keep their existing state.
+
+`coordination.NewScopedOrchestrationSource(storage, scopes, authorize)` supplies
+discovery for an explicit list of exact scopes. The host authorization callback
+runs before and after each storage page under the service identity. Scope lists
+are detached, limited to 256 entries and cannot contain duplicates. Closed
+accounts remain discoverable so an interruption between account closure and the
+parent write can be retried. You may supply a different `OrchestrationSource`
+when your host owns scope discovery; it must eventually finish each bounded pass.
+
+Pass that source and expirer in `coordination.OrchestrationExpiryConfig`. Defaults
+are four concurrent teams, one per scope, one-second polling, five seconds for
+discovery and five seconds per expiry attempt. Callbacks must honor cancellation.
+`Engine.Stop` cancels and joins them before announcing shutdown. A timed-out stop
+retains ownership; call it again before disposing storage.
+
+Expiry preserves child records, suspensions, invocation journals and conservative
+usage charges. It does not refund uncertain usage, cancel an external effect,
+claim that a provider stopped, or permit a new execution. A lost account-write
+acknowledgment grants no parent cleanup; a later pass rereads the stored closure.
+Parent writes use the continuation generation fence, so a stale pass cannot
+replace a newer coordinator. Inspect `OrchestrationExpiryStatus` for local
+activity and failure counters. Durable event delivery and recovery of an active
+coordinator before its deadline remain separate work.
 
 ## Execution records
 
