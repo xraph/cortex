@@ -183,7 +183,10 @@ func killAdoptionCoordinator(t *testing.T, root, boundary string) adoptionCrashM
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
-	logFile, err := os.OpenFile(filepath.Join(root, "child.log"), os.O_CREATE|os.O_WRONLY, 0o600)
+	directory, err := os.OpenRoot(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, directory.Close()) })
+	logFile, err := directory.OpenFile("child.log", os.O_CREATE|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, logFile.Close()) })
 	// Run the parent test entry point; the child environment selects worker mode.
@@ -214,15 +217,15 @@ func killAdoptionCoordinator(t *testing.T, root, boundary string) adoptionCrashM
 		select {
 		case childErr := <-done:
 			waited = true
-			output, readErr := os.ReadFile(logFile.Name())
+			output, readErr := directory.ReadFile("child.log")
 			require.NoError(t, readErr)
 			t.Fatalf("coordinator exited before %s: %v\n%s", boundary, childErr, output)
 		case <-deadline.C:
-			output, readErr := os.ReadFile(logFile.Name())
+			output, readErr := directory.ReadFile("child.log")
 			require.NoError(t, readErr)
 			t.Fatalf("coordinator did not reach %s\n%s", boundary, output)
 		case <-ticker.C:
-			data, readErr := os.ReadFile(filepath.Join(root, "boundary.json"))
+			data, readErr := directory.ReadFile("boundary.json")
 			if errors.Is(readErr, os.ErrNotExist) {
 				continue
 			}
