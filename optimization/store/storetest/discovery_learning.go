@@ -152,7 +152,15 @@ func DiscoveryLearning(t *testing.T, factory Factory) {
 				req.Lease.Generation++
 				want = optimization.ErrConflict
 			case "validation-started":
+				for i := range f.children {
+					initial := discoveryRequest(t, f, i)
+					initial.Lessons = []optimization.LessonDraft{}
+					if err := f.s.Transact(f.ctx, func(tx store.Tx) error { _, putErr := tx.PutDiscoveryLessons(initial); return putErr }); err != nil {
+						t.Fatal(err)
+					}
+				}
 				advanceFixture(f.ctx, t, f.s, f.parent, f.leases[0], optimization.PhaseValidate)
+				want = optimization.ErrConflict
 			case "nil-result":
 				req.Lessons = nil
 				want = optimization.ErrInvalidSpec

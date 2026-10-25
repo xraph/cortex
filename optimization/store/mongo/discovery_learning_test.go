@@ -20,3 +20,11 @@ func TestDiscoveryReflection(t *testing.T) { storetest.DiscoveryReflection(t, co
 func TestDiscoveryReflectionRecovery(t *testing.T) {
 	testRecovery(t, storetest.DiscoveryReflectionRecovery)
 }
+
+func TestImprovementWorker(t *testing.T) { storetest.ImprovementWorker(t, conformanceFactory(t)) }
+func TestImprovementWorkerLoop(t *testing.T) {
+	storetest.ImprovementWorkerLoop(t, conformanceFactory(t))
+}
+func TestImprovementWorkerRecovery(t *testing.T) {
+	testRecovery(t, storetest.ImprovementWorkerRecovery)
+}

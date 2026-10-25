@@ -35,3 +35,17 @@ func TestDiscoveryReflection(t *testing.T) {
 func TestDiscoveryReflectionRecovery(t *testing.T) {
 	testRecovery(t, storetest.DiscoveryReflectionRecovery)
 }
+
+func TestImprovementWorker(t *testing.T) {
+	storetest.ImprovementWorker(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "parent.db"), now)
+	})
+}
+func TestImprovementWorkerLoop(t *testing.T) {
+	storetest.ImprovementWorkerLoop(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "parent-loop.db"), now)
+	})
+}
+func TestImprovementWorkerRecovery(t *testing.T) {
+	testRecovery(t, storetest.ImprovementWorkerRecovery)
+}

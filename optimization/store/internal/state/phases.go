@@ -19,6 +19,16 @@ func (tx *transaction) validatePhaseEvidence(experiment optimization.Experiment,
 				if !exists || current.State != optimization.StateRunning || current.Phase != optimization.PhaseValidate {
 					return optimization.ErrIncompleteEvidence
 				}
+				batch, recorded := tx.data.DiscoveryLessons[current.ID.String()]
+				if !recorded {
+					return optimization.ErrIncompleteEvidence
+				}
+				if err := checkLessonBindings(tx.data, current, tx.now); err != nil {
+					return err
+				}
+				if err := checkDiscoveryEvidence(tx.data, current, batch.Lessons, tx.now); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -57,7 +67,7 @@ func (tx *transaction) validatePhaseEvidence(experiment optimization.Experiment,
 			}
 			for _, arm := range allocation.PairedRoster {
 				child, exists := tx.data.Experiments[arm.ExperimentID.String()]
-				if !exists {
+				if !exists || experiment.Spec.Improvement != nil && child.State != optimization.StateRunning {
 					return optimization.ErrIncompleteEvidence
 				}
 				if err := tx.requireVersionTrials(child, arm.Baseline, optimization.SplitValidation, allocation.ID, trials); err != nil {

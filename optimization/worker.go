@@ -36,7 +36,8 @@ type PhaseHandler interface {
 	Execute(context.Context, WorkItem) (Transition, error)
 }
 
-// Work polls bounded pages in the caller's exact scope. It owns one active phase
+// Work polls top-level experiments in the caller's exact scope. Parent handlers
+// schedule their children through WorkOnce. It owns one active phase
 // and one heartbeat goroutine; the host owns scope enumeration and supervision.
 func (o *Optimizer) Work(ctx context.Context) error {
 	if _, err := o.caller(ctx); err != nil {
@@ -51,6 +52,9 @@ func (o *Optimizer) Work(ctx context.Context) error {
 					return err
 				}
 				for _, experiment := range page.Items {
+					if experiment.Spec.Parent != nil {
+						continue
+					}
 					if err = o.WorkOnce(ctx, experiment.ID); err != nil && !errors.Is(err, ErrConflict) {
 						return err
 					}
@@ -207,6 +211,9 @@ func (o *Optimizer) heartbeat(ctx context.Context, cancel context.CancelFunc, ex
 		case <-ticker.C:
 			resolved, done, err := o.meter.authorizeAction(ctx, experiment.ID, ActionStart)
 			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return nil
+				}
 				cancel()
 				return err
 			}
@@ -217,6 +224,9 @@ func (o *Optimizer) heartbeat(ctx context.Context, cancel context.CancelFunc, ex
 			err = o.config.Repository.Transact(resolved, func(tx Transaction) error { return tx.RenewLease(lease) })
 			done()
 			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return nil
+				}
 				cancel()
 				return err
 			}

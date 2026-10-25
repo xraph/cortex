@@ -1437,3 +1437,63 @@ suite passed in 349.024s, and its core and internal-state packages also passed.
 Task 14 still needs parent scheduling, aggregate comparison and controller
 adoption. Discovery storage, inheritance and the metered child handler are now
 implemented.
+
+## Parent discovery and paired-validation scheduler
+
+`NewImprovementPhaseHandler` wraps the child worker configuration. The parent
+keeps renewing its lease while the dedicated child worker advances one bounded
+step. Children are created and queued from the exact frozen templates, in stream
+order. Each private discovery reflection must exist before scheduling continues.
+The store now checks those reflections and their current evidence when the parent
+moves from discovery into validation.
+
+The parent freezes one paired allocation using the existing finalist selector,
+then resumes each child's assigned validation work. Allocation identity, selected
+execution versions and case assignments survive takeover. The parent reaches its
+decision phase only after the full paired stream has terminal evidence. Generic
+`Work` polling skips parent-owned children, so it cannot independently claim them
+or run their decisions while the parent is scheduling.
+
+Scheduling rechecks caller and requester authority for each child, including
+children whose discovery is already complete. A denied child is not created, a
+paused child remains paused, and child budget exhaustion exhausts the parent.
+Unknown model calls propagate to the supervisor. Finalist selection, trial listing
+and paired readiness share the existing task-mode code.
+
+A longer integration run exposed a heartbeat shutdown race: cancellation during
+renewal could turn a completed step into a false `context canceled` failure.
+A deterministic regression reproduced it. Heartbeat shutdown now treats its own
+cancelled renewal as normal, while the worker retains caller cancellation and
+substantive renewal failures.
+
+PostgreSQL recovery also exposed a metering boundary race. Dispatch records the
+live lease after a heartbeat renewal, but the model client required its expiry to
+match the request's earlier snapshot exactly. A deterministic test reproduced the
+refusal, along with refusal of a held reservation taken over before dispatch and
+acceptance of a mismatched parent generation. Request content and dispatch
+authority are now checked separately: the call must retain experiment, owner,
+worker generation and parent generation, while its expiry may extend. A held
+reservation retains its creation lease as history; its live dispatch fence
+supplies current authority.
+
+The real controller/trial integration covers four ordered children across both
+arms, private lesson inheritance, all proposal/reflection/trial charges, and the
+holdout barrier. Recovery closes storage during discovery and after allocation,
+waits for lease expiry, rebuilds both workers and verifies that provider calls and
+the frozen allocation are not repeated. The final race matrix passes memory
+(140.005s), SQLite (749.285s), PostgreSQL (191.627s) and MongoDB (304.472s).
+It uses the production worker lease and waits for actual expiry at both restart
+checkpoints. Earlier two-second fixture leases expired between a returned model
+answer and its persistence under concurrent database load. Those runs correctly
+refused to replay the unknown answer; dedicated short-lease tests remain.
+
+Metering and worker race regressions, the optimization build, scoped `make f`
+and final all-module `make l` pass. Sentinel's judge and cost-provenance race
+tests also pass after the dispatch-fence fix. Its sequential/parallel reopen and
+cost regressions passed before that fix and are recorded separately. An earlier
+database matrix was interrupted when Docker became unavailable; the final matrix
+above ran both container-backed stores successfully.
+
+Task 14 still needs aggregate controller comparison and reviewed controller
+adoption. The parent handler currently returns `ErrUnavailable` at the decision
+phase. It does not create a recommendation or adopt a controller.

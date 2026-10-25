@@ -150,10 +150,14 @@ func trialInPhase(t Trial, p Phase) bool {
 	return false
 }
 func (h *TrialPhaseHandler) listTrials(ctx context.Context, experiment id.ID) ([]Trial, error) {
+	return listExperimentTrials(ctx, h.config.Repository, experiment)
+}
+
+func listExperimentTrials(ctx context.Context, repo Repository, experiment id.ID) ([]Trial, error) {
 	var out []Trial
 	q := TrialQuery{PageQuery: PageQuery{Limit: 100}}
 	for {
-		page, err := h.config.Repository.ListTrials(ctx, experiment, q)
+		page, err := repo.ListTrials(ctx, experiment, q)
 		if err != nil {
 			return nil, err
 		}

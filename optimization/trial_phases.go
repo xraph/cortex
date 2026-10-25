@@ -156,6 +156,10 @@ func (h *TrialPhaseHandler) allocation(ctx context.Context, item WorkItem, trial
 	return allocation, nil
 }
 func (h *TrialPhaseHandler) finalist(ctx context.Context, e Experiment, trials []Trial) (VersionRef, error) {
+	return selectFinalist(ctx, h.config.Repository, e, trials)
+}
+
+func selectFinalist(ctx context.Context, repo Repository, e Experiment, trials []Trial) (VersionRef, error) {
 	type score struct {
 		sum   float64
 		count int
@@ -182,10 +186,10 @@ func (h *TrialPhaseHandler) finalist(ctx context.Context, e Experiment, trials [
 			value.valid = false
 			continue
 		}
-		if err := h.checkArtifacts(ctx, t); err != nil {
+		if err := checkTrialArtifacts(ctx, repo, t); err != nil {
 			return VersionRef{}, err
 		}
-		evaluation, err := h.config.Repository.GetEvaluation(ctx, t.EvaluationID)
+		evaluation, err := repo.GetEvaluation(ctx, t.EvaluationID)
 		if err != nil {
 			return VersionRef{}, err
 		}

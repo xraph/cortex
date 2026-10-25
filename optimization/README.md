@@ -139,6 +139,32 @@ Candidate versions and phase advancement commit together. Reflection queues
 lesson publications in the same transaction as completion or review. The worker
 does not publish to Fabriq or activate a winner. Those adapters remain separate.
 
+## Controller comparison scheduling
+
+For a frozen controller comparison, wrap your child `OptimizerConfig` with
+`NewImprovementPhaseHandler`, then use that handler in the parent optimizer's
+config. The wrapper creates a separate child worker so the parent can keep
+renewing its lease while a child executes. `Work` polls top-level experiments;
+the parent schedules its children through `WorkOnce`.
+
+Use `CreateImprovementExperiment` with an `ImprovementEvaluator` to qualify the
+parent and child plans before saving the draft. The scheduler creates children
+from those exact templates in stream order. Each child finishes discovery and
+saves its private reflection before the next child starts. Later tasks inherit
+only earlier reflections from their own controller arm.
+
+Once every private reflection is recorded, the parent opens validation and
+freezes one allocation with each child's selected execution version. Retries and
+takeovers reuse that allocation. The parent reaches its decision phase only after
+both arms have captured all assigned validation outcomes. Unknown controller
+answers stop work, even if a late receipt has settled their cost. Paused children
+stay paused; an exhausted child exhausts the parent.
+
+Parent scheduling currently stops at the decision phase with `ErrUnavailable`.
+Aggregate controller comparison and reviewed controller adoption are still
+pending. You can run discovery and paired validation, but this handler cannot yet
+recommend or adopt a controller version.
+
 ## Late receipts and takeover
 
 `UsageRecovery.Recover` checks the caller and original requester's current

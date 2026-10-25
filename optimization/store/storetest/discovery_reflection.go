@@ -145,6 +145,17 @@ func DiscoveryReflection(t *testing.T, factory Factory) {
 			if err != nil || saved.Phase != optimization.PhaseValidate || !saved.DecisionID.IsNil() {
 				t.Fatalf("early reflection crossed validation barrier: %+v %v", saved, err)
 			}
+			if mode == "lost" {
+				assertPhaseRefused(f.ctx, t, f.s, f.parent, f.leases[0], optimization.PhaseValidate)
+				return
+			}
+			other := discoveryRequest(t, f, 1)
+			if err = f.s.Transact(f.ctx, func(tx store.Tx) error {
+				_, putErr := tx.PutDiscoveryLessons(other)
+				return putErr
+			}); err != nil {
+				t.Fatal(err)
+			}
 			advanceFixture(f.ctx, t, f.s, f.parent, f.leases[0], optimization.PhaseValidate)
 			if _, err = handler.Execute(f.ctx, item); !errors.Is(err, optimization.ErrUnavailable) || provider.calls != 1 {
 				t.Fatalf("validation reopened discovery reflection: %v calls=%d", err, provider.calls)

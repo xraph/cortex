@@ -314,3 +314,49 @@ func TestWorkerRenewsLeaseBeforeEachStep(t *testing.T) {
 		t.Fatal("missing phase dispatch")
 	}
 }
+
+func TestWorkerHeartbeatShutdownDoesNotFailCompletedStep(t *testing.T) {
+	s, err := memory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	bundle := storetest.Fixture(t, "heartbeat-shutdown")
+	ctx := cortex.WithScope(context.Background(), bundle.Experiment.Spec.Scope)
+	running := make(chan struct{})
+	renewing := make(chan struct{})
+	var blocked atomic.Bool
+	auth := meterAuthorizer(func(ctx context.Context, _ optimization.Action, _ optimization.Resource) error {
+		select {
+		case <-running:
+			if blocked.CompareAndSwap(false, true) {
+				close(renewing)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+		default:
+		}
+		return nil
+	})
+	handler := phaseHandler(func(context.Context, optimization.WorkItem) (optimization.Transition, error) {
+		close(running)
+		<-renewing
+		return optimization.Transition{}, optimization.ErrConflict
+	})
+	op, err := optimization.NewOptimizer(optimization.OptimizerConfig{Repository: s, Authorizer: auth, IdentityResolver: meterResolver(func(ctx context.Context, _ optimization.IdentityRef, _ cortex.Scope) (context.Context, error) {
+		return ctx, nil
+	}), Caller: callerIdentity(func(context.Context) (optimization.IdentityRef, error) { return bundle.Experiment.Spec.Requester, nil }), Handler: handler, Worker: optimization.WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 10 * time.Millisecond, PollInterval: time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := op.Create(ctx, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = op.Start(ctx, created.ID, created.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err = op.WorkOnce(ctx, created.ID); !errors.Is(err, optimization.ErrConflict) || errors.Is(err, context.Canceled) {
+		t.Fatalf("worker shutdown replaced step result: %v", err)
+	}
+}

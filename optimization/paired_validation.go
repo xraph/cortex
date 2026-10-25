@@ -80,16 +80,8 @@ func (h *TrialPhaseHandler) pairedValidationReady(ctx context.Context, experimen
 		if err != nil {
 			return err
 		}
-		for _, version := range []VersionRef{arm.Baseline, arm.Finalist} {
-			for _, digest := range arm.CaseDigests {
-				for repetition := range child.Spec.Limits.Repetitions {
-					if !slices.ContainsFunc(trials, func(trial Trial) bool {
-						return trial.ExperimentID == child.ID && trial.Version == version && trial.CaseDigest == digest && trial.Repetition == repetition && trial.AllocationID == allocation.ID && trial.Split == SplitValidation && TrialEvidenceReady(trial)
-					}) {
-						return ErrConflict
-					}
-				}
-			}
+		if !validationArmReady(child, arm, allocation.ID, trials) {
+			return ErrConflict
 		}
 	}
 	return nil

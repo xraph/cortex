@@ -29,3 +29,7 @@ func testDiscovery(t *testing.T, verify func(*testing.T, storetest.Factory)) {
 }
 
 func TestDiscoveryReflection(t *testing.T) { testDiscovery(t, storetest.DiscoveryReflection) }
+
+func TestImprovementWorker(t *testing.T) { testDiscovery(t, storetest.ImprovementWorker) }
+
+func TestImprovementWorkerLoop(t *testing.T) { testDiscovery(t, storetest.ImprovementWorkerLoop) }
