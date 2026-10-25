@@ -142,6 +142,7 @@ func decodeMap[T any](values map[string]T, record Record) error {
 }
 
 var recordCodecs = []recordCodec{
+	mapCodec("discovery_lessons", func(s *scopeData) *map[string]optimization.DiscoveryLessons { return &s.DiscoveryLessons }),
 	mapCodec("artifacts", func(s *scopeData) *map[string]optimization.ArtifactRetention { return &s.Artifacts }),
 	mapCodec("experiments", func(s *scopeData) *map[string]optimization.Experiment { return &s.Experiments }),
 	mapCodec("versions", func(s *scopeData) *map[string]optimization.HarnessVersion { return &s.Versions }),

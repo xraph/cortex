@@ -1317,3 +1317,37 @@ the thirty-minute package timeout during late conformance cases. Neither log
 reported an assertion or race failure before the timeout. Their remaining
 conformance and recovery checks are being run in smaller groups; the original
 SQLite package is still running. Those broad checks are not recorded as passing.
+
+
+## Provisional discovery reflection storage
+
+Each controller-arm task can now save one immutable `DiscoveryLessons` record
+before the parent opens validation. The store derives the parent, controller,
+arm and stream position from the frozen roster. It checks the current parent
+and child lease, requires captured discovery evaluations, and rechecks retained
+artifacts from every cited trial attempt. Shared content validation bounds both
+provisional drafts and published lessons.
+
+An empty result is durable too. Retrying the same record preserves its digest,
+timestamp and audit event; changing its content conflicts. A transaction abort
+removes the record and audit together. These records do not enter the global
+lesson library or the Fabriq publication outbox.
+
+The shared storage tests cover source binding, cross-scope reads, cross-arm and
+missing evidence, stale workers, parent pause, validation already started, empty
+results and rollback. Reopen tests take over the parent and child leases, reject
+the old worker, retry the saved result and reopen again to check the unchanged
+record and single audit event. The base discovery/reopen matrix passes on memory,
+SQLite, PostgreSQL and MongoDB. The added rollback and pause cases pass on memory,
+SQLite and PostgreSQL; MongoDB is checking them in the remaining recovery run.
+
+This is storage support. Later-task inheritance, current-evidence resolution,
+metered discovery reflection and parent scheduling are still pending. Aggregate
+controller comparison and adoption also remain in Task 14.
+
+The remaining comparison-creation conformance cases passed on PostgreSQL
+(221.694s) and MongoDB (699.966s). Their non-conformance recovery groups and the
+original SQLite package are still running. The optimization build and record
+codec checks pass. All-module lint passed before the final test additions; the
+post-format rerun reached concurrent A2A lint failures in the runtime chat's
+files. Those diagnostics were sent to that chat, and its files remain untouched.

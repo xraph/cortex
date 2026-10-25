@@ -31,18 +31,8 @@ func ValidateLessonDraft(lesson Lesson) error {
 	if lesson.HarnessSchema != 1 || lesson.Revision != 0 || !lesson.CreatedAt.IsZero() || !lesson.RevokedAt.IsZero() || lesson.RevocationReason != "" {
 		return ErrInvalidSpec
 	}
-	if strings.TrimSpace(lesson.Domain) == "" || len(lesson.Domain) > 256 || !utf8.ValidString(lesson.Domain) || strings.TrimSpace(lesson.Statement) == "" || len(lesson.Statement) > 32768 || !utf8.ValidString(lesson.Statement) {
-		return ErrInvalidSpec
-	}
-	for _, conditions := range [][]string{lesson.Applicability, lesson.Contraindications} {
-		if len(conditions) > 64 {
-			return ErrInvalidSpec
-		}
-		for _, value := range conditions {
-			if strings.TrimSpace(value) == "" || len(value) > 4096 || !utf8.ValidString(value) {
-				return ErrInvalidSpec
-			}
-		}
+	if err := validateLessonContent(lesson.Domain, lesson.Statement, lesson.Applicability, lesson.Contraindications); err != nil {
+		return err
 	}
 	if len(lesson.DecisionIDs) == 0 || len(lesson.DecisionIDs) > 64 || len(lesson.TrialIDs) > 500 {
 		return ErrIncompleteEvidence
@@ -68,4 +58,21 @@ func ValidateLessonDraft(lesson Lesson) error {
 	default:
 		return ErrInvalidSpec
 	}
+}
+
+func validateLessonContent(domain, statement string, applicability, contraindications []string) error {
+	if strings.TrimSpace(domain) == "" || len(domain) > 256 || !utf8.ValidString(domain) || strings.TrimSpace(statement) == "" || len(statement) > 32768 || !utf8.ValidString(statement) {
+		return ErrInvalidSpec
+	}
+	for _, conditions := range [][]string{applicability, contraindications} {
+		if len(conditions) > 64 {
+			return ErrInvalidSpec
+		}
+		for _, value := range conditions {
+			if strings.TrimSpace(value) == "" || len(value) > 4096 || !utf8.ValidString(value) {
+				return ErrInvalidSpec
+			}
+		}
+	}
+	return nil
 }

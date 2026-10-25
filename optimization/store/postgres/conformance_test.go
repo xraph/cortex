@@ -55,12 +55,17 @@ func openDatabase(t *testing.T, dsn string) *grove.DB {
 }
 
 func TestConformance(t *testing.T) {
+	storetest.Run(t, conformanceFactory(t))
+}
+
+func conformanceFactory(t *testing.T) storetest.Factory {
+	t.Helper()
 	dsn := testDatabase(t)
 	admin := openDatabase(t, dsn)
 	if err := New(admin).Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	storetest.Run(t, func(t *testing.T, now func() time.Time) store.Store {
+	return func(t *testing.T, now func() time.Time) store.Store {
 		t.Helper()
 		if _, err := pgdriver.Unwrap(admin).Exec(context.Background(), `TRUNCATE cortex_optimization_records, cortex_optimization_scopes`); err != nil {
 			t.Fatal(err)
@@ -70,5 +75,5 @@ func TestConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		return s
-	})
+	}
 }

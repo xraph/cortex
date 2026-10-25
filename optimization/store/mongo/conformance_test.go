@@ -75,12 +75,17 @@ func openDatabase(t *testing.T, uri string) *grove.DB {
 }
 
 func TestConformance(t *testing.T) {
+	storetest.Run(t, conformanceFactory(t))
+}
+
+func conformanceFactory(t *testing.T) storetest.Factory {
+	t.Helper()
 	uri := testDatabase(t, true)
 	admin := openDatabase(t, uri)
 	if err := New(admin).Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	storetest.Run(t, func(t *testing.T, now func() time.Time) store.Store {
+	return func(t *testing.T, now func() time.Time) store.Store {
 		t.Helper()
 		for _, collection := range []string{"cortex_optimization_records", "cortex_optimization_chunks", "cortex_optimization_scopes"} {
 			if _, err := mongodriver.Unwrap(admin).Collection(collection).DeleteMany(context.Background(), bson.D{}); err != nil {
@@ -92,5 +97,5 @@ func TestConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		return s
-	})
+	}
 }
