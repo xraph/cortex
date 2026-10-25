@@ -67,6 +67,7 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
+	resolutions     AskResolutionStore
 	recorder        AtomicMessageStore
 	replyCommitter  ReservedReplyStore
 	roster          *frozenRoster
@@ -142,6 +143,7 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	}
 	_, atomicMessages := backend.(AtomicMessageStore)
 	_, atomicReplies := backend.(ReservedReplyStore)
+	_, atomicResolutions := backend.(AskResolutionStore)
 	if cfg.ReservedRunner != nil && !atomicReplies {
 		return nil, ErrReplyCommitUnavailable
 	}
@@ -179,6 +181,13 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		b.replyCommitter, supported = routing.(ReservedReplyStore)
 		if !supported {
 			return nil, ErrReplyCommitUnavailable
+		}
+	}
+	if atomicResolutions {
+		var supported bool
+		b.resolutions, supported = routing.(AskResolutionStore)
+		if !supported {
+			return nil, ErrAskResolutionUnavailable
 		}
 	}
 	if atomicMessages {
@@ -632,6 +641,10 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		// Somebody is still to answer. The message is stored either way,
 		// so nothing is lost by waiting for them.
 		return false, nil
+	}
+
+	if b.resolutions != nil {
+		return b.resumeSealedAsk(ctx, pending, AskReply{Replies: replies, Complete: true})
 	}
 
 	ask, err := b.store.ClaimPendingAsk(ctx, e.InReplyTo)

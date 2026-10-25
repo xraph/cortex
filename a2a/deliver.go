@@ -248,6 +248,9 @@ func (b *Bus) resolveAskWithFailure(ctx context.Context, replyWith, reason strin
 	if replyWith == "" {
 		return nil
 	}
+	if b.resolutions != nil {
+		return b.resolveSealedFailure(ctx, replyWith, reason)
+	}
 	ask, err := b.store.ClaimPendingAsk(ctx, replyWith)
 	switch {
 	case errors.Is(err, ErrAskNotFound), errors.Is(err, ErrAskAlreadyClaimed):

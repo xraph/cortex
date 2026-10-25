@@ -33,6 +33,10 @@ func TestConformance(t *testing.T) {
 		s := newTestStore(t)
 		storetest.RunRecoveryTransactions(t, s, assuranceDriver{store: s})
 	})
+	t.Run("A2AAskResolutionTransactions", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.A2AAskResolutionTransactions(t, s, assuranceDriver{store: s})
+	})
 	t.Run("A2AReplyTransactions", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.A2AReplyTransactions(t, s, assuranceDriver{store: s})

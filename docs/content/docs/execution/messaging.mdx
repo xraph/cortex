@@ -365,3 +365,34 @@ The queued reply survives a restart before ask resolution. Claiming the pending
 ask and resuming its run are still separate operations, so a crash or ambiguous
 resume acknowledgment between them needs further recovery work. This change does
 not enable prepared-team messaging or qualify deferred child completion.
+
+## Retained ask outcomes
+
+Native buses use `a2a.AskResolutionStore` to claim a pending ask and retain its
+selected tool-result payload in one transaction. Peer answers, deadline expiry
+and cancellation use the same path. The receipt includes the original ask
+binding, exact JSON payload, content digests and seal time. The payload supports
+up to 256 reply items and 4 MiB of encoded JSON; the complete retained record is
+also bounded. Oversized or malformed outcomes leave the ask unclaimed.
+
+An identical seal retry returns the existing receipt with `Fresh` false. A
+competing outcome receives `ErrAskAlreadyClaimed`. Changed ask identity fails.
+A transaction error returns no receipt, including after a lost commit
+acknowledgment. The committed receipt remains available through
+`GetAskResolution`. `ReadPendingAsk` includes claimed asks, while
+`ListAskResolutions` pages retained outcomes in one exact scope and routing
+partition. Its default page size is 64 and its maximum is 256. Treat its cursor
+as opaque.
+
+The bus resumes only after a fresh seal acknowledgment. It never resumes from a
+receipt read or an identical retry. If resume fails, the selected answer remains
+available, but the receipt does not say whether resume started or finished. A
+recovery adapter still needs to bind the answer to the original suspension
+identity and reconcile execution before it may retry. This adapter is not yet
+wired into the engine, so private prepared-team messaging remains disabled.
+
+When timeout or cancellation cannot read the source message and collected
+answers, the native path returns the error and keeps the ask pending. It does
+not substitute a partial result. Legacy claims without retained outcomes cannot
+be adopted. Custom stores without this optional capability retain the earlier
+claim-and-resume behavior and its recovery limitations.

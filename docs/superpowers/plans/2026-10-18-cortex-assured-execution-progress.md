@@ -6723,3 +6723,36 @@ recovery across that boundary, deferred recipient completion and prepared-team
 bus ownership still need implementation. Lifecycle hooks do not form a durable
 event outbox. Private prepared-team messaging remains disabled, and this packet
 does not complete the four-stage plan.
+
+### Retained ask outcomes before resume
+
+Native A2A buses now claim each pending ask and seal its selected JSON tool result
+in one transaction. Peer replies, timeout and cancellation share this path. The
+immutable receipt retains the ask identity, payload, digests and seal time. Equal
+retries return an observation; competing outcomes cannot replace the winner.
+Claimed legacy asks without an outcome cannot be adopted. Exact-scope history is
+paged within the routing partition, including an explicit global partition.
+
+The bus resumes only after a fresh acknowledgment. Lost seal acknowledgments and
+resume errors leave the selected payload available without authorizing another
+resume. Missing source evidence leaves timeout or cancellation pending instead
+of dropping collected answers. Custom stores without the optional capability
+retain the legacy behavior and its limitations.
+
+The missing-contract check failed first. A separate fault test then reproduced a
+receipt returned for the wrong correlation token; the reader now rejects it.
+The full native A2A race suite passed without skips: SQLite 62.157s, PostgreSQL
+10.400s and MongoDB 12.859s. Final focused outcome, scope, pagination, concurrency,
+rollback and ambiguity tests passed in 16.321s, 6.182s and 7.724s respectively.
+After final formatting, the native transaction regression passed in 2.565s,
+3.102s and 4.112s. Root, A2A and orchestration races passed, as did engine
+messaging/recovery races in 38.250s. Scoped `make f`, all-ten-module `make l`, root
+build and docs types/lint/build pass. The built messaging page contains the new
+outcome documentation.
+
+The receipt proves which answer won. It does not prove that resume started or
+finished, and observing it never grants permission to resume again. Binding a
+recovered answer to the original suspension and reconciling execution remain
+open. Private prepared-team messaging stays disabled until that path, deferred
+recipient completion and bus ownership are integrated. The full plan remains
+in progress.
