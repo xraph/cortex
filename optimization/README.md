@@ -165,7 +165,7 @@ need host reconciliation of the original output before the phase can advance.
 
 ## Trial execution
 
-Use `NewTrialPhaseHandler` for sequential experiments. You supply an
+Use `NewTrialPhaseHandler` for sequential, parallel and task-local experiments. You supply an
 `EnvironmentFactory`, `Evaluator`, repository, authorization ports and a
 `TrialAllowance` covering the entire trial. Your environment must enforce that
 allowance across model calls, tools and retrieval, along with the frozen step,
@@ -201,6 +201,49 @@ its own dispatch marker. The worker commits successful sibling results before
 returning a batch error, so you can resume uncertain work without replaying a
 completed call. Cancellation or lost authority leaves the batch recoverable.
 
-Task-local selection still needs its service adapter. You can bind the
-Sentinel implementation from `github.com/xraph/cortex/sentinel/optimization`;
-see its [adapter guide](../sentinel/optimization/README.md).
+You can bind the Sentinel implementation from
+`github.com/xraph/cortex/sentinel/optimization`; see its
+[adapter guide](../sentinel/optimization/README.md).
+
+## Task-local refinement
+
+Call `OptimizeTask(ctx, TaskSpec{...})` with a frozen `ExperimentBundle` containing
+one discovery task, its baseline and controller versions, evaluation plan and
+host-approved budget. Supply the same trusted evaluator through
+`OptimizerConfig.TaskEvaluator` and `TrialConfig.Evaluator`. Cortex qualifies the
+plan before persisting work and again at each trial phase. Every criterion must
+explicitly support scoring without an expected answer.
+
+`TaskSpec.Isolation` records the guarantees you require from each environment.
+The opened environment must satisfy every promised guarantee, including read-only
+access when requested. Omitted round and repetition counts default to one. The
+total timeout covers evaluator qualification and execution, and a shorter caller
+deadline is persisted as the experiment's absolute deadline. Caller cancellation
+attempts an authorized durable cancellation; failed cleanup is returned with the
+original error. Recursive calls from optimization trials, controllers and judges
+are refused.
+
+The result returns a completed capture's output and artifacts, the decision and
+all trial outcomes, including failures and blocked probes. Selection preserves the
+baseline on a tie. Comparative cost gates require known execution charges at the
+frozen pricing revision and a positive baseline cost. Judge charges remain in the
+budget ledger separately. A selected task result is exploratory or contrastive
+evidence and cannot activate a global harness version.
+
+Use `GetTaskResult` to retrieve a completed result after reconnecting. It rechecks
+current authority, retained artifacts and frozen lessons without executing the
+task again. Interrupted calls return the experiment ID when creation succeeded;
+your worker can reconcile unresolved attempts within the original deadline.
+
+Artifact adoption is explicit. Bind `WithArtifactAdopter` and freeze an
+`AdoptionPolicy` in the task before calling `AdoptArtifacts` with the selected
+decision, trial, artifact subset, destination and idempotency key. Both the caller
+and original requester need the current adoption grant. A nil policy forbids
+adoption.
+
+Your host adapter must enforce destination permissions and the pinned policy,
+read the exact artifact content, and atomically persist the key, request digest
+and receipt with its effects. An identical retry must reconcile the original
+commit; changed content under that key must conflict. Cortex validates the
+receipt and never retries host effects automatically. The integration tests use
+a receipt-producing host fixture; you still need a qualified destination adapter.

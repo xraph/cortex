@@ -9,8 +9,9 @@ import (
 
 func decisionTrials(data *scopeData, decision optimization.Decision) []optimization.Trial {
 	var trials []optimization.Trial
+	experiment := data.Experiments[decision.ExperimentID.String()]
 	for _, trial := range data.Trials {
-		if trial.ExperimentID == decision.ExperimentID && trial.Split == optimization.SplitValidation && trial.AllocationID == decision.AllocationID {
+		if trial.ExperimentID == decision.ExperimentID && (experiment.Spec.Mode == optimization.ModeTaskLocal || trial.Split == optimization.SplitValidation && trial.AllocationID == decision.AllocationID) {
 			trials = append(trials, trial)
 		}
 	}

@@ -121,6 +121,7 @@ func DefaultObjective() Objective {
 // ExperimentSpec is frozen before work begins. Host authorization must still
 // validate its requested limits and references before persistence or dispatch.
 type ExperimentSpec struct {
+	Task          *TaskPolicy  `json:"task,omitempty"`
 	SchemaVersion int          `json:"schema_version"`
 	Scope         cortex.Scope `json:"scope"`
 	AgentID       id.AgentID   `json:"agent_id"`
@@ -281,6 +282,16 @@ func trialProduct(cases, arms, repetitions, capTrials int) (int, error) {
 }
 
 func validateSpecFields(spec ExperimentSpec) error {
+	if spec.Mode == ModeTaskLocal {
+		if spec.Task == nil || spec.Task.Deadline.IsZero() || ValidateTrialCapabilities(spec.Task.Isolation, spec.Objective.RequireReproducibility) != nil {
+			return ErrUnavailable
+		}
+		if spec.Task.AdoptionPolicy != nil && spec.Task.AdoptionPolicy.Validate() != nil {
+			return ErrInvalidSpec
+		}
+	} else if spec.Task != nil {
+		return ErrInvalidSpec
+	}
 	if spec.SchemaVersion != 1 || strings.TrimSpace(spec.Requester.Subject) == "" {
 		return fmt.Errorf("%w: invalid schema or requester", ErrInvalidSpec)
 	}

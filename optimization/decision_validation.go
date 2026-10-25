@@ -25,6 +25,12 @@ func CriterionFailureKey(caseID string, repetition int, criterionID string) stri
 // check artifact availability, current authorization and runtime qualification.
 // Bootstrap statistics remain the evaluator's responsibility.
 func ValidateDecisionEvidence(experiment Experiment, decision Decision, evidence []DecisionEvidence) error {
+	if experiment.Spec.Mode == ModeTaskLocal {
+		return ValidateTaskDecision(experiment, decision, evidence)
+	}
+	if decision.TaskSelection != nil {
+		return ErrIncompleteEvidence
+	}
 	if len(decision.Reasons) == 0 || slices.ContainsFunc(decision.Reasons, func(reason string) bool { return strings.TrimSpace(reason) == "" }) {
 		return ErrIncompleteEvidence
 	}

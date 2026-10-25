@@ -205,7 +205,8 @@ func (tx *transaction) validateLessonEvidence(owner optimization.Experiment, les
 				return optimization.ErrIncompleteEvidence
 			}
 		case optimization.EvidenceContrastive:
-			if decision.EvidenceClass != optimization.EvidenceContrastive || !decision.Comparison.Complete {
+			taskSelection := source.Spec.Mode == optimization.ModeTaskLocal && decision.TaskSelection != nil
+			if decision.EvidenceClass != optimization.EvidenceContrastive || !decision.Comparison.Complete && !taskSelection {
 				return optimization.ErrIncompleteEvidence
 			}
 		}

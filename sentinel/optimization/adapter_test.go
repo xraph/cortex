@@ -63,6 +63,9 @@ func TestEvaluatorPreservesCaptureAndDeduplicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(plan.Criteria) != 1 || plan.Criteria[0].RequiresExpected == nil || !*plan.Criteria[0].RequiresExpected {
+		t.Fatal("frozen exact scorer lost its expected-answer requirement")
+	}
 	now := time.Now().UTC()
 	execution, err := opt.SealExecution(opt.ExecutionRecord{RunID: cid.NewAgentRunID(), PreparedDigest: strings.Repeat("a", 64), InputDigest: task.InputDigest, State: run.StateCompleted, Outcome: run.Outcome{Output: "answer", StopReason: run.StopFinalAnswer, CompletedAt: now.Add(17 * time.Second)}, StartedAt: now, CompletedAt: now.Add(17 * time.Second), Duration: 17 * time.Second, Environment: opt.EnvironmentReceipt{ID: "receipt", Provider: "test", EnvironmentID: "environment", Scope: scope, AttemptID: cid.New(opt.PrefixAttempt), Snapshot: task.EnvironmentSnapshot, Fence: opt.Fence{Owner: "worker", Generation: 1}}})
 	if err != nil {

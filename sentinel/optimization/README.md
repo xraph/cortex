@@ -28,7 +28,10 @@ providing idempotency and recovery.
 
 Private rubric bytes stay in Sentinel. The binding verifies exact task inputs and
 frozen plan identities, then projects criterion IDs and scorer revisions into
-Cortex. Supported scorers are the pinned local built-ins: `exact`, `contains`,
+Cortex. It also records whether each criterion requires an expected answer,
+including the fallback used by `contains` and `not_contains` when no substring
+is configured. If any case requires an expected answer, that requirement applies
+to the frozen criterion. Supported scorers are the pinned local built-ins: `exact`, `contains`,
 `not_contains`, `regex`, `json_valid`, `length`, `latency` and `cost`.
 
 For a model judge, construct `NewMeteredJudge` with your repository, authorizer,
@@ -92,6 +95,12 @@ replay. The evaluation stays incomplete. Use `optimization.UsageRecovery` with
 your receipt verifier to reconcile a late charge, including after cancellation or
 lease loss. A receipt establishes usage, not the missing answer.
 
+For task-local refinement, supply this evaluator as both
+`OptimizerConfig.TaskEvaluator` and `TrialConfig.Evaluator`. Cortex verifies the
+frozen capabilities before admitting work and rejects unknown or answer-dependent
+criteria. Existing offline plans that predate capability metadata retain their
+bindings, but you must freeze a qualified plan to use task-local selection.
+
 ## Verification boundary
 
 The integration test uses both SQLite stores, the real optimizer worker and
@@ -100,6 +109,11 @@ and reopens both stores after lost provisioning, execution and scoring acknowled
 checks that execution and committed judge calls are not replayed, verifies separate
 judge reservations and a priced cost-ratio gate, and advances through review.
 
+Parallel variants exercise the same recovery boundaries. The task-local variant
+uses one discovery case without an expected answer, recovers twelve recorded
+executions and judge results across database reopen, and returns the selected
+capture without a holdout allocation or a repeated execution.
+
 Its model and environment are fixtures. Live sandbox qualification, hosted model
-calls, parallel/task-local scheduling, Fabriq publication and
-dashboard application flows are separate work.
+calls, destination artifact adoption, Fabriq publication and dashboard application
+flows require their own integration checks.

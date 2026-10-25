@@ -202,7 +202,8 @@ func (e *Evaluator) plan(ctx context.Context, b Binding) (*evalplan.Plan, opt.Ev
 				return nil, empty, opt.ErrIncompleteEvidence
 			}
 			scorers[c.Scorer] = c.Revision
-			criteria = append(criteria, opt.CriterionDefinition{ID: c.ID, Required: c.Required})
+			requiresExpected := criterionRequiresExpected(c)
+			criteria = append(criteria, opt.CriterionDefinition{ID: c.ID, Required: c.Required, RequiresExpected: &requiresExpected})
 		}
 		slices.SortFunc(criteria, func(a, b opt.CriterionDefinition) int {
 			if a.ID < b.ID {
@@ -213,11 +214,11 @@ func (e *Evaluator) plan(ctx context.Context, b Binding) (*evalplan.Plan, opt.Ev
 			}
 			return 0
 		})
-		if result.Criteria == nil {
-			result.Criteria = criteria
-		} else if !equal(result.Criteria, criteria) {
-			return nil, empty, opt.ErrIncompleteEvidence
+		merged, mergeErr := mergeCriteria(result.Criteria, criteria)
+		if mergeErr != nil {
+			return nil, empty, mergeErr
 		}
+		result.Criteria = merged
 	}
 	names := make([]string, 0, len(scorers))
 	for name := range scorers {
@@ -331,7 +332,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, r opt.EvaluationRequest) (opt.
 	if err != nil {
 		return empty, err
 	}
-	if !equal(plan, r.Plan) || r.ExperimentID.IsNil() || r.TrialID.IsNil() || !opt.ValidOpaqueKey(r.IdempotencyKey) {
+	if !compatiblePlan(plan, r.Plan) || r.ExperimentID.IsNil() || r.TrialID.IsNil() || !opt.ValidOpaqueKey(r.IdempotencyKey) {
 		return empty, opt.ErrIncompleteEvidence
 	}
 	var binding *CaseBinding

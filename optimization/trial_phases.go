@@ -99,6 +99,9 @@ func (h *TrialPhaseHandler) afterProbe(ctx context.Context, e Experiment) (Trans
 		}
 	}
 	phase := PhaseValidate
+	if e.Spec.Mode == ModeTaskLocal {
+		phase = PhaseDecide
+	}
 	if len(candidates) < e.Spec.Limits.MaxCandidates {
 		if accepted >= 2 && !composed {
 			phase = PhaseCompose

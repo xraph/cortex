@@ -52,6 +52,7 @@ const (
 	ActionRevokeLesson     Action = "optimization.lesson.revoke"
 	ActionRetryPublication Action = "optimization.lesson.retry"
 	ActionReadArtifact     Action = "optimization.artifact.read"
+	ActionAdoptArtifacts   Action = "optimization.artifact.adopt"
 	ActionDelete           Action = "optimization.delete"
 )
 

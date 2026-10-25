@@ -55,6 +55,12 @@ func (tx *transaction) prepareDecision(experiment optimization.Experiment, chang
 	if !exists || value.PolicyDigest != baseline.PolicyDigest {
 		return nil, optimization.ErrPolicyDenied
 	}
+	if experiment.Spec.Mode == optimization.ModeTaskLocal {
+		return tx.prepareTaskDecision(experiment, value)
+	}
+	if value.TaskSelection != nil {
+		return nil, optimization.ErrIncompleteEvidence
+	}
 	allocation, exists := tx.data.Allocations[value.AllocationID.String()]
 	if !exists || allocation.ExposedAt.IsZero() || !allocation.ReleasedAt.IsZero() {
 		return nil, optimization.ErrIncompleteEvidence
@@ -108,4 +114,41 @@ func (tx *transaction) prepareDecision(experiment optimization.Experiment, chang
 		return nil, err
 	}
 	return &detached, nil
+}
+
+func (tx *transaction) prepareTaskDecision(experiment optimization.Experiment, value optimization.Decision) (*optimization.Decision, error) {
+	if err := tx.requireVersionTrials(experiment, experiment.Spec.Baseline, optimization.SplitDiscovery, id.ID{}, nil); err != nil {
+		return nil, err
+	}
+	for _, candidate := range tx.data.Candidates {
+		if candidate.ExperimentID == experiment.ID && candidate.Accepted {
+			if err := tx.requireVersionTrials(experiment, candidate.Version, optimization.SplitDiscovery, id.ID{}, nil); err != nil {
+				return nil, err
+			}
+		}
+	}
+	var evidence []optimization.DecisionEvidence
+	for _, trial := range tx.data.Trials {
+		if trial.ExperimentID != experiment.ID {
+			continue
+		}
+		item := optimization.DecisionEvidence{Trial: trial}
+		if trial.EvaluationID != "" {
+			evaluation, exists := tx.data.Evaluations[trial.EvaluationID]
+			if !exists {
+				return nil, optimization.ErrIncompleteEvidence
+			}
+			item.Evaluation = &evaluation
+		}
+		evidence = append(evidence, item)
+	}
+	if err := optimization.ValidateTaskDecision(experiment, value, evidence); err != nil {
+		return nil, err
+	}
+	if err := checkDecisionArtifacts(tx.data, value, tx.now); err != nil {
+		return nil, err
+	}
+	value.CreatedAt = tx.now
+	detached, err := clone(value)
+	return &detached, err
 }

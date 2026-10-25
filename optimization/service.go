@@ -25,6 +25,7 @@ type OptimizerConfig struct {
 	Lessons          LessonStore
 	Compatibility    Compatibility
 	ArtifactVerifier *ArtifactVerifier
+	TaskEvaluator    Evaluator
 	Handler          PhaseHandler
 	UsageRecovery    *UsageRecovery
 	Worker           WorkerConfig
@@ -32,11 +33,12 @@ type OptimizerConfig struct {
 
 // Optimizer provides experiment commands and a bounded, host-started worker.
 type Optimizer struct {
-	activeEngine *engine.Engine
-	config       OptimizerConfig
-	meter        *LedgerMeter
-	owner        string
-	work         sync.Mutex
+	activeEngine    *engine.Engine
+	artifactAdopter ArtifactAdopter
+	config          OptimizerConfig
+	meter           *LedgerMeter
+	owner           string
+	work            sync.Mutex
 }
 
 // NewOptimizer never starts background work. The host runs Work with an exact

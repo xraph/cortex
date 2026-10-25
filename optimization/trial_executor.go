@@ -66,7 +66,12 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 		return Transition{}, ErrConflict
 	}
 	item.Experiment = current
-	if current.Spec.Mode != ModeSequential && current.Spec.Mode != ModeParallel {
+	if current.Spec.Mode == ModeTaskLocal {
+		if qualificationErr := verifyTaskPlan(ctx, h.config.Evaluator, current); qualificationErr != nil {
+			return Transition{}, qualificationErr
+		}
+	}
+	if current.Spec.Mode != ModeSequential && current.Spec.Mode != ModeParallel && current.Spec.Mode != ModeTaskLocal {
 		return Transition{}, ErrUnavailable
 	}
 	if !current.Spec.Budget.TokenOnly && (h.config.Allowance.MaxUSDMicros <= 0 || h.config.Allowance.PricingRevision != current.Spec.Budget.PricingRevision) {
@@ -77,6 +82,9 @@ func (h *TrialPhaseHandler) Execute(ctx context.Context, item WorkItem) (Transit
 		return Transition{}, err
 	}
 	if item.Experiment.Phase == PhaseDecide {
+		if current.Spec.Mode == ModeTaskLocal {
+			return h.decideTask(ctx, item)
+		}
 		return h.decide(ctx, item, trials)
 	}
 	scheduled, err := h.schedule(ctx, item, trials)
@@ -208,14 +216,14 @@ func (h *TrialPhaseHandler) step(ctx context.Context, item WorkItem, trial Trial
 		if receipt.AttemptID != attempt.ID || receipt.Scope.Canonical() != request.Scope.Canonical() || receipt.Snapshot != task.EnvironmentSnapshot || receipt.Fence != attempt.Fence {
 			return Transition{}, ErrIncompleteEvidence
 		}
-		if validationErr := ValidateTrialCapabilities(receipt.Capabilities, item.Experiment.Spec.Objective.RequireReproducibility); validationErr != nil {
+		if validationErr := validateTrialEnvironment(item.Experiment.Spec, receipt.Capabilities); validationErr != nil {
 			return Transition{}, validationErr
 		}
 		update.Receipt = &receipt
 		change.TrialUpdates = []TrialUpdate{update}
 		return change, nil
 	}
-	if err := ValidateTrialCapabilities(attempt.Receipt.Capabilities, item.Experiment.Spec.Objective.RequireReproducibility); err != nil {
+	if err := validateTrialEnvironment(item.Experiment.Spec, attempt.Receipt.Capabilities); err != nil {
 		return Transition{}, err
 	}
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -338,6 +346,28 @@ func ValidateTrialCapabilities(c IsolationCapabilities, reproducible bool) error
 	return nil
 }
 
+func validateTrialEnvironment(spec ExperimentSpec, actual IsolationCapabilities) error {
+	if err := ValidateTrialCapabilities(actual, spec.Objective.RequireReproducibility); err != nil {
+		return err
+	}
+	if spec.Task == nil {
+		return nil
+	}
+	want := spec.Task.Isolation
+	for _, pair := range [][2]bool{
+		{want.Isolated, actual.Isolated}, {want.Resettable, actual.Resettable},
+		{want.IdempotentEffects, actual.IdempotentEffects}, {want.Recoverable, actual.Recoverable},
+		{want.Stoppable, actual.Stoppable}, {want.ReadOnly, actual.ReadOnly},
+		{want.FrozenRetrieval, actual.FrozenRetrieval}, {want.AtomicSources, actual.AtomicSources},
+		{want.DeterministicApproval, actual.DeterministicApproval},
+	} {
+		if pair[0] && !pair[1] {
+			return ErrUnavailable
+		}
+	}
+	return nil
+}
+
 func (h *TrialPhaseHandler) stopAttempt(ctx context.Context, item WorkItem, receipt EnvironmentReceipt) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
@@ -354,16 +384,7 @@ func (h *TrialPhaseHandler) checkArtifacts(ctx context.Context, trial Trial) err
 	return checkTrialArtifacts(ctx, h.config.Repository, trial)
 }
 func checkTrialArtifacts(ctx context.Context, repository Repository, trial Trial) error {
-	var refs []ArtifactRef
-	if trial.Execution != nil {
-		refs = append(refs, trial.Execution.Artifacts...)
-	}
-	for _, attempt := range trial.Attempts {
-		if attempt.Execution != nil {
-			refs = append(refs, attempt.Execution.Artifacts...)
-		}
-	}
-	for _, ref := range refs {
+	for _, ref := range TrialArtifactRefs(trial) {
 		if _, err := ref.BindingDigest(); err != nil || ref.ExperimentID != trial.ExperimentID {
 			return ErrIncompleteEvidence
 		}

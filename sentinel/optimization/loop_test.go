@@ -209,10 +209,18 @@ func TestSentinelParallelOptimizationLoopRecoversAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestSentinelTaskLocalLoopRecoversWithoutRerun(t *testing.T) {
+	testSentinelLoop(t, true, true, opt.ModeTaskLocal)
+}
+
 func testSentinelLoop(t *testing.T, composition, metered bool, mode opt.Mode) {
 	t.Helper()
 	bundle := storetest.Fixture(t, "sentinel-loop")
 	bundle.Experiment.Spec.Mode = mode
+	if mode == opt.ModeTaskLocal {
+		bundle.Experiment.Spec.Tasks = bundle.Experiment.Spec.Tasks[:1]
+		bundle.Experiment.Spec.Task = &opt.TaskPolicy{Deadline: time.Now().UTC().Add(bundle.Experiment.Spec.Limits.ExperimentTimeout), Isolation: opt.IsolationCapabilities{Isolated: true, Resettable: true, Recoverable: true, Stoppable: true, FrozenRetrieval: true, AtomicSources: true, DeterministicApproval: true}}
+	}
 	view, err := bundle.Versions[0].Prepared.Inspect()
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +281,9 @@ func testSentinelLoop(t *testing.T, composition, metered bool, mode opt.Mode) {
 	cases := make([]adapter.CaseBinding, 0, len(bundle.Experiment.Spec.Tasks))
 	for _, task := range bundle.Experiment.Spec.Tasks {
 		tc := &testcase.Case{ID: sid.NewCaseID(), SuiteID: suiteRecord.ID, Name: task.ID, Input: task.Input, Expected: "answer", Scorers: []testcase.ScorerConfig{{Name: "exact"}}}
+		if mode == opt.ModeTaskLocal {
+			tc.Expected = ""
+		}
 		if metered {
 			tc.Scorers = []testcase.ScorerConfig{{Name: "quality", Config: map[string]any{"rubric": "Return 1 for answer, 0 otherwise."}}}
 		}
@@ -320,6 +331,9 @@ func testSentinelLoop(t *testing.T, composition, metered bool, mode opt.Mode) {
 		proposals = append(proposals, second)
 		bundle.Experiment.Spec.Limits.MaxCandidates = 3
 		expectedExecutions, expectedControllers = 18, 3
+	}
+	if mode == opt.ModeTaskLocal {
+		expectedExecutions -= 6
 	}
 	body, err := json.Marshal(map[string]any{"proposals": proposals})
 	if err != nil {
@@ -404,16 +418,26 @@ func testSentinelLoop(t *testing.T, composition, metered bool, mode opt.Mode) {
 			worker = makeOptimizer()
 			continue
 		}
-		if current.State == opt.StateReviewRequired {
+		if current.State == opt.StateReviewRequired || current.State == opt.StateCompleted && mode == opt.ModeTaskLocal {
 			decision, decisionErr := repository.GetDecision(ctx, current.DecisionID)
 			if decisionErr != nil {
 				t.Fatal(decisionErr)
 			}
-			if decision.Outcome != opt.DecisionRecommend || !decision.Comparison.Complete || decision.Comparison.MeanDelta != 1 || len(decision.EvaluationIDs) != 6 || host.executions != expectedExecutions || model.calls != expectedControllers || recoveries != 3 {
+			if (mode != opt.ModeTaskLocal && (decision.Outcome != opt.DecisionRecommend || !decision.Comparison.Complete || decision.Comparison.MeanDelta != 1 || len(decision.EvaluationIDs) != 6)) || host.executions != expectedExecutions || model.calls != expectedControllers || recoveries != 3 {
 				t.Fatalf("loop evidence: decision=%+v executions=%d controller=%d recoveries=%d", decision, host.executions, model.calls, recoveries)
 			}
+			if mode == opt.ModeTaskLocal {
+				result, resultErr := worker.GetTaskResult(ctx, current.ID)
+				if resultErr != nil || result.Output != "answer" || result.Decision.Outcome != opt.DecisionSelect || result.EvidenceClass != opt.EvidenceContrastive || len(result.Evidence) != expectedExecutions || host.executions != expectedExecutions {
+					t.Fatalf("task result after reopening: %+v %v", result, resultErr)
+				}
+				allocations, allocationErr := repository.ListValidationAllocations(ctx, current.ID, opt.PageQuery{Limit: 100})
+				if allocationErr != nil || len(allocations.Items) != 0 {
+					t.Fatalf("task consumed a holdout allocation: %+v %v", allocations, allocationErr)
+				}
+			}
 			if metered {
-				if judgeModel.calls != expectedExecutions || decision.Comparison.CostRatio == nil || *decision.Comparison.CostRatio != .5 {
+				if judgeModel.calls != expectedExecutions || mode != opt.ModeTaskLocal && (decision.Comparison.CostRatio == nil || *decision.Comparison.CostRatio != .5) {
 					t.Fatalf("judge/cost: calls=%d comparison=%+v", judgeModel.calls, decision.Comparison)
 				}
 				page, listErr := repository.ListReservations(ctx, current.ID, opt.PageQuery{Limit: 100})

@@ -90,6 +90,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return optimization.ErrConflict
 		}
 		allowed = nextPhase(experiment.Phase, change.NextPhase)
+		if experiment.Spec.Mode == optimization.ModeTaskLocal {
+			allowed = allowed && change.NextPhase != optimization.PhaseValidate || experiment.Phase == optimization.PhaseProbe && change.NextPhase == optimization.PhaseDecide
+		}
 		allowed = allowed || experiment.Phase == change.NextPhase && (len(change.Trials)+len(change.TrialUpdates)+len(change.Evaluations) > 0)
 		if allowed && experiment.Phase != change.NextPhase && change.NextPhase == optimization.PhasePropose {
 			if experiment.Round >= experiment.Spec.Limits.MaxRounds {
@@ -152,6 +155,12 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	experiment.UpdatedAt = tx.now
 	if change.NextState == optimization.StateQueued && previousState == optimization.StateDraft {
 		experiment.Deadline = tx.now.Add(experiment.Spec.Limits.ExperimentTimeout)
+		if experiment.Spec.Task != nil && experiment.Spec.Task.Deadline.Before(experiment.Deadline) {
+			experiment.Deadline = experiment.Spec.Task.Deadline
+		}
+		if !tx.now.Before(experiment.Deadline) {
+			return optimization.ErrBudgetExceeded
+		}
 	}
 	if decision != nil {
 		tx.data.Decisions[decision.ID.String()] = *decision

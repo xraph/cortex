@@ -1114,3 +1114,55 @@ check against published Cortex v1.8.0 pass. The full store suites took 132.758s
 for memory, 332.893s for SQLite, 318.979s for PostgreSQL and 445.600s for MongoDB.
 Task 13 remains open for task-local selection, explicit artifact adoption and
 product capability wiring. No phase completion claim is made.
+
+## Task-local selection and explicit artifact adoption
+
+`OptimizeTask` now uses the existing worker, controller and prepared trial paths
+for one frozen discovery task. It returns the selected completed capture and every
+trial outcome, without rerunning the winner. Default rounds and repetitions are
+one. The frozen deadline covers qualification and execution, respects a shorter
+caller deadline, and survives worker takeover. Cancellation attempts an authorized
+durable stop. Optimization trial, controller and evaluation provenance cannot
+start another task-local optimization.
+
+The trusted evaluator must qualify every criterion as independent of an expected
+answer before persistence and at trial execution. Sentinel exports this capability,
+including built-in substring fallback, and combines requirements across cases.
+Legacy offline plans retain their bindings; task-local plans need explicit
+capabilities. The same environment checks apply at dispatch and selection and
+preserve every promised guarantee, including read-only access.
+
+Selection rederives scores from the complete stored roster, preserves failures
+and blocked probes, and retains the baseline on ties. Cost comparisons require
+known original execution charges at the pinned pricing revision and a positive
+baseline. Judge charges remain separate. Task evidence can support a contrastive
+lesson, but it cannot become an offline confidence estimate or global activation.
+
+`GetTaskResult` rechecks current authority, artifacts and lessons. Explicit
+`AdoptArtifacts` requires the frozen adoption policy, exact selected bindings and
+current caller/requester grants. The host adapter owns destination authorization
+and atomic effect/key/digest/receipt persistence. The fixture loses a commit
+response, reconciles the retry without another effect, and rejects changed
+content under the same key. A production destination adapter is still required.
+
+The Sentinel task loop uses a metered judge without an expected answer. It reopens
+both SQLite stores after lost environment, execution and scoring acknowledgments,
+recovers twelve trial/evaluation records, and returns the selected output without
+replaying calls or consuming a validation allocation. Conformance covers all four
+stores, including deadline qualification, cancellation, forged capabilities,
+recursive execution, selection tampering, denied adoption and withdrawn evidence.
+
+Product capability wiring and the later plan tasks remain open.
+
+Review found that evidence withdrawn during a later artifact content read could
+escape an earlier retention check. The regression reproduced this with separate
+baseline and candidate artifacts. Result retrieval and adoption now recheck every
+trial's retained evidence and frozen lessons after external reads. The final task
+conformance race tests pass on memory, SQLite, PostgreSQL and MongoDB. The full
+Sentinel race suite passed in 222.748s, and the Docker-backed integration suite
+passed in 11.872s. The full optimization race suite passed memory in 135.636s,
+SQLite in 337.919s, PostgreSQL in 324.102s and MongoDB in 453.116s. After the
+retention fix, all four focused task suites, Sentinel task/criteria races, both
+module builds and the published-root consumer build/core/task races pass. Scoped
+`make f`, all-module `make l` with a private cache and `git diff --check` pass.
+No database backend was skipped in the focused conformance runs.

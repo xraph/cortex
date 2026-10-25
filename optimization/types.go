@@ -156,6 +156,7 @@ type Attempt struct {
 type DecisionOutcome string
 
 const (
+	DecisionSelect       DecisionOutcome = "select"
 	DecisionRecommend    DecisionOutcome = "recommend"
 	DecisionRetain       DecisionOutcome = "retain"
 	DecisionInconclusive DecisionOutcome = "inconclusive"
@@ -164,6 +165,7 @@ const (
 
 // Decision binds selection policy to the exact compared evidence.
 type Decision struct {
+	TaskSelection *TaskSelection  `json:"task_selection,omitempty"`
 	AllocationID  id.ID           `json:"allocation_id"`
 	SpecDigest    string          `json:"spec_digest"`
 	ID            id.ID           `json:"id"`

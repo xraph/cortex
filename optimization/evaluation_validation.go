@@ -32,6 +32,9 @@ func (plan EvaluationPlan) Validate(spec ExperimentSpec) error {
 	criteria := make(map[string]bool, len(plan.Criteria))
 	required := make(map[string]bool, len(plan.Criteria))
 	for _, criterion := range plan.Criteria {
+		if spec.Mode == ModeTaskLocal && (criterion.RequiresExpected == nil || *criterion.RequiresExpected) {
+			return ErrUnavailable
+		}
 		if strings.TrimSpace(criterion.ID) == "" || criteria[criterion.ID] {
 			return ErrInvalidSpec
 		}

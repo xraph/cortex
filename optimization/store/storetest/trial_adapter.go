@@ -15,14 +15,16 @@ import (
 )
 
 type trialFixtureFactory struct {
-	t            *testing.T
-	bundle       optimization.ExperimentBundle
-	environments map[id.ID]*trialFixtureEnvironment
-	calls        int
-	lost         bool
-	stopUnknown  bool
-	stops        int
-	sessions     map[id.ID]bool
+	t                   *testing.T
+	bundle              optimization.ExperimentBundle
+	environments        map[id.ID]*trialFixtureEnvironment
+	calls               int
+	lost                bool
+	stopUnknown         bool
+	stops               int
+	sessions            map[id.ID]bool
+	artifacts           []optimization.ArtifactRef
+	artifactsByPrepared map[string][]optimization.ArtifactRef
 }
 type trialFixtureEnvironment struct {
 	factory   *trialFixtureFactory
@@ -66,6 +68,10 @@ func (e *trialFixtureEnvironment) Execute(_ context.Context, p *engine.PreparedA
 	}
 	f.sessions[opts.SessionID] = true
 	record := capturedExecution(f.t, f.bundle, e.receipt)
+	record.Artifacts = f.artifacts
+	if refs, ok := f.artifactsByPrepared[p.Digest()]; ok {
+		record.Artifacts = refs
+	}
 	record.PreparedDigest = p.Digest()
 	record.Outcome.Output = input
 	for _, task := range f.bundle.Experiment.Spec.Tasks {

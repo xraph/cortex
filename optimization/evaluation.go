@@ -34,8 +34,9 @@ type EvaluationPlan struct {
 
 // CriterionDefinition freezes the expected result roster and required gates.
 type CriterionDefinition struct {
-	ID       string `json:"id"`
-	Required bool   `json:"required"`
+	RequiresExpected *bool  `json:"requires_expected,omitempty"`
+	ID               string `json:"id"`
+	Required         bool   `json:"required"`
 }
 
 // EvaluationRequest contains recorded output, never a callback to execute a task.
