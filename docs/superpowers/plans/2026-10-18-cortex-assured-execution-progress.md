@@ -6149,3 +6149,34 @@ This completes the accounting foundation only. Prepared runtime dispatch, durabl
 child linkage, shared-purpose propagation, isolated sessions and restricted A2A
 routing remain open. Database tests do not establish provider billing accuracy
 or process-crash recovery for the complete team runtime.
+
+### Reserved child admission before execution
+
+`NewReservedService` uses the shared strategy and persistence path with a
+two-step runner. Reservation returns a child ID and an execution function. The
+service persists the ID before invoking that function. Reservation errors,
+cancellation and failed linkage writes preserve identities without dispatch.
+Parallel reservations retain their IDs after another write fails. Missing
+results keep the reserved ID; conflicting returned identities fail the team
+and remain available for reconciliation. Repeated child IDs cannot execute
+again, and final evidence contains each child once.
+
+`RunConfigWithID` lets the host bind team creation to an existing budget account.
+Duplicate team creation must fail before reservation. The conformance test
+combines real budget storage and the service, races two starts with the same ID,
+then retries after completion. It requires one execution, linkage and allocation
+visible during that execution, unchanged final evidence and retained charges
+for unverified usage.
+
+The initial regression refused valid reserved execution. Another regression
+caught duplicate IDs in final evidence after duplicate dispatch was rejected.
+All five strategy tests pass, along with cancellation, write failure, interrupted
+execution and concurrent admission tests. SQLite, PostgreSQL and MongoDB
+conformance races passed with real containers and no skips. Scoped formatting,
+all ten modules' lint, engine orchestration races, root build and docs checks
+passed. These checks cover admission ordering and persistence, not live provider
+recovery or the complete prepared-team runtime.
+
+The engine still needs to start the exact reserved child through its prepared
+run path, persist team provenance across suspension, create isolated sessions
+and constrain A2A routing. This service does not settle usage or authorize retry.

@@ -133,6 +133,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("EvidenceDeletionFence", func(t *testing.T) { testEvidenceDeletionFence(t, newStore) })
 	t.Run("PreparationSnapshot", func(t *testing.T) { testPreparationSnapshot(t, newStore) })
 	t.Run("OrchestrationExecutionEvidence", func(t *testing.T) { testOrchestrationExecutionEvidence(t, newStore) })
+	t.Run("OrchestrationReservedExecution", func(t *testing.T) { testOrchestrationReservedExecution(t, newStore) })
 	t.Run("OrchestrationBudgetConcurrent", func(t *testing.T) { testOrchestrationBudgetConcurrent(t, newStore) })
 	t.Run("OrchestrationBudgetLifecycle", func(t *testing.T) { testOrchestrationBudgetLifecycle(t, newStore) })
 	t.Run("OrchestrationBudgetDenials", func(t *testing.T) { testOrchestrationBudgetDenials(t, newStore) })

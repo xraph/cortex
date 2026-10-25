@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/hostport"
 )
 
 // HookEmitter receives orchestration lifecycle events. The engine adapts the
@@ -28,10 +29,11 @@ func (noopHooks) AgentHandoff(context.Context, id.OrchestrationID, string, strin
 
 // Service runs stored orchestration configs end to end.
 type Service struct {
-	runner  AgentRunner
-	configs ConfigStore
-	runs    RunStore
-	hooks   HookEmitter
+	runner   AgentRunner
+	reserved ReservedAgentRunner
+	configs  ConfigStore
+	runs     RunStore
+	hooks    HookEmitter
 }
 
 // NewService builds a Service. hooks may be nil (a no-op emitter is used).
@@ -45,6 +47,9 @@ func NewService(runner AgentRunner, configs ConfigStore, runs RunStore, hooks Ho
 // Run loads the named config, executes the strategy, persists a Run,
 // and fires lifecycle hooks. The returned run reflects the final state.
 func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
+	if hostport.IsNil(s.configs) {
+		return nil, cortex.ErrOrchestrationNotFound
+	}
 	cfg, err := s.configs.GetOrchestrationByName(ctx, name)
 	if err != nil {
 		return nil, err
@@ -58,9 +63,13 @@ func (s *Service) Run(ctx context.Context, name, input string) (*Run, error) {
 // RunConfig executes the supplied config without reading ConfigStore. Execution
 // fields are detached before hooks or agents run. The injected runner remains
 // responsible for participant preparation, authorization and shared budgets.
-// Child identities are persisted as each invocation returns. A failed write
-// stops subsequent admission; already admitted parallel calls retain their IDs.
+// Reserved runners persist child identities before execution; ordinary runners
+// persist them when they return. A failed write stops subsequent admission.
 func (s *Service) RunConfig(ctx context.Context, cfg Config, input string) (*Run, error) {
+	return s.RunConfigWithID(ctx, cfg, input, id.NewOrchestrationID())
+}
+
+func (s *Service) runConfig(ctx context.Context, cfg Config, input string, team id.OrchestrationID) (*Run, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -70,10 +79,10 @@ func (s *Service) RunConfig(ctx context.Context, cfg Config, input string) (*Run
 	}
 	cfg.Settings.RouterRules = maps.Clone(cfg.Settings.RouterRules)
 	rec := &Run{
-		ID: id.NewOrchestrationID(), ConfigID: cfg.ID, Strategy: cfg.Strategy,
+		ID: team, ConfigID: cfg.ID, Strategy: cfg.Strategy,
 		Status: StatusRunning, Input: input, StartedAt: nowUTC(),
 	}
-	runner := &persistingRunner{runner: s.runner, runs: s.runs, record: rec}
+	runner := &persistingRunner{runner: s.runner, reserved: s.reserved, runs: s.runs, record: rec}
 
 	orch, err := Build(cfg.Strategy, runner, cfg.Participants, cfg.Settings)
 	if err != nil {
@@ -100,7 +109,7 @@ func (s *Service) RunConfig(ctx context.Context, cfg Config, input string) (*Run
 		observed := rec.AgentRunIDs
 		rec.AgentRunIDs = nil
 		for _, ar := range result.AgentResults {
-			if !ar.RunID.IsNil() {
+			if !ar.RunID.IsNil() && !slices.Contains(rec.AgentRunIDs, ar.RunID) {
 				rec.AgentRunIDs = append(rec.AgentRunIDs, ar.RunID)
 			}
 		}

@@ -64,6 +64,37 @@ participants and settings before invoking hooks. You must supply a runner that
 enforces your participant versions, authorization and shared budgets. Passing a
 config does not provide those guarantees by itself.
 
+### Record reserved children before execution
+
+Use `orchestration.NewReservedService(runner, runs, hooks)` when you reserve child
+capacity before calling a provider. Your `ReservedAgentRunner.ReserveAgent`
+receives the team ID and returns a `ReservedInvocation` with the exact child run
+ID and an `Execute` function. Reservation must not invoke a provider or agent
+tool. Keep all authorization and budget checks in your runner.
+
+The service saves the child ID before calling `Execute`. A failed write blocks
+execution and later admission, even when a later write succeeds. Concurrent
+reservations retain their identities for reconciliation. If reservation itself
+fails after allocating an identity, return that invocation alongside the error;
+the service records it but does not execute it. Unexecuted allocations remain
+charged until you can prove they are safe to release.
+
+`Execute` must use the reserved run ID and requested agent name. Missing results
+retain the reserved identity. A different returned identity fails the team and
+is retained alongside the reserved ID, without accepting its output. Reusing a
+child ID in the same team cannot execute it again.
+
+Call `RunConfigWithID(ctx, config, input, teamID)` to use the same ID as your
+durable budget account. The store must reject duplicate team creation. All three
+built-in stores do, including concurrent starts. An existing team ID cannot
+restart execution; reconcile its saved state instead. `RunConfig` still creates
+a fresh team ID when you do not need to choose one beforehand.
+
+These writes retain child linkage if execution is interrupted. They do not prove
+that the child has started, authenticate its usage or authorize replay. Prepared
+agent execution, isolated sessions and restricted messaging still require the
+engine integration.
+
 ## Durable team capacity
 
 `orchestration.BudgetStore` accounts for a team independently of task plans and
