@@ -18,6 +18,7 @@ import (
 
 type settlementLifecycleStore struct {
 	coordination.TaskSettlementStore
+	coordination.TaskCallSealStore
 	attempts     atomic.Int32
 	loseFirstAck bool
 }
@@ -41,6 +42,13 @@ func (f settlementLifecycleResolver) ResolveTaskUsageSettlement(ctx context.Cont
 
 type settlementLifecycleAuthority struct{}
 
+func (settlementLifecycleAuthority) WithTaskCallSealFence(_ context.Context, r coordination.TaskCallSealRequest, next func(coordination.TaskCallSealRequest) error) error {
+	return next(r)
+}
+func (settlementLifecycleAuthority) AuthorizeTaskCallSeal(context.Context, coordination.TaskCallSealRequest) error {
+	return nil
+}
+
 func (settlementLifecycleAuthority) WithTaskUsageClosureFence(_ context.Context, r coordination.TaskUsageClosureRequest, next func(coordination.TaskUsageClosureRequest) error) error {
 	return next(r)
 }
@@ -56,12 +64,22 @@ func (settlementLifecycleAuthority) AuthorizeTaskUsageSettlement(context.Context
 
 func testManagedTaskSettlement(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
-	f := budgetedTaskRecoveryFixture(t, backend, driver, true)
-	accepted, err := f.repo.AdoptTaskResult(f.ctx, f.request)
+	t.Run("recovered", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, false) })
+	t.Run("ordinary", func(t *testing.T) { testManagedTaskSettlementCase(t, backend, driver, true) })
+}
+
+func testManagedTaskSettlementCase(t *testing.T, backend store.Store, driver assurance.Driver, ordinary bool) {
+	t.Helper()
+	f := budgetedTaskFixture(t, backend, driver, true, ordinary)
+	accept := f.repo.AdoptTaskResult
+	if ordinary {
+		accept = f.repo.AcceptTaskResult
+	}
+	accepted, err := accept(f.ctx, f.request)
 	require.NoError(t, err)
 	original, err := backend.GetRun(f.ctx, accepted.Claim.RunID)
 	require.NoError(t, err)
-	observed := &settlementLifecycleStore{TaskSettlementStore: f.repo, loseFirstAck: true}
+	observed := &settlementLifecycleStore{TaskSettlementStore: f.repo, TaskCallSealStore: f.repo, loseFirstAck: true}
 	var resolutions atomic.Int32
 	authority := settlementLifecycleAuthority{}
 	cfg := coordination.TaskSettlementServiceConfig{Store: observed, ClosureActor: "accounting", Interval: 20 * time.Millisecond,
@@ -74,6 +92,12 @@ func testManagedTaskSettlement(t *testing.T, backend store.Store, driver assuran
 			r := coordination.TaskUsageSettlementRequest{SchemaVersion: 1, Usage: coordination.TaskUsageRequest{Claim: snapshot.Claim.Token(), Seal: snapshot.Journal.Seal, SnapshotDigest: snapshot.Journal.Digest}, UsageDigest: snapshot.Digest, ClosureDigest: closed.Digest, ReservationID: reservation.Request.ID, ReservationDigest: reservation.RequestDigest, Actor: "fixture", Reason: "final usage", Billing: coordination.TaskBillingProof{Issuer: "fixture", Revision: "1", ProofRef: "bill", ProofDigest: evidence.Digest([]byte("bill")), PricingRevision: reservation.Request.PricingRevision, ObservedAt: f.clock.Now(), ExpiresAt: f.clock.Now().Add(time.Minute)}}
 			return &r, nil
 		}),
+	}
+	if ordinary {
+		cfg.CallSealFence, cfg.CallSealAuthorizer = authority, authority
+		before, readErr := f.repo.GetRunCallSeal(f.ctx, accepted.Claim.RunID)
+		require.NoError(t, readErr)
+		require.Nil(t, before)
 	}
 	// Fixture authority qualifies lifecycle and storage behavior, not live billing.
 	eng, err := engine.New(engine.WithStore(backend), engine.WithTaskSettlement(cfg), engine.WithSuspensionTTL(0))
@@ -95,7 +119,8 @@ func testManagedTaskSettlement(t *testing.T, backend store.Store, driver assuran
 	require.NoError(t, err)
 	require.Equal(t, original, after)
 	f.clock.advance(time.Hour)
-	restartedStore := &settlementLifecycleStore{TaskSettlementStore: assurance.New(driver).WithClock(f.clock)}
+	reopened := assurance.New(driver).WithClock(f.clock)
+	restartedStore := &settlementLifecycleStore{TaskSettlementStore: reopened, TaskCallSealStore: reopened}
 	cfg.Store = restartedStore
 	restarted, err := engine.New(engine.WithStore(backend), engine.WithTaskSettlement(cfg), engine.WithSuspensionTTL(0))
 	require.NoError(t, err)

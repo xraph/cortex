@@ -40,21 +40,26 @@ type TaskSettlementServiceConfig struct {
 	ClosureActor      string
 	ClosureFence      TaskUsageClosureFence
 	ClosureAuthorizer TaskUsageClosureAuthorizer
-	Resolver          TaskUsageSettlementResolver
-	Fence             TaskUsageSettlementFence
-	Authorizer        TaskUsageSettlementAuthorizer
-	AttemptTimeout    time.Duration
-	Interval          time.Duration
-	DiscoveryTimeout  time.Duration
-	PageTimeout       time.Duration
-	PageSize          int
-	MaxInFlight       int
-	MaxPerScope       int
-	ReportError       func(error)
+	// Configure both ports to seal ordinary accepted task journals automatically.
+	// ClosureActor also identifies the caller for this separate authorization.
+	CallSealFence      TaskCallSealFence
+	CallSealAuthorizer TaskCallSealAuthorizer
+	Resolver           TaskUsageSettlementResolver
+	Fence              TaskUsageSettlementFence
+	Authorizer         TaskUsageSettlementAuthorizer
+	AttemptTimeout     time.Duration
+	Interval           time.Duration
+	DiscoveryTimeout   time.Duration
+	PageTimeout        time.Duration
+	PageSize           int
+	MaxInFlight        int
+	MaxPerScope        int
+	ReportError        func(error)
 }
 
 // TaskSettlementService owns discovery, admission closure and settlement until
-// Stop drains every callback. It never seals journals or invokes task work.
+// Stop drains every callback. Journal sealing needs its separate optional ports.
+// The service never invokes task work.
 type TaskSettlementService struct{ service *TaskService }
 
 // NewTaskSettlementService validates explicit ports without starting work.
@@ -80,7 +85,23 @@ func NewTaskSettlementService(config TaskSettlementServiceConfig) (*TaskSettleme
 	if err != nil {
 		return nil, err
 	}
-	service, err := newRunRecoveryService(runRecoveryConfig{ClaimState: ClaimCompleted, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}, config.Store, func() (runRecoveryPage, error) {
+	traversal := runRecoveryConfig{ClaimState: ClaimCompleted, Discovery: config.Discovery, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, PageTimeout: config.PageTimeout, PageSize: config.PageSize, MaxInFlight: config.MaxInFlight, MaxPerScope: config.MaxPerScope, ReportError: config.ReportError}
+	if config.CallSealFence != nil || config.CallSealAuthorizer != nil {
+		storage, ok := config.Store.(TaskCallSealStore)
+		if !ok {
+			return nil, execution.ErrRunCallUnavailable
+		}
+		sealer, sealErr := NewTaskCallSealer(storage, config.CallSealFence, config.CallSealAuthorizer)
+		if sealErr != nil {
+			return nil, sealErr
+		}
+		traversal.SealMissing = func(ctx context.Context, claim Claim) (execution.RunCallSeal, error) {
+			bounded, cancel := context.WithTimeout(ctx, config.AttemptTimeout)
+			defer cancel()
+			return sealer.Seal(bounded, TaskCallSealRequest{SchemaVersion: 1, Claim: claim.Token(), ClaimDigest: claim.Digest, Seal: execution.RunCallSealRequest{SchemaVersion: 1, Scope: claim.Scope, RunID: claim.RunID, Actor: config.ClosureActor, Reason: "close accepted task call admission"}})
+		}
+	}
+	service, err := newRunRecoveryService(traversal, config.Store, func() (runRecoveryPage, error) {
 		return func(ctx context.Context, claim Claim, seal execution.RunCallSeal, _ string, _ int) (string, error) {
 			return "", settleCompletedRun(ctx, config, closer, settler, claim, seal)
 		}, nil

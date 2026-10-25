@@ -5824,3 +5824,42 @@ run; the focused lifecycle and database checks above passed.
 This packet does not change optimizer files. Automatic journal sealing for ordinary completed runs,
 historical-debt discovery across superseded claims, concrete host billing and live
 qualification remain open.
+
+### S3.5 seal ordinary accepted task journals
+
+The first tests failed on the missing `TaskCallSealRequest` and `SealTaskCalls`
+APIs. The guarded implementation now binds the full completed claim digest to
+the exact run seal request. Storage holds plan, run and journal guards while
+checking the retained acceptance and current committed run. It shares the journal
+seal write with the existing run sealer. Closure does not infer external
+quiescence or release funds.
+
+Settlement can seal ordinary accepted runs when you supply both `CallSealFence`
+and `CallSealAuthorizer`. Missing ports preserve the existing wait-for-seal
+behavior. Its actor is `ClosureActor`, with separate authorization for sealing.
+Each seal attempt uses the configured attempt timeout, independently of the
+following settlement attempt.
+
+The database lifecycle fixture now covers ordinary completion as well as recovery
+adoption. Both paths close verifier admission, settle retained provider/verifier
+usage, recover a lost acknowledgment and reopen after proof expiry without
+requesting another bill. Authority tests cover changed requests and receipts,
+denial, cancellation, callback misuse and detached metadata. Store tests reject
+unaccepted or changed claims, changed run state, foreign runs and wrong scopes.
+Rollback, lost acknowledgment, cancellation after commit and a delayed call
+blocked through seal commit passed on SQLite, PostgreSQL and MongoDB.
+
+The broader recovery/adoption race checks passed on SQLite (29.353s), PostgreSQL
+(24.123s) and MongoDB (31.017s). Journal sealing/recovery regressions passed too
+(13.054s, 6.519s and 8.511s respectively), with no skipped database tests.
+Coordination, execution and assurance race suites, root build, docs type/lint/build,
+scoped formatting and all-module lint passed. The full engine race suite passed
+in 406.827s with no skips, resolving the previous six-minute timeout.
+
+CI for `901abd8` exposed two G304 findings in the SQLite adoption crash-test
+harness. Its log and boundary reads now use `os.Root` to confine access to the
+test directory. Both process-kill boundaries passed again (4.189s); this fix was
+pushed separately as `d015e7f`. Gosec v2.28.0 finished with zero findings and no
+load errors using CI's exclusions plus the ignored local `.superpowers` scratch
+directory, which is absent from the CI checkout. Live billing, historical-debt discovery
+after superseded claims and the remaining four-stage gates are still open.

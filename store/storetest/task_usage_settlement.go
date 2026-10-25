@@ -21,7 +21,12 @@ import (
 
 func budgetedTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, metered bool) taskRecoveryFixture {
 	t.Helper()
-	option := taskRecoveryOptions{ProviderUsage: execution.ReservationUsage{Actual: execution.Resources{Tokens: 11, USDMicros: 5}, Known: execution.KnownTokens | execution.KnownMoney}}
+	return budgetedTaskFixture(t, backend, driver, metered, false)
+}
+
+func budgetedTaskFixture(t *testing.T, backend store.Store, driver assurance.Driver, metered, ordinary bool) taskRecoveryFixture {
+	t.Helper()
+	option := taskRecoveryOptions{Ordinary: ordinary, ProviderUsage: execution.ReservationUsage{Actual: execution.Resources{Tokens: 11, USDMicros: 5}, Known: execution.KnownTokens | execution.KnownMoney}}
 	if metered {
 		option.VerifierBudget = &verification.EvaluationBudget{MaxCalls: 2, MaxTokens: 100, MaxUSDMicros: 100, PricingRevision: "prices-1"}
 	}

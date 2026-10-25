@@ -297,8 +297,13 @@ lifecycle, retain pending debt, and retry committed receipts with current
 authorization after a lost acknowledgment or restart. Attempt timeouts bound
 cooperative callbacks; shutdown retains ownership until every callback returns.
 Store tests exercise this path on SQLite, PostgreSQL and MongoDB with fixture
-authority. Automatic sealing for ordinary completed runs, historical-debt
-discovery across superseded claims and concrete billing adapters remain open.
+authority. Optional `TaskCallSealFence` and `TaskCallSealAuthorizer` ports now let
+the service seal ordinary accepted runs before settlement. `SealTaskCalls`
+compares the current completed claim, acceptance and committed run under the
+plan/run/journal guards, then reuses the existing journal seal write. Rollback,
+lost acknowledgment and concurrent late admission tests cover all three stores.
+Historical-debt discovery across superseded claims and concrete billing adapters
+remain open.
 
 ## S3.6: Team review UI and recovery qualification
 

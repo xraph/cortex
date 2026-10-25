@@ -2,9 +2,10 @@ package engine
 
 import "github.com/xraph/cortex/coordination"
 
-// WithTaskSettlement installs optional accounting for accepted, sealed task runs.
+// WithTaskSettlement installs optional accounting for accepted task runs.
 // The host supplies authorized discovery and reads, closure authority, billing
-// resolution and settlement fencing. This service never invokes task work.
+// resolution and settlement fencing. Separate optional call-seal ports close
+// ordinary completed journals. This service never invokes task work.
 func WithTaskSettlement(config coordination.TaskSettlementServiceConfig) Option {
 	return func(e *Engine) error {
 		if e.taskSettlement != nil {

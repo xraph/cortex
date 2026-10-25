@@ -32,6 +32,7 @@ type taskRecoveryOptions struct {
 	Acquire        func(context.Context, coordination.ClaimRequest, planning.Plan) (coordination.Claim, error)
 	ProviderUsage  execution.ReservationUsage
 	VerifierBudget *verification.EvaluationBudget
+	Ordinary       bool
 }
 
 func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, mode string, options ...taskRecoveryOptions) taskRecoveryFixture {
@@ -118,6 +119,10 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 	if mode != "pending effect" {
 		require.NoError(t, repo.CompleteEffect(ctx, effect, storedEffectReceipt(t, effect)))
 	}
+	if option.Ordinary {
+		clock := &jobClock{at: time.Now().UTC()}
+		return taskRecoveryFixture{ctx: ctx, repo: repo.WithClock(clock), clock: clock, request: req, model: model, effect: effect}
+	}
 	clock := &jobClock{at: claim.ExpiresAt.Add(time.Second)}
 	repo = repo.WithClock(clock)
 	recovering, err := repo.ExpireTaskClaim(ctx, claim.PlanID, claim.TaskID, claim.Revision)
@@ -134,6 +139,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 // ownership records. Fixture proof references do not qualify a host authenticator.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })
 	t.Run("guarded usage settlement", func(t *testing.T) { testTaskUsageSettlement(t, backend, driver) })
 	t.Run("usage admission closure", func(t *testing.T) { testTaskUsageClosure(t, backend, driver) })
 	t.Run("complete usage snapshot", func(t *testing.T) { testTaskUsageSnapshot(t, backend, driver) })

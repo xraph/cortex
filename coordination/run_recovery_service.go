@@ -20,6 +20,7 @@ type runRecoveryConfig struct {
 	Interval, DiscoveryTimeout, PageTimeout time.Duration
 	PageSize, MaxInFlight, MaxPerScope      int
 	ReportError                             func(error)
+	SealMissing                             func(context.Context, Claim) (execution.RunCallSeal, error)
 }
 
 type runRecoveryPage func(context.Context, Claim, execution.RunCallSeal, string, int) (string, error)
@@ -141,7 +142,14 @@ func (s *runRecoveryScheduler) recoverRun(ctx context.Context, claim Claim) erro
 		return err
 	}
 	if sealed == nil {
-		return nil
+		if s.config.SealMissing == nil {
+			return nil
+		}
+		created, sealErr := s.config.SealMissing(ctx, claim)
+		if sealErr != nil {
+			return sealErr
+		}
+		sealed = &created
 	}
 	if sealed.Validate() != nil || sealed.Request.RunID != claim.RunID || sealed.Request.Scope.Canonical() != claim.Scope.Canonical() {
 		return execution.ErrRunCallConflict

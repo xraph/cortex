@@ -55,6 +55,52 @@ func (s *settlementServiceStore) GetTaskUsageClosure(context.Context, id.AgentRu
 func (s *settlementServiceStore) GetTaskUsageSettlement(context.Context, id.AgentRunID) (*coordination.TaskUsageSettlement, error) {
 	return s.settled, nil
 }
+
+func (s *settlementServiceStore) SealTaskCalls(_ context.Context, r coordination.TaskCallSealRequest) (execution.RunCallSeal, error) {
+	request, digest, err := r.Seal.Freeze()
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	sealed := execution.RunCallSeal{Request: request, RequestDigest: digest, At: s.claim.At}
+	s.seal = &sealed
+	s.snapshot.Journal.Seal = sealed
+	s.snapshot.Journal, err = execution.SealRunRecoverySnapshot(s.snapshot.Journal)
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	s.snapshot, err = coordination.SealTaskUsageSnapshot(s.snapshot)
+	return sealed, err
+}
+
+func TestTaskSettlementServiceSealsOnlyWithExplicitAuthority(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, s, cfg := settlementServiceFixture(t)
+			s.seal = nil
+			cfg.CallSealFence = taskCallSealFence(func(_ context.Context, r coordination.TaskCallSealRequest, next func(coordination.TaskCallSealRequest) error) error {
+				return next(r)
+			})
+			cfg.CallSealAuthorizer = taskCallSealAuthorizer(func(context.Context, coordination.TaskCallSealRequest) error {
+				if denied {
+					return errors.New("seal denied")
+				}
+				return nil
+			})
+			service, err := coordination.NewTaskSettlementService(cfg)
+			require.NoError(t, err)
+			require.NoError(t, service.Start(ctx))
+			synctest.Wait()
+			require.NoError(t, service.Stop(ctx))
+			if denied {
+				require.Nil(t, s.seal)
+				require.Zero(t, s.settlements.Load())
+			} else {
+				require.NotNil(t, s.seal)
+				require.EqualValues(t, 1, s.settlements.Load())
+			}
+		})
+	}
+}
 func (s *settlementServiceStore) CloseTaskUsage(_ context.Context, r coordination.TaskUsageClosureRequest) (coordination.TaskUsageClosure, error) {
 	s.closes.Add(1)
 	r, digest, err := r.Freeze()

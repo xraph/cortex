@@ -32,7 +32,7 @@ type RunCallLocker interface {
 var _ execution.RunCallSealStore = (*Repository)(nil)
 
 func (s *Repository) runCallTransaction(ctx context.Context, runID id.AgentRunID, callback func(context.Context, *Repository) error) error {
-	scope, err := cortex.RequireScope(ctx)
+	_, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return err
 	}
@@ -43,14 +43,8 @@ func (s *Repository) runCallTransaction(ctx context.Context, runID id.AgentRunID
 	if !ok {
 		return execution.ErrRunCallUnavailable
 	}
-	// A separate durable anchor also covers journals predating this protocol and
-	// runs whose first worker has not arrived. It contains no execution permission.
-	anchor, err := record(KindRunCallGuard, runID.String(), evidence.Digest([]byte("{}")), runID.String(), scope, struct{}{})
-	if err != nil {
-		return err
-	}
-	if insertErr := s.insert(ctx, anchor); insertErr != nil {
-		return insertErr
+	if anchorErr := s.ensureRunCallGuard(ctx, runID); anchorErr != nil {
+		return anchorErr
 	}
 	err = driver.TransactRunCalls(ctx, runID, func(tc context.Context, tx Driver) error {
 		repo := &Repository{driver: tx, clock: s.clock}
@@ -80,40 +74,57 @@ func (s *Repository) SealRunCalls(ctx context.Context, request execution.RunCall
 	}
 	var result execution.RunCallSeal
 	err = s.runCallTransaction(ctx, r.RunID, func(tc context.Context, tx *Repository) error {
-		result = execution.RunCallSeal{}
-		existing, readErr := tx.GetRunCallSeal(tc, r.RunID)
-		if readErr != nil {
-			return readErr
-		}
-		if existing != nil {
-			if existing.RequestDigest != digest {
-				return execution.ErrRunCallConflict
-			}
-			result = *existing
-			return nil
-		}
-		value := execution.RunCallSeal{Request: r, RequestDigest: digest, At: s.clock.Now().UTC()}
-		if value.Validate() != nil {
-			return execution.ErrInvalidRunCall
-		}
-		body, encodeErr := json.Marshal(value)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		row, encodeErr := record(kindRunCallSeal, r.RunID.String(), evidence.Digest(body), r.RunID.String(), r.Scope, value)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		if insertErr := tx.driver.Insert(tc, row); insertErr != nil {
-			return insertErr
-		}
-		result = value
-		return nil
+		var sealErr error
+		result, sealErr = tx.sealRunCallsInTransaction(tc, r, digest)
+		return sealErr
 	})
 	if err != nil {
 		return execution.RunCallSeal{}, err
 	}
 	return result, nil
+}
+
+// ensureRunCallGuard creates an anchor without granting execution permission.
+func (s *Repository) ensureRunCallGuard(ctx context.Context, runID id.AgentRunID) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	anchor, err := record(KindRunCallGuard, runID.String(), evidence.Digest([]byte("{}")), runID.String(), scope, struct{}{})
+	if err != nil {
+		return err
+	}
+	return s.insert(ctx, anchor)
+}
+
+// sealRunCallsInTransaction requires the journal guard until outer commit.
+func (s *Repository) sealRunCallsInTransaction(ctx context.Context, r execution.RunCallSealRequest, digest string) (execution.RunCallSeal, error) {
+	existing, err := s.GetRunCallSeal(ctx, r.RunID)
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	if existing != nil {
+		if existing.RequestDigest != digest {
+			return execution.RunCallSeal{}, execution.ErrRunCallConflict
+		}
+		return *existing, nil
+	}
+	value := execution.RunCallSeal{Request: r, RequestDigest: digest, At: s.clock.Now().UTC()}
+	if value.Validate() != nil {
+		return execution.RunCallSeal{}, execution.ErrInvalidRunCall
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	row, err := record(kindRunCallSeal, r.RunID.String(), evidence.Digest(body), r.RunID.String(), r.Scope, value)
+	if err != nil {
+		return execution.RunCallSeal{}, err
+	}
+	if insertErr := s.driver.Insert(ctx, row); insertErr != nil {
+		return execution.RunCallSeal{}, insertErr
+	}
+	return value, nil
 }
 
 // GetRunCallSeal returns a permanent barrier or nil when membership is still open.
