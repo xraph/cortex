@@ -177,7 +177,7 @@ func (s *bindingFaultStore) BindDeliveryRun(ctx context.Context, d *a2a.Delivery
 }
 
 func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) store.Store) {
-	for _, mode := range []string{"bind_failure", "lost_ack", "reserve_failure", "cancelled", "stale_claim", "wrong_result", "mutated_reservation", "result_error", "nil_result"} {
+	for _, mode := range []string{"bind_failure", "lost_ack", "reserve_failure", "cancelled", "stale_claim", "wrong_result", "mutated_reservation", "result_error", "nil_result", "waiting", "mixed_waiting"} {
 		t.Run(mode, func(t *testing.T) {
 			backend := newStore(t)
 			ctx := ctxWithScope("reserved-failure")
@@ -230,6 +230,14 @@ func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) sto
 					if mode == "result_error" {
 						result.Err = failure
 					}
+					if mode == "waiting" || mode == "mixed_waiting" {
+						result.Output = ""
+						result.Err = cortex.ErrOrchestrationWaiting
+						if mode == "mixed_waiting" {
+							return result, failure
+						}
+						return result, cortex.ErrOrchestrationWaiting
+					}
 					return result, nil
 				}}
 				if mode == "reserve_failure" {
@@ -237,22 +245,23 @@ func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) sto
 				}
 				return inv, nil
 			}}
-			bus, err := a2a.NewBus(a2a.BusConfig{Store: wrapped, ReservedRunner: runner, OrchestrationID: team, Synchronous: true})
+			resumer := &rosterResumer{}
+			bus, err := a2a.NewBus(a2a.BusConfig{Store: wrapped, ReservedRunner: runner, Resumer: resumer, OrchestrationID: team, Synchronous: true})
 			require.NoError(t, err)
-			sent, err := bus.Send(ctx, a2a.SendParams{Sender: a2a.Address{Agent: "planner"}, Receivers: []a2a.Address{{Agent: "worker"}}, Performative: a2a.Request, Content: "evaluate"})
+			sent, err := bus.Ask(ctx, a2a.AskParams{SendParams: a2a.SendParams{Sender: a2a.Address{Agent: "planner"}, Receivers: []a2a.Address{{Agent: "worker"}}, Performative: a2a.Request, Content: "evaluate"}, AskerRunID: id.NewAgentRunID(), ToolCallID: "ask-worker"})
 			require.NoError(t, err)
 			queued, err := private.ListQueuedDeliveries(ctx, 10)
 			require.NoError(t, err)
 			require.Len(t, queued, 1)
 			deliveryID = queued[0].ID
 			_, drainErr := bus.Drain(drainCtx)
-			wantExecution := mode == "wrong_result" || mode == "mutated_reservation" || mode == "result_error" || mode == "nil_result"
+			wantExecution := mode == "wrong_result" || mode == "mutated_reservation" || mode == "result_error" || mode == "nil_result" || mode == "waiting" || mode == "mixed_waiting"
 			if wantExecution {
 				require.Equal(t, 1, executed)
 			} else {
 				require.Zero(t, executed)
 			}
-			if mode == "result_error" || mode == "nil_result" {
+			if mode == "result_error" || mode == "nil_result" || mode == "waiting" || mode == "mixed_waiting" {
 				require.NoError(t, drainErr)
 			} else {
 				require.Error(t, drainErr)
@@ -275,6 +284,24 @@ func testA2AReservedDispatchFailures(t *testing.T, newStore func(*testing.T) sto
 			}
 			messages, err := private.ListMessages(ctx, &a2a.MessageListFilter{ConversationID: sent.ConversationID})
 			require.NoError(t, err)
+			switch mode {
+			case "waiting":
+				require.Len(t, messages, 1, "suspension must not publish a terminal reply")
+				require.Zero(t, resumer.calls, "the sender must remain suspended for a real reply")
+				pending, pendingErr := private.ListPendingAsksByConversation(ctx, sent.ConversationID)
+				require.NoError(t, pendingErr)
+				require.Len(t, pending, 1)
+				require.Equal(t, a2a.DeliveryDelivering, retained.State)
+				require.Nil(t, retained.DeliveredAt)
+				require.NotEmpty(t, retained.ClaimToken)
+				_, drainErr = bus.Drain(ctx)
+				require.NoError(t, drainErr)
+				require.Equal(t, 1, executed, "a retained child cannot be executed again")
+			case "mixed_waiting":
+				require.Len(t, messages, 2, "a mixed failure must not become a suspension")
+				require.Equal(t, a2a.Failure, messages[1].Performative)
+				require.Equal(t, 1, resumer.calls)
+			}
 			for _, message := range messages {
 				require.NotContains(t, message.Content, "private")
 			}

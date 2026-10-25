@@ -316,6 +316,15 @@ Neither identity grants permission to retry. Mismatched execution IDs retain
 the reserved ID and record the unexpected ID as a failed delivery; their
 output is withheld. Reserved execution failures produce a generic peer reply.
 
+A reserved child returning only `cortex.ErrOrchestrationWaiting` stays bound in
+`delivering`. The bus publishes no terminal reply and leaves the sender's ask
+pending. Repeated drains and timeout reclaim cannot dispatch that child again.
+If the result also contains a failure, it follows the failure path. Both A2A and
+orchestration use `cortex.IsOrchestrationWaiting` to classify wrapped and joined
+errors consistently. This preserves suspension; it does not yet recover a later
+child completion or provide a durable reply outbox. Prepared-team messaging
+remains disabled until those paths are integrated.
+
 SQL migration `20261025000002` adds claim tokens and supports replay after an
 unrecorded schema change. MongoDB accepts missing tokens on legacy records;
 new claims always receive a token. Stop older dispatchers before upgrading:

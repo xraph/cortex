@@ -151,25 +151,7 @@ func (s *Service) ResumeContinuation(ctx context.Context, team id.OrchestrationI
 
 // IsWaiting refuses to mistake a mixed parallel failure for a suspension.
 func IsWaiting(err error) bool {
-	if err == nil {
-		return false
-	}
-	if children, ok := err.(interface{ Unwrap() []error }); ok {
-		found := false
-		for _, child := range children.Unwrap() {
-			if child != nil {
-				found = true
-				if !IsWaiting(child) {
-					return false
-				}
-			}
-		}
-		return found
-	}
-	if child, ok := err.(interface{ Unwrap() error }); ok {
-		return IsWaiting(child.Unwrap())
-	}
-	return errors.Is(err, cortex.ErrOrchestrationWaiting)
+	return cortex.IsOrchestrationWaiting(err)
 }
 
 // ValidateResult checks the bounded successful result shape before replay storage.

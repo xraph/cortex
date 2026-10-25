@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"errors"
 
 	"github.com/xraph/cortex/id"
 )
@@ -15,12 +16,37 @@ type RunOpts struct {
 	SystemPrompt string
 }
 
-// AgentResult is the caller-facing view of one completed agent run.
+// AgentResult is the caller-facing view of an agent run. A waiting result retains
+// its identity without a terminal answer; callers must inspect both error values.
 type AgentResult struct {
 	AgentName string        `json:"agent_name"`
 	RunID     id.AgentRunID `json:"run_id,omitempty"`
 	Output    string        `json:"output"`
 	Err       error         `json:"-"`
+}
+
+// IsOrchestrationWaiting reports whether every nonnil leaf of an error tree is
+// ErrOrchestrationWaiting. A mixed failure must never be treated as suspension.
+func IsOrchestrationWaiting(err error) bool {
+	if err == nil {
+		return false
+	}
+	if children, ok := err.(interface{ Unwrap() []error }); ok {
+		found := false
+		for _, child := range children.Unwrap() {
+			if child != nil {
+				found = true
+				if !IsOrchestrationWaiting(child) {
+					return false
+				}
+			}
+		}
+		return found
+	}
+	if child, ok := err.(interface{ Unwrap() error }); ok {
+		return IsOrchestrationWaiting(child.Unwrap())
+	}
+	return errors.Is(err, ErrOrchestrationWaiting)
 }
 
 // AgentRunner is the one host capability the coordination packages depend

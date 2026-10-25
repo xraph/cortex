@@ -6672,3 +6672,24 @@ root build and docs types/lint/build pass. All-ten-module lint passes after the
 optimizer owner's fixes. The compatibility packet is committed and pushed as
 `d0eb82f`. CI for that commit is still running; local checks do not establish its
 result.
+
+### Reserved messaging preserves child suspension
+
+The reserved A2A path now retains a purely waiting child's delivery without
+publishing a failure reply or claiming the sender's pending ask. The child ID and
+delivery claim remain intact, so neither a second drain nor timeout reclaim can
+execute the child again. Mixed waiting and failure errors still produce the
+generic failure reply and resume the sender once.
+
+The regression first reproduced a false terminal reply. SQLite, PostgreSQL and
+MongoDB then passed the reserved-dispatch and binding race matrix without skips
+in 19.134s, 3.429s and 4.812s. The A2A package's import-boundary test caught an
+initial dependency on orchestration. The shared error classifier now lives in
+the root runner contract, with orchestration forwarding to it. Root, A2A and
+orchestration package races pass after that correction. The final actual-ask
+regression passed without skips on SQLite (7.240s), PostgreSQL (7.545s) and MongoDB
+(10.681s). Engine recovery and continuation races passed in 19.234s. Scoped
+formatting, all-ten-module lint, root build and docs types/lint/build pass.
+
+This fixes suspension semantics in the existing bus. It does not enable private
+prepared-team tools or complete deferred child-result and reply-outbox recovery.

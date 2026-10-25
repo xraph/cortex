@@ -99,6 +99,11 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 	if out == nil && runErr == nil {
 		runErr = cortex.ErrRunIncomplete
 	}
+	if b.reserved != nil && cortex.IsOrchestrationWaiting(runErr) {
+		// The retained child still owns this delivery. A pause is neither an
+		// answer nor proof of failure, and its binding prevents redispatch.
+		return nil
+	}
 
 	reply := SendParams{
 		Sender:         d.Receiver,
