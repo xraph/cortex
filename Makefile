@@ -100,10 +100,13 @@ clean c:
 	@echo "$(GREEN)✓ Clean complete$(NC)"
 
 ## fmt (f): Format code
+# Limit formatting to owned paths when several changes share the checkout.
+FORMAT_PATHS ?= .
+
 fmt:
 	@echo "$(BLUE)Formatting code...$(NC)"
-	@gofmt -s -w .
-	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/cortex . || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
+	@gofmt -s -w $(FORMAT_PATHS)
+	@command -v goimports >/dev/null 2>&1 && goimports -w -local github.com/xraph/cortex $(FORMAT_PATHS) || echo "$(YELLOW)goimports not found, skipping (run: go install golang.org/x/tools/cmd/goimports@latest)$(NC)"
 	@echo "$(GREEN)✓ Formatting complete$(NC)"
 
 ## lint (l): Run linter

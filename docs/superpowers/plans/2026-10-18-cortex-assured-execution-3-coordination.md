@@ -313,6 +313,10 @@ after the adoption window. These fixtures do not authenticate real quiescence.
 plan discovery, sealed snapshots, proof resolution and guarded adoption. They reuse
 recovery traversal and lifecycle ownership, bound each attempt, and preserve
 unready claims for later passes. Local engine integration tests exercise the
-built-in stores and completed-claim restart behavior. Concrete host proof/fence
-implementations, process-fault qualification and provider/verifier usage settlement
+built-in stores and completed-claim restart behavior. SQLite process-kill tests
+now cover death after all adoption writes but before commit, and death after commit
+before acknowledgment. A fresh connection and engine resume recovery, retain one
+acceptance/outbox identity, and preserve the original lease, fence, run and absent
+local provider return. Concrete host proof/fence implementations, other backend
+process faults, deployment qualification and provider/verifier usage settlement
 remain open.

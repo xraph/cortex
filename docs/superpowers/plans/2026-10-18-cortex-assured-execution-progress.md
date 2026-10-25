@@ -5620,3 +5620,37 @@ also passed. The MongoDB readiness fix is committed separately as 4f26f11.
 Managed adoption remains qualified by local lifecycle and real-store fixtures;
 concrete proof adapters, deployment and process-crash adoption qualification,
 shared usage settlement and the remaining four-stage gates are still open.
+
+### S3.2 adoption coordinator process-crash qualification
+
+The new SQLite suite kills a test-owned coordinator at two real transaction
+boundaries: after the adoption callback writes its records but before commit,
+and after commit before the store acknowledges it. The parent owns the database
+directory and waits for the killed child before opening a fresh connection.
+
+Before-commit recovery retains the recovering claim and exposes no acceptance to
+outbox discovery. After-commit recovery retains the completed claim and the same
+acceptance. A new engine performs an observed recovery scan; guarded retry returns
+the historical receipt without duplicating its outbox identity. Both paths preserve
+the original lease expiry, fence and run, including the missing local provider
+return. Fixture authority still does not authenticate remote quiescence.
+
+The SQLite entry point initially failed to compile until the shared harness was
+added. The first harness build exposed a constructor signature mismatch, corrected
+to the existing guarded adopter API. The crash cases passed with the race detector
+in 4.098 seconds. The expanded crash and adoption suite passed in 12.347 seconds.
+Final format, aggregate lint and regression checks follow. Process-fault coverage
+for PostgreSQL and MongoDB, installed host adapters and usage settlement remain open.
+
+The final race run passed SQLite in 13.015 seconds, PostgreSQL in 8.569 seconds
+and MongoDB in 10.349 seconds without skips. An earlier PostgreSQL attempt failed
+during Docker port inspection before tests began; its isolated retry passed.
+Root build, docs type/lint checks and docs production build passed. `make f` now
+accepts `FORMAT_PATHS` and still defaults to the whole repository. This packet used
+`make f FORMAT_PATHS='store/storetest/task_adoption_crash.go store/sqlite/task_adoption_crash_test.go'`
+to preserve the optimizer changes being edited in another chat.
+
+Full `make l` passed after the other chat formatted two concurrent optimizer tests
+that the initial lint pass had caught mid-edit. No optimizer files are included in
+this packet. Live host authority and Linux sandbox qualification remain separate
+gates; these crash tests make no deployment-readiness claim.
