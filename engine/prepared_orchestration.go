@@ -232,8 +232,22 @@ func (e *Engine) prepareOrchestration(ctx context.Context, key id.OrchestrationC
 		}
 		snapshot.Participants[name] = prepared
 	}
-	if validationErr := validatePreparedOrchestration(snapshot); validationErr != nil {
-		return nil, validationErr
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, contextErr
+	}
+	prepared, freezeErr := freezePreparedOrchestration(snapshot)
+	if freezeErr != nil {
+		return nil, freezeErr
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, contextErr
+	}
+	return prepared, nil
+}
+
+func freezePreparedOrchestration(snapshot preparedOrchestrationSnapshot) (*PreparedOrchestration, error) {
+	if err := validatePreparedOrchestration(snapshot); err != nil {
+		return nil, err
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
@@ -241,9 +255,6 @@ func (e *Engine) prepareOrchestration(ctx context.Context, key id.OrchestrationC
 	}
 	if len(data) > maxPreparedOrchestrationBytes-256 {
 		return nil, cortex.ErrInvalidPrepared
-	}
-	if contextErr := ctx.Err(); contextErr != nil {
-		return nil, contextErr
 	}
 	return &PreparedOrchestration{payload: data, digest: contentDigest(data)}, nil
 }
