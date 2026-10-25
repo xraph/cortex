@@ -96,21 +96,14 @@ func (f *ControllerFactory) forWork(ctx context.Context, item WorkItem, discover
 	if err != nil {
 		return nil, err
 	}
-	sealed, err := SealVersion(version)
+	spec, binding, err := f.controllerBinding(version)
 	if err != nil {
 		return nil, err
 	}
-	if sealed.Digest != experiment.Spec.Controller.Digest || sealed.Controller == nil || sealed.Kind != HarnessImprovement {
+	if version.Digest != experiment.Spec.Controller.Digest {
 		return nil, ErrStaleVersion
 	}
-	spec := *sealed.Controller
-	if len(spec.Tools) > 0 {
-		return nil, ErrUnavailable
-	}
-	binding, exists := f.bindings[spec.Model+"\x00"+spec.ModelRevision]
-	if !exists {
-		return nil, ErrUnavailable
-	}
+
 	return &modelController{factory: f, experiment: experiment, lease: item.Lease, spec: spec, binding: binding, discovery: discovery}, nil
 }
 
@@ -121,6 +114,22 @@ type modelController struct {
 	lease      WorkLease
 	spec       ControllerSpec
 	binding    ModelBinding
+}
+
+func (f *ControllerFactory) controllerBinding(version HarnessVersion) (ControllerSpec, ModelBinding, error) {
+	sealed, err := SealVersion(version)
+	if err != nil || sealed.Digest != version.Digest || sealed.Controller == nil || sealed.Kind != HarnessImprovement {
+		return ControllerSpec{}, ModelBinding{}, ErrStaleVersion
+	}
+	spec := *sealed.Controller
+	if len(spec.Tools) > 0 {
+		return ControllerSpec{}, ModelBinding{}, ErrUnavailable
+	}
+	binding, exists := f.bindings[spec.Model+"\x00"+spec.ModelRevision]
+	if !exists {
+		return ControllerSpec{}, ModelBinding{}, ErrUnavailable
+	}
+	return spec, binding, nil
 }
 
 func (c *modelController) Propose(ctx context.Context, input ProposalInput) ([]Proposal, error) {

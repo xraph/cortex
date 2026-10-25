@@ -10,6 +10,7 @@ import (
 // scope and creation time come from the transaction, and generation is assigned
 // by the store. The service must recheck current grants and evidence availability.
 type ActivationChange struct {
+	Kind               HarnessKind `json:"kind,omitempty"`
 	Reason             string      `json:"reason,omitempty"`
 	ID                 id.ID       `json:"id"`
 	AgentID            id.AgentID  `json:"agent_id"`
@@ -35,6 +36,18 @@ func ActivationChannel(channel string) (string, error) {
 	return channel, nil
 }
 
+// ActivationKind resolves legacy execution routes and rejects unsupported kinds.
+func ActivationKind(kind HarnessKind) (HarnessKind, error) {
+	switch kind {
+	case "", HarnessExecution:
+		return HarnessExecution, nil
+	case HarnessImprovement:
+		return HarnessImprovement, nil
+	default:
+		return "", ErrInvalidSpec
+	}
+}
+
 // ValidateActivationEvidence binds an activation to its immutable recommendation.
 // Current authorization, retained artifacts and source compatibility belong to
 // the service; satisfying this check alone does not enable active execution.
@@ -53,7 +66,21 @@ func ValidateActivationEvidence(change ActivationChange, experiment Experiment, 
 	if decision.ID != change.DecisionID || experiment.DecisionID != decision.ID || decision.ExperimentID != experiment.ID || decision.SpecDigest != experiment.SpecDigest || decision.Candidate != change.Version || version.ID != change.Version.ID || version.Digest != change.Version.Digest || experiment.Spec.AgentID != change.AgentID || version.AgentID != change.AgentID {
 		return ErrIncompleteEvidence
 	}
-	if decision.Outcome != DecisionRecommend || decision.EvidenceClass != EvidenceValidated || !decision.Comparison.Complete || decision.SelectionKind != string(HarnessExecution) || version.Kind != HarnessExecution || experiment.Spec.Mode != ModeSequential && experiment.Spec.Mode != ModeParallel {
+	if decision.Outcome != DecisionRecommend || decision.EvidenceClass != EvidenceValidated || !decision.Comparison.Complete || experiment.Spec.Mode != ModeSequential && experiment.Spec.Mode != ModeParallel {
+		return ErrIncompleteEvidence
+	}
+	kind, err := ActivationKind(change.Kind)
+	if err != nil {
+		return err
+	}
+	if decision.SelectionKind != string(kind) || version.Kind != kind {
+		return ErrIncompleteEvidence
+	}
+	if kind == HarnessImprovement {
+		if experiment.Spec.Improvement == nil || experiment.State != StateReviewRequired || decision.Baseline != experiment.Spec.Improvement.Controllers[0] || decision.Candidate != experiment.Spec.Improvement.Controllers[1] {
+			return ErrIncompleteEvidence
+		}
+	} else if experiment.Spec.Improvement != nil {
 		return ErrIncompleteEvidence
 	}
 	if change.PolicyDigest != decision.PolicyDigest || change.PolicyDigest != version.PolicyDigest {

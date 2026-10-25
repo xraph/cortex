@@ -26,6 +26,7 @@ type Repository interface {
 	GetEvaluation(context.Context, string) (Evaluation, error)
 	GetDecision(context.Context, id.ID) (Decision, error)
 	GetActivation(context.Context, id.AgentID, string) (Activation, error)
+	GetActivationForKind(context.Context, id.AgentID, string, HarnessKind) (Activation, error)
 	ResolveActivation(context.Context, id.ID) (Activation, error)
 	GetActivationGeneration(context.Context, id.ID) (Activation, error)
 	GetLesson(context.Context, id.ID) (Lesson, error)
@@ -41,6 +42,7 @@ type Repository interface {
 	ListLessons(context.Context, LessonQuery) (Page[Lesson], error)
 	ListPublications(context.Context, PublicationQuery) (Page[Publication], error)
 	ListActivationHistory(context.Context, id.AgentID, string, PageQuery) (Page[Activation], error)
+	ListActivationHistoryForKind(context.Context, id.AgentID, string, HarnessKind, PageQuery) (Page[Activation], error)
 	Migrate(context.Context) error
 	Ping(context.Context) error
 	Close() error

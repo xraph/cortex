@@ -61,6 +61,11 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		if !exists {
 			return optimization.ErrIncompleteEvidence
 		}
+		if experiment.Spec.Improvement != nil {
+			if evidenceErr := checkControllerDecision(tx.data, experiment, decision, tx.now); evidenceErr != nil {
+				return evidenceErr
+			}
+		}
 		if artifactErr := checkDecisionArtifacts(tx.data, decision, tx.now); artifactErr != nil {
 			return artifactErr
 		}

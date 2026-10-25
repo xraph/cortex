@@ -186,6 +186,7 @@ type Decision struct {
 
 // Activation is an append-only generation for an exact scope, agent and channel.
 type Activation struct {
+	Kind               HarnessKind  `json:"kind,omitempty"`
 	Deactivated        bool         `json:"deactivated,omitempty"`
 	Reason             string       `json:"reason,omitempty"`
 	RollbackTo         id.ID        `json:"rollback_to,omitempty"`

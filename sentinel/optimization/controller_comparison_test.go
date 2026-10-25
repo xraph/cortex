@@ -204,4 +204,31 @@ func controllerComparisonReopen(t *testing.T, incomplete bool) {
 	if getErr != nil || !reflect.DeepEqual(stored.Comparison, second) {
 		t.Fatalf("persisted Sentinel decision: %+v %v", stored, getErr)
 	}
+	current, getErr := repository.GetExperiment(ctx, parent.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	review, reviewErr := handler.Execute(ctx, opt.WorkItem{Experiment: current, Lease: current.Lease})
+	if reviewErr != nil || review.NextState != opt.StateReviewRequired || len(review.Publications) != 0 {
+		t.Fatalf("parent Sentinel review: %+v %v", review, reviewErr)
+	}
+	review.ExperimentID, review.ExpectedRevision, review.Lease, review.Actor, review.IdempotencyKey = current.ID, current.Revision, current.Lease, current.Spec.Requester, "sentinel-parent-review"
+	if err = repository.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(review) }); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repository = osqlite.New(loopDB(t, optimizerPath))
+	// A lost review acknowledgment must reuse the persisted transition.
+	if err = repository.Transact(ctx, func(tx store.Tx) error { return tx.CommitTransition(review) }); err != nil {
+		t.Fatalf("review retry after reopen: %v", err)
+	}
+	finished, getErr := repository.GetExperiment(ctx, parent.ID)
+	if getErr != nil || finished.State != opt.StateReviewRequired || finished.DecisionID != stored.ID || finished.Revision != current.Revision+1 {
+		t.Fatalf("reopened Sentinel review: %+v %v", finished, getErr)
+	}
+	if judgeModel.calls != calls {
+		t.Fatal("review recovery replayed metered judges")
+	}
 }

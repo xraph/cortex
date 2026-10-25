@@ -32,11 +32,11 @@ passed its full qualification gate.
 | 8: isolated trials | Trial execution, environment receipts, recovery and recorded scoring | Production environment qualification |
 | 9: sequential refinement | Controller proposal/composition/reflection and phase handlers | Full persistent workflow qualification |
 | 10: validation and decisions | Frozen holdout allocations, deterministic comparison and decision gates | End-to-end acceptance audit |
-| 11: activation | Review commands, append-only deactivation and bound production execution pass module verification | Built-in current-source compatibility adapter and product capability wiring |
+| 11: activation | Review commands, deactivation, bound production execution and current-source compatibility pass module verification | Product capability wiring and final workflow qualification |
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
-| 13: parallel and task-local | Bounded parallel trial batches, partial-result commits and persistent recovery | Task-local service, artifact adoption and product capability wiring |
-| 14: controller improvement | Paired allocation storage exists | Implement controller comparison and parent/child execution |
-| 15: orchestration presets | Runtime integration contract planned | Implement approved preset execution and trace conversion |
+| 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
+| 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
+| 15: orchestration presets | Runtime prepared teams, durable continuation and expiry are available | Approved preset selection, isolated trial execution and child trace conversion |
 | 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
@@ -1582,3 +1582,40 @@ including artifact checks, worker authority and reopen recovery.
 
 Parent reflection, review completion and reviewed controller adoption remain
 pending; Task 14 is not complete.
+
+## Reviewed controller adoption
+
+The parent finishes `PhaseReflect` by revalidating its stored comparison and
+entering `StateReviewRequired`. It makes no further controller call and publishes
+no private child lessons. Controller activation requires that review state and a
+validated recommendation for the exact frozen controller pair.
+
+Activations now carry a harness kind. Controller and execution routes use
+separate keys and generations for the same scope, agent and channel, while the
+existing execution key and records without a kind remain readable. Activation,
+rollback, deactivation, retry identity, history cursors and audit events retain
+the kind. Default readers and `RunActive` remain execution-only.
+
+`ResolveActiveController` supplies a detached reviewed controller for new work.
+Existing experiments keep their frozen version. The service rechecks parent and
+child grants, retained child artifacts and decision evidence before adoption or
+resolution, including after host compatibility checks. The transaction repeats
+the stored evidence and lesson checks. `ControllerCompatibility` checks the same
+factory used for controller execution; the host still verifies current policy
+and external provider routing. These checks make no model calls.
+
+Tests cover the review gate, unsupported models and tools, host mutation, grant
+revocation during compatibility, unavailable child artifacts, foreign scope,
+route separation, cursor separation, legacy execution records, stale generations
+and reopen recovery. The adoption race matrix passes memory (20.354s), SQLite
+(74.281s), PostgreSQL (75.632s) and MongoDB (94.269s). Final focused checks cover
+legacy route compatibility, controller bindings and grant revocation during the
+host callback. Broader activation regressions pass memory (107.223s) and SQLite
+(298.768s). Sentinel controller comparison, final review and reopen recovery pass in 60.740s.
+The review retry preserves the original decision and revision without another
+judge dispatch, including when a judge returned malformed output.
+Both modules build, scoped `make f` and the whitespace check pass. All-module
+`make l` passed before the final test extension. The rerun passes every nested
+module but reports formatting in the runtime owner's concurrent root edits. The
+full optimization race suite is running. Broader phase completion remains
+unproven until that suite and the plan audit finish.

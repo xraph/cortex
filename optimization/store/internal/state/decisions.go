@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/optimization"
@@ -133,35 +134,10 @@ func (tx *transaction) prepareControllerDecision(experiment optimization.Experim
 	if err := tx.validatePhaseEvidence(validationExperiment, validationChange, candidateResources{}, nil); err != nil {
 		return nil, err
 	}
-	children := make([]optimization.ControllerEvidence, 0, len(allocation.PairedRoster))
-	for _, arm := range allocation.PairedRoster {
-		child, found := tx.data.Experiments[arm.ExperimentID.String()]
-		if !found {
-			return nil, optimization.ErrIncompleteEvidence
-		}
-		if err := checkLessonBindings(tx.data, child, tx.now); err != nil {
-			return nil, err
-		}
-		item := optimization.ControllerEvidence{Experiment: child}
-		for _, trial := range tx.data.Trials {
-			if trial.ExperimentID != child.ID || trial.Split != optimization.SplitValidation || trial.AllocationID != allocation.ID || trial.Version != arm.Finalist {
-				continue
-			}
-			evidence := optimization.DecisionEvidence{Trial: trial}
-			if trial.EvaluationID != "" {
-				evaluation, recorded := tx.data.Evaluations[trial.EvaluationID]
-				if !recorded {
-					return nil, optimization.ErrIncompleteEvidence
-				}
-				evidence.Evaluation = &evaluation
-			}
-			item.Trials = append(item.Trials, evidence)
-		}
-		children = append(children, item)
-	}
-	if err := optimization.ValidateControllerDecisionEvidence(experiment, allocation, value, children); err != nil {
+	if err := checkControllerDecision(tx.data, experiment, value, tx.now); err != nil {
 		return nil, err
 	}
+
 	if value.Outcome != optimization.DecisionInconclusive {
 		if err := checkDecisionArtifacts(tx.data, value, tx.now); err != nil {
 			return nil, err
@@ -207,4 +183,38 @@ func (tx *transaction) prepareTaskDecision(experiment optimization.Experiment, v
 	value.CreatedAt = tx.now
 	detached, err := clone(value)
 	return &detached, err
+}
+
+func checkControllerDecision(data *scopeData, experiment optimization.Experiment, value optimization.Decision, now time.Time) error {
+	allocation, exists := data.Allocations[value.AllocationID.String()]
+	if !exists || allocation.ExperimentID != experiment.ID {
+		return optimization.ErrIncompleteEvidence
+	}
+	children := make([]optimization.ControllerEvidence, 0, len(allocation.PairedRoster))
+	for _, arm := range allocation.PairedRoster {
+		child, found := data.Experiments[arm.ExperimentID.String()]
+		if !found {
+			return optimization.ErrIncompleteEvidence
+		}
+		if err := checkLessonBindings(data, child, now); err != nil {
+			return err
+		}
+		item := optimization.ControllerEvidence{Experiment: child}
+		for _, trial := range data.Trials {
+			if trial.ExperimentID != child.ID || trial.Split != optimization.SplitValidation || trial.AllocationID != allocation.ID || trial.Version != arm.Finalist {
+				continue
+			}
+			evidence := optimization.DecisionEvidence{Trial: trial}
+			if trial.EvaluationID != "" {
+				evaluation, recorded := data.Evaluations[trial.EvaluationID]
+				if !recorded {
+					return optimization.ErrIncompleteEvidence
+				}
+				evidence.Evaluation = &evaluation
+			}
+			item.Trials = append(item.Trials, evidence)
+		}
+		children = append(children, item)
+	}
+	return optimization.ValidateControllerDecisionEvidence(experiment, allocation, value, children)
 }

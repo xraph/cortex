@@ -139,7 +139,12 @@ func (s *Store) ListPublications(ctx context.Context, query optimization.Publica
 
 // ListActivationHistory returns immutable generations even when the head is stale.
 func (s *Store) ListActivationHistory(ctx context.Context, agentID id.AgentID, channel string, query optimization.PageQuery) (optimization.Page[optimization.Activation], error) {
-	key, err := activationKey(agentID, channel)
+	return s.ListActivationHistoryForKind(ctx, agentID, channel, optimization.HarnessExecution, query)
+}
+
+// ListActivationHistoryForKind keeps controller and execution history separate.
+func (s *Store) ListActivationHistoryForKind(ctx context.Context, agentID id.AgentID, channel string, kind optimization.HarnessKind, query optimization.PageQuery) (optimization.Page[optimization.Activation], error) {
+	key, err := activationKey(agentID, channel, kind)
 	if err != nil {
 		return optimization.Page[optimization.Activation]{}, err
 	}
@@ -147,9 +152,14 @@ func (s *Store) ListActivationHistory(ctx context.Context, agentID id.AgentID, c
 	if err != nil {
 		return optimization.Page[optimization.Activation]{}, err
 	}
+	normalizedKind, err := optimization.ActivationKind(kind)
+	if err != nil {
+		return optimization.Page[optimization.Activation]{}, err
+	}
 	return readPage(ctx, s, "activations", id.Nil, key, query, func(data *scopeData) ([]pageRow[optimization.Activation], error) {
 		return selectRows(data.Activations, func(value optimization.Activation) bool {
-			return value.AgentID == agentID && value.Channel == normalized
+			valueKind, kindErr := optimization.ActivationKind(value.Kind)
+			return kindErr == nil && valueKind == normalizedKind && value.AgentID == agentID && value.Channel == normalized
 		}, func(value optimization.Activation) time.Time { return value.CreatedAt }), nil
 	})
 }

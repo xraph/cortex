@@ -163,8 +163,9 @@ stay paused; an exhausted child exhausts the parent.
 Set `ImprovementEvaluator` to an adapter implementing `ControllerEvaluator` to
 advance the parent through comparison. The Sentinel adapter reloads the original
 child captures and compares the selected execution versions across their frozen
-plans. The parent stops at `PhaseReflect`; review completion and controller
-adoption remain pending.
+plans. The parent then rechecks the stored decision and enters `StateReviewRequired`.
+Finishing the comparison does not publish private discovery lessons or activate a
+controller.
 
 `ReadControllerEvidence` and `BuildControllerComparison` assemble selected child
 captures into frozen plan groups. `ValidateControllerDecisionEvidence` checks
@@ -341,6 +342,29 @@ validation once. Its decision phase compares the selected child captures across
 their frozen plans, rechecks child authority and persists a controller decision.
 Missing scores produce an inconclusive result. Comparison makes no model calls.
 
-The parent currently advances through `PhaseDecide` to `PhaseReflect`. Parent
-reflection, review completion and controller adoption remain pending. Ordinary
-trial phase handlers return `ErrUnavailable` for comparison parents.
+The parent advances through comparison to review without another controller call.
+Ordinary trial phase handlers return `ErrUnavailable` for comparison parents.
+
+### Reviewed controller adoption
+
+Set `ActivationRequest.Kind` to `HarnessImprovement` to adopt a reviewed controller
+recommendation. Use that kind for rollback and deactivation too. Controller routes
+have their own generation and history for each scope, agent and channel. An omitted
+kind retains execution-route behavior, including existing persisted activations.
+`GetActivation` and `ListActivationHistory` read execution routes; their `ForKind`
+variants accept an explicit kind. `RunActive` never resolves a controller route.
+
+Supply `OptimizerConfig.ControllerCompatibility` separately from execution
+compatibility. `NewControllerCompatibility` checks the same `ControllerFactory`
+used by your worker, including the frozen model revision and supported tools. Its
+host checker must verify current policy and external provider routing. Checks
+make no model calls. Adoption and resolution also recheck parent and child grants,
+retained child artifacts and the original decision evidence.
+
+Use `ResolveActiveController` when preparing new work. Put the returned
+`selection.Activation.Version` into `bundle.Experiment.Spec.Controller` before
+calling `Create`. The returned selection is detached; a later route change does
+not rewrite an existing experiment. Hosts authorize resolution with
+`optimization.resolve_controller` on `controller_activation` and on the source
+parent and child experiments. Activation, rollback and deactivation keep their
+existing actions and use the `controller_activation` resource kind.

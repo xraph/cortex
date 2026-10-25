@@ -18,18 +18,19 @@ type CallerIdentity interface {
 // OptimizerConfig supplies explicit persistence, authority and phase execution.
 // A Handler must reconcile durable external attempts before dispatching effects.
 type OptimizerConfig struct {
-	Repository           Repository
-	Authorizer           Authorizer
-	IdentityResolver     IdentityResolver
-	Caller               CallerIdentity
-	Lessons              LessonStore
-	Compatibility        Compatibility
-	ArtifactVerifier     *ArtifactVerifier
-	TaskEvaluator        Evaluator
-	ImprovementEvaluator Evaluator
-	Handler              PhaseHandler
-	UsageRecovery        *UsageRecovery
-	Worker               WorkerConfig
+	Repository              Repository
+	Authorizer              Authorizer
+	IdentityResolver        IdentityResolver
+	Caller                  CallerIdentity
+	Lessons                 LessonStore
+	Compatibility           Compatibility
+	ControllerCompatibility Compatibility
+	ArtifactVerifier        *ArtifactVerifier
+	TaskEvaluator           Evaluator
+	ImprovementEvaluator    Evaluator
+	Handler                 PhaseHandler
+	UsageRecovery           *UsageRecovery
+	Worker                  WorkerConfig
 }
 
 // Optimizer provides experiment commands and a bounded, host-started worker.

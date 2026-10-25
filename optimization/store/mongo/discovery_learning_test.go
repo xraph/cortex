@@ -42,3 +42,12 @@ func TestControllerDecisionRecovery(t *testing.T) {
 func TestControllerDecisionWorker(t *testing.T) {
 	storetest.ControllerDecisionWorker(t, conformanceFactory(t))
 }
+
+func TestControllerAdoption(t *testing.T) { storetest.ControllerAdoption(t, conformanceFactory(t)) }
+func TestControllerAdoptionRecovery(t *testing.T) {
+	testRecovery(t, storetest.ControllerAdoptionRecovery)
+}
+
+func TestControllerAdoptionArtifactDenial(t *testing.T) {
+	storetest.ControllerAdoptionArtifactDenial(t, conformanceFactory(t))
+}

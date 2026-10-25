@@ -41,3 +41,9 @@ func TestControllerDecisionArtifacts(t *testing.T) {
 }
 
 func TestControllerDecisionWorker(t *testing.T) { testDiscovery(t, storetest.ControllerDecisionWorker) }
+
+func TestControllerAdoption(t *testing.T) { testDiscovery(t, storetest.ControllerAdoption) }
+
+func TestControllerAdoptionArtifactDenial(t *testing.T) {
+	testDiscovery(t, storetest.ControllerAdoptionArtifactDenial)
+}

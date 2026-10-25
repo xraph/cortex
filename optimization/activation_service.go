@@ -11,43 +11,46 @@ import (
 
 // ActivationRequest identifies a reviewed version and the expected route generation.
 type ActivationRequest struct {
-	ID                 id.ID      `json:"id"`
-	AgentID            id.AgentID `json:"agent_id"`
-	Channel            string     `json:"channel"`
-	Version            VersionRef `json:"version"`
-	DecisionID         id.ID      `json:"decision_id"`
-	ExpectedGeneration int64      `json:"expected_generation"`
-	Reason             string     `json:"reason"`
+	Kind               HarnessKind `json:"kind,omitempty"`
+	ID                 id.ID       `json:"id"`
+	AgentID            id.AgentID  `json:"agent_id"`
+	Channel            string      `json:"channel"`
+	Version            VersionRef  `json:"version"`
+	DecisionID         id.ID       `json:"decision_id"`
+	ExpectedGeneration int64       `json:"expected_generation"`
+	Reason             string      `json:"reason"`
 }
 
 // RollbackRequest appends a generation referring to a previous activation.
 type RollbackRequest struct {
-	ID                 id.ID      `json:"id"`
-	AgentID            id.AgentID `json:"agent_id"`
-	Channel            string     `json:"channel"`
-	TargetID           id.ID      `json:"target_id"`
-	ExpectedGeneration int64      `json:"expected_generation"`
-	Reason             string     `json:"reason"`
+	Kind               HarnessKind `json:"kind,omitempty"`
+	ID                 id.ID       `json:"id"`
+	AgentID            id.AgentID  `json:"agent_id"`
+	Channel            string      `json:"channel"`
+	TargetID           id.ID       `json:"target_id"`
+	ExpectedGeneration int64       `json:"expected_generation"`
+	Reason             string      `json:"reason"`
 }
 
 // DeactivationRequest disables a route without removing its history.
 type DeactivationRequest struct {
-	ID                 id.ID      `json:"id"`
-	AgentID            id.AgentID `json:"agent_id"`
-	Channel            string     `json:"channel"`
-	ExpectedGeneration int64      `json:"expected_generation"`
-	Reason             string     `json:"reason"`
+	Kind               HarnessKind `json:"kind,omitempty"`
+	ID                 id.ID       `json:"id"`
+	AgentID            id.AgentID  `json:"agent_id"`
+	Channel            string      `json:"channel"`
+	ExpectedGeneration int64       `json:"expected_generation"`
+	Reason             string      `json:"reason"`
 }
 
 // Activate rechecks current authority, compatibility and retained evidence.
 func (o *Optimizer) Activate(ctx context.Context, request ActivationRequest) (*Activation, error) {
-	change := ActivationChange{ID: request.ID, AgentID: request.AgentID, Channel: request.Channel, Version: request.Version, DecisionID: request.DecisionID, ExpectedGeneration: request.ExpectedGeneration, Reason: request.Reason}
+	change := ActivationChange{Kind: request.Kind, ID: request.ID, AgentID: request.AgentID, Channel: request.Channel, Version: request.Version, DecisionID: request.DecisionID, ExpectedGeneration: request.ExpectedGeneration, Reason: request.Reason}
 	return o.activate(ctx, change, ActionActivate)
 }
 
 // Rollback revalidates a previously activated version under current policy.
 func (o *Optimizer) Rollback(ctx context.Context, request RollbackRequest) (*Activation, error) {
-	if _, err := o.authorizeActivation(ctx, request.AgentID, ActionRollback); err != nil {
+	if _, err := o.authorizeActivationKind(ctx, request.AgentID, ActionRollback, request.Kind); err != nil {
 		return nil, err
 	}
 	channel, err := ActivationChannel(request.Channel)
@@ -58,21 +61,29 @@ func (o *Optimizer) Rollback(ctx context.Context, request RollbackRequest) (*Act
 	if err != nil {
 		return nil, err
 	}
-	if previous.Deactivated || previous.AgentID != request.AgentID || previous.Channel != channel || previous.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
+	kind, kindErr := ActivationKind(request.Kind)
+	if kindErr != nil {
+		return nil, kindErr
+	}
+	previousKind, kindErr := ActivationKind(previous.Kind)
+	if kindErr != nil {
+		return nil, kindErr
+	}
+	if previousKind != kind || previous.Deactivated || previous.AgentID != request.AgentID || previous.Channel != channel || previous.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
 		return nil, ErrIncompleteEvidence
 	}
-	return o.activate(ctx, ActivationChange{ID: request.ID, AgentID: request.AgentID, Channel: channel, Version: previous.Version, DecisionID: previous.DecisionID, ExpectedGeneration: request.ExpectedGeneration, RollbackTo: previous.ID, Reason: request.Reason}, ActionRollback)
+	return o.activate(ctx, ActivationChange{Kind: kind, ID: request.ID, AgentID: request.AgentID, Channel: channel, Version: previous.Version, DecisionID: previous.DecisionID, ExpectedGeneration: request.ExpectedGeneration, RollbackTo: previous.ID, Reason: request.Reason}, ActionRollback)
 }
 
 func (o *Optimizer) activate(ctx context.Context, change ActivationChange, action Action) (*Activation, error) {
-	actor, err := o.authorizeActivation(ctx, change.AgentID, action)
+	actor, err := o.authorizeActivationKind(ctx, change.AgentID, action, change.Kind)
 	if err != nil {
 		return nil, err
 	}
 	if !validActivationReason(change.Reason) {
 		return nil, ErrInvalidSpec
 	}
-	if o.config.Compatibility == nil || o.config.ArtifactVerifier == nil {
+	if o.config.ArtifactVerifier == nil {
 		return nil, ErrUnavailable
 	}
 	decision, err := o.config.Repository.GetDecision(copyScopeContext(ctx), change.DecisionID)
@@ -84,6 +95,9 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 		return nil, err
 	}
 	defer cleanup()
+	if childErr := o.authorizeControllerDecision(ctx, decision, action); childErr != nil {
+		return nil, childErr
+	}
 	version, err := o.activationVersion(resolved, change, decision)
 	if err != nil {
 		return nil, err
@@ -96,7 +110,7 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 		return nil, compatibilityErr
 	}
 	// External checks may take time. Recheck both identities before the atomic write.
-	if _, err = o.authorizeActivation(ctx, change.AgentID, action); err != nil {
+	if _, err = o.authorizeActivationKind(ctx, change.AgentID, action, change.Kind); err != nil {
 		return nil, err
 	}
 	current, done, err := o.meter.authorizeAction(ctx, decision.ExperimentID, action)
@@ -104,6 +118,9 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 		return nil, err
 	}
 	defer done()
+	if childErr := o.authorizeControllerDecision(ctx, decision, action); childErr != nil {
+		return nil, childErr
+	}
 	var value Activation
 	err = o.config.Repository.Transact(current, func(tx Transaction) error {
 		var commitErr error
@@ -140,6 +157,10 @@ func (o *Optimizer) activationVersion(ctx context.Context, change ActivationChan
 }
 
 func (o *Optimizer) authorizeActivation(ctx context.Context, agentID id.AgentID, action Action) (IdentityRef, error) {
+	return o.authorizeActivationKind(ctx, agentID, action, HarnessExecution)
+}
+
+func (o *Optimizer) authorizeActivationKind(ctx context.Context, agentID id.AgentID, action Action, kind HarnessKind) (IdentityRef, error) {
 	actor, err := o.caller(ctx)
 	if err != nil {
 		return actor, err
@@ -147,7 +168,15 @@ func (o *Optimizer) authorizeActivation(ctx context.Context, agentID id.AgentID,
 	if _, err = id.ParseWithPrefix(agentID.String(), id.PrefixAgent); err != nil {
 		return actor, ErrInvalidSpec
 	}
-	err = o.config.Authorizer.Authorize(copyScopeContext(ctx), action, Resource{Scope: copyScope(cortex.ScopeFromContext(ctx)), AgentID: agentID, Kind: "activation"})
+	normalized, err := ActivationKind(kind)
+	if err != nil {
+		return actor, err
+	}
+	resourceKind := "activation"
+	if normalized == HarnessImprovement {
+		resourceKind = "controller_activation"
+	}
+	err = o.config.Authorizer.Authorize(copyScopeContext(ctx), action, Resource{Scope: copyScope(cortex.ScopeFromContext(ctx)), AgentID: agentID, Kind: resourceKind})
 	return actor, err
 }
 
@@ -156,7 +185,14 @@ func (o *Optimizer) checkCompatibility(ctx context.Context, version HarnessVersi
 	if err != nil {
 		return err
 	}
-	report, err := o.config.Compatibility.Check(copyScopeContext(ctx), *detached)
+	checker := o.config.Compatibility
+	if version.Kind == HarnessImprovement {
+		checker = o.config.ControllerCompatibility
+	}
+	if checker == nil {
+		return ErrUnavailable
+	}
+	report, err := checker.Check(copyScopeContext(ctx), *detached)
 	if err != nil {
 		return err
 	}
@@ -167,19 +203,61 @@ func (o *Optimizer) checkCompatibility(ctx context.Context, version HarnessVersi
 }
 
 func (o *Optimizer) verifyActivationArtifacts(ctx context.Context, decision Decision) error {
-	query := TrialQuery{PageQuery: PageQuery{Limit: 100}, Split: SplitValidation}
+	parent, err := o.config.Repository.GetExperiment(copyScopeContext(ctx), decision.ExperimentID)
+	if err != nil {
+		return err
+	}
 	seen := map[string]bool{}
+	if parent.Spec.Improvement == nil {
+		return o.verifyTrialArtifacts(ctx, parent.ID, decision.AllocationID, seen)
+	}
+	for _, child := range parent.Spec.Improvement.Children {
+		if err := o.verifyTrialArtifacts(ctx, child.ExperimentID, decision.AllocationID, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *Optimizer) authorizeControllerDecision(ctx context.Context, decision Decision, action Action) error {
+	parent, err := o.config.Repository.GetExperiment(copyScopeContext(ctx), decision.ExperimentID)
+	if err != nil {
+		return err
+	}
+	if parent.Spec.Improvement == nil {
+		return nil
+	}
+	for _, child := range parent.Spec.Improvement.Children {
+		_, done, authErr := o.meter.authorizeAction(ctx, child.ExperimentID, action)
+		if authErr != nil {
+			return authErr
+		}
+		done()
+	}
+	allocation, err := o.config.Repository.GetValidationAllocation(ctx, decision.AllocationID)
+	if err != nil {
+		return err
+	}
+	evidence, err := ReadControllerEvidence(ctx, o.config.Repository, parent, allocation)
+	if err != nil {
+		return err
+	}
+	return ValidateControllerDecisionEvidence(parent, allocation, decision, evidence)
+}
+
+func (o *Optimizer) verifyTrialArtifacts(ctx context.Context, experimentID, allocationID id.ID, seen map[string]bool) error {
+	query := TrialQuery{PageQuery: PageQuery{Limit: 100}, Split: SplitValidation}
 	cursors := map[string]bool{}
 	for {
-		page, err := o.config.Repository.ListTrials(copyScopeContext(ctx), decision.ExperimentID, query)
+		page, err := o.config.Repository.ListTrials(copyScopeContext(ctx), experimentID, query)
 		if err != nil {
 			return err
 		}
 		for _, trial := range page.Items {
-			if trial.ExperimentID != decision.ExperimentID {
+			if trial.ExperimentID != experimentID {
 				return ErrIncompleteEvidence
 			}
-			if trial.AllocationID != decision.AllocationID {
+			if trial.AllocationID != allocationID {
 				continue
 			}
 			for _, ref := range TrialArtifactRefs(trial) {
@@ -191,7 +269,7 @@ func (o *Optimizer) verifyActivationArtifacts(ctx context.Context, decision Deci
 					continue
 				}
 				seen[binding] = true
-				if _, verifyErr := o.config.ArtifactVerifier.Verify(copyScopeContext(ctx), decision.ExperimentID, ref); verifyErr != nil {
+				if _, verifyErr := o.config.ArtifactVerifier.Verify(copyScopeContext(ctx), experimentID, ref); verifyErr != nil {
 					return verifyErr
 				}
 			}
@@ -209,7 +287,7 @@ func (o *Optimizer) verifyActivationArtifacts(ctx context.Context, decision Deci
 
 // Deactivate turns off the route even when its previous evidence is unavailable.
 func (o *Optimizer) Deactivate(ctx context.Context, request DeactivationRequest) (*Activation, error) {
-	actor, err := o.authorizeActivation(ctx, request.AgentID, ActionDeactivate)
+	actor, err := o.authorizeActivationKind(ctx, request.AgentID, ActionDeactivate, request.Kind)
 	if err != nil {
 		return nil, err
 	}

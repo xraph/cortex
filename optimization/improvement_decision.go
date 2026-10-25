@@ -74,3 +74,32 @@ func (h *ImprovementPhaseHandler) authorizeComparisonChildren(ctx context.Contex
 	}
 	return nil
 }
+
+func (h *ImprovementPhaseHandler) review(ctx context.Context, item WorkItem) (Transition, error) {
+	parent := item.Experiment
+	if parent.DecisionID.IsNil() {
+		return Transition{}, ErrIncompleteEvidence
+	}
+	if err := h.authorizeComparisonChildren(ctx, parent); err != nil {
+		return Transition{}, err
+	}
+	repo := h.child.config.Repository
+	decision, err := repo.GetDecision(ctx, parent.DecisionID)
+	if err != nil {
+		return Transition{}, err
+	}
+	allocation, err := repo.GetValidationAllocation(ctx, decision.AllocationID)
+	if err != nil {
+		return Transition{}, err
+	}
+	evidence, err := ReadControllerEvidence(ctx, repo, parent, allocation)
+	if err != nil {
+		return Transition{}, err
+	}
+	if err := ValidateControllerDecisionEvidence(parent, allocation, decision, evidence); err != nil {
+		return Transition{}, err
+	}
+	// Discovery learning is already frozen per arm. Finishing the parent does not
+	// expose held-out answers to a controller or publish its private lessons.
+	return Transition{NextState: StateReviewRequired}, nil
+}

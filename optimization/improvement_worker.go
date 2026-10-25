@@ -47,6 +47,8 @@ func (h *ImprovementPhaseHandler) Execute(ctx context.Context, item WorkItem) (T
 		return h.validate(ctx, item)
 	case PhaseDecide:
 		return h.decide(ctx, item)
+	case PhaseReflect:
+		return h.review(ctx, item)
 	default:
 		return Transition{}, ErrUnavailable
 	}

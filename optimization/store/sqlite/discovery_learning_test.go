@@ -69,3 +69,18 @@ func TestControllerDecisionWorker(t *testing.T) {
 		return openTestStore(t, filepath.Join(t.TempDir(), "controller-worker.db"), now)
 	})
 }
+
+func TestControllerAdoption(t *testing.T) {
+	storetest.ControllerAdoption(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "controller-adoption.db"), now)
+	})
+}
+func TestControllerAdoptionRecovery(t *testing.T) {
+	testRecovery(t, storetest.ControllerAdoptionRecovery)
+}
+
+func TestControllerAdoptionArtifactDenial(t *testing.T) {
+	storetest.ControllerAdoptionArtifactDenial(t, func(t *testing.T, now func() time.Time) store.Store {
+		return openTestStore(t, filepath.Join(t.TempDir(), "controller-artifact.db"), now)
+	})
+}
