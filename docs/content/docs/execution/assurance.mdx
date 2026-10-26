@@ -1817,6 +1817,28 @@ processes too; use conditional operations or a declared bounded observation
 window for external services. Passing port fixtures does not qualify a deployed
 grant service or worker.
 
+### Review and control a team
+
+Install `coordination.NewPlanningOperator` with your exact-scope discovery,
+current read fence, scheduling source and command resolvers. Pass it through
+`api.WithPlanning` for `/v1/planning` routes or dashboard `Deps.Planning` for
+`planning.list`, `planning.detail` and `planning.command`. Missing command
+services remain unavailable. The operator does not invent workers, grants,
+allocations or quiescence evidence from browser input.
+
+Details show task dependencies, ownership, budget, review requirements and
+current acceptance. A retained acceptance is rechecked against the original
+result and evidence before it appears as currently accepted. Artifact heads and
+conflicts require a separately authorized exact-resource board read. A changed
+head invalidates a conflict-resolution command.
+
+Keep the same operation ID after a lost acknowledgment. Commands carry expected
+plan, assignment and resource revisions; trusted host resolvers recover the
+original request. Accepting a plan revision can return its historical receipt
+after the graph advances, but still requires current authority. Cancellation
+stops the selected runtime and records the assignment transition. It does not
+release the claim, refund uncertain work or prove external effects have stopped.
+
 ### Recheck readiness at dispatch
 
 Use `coordination.TaskDispatchStore.DispatchReadyTask` to retain dispatch intent

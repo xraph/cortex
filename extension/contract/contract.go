@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/learning"
@@ -39,6 +40,7 @@ type Deps struct {
 	Engine         *engine.Engine
 	AdaptiveReview *engine.AdaptiveReviewer
 	Learning       *learning.Guard
+	Planning       *coordination.PlanningOperator
 	// ExecutionBudget supplies host-owned cumulative limits before preparation.
 	// The callback receives a detached effective agent. Client limits can only
 	// narrow its result; clients cannot supply their own deadline authority.
@@ -89,7 +91,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return checkErr
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage, s.bindOptimization, s.bindAdaptive} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage, s.bindOptimization, s.bindAdaptive, s.bindPlanning} {
 		if checkErr := bind(d); checkErr != nil {
 			return checkErr
 		}

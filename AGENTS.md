@@ -50,10 +50,10 @@ cd extension && GOWORK=off go test -race -count=1 ./...
 |---|---|---|
 | `ci` (shared `xraph/workflows` `go-ci.yml@v1`, Go 1.26) | root | `make test`, `make test-coverage` (race + atomic coverage, 30-minute package timeout), golangci-lint at the version pinned there, `gofmt -l .`, `make vet`, a `go mod tidy` diff, gosec and govulncheck (both gating), and a check that nested modules require cortex at versions the proxy can serve |
 | `format` | whole tree | `goimports -l -local github.com/xraph/cortex .` must print nothing |
-| `submodules` | `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization` | `go mod tidy` diff, `go build ./...`, `go test -race -count=1 ./...` |
+| `submodules` | `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization`, `a2aremote`, `a2aremote/grpcbind` | `go mod tidy` diff, `go build ./...`, `go test -race -count=1 ./...` |
 | `docs` | `docs/` | `pnpm install --frozen-lockfile`, `pnpm types:check`, `pnpm lint`, `pnpm build` |
 
-`a2aremote`, `a2aremote/grpcbind` and `inttest` aren't built, tested or linted in CI. If you touch them, run their tests and `make lint` yourself.
+`a2aremote` and `a2aremote/grpcbind` now run in the sub-module CI matrix. `inttest` is still outside that matrix. Run `make test-integration` when you change it, and run `make lint` locally for every module.
 
 ### Tests and Docker
 

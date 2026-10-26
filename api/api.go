@@ -8,6 +8,7 @@ import (
 
 	"github.com/xraph/forge"
 
+	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/optimization"
 )
@@ -18,6 +19,7 @@ type API struct {
 	contentReads  atomic.Int64
 	eng           *engine.Engine
 	optimization  *optimization.Optimizer
+	planning      *coordination.PlanningOperator
 	router        forge.Router
 }
 
@@ -92,6 +94,9 @@ func (a *API) RegisterRoutes(router forge.Router) error {
 		return err
 	}
 	if err := a.registerConfigRoutes(router); err != nil {
+		return err
+	}
+	if err := a.registerPlanningRoutes(router); err != nil {
 		return err
 	}
 	return a.registerOptimizationRoutes(router)
