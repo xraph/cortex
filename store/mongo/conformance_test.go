@@ -52,6 +52,12 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("ConversationIntegrity", func(t *testing.T) {
+		storetest.ConversationIntegrity(t, s, func(c context.Context, agentID, content string) error {
+			_, err := s.mdb.Collection(colMemories).UpdateMany(c, bson.M{"agent_id": agentID, "kind": "conversation"}, bson.M{"$set": bson.M{"content": content}})
+			return err
+		})
+	})
 	t.Run("HistoricalRunRevision", func(t *testing.T) { testHistoricalRunRevision(t, s) })
 	t.Run("TaskRecoveryAdoption", func(t *testing.T) { storetest.TaskRecoveryAdoption(t, s, assuranceDriver{store: s}) })
 	t.Run("RunRecoveryTransactions", func(t *testing.T) { storetest.RunRecoveryTransactions(t, s, assuranceDriver{store: s}) })

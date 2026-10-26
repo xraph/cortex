@@ -143,10 +143,11 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 		if _, scopeErr := cortex.DecodeStoredScope(models[i].ScopeCanon, [3]string{models[i].ScopeL0, models[i].ScopeL1, models[i].ScopeL2}, len(models[i].ScopeExtra) > 0); scopeErr != nil {
 			return nil, scopeErr
 		}
-		var msg memory.Message
-		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
-			messages = append(messages, msg)
+		msg, decodeErr := memory.DecodeStoredMessage([]byte(models[i].Content))
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
+		messages = append(messages, msg)
 	}
 	return messages, nil
 }

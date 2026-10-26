@@ -191,10 +191,11 @@ func (s *Store) LoadConversation(ctx context.Context, agentID id.AgentID, sessio
 		if _, scopeErr := decodeStoredScope(models[i].ScopeCanon, models[i].ScopeL0, models[i].ScopeL1, models[i].ScopeL2, models[i].ScopeExtra); scopeErr != nil {
 			return nil, scopeErr
 		}
-		var msg memory.Message
-		if err := json.Unmarshal([]byte(models[i].Content), &msg); err == nil {
-			messages = append(messages, msg)
+		msg, decodeErr := memory.DecodeStoredMessage([]byte(models[i].Content))
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
+		messages = append(messages, msg)
 	}
 	return messages, nil
 }

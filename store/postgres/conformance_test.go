@@ -88,6 +88,12 @@ func TestConformance(t *testing.T) {
 		}
 		return s
 	})
+	t.Run("ConversationIntegrity", func(t *testing.T) {
+		storetest.ConversationIntegrity(t, s, func(c context.Context, agentID, content string) error {
+			_, err := s.pgdb.Exec(c, "UPDATE cortex_memories SET content = $1 WHERE agent_id = $2 AND kind = 'conversation'", content, agentID)
+			return err
+		})
+	})
 	t.Run("TaskRecoveryAdoption", func(t *testing.T) { storetest.TaskRecoveryAdoption(t, s, assuranceDriver{store: s}) })
 	t.Run("RunRecoveryTransactions", func(t *testing.T) { storetest.RunRecoveryTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("A2AAskResolutionTransactions", func(t *testing.T) { storetest.A2AAskResolutionTransactions(t, s, assuranceDriver{store: s}) })
