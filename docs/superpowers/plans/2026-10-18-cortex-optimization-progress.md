@@ -2345,3 +2345,32 @@ repository-wide `make l` reports five findings in the runtime chat's concurrent
 held-question changes; every other module passes. The owner has those findings,
 and the final repository-wide rerun is still in progress. Final focused catalog
 and private-access race tests pass in 1.707s, with the operator adapter in 1.375s.
+
+## Catalog transport integration
+
+`GET /v1/optimization/catalog` and the dashboard `optimization.catalog` query
+share the catalog reader. The dashboard requires its independent optimization
+read grant. REST responses use `no-store`. Both preserve current source denials,
+unavailable dependencies and malformed cursor errors.
+
+The REST integration lists approved choices, creates from the same registry,
+reopens SQLite and verifies that revoked evaluation access still excludes the
+plan and denies creation recovery. It also checks kind filters, pagination,
+foreign scopes and duplicate query parameters. The real dashboard HTTP
+dispatcher checks current source access, domain grants and source outages.
+
+Full API race tests pass in 101.153s, and extension race tests pass with the
+contract suite in 61.838s. Both module builds pass. Task 16 still needs concrete
+Sentinel catalog mapping, installed host readiness and preparation composition,
+artifact export and richer review summaries.
+
+The transport modules pin published optimizer `1b6f6bc`. Temporary modfiles with
+all local replacements removed pass catalog race tests (API 2.197s, contract
+1.956s) and both module builds. These checks use labelled fixtures; installed
+Sentinel grants and live provider readiness remain unqualified.
+
+Final scoped formatting and API/extension lint pass. The final repository-wide
+pass reported one shadowed variable in the concurrent runtime change. Its owner
+has corrected the source; that root-only recheck and the remaining nested-module
+lint work are still live under shared lint contention. The transport commit does
+not include runtime files or claim a completed green repository-wide rerun.

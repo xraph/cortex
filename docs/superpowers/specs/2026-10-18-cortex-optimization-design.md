@@ -420,6 +420,14 @@ the original experiment's current state without preparing it again. Current
 creation and catalog grants still apply. Creation saves a draft and runs no
 trials.
 
+Catalog discovery returns immutable references and bounded display metadata.
+It accepts an optional kind, with the same page limits as other operator lists.
+Continuations bind the current scope, caller and kind. The approved registry
+also binds visible registrations, so a source revision or permission change
+requires fresh pagination. Listing does not prepare an experiment. Missing
+configuration and source failures remain errors; ordinary source denials remove
+choices from discovery and still deny creation or retry with those references.
+
 Capability reads accept an optional `experiment_id`. Without it, you get scope
 setup diagnostics. With it, the service checks prerequisites for that frozen
 experiment and derives editable dimensions from its saved policy. The response

@@ -584,3 +584,8 @@ cursor also binds the currently visible registrations. If those registrations
 or grants change, restart pagination after the returned conflict. Missing catalog
 configuration is unavailable; an installed catalog with no permitted choices
 returns an empty, complete page. No total is inferred from pagination.
+
+REST exposes `GET /v1/optimization/catalog`. The dashboard query is
+`optimization.catalog`, with the independent `cortex.optimization.read` grant.
+Both accept the shared catalog input and recheck source permissions on each
+request. REST responses use `no-store`.

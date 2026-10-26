@@ -85,6 +85,7 @@ intents:
 
   - {name: tools.usage, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
 
+  - {name: optimization.catalog, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
   - {name: optimization.capabilities, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
   - {name: optimization.experiments.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
   - {name: optimization.experiments.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
