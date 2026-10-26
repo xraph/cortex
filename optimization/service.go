@@ -66,6 +66,10 @@ func NewOptimizer(config OptimizerConfig, options ...Option) (*Optimizer, error)
 }
 
 func (o *Optimizer) caller(ctx context.Context) (IdentityRef, error) {
+	return currentCaller(ctx, o.config.Caller)
+}
+
+func currentCaller(ctx context.Context, caller CallerIdentity) (IdentityRef, error) {
 	if err := ctx.Err(); err != nil {
 		return IdentityRef{}, err
 	}
@@ -75,7 +79,7 @@ func (o *Optimizer) caller(ctx context.Context) (IdentityRef, error) {
 	if _, err := ScopeKey(cortex.ScopeFromContext(ctx)); err != nil {
 		return IdentityRef{}, err
 	}
-	actor, err := o.config.Caller.Current(copyScopeContext(ctx))
+	actor, err := caller.Current(copyScopeContext(ctx))
 	if err != nil {
 		return IdentityRef{}, err
 	}

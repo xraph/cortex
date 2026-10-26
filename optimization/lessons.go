@@ -63,6 +63,7 @@ type PublicationRequest struct {
 // LessonRevocation permanently withdraws a lesson at the expected local revision.
 // Current actor authorization is checked by the service before this command.
 type LessonRevocation struct {
+	CommandKey       string      `json:"command_key,omitempty"`
 	LessonID         id.ID       `json:"lesson_id"`
 	ExpectedRevision int64       `json:"expected_revision"`
 	Actor            IdentityRef `json:"actor"`
@@ -147,6 +148,7 @@ type PublicationLease struct {
 // PublicationRetry requests another bounded delivery cycle after a failed one.
 // The service stamps Actor from the authenticated caller.
 type PublicationRetry struct {
+	CommandKey         string      `json:"command_key,omitempty"`
 	LessonID           id.ID       `json:"lesson_id"`
 	LocalRevision      int64       `json:"local_revision"`
 	ExpectedGeneration int64       `json:"expected_generation"`

@@ -192,40 +192,5 @@ func (p *Publisher) recordFailure(ctx context.Context, lease PublicationLease, a
 
 // Retry starts another bounded delivery cycle after current host authorization.
 func (p *Publisher) Retry(ctx context.Context, request PublicationRetry) (Publication, error) {
-	var empty Publication
-	if err := ctx.Err(); err != nil {
-		return empty, err
-	}
-	if cortex.ScopeFromContext(ctx).IsZero() {
-		return empty, cortex.ErrNoScope
-	}
-	actor, err := p.config.Caller.Current(copyScopeContext(ctx))
-	if err != nil {
-		return empty, err
-	}
-	if !ValidOpaqueKey(actor.Subject) {
-		return empty, ErrPolicyDenied
-	}
-	request.Actor = actor
-	value, err := p.config.Repository.GetPublication(copyScopeContext(ctx), request.LessonID, request.LocalRevision)
-	if err != nil {
-		return empty, err
-	}
-	resource := Resource{Scope: copyScope(cortex.ScopeFromContext(ctx)), ID: request.LessonID, Kind: "lesson"}
-	if authErr := p.config.Authorizer.Authorize(copyScopeContext(ctx), ActionRetryPublication, resource); authErr != nil {
-		return empty, authErr
-	}
-	action := ActionPublishLesson
-	if value.Operation == PublicationRevoke {
-		action = ActionRevokeLesson
-	}
-	resolved, cleanup, err := p.meter.authorizeAction(ctx, value.ExperimentID, action)
-	if err != nil {
-		return empty, err
-	}
-	defer cleanup()
-	if retryErr := p.config.Repository.Transact(resolved, func(tx Transaction) error { return tx.RetryPublication(request) }); retryErr != nil {
-		return empty, retryErr
-	}
-	return p.config.Repository.GetPublication(resolved, request.LessonID, request.LocalRevision)
+	return (lessonOperator{repository: p.config.Repository, authorizer: p.config.Authorizer, caller: p.config.Caller, meter: p.meter}).retry(ctx, request)
 }

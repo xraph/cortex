@@ -141,6 +141,13 @@ func (tx *transaction) RetryPublication(request optimization.PublicationRetry) e
 	if request.LocalRevision < 1 || request.ExpectedGeneration < 1 || !optimization.ValidOpaqueKey(request.Actor.Subject) || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 512 || !utf8.ValidString(request.Reason) {
 		return optimization.ErrInvalidSpec
 	}
+	digest, repeated, commandErr := tx.lessonCommand(request.CommandKey, optimization.ActionRetryPublication, request)
+	if commandErr != nil {
+		return commandErr
+	}
+	if repeated {
+		return nil
+	}
 	key := publicationKey(request.LessonID, request.LocalRevision)
 	value, ok := tx.data.Publications[key]
 	if !ok {
@@ -167,6 +174,7 @@ func (tx *transaction) RetryPublication(request optimization.PublicationRetry) e
 	value.DeliveryActor = request.Actor
 	tx.data.Publications[key] = value
 	tx.publicationEvent(value, "lesson_publication_retry_requested").Payload = payload
+	tx.rememberLessonCommand(request.CommandKey, digest)
 	return nil
 }
 

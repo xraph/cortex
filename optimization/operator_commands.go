@@ -48,11 +48,22 @@ func operatorTransition(request CommandRequest, action Action, next State) (Tran
 	if _, err := ParseID(request.ExperimentID.String(), PrefixExperiment); err != nil {
 		return Transition{}, err
 	}
-	if request.ExpectedRevision < 1 || !ValidOpaqueKey(request.IdempotencyKey) {
+	if request.ExpectedRevision < 1 {
 		return Transition{}, ErrInvalidSpec
+	}
+	key, err := operatorCommandKey(request.IdempotencyKey)
+	if err != nil {
+		return Transition{}, err
+	}
+	return Transition{ExperimentID: request.ExperimentID, ExpectedRevision: request.ExpectedRevision, NextState: next, IdempotencyKey: key, CommandAction: action}, nil
+}
+
+func operatorCommandKey(value string) (string, error) {
+	if !ValidOpaqueKey(value) {
+		return "", ErrInvalidSpec
 	}
 	// Keep caller-provided keys out of persistent metadata. The namespace also
 	// separates them from existing host and worker transition keys.
-	key := fmt.Sprintf("operator/%x", sha256.Sum256([]byte(request.IdempotencyKey)))
-	return Transition{ExperimentID: request.ExperimentID, ExpectedRevision: request.ExpectedRevision, NextState: next, IdempotencyKey: key, CommandAction: action}, nil
+	key := fmt.Sprintf("operator/%x", sha256.Sum256([]byte(value)))
+	return key, nil
 }

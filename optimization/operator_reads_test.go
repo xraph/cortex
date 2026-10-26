@@ -60,6 +60,12 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 				}
 
 				if purpose != run.PurposeNormal {
+					if _, commandErr := op.RetryLessonCommand(callCtx, optimization.RetryLessonRequest{}); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
+						t.Errorf("private lesson retry reached %s: %v", purpose, commandErr)
+					}
+					if _, commandErr := op.RevokeLessonCommand(callCtx, optimization.RevokeLessonRequest{}); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
+						t.Errorf("private lesson revoke reached %s: %v", purpose, commandErr)
+					}
 					command := optimization.CommandRequest{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 1, IdempotencyKey: "private-command"}
 					commands := []func() (optimization.Experiment, error){
 						func() (optimization.Experiment, error) { return op.StartCommand(callCtx, command) },

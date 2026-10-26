@@ -2116,3 +2116,49 @@ first run found types still being introduced; the second found three formatting
 issues and an unchecked type assertion in those uncommitted files. These runtime
 changes are outside this commit. The preceding foundation commit passed full
 all-module lint before that runtime slice began.
+
+## Lesson retry and revocation command foundations
+
+`RetryLessonCommand` queues another bounded outbox cycle.
+`RevokeLessonCommand` withdraws local eligibility and queues remote revocation in
+one transaction. Neither command calls Fabriq in the request. Shared operator
+adapters take their idempotency keys separately from payload fields.
+
+Lesson commands have a scope-local receipt namespace. Each receipt binds the
+hashed transport key to the action, actor, reason, lesson and revision or delivery
+generation. The receipt survives later delivery cycles, so retrying an old
+command cannot reset a newer cycle's attempt allowance or revive a superseded
+publication. Revocation keeps its existing consumer invalidation behavior.
+
+Retry rechecks the operator after resolving the original requester's current
+authority. Revocation requires the operator's current grant and stays available
+when the original requester cannot be resolved. Trial, evaluator and controller
+contexts cannot invoke either command. The existing publisher and optimizer now
+share retry admission instead of maintaining two authorization paths.
+
+Tests first exposed a command/content digest collision in the revocation receipt;
+the separate digests fix the identical retry conflict. Conformance covers
+competing calls, transaction rollback, changed actors and payloads, cross-action
+key reuse, repeated delivery cycles and private-purpose denial. Reopen tests on
+SQLite, PostgreSQL and MongoDB preserve both retry and revocation receipts.
+These are local outbox checks, not live Fabriq delivery qualification. REST and
+dashboard bindings for these lesson commands remain to be added.
+
+Final scoped formatting, optimizer build and all ten modules' lint pass. The full
+optimizer core race suite passes in 53.734s, operator adapters in 5.123s and
+internal state in 1.188s. Final serial command/reopen checks pass on memory
+(5.215s), SQLite (16.938s), PostgreSQL (18.195s) and MongoDB (23.351s), with the
+private-purpose and adapter checks passing as well.
+
+The first expanded regression run passed memory and PostgreSQL, but disk
+exhaustion interrupted SQLite and the MongoDB container lost its connection.
+Inactive optimizer lint caches were cleared, leaving source files and active
+build directories alone. The fresh SQLite regression run passes in 173.804s.
+
+The fresh expanded MongoDB run passed the operator, retention, publication,
+revocation, command recovery and publication recovery cases. Its last lesson
+creation fixture lost a connection before reaching its assertion. That isolated
+case passes in 9.264s with a private Go build cache. A first isolated attempt had
+failed during vet because shared build-cache files disappeared while compiling.
+The broad MongoDB invocation itself therefore remains a failed run; the isolated
+rerun supplies the missing case evidence rather than replacing that history.

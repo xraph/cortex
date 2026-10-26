@@ -156,6 +156,7 @@ var recordCodecs = []recordCodec{
 	mapCodec("lessons", func(s *scopeData) *map[string]optimization.Lesson { return &s.Lessons }),
 	mapCodec("publications", func(s *scopeData) *map[string]optimization.Publication { return &s.Publications }),
 	mapCodec("publication_requests", func(s *scopeData) *map[string]optimization.PublicationRequest { return &s.PublicationRequests }),
+	mapCodec("lesson_commands", func(s *scopeData) *map[string]string { return &s.LessonCommands }),
 	mapCodec("revocations", func(s *scopeData) *map[string]optimization.LessonRevocation { return &s.Revocations }),
 	nestedCodec("transitions", func(s *scopeData) *map[string]map[string]string { return &s.Transitions }),
 	nestedCodec("receipts", func(s *scopeData) *map[string]map[string]string { return &s.Receipts }),

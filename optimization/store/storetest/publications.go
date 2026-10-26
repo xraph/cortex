@@ -389,6 +389,13 @@ func publicationRequest(bundle optimization.ExperimentBundle, lease optimization
 	return optimization.PublicationRequest{ExperimentID: bundle.Experiment.ID, Lease: lease, Actor: bundle.Experiment.Spec.Requester, RemoteAggregateID: lessonID.String(), Lesson: optimization.Lesson{ID: lessonID, Scope: bundle.Experiment.Spec.Scope, Domain: "reasoning", HarnessSchema: 1, Statement: "Check source evidence before answering.", Applicability: []string{"source-based questions"}, DecisionIDs: []id.ID{decision.ID}, EvidenceClass: optimization.EvidenceExploratory}}
 }
 
+// PublishedLessonFixture creates local lesson evidence and its pending outbox.
+// It does not contact or qualify a remote knowledge provider.
+func PublishedLessonFixture(t *testing.T, factory Factory) (store.Store, context.Context, optimization.PublicationRequest) {
+	t.Helper()
+	return publishedLessonFixture(t, factory)
+}
+
 func publishedLessonFixture(t *testing.T, factory Factory) (store.Store, context.Context, optimization.PublicationRequest) {
 	t.Helper()
 	s, ctx, bundle, lease, decision := decisionFixture(t, factory)

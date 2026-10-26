@@ -17,6 +17,13 @@ func (tx *transaction) RevokeLesson(request optimization.LessonRevocation) error
 	if request.ExpectedRevision != 1 || strings.TrimSpace(request.Actor.Subject) == "" || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 4096 {
 		return optimization.ErrInvalidSpec
 	}
+	commandDigest, repeated, commandErr := tx.lessonCommand(request.CommandKey, optimization.ActionRevokeLesson, request)
+	if commandErr != nil {
+		return commandErr
+	}
+	if repeated {
+		return nil
+	}
 	key := request.LessonID.String()
 	lesson, exists := tx.data.Lessons[key]
 	if !exists {
@@ -78,5 +85,6 @@ func (tx *transaction) RevokeLesson(request optimization.LessonRevocation) error
 		event = tx.appendEvent(experiment, "lesson_consumer_invalidated", request.Actor)
 		event.Resources = append(event.Resources, lesson.ID)
 	}
+	tx.rememberLessonCommand(request.CommandKey, commandDigest)
 	return nil
 }
