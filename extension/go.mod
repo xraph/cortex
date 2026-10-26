@@ -9,7 +9,7 @@ replace github.com/xraph/cortex/sentinel => ../sentinel
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
-	github.com/xraph/cortex/optimization v0.0.0-20261026122752-0b00c24b30ca
+	github.com/xraph/cortex/optimization v0.0.0-20261026130522-186842e2615c
 	github.com/xraph/cortex/sentinel v0.0.0-20261026122752-0b00c24b30ca
 	github.com/xraph/forge v1.13.2-0.20261026124101-97dbf04160fd
 	github.com/xraph/go-utils v1.5.0

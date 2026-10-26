@@ -26,23 +26,34 @@ func (a *API) registerOptimizationCommands(router forge.Router) error {
 			return fmt.Errorf("register optimization command %s: %w", route.name, err)
 		}
 	}
-	return nil
+	return a.registerOptimizationActivationCommands(router)
 }
 
 func optimizationCommand(invoke func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)) func(forge.Context, *operator.LifecycleInput) (*opt.Experiment, error) {
+	handler := optimizationMutation(func(ctx context.Context, in operator.LifecycleInput, key string) (*opt.Experiment, error) {
+		out, err := invoke(ctx, in, key)
+		return &out, err
+	})
 	return func(ctx forge.Context, in *operator.LifecycleInput) (*opt.Experiment, error) {
+		input := *in
+		input.ID = ctx.Param("id")
+		return handler(ctx, &input)
+	}
+}
+
+func optimizationMutation[I, O any](invoke func(context.Context, I, string) (O, error)) func(forge.Context, *I) (O, error) {
+	return func(ctx forge.Context, in *I) (O, error) {
+		var zero O
 		ctx.SetHeader("Cache-Control", "no-store")
 		keys := ctx.Request().Header.Values("Idempotency-Key")
 		if len(keys) != 1 || !opt.ValidOpaqueKey(keys[0]) {
-			return nil, replyOptimizationFailure(ctx, opt.ErrInvalidSpec)
+			return zero, replyOptimizationFailure(ctx, opt.ErrInvalidSpec)
 		}
-		input := *in
-		input.ID = ctx.Param("id")
-		result, err := invoke(ctx.Context(), input, keys[0])
+		out, err := invoke(ctx.Context(), *in, keys[0])
 		if err != nil {
-			return nil, replyOptimizationFailure(ctx, err)
+			return zero, replyOptimizationFailure(ctx, err)
 		}
-		return &result, nil
+		return out, nil
 	}
 }
 

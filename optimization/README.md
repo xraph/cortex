@@ -536,3 +536,17 @@ evidence and compatibility on retries. Deactivation still works when old evidenc
 is unavailable. Private trial, evaluation and controller execution contexts cannot
 change or resolve production routes, and a reviewer identity change during
 activation admission fails before commit.
+
+REST exposes `POST /v1/optimization/activations/activate`, `/rollback` and
+`/deactivate`, with the key in `Idempotency-Key`. Send `agent_id`, `reason` and
+`expected_generation`; zero means that no route generation exists yet. Omit
+`channel` to use `default` and `kind` to use an execution route. Activate also
+requires `version_id`, `version_digest` and `decision_id`. Rollback requires the
+historical activation's `target_id`.
+
+The corresponding dashboard intents are `optimization.activations.activate`,
+`.rollback` and `.deactivate`. Each requires `cortex.optimization.activate` and the
+host's current resource grants. Other Cortex permissions do not grant activation.
+These commands use the same durable audit and envelope-key handling as lifecycle
+commands. Successful receipts invalidate activation history, versions, experiment
+detail, capabilities and events so the review view refreshes current state.

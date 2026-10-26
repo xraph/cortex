@@ -2020,3 +2020,35 @@ operator adapters in 1.351s. Transport bindings are being verified separately.
 
 The active execution, activation and controller regression group passes in
 42.655s. Scoped formatting, full all-module lint and the optimizer build pass.
+
+## Activation transport bindings
+
+REST now exposes Activate, Rollback and Deactivate under
+`/v1/optimization/activations`. Dashboard commands use the matching
+`optimization.activations.*` intents and the independent
+`cortex.optimization.activate` permission. Both transports use the shared adapter
+and lifecycle mutation helpers. Payload IDs cannot replace the transport command identity.
+The API and extension pin the published optimizer foundation at `186842e`.
+
+REST tests execute reviewed activation evidence through SQLite, reopen after
+activation and deactivation, then verify that old retries preserve the disabled
+head and exactly three historical generations. The dashboard matrix checks
+independent permission scopes, absent audit and optimizer dependencies, foreign
+evidence, stale compatibility and current host denial. An outcome-audit failure
+is retried with the original key and returns generation one. Real dashboard HTTP
+requests verify CSRF rejection, historical receipts and the six exact query
+invalidations for all three actions.
+
+Full API race tests pass in 32.260s, extension in 1.737s and contract in 26.639s;
+both module builds pass. The added dashboard HTTP envelope checks pass in 4.420s.
+Final published-dependency tests and all-module lint follow before commit.
+
+Task 16 still needs frozen creation, authorized catalogs and readiness,
+retain-decision and lesson commands, artifact export and richer summaries.
+`optimization.capabilities` is included in the specified activation invalidation
+set but its query is not implemented yet. Tasks 17 and 18 still require the review
+pages and persistent browser qualification.
+
+Final scoped formatting and full all-module lint pass. Public-only dependency
+checks pass API (10.372s), extension (1.752s) and contract (4.117s), followed by
+both builds. Temporary modfiles remove every local replacement for these checks.

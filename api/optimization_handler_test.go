@@ -48,21 +48,7 @@ func optimizationHTTPFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthori
 func optimizationHTTPRecoveryFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthority, opt.ExperimentBundle, context.Context, func() *opt.Optimizer) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "optimization.db")
-	open := func() *optsqlite.Store {
-		drv := sqlitedriver.New()
-		if err := drv.Open(context.Background(), path); err != nil {
-			t.Fatal(err)
-		}
-		db, err := grove.Open(drv)
-		if err != nil {
-			t.Fatal(err)
-		}
-		repo := optsqlite.New(db)
-		if err = repo.Migrate(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		return repo
-	}
+	open := func() *optsqlite.Store { return openOptimizationHTTPStore(t, path) }
 	bundle := storetest.Fixture(t, "http")
 	ctx := cortex.WithScope(context.Background(), bundle.Experiment.Spec.Scope)
 	repo := open()
@@ -220,4 +206,21 @@ func TestOptimizationHTTPPagination(t *testing.T) {
 	if failure.Code != "optimization_unavailable" {
 		t.Fatalf("unavailable: %+v", failure)
 	}
+}
+
+func openOptimizationHTTPStore(t *testing.T, path string) *optsqlite.Store {
+	t.Helper()
+	drv := sqlitedriver.New()
+	if err := drv.Open(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := grove.Open(drv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := optsqlite.New(db)
+	if err = repo.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return repo
 }

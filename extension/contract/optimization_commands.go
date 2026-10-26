@@ -20,17 +20,17 @@ func (s *service) bindOptimizationCommands(d *dispatcher.Dispatcher) error {
 		{"cancel", commands.Cancel},
 		{"resume", commands.Resume},
 	} {
-		if err := optimizationCommand(d, s, "optimization.experiments."+binding.action, binding.invoke); err != nil {
+		if err := optimizationCommand(d, s, "optimization.experiments."+binding.action, "optimization.run", func(in operator.LifecycleInput) string { return in.ID }, binding.invoke); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.bindOptimizationActivationCommands(d)
 }
 
-func optimizationCommand(d *dispatcher.Dispatcher, s *service, name string, invoke func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)) error {
-	return dispatcher.RegisterCommand(d, ContributorName, name, 1, func(ctx context.Context, in operator.LifecycleInput, p dc.Principal) (opt.Experiment, error) {
-		var out opt.Experiment
-		ctx, err := s.context(ctx, p, "optimization.run")
+func optimizationCommand[I, O any](d *dispatcher.Dispatcher, s *service, name, permission string, resource func(I) string, invoke func(context.Context, I, string) (O, error)) error {
+	return dispatcher.RegisterCommand(d, ContributorName, name, 1, func(ctx context.Context, in I, p dc.Principal) (O, error) {
+		var out O
+		ctx, err := s.context(ctx, p, permission)
 		if err != nil {
 			return out, err
 		}
@@ -38,7 +38,7 @@ func optimizationCommand(d *dispatcher.Dispatcher, s *service, name string, invo
 		if !opt.ValidOpaqueKey(key) {
 			return out, optimizationError(opt.ErrInvalidSpec)
 		}
-		err = s.write(ctx, p, name, in.ID, func() error {
+		err = s.write(ctx, p, name, resource(in), func() error {
 			var callErr error
 			out, callErr = invoke(ctx, in, key)
 			return optimizationError(callErr)
