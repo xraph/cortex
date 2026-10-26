@@ -127,27 +127,18 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 	}
 	if runErr != nil {
 		reply.Performative = Failure
-		publicErr := runErr
 		if b.reserved != nil {
-			publicErr = cortex.ErrRunIncomplete
+			reply.Content = recipientFailureContent(d.Receiver.Agent)
+		} else {
+			reply.Content = fmt.Sprintf("%s could not answer: %v", d.Receiver.Agent, runErr)
 		}
-		reply.Content = fmt.Sprintf("%s could not answer: %v", d.Receiver.Agent, publicErr)
 	} else {
 		reply.Performative = Inform
 		reply.Content = out.Output
 	}
 	if b.replyCommitter != nil {
-		committed, commitErr := b.replyCommitter.CommitReservedReply(ctx, d, reply.Content, runErr == nil)
-		if commitErr != nil {
-			return commitErr
-		}
-		d.State, d.DeliveredAt = DeliveryDelivered, &committed.CommittedAt
-		if committed.Fresh {
-			b.hooks.MessageDelivered(ctx, e.ID, d.Receiver.String())
-			b.hooks.MessageSent(ctx, committed.ReplyMessageID, reply.Sender.String(), addressList(reply.Receivers), string(reply.Performative))
-		}
-		b.dispatch.enqueue(committed.ReplyDeliveryID)
-		return nil
+		_, commitErr := b.commitReservedOutcome(ctx, d, e, reply.Content, runErr == nil)
+		return commitErr
 	}
 
 	if err := b.finishDelivery(ctx, d, e, runID); err != nil {

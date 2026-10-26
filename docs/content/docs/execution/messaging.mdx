@@ -463,8 +463,8 @@ authority.
 
 Changed run revisions, replaced or edited suspensions, expired pauses and wrong
 scope fail before a start grant. Expired admitted work and execution that may
-already have started still need host reconciliation. Deferred recipient
-completion and private prepared-team messaging remain open.
+already have started still need host reconciliation. Automatic deferred-recipient
+discovery and private prepared-team messaging remain open.
 
 ### Run recovery in the background
 
@@ -514,3 +514,46 @@ cancellation.
 local active/failure counters. These counters contain no run content or scope
 values. The host still supplies current authorization and installs the service;
 adding `WithA2A` alone does not enable background recovery.
+
+## Complete a deferred recipient's reply
+
+A reserved recipient can pause while its original delivery remains `delivering`.
+After the child finishes through its authorized resume path, use
+`Bus.RecoverRecipient` to publish the retained outcome:
+
+```go
+receipt, err := bus.RecoverRecipient(ctx, deliveryID, authorizeDeliveryRecovery)
+```
+
+The context needs the delivery's exact scope. Configure `RecipientObserver` on
+the same partitioned bus as `ReservedRunner`. The observer reads the original
+child's durable state and returns `RecipientWaiting`, `RecipientSucceeded` or
+`RecipientFailed`. It must validate the captured participant, run identity,
+prepared provenance and current permissions. A read error stays an error and
+leaves the delivery pending; it must not be converted into a failed-child result.
+
+For prepared teams, your observer adapter can call
+`Engine.ObservePreparedRecipient(ctx, request, authorizeRunObservation)`. This
+host API restores the original team snapshot and checks the child, scope,
+participant, parent linkage, budget reservation and usage before returning an
+outcome. It needs no LLM client. It rechecks host permission before returning
+output, reads only the run's published output, and does not change its verification
+status. Terminal observations can read settled reservations; paused children
+still need an unsettled reservation to resume. Closed or expired team authority
+remains a reconciliation condition.
+
+Recovery never reserves, executes or resumes the child. Waiting returns an empty
+receipt. A terminal result uses the same atomic reply commit as immediate
+delivery: the original delivery, reply message, hop charge, reply queue entry and
+receipt change together. Failed-child replies contain a generic failure message;
+private diagnostics are discarded.
+
+Permission is checked before reading the delivery and again after observing the
+child. Concurrent callers receive the same committed reply, with one fresh
+acknowledgment. If the commit acknowledgment is lost, a fresh bus can read that
+receipt and drain the retained queue without observing or executing the child
+again. Lifecycle hooks remain best effort, so receipt recovery does not replay
+them as though they were a durable event log.
+
+This is an explicit host recovery API. Automatic discovery of bound deliveries
+and private prepared-team bus lifecycle wiring remain separate work.

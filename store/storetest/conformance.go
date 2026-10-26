@@ -249,6 +249,8 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("A2AAskResolutionHistory", func(t *testing.T) { testA2AAskResolutionHistory(t, newStore) })
 	t.Run("A2AAskResolutionBus", func(t *testing.T) { testA2AAskResolutionBus(t, newStore) })
 	t.Run("A2AAskResolution", func(t *testing.T) { testA2AAskResolution(t, newStore) })
+	t.Run("A2ADeferredReplyConcurrency", func(t *testing.T) { testA2ADeferredReplyConcurrency(t, newStore) })
+	t.Run("A2ADeferredReply", func(t *testing.T) { testA2ADeferredReply(t, newStore) })
 	t.Run("A2AReservedReplyCommit", func(t *testing.T) { testA2AReservedReplyCommit(t, newStore) })
 	t.Run("A2AReservedDispatchFailures", func(t *testing.T) { testA2AReservedDispatchFailures(t, newStore) })
 	t.Run("A2ARoutingIsolation", func(t *testing.T) { testA2ARoutingIsolation(t, newStore) })

@@ -28,13 +28,14 @@ func (e *Engine) checkOrchestrationBinding(ctx context.Context, key id.AgentRunI
 	return e.checkOrchestrationAuthority(ctx, key, snap, p, budget, false)
 }
 
-// Completed observations may read a settled reservation, but execution and
+// Terminal observations may read a settled reservation, but execution and
 // paused-child resume still require an unsettled reservation.
 func (e *Engine) checkOrchestrationObservation(ctx context.Context, child *run.Run, snap *preparedSnapshot) error {
-	return e.checkOrchestrationAuthority(ctx, child.ID, snap, child.Provenance, child.Budget, child.State == run.StateCompleted)
+	terminal := child.State == run.StateCompleted || child.State == run.StateFailed || child.State == run.StateCancelled || child.State == run.StateIncomplete
+	return e.checkOrchestrationAuthority(ctx, child.ID, snap, child.Provenance, child.Budget, terminal)
 }
 
-func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget, completedObservation bool) error {
+func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRunID, snap *preparedSnapshot, p run.ExecutionProvenance, budget execution.Budget, terminalObservation bool) error {
 	if err := orchestration.CheckCoordinator(ctx); err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRu
 	if err != nil {
 		return err
 	}
-	if account.Policy.ValidateReservation(req) != nil || (reservation.Settlement != nil && !completedObservation) || req.TaskID != key || req.OwnerRef != snap.Agent.Name || !req.Allocation.Covers(allocation) || budget.Deadline.IsZero() || budget.Deadline.After(req.Deadline) || !time.Now().Before(req.Deadline) {
+	if account.Policy.ValidateReservation(req) != nil || (reservation.Settlement != nil && !terminalObservation) || req.TaskID != key || req.OwnerRef != snap.Agent.Name || !req.Allocation.Covers(allocation) || budget.Deadline.IsZero() || budget.Deadline.After(req.Deadline) || !time.Now().Before(req.Deadline) {
 		return cortex.ErrInvalidPrepared
 	}
 	return nil

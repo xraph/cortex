@@ -34,6 +34,19 @@ func (e *Engine) ResumePreparedOrchestration(ctx context.Context, team id.Orches
 	if e.llm == nil {
 		return nil, cortex.ErrNoLLM
 	}
+	runner, err := e.restorePreparedTeam(ctx, team)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithDeadline(ctx, runner.policy.Deadline)
+	defer cancel()
+	return orchestration.NewCoordinatedService(runner, runner, e.store, registryHookEmitter{eng: e}).ResumeContinuation(ctx, team)
+}
+
+func (e *Engine) restorePreparedTeam(ctx context.Context, team id.OrchestrationID) (*preparedTeamRunner, error) {
+	if e.store == nil {
+		return nil, cortex.ErrNoStore
+	}
 	storage, ok := e.store.(orchestration.ContinuationStore)
 	if !ok {
 		return nil, cortex.ErrOrchestrationContinuationUnavailable
@@ -41,6 +54,9 @@ func (e *Engine) ResumePreparedOrchestration(ctx context.Context, team id.Orches
 	c, err := storage.GetOrchestrationContinuation(ctx, team)
 	if err != nil {
 		return nil, err
+	}
+	if c.OrchestrationID != team || c.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
+		return nil, cortex.ErrInvalidContinuation
 	}
 	var saved preparedTeamContinuation
 	if json.Unmarshal(c.Payload, &saved) != nil || saved.SchemaVersion != 1 || saved.Prepared == nil {
@@ -71,19 +87,33 @@ func (e *Engine) ResumePreparedOrchestration(ctx context.Context, team id.Orches
 	if !bytes.Equal(encoded, recorded) || policy.ExecutionID != team {
 		return nil, cortex.ErrInvalidContinuation
 	}
-	ctx, cancel := context.WithDeadline(ctx, policy.Deadline)
-	defer cancel()
 	saved.Options.OrchestrationBudget = nil
-	runner := &preparedTeamRunner{eng: e, policy: policy, view: view, opts: saved.Options}
-	return orchestration.NewCoordinatedService(runner, runner, e.store, registryHookEmitter{eng: e}).ResumeContinuation(ctx, team)
+	return &preparedTeamRunner{eng: e, policy: policy, view: view, opts: saved.Options}, nil
 }
 
 func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in orchestration.InvocationRecord) (*orchestration.AgentResult, error) {
-	child, err := r.eng.store.GetRun(ctx, in.RunID)
+	if in.Intent.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
+		return nil, cortex.ErrInvalidPrepared
+	}
+	child, err := r.observePreparedChild(ctx, in.Intent.AgentName, in.RunID)
 	if err != nil {
 		return nil, err
 	}
-	captured := r.view.Participants[in.Intent.AgentName]
+	if child.State == run.StatePaused || child.State == run.StateRunning {
+		return &orchestration.AgentResult{AgentName: in.Intent.AgentName, RunID: child.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
+	}
+	return orchestrationAgentResult(in.Intent.AgentName, child, nil)
+}
+
+func (r *preparedTeamRunner) observePreparedChild(ctx context.Context, name string, key id.AgentRunID) (*run.Run, error) {
+	child, err := r.eng.store.GetRun(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if child == nil || child.ID != key {
+		return nil, cortex.ErrInvalidPrepared
+	}
+	captured := r.view.Participants[name]
 	if captured == nil {
 		return nil, cortex.ErrInvalidPrepared
 	}
@@ -91,7 +121,7 @@ func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in o
 	if err != nil {
 		return nil, err
 	}
-	if child.AgentID != snap.Agent.ID || child.Scope.Canonical() != in.Intent.Scope.Canonical() || child.Provenance.PreparedDigest != captured.Digest() || child.Provenance.OrchestrationID != r.policy.ExecutionID.String() || child.Provenance.OrchestrationDigest != r.policy.PreparedDigest {
+	if child.AgentID != snap.Agent.ID || child.Scope.Canonical() != cortex.ScopeFromContext(ctx).Canonical() || child.Provenance.PreparedDigest != captured.Digest() || child.Provenance.OrchestrationID != r.policy.ExecutionID.String() || child.Provenance.OrchestrationDigest != r.policy.PreparedDigest {
 		return nil, cortex.ErrInvalidPrepared
 	}
 	team, err := r.eng.store.GetOrchestrationRun(ctx, r.policy.ExecutionID)
@@ -108,8 +138,5 @@ func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in o
 	if usageErr := r.checkUsage(child, allocation); usageErr != nil {
 		return nil, usageErr
 	}
-	if child.State == run.StatePaused || child.State == run.StateRunning {
-		return &orchestration.AgentResult{AgentName: in.Intent.AgentName, RunID: child.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
-	}
-	return orchestrationAgentResult(in.Intent.AgentName, child, nil)
+	return child, nil
 }

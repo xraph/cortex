@@ -13,8 +13,8 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution and expired admissions. Recover paused recipients and
-  integrate the private prepared-team bus. Complete task scheduling, review,
+  started execution and expired admissions. Install deferred recipient recovery
+  with the private prepared-team bus. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
   governed lessons, calibration, operator surfaces and end-to-end benchmarks.
@@ -6960,3 +6960,48 @@ SQLite (4.912s), PostgreSQL (44.598s) and MongoDB (52.476s). The initial owned l
 findings were shadowed or reassigned error variables and were fixed. Concurrent
 optimizer adapter/formatting findings were resolved by their owner before the
 final all-module lint pass. CI qualification remains separate.
+
+### Deferred recipient reply completion
+
+`Bus.RecoverRecipient` observes the original bound child through a configured
+`RecipientObserver` and publishes only a terminal outcome. It requires current
+host authorization for the exact delivery before reads and after observation.
+Waiting remains pending. A storage or authorization error does not become a
+failure reply. Wrong run/agent bindings and unknown states fail without changing
+the delivery; failed-child diagnostics never enter the reply.
+
+Immediate and deferred replies share the existing atomic commit and hook/queue
+adapter. Concurrent callers converge on one reply. A committed receipt takes
+precedence over a stale delivering-row read, and a fresh bus can recover a lost
+commit acknowledgment without another observation or execution. Receipt reads
+do not replay best-effort hooks.
+
+`Engine.ObservePreparedRecipient` restores the original team snapshot and shares
+prepared-child validation with orchestration continuation. It needs no LLM and
+checks parent linkage, frozen participant identity, provenance, scope, current
+budget authority and usage. Current host authority is required before private
+reads and before output. Settled terminal failures can be observed; settled
+paused children remain ineligible for resume. Closed or expired authority still
+requires reconciliation.
+
+TDD evidence includes missing recovery/observation contracts, a failing stale-read
+race, and failed observations of settled terminal failures. The native shared
+suite covers successful, failed and waiting recipients, observation errors,
+permission denial/revocation, invalid bindings/states, lost acknowledgments and
+concurrent callers. Engine integration independently resumes a real prepared
+child, then uses a fresh engine and bus to deliver its retained result without
+reserving or executing it again. The broader prepared-team, reply and recovery
+race checks pass. Final formatting, lint and verification evidence follow below.
+
+Automatic deferred-delivery discovery and private prepared-team bus installation
+remain open. This host API does not close the end-to-end coordination milestone.
+
+Final scoped `make f`, all-ten-module `make l`, root build, docs types/lint/build
+and diff checks pass. Broader engine prepared-team/recovery races passed in
+99.702s; native A2A reply, dispatch, transaction and deferred-recovery races ran
+without skips on SQLite (34.240s), PostgreSQL (4.279s) and MongoDB (4.380s).
+An intermediate rerun exhausted host disk during compilation and lint cache
+writes. Inactive temporary lint caches were reclaimed, then the affected checks
+were rerun serially: A2A (1.175s), engine (7.441s), SQLite (24.226s), root build and
+all-module lint passed. No source or active test directories were removed.
+CI qualification remains separate.

@@ -42,6 +42,8 @@ type BusConfig struct {
 	Roster *Roster
 	// ReservedRunner replaces Runner for partitioned execution with durable admission.
 	ReservedRunner cortex.ReservedAgentRunner
+	// RecipientObserver enables guarded completion of previously paused recipients.
+	RecipientObserver RecipientObserver
 	// OrchestrationID fixes this bus to one routing partition. Zero is global.
 	OrchestrationID id.OrchestrationID
 	// HandoffHandler is required for structured assignments. No ordinary agent
@@ -67,23 +69,24 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
-	resolutions     AskResolutionStore
-	recorder        AtomicMessageStore
-	replyCommitter  ReservedReplyStore
-	roster          *frozenRoster
-	reserved        cortex.ReservedAgentRunner
-	binder          DeliveryRunBinder
-	orchestrationID id.OrchestrationID
-	handoffHandler  HandoffHandler
-	store           Store
-	runner          cortex.AgentRunner
-	resumer         Resumer
-	resolver        Resolver
-	hooks           HookEmitter
-	clock           Clock
-	opts            Options
-	dispatch        *dispatcher
-	metrics         busMetrics
+	recipientObserver RecipientObserver
+	resolutions       AskResolutionStore
+	recorder          AtomicMessageStore
+	replyCommitter    ReservedReplyStore
+	roster            *frozenRoster
+	reserved          cortex.ReservedAgentRunner
+	binder            DeliveryRunBinder
+	orchestrationID   id.OrchestrationID
+	handoffHandler    HandoffHandler
+	store             Store
+	runner            cortex.AgentRunner
+	resumer           Resumer
+	resolver          Resolver
+	hooks             HookEmitter
+	clock             Clock
+	opts              Options
+	dispatch          *dispatcher
+	metrics           busMetrics
 
 	// mu guards transports, which AddTransport appends to after the bus
 	// exists. Registration happens at startup and reads happen once per
@@ -129,6 +132,9 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	if cfg.Runner == nil && cfg.ReservedRunner == nil {
 		return nil, ErrNoRunner
 	}
+	if cfg.RecipientObserver != nil && cfg.ReservedRunner == nil {
+		return nil, cortex.ErrInvalidPrepared
+	}
 	if cfg.ReservedRunner != nil {
 		if cfg.Runner != nil || cfg.OrchestrationID.IsNil() {
 			return nil, cortex.ErrInvalidPrepared
@@ -158,19 +164,20 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		return nil, routingErr
 	}
 	b := &Bus{
-		roster:          roster,
-		reserved:        cfg.ReservedRunner,
-		orchestrationID: cfg.OrchestrationID,
-		handoffHandler:  cfg.HandoffHandler,
-		store:           routing,
-		runner:          cfg.Runner,
-		resumer:         cfg.Resumer,
-		resolver:        cfg.Resolver,
-		hooks:           cfg.Hooks,
-		clock:           cfg.Clock,
-		transports:      cfg.Transports,
-		opts:            cfg.Options.withDefaults(),
-		metrics:         newBusMetrics(cfg.Metrics),
+		recipientObserver: cfg.RecipientObserver,
+		roster:            roster,
+		reserved:          cfg.ReservedRunner,
+		orchestrationID:   cfg.OrchestrationID,
+		handoffHandler:    cfg.HandoffHandler,
+		store:             routing,
+		runner:            cfg.Runner,
+		resumer:           cfg.Resumer,
+		resolver:          cfg.Resolver,
+		hooks:             cfg.Hooks,
+		clock:             cfg.Clock,
+		transports:        cfg.Transports,
+		opts:              cfg.Options.withDefaults(),
+		metrics:           newBusMetrics(cfg.Metrics),
 	}
 	if cfg.ReservedRunner != nil {
 		var supported bool
