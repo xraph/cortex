@@ -19,7 +19,7 @@ import (
 	"github.com/xraph/cortex/verification"
 )
 
-func taskAdjudicationFixture(t *testing.T, s store.Store) (context.Context, coordination.TaskAcceptanceRequest, coordination.Review, coordination.TaskAdjudicationRequest) {
+func taskAdjudicationFixture(t *testing.T, s store.Store, deferred ...*coordination.Submission) (context.Context, coordination.TaskAcceptanceRequest, coordination.Review, coordination.TaskAdjudicationRequest) {
 	config := taskContractConfig(t)
 	var reviewerAgent id.AgentID
 	old := config.Plan
@@ -31,10 +31,27 @@ func taskAdjudicationFixture(t *testing.T, s store.Store) (context.Context, coor
 		p.SchemaVersion = 2
 		p.Tasks[0].Review = &planning.ReviewRequirement{ReviewerAgent: reviewerAgent.String(), ReviewerPrincipal: "reviewer-1", PolicyRevision: "review/1"}
 	}
-	ctx, req := taskAcceptanceFixture(t, s, config)
+	var ctx context.Context
+	var req coordination.TaskAcceptanceRequest
+	if len(deferred) == 0 {
+		ctx, req = taskAcceptanceFixture(t, s, config)
+	} else {
+		var working coordination.Assignment
+		var change coordination.AssignmentChange
+		var job verification.Job
+		ctx, working, change, job = configuredSubmissionFixture(t, s, config)
+		req = finishTaskAcceptanceFixture(ctx, t, s, working, change, job, acceptanceClaimFixture{ID: id.New(coordination.PrefixClaim), Duration: 5 * time.Minute, DeferSubmission: true})
+		current, readErr := s.GetRun(ctx, change.Submission.RunID)
+		require.NoError(t, readErr)
+		*deferred[0] = *change.Submission
+		deferred[0].RunRevision = current.Revision
+	}
 	journal := resultCapability[coordination.AssignmentStore](t, s)
 	subject, err := journal.GetAssignment(ctx, req.AssignmentID)
 	require.NoError(t, err)
+	if len(deferred) != 0 {
+		subject.Submission = deferred[0]
+	}
 	h := subject.Handoff
 	h.ID = id.New(coordination.PrefixHandoff)
 	h.AssignmentID = id.New(coordination.PrefixAssignment)
@@ -163,9 +180,9 @@ func TaskAdjudication(t *testing.T, newStore func(*testing.T) store.Store) {
 	}
 }
 
-func taskCompletionFixture(t *testing.T, s store.Store) (context.Context, coordination.TaskCompletionRequest, coordination.TaskAcceptanceRequest, coordination.Review) {
+func taskCompletionFixture(t *testing.T, s store.Store, deferred ...*coordination.Submission) (context.Context, coordination.TaskCompletionRequest, coordination.TaskAcceptanceRequest, coordination.Review) {
 	t.Helper()
-	ctx, accept, review, _ := taskAdjudicationFixture(t, s)
+	ctx, accept, review, _ := taskAdjudicationFixture(t, s, deferred...)
 	policy := execution.ReservationPolicy{SchemaVersion: 1, PlanID: review.Handoff.PlanID, Scope: review.Handoff.Scope, Limits: execution.Resources{Steps: int64(review.Handoff.Authority.Budget.MaxSteps), Tokens: int64(review.Handoff.Authority.Budget.MaxTokens), ToolCalls: int64(review.Handoff.Authority.Budget.MaxToolCalls), FanOut: 10}, Deadline: review.Handoff.Deadline, TokenOnly: true}
 	budgets := resultCapability[execution.BudgetStore](t, s)
 	require.NoError(t, budgets.CreateReservationPolicy(ctx, policy))

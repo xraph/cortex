@@ -109,6 +109,13 @@ func (s *Repository) validateTaskAdjudication(ctx context.Context, p planning.Pl
 		}
 		return time.Time{}, nil
 	}
+	closed, closureErr := s.GetTaskCompletionSettlement(ctx, req.AssignmentID)
+	if closureErr != nil {
+		return time.Time{}, closureErr
+	}
+	if closed != nil && closed.Abandonment != nil {
+		return time.Time{}, coordination.ErrInvalidTaskAcceptance
+	}
 	if req.SchemaVersion != 2 || req.Adjudication == nil {
 		return time.Time{}, coordination.ErrInvalidTaskAcceptance
 	}

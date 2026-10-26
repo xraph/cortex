@@ -29,9 +29,10 @@ func taskAcceptanceFixture(t *testing.T, backend store.Store, configs ...submiss
 }
 
 type acceptanceClaimFixture struct {
-	ID       id.ID
-	Duration time.Duration
-	Acquire  func(context.Context, coordination.ClaimRequest) (coordination.Claim, error)
+	DeferSubmission bool
+	ID              id.ID
+	Duration        time.Duration
+	Acquire         func(context.Context, coordination.ClaimRequest) (coordination.Claim, error)
 }
 
 func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend store.Store, working coordination.Assignment, change coordination.AssignmentChange, job verification.Job, options ...acceptanceClaimFixture) coordination.TaskAcceptanceRequest {
@@ -50,8 +51,11 @@ func finishTaskAcceptanceFixture(ctx context.Context, t *testing.T, backend stor
 	require.NoError(t, err)
 	dispatch, err := claims.BeginTaskDispatch(ctx, claim.Token(), job.Request.Binding.RunID)
 	require.NoError(t, err)
-	assignment, err := resultCapability[coordination.AssignmentStore](t, backend).AdvanceAssignment(ctx, change)
-	require.NoError(t, err)
+	assignment := working
+	if !fixture.DeferSubmission {
+		assignment, err = resultCapability[coordination.AssignmentStore](t, backend).AdvanceAssignment(ctx, change)
+		require.NoError(t, err)
+	}
 	jobs := resultCapability[verification.JobStore](t, backend)
 	job, err = jobs.ClaimVerificationJob(ctx, verification.JobClaim{JobID: job.Request.ID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "verifier", Duration: 5 * time.Minute})
 	require.NoError(t, err)

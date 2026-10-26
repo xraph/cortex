@@ -30,7 +30,7 @@ func (s *Repository) GetTaskCompletionSettlement(ctx context.Context, assignment
 		return nil, err
 	}
 	var receipt coordination.TaskCompletionSettlement
-	if row.Deleted || len(row.Body) > 32<<10 || json.Unmarshal([]byte(row.Body), &receipt) != nil || receipt.Validate() != nil || receipt.AssignmentID != assignmentID || row.ID != assignmentID.String() || row.Kind != kindTaskCompletionSettlement || row.RunID != receipt.RunID.String() || row.Digest != receipt.Digest {
+	if row.Deleted || len(row.Body) > coordination.MaxHandoffBytes+128<<10 || json.Unmarshal([]byte(row.Body), &receipt) != nil || receipt.Validate() != nil || receipt.AssignmentID != assignmentID || row.ID != assignmentID.String() || row.Kind != kindTaskCompletionSettlement || row.RunID != receipt.RunID.String() || row.Digest != receipt.Digest {
 		return nil, coordination.ErrInvalidReview
 	}
 	return &receipt, nil
@@ -40,6 +40,30 @@ func (s *Repository) GetTaskCompletionSettlement(ctx context.Context, assignment
 // unknown provider usage. Failed or malformed output is still charged. Absence
 // or unfinished execution stays pending; this method never infers quiescence.
 func (s *Repository) SettleTaskCompletion(ctx context.Context, assignmentID id.ID, completionDigest string) (*coordination.TaskCompletionSettlement, error) {
+	return s.settleTaskCompletion(ctx, assignmentID, completionDigest, nil)
+}
+
+// AbandonTaskCompletion records authenticated permanent quiescence. The caller
+// must hold the same execution exclusion fence as every delayed reviewer.
+func (s *Repository) AbandonTaskCompletion(ctx context.Context, request coordination.TaskCompletionAbandonmentRequest) (coordination.TaskCompletionSettlement, error) {
+	req, _, err := request.Freeze()
+	if err != nil {
+		return coordination.TaskCompletionSettlement{}, err
+	}
+	if checkErr := require(ctx, req.Completion.Request.Handoff.Scope); checkErr != nil {
+		return coordination.TaskCompletionSettlement{}, checkErr
+	}
+	result, err := s.settleTaskCompletion(ctx, req.Completion.Request.AssignmentID, req.Completion.Digest, &req)
+	if err != nil {
+		return coordination.TaskCompletionSettlement{}, err
+	}
+	if result == nil {
+		return coordination.TaskCompletionSettlement{}, coordination.ErrReviewConflict
+	}
+	return *result, nil
+}
+
+func (s *Repository) settleTaskCompletion(ctx context.Context, assignmentID id.ID, completionDigest string, abandonment *coordination.TaskCompletionAbandonmentRequest) (*coordination.TaskCompletionSettlement, error) {
 	if !evidence.ValidDigest(completionDigest) {
 		return nil, coordination.ErrInvalidReview
 	}
@@ -58,6 +82,16 @@ func (s *Repository) SettleTaskCompletion(ctx context.Context, assignmentID id.I
 			return readErr
 		}
 		if cached != nil {
+			if abandonment != nil {
+				if cached.Abandonment == nil {
+					return coordination.ErrReviewConflict
+				}
+				_, incoming, freezeErr := abandonment.Freeze()
+				_, retained, retainedErr := cached.Abandonment.Freeze()
+				if freezeErr != nil || retainedErr != nil || incoming != retained {
+					return coordination.ErrReviewConflict
+				}
+			}
 			if cached.CompletionDigest != completionDigest {
 				return coordination.ErrReviewConflict
 			}
@@ -76,37 +110,60 @@ func (s *Repository) SettleTaskCompletion(ctx context.Context, assignmentID id.I
 			return coordination.ErrAssignmentUnavailable
 		}
 		current, readErr := reader.LockSubmissionRun(tc, completion.Request.RunID)
-		if errors.Is(readErr, cortex.ErrRunNotFound) {
-			return nil
-		}
-		if readErr != nil {
+		if readErr != nil && !errors.Is(readErr, cortex.ErrRunNotFound) {
 			return readErr
 		}
 		req := completion.Request
-		agentID, parseErr := id.ParseWithPrefix(req.Handoff.Receiver.Agent, id.PrefixAgent)
-		if parseErr != nil {
-			return coordination.ErrInvalidReview
-		}
-		if checkErr := validatePreparedProposalRun(preparedProposalBinding{RunID: req.RunID, SessionID: req.SessionID, AgentID: agentID, Scope: req.Handoff.Scope, PreparedDigest: req.PreparedDigest, InputDigest: req.InputDigest, NotBefore: completion.ObservedAt, Reservation: req.Reservation}, current); checkErr != nil {
-			return checkErr
-		}
-		if current.Provenance.Purpose != run.PurposeEvaluation || current.Provenance.ParentRunID != req.Handoff.ParentRunID.String() || current.Provenance.AssignmentDigest != req.Handoff.Digest {
-			return coordination.ErrInvalidReview
-		}
-		switch current.State {
-		case run.StateCompleted, run.StateFailed, run.StateCancelled, run.StateIncomplete:
-		default:
-			return nil
+		if current != nil {
+			agentID, parseErr := id.ParseWithPrefix(req.Handoff.Receiver.Agent, id.PrefixAgent)
+			if parseErr != nil {
+				return coordination.ErrInvalidReview
+			}
+			if checkErr := validatePreparedProposalRun(preparedProposalBinding{RunID: req.RunID, SessionID: req.SessionID, AgentID: agentID, Scope: req.Handoff.Scope, PreparedDigest: req.PreparedDigest, InputDigest: req.InputDigest, NotBefore: completion.ObservedAt, Reservation: req.Reservation}, current); checkErr != nil {
+				return checkErr
+			}
+			if current.Provenance.ParentRunID != req.Handoff.ParentRunID.String() || current.Provenance.AssignmentDigest != req.Handoff.Digest {
+				return coordination.ErrInvalidReview
+			}
 		}
 		now := s.clock.Now()
-		if current.CompletedAt == nil || current.CompletedAt.Before(*current.StartedAt) || current.CompletedAt.After(now) {
-			return coordination.ErrInvalidReview
+		var minimum execution.Resources
+		var runRevision int64
+		var runDigest string
+		if abandonment != nil {
+			claim, claimErr := tx.GetTaskClaim(tc, req.Handoff.PlanID, req.Handoff.TaskID)
+			if claimErr != nil {
+				return claimErr
+			}
+			if claim.State == coordination.ClaimCompleted && claim.PlanDigest == req.Handoff.PlanDigest {
+				return coordination.ErrReviewConflict
+			}
+			proof := abandonment.Proof
+			if abandonment.Completion.Digest != completion.Digest || now.Before(proof.ObservedAt) || !now.Before(proof.ExpiresAt) || proof.ObservedAt.Before(completion.ObservedAt) || (current != nil && current.UpdatedAt.After(proof.ObservedAt)) {
+				return coordination.ErrReviewConflict
+			}
+			if current != nil {
+				minimum = preparedProposalUsage(current)
+			}
+		} else {
+			if current == nil {
+				return nil
+			}
+			switch current.State {
+			case run.StateCompleted, run.StateFailed, run.StateCancelled, run.StateIncomplete:
+			default:
+				return nil
+			}
+			if current.CompletedAt == nil || current.CompletedAt.Before(*current.StartedAt) || current.CompletedAt.After(now) {
+				return coordination.ErrInvalidReview
+			}
+			data, marshalErr := json.Marshal(current)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			minimum = preparedProposalUsage(current)
+			runRevision, runDigest = current.Revision, evidence.Digest(data)
 		}
-		data, marshalErr := json.Marshal(current)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		minimum := preparedProposalUsage(current)
 		settlement := execution.Settlement{ReservationID: completion.Reservation.Request.ID, RequestDigest: completion.Reservation.RequestDigest, Minimum: &minimum, Receipt: completion.Digest}
 		frozen, digest, freezeErr := settlement.Freeze()
 		if freezeErr != nil {
@@ -116,16 +173,19 @@ func (s *Repository) SettleTaskCompletion(ctx context.Context, assignmentID id.I
 		if settleErr != nil {
 			return settleErr
 		}
-		saved, sealErr := coordination.SealTaskCompletionSettlement(coordination.TaskCompletionSettlement{SchemaVersion: 1, AssignmentID: assignmentID, CompletionDigest: completionDigest, RunID: current.ID, RunRevision: current.Revision, RunDigest: evidence.Digest(data), Settlement: settled, ObservedAt: s.clock.Now()})
+		saved, sealErr := coordination.SealTaskCompletionSettlement(coordination.TaskCompletionSettlement{SchemaVersion: 1, AssignmentID: assignmentID, CompletionDigest: completionDigest, RunID: req.RunID, RunRevision: runRevision, RunDigest: runDigest, Abandonment: abandonment, Settlement: settled, ObservedAt: s.clock.Now()})
 		if sealErr != nil {
 			return sealErr
 		}
-		row, rowErr := record(kindTaskCompletionSettlement, assignmentID.String(), saved.Digest, current.ID.String(), req.Handoff.Scope, saved)
+		row, rowErr := record(kindTaskCompletionSettlement, assignmentID.String(), saved.Digest, req.RunID.String(), req.Handoff.Scope, saved)
 		if rowErr != nil {
 			return rowErr
 		}
 		if writeErr := tx.driver.Insert(tc, row); writeErr != nil {
 			return writeErr
+		}
+		if abandonment != nil && !s.clock.Now().Before(abandonment.Proof.ExpiresAt) {
+			return coordination.ErrReviewConflict
 		}
 		result = &saved
 		return nil

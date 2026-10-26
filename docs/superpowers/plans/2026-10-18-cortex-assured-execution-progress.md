@@ -89,6 +89,38 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 
 ## Verification log
 
+### Completion closure and bounded reflection, 2026-10-26
+
+The completion worker now handles a finished producer that has not submitted its
+result, resolves the retained submission, and proceeds through independent
+review, adjudication, settlement and guarded acceptance. An integrated SQLite
+engine test runs both submitted and unsubmitted paths through the actual prepared
+reviewer runtime. Restart observes the retained reviewer run without dispatching
+another model call.
+
+A host can close an uncertain reviewer start only with current authenticated
+proof that the worker has been permanently excluded. The durable abandonment
+marker prevents late review acceptance and keeps the full uncertain reservation
+charged. A missing run alone is not proof. SQLite, Postgres and Mongo conformance
+covers absent runs, lost acknowledgements, late successful reviews, expired or
+future proof, wrong admission, scope, denial and duplicate fence callbacks.
+
+Reflection is opt-in through `engine.WithReflection`. It records bounded
+observations and decisions before either model transport starts a step, retains
+assumptions with evidence, and distinguishes fresh service health from unknown
+health. Analytical, reactive and reflective phases have explicit deterministic
+behavior. Unsupported actions fail configuration. User intervention advances the
+control revision without resetting consumed attempts or raising the frozen run
+limits. Replanning uses the current live task claim and the existing shared plan
+account; an integrated test rejects an invented allowance before proposal model
+dispatch. Asking for input stops the run as incomplete.
+
+Focused reflection race tests passed in cognitive, engine, assurance and SQLite.
+The Postgres and Mongo reflection and completion-abandonment matrix passed with
+real containers. The integrated prepared-reviewer test passed under the race
+detector. These checks establish the library paths; installed host fences and
+provider crash recovery still need their own qualification.
+
 ### Independent task review and bounded replanning, 2026-10-26
 
 Plans can now require an independent reviewer before execution begins. The

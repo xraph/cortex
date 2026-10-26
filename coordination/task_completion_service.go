@@ -77,7 +77,9 @@ type TaskCompletionSource interface {
 
 // TaskCompletionServiceConfig bounds an independently scheduled completion loop.
 // Discovery authorizes assignment metadata reads. Pending review returns immediately, leaving
-// worker execution slots free. Callbacks must honor cancellation.
+// worker execution slots free. An optional Abandoner requires a resolver implementing
+// TaskCompletionAbandonmentResolver and an explicit proof-authorized closer.
+// Callbacks must honor cancellation.
 type TaskCompletionServiceConfig struct {
 	Store                                      TaskCompletionServiceStore
 	Discovery                                  TaskCompletionSource
@@ -85,6 +87,7 @@ type TaskCompletionServiceConfig struct {
 	Authority                                  TaskCompletionAuthority
 	Reviewer                                   TaskCompletionReviewer
 	Acceptor                                   TaskCompletionAcceptance
+	Abandoner                                  TaskCompletionAbandoner
 	Interval, DiscoveryTimeout, AttemptTimeout time.Duration
 	MaxInFlight, MaxPerScope                   int
 	ReportError                                func(error)
@@ -100,6 +103,11 @@ type TaskCompletionService struct{ service *TaskService }
 func NewTaskCompletionService(config TaskCompletionServiceConfig) (*TaskCompletionService, error) {
 	if hostport.IsNil(config.Discovery) || hostport.IsNil(config.Store) || hostport.IsNil(config.Resolver) || hostport.IsNil(config.Authority) || hostport.IsNil(config.Reviewer) || hostport.IsNil(config.Acceptor) {
 		return nil, ErrInvalidScheduler
+	}
+	if !hostport.IsNil(config.Abandoner) {
+		if _, ok := config.Resolver.(TaskCompletionAbandonmentResolver); !ok {
+			return nil, ErrInvalidScheduler
+		}
 	}
 	if config.AttemptTimeout == 0 {
 		config.AttemptTimeout = time.Minute
@@ -249,8 +257,31 @@ func finishAssignment(ctx context.Context, config TaskCompletionServiceConfig, s
 	if settleErr != nil {
 		return settleErr
 	}
+	if settled == nil && !hostport.IsNil(config.Abandoner) {
+		resolver, ok := config.Resolver.(TaskCompletionAbandonmentResolver)
+		if !ok {
+			return ErrInvalidScheduler
+		}
+		request, resolveErr := resolver.ResolveTaskCompletionAbandonment(ctx, *completion)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if request != nil {
+			if request.Completion.Digest != completion.Digest {
+				return ErrReviewConflict
+			}
+			closed, closeErr := config.Abandoner.Abandon(ctx, *request)
+			if closeErr != nil {
+				return closeErr
+			}
+			settled = &closed
+		}
+	}
 	if settled != nil && (settled.Validate() != nil || settled.CompletionDigest != completion.Digest || settled.RunID != completion.Request.RunID) {
 		return ErrInvalidReview
+	}
+	if settled != nil && settled.Abandonment != nil {
+		return nil
 	}
 	offered, err := SealTaskCompletion(*completion)
 	if err != nil {

@@ -180,6 +180,14 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			break
 		}
 
+		if stopped, reflectionErr := e.reflectionBoundary(ctx, r, st); stopped {
+			if reflectionErr != nil {
+				e.logWarn("reflection boundary", reflectionErr, log.String("run_id", r.ID.String()))
+			}
+			stopReason = run.StopPolicyUnavailable
+			break
+		}
+
 		stepStart := time.Now().UTC()
 		ctx, stepSpan = e.startStep(runCtx, st.stepIndex)
 		ctx = withTaskCallIndex(ctx, st.stepIndex)
@@ -462,6 +470,14 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		}
 		if limit := cfg.Budget.Check(st.usage, time.Now()); limit != "" {
 			stopReason = run.StopReason(limit)
+			break
+		}
+
+		if stopped, reflectionErr := e.reflectionBoundary(ctx, r, st); stopped {
+			if reflectionErr != nil {
+				e.logWarn("reflection boundary", reflectionErr, log.String("run_id", r.ID.String()))
+			}
+			stopReason = run.StopPolicyUnavailable
 			break
 		}
 
@@ -875,6 +891,7 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 // the failure but log it. A caller with cleanup waiting on the state
 // actually landing calls persistFailure instead.
 func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error, _ time.Time) {
+	e.reflectionErrorBoundary(ctx, r)
 	if err := e.persistFailure(ctx, r, agentID, runErr); err != nil {
 		e.logError("update run on failure", err, log.String("run_id", r.ID.String()))
 	}

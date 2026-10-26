@@ -1,6 +1,6 @@
 // Package cognitive defines persona cognitive settings and trusted operational
-// observations. Persona phases describe intended behavior; the runtime does not
-// yet execute phase transitions or reflection from these settings.
+// observations. Persona phases remain descriptive unless the host opts into
+// the bounded reflection controller with explicit supported strategies.
 package cognitive
 
 // Strategy names an intended thinking approach, not a separate runtime algorithm.

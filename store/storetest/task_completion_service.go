@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/execution"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/session"
 	"github.com/xraph/cortex/store"
@@ -22,7 +23,14 @@ var errCompletionFixture = errors.New("fixture acknowledgment lost")
 
 type completionFixtureStore struct {
 	coordination.TaskCompletionServiceStore
-	lose atomic.Bool
+	lose    atomic.Bool
+	settles atomic.Int32
+}
+
+func (s *completionFixtureStore) SettleTaskCompletion(ctx context.Context, assignmentID id.ID, digest string) (*coordination.TaskCompletionSettlement, error) {
+	result, err := s.TaskCompletionServiceStore.SettleTaskCompletion(ctx, assignmentID, digest)
+	s.settles.Add(1)
+	return result, err
 }
 
 func (s *completionFixtureStore) ReserveTaskCompletion(ctx context.Context, r coordination.TaskCompletionRequest) (coordination.TaskCompletion, error) {
@@ -34,21 +42,33 @@ func (s *completionFixtureStore) ReserveTaskCompletion(ctx context.Context, r co
 }
 
 type completionFixtureResolver struct {
-	request coordination.TaskCompletionRequest
-	accept  coordination.TaskAcceptanceRequest
+	request    coordination.TaskCompletionRequest
+	accept     coordination.TaskAcceptanceRequest
+	submission *coordination.Submission
+	abandon    bool
+}
+
+func (r completionFixtureResolver) ResolveTaskCompletionAbandonment(_ context.Context, c coordination.TaskCompletion) (*coordination.TaskCompletionAbandonmentRequest, error) {
+	if !r.abandon {
+		return nil, nil
+	}
+	proof := completionAbandonment(c)
+	return &proof, nil
 }
 
 func (r completionFixtureResolver) ResolveTaskSubmission(context.Context, coordination.Assignment) (*coordination.Submission, error) {
-	return nil, nil
+	return r.submission, nil
 }
-func (r completionFixtureResolver) ResolveTaskCompletion(context.Context, coordination.Assignment) (*coordination.TaskCompletionRequest, error) {
+func (r completionFixtureResolver) ResolveTaskCompletion(_ context.Context, subject coordination.Assignment) (*coordination.TaskCompletionRequest, error) {
 	req := r.request
+	req.AssignmentRevision, req.AssignmentDigest = subject.Revision, subject.Digest
 	return &req, nil
 }
 func (r completionFixtureResolver) ResolveTaskAcceptance(_ context.Context, c coordination.TaskCompletion, a coordination.TaskAdjudication) (*coordination.TaskAcceptanceRequest, error) {
 	req := r.accept
 	req.SchemaVersion = 2
 	req.ID = c.Request.AcceptanceID
+	req.AssignmentRevision, req.AssignmentDigest = c.Request.AssignmentRevision, c.Request.AssignmentDigest
 	req.Adjudication = &coordination.TaskAdjudicationRef{ID: a.Request.ID, Digest: a.Digest}
 	return &req, nil
 }
@@ -152,6 +172,7 @@ func (r *completionFixtureReviewer) Execute(ctx context.Context, c coordination.
 func (r *completionFixtureReviewer) completionReview(c coordination.TaskCompletion, revision int64, at time.Time) coordination.Review {
 	result := r.template
 	result.ID = c.Request.ReviewID
+	result.SubjectRevision, result.SubjectDigest = c.Request.AssignmentRevision, c.Request.AssignmentDigest
 	result.Handoff = c.Request.Handoff
 	result.RunID = c.Request.RunID
 	result.RunRevision = revision
@@ -187,12 +208,13 @@ func (r *completionFixtureReviewer) Observe(ctx context.Context, c coordination.
 
 // TaskCompletionLifecycle checks restart recovery and uncertain dispatch boundaries.
 func TaskCompletionLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
-	for _, mode := range []string{"complete", "lost_execution_ack", "lost_reservation_ack", "pending", "revoked", "failed", "cancelled", "incomplete", "malformed"} {
+	for _, mode := range []string{"complete", "committed_unsubmitted", "abandoned", "lost_execution_ack", "lost_reservation_ack", "pending", "revoked", "failed", "cancelled", "incomplete", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newStore(t)
-			ctx, req, accept, review := taskCompletionFixture(t, s)
+			fixture := NewTaskCompletionFixture(t, s, mode == "committed_unsubmitted")
+			ctx, req, accept, review := fixture.Context, fixture.Request, fixture.Acceptance, fixture.Review
 			storage := &completionFixtureStore{TaskCompletionServiceStore: resultCapability[coordination.TaskCompletionServiceStore](t, s)}
-			storage.lose.Store(mode == "lost_reservation_ack")
+			storage.lose.Store(mode == "lost_reservation_ack" || mode == "abandoned")
 			reviewer := &completionFixtureReviewer{store: s, template: review, observations: make(chan struct{}, 20), pending: mode == "pending", lose: mode == "lost_execution_ack"}
 			switch mode {
 			case "failed":
@@ -206,12 +228,17 @@ func TaskCompletionLifecycle(t *testing.T, newStore func(*testing.T) store.Store
 			}
 			acceptor := &completionFixtureAcceptor{store: resultCapability[coordination.TaskAcceptanceStore](t, s), done: make(chan struct{})}
 			failures := make(chan error, 20)
-			config := coordination.TaskCompletionServiceConfig{Store: storage, Discovery: completionFixtureSource{req}, Resolver: completionFixtureResolver{req, accept}, Authority: completionFixtureAuthority{deny: mode == "revoked"}, Reviewer: reviewer, Acceptor: acceptor, Interval: time.Millisecond, ReportError: func(err error) {
+			config := coordination.TaskCompletionServiceConfig{Store: storage, Discovery: completionFixtureSource{req}, Resolver: completionFixtureResolver{request: req, accept: accept, submission: &fixture.Submission, abandon: mode == "abandoned"}, Authority: completionFixtureAuthority{deny: mode == "revoked"}, Reviewer: reviewer, Acceptor: acceptor, Interval: time.Millisecond, ReportError: func(err error) {
 				select {
 				case failures <- err:
 				default:
 				}
 			}}
+			if mode == "abandoned" {
+				closer, closeErr := coordination.NewTaskCompletionCloser(resultCapability[coordination.TaskCompletionAbandonmentStore](t, s), completionAbandonmentAuthority{})
+				require.NoError(t, closeErr)
+				config.Abandoner = closer
+			}
 			service, err := coordination.NewTaskCompletionService(config)
 			require.NoError(t, err)
 			require.NoError(t, service.Start(ctx))
@@ -221,7 +248,7 @@ func TaskCompletionLifecycle(t *testing.T, newStore func(*testing.T) store.Store
 				require.NoError(t, service.Stop(stopCtx))
 			}()
 			switch mode {
-			case "complete", "lost_execution_ack":
+			case "complete", "committed_unsubmitted", "lost_execution_ack":
 				select {
 				case <-acceptor.done:
 				case <-time.After(5 * time.Second):
@@ -247,6 +274,20 @@ func TaskCompletionLifecycle(t *testing.T, newStore func(*testing.T) store.Store
 					t.Fatal("invalid reviewer result accepted")
 				default:
 				}
+			case "abandoned":
+				require.Eventually(t, func() bool {
+					closed, closeErr := storage.GetTaskCompletionSettlement(ctx, req.AssignmentID)
+					return closeErr == nil && closed != nil && closed.Abandonment != nil
+				}, 5*time.Second, time.Millisecond)
+				require.Zero(t, reviewer.executions.Load())
+				require.NoError(t, service.Stop(context.Background()))
+				priorSettles := storage.settles.Load()
+				restarted, restartErr := coordination.NewTaskCompletionService(config)
+				require.NoError(t, restartErr)
+				service = restarted
+				require.NoError(t, service.Start(ctx))
+				require.Eventually(t, func() bool { return storage.settles.Load() > priorSettles }, time.Second, time.Millisecond)
+				require.Zero(t, reviewer.executions.Load())
 			case "revoked":
 				select {
 				case <-failures:
