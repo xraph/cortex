@@ -56,6 +56,7 @@ func Run(t *testing.T, factory Factory) {
 	decisions(t, factory)
 	activations(t, factory)
 	activationCommands(t, factory)
+	activationOperator(t, factory)
 	activationDeactivation(t, factory)
 	activeExecution(t, factory)
 	activeTeamExecution(t, factory)

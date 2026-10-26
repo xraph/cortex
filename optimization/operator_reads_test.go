@@ -67,6 +67,22 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 						func() (optimization.Experiment, error) { return op.ResumeCommand(callCtx, command) },
 						func() (optimization.Experiment, error) { return op.Start(callCtx, bundle.Experiment.ID, 1) },
 					}
+					activationCommands := []func() (*optimization.Activation, error){
+						func() (*optimization.Activation, error) {
+							return op.Activate(callCtx, optimization.ActivationRequest{AgentID: bundle.Experiment.Spec.AgentID, Reason: "private activation"})
+						},
+						func() (*optimization.Activation, error) {
+							return op.Rollback(callCtx, optimization.RollbackRequest{AgentID: bundle.Experiment.Spec.AgentID, Reason: "private rollback"})
+						},
+						func() (*optimization.Activation, error) {
+							return op.Deactivate(callCtx, optimization.DeactivationRequest{AgentID: bundle.Experiment.Spec.AgentID, Reason: "private deactivation"})
+						},
+					}
+					for _, invoke := range activationCommands {
+						if _, commandErr := invoke(); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
+							t.Errorf("private activation command reached %s: %v", purpose, commandErr)
+						}
+					}
 					for _, invoke := range commands {
 						if _, commandErr := invoke(); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
 							t.Errorf("private lifecycle command reached %s: %v", purpose, commandErr)

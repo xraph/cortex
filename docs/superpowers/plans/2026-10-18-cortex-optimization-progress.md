@@ -1991,3 +1991,32 @@ module replacement removed in temporary modfiles. Sentinel's metered judge,
 cost-provenance and sequential/parallel reopen-recovery regressions pass in
 201.694s. These checks use deterministic providers and do not qualify a live
 model or billing integration.
+
+## Activation operator identity and admission
+
+Activation adapters now reuse the existing generation transaction and receipt
+records. `ActivateInput`, `RollbackInput` and `ActivationRouteInput` take a
+transport key separately. A versioned hash of that key and exact scope becomes
+the command ID; the store binds it to the actor, action, route, evidence, reason
+and expected generation. Different payloads cannot become different commands
+merely by reusing the same key. Responses are immutable receipts, so callers must
+refresh activation history to determine the current route.
+
+Two service regressions were reproduced and fixed before exposing the adapters.
+Private trial, evaluation and optimization-controller contexts could reach
+activation admission, and a reviewer change during compatibility checks was not
+compared with the original actor. All production activation/resolution paths now
+apply the private-purpose guard. The final reviewer identity is checked after
+requester and evidence authorization, immediately before the transaction.
+
+Reopen tests retry activation, rollback and deactivation after each database
+close. They preserve one event per command and leave a disabled route disabled
+when an old receipt is retried. Concurrent tests allow MongoDB's documented
+bounded fence acquisition to return a conflict; retrying after contention must
+recover the original receipt and cannot append another generation. Final adapter
+and recovery checks pass memory (4.502s), SQLite (15.146s), PostgreSQL (18.884s)
+and MongoDB (25.194s). The full optimizer core race suite passes in 80.612s and
+operator adapters in 1.351s. Transport bindings are being verified separately.
+
+The active execution, activation and controller regression group passes in
+42.655s. Scoped formatting, full all-module lint and the optimizer build pass.

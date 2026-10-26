@@ -521,3 +521,18 @@ If the command commits but its audit outcome cannot be saved, the dashboard
 returns an unavailable error with `command_attempted: true`. Retry the same key
 and payload after audit recovery. The optimizer returns current state without
 repeating the transition. Missing audit configuration fails before a mutation.
+
+The shared `operator.Commands` adapter also provides Activate, Rollback and
+Deactivate. Pass the envelope key separately from `ActivateInput`, `RollbackInput`
+or `ActivationRouteInput`. The adapter derives a stable activation ID from the
+exact scope and key. It does not derive identity from the payload or action, so
+reusing a key for another reviewer, route, action or expected generation fails
+against the stored receipt. Raw keys are not persisted.
+
+Activation responses are immutable command receipts. Read activation history to
+find the current generation after a retry; an older receipt does not mean its
+version is still active. Activation and rollback recheck current grants, retained
+evidence and compatibility on retries. Deactivation still works when old evidence
+is unavailable. Private trial, evaluation and controller execution contexts cannot
+change or resolve production routes, and a reviewer identity change during
+activation admission fails before commit.

@@ -110,9 +110,6 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 		return nil, compatibilityErr
 	}
 	// External checks may take time. Recheck both identities before the atomic write.
-	if _, err = o.authorizeActivationKind(ctx, change.AgentID, action, change.Kind); err != nil {
-		return nil, err
-	}
 	current, done, err := o.meter.authorizeAction(ctx, decision.ExperimentID, action)
 	if err != nil {
 		return nil, err
@@ -120,6 +117,13 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 	defer done()
 	if childErr := o.authorizeControllerDecision(ctx, decision, action); childErr != nil {
 		return nil, childErr
+	}
+	currentActor, err := o.authorizeActivationKind(ctx, change.AgentID, action, change.Kind)
+	if err != nil {
+		return nil, err
+	}
+	if currentActor != actor {
+		return nil, ErrPolicyDenied
 	}
 	var value Activation
 	err = o.config.Repository.Transact(current, func(tx Transaction) error {
@@ -161,6 +165,9 @@ func (o *Optimizer) authorizeActivation(ctx context.Context, agentID id.AgentID,
 }
 
 func (o *Optimizer) authorizeActivationKind(ctx context.Context, agentID id.AgentID, action Action, kind HarnessKind) (IdentityRef, error) {
+	if err := allowOptimizationInvocation(ctx); err != nil {
+		return IdentityRef{}, err
+	}
 	actor, err := o.caller(ctx)
 	if err != nil {
 		return actor, err

@@ -38,3 +38,7 @@ func TestActiveTeamRecovery(t *testing.T) {
 }
 
 func TestOperatorCommandRecovery(t *testing.T) { testRecovery(t, storetest.OperatorCommandRecovery) }
+
+func TestOperatorActivationRecovery(t *testing.T) {
+	testRecovery(t, storetest.OperatorActivationRecovery)
+}

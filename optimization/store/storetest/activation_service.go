@@ -13,11 +13,15 @@ import (
 )
 
 type activationCompatibility struct {
+	afterCheck   func()
 	incompatible bool
 	policy       string
 }
 
 func (c *activationCompatibility) Check(_ context.Context, version optimization.HarnessVersion) (optimization.CompatibilityReport, error) {
+	if c.afterCheck != nil {
+		c.afterCheck()
+	}
 	policy := version.PolicyDigest
 	if c.policy != "" {
 		policy = c.policy
@@ -56,6 +60,16 @@ func activationCommands(t *testing.T, factory Factory) {
 			t.Fatalf("stale activation: %v", err)
 		}
 		compatibility.incompatible = false
+		originalActor := authority.actor
+		compatibility.afterCheck = func() { authority.actor = optimization.IdentityRef{Subject: "substituted-reviewer"} }
+		if _, err = op.Activate(ctx, request); !errors.Is(err, optimization.ErrPolicyDenied) {
+			t.Fatalf("activation attributed to a replaced caller: %v", err)
+		}
+		if _, err = s.GetActivation(ctx, request.AgentID, ""); !errors.Is(err, optimization.ErrNotFound) {
+			t.Fatalf("replaced caller committed activation: %v", err)
+		}
+		authority.actor = originalActor
+		compatibility.afterCheck = nil
 		active, err := op.Activate(ctx, request)
 		if err != nil {
 			t.Fatal(err)
