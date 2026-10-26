@@ -65,8 +65,12 @@ result, never evidence that an answer is correct.
 
 `Engine.RuntimeCapabilities()` and the dashboard's `runtime.detail.assurance` describe process configuration. They report prepared-execution support, publication mode, whether a gate is installed and whether that gate advertises incremental checking. Presence does not certify provider health or effectiveness.
 
-Automatic contextual verification at publication remains unavailable. The explicit
-`VerifyRun` worker below can verify saved candidates. Default preparation freezes collected inputs and checks its source read set for observed changes. Those independent reads are not one transaction.
+Enable `WithRequiredVerification` together with `WithVerificationWorker` to gate
+publication on the frozen acceptance contract. `VerifyRun` also supports explicit
+verification of retained candidates. `WithVerificationRecovery` resumes eligible
+jobs through bounded, authorized discovery after restart. Default preparation
+checks its collected source read set; use `WithAtomicPreparation` when you require
+a consistent store snapshot.
 
 ## Prepared startup failures
 
@@ -153,7 +157,11 @@ Qualify your installed provider, scanner, authorization and storage paths before
 
 ## Evidence and acceptance contracts
 
-You can build independent evaluators with the `evidence` and `verification` packages. Engine verification is still disabled; saving a report does not change a run's status or authorize publication.
+You can build independent evaluators with the `evidence` and `verification`
+packages. Engine verification is opt-in through `WithRequiredVerification` and
+`WithVerificationWorker`. Saving a report alone does not change a run's status or
+authorize publication; the guarded result commit rechecks current evidence and
+grants.
 
 Seal captured bytes with `evidence.Seal`. The reference binds their SHA-256 digest, exact scope, version, producer, sensitivity and retention deadline. Wrap a built-in storage capability with `evidence.NewRepository` and your host authorizer before serving content. Reads check both bytes and metadata, then recheck source access. Built-in storage limits content to one MiB; inject a separate repository for larger artifacts. The authorizer must enforce current grants, sensitivity and retention.
 
@@ -301,8 +309,10 @@ MiB, with at most 256 report IDs and eight MiB of report JSON and evidence bytes
 processed in one attempt.
 
 The required runtime gate and scoped recovery loop below consume this storage
-boundary. Durable public outbox dispatch remains open. Storage alone does not
-change `RunCompleted` hooks or enable contextual verification in capabilities.
+boundary. `WithPublicEventReplay` exposes the retained metadata log to authorized
+readers, including remote subscriptions. Configure the verification services to
+run checks and commit results; the storage capability alone does not enable them
+or turn plugin callbacks into durable delivery.
 
 
 ## Read screened result content
@@ -877,8 +887,10 @@ Required-verification success continues through private candidate capture and
 guarded result commit. The ordinary recording method rejects verification
 results and required candidates. Direct store updates and imported terminal rows
 do not produce these events, and enabling recording does not backfill history.
-Verified-result commits also announce their result artifact. Arbitrary artifact
-producers, approved-content replay and durable hook delivery remain open.
+Verified-result commits also announce their result artifact. Replay carries
+metadata and references. Use `WithResultContent` for a fresh authorized, screened
+content read; the event log does not retain answer bytes or durably deliver plugin
+hooks. Arbitrary artifact producers do not acquire publication authority.
 
 ### Replay verification lifecycle metadata
 
@@ -1032,10 +1044,12 @@ a new verdict for its replacement run. Retried capture, enqueue, cancellation
 and result commits preserve the recorded IDs and sequence; failed transactions
 leave neither state changes nor events behind.
 
-Approved answer-content replay, arbitrary artifact producers and durable
-completion-hook delivery remain open. Remote subscriptions use the same log; see
-[remote messaging](/docs/execution/remote-messaging#follow-durable-metadata). Installed
-browser/proxy reconnect and revocation checks also remain unqualified.
+Remote subscriptions use the same metadata log; see
+[remote messaging](/docs/execution/remote-messaging#follow-durable-metadata).
+Retrieve approved answer content through `WithResultContent`, which repeats
+current authorization and screening. Plugin completion hooks remain best effort,
+and arbitrary artifact producers cannot append approved content. Qualify your
+installed browser/proxy reconnect and revocation behavior separately.
 
 
 ### Require verification before publishing an answer
@@ -1240,9 +1254,13 @@ terminal receipts fail without overwriting history.
 
 Retain journal rows for as long as delayed deliveries or provider effects remain
 possible. The host must retain its operation-to-run mapping, protect direct store
-access and supply the pinned provider adapter. Automatic retries, compensation,
-scheduler fencing and atomic task/event updates remain open work. The crash fixture checks a durable local file write followed by a
-killed process and SQLite recovery; it does not qualify a production provider.
+access and supply the pinned provider adapter. `WithEffectRecovery` reconciles
+sealed effects, while `WithEffectContinuation` admits bounded retries or explicit
+compensation only with current authorization, durable capacity and authenticated
+provider proof. An unknown outcome blocks continuation. Compensation never marks
+the original task successful; returned observations still need normal verification.
+The crash fixture checks a durable local file write followed by a killed process
+and SQLite recovery. Qualify your production provider's guarantees separately.
 
 
 ### Connect effect recovery to engine tools
@@ -1563,10 +1581,13 @@ An identical retry acknowledges the stored observation even after evidence is
 removed; it does not restore access to those bytes. A changed retry conflicts.
 No review count or majority vote marks a task successful.
 
-You still need current host authorization, scheduler ownership checks and a
-review completion policy. The storage capability does not dispatch the reviewer,
-close its assignment or grant access to artifact content. Human adjudication and
-verified task acceptance remain separate operations.
+Use `WithTaskCompletion` with a current host completion policy and
+`Engine.NewTaskReviewRuntime` to admit and execute an independent review through
+the prepared runtime. The service retains review dispatch, adjudication and
+acceptance under their separate guards and shared budget. Observation storage
+alone does not dispatch a reviewer or grant access to artifact content. You still
+supply authenticated reviewer identity, current grants and any required human
+decision.
 
 ### Accept a verified task result
 
@@ -1622,10 +1643,12 @@ restore evidence access or establish continuing freshness.
 A completed claim cannot renew, expire into recovery or be reassigned within the
 same plan revision. A newer plan can acquire a new attempt with an incremented
 fence and fresh verification. Acceptance leaves budget usage reserved until a
-separate settlement establishes actual consumption. It does not dispatch agents,
-deliver public events or implement review adjudication. Required review checks
-belong in the verification contract; advisory agreement cannot supply a pass.
-Production scheduling remains gated by G2 and installed worker qualification.
+separate settlement establishes actual consumption. `WithTaskCompletion` handles
+required independent review and adjudication before acceptance.
+`WithCoordinationEvents` delivers private lifecycle metadata with stable event
+identities and durable acknowledgments. Advisory agreement cannot supply a
+required pass. Production scheduling still requires the G2 gate and qualification
+of your installed workers and authority adapters.
 
 ### Reserve durable task ownership
 
@@ -1785,9 +1808,11 @@ An independently acquired budgeted claim cannot be upgraded into this admission.
 Your host must authenticate the worker and hold current grant and external
 revision guards across storage. Before dispatch, recheck ownership, authority,
 budget and prerequisites. This admission does not invoke an agent or publish the
-event intent, and a historical receipt grants neither permission. Scheduler
-lifecycle, parent cancellation and recovery remain separate integration work.
-The host ports have no default implementation. Their guards must cover other
+event intent, and a historical receipt grants neither permission.
+`WithTaskScheduling` connects fresh admissions to prepared execution;
+`WithClaimRecovery` and the provider/effect recovery services handle expired
+ownership and uncertain calls. `WithCoordinationEvents` delivers the retained
+metadata intents. The host authority ports have no permissive default implementation. Their guards must cover other
 processes too; use conditional operations or a declared bounded observation
 window for external services. Passing port fixtures does not qualify a deployed
 grant service or worker.
@@ -1823,8 +1848,11 @@ This operation creates no child run. Your host still needs current grant and
 external revision guards through dispatch, followed by a runtime adapter that
 creates the reserved child once, rejects an existing unrelated run and checks
 current authority through execution. A historical receipt grants no permission
-to retry effects. Runtime integration, cancellation after intent, recovery,
-public event delivery and installed worker qualification remain open.
+to retry effects. `RunPreparedTask` and `StreamPreparedTask` execute only a
+confirmed fresh child creation, and the task scheduler uses that path. Managed
+recovery reconciles ambiguous work; `WithCoordinationEvents` delivers its retained
+private metadata. You still qualify cancellation, grants and provider proofs in
+your installed worker deployment.
 
 Wrap dispatch storage with `coordination.NewTaskDispatchAdmitter`. Supply a
 `TaskDispatchFence` and `TaskDispatchAuthorizer`; there are no permissive defaults.
@@ -1944,8 +1972,11 @@ The existing ReAct, streaming, suspension and required-verification paths execut
 the child. Provider and tool calls retain the task marker and require the live
 lease below. A failed verifier keeps the candidate private. Completing the child
 does not accept the task, settle shared reservations or qualify a host adapter;
-those remain separate coordination steps. Durable recovery for ambiguous starts
-and `Scheduler.Tick` integration are still required.
+those remain separate coordination steps. `WithTaskScheduling` invokes this path
+only after fresh admission. Configure `WithProviderRecovery`, `WithEffectRecovery`
+and `WithTaskAdoption` for eligible sealed work, `WithTaskSettlement` for accounting,
+and `WithTaskRetirement` for authenticated unsuccessful closure. Recovery never
+redispatches a child from an ambiguous creation acknowledgment.
 
 ### Hold task authority through each call
 
@@ -1988,8 +2019,9 @@ uncertain-outcome path.
 
 This guard does not settle shared usage or authorize a retry.
 The runtime records task calls in the durable journal described below. Its fixture tests do not qualify an installed identity or lease service.
-The admitted-task entry points above use this guard. Durable recovery and
-installed host qualification still need integration.
+The admitted-task entry points above use this guard. Configure the managed
+provider/effect recovery, adoption, settlement and retirement services for sealed
+work. Your installed identity, lease and proof adapters still need qualification.
 
 ### Retain call observations for recovery
 
@@ -2040,5 +2072,7 @@ be hidden behind the end-of-stream marker.
 Journal errors stop execution. A tool with an ambiguous start or return stops
 further effects through the uncertain-outcome path. Completion is written while
 the lease is held, but it only describes the local callback: later lease-release
-failure still makes execution uncertain. Provider recovery, shared settlement
-and scheduler recovery remain separate work.
+failure still makes execution uncertain. `WithProviderRecovery`,
+`WithTaskSettlement` and `WithClaimRecovery` own the separate reconciliation,
+accounting and ownership transitions. Supply current host authority, authenticated
+proofs and discovery that includes unresolved historical work.

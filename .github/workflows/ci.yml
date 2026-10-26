@@ -73,6 +73,8 @@ jobs:
           - integrations/fabriq
           - integrations/sandbox
           - optimization
+          - a2aremote
+          - a2aremote/grpcbind
 
     defaults:
       run:

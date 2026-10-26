@@ -4,49 +4,39 @@ Plan: `2026-10-18-cortex-assured-execution.md`. Implementation baseline: `cd4c74
 
 ## Completion boundary, 2026-10-26
 
-The four-stage program is incomplete. Passing packet tests does not close a stage
-gate. The following list groups the remaining work by deliverable so you can see
-the path to acceptance without reading the chronological evidence below.
+The four-stage program is incomplete. The remaining work is integration and
+acceptance of the implemented mechanisms. The fixed assurance corpus and reporting path are implemented; their fixture report is synthetic, not an installed accuracy claim.
+The chronological entries below describe each packet at its original revision;
+the current list here supersedes their old implementation-gap statements.
 
-- Trust: the installed Ollama provider and bounded publication scanner now pass
-  the recorded host matrix below. Finish outage and revocation qualification,
-  then close G1 against the integrated revision.
-- Verification: finish evaluator and effect recovery, concrete host adapters,
-  durable public delivery and installed review flows. Live Linux sandbox
-  qualification remains deferred by the user's worker-selection decision.
-- Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution. Host-authenticated closure can terminate an uncertain start
-  as incomplete. Captured team answers now wait for verification and use current
-  guarded result reads before advancing; successful recovery before durable
-  capture still needs authenticated result evidence. Expired admissions that
-  never started terminate
-  atomically. Private prepared-team messaging and
-  durable held-question release are wired; installed recovery qualification is
-  still open. Complete task scheduling, review,
-  effect reconciliation, durable events and bounded replanning integration.
-- Adaptation: complete operational capability/context and reflection integration,
-  governed lessons, calibration, operator surfaces and end-to-end benchmarks.
-  An opt-in capability tool now observes the frozen allowlist, current visibility,
-  executor registration and remaining limits through the normal tool path.
-  Conversation read failures now stop ordinary execution before provider dispatch;
-  context budgets now select initial history, preserve source identities and
-  recount complete requests before dispatch. Frozen tokenizer revisions and
-  selection records are checked on resume. Extractive summaries now preserve
-  original private history and required constraints. Provider tokenizer
-  qualification and installed context flows remain open.
-  Optimization implementation and evidence remain in its separate progress ledger.
-- Acceptance: run the installed API/dashboard and provider flows, crash recovery,
-  denial/revocation paths, security corpus, cost/latency measurements and rollout
-  checks. CI must pass for the integrated revision. Local packet checks cannot
-  substitute for this evidence.
+| Stage | Implemented | Remaining acceptance work |
+| --- | --- | --- |
+| 1: trustworthy execution | Frozen preparation, budgets, truthful outcomes, buffered screening, scoped transports and strict delegation | Integrated CI, final installed outage/revocation matrix |
+| 2: verified results | Private candidate capture, independent checks, atomic result/outbox commit, guarded content reads, durable evaluator recovery, broker and concrete grading adapter | Installed evaluator/export composition; live Linux isolation remains user-deferred |
+| 3: durable coordination | Claims, renewals, review adjudication, accepted dependency checks, shared budgets, effect reconciliation and continuation, retirement, bounded replanning, artifact board and durable team events | Team operator/API/UI integration and installed planner-producer-reviewer restart/revocation journey |
+| 4: governed adaptation | Operational context, reflection, retained assumptions, constrained summaries, governed lessons, frozen reliability cohorts and existing optimizer lifecycle | Installed retention pin, optimizer capability/catalog composition, improvement activation/rollback journey and final operator review |
 
-The runtime now connects retained answers, guarded resume admissions and private
-prepared-team messaging, including recovery of interrupted question release.
-The next coordination boundary is recovery of results lost before durable
-capture, followed by installed qualification. Captured-result recovery reuses
-the verification worker and guarded result reader. Incomplete closure requires host
-proof of permanent worker and tool quiescence; local fixtures do not supply that
-proof for installed providers.
+The selected installed host is the Forge dashboard demo with the real pinned
+Ollama Qwen3 4B model and the bounded `local-publication-1` scanner. Its narrow
+warehouse-record workflow now passes generation, independent fixed-value/schema/
+context checks, guarded publication, metadata replay, lesson acceptance/revocation,
+reader permission and foreign-scope denial. A deliberately wrong real-model
+answer remains uncommitted. Restarting with a different source revision denies
+historical content on both the restarted operator and the old reader process.
+These checks do not estimate general model accuracy or qualify production identity.
+
+The local graded-job adapter retains dispatch intents and original job identities.
+Recovery inspects the original job; it cannot redispatch an ambiguous submission.
+SQLite, PostgreSQL and MongoDB tests verify that deleted or expired observation
+artifacts invalidate current result reads. Candidate/grader process isolation
+still requires the Linux worker that the user chose to configure later.
+
+Current commits include `70a53cf` (operator contracts), `d4f476b` (artifact board
+and team events), and `e3f594c` (durable grading and report observations). All-module
+lint and focused race checks passed before these commits. Real PostgreSQL and
+MongoDB conformance checks ran. Exact integrated-head CI and the installed team
+and improvement flows still need to pass before closing their stage gates.
+
 Production verification rollout remains disabled. No completion percentage or
 production readiness is claimed.
 

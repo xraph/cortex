@@ -1,0 +1,763 @@
+{
+  "origin": "TestAssuranceFixtureArtifact: synthetic authenticated telemetry, no model calls",
+  "mode": "deterministic_fixture",
+  "corpus_revision": "assurance-corpus-v1",
+  "arms": [
+    {
+      "arm": {
+        "id": "unchecked",
+        "verification": false,
+        "reflection": false,
+        "memory": false,
+        "team": false
+      },
+      "metrics": {
+        "planned": 12,
+        "calibration": {
+          "successes": 11,
+          "failures": 0,
+          "missing": 1,
+          "grader_errors": 0,
+          "cancelled": 0,
+          "estimate": 0.9166666666666666,
+          "interval": {
+            "kind": "confidence",
+            "lower": 0.646120088858883,
+            "upper": 0.9851349055950829,
+            "level": 0.95,
+            "method_revision": "wilson-confirmed-planned-v1"
+          },
+          "predicted_trials": 0,
+          "bins": [
+            {
+              "lower": 0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.2,
+              "upper": 0.3,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.3,
+              "upper": 0.4,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.7,
+              "upper": 0.8,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.9,
+              "upper": 1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            }
+          ]
+        },
+        "coverage": {
+          "claims": 11,
+          "verification": 11,
+          "abstention": 11,
+          "recovery": 2,
+          "security": 11,
+          "latency": 11,
+          "cost": 11
+        },
+        "false_success": {
+          "numerator": 0,
+          "denominator": 11,
+          "value": 0
+        },
+        "unresolved_success_claims": 0,
+        "verified_task_success": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "abstention": {
+          "numerator": 0,
+          "denominator": 11,
+          "value": 0
+        },
+        "selective_accuracy": {
+          "numerator": 11,
+          "denominator": 11,
+          "value": 1
+        },
+        "recovery": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "required_security_trials": 5,
+        "security_observed": 5,
+        "security_status": "zero_observed_violations",
+        "unauthorized_operations": 0,
+        "secret_leaks": 0,
+        "artifact_substitutions": 0,
+        "duplicate_effects": 0,
+        "unsafe_publications": 0,
+        "p50_ms": 7,
+        "p95_ms": 12,
+        "known_cost_micros": {
+          "USD": 1100
+        },
+        "total_cost_micros": null,
+        "cost_per_verified_micros": null
+      }
+    },
+    {
+      "arm": {
+        "id": "verification",
+        "verification": true,
+        "reflection": false,
+        "memory": false,
+        "team": false
+      },
+      "metrics": {
+        "planned": 12,
+        "calibration": {
+          "successes": 12,
+          "failures": 0,
+          "missing": 0,
+          "grader_errors": 0,
+          "cancelled": 0,
+          "estimate": 1,
+          "interval": {
+            "kind": "confidence",
+            "lower": 0.7575059933447592,
+            "upper": 1,
+            "level": 0.95,
+            "method_revision": "wilson-confirmed-planned-v1"
+          },
+          "predicted_trials": 0,
+          "bins": [
+            {
+              "lower": 0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.2,
+              "upper": 0.3,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.3,
+              "upper": 0.4,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.7,
+              "upper": 0.8,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.9,
+              "upper": 1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            }
+          ]
+        },
+        "coverage": {
+          "claims": 12,
+          "verification": 12,
+          "abstention": 12,
+          "recovery": 2,
+          "security": 12,
+          "latency": 12,
+          "cost": 12
+        },
+        "false_success": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "unresolved_success_claims": 0,
+        "verified_task_success": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "abstention": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "selective_accuracy": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "recovery": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "required_security_trials": 5,
+        "security_observed": 5,
+        "security_status": "zero_observed_violations",
+        "unauthorized_operations": 0,
+        "secret_leaks": 0,
+        "artifact_substitutions": 0,
+        "duplicate_effects": 0,
+        "unsafe_publications": 0,
+        "p50_ms": 18,
+        "p95_ms": 24,
+        "known_cost_micros": {
+          "USD": 1200
+        },
+        "total_cost_micros": 1200,
+        "cost_per_verified_micros": 100
+      }
+    },
+    {
+      "arm": {
+        "id": "reflection",
+        "verification": true,
+        "reflection": true,
+        "memory": false,
+        "team": false
+      },
+      "metrics": {
+        "planned": 12,
+        "calibration": {
+          "successes": 12,
+          "failures": 0,
+          "missing": 0,
+          "grader_errors": 0,
+          "cancelled": 0,
+          "estimate": 1,
+          "interval": {
+            "kind": "confidence",
+            "lower": 0.7575059933447592,
+            "upper": 1,
+            "level": 0.95,
+            "method_revision": "wilson-confirmed-planned-v1"
+          },
+          "predicted_trials": 0,
+          "bins": [
+            {
+              "lower": 0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.2,
+              "upper": 0.3,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.3,
+              "upper": 0.4,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.7,
+              "upper": 0.8,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.9,
+              "upper": 1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            }
+          ]
+        },
+        "coverage": {
+          "claims": 12,
+          "verification": 12,
+          "abstention": 12,
+          "recovery": 2,
+          "security": 12,
+          "latency": 12,
+          "cost": 12
+        },
+        "false_success": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "unresolved_success_claims": 0,
+        "verified_task_success": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "abstention": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "selective_accuracy": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "recovery": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "required_security_trials": 5,
+        "security_observed": 5,
+        "security_status": "zero_observed_violations",
+        "unauthorized_operations": 0,
+        "secret_leaks": 0,
+        "artifact_substitutions": 0,
+        "duplicate_effects": 0,
+        "unsafe_publications": 0,
+        "p50_ms": 30,
+        "p95_ms": 36,
+        "known_cost_micros": {
+          "USD": 1200
+        },
+        "total_cost_micros": 1200,
+        "cost_per_verified_micros": 100
+      }
+    },
+    {
+      "arm": {
+        "id": "memory",
+        "verification": true,
+        "reflection": false,
+        "memory": true,
+        "team": false
+      },
+      "metrics": {
+        "planned": 12,
+        "calibration": {
+          "successes": 12,
+          "failures": 0,
+          "missing": 0,
+          "grader_errors": 0,
+          "cancelled": 0,
+          "estimate": 1,
+          "interval": {
+            "kind": "confidence",
+            "lower": 0.7575059933447592,
+            "upper": 1,
+            "level": 0.95,
+            "method_revision": "wilson-confirmed-planned-v1"
+          },
+          "predicted_trials": 0,
+          "bins": [
+            {
+              "lower": 0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.2,
+              "upper": 0.3,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.3,
+              "upper": 0.4,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.7,
+              "upper": 0.8,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.9,
+              "upper": 1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            }
+          ]
+        },
+        "coverage": {
+          "claims": 12,
+          "verification": 12,
+          "abstention": 12,
+          "recovery": 2,
+          "security": 12,
+          "latency": 12,
+          "cost": 12
+        },
+        "false_success": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "unresolved_success_claims": 0,
+        "verified_task_success": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "abstention": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "selective_accuracy": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "recovery": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "required_security_trials": 5,
+        "security_observed": 5,
+        "security_status": "zero_observed_violations",
+        "unauthorized_operations": 0,
+        "secret_leaks": 0,
+        "artifact_substitutions": 0,
+        "duplicate_effects": 0,
+        "unsafe_publications": 0,
+        "p50_ms": 42,
+        "p95_ms": 48,
+        "known_cost_micros": {
+          "USD": 1200
+        },
+        "total_cost_micros": 1200,
+        "cost_per_verified_micros": 100
+      }
+    },
+    {
+      "arm": {
+        "id": "team",
+        "verification": true,
+        "reflection": false,
+        "memory": false,
+        "team": true
+      },
+      "metrics": {
+        "planned": 12,
+        "calibration": {
+          "successes": 12,
+          "failures": 0,
+          "missing": 0,
+          "grader_errors": 0,
+          "cancelled": 0,
+          "estimate": 1,
+          "interval": {
+            "kind": "confidence",
+            "lower": 0.7575059933447592,
+            "upper": 1,
+            "level": 0.95,
+            "method_revision": "wilson-confirmed-planned-v1"
+          },
+          "predicted_trials": 0,
+          "bins": [
+            {
+              "lower": 0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.2,
+              "upper": 0.3,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.3,
+              "upper": 0.4,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.7,
+              "upper": 0.8,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            },
+            {
+              "lower": 0.9,
+              "upper": 1,
+              "count": 0,
+              "mean_prediction": 0,
+              "success_rate": 0
+            }
+          ]
+        },
+        "coverage": {
+          "claims": 12,
+          "verification": 12,
+          "abstention": 12,
+          "recovery": 2,
+          "security": 12,
+          "latency": 12,
+          "cost": 12
+        },
+        "false_success": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "unresolved_success_claims": 0,
+        "verified_task_success": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "abstention": {
+          "numerator": 0,
+          "denominator": 12,
+          "value": 0
+        },
+        "selective_accuracy": {
+          "numerator": 12,
+          "denominator": 12,
+          "value": 1
+        },
+        "recovery": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "required_security_trials": 5,
+        "security_observed": 5,
+        "security_status": "zero_observed_violations",
+        "unauthorized_operations": 0,
+        "secret_leaks": 0,
+        "artifact_substitutions": 0,
+        "duplicate_effects": 0,
+        "unsafe_publications": 0,
+        "p50_ms": 54,
+        "p95_ms": 60,
+        "known_cost_micros": {
+          "USD": 1200
+        },
+        "total_cost_micros": 1200,
+        "cost_per_verified_micros": 100
+      }
+    }
+  ],
+  "missing_comparisons": [
+    "verification",
+    "reflection",
+    "memory",
+    "team"
+  ]
+}

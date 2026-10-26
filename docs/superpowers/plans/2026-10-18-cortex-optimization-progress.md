@@ -22,7 +22,7 @@ passed its full qualification gate.
 
 | Task | Implementation | Remaining gate |
 | --- | --- | --- |
-| 1: prepared execution | Published prepared execution and current runtime snapshot contracts | Host/source consistency qualification with the runtime owner |
+| 1: prepared execution | Published prepared execution, atomic built-in store snapshots and current runtime binding checks | Installed external-source and provider consistency qualification |
 | 2: optimization contracts | Sealed versions, specifications, policies and validated service configuration | Final public API and release audit |
 | 3: atomic memory storage | Transactional leases, usage, trials, decisions, activation and lesson records | Final conformance audit against all plan requirements |
 | 4: durable persistence | SQLite, PostgreSQL and Mongo; indexed reads, retention and deletion recovery | Throughput and full-system qualification |
@@ -36,11 +36,17 @@ passed its full qualification gate.
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
 | 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
 | 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
-| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces and reviewed production routing pass the frozen database race gate | Private messaging support and final qualification |
-| 16: API and contracts | Authenticated HTTP/dashboard reads and durable lifecycle command services pass module tests | Catalogs, readiness, review summaries, command transport bindings and final contract audit |
+| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces, reviewed production routing and private prepared-team messaging are implemented | Installed team routing, billing and full-system qualification |
+| 16: API and contracts | Authenticated reads, lifecycle/activation/lesson commands, scoped capabilities, frozen creation and authorized catalog transport are implemented | Concrete installed readiness and preparation composition, governed artifact export, richer review summaries and final contract audit |
 | 17-18: dashboard and browser flows | Designed | Review UI and persistent browser qualification |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
+
+The table reflects the current implementation audit. The dated entries below
+preserve what was known at each checkpoint; their earlier pending-work statements
+do not override later code. Runtime foundations, experiment/adoption services and
+operator transport can be reused by assured execution. Host adapters, dashboard
+review workflows and installed qualification still need their own evidence.
 
 ## Sentinel evidence
 
