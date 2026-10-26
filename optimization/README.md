@@ -503,3 +503,21 @@ the service checks the operator's identity and grant again before committing.
 The existing `Start`, `Cancel`, `Pause` and `Resume` methods retain their generated
 keys for host callers. Both command paths refuse evaluation, optimization trial
 and optimization controller execution contexts.
+
+REST lifecycle commands use `POST /v1/optimization/experiments/:id/start`,
+`/cancel` and `/resume`. Send `expected_revision` in JSON and exactly one
+`Idempotency-Key` header. The URL determines the experiment; a body `id` cannot
+redirect the command. A body `idempotency_key` cannot supply a missing header.
+
+Dashboard intents are `optimization.experiments.start`, `.cancel` and `.resume`.
+Send `id` and `expected_revision` in the payload and keep the key in the command
+envelope. These intents require `cortex.optimization.run`, the optimizer's
+current host grants and a durable `Deps.Audit` recorder. They bypass Forge's
+generic response cache so every retry reaches the optimizer's durable receipt
+and current authorization checks. Successful responses invalidate experiment,
+trial, comparison and event queries.
+
+If the command commits but its audit outcome cannot be saved, the dashboard
+returns an unavailable error with `command_attempted: true`. Retry the same key
+and payload after audit recovery. The optimizer returns current state without
+repeating the transition. Missing audit configuration fails before a mutation.

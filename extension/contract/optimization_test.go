@@ -44,7 +44,8 @@ func (*optimizationTestAuthority) Execute(context.Context, opt.WorkItem) (opt.Tr
 	return opt.Transition{}, opt.ErrUnavailable
 }
 
-func TestOptimizationReadContracts(t *testing.T) {
+func optimizationContractFixture(t *testing.T) (*opt.Optimizer, *optimizationTestAuthority, opt.ExperimentBundle, dc.Principal) {
+	t.Helper()
 	repo, err := memory.New()
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +61,11 @@ func TestOptimizationReadContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return service, auth, bundle, dc.Principal{User: &dashauth.UserInfo{Subject: "fixture", Scopes: []string{"cortex.optimization.read"}}, Claims: map[string]any{"cortex_scope": bundle.Experiment.Spec.Scope}}
+}
+
+func TestOptimizationReadContracts(t *testing.T) {
+	service, auth, bundle, p := optimizationContractFixture(t)
 	e, err := engine.New(engine.WithStore(scopespy.New()))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +78,6 @@ func TestOptimizationReadContracts(t *testing.T) {
 		return d
 	}
 	d, unavailable := create(service), create(nil)
-	p := dc.Principal{User: &dashauth.UserInfo{Subject: "fixture", Scopes: []string{"cortex.optimization.read"}}, Claims: map[string]any{"cortex_scope": bundle.Experiment.Spec.Scope}}
 	key := bundle.Experiment.ID.String()
 	cases := []struct {
 		intent  string

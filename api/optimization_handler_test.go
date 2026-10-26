@@ -41,6 +41,12 @@ func (*optimizationAuthority) Execute(context.Context, opt.WorkItem) (opt.Transi
 
 func optimizationHTTPFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthority, opt.ExperimentBundle, context.Context) {
 	t.Helper()
+	service, auth, bundle, ctx, _ := optimizationHTTPRecoveryFixture(t)
+	return service, auth, bundle, ctx
+}
+
+func optimizationHTTPRecoveryFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthority, opt.ExperimentBundle, context.Context, func() *opt.Optimizer) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "optimization.db")
 	open := func() *optsqlite.Store {
 		drv := sqlitedriver.New()
@@ -69,11 +75,20 @@ func optimizationHTTPFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthori
 	repo = open()
 	t.Cleanup(func() { _ = repo.Close() })
 	auth := &optimizationAuthority{}
-	service, err := opt.NewOptimizer(opt.OptimizerConfig{Repository: repo, Caller: auth, Authorizer: auth, IdentityResolver: auth, Handler: auth, Worker: opt.DefaultWorkerConfig()})
-	if err != nil {
-		t.Fatal(err)
+	newService := func() *opt.Optimizer {
+		service, err := opt.NewOptimizer(opt.OptimizerConfig{Repository: repo, Caller: auth, Authorizer: auth, IdentityResolver: auth, Handler: auth, Worker: opt.DefaultWorkerConfig()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
 	}
-	return service, auth, bundle, ctx
+	return newService(), auth, bundle, ctx, func() *opt.Optimizer {
+		if err := repo.Close(); err != nil {
+			t.Fatal(err)
+		}
+		repo = open()
+		return newService()
+	}
 }
 
 func optimizationGET(ctx context.Context, handler http.Handler, path string) *httptest.ResponseRecorder {

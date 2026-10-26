@@ -33,7 +33,7 @@ func (s *service) bindOptimization(d *dispatcher.Dispatcher) error {
 			return err
 		}
 	}
-	return nil
+	return s.bindOptimizationCommands(d)
 }
 
 func optimizationQuery[I, O any](d *dispatcher.Dispatcher, s *service, name string, read func(context.Context, I) (O, error)) error {

@@ -2,7 +2,7 @@ schemaVersion: 1
 contributor:
   name: cortex
   envelope: {supports: [v1], preferred: v1}
-  capabilities: [cortex.read, cortex.manage, cortex.run, cortex.approve, cortex.overlay, cortex.optimization.read]
+  capabilities: [cortex.read, cortex.manage, cortex.run, cortex.approve, cortex.overlay, cortex.optimization.read, cortex.optimization.run]
   app: {displayName: Cortex, slug: cortex, icon: bot, home: /, priority: 40}
 intents:
   - {name: agents.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
@@ -99,3 +99,7 @@ intents:
   - {name: optimization.lessons.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
   - {name: optimization.publications.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
   - {name: optimization.activations.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+
+  - {name: optimization.experiments.start, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.optimization.run]}, invalidates: [optimization.experiments.list, optimization.experiments.detail, optimization.trials.list, optimization.trials.detail, optimization.comparison, optimization.events.list]}
+  - {name: optimization.experiments.cancel, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.optimization.run]}, invalidates: [optimization.experiments.list, optimization.experiments.detail, optimization.trials.list, optimization.trials.detail, optimization.comparison, optimization.events.list]}
+  - {name: optimization.experiments.resume, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.optimization.run]}, invalidates: [optimization.experiments.list, optimization.experiments.detail, optimization.trials.list, optimization.trials.detail, optimization.comparison, optimization.events.list]}

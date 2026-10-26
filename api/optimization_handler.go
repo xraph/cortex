@@ -39,7 +39,7 @@ func (a *API) registerOptimizationRoutes(router forge.Router) error {
 			return fmt.Errorf("register optimization route %s: %w", route.name, err)
 		}
 	}
-	return nil
+	return a.registerOptimizationCommands(router)
 }
 
 func optimizationRead[I, O any](read func(context.Context, I) (O, error)) func(forge.Context, *I) (*O, error) {
@@ -55,13 +55,11 @@ func optimizationRead[I, O any](read func(context.Context, I) (O, error)) func(f
 			}
 		}
 		if err != nil {
-			failure := operator.Failure(opt.ErrInvalidSpec)
-			return nil, ctx.JSON(failure.Status, failure)
+			return nil, replyOptimizationFailure(ctx, opt.ErrInvalidSpec)
 		}
 		out, err := read(ctx.Context(), *in)
 		if err != nil {
-			failure := operator.Failure(err)
-			return nil, ctx.JSON(failure.Status, failure)
+			return nil, replyOptimizationFailure(ctx, err)
 		}
 		return &out, nil
 	}

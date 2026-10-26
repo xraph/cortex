@@ -1946,3 +1946,48 @@ payload's `idempotency_key` cannot replace a missing REST header or dashboard
 envelope key. Adapter race tests pass in 1.294s, along with the build, scoped
 formatting and full all-module lint. The shared Forge dispatcher accessor is in
 verification before the dashboard mutation bindings are added.
+
+## Lifecycle transport bindings
+
+REST now binds Start, Cancel and Resume to the shared operator commands. You
+supply `expected_revision` and one `Idempotency-Key` header. The path supplies the
+experiment ID, even when the payload contains a different ID. Successful retries
+return current state and cannot revive cancelled work.
+
+Dashboard commands require `cortex.optimization.run` and durable audit recording.
+Forge now exposes the command envelope key through
+`dispatcher.CommandIdempotencyKey`; the extension uses that accessor and bypasses
+the generic response cache. The optimizer owns durable command identity and
+rechecks current grants. Failed outcome auditing returns `command_attempted`
+without losing the committed domain receipt. Tests retry that same command after
+audit recovery and verify that the revision does not advance again.
+
+The bindings invalidate the exact experiment, trial, comparison and event query
+names. Real HTTP tests cover CSRF rejection, missing keys, wrong request kinds,
+foreign scope, independent permissions and current authority after a retry.
+SQLite HTTP tests reopen the database after Start and Cancel and verify receipt
+recovery, grant withdrawal and an old Start retry after cancellation.
+
+The Forge change is published as `97dbf04160fd`, with all 39 lint modules,
+fresh-cache Linux lint, the contract race suite and root build passing. Its push
+was rebased over a remote changelog-only commit. Cortex pins that public version;
+no sibling-repository replacement is needed. Removing all local replacements
+also exposed the extension's old, unresolvable Sentinel `v1.7.0` pin, which is
+replaced by the already-published `0b00c24b30ca` revision.
+
+Full API race tests pass in 40.816s, extension in 2.100s and contract in 29.478s,
+with both builds passing. Added HTTP reopen coverage passes in 5.653s. The initial
+full lint pass reports only the runtime owner's in-progress resume-admission
+findings; those files remain under that chat's ownership. Final lint and
+published-dependency checks follow before commit.
+
+Task 16 remains open for frozen creation, catalogs, readiness, review and
+activation commands, artifact exports and richer summaries. The dashboard pages
+and persistent browser qualification in tasks 17 and 18 are still pending.
+
+Final scoped `make f` and all-module `make l` pass. Published-only dependency
+checks pass API (5.003s), extension (1.746s) and contract (2.024s), with every local
+module replacement removed in temporary modfiles. Sentinel's metered judge,
+cost-provenance and sequential/parallel reopen-recovery regressions pass in
+201.694s. These checks use deterministic providers and do not qualify a live
+model or billing integration.

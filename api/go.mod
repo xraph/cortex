@@ -7,7 +7,7 @@ replace github.com/xraph/cortex => ../
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
-	github.com/xraph/cortex/optimization v0.0.0-20261026115254-8788a2a78cdd
+	github.com/xraph/cortex/optimization v0.0.0-20261026122752-0b00c24b30ca
 	github.com/xraph/forge v1.12.10
 	github.com/xraph/grove v1.9.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
