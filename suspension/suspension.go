@@ -47,8 +47,11 @@ const (
 // the message history by call id to find out with what would be a
 // needless puzzle for the one consumer this type exists to serve.
 type PendingCall struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	// ReplyWith binds an agent reply to the question created by this pause.
+	// A tool-call ID alone may be reused by a later model response.
+	ReplyWith string `json:"reply_with,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 	// Arguments is the JSON-encoded argument object, verbatim from the
 	// model's tool call.
 	Arguments string `json:"arguments"`

@@ -62,7 +62,8 @@ type ToolResult struct {
 // ResumeInput is everything a caller supplies to continue a suspended
 // run. One result per pending call, no more and no fewer.
 type ResumeInput struct {
-	ToolResults []ToolResult `json:"tool_results"`
+	ToolResults       []ToolResult `json:"tool_results"`
+	agentReplyVersion *suspension.ClaimVersion
 }
 
 // resumption is the rehydrated run a claim produced, ready for whichever
@@ -213,6 +214,12 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// would fall off constantly. The authoritative check is the one
 	// below, against the suspension the claim actually returned.
 	preview, previewErr := e.store.GetSuspension(ctx, runID)
+	if previewErr != nil && in.agentReplyVersion != nil {
+		return nil, nil, fmt.Errorf("read correlated suspension: %w", previewErr)
+	}
+	if bindingErr := checkAgentReplyVersion(preview, in, source); bindingErr != nil {
+		return nil, nil, bindingErr
+	}
 	if susp := preview; previewErr == nil {
 		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
 			return nil, nil, decodeErr
@@ -245,6 +252,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if err != nil {
 		return nil, nil, fmt.Errorf("load run to resume: %w", err)
 	}
+	if in.agentReplyVersion != nil && snapshot.Revision != in.agentReplyVersion.RunRevision {
+		return nil, nil, cortex.ErrRunConflict
+	}
 	if bindingErr := e.checkPreparedTeamResume(ctx, snapshot, preview); bindingErr != nil {
 		return nil, nil, bindingErr
 	}
@@ -266,6 +276,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		}
 		susp, err = versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: runID, SuspensionID: preview.ID, RunRevision: snapshot.Revision})
 	} else {
+		if in.agentReplyVersion != nil {
+			return nil, nil, suspension.ErrVersionClaimUnavailable
+		}
 		susp, err = e.store.ClaimSuspension(ctx, runID)
 	}
 	if err != nil {

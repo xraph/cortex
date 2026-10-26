@@ -74,6 +74,25 @@ func testSuspensionVersionClaim(t *testing.T, newStore func(*testing.T) store.St
 	}
 }
 
+func testSuspensionQuestionBinding(t *testing.T, newStore func(*testing.T) store.Store) {
+	backend := newStore(t)
+	ctx := ctxWithScope("question-binding")
+	current, paused := mustSuspendRun(t, backend, ctx, nil)
+	require.NoError(t, backend.DeleteSuspension(ctx, current.ID))
+	paused.Reason = suspension.ReasonAgentReply
+	paused.Pending[0].Name = "agent_ask"
+	paused.Pending[0].ReplyWith = id.NewMessageID().String()
+	require.NoError(t, backend.CreateSuspension(ctx, paused))
+	loaded, err := backend.GetSuspension(ctx, current.ID)
+	require.NoError(t, err)
+	require.Equal(t, paused.Pending, loaded.Pending)
+	versioned, ok := backend.(suspension.VersionedStore)
+	require.True(t, ok)
+	claimed, err := versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: current.ID, SuspensionID: paused.ID, RunRevision: current.Revision})
+	require.NoError(t, err)
+	require.Equal(t, paused.Pending, claimed.Pending)
+}
+
 func testSuspensionVersionExpiry(t *testing.T, newStore func(*testing.T) store.Store) {
 	backend := newStore(t)
 	ctx := ctxWithScope("versioned-expiry")

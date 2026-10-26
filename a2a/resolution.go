@@ -98,6 +98,12 @@ func (b *Bus) resumeSealedAsk(ctx context.Context, pending *PendingAsk, reply As
 	if !resolution.Fresh || b.resumer == nil {
 		return false, nil
 	}
+	if correlated, ok := b.resumer.(ResolutionResumer); ok {
+		if resumeErr := correlated.ResumeAgentResolution(ctx, resolution); resumeErr != nil {
+			return false, resumeErr
+		}
+		return true, nil
+	}
 	if resumeErr := b.resumer.ResumeAgentReply(ctx, pending.AskerRunID, pending.ToolCallID, resolution.Payload); resumeErr != nil {
 		return false, resumeErr
 	}

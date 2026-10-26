@@ -183,6 +183,18 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 		return "", err
 	}
 
+	if reason == suspension.ReasonAgentReply {
+		if _, supported := e.store.(a2a.AskResolutionStore); supported {
+			if _, versioned := e.store.(suspension.VersionedStore); !versioned {
+				return "", suspension.ErrVersionClaimUnavailable
+			}
+			pend.calls, err = bindPendingQuestions(pend)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+
 	s := &suspension.Suspension{
 		Entity:    cortex.NewEntity(),
 		ID:        id.NewSuspensionID(),

@@ -498,6 +498,7 @@ type AskParams struct {
 
 // AskResult identifies the message and the token a reply must carry.
 type AskResult struct {
+	ToolCallID     string            `json:"tool_call_id,omitempty"`
 	MessageID      id.MessageID      `json:"message_id"`
 	ConversationID id.ConversationID `json:"conversation_id"`
 	ReplyWith      string            `json:"reply_with"`
@@ -560,7 +561,7 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 		return nil, err
 	}
 
-	res := &AskResult{MessageID: e.ID, ConversationID: e.ConversationID, ReplyWith: e.ReplyWith}
+	res := &AskResult{MessageID: e.ID, ConversationID: e.ConversationID, ReplyWith: e.ReplyWith, ToolCallID: p.ToolCallID}
 	if p.Hold {
 		res.held = e
 		return res, nil

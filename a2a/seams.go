@@ -24,6 +24,13 @@ type Resumer interface {
 	ResumeAgentReply(ctx context.Context, runID id.AgentRunID, callID, result string) error
 }
 
+// ResolutionResumer consumes a retained outcome with its question identity.
+// Native buses prefer it to the legacy run-ID-only resumer. Receiving a receipt
+// does not grant authority to replay a previously attempted resume.
+type ResolutionResumer interface {
+	ResumeAgentResolution(context.Context, AskResolution) error
+}
+
 // Transport delivers an envelope to one receiver. The in-process
 // implementation resolves agents in this engine; a remote implementation
 // resolves a Node.

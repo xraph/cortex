@@ -384,15 +384,47 @@ acknowledgment. The committed receipt remains available through
 partition. Its default page size is 64 and its maximum is 256. Treat its cursor
 as opaque.
 
-The bus resumes only after a fresh seal acknowledgment. It never resumes from a
-receipt read or an identical retry. If resume fails, the selected answer remains
-available, but the receipt does not say whether resume started or finished. A
-recovery adapter still needs to bind the answer to the original suspension
-identity and reconcile execution before it may retry. This adapter is not yet
-wired into the engine, so private prepared-team messaging remains disabled.
+The bus invokes its resumer only after a fresh seal acknowledgment. Reading a
+receipt or repeating an identical seal does not invoke it again. If resume
+fails, the selected answer remains available, but the receipt does not say
+whether resume started or finished. Durable resume admission and execution
+reconciliation are still required before automatic retry is safe. Private
+prepared-team messaging remains disabled.
 
 When timeout or cancellation cannot read the source message and collected
 answers, the native path returns the error and keeps the ask pending. It does
 not substitute a partial result. Legacy claims without retained outcomes cannot
 be adopted. Custom stores without this optional capability retain the earlier
 claim-and-resume behavior and its recovery limitations.
+
+## Correlate answers with the paused questions
+
+The native engine persists each held question's `reply_with` token in its
+suspension's pending call before releasing the question. The token identifies
+that question even if a later model response reuses the same tool-call ID.
+`a2a.ResolutionResumer` receives the retained outcome and checks it against these
+stored tokens. The legacy run-ID-only resumer cannot answer a correlated pause.
+
+If one step asks several questions, the first answer stays in storage. Each new
+answer checks the retained outcomes for all pending questions, and the engine
+resumes only when they are all present. A fresh engine can read the earlier
+answers. Assembly is bounded to 256 pending questions and 4 MiB of combined
+encoded results; the run's publication checks still apply to each result.
+
+Before reading those outcomes, the engine captures the suspension ID and run
+revision. Both must still match when it claims the pause. Replacement, revision
+changes, missing bindings and failed evidence reads leave the run paused. A
+later question never inherits an earlier question's answer just because its
+tool-call ID matches.
+
+Drain existing agent-reply pauses on their compatible workers before upgrading.
+Older pauses have no question token, and this path refuses to infer one. Custom
+stores without retained outcomes keep their legacy behavior. A store that
+provides retained outcomes must also provide versioned suspension claims.
+Drain older messaging dispatchers too. They ignore the correlation field and
+must not service new correlated pauses during a mixed-version rollout.
+
+This correlates normal delivery, including several answers arriving across an
+engine restart. It does not recover a lost final resume acknowledgment or start
+resume from history alone. Those cases still need durable admission and
+reconciliation evidence.

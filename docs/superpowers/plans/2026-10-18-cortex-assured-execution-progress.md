@@ -12,8 +12,8 @@ the path to acceptance without reading the chronological evidence below.
 - Verification: finish evaluator and effect recovery, concrete host adapters,
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
-- Coordination: bind retained answers to their original pauses, retain resume
-  admission and reconcile ambiguous execution. Recover paused recipients and
+- Coordination: retain resume admission for the original pause and reconcile
+  ambiguous execution. Recover paused recipients and
   integrate the private prepared-team bus. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
@@ -6817,3 +6817,41 @@ it with `go list ./...` confirms that all 13 optimizer packages are selected
 exactly once: ten service/support/memory packages and three database packages.
 This validates coverage of the split, not its runtime performance. A successful
 new CI run is still required.
+
+### Question-bound resume and complete answer assembly
+
+Native agent-reply pauses now persist the correlation token for every held
+question before releasing it. The bus passes its retained outcome to the engine's
+`ResolutionResumer`, which checks the token and tool-call identity against the
+stored pause. A later question that reuses the tool-call ID cannot receive an old
+answer. The legacy resumer refuses correlated pauses.
+
+One step can ask several questions. Each answer is retained independently, and
+resume waits for all pending questions. A fresh engine reads earlier answers
+from storage. Assembly accepts at most 256 questions and 4 MiB of combined
+encoded results. The suspension ID and run revision captured before assembly
+must still match at claim time; replacement, revision changes, missing bindings,
+failed reads and oversized assembly leave the run paused.
+
+The initial regressions reproduced missing persisted correlation and a first
+answer failing a two-question step. The broader engine messaging, resume and
+recovery race suite passes in 95.652s. Native correlation round trips, versioned
+claims and retained outcome races pass without skips on SQLite (28.272s),
+PostgreSQL (9.503s) and MongoDB (12.446s). A2A, suspension and orchestration package
+races pass. Final formatting, lint, build and focused checks are recorded below.
+
+Old agent-reply pauses must finish on compatible workers before upgrade, and old
+dispatchers must be drained because they ignore the new correlation field.
+Custom stores without retained outcomes keep their legacy path. Native outcome
+storage requires versioned claims for new agent-reply pauses.
+
+This closes normal answer correlation and partial-answer assembly across an
+engine restart. It does not close lost final acknowledgments: durable resume
+admission, execution reconciliation, deferred recipient completion and private
+prepared-team bus ownership remain open. The full program remains incomplete.
+
+Final scoped `make f`, all-ten-module `make l`, root build and docs
+types/lint/build pass. The final correlated-answer, version-claim and messaging
+end-to-end race recheck passes in 75.978s. The built messaging page contains the
+new correlation and upgrade guidance. Initial lint reported two formatting
+findings in the owned struct fields; both are fixed.
