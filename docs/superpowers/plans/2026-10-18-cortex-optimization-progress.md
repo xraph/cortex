@@ -1844,3 +1844,23 @@ boundary and worker regressions pass in 1.637s, followed by the complete core
 race suite in 52.446s. Scoped `make f`, full `make l`, the optimization build and
 whitespace checks pass. The preceding production team's frozen database race
 binaries remain active and are reported separately.
+
+## Shared operator transport adapters
+
+The production team's frozen race run has finished. Every compiled package log
+ends in `PASS`, including MongoDB. PostgreSQL took 823.678s and SQLite 832.706s;
+the runner handle expired before its final aggregate output was collected. These
+binaries cover the production team packet, not the later operator read adapters.
+
+`optimization/operator` provides the request types and read adapters shared by
+HTTP and dashboard bindings. IDs enter as strings and must match the expected
+entity prefix before the optimizer reads storage. A missing optimizer returns
+unavailable, while configured empty collections keep the explicit page contract.
+The adapters retain current caller, scope and per-resource authorization. Public
+failure responses use fixed messages and codes without provider or storage text.
+
+The first adapter race tests pass in 1.313s. They cover scoped reads, missing
+configuration, current grant denial, foreign IDs, invalid entity kinds and the
+page limit. HTTP and dashboard transport tests follow in the next packet.
+Scoped formatting, the operator build, whitespace checks and full all-module
+`make l` pass for this adapter packet.
