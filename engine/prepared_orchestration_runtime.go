@@ -207,7 +207,9 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 			return nil, execution.ErrBudgetExceeded
 		}
 		record, runErr := r.execute(execCtx, draft)
-		runErr = errors.Join(runErr, r.checkUsage(record, allocation))
+		if usageErr := r.checkUsage(record, allocation); usageErr != nil {
+			runErr = errors.Join(runErr, usageErr)
+		}
 		if runErr == nil {
 			bus, busErr := r.messagingBus()
 			if busErr != nil {
@@ -223,7 +225,10 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 					if readErr != nil {
 						return nil, readErr
 					}
-					record = current
+					record, readErr = r.eng.recoveredTeamResult(execCtx, current, snap)
+					if readErr != nil {
+						return nil, readErr
+					}
 					if observedErr := r.eng.checkOrchestrationObservation(execCtx, record, snap); observedErr != nil {
 						return nil, observedErr
 					}

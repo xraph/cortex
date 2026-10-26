@@ -202,6 +202,11 @@ func (r *preparedTeamRecovery) waitingReady(ctx context.Context, parent *orchest
 		case run.StatePaused, run.StateRunning:
 			waiting = true
 		case run.StateCompleted:
+			if verificationErr := requiredChildResultError(child); errors.Is(verificationErr, cortex.ErrOrchestrationWaiting) {
+				waiting = true
+			} else if verificationErr != nil {
+				failed = true
+			}
 		case run.StateCreated, run.StateIncomplete, run.StateCancelled, run.StateFailed:
 			failed = true
 		default:

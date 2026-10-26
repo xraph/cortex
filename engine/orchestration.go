@@ -27,6 +27,11 @@ func orchestrationAgentResult(agentName string, r *run.Run, err error) (*orchest
 		}
 		return nil, err
 	}
+	// Only replace the runtime's standalone verification result. A joined error
+	// may also contain a budget or dispatch failure and must keep that failure.
+	if verificationErr := requiredChildResultError(r); verificationErr != nil && (err == nil || err == cortex.ErrVerificationUnavailable || err == cortex.ErrRunUnverified) { //nolint:errorlint // Exact sentinels only: errors.Is would hide other failures in a joined error.
+		err = verificationErr
+	}
 	if err == nil {
 		switch r.State {
 		case run.StateCompleted:
@@ -36,10 +41,14 @@ func orchestrationAgentResult(agentName string, r *run.Run, err error) (*orchest
 			err = fmt.Errorf("cortex: worker %s stopped with %s: %w", agentName, r.StopReason, cortex.ErrRunIncomplete)
 		}
 	}
+	output := r.Output
+	if err != nil && (r.Provenance.VerificationRequired || r.Provenance.VerificationIntentID != "") {
+		output = ""
+	}
 	return &orchestration.AgentResult{
 		AgentName: agentName,
 		RunID:     r.ID,
-		Output:    r.Output,
+		Output:    output,
 		Err:       err,
 	}, err
 }

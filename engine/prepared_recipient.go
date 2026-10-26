@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"unicode/utf8"
 
 	"github.com/xraph/cortex"
@@ -13,7 +14,8 @@ import (
 // ObservePreparedRecipient reads an existing child's outcome from the original
 // prepared team. The host must authorize this exact team and run before private
 // reads and before returning output. No child is reserved, executed or resumed.
-// Only the run's published output is returned; result verification is unchanged.
+// Required verification must pass before success. Recovered verified output also
+// requires configured result-content authority and current publication checks.
 func (e *Engine) ObservePreparedRecipient(ctx context.Context, req a2a.RecipientRequest, authorize func(context.Context, id.OrchestrationID, id.AgentRunID) error) (a2a.RecipientObservation, error) {
 	if authorize == nil || req.OrchestrationID.Prefix() != id.PrefixOrchestration || req.RunID.Prefix() != id.PrefixAgentRun || req.AgentName == "" || len(req.AgentName) > 256 || !utf8.ValidString(req.AgentName) {
 		return a2a.RecipientObservation{}, cortex.ErrInvalidPrepared
@@ -57,7 +59,14 @@ func (r *preparedTeamRunner) ObserveRecipient(ctx context.Context, req a2a.Recip
 	case run.StateCreated, run.StateRunning, run.StatePaused:
 		result.State = a2a.RecipientWaiting
 	case run.StateCompleted:
-		result.State, result.Output = a2a.RecipientSucceeded, child.Output
+		switch verificationErr := requiredChildResultError(child); {
+		case errors.Is(verificationErr, cortex.ErrOrchestrationWaiting):
+			result.State = a2a.RecipientWaiting
+		case verificationErr != nil:
+			result.State = a2a.RecipientFailed
+		default:
+			result.State, result.Output = a2a.RecipientSucceeded, child.Output
+		}
 	case run.StateFailed, run.StateCancelled, run.StateIncomplete:
 		result.State = a2a.RecipientFailed
 	default:

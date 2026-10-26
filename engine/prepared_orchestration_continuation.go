@@ -138,5 +138,5 @@ func (r *preparedTeamRunner) observePreparedChild(ctx context.Context, name stri
 	if usageErr := r.checkUsage(child, allocation); usageErr != nil {
 		return nil, usageErr
 	}
-	return child, nil
+	return r.eng.recoveredTeamResult(ctx, child, snap)
 }

@@ -777,3 +777,32 @@ worker fixture covers a local provider with no external effects; you still need
 to qualify proof authentication and worker fencing for your installed providers.
 Recovering a successful result requires the separate verification and acceptance
 contracts and sufficient retained result evidence.
+
+## Recover a verified team answer
+
+A child can finish generation before its verification job finishes. Prepared
+teams keep that child waiting while verification is pending, including when a
+candidate capture committed but its acknowledgment was lost. Recipient recovery
+does not send an empty answer, and the coordinator does not start the next child
+or repeatedly claim ownership while it waits.
+
+Use the existing `RecoverVerificationPage` or configured verification recovery
+service to finish checks on the retained candidate. This does not regenerate the
+answer. After verification passes, recipient observation or
+`ResumePreparedOrchestration` can consume the result and continue the team. Failed
+or inconclusive verification fails the child without exposing its candidate.
+
+Configure `WithResultContent` on the recovering engine, alongside the original
+required-verification configuration, model revisions and publication gate. Team
+recovery uses that reader to check current content permission, retained evidence,
+run revision and publication policy. Passing metadata in the run row is not
+enough. A missing result, substituted identity, removed verification requirement,
+denied read or redacted projection cannot become a successful team answer. A
+redacted projection differs from the verified candidate and needs its own checks
+before an agent can rely on it as verified input.
+
+The crash fixture kills the worker after private candidate capture and recovers
+through a fresh database connection and engine. It verifies the saved candidate,
+waits for coordinator lease expiry and generates only the next child. This covers
+durably captured output. A provider result lost before capture still needs
+authenticated external recovery evidence or an incomplete terminal disposition.

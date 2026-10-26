@@ -132,10 +132,13 @@ func newWorkerFixture(t *testing.T, criteria ...verification.Criterion) workerFi
 	jobID := id.New(verification.PrefixJob)
 	req := engine.VerifyRunRequest{Job: verification.JobRequest{SchemaVersion: 1, ID: jobID, ExpectedRunRevision: r.Revision, ContractID: contract.ID, Binding: binding, Deadline: now.Add(5 * time.Minute), MaxAttempts: 3, EvaluationBudget: &verification.EvaluationBudget{MaxCalls: 3, MaxTokens: 30, TokenOnly: true}}, Claim: verification.JobClaim{JobID: jobID, ClaimID: id.New(verification.PrefixJobClaim), Owner: "worker-1", Duration: time.Minute}, ResultID: id.New(verification.PrefixResult)}
 	adapter := &workerAdapter{status: verification.StatusPassed}
-	config := engine.VerificationWorkerConfig{Adapter: adapter, Clock: workerClock{}, Authorizer: workerAuthorizer(func(context.Context, verification.Binding) error { return nil }), Fence: workerFence(func(_ context.Context, b verification.Binding, commit func(verification.Binding) error) error {
+	return workerFixture{ctx: ctx, storage: s, path: path, request: req, config: workerConfiguration(adapter), adapter: adapter, llm: client}
+}
+
+func workerConfiguration(adapter *workerAdapter) engine.VerificationWorkerConfig {
+	return engine.VerificationWorkerConfig{Adapter: adapter, Clock: workerClock{}, Authorizer: workerAuthorizer(func(context.Context, verification.Binding) error { return nil }), Fence: workerFence(func(_ context.Context, b verification.Binding, commit func(verification.Binding) error) error {
 		return commit(b)
 	})}
-	return workerFixture{ctx: ctx, storage: s, path: path, request: req, config: config, adapter: adapter, llm: client}
 }
 func (f workerFixture) engine(t *testing.T, s store.Store) *engine.Engine {
 	t.Helper()

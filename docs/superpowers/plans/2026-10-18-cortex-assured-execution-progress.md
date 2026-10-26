@@ -14,8 +14,10 @@ the path to acceptance without reading the chronological evidence below.
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
   started execution. Host-authenticated closure can terminate an uncertain start
-  as incomplete; successful recovery still needs retained result evidence and
-  verified acceptance. Expired admissions that never started terminate
+  as incomplete. Captured team answers now wait for verification and use current
+  guarded result reads before advancing; successful recovery before durable
+  capture still needs authenticated result evidence. Expired admissions that
+  never started terminate
   atomically. Private prepared-team messaging and
   durable held-question release are wired; installed recovery qualification is
   still open. Complete task scheduling, review,
@@ -30,8 +32,9 @@ the path to acceptance without reading the chronological evidence below.
 
 The runtime now connects retained answers, guarded resume admissions and private
 prepared-team messaging, including recovery of interrupted question release.
-The next coordination boundary is recovery of successful results after ambiguous
-starts, followed by installed qualification. Incomplete closure requires host
+The next coordination boundary is recovery of results lost before durable
+capture, followed by installed qualification. Captured-result recovery reuses
+the verification worker and guarded result reader. Incomplete closure requires host
 proof of permanent worker and tool quiescence; local fixtures do not supply that
 proof for installed providers.
 Production verification rollout remains disabled. No completion percentage or
@@ -7282,3 +7285,37 @@ This supplies an incomplete terminal disposition. It does not reconstruct a lost
 successful result or authenticate an installed provider's quiescence. The crash
 fixture owns its only process and has no external provider effects. Concrete host
 proof, successful result recovery and installed qualification remain open.
+
+### Captured team result recovery and verified handoff
+
+Prepared teams now wait when generation completed but required verification is
+pending. A lost capture acknowledgment preserves the waiting parent instead of
+closing it as failed, and background recovery does not keep reclaiming that
+parent. Failed or inconclusive verification fails the child without returning
+candidate text. Other failures, including a joined budget error, remain failures.
+
+Historical child observation validates the frozen verification requirement and
+uses the existing result-content reader before returning a passed result. You
+must configure current content grants, resource fencing and publication checks
+on the recovering engine. Missing or substituted result identities, downgraded
+requirements, denied reads and redacted projections cannot become verified team
+answers. Verification recovery still owns evaluation and commit; team recovery
+only consumes the retained accepted result.
+
+The regression first reproduced a failed parent after a committed capture lost
+its acknowledgment. Final focused race tests passed in 23.167 seconds, including
+fresh-engine recovery, waiting without ownership churn, failed/inconclusive
+checks, content denial and identity substitution. The process-kill fixture parks
+after native private capture, kills and joins that worker, then reopens storage.
+It recovers verification, waits for coordinator lease expiry and executes only
+the next child. The isolated crash test passed in 6.723 seconds. Related engine
+orchestration and recipient regressions passed in 65.038 seconds; orchestration
+and A2A race suites passed in 2.201 and 1.181 seconds. Mixed-error preservation
+passed after final formatting. All-module lint, root build, docs type checks,
+docs lint and production docs build passed.
+
+This covers durable candidate output. A provider response lost before capture
+still requires authenticated external recovery evidence or incomplete closure.
+Installed provider qualification and integrated CI remain open. The prior
+`0a5c5ea` CI run passed its security, lint, docs and sandbox jobs while root tests
+and database qualification were still running; that is not a full CI pass.
