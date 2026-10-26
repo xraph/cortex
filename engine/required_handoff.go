@@ -69,7 +69,7 @@ func (e *Engine) checkRequiredResume(ctx context.Context, r *run.Run, s *suspens
 	if !required {
 		return nil
 	}
-	if snap == nil || snap.SchemaVersion != requiredPreparedSchemaVersion || !r.Provenance.VerificationRequired || r.Provenance.VerificationIntentID == "" || s.RunID != r.ID || s.Scope.Canonical() != r.Scope.Canonical() {
+	if snap == nil || snap.Config.Verification == nil || !validRequiredSnapshot(snap) || !r.Provenance.VerificationRequired || r.Provenance.VerificationIntentID == "" || s.RunID != r.ID || s.Scope.Canonical() != r.Scope.Canonical() {
 		return cortex.ErrVerificationUnavailable
 	}
 	if policyErr := e.requireVerification(snap); policyErr != nil {

@@ -74,6 +74,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 		NewMessagesFrom: s.newMessagesFrom,
 		SessionID:       s.sessionID,
 		Config: suspension.RunConfig{
+			Context:     cfg.Context,
 			Publication: publication, Budget: cfg.Budget, AllToolsRestricted: cfg.AllToolsRestricted,
 			Model:           cfg.Model,
 			Temperature:     cfg.Temperature,
@@ -91,6 +92,7 @@ func (s *reactState) continuation(cfg resolvedConfig) suspension.Continuation {
 // run ever runs on.
 func configFromContinuation(c suspension.RunConfig) resolvedConfig {
 	return resolvedConfig{
+		Context:     c.Context,
 		Publication: c.Publication, Budget: c.Budget, AllToolsRestricted: c.AllToolsRestricted,
 		Model:           c.Model,
 		Temperature:     c.Temperature,
@@ -201,6 +203,11 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			stopReason = run.StopCancelled
 			stepSpan.finish(stepStopped, nil)
 			break
+		}
+		if contextErr := e.admitContextRequest(ctx, cfg.Context, req); contextErr != nil {
+			terminalErr := e.stopContextAdmission(ctx, r, st, contextErr)
+			stepSpan.finish(stepStopped, nil)
+			return r, terminalErr
 		}
 		resp, err := e.completeTaskCall(ctx, r, req)
 		if err != nil {
@@ -489,6 +496,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		if ctx.Err() != nil {
 			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
 			stepSpan.finish(stepStopped, nil)
+			return
+		}
+		if contextErr := e.admitContextRequest(ctx, cfg.Context, req); contextErr != nil {
+			terminalErr := e.stopContextAdmission(ctx, r, st, contextErr)
+			stepSpan.finish(stepStopped, nil)
+			sendEvent(ctx, events, runErrorEvent(r, terminalErr))
 			return
 		}
 		stream, err := e.streamTaskCall(ctx, r, req)

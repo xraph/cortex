@@ -8,6 +8,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
+	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -115,6 +116,16 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	current, readErr := e.store.GetRun(ctx, runID)
 	if readErr != nil {
 		return nil, readErr
+	}
+	var contextPolicy *cognitive.ContextPolicy
+	if current.Provenance.ContextSelection != nil {
+		if current.Provenance.ContextSelection.Validate() != nil {
+			return nil, cortex.ErrInvalidContinuation
+		}
+		contextPolicy = &current.Provenance.ContextSelection.Policy
+	}
+	if contextErr := e.requireContextPolicy(contextPolicy); contextErr != nil {
+		return nil, contextErr
 	}
 	var bindingErr error
 	ctx, bindingErr = e.bindPreparedMessageRun(ctx, current)

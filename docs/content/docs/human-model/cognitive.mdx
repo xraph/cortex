@@ -58,11 +58,69 @@ and configuration. The tool reads only the executing run and accepts no run,
 principal or scope arguments. It does not change the prepared prompt or start
 reflection, replanning or learning.
 
+## Context budgets
+
+Register a context budget when you want the engine to select initial history
+and check each complete provider request against a finite context window:
+
+```go
+engine.WithContextBudget(engine.ContextBudgetConfig{
+    Policy: cognitive.ContextPolicy{
+        Revision:        "history/v1",
+        CounterRevision: "provider-counter/v1",
+        MaxTokens:       32768,
+        ReservedTokens:  2048,
+    },
+    CountTokens:     countProviderRequest,
+    OptionalHistory: classifyOptionalHistory,
+})
+```
+
+You supply both functions. `CountTokens` takes a context and `*llm.Request`, and
+returns the input token count or an error. It receives a detached request, including
+system text, tools and messages. Its implementation must account for the chosen
+provider's framing and tokenizer. Local fixture counters do not qualify a live
+provider, and this policy is separate from cumulative execution budgets or billing.
+
+`OptionalHistory` takes a context, `cortex.Subject` and chronological
+`[][]llm.Message` turns. It returns optional turn indices. Omit the callback to
+keep all history required. The engine starts a turn at each user message and
+never splits a selected turn; system text, tool definitions, the current task
+and every message generated during the current run stay pinned. Callback errors
+stop execution, and a callback cannot mutate the engine's messages.
+
+The engine checks up to 4096 stored history messages and rejects a longer history
+instead of silently taking its tail. History is the existing text projection;
+tool execution traces are separate. System, developer and tool roles in that
+projection are rejected. Conversation-store read or decode failures stop the run.
+Automatic summaries and compaction during an active run are not implemented.
+
+Selection records retain original and selected history digests, optional-item
+decisions, source references and counter revisions in run provenance, without
+copying conversation text into metadata. Required-verification input artifacts
+also retain the original and selected history privately, within the existing
+one-MiB artifact limit. For ordinary runs, your conversation retention policy
+determines whether omitted source text remains available later.
+
+The complete request is counted again before each sync or streaming provider
+call, and output is capped by the reserved allowance. If required context grows
+beyond the allowance, execution stops incomplete before another provider call.
+That local rejection does not charge a model attempt. Initial selection failures
+occur before run creation; errors from host counters and classifiers expose only
+`cortex.ErrContextUnavailable`.
+
+Context-enabled prepared snapshots use schema 7, or schema 8 when verification
+is required. The policy and counter revisions are frozen. A fresh engine must
+install the identical policy to resume, and history, task and selection records
+are checked before claiming a pause and again before execution. Change revisions
+when classification or counting semantics change. Older workers reject these
+schemas. Existing schema-2/6 artifacts remain usable without a context budget;
+prepare new artifacts to opt in, and drain older pauses on their compatible host.
+
 ## Context selection core
 
 You can use `cognitive.ContextPolicy.Select` to select atomic context items within
-a token allowance. The engine does not call it yet. Automatic conversation
-compaction, prepared-policy pinning and resume receipts still need runtime wiring.
+a token allowance outside the engine as well.
 
 Supply a policy revision, a token-counter revision, a finite `MaxTokens` and
 `ReservedTokens` for output. `ContextInput.FixedTokens` accounts for system

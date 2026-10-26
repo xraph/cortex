@@ -177,13 +177,18 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	input = string(safeInput)
 	r.Input = input
 	var messages []llm.Message
-	if cfg.Verification != nil {
+	if cfg.Verification != nil || cfg.Context != nil {
 		messages, err = e.loadPreparedHistory(ctx, snap, r)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	intent, intentErr := e.buildRequiredIntent(ctx, p, cfg, r, messages)
+	original := messages
+	messages, err = e.selectContextHistory(ctx, snap, r, messages)
+	if err != nil {
+		return nil, nil, err
+	}
+	intent, intentErr := e.buildRequiredIntent(ctx, p, cfg, r, messages, original)
 	if intentErr != nil {
 		return nil, nil, intentErr
 	}
@@ -228,7 +233,7 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 		}
 	}
 	e.extensions.EmitRunStarted(ctx, r.AgentID, r.ID, input)
-	if cfg.Verification == nil {
+	if cfg.Verification == nil && cfg.Context == nil {
 		var err error
 		messages, err = e.loadPreparedHistory(ctx, snap, r)
 		if err != nil {
@@ -252,6 +257,9 @@ func (e *Engine) failPreparedStart(ctx context.Context, r *run.Run) error {
 }
 
 func (e *Engine) checkPreparedRevisions(snap *preparedSnapshot) error {
+	if contextErr := e.requireContextPolicy(snap.Config.Context); contextErr != nil {
+		return contextErr
+	}
 	if pinned := snap.Provenance.ModelRevision; pinned != "" && e.modelRevisions[snap.Config.Model] != pinned {
 		return fmt.Errorf("cortex: model revision changed: %w", cortex.ErrInvalidPrepared)
 	}
@@ -272,11 +280,18 @@ func preparedOptions(overrides *RunOverrides) PreparedRunOptions {
 }
 
 func (e *Engine) loadPreparedHistory(ctx context.Context, snap *preparedSnapshot, r *run.Run) ([]llm.Message, error) {
-	history, err := e.store.LoadConversation(ctx, r.AgentID, r.SessionID, 100)
+	limit := 100
+	if snap.Config.Context != nil {
+		limit = 4097
+	}
+	history, err := e.store.LoadConversation(ctx, r.AgentID, r.SessionID, limit)
 	if err != nil {
 		if snap.Config.Verification != nil {
 			return nil, cortex.ErrVerificationUnavailable
 		}
+		return nil, cortex.ErrConversationUnavailable
+	}
+	if snap.Config.Context != nil && len(history) >= limit {
 		return nil, cortex.ErrConversationUnavailable
 	}
 	messages := memoryToLLM(history)

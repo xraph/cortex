@@ -123,11 +123,14 @@ func (e *Engine) prepareRequiredVerification(ctx context.Context, cfg *resolvedC
 }
 
 func validRequiredSnapshot(s *preparedSnapshot) bool {
+	if s.SchemaVersion != snapshotSchema(s.Config) || (s.Config.Context != nil && !validContextPolicy(s.Config.Context)) {
+		return false
+	}
 	p := s.Config.Verification
 	if p == nil {
-		return s.SchemaVersion == preparedSchemaVersion
+		return true
 	}
-	return (s.SchemaVersion == requiredPreparedSchemaVersion) && utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && s.Config.Publication.Mode != safety.ModeCheckedSegments
+	return utf8.ValidString(p.Revision) && strings.TrimSpace(p.Revision) != "" && len(p.Revision) <= 256 && !p.ContractID.IsNil() && p.ContractID.Prefix() == verification.PrefixContract && evidence.ValidDigest(p.ContractDigest) && p.EvaluationBudget.Validate() == nil && p.TotalTokens > 0 && p.EvaluationBudget.MaxTokens < int64(p.TotalTokens) && s.Config.Budget.MaxTokens == p.TotalTokens-int(p.EvaluationBudget.MaxTokens) && !s.Config.Budget.Deadline.IsZero() && s.Config.AllToolsRestricted && s.Config.ToolsRestricted && s.Config.Publication.Mode != safety.ModeCheckedSegments
 }
 
 func (e *Engine) requireVerification(s *preparedSnapshot) error {
@@ -144,11 +147,16 @@ func (e *Engine) requireVerification(s *preparedSnapshot) error {
 	return nil
 }
 
-func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg resolvedConfig, r *run.Run, messages []llm.Message) (verification.CaptureIntent, error) {
+func (e *Engine) buildRequiredIntent(ctx context.Context, p *PreparedAgent, cfg resolvedConfig, r *run.Run, messages, original []llm.Message) (verification.CaptureIntent, error) {
 	if cfg.Verification == nil {
 		return verification.CaptureIntent{}, nil
 	}
 	inputs := verification.ExecutionInputs{SchemaVersion: 1, RunID: r.ID, AgentID: r.AgentID, SessionID: r.SessionID, PreparedDigest: p.Digest(), Input: r.Input, History: messages, Model: cfg.Model, ModelRevision: r.Provenance.ModelRevision}
+	if cfg.Context != nil {
+		inputs.SchemaVersion = 2
+		inputs.ContextSelection = r.Provenance.ContextSelection
+		inputs.OriginalHistory = original
+	}
 	for _, tool := range r.Provenance.Tools {
 		inputs.Tools = append(inputs.Tools, verification.ToolRevision{Name: tool.Name, Revision: tool.Revision})
 	}

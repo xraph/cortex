@@ -155,6 +155,10 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 	}
 	cfg := e.effectiveConfig(ag, overrides, overlays)
 	cfg.Publication = e.frozenPublication()
+	if e.contextBudget != nil {
+		policy := e.contextBudget.Policy
+		cfg.Context = &policy
+	}
 	if budgetErr := cfg.Budget.Validate(); budgetErr != nil {
 		return nil, budgetErr
 	}
@@ -192,10 +196,7 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 	if e.knowledge == nil {
 		provenance.Diagnostics = append(provenance.Diagnostics, "optional knowledge provider unavailable")
 	}
-	snap := preparedSnapshot{SchemaVersion: preparedSchemaVersion, Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
-	if cfg.Verification != nil {
-		snap.SchemaVersion = requiredPreparedSchemaVersion
-	}
+	snap := preparedSnapshot{SchemaVersion: snapshotSchema(cfg), Scope: cortex.ScopeFromContext(ctx), Agent: *ag, Config: cfg, Sections: sections, Tools: defs, Provenance: provenance}
 	if !isAtomicPreparation(ctx) {
 		if publicationErr := e.checkPreparedSources(ctx, ag, &snap); publicationErr != nil {
 			return nil, publicationErr

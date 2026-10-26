@@ -9,6 +9,8 @@ var (
 	ErrMigrationFailed = errors.New("cortex: migration failed")
 	// ErrConversationUnavailable prevents execution with an unreadable session history.
 	ErrConversationUnavailable = errors.New("cortex: conversation history unavailable")
+	// ErrContextUnavailable prevents use of an unavailable or changed context policy.
+	ErrContextUnavailable = errors.New("cortex: context policy unavailable")
 
 	// Not found errors.
 	ErrAgentNotFound                    = errors.New("cortex: agent not found")

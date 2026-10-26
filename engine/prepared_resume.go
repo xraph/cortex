@@ -18,12 +18,12 @@ import (
 
 func decodeContinuation(cont suspension.Continuation) (*PreparedAgent, *preparedSnapshot, error) {
 	if cont.SchemaVersion == 0 {
-		if cont.Config.Publication != (safety.Policy{}) || cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Provenance.TaskClaimID != "" || hasOrchestrationBinding(cont.Provenance) || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
+		if cont.Config.Context != nil || cont.Provenance.ContextSelection != nil || cont.Config.Publication != (safety.Policy{}) || cont.Config.AllToolsRestricted || cont.Config.Budget.MaxSteps != 0 || len(cont.Prepared) > 0 || cont.Provenance.PreparedDigest != "" || cont.Provenance.TaskClaimID != "" || hasOrchestrationBinding(cont.Provenance) || cont.Config.Budget.MaxTokens != 0 || cont.Config.Budget.MaxToolCalls != 0 || !cont.Config.Budget.Deadline.IsZero() {
 			return nil, nil, fmt.Errorf("cortex: legacy continuation contains unsupported policy: %w", cortex.ErrInvalidContinuation)
 		}
 		return nil, nil, nil
 	}
-	if cont.SchemaVersion != preparedSchemaVersion && cont.SchemaVersion != requiredPreparedSchemaVersion {
+	if cont.SchemaVersion != preparedSchemaVersion && cont.SchemaVersion != requiredPreparedSchemaVersion && cont.SchemaVersion != contextPreparedSchemaVersion && cont.SchemaVersion != requiredContextPreparedSchemaVersion {
 		return nil, nil, fmt.Errorf("cortex: continuation schema %d: %w", cont.SchemaVersion, cortex.ErrInvalidContinuation)
 	}
 	var prepared PreparedAgent
@@ -71,7 +71,7 @@ func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnap
 	if cont.Usage.Steps != cont.StepIndex || cont.Usage.Tokens != cont.TokensUsed || cont.Usage.Steps < 0 || cont.Usage.Tokens < 0 || cont.Usage.ToolCalls < 0 || cont.Usage.ReportedTokens < 0 || cont.Usage.ReportedTokens > cont.Usage.Tokens {
 		return fmt.Errorf("cortex: continuation accounting mismatch: %w", cortex.ErrInvalidContinuation)
 	}
-	return nil
+	return validateContextContinuation(cont, snap, r)
 }
 
 func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState) error {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
@@ -74,16 +75,17 @@ type PendingCall struct {
 // executing, so an agent-config edit landing during the pause cannot
 // shift a conversation already in flight.
 type RunConfig struct {
-	Publication        safety.Policy    `json:"publication"`
-	Budget             execution.Budget `json:"budget,omitempty"`
-	AllToolsRestricted bool             `json:"all_tools_restricted,omitempty"`
-	Model              string           `json:"model,omitempty"`
-	Temperature        *float64         `json:"temperature,omitempty"`
-	MaxSteps           int              `json:"max_steps,omitempty"`
-	MaxTokens          int              `json:"max_tokens,omitempty"`
-	ReasoningLoop      string           `json:"reasoning_loop,omitempty"`
-	Tools              []string         `json:"tools,omitempty"`
-	PersonaRef         string           `json:"persona_ref,omitempty"`
+	Context            *cognitive.ContextPolicy `json:"context,omitempty"`
+	Publication        safety.Policy            `json:"publication"`
+	Budget             execution.Budget         `json:"budget,omitempty"`
+	AllToolsRestricted bool                     `json:"all_tools_restricted,omitempty"`
+	Model              string                   `json:"model,omitempty"`
+	Temperature        *float64                 `json:"temperature,omitempty"`
+	MaxSteps           int                      `json:"max_steps,omitempty"`
+	MaxTokens          int                      `json:"max_tokens,omitempty"`
+	ReasoningLoop      string                   `json:"reasoning_loop,omitempty"`
+	Tools              []string                 `json:"tools,omitempty"`
+	PersonaRef         string                   `json:"persona_ref,omitempty"`
 
 	// ToolsRestricted says Tools is an explicit allowlist even when it
 	// is empty, which is what an overlay that withdrew the agent's last

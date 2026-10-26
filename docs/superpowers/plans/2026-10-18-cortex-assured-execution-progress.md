@@ -27,8 +27,10 @@ the path to acceptance without reading the chronological evidence below.
   An opt-in capability tool now observes the frozen allowlist, current visibility,
   executor registration and remaining limits through the normal tool path.
   Conversation read failures now stop ordinary execution before provider dispatch;
-  a bounded context selection core now preserves required items and source
-  references. Engine integration and automatic summaries remain open.
+  context budgets now select initial history, preserve source identities and
+  recount complete requests before dispatch. Frozen tokenizer revisions and
+  selection records are checked on resume. Automatic summaries, provider
+  tokenizer qualification and installed context flows remain open.
   Optimization implementation and evidence remain in its separate progress ledger.
 - Acceptance: run the installed API/dashboard and provider flows, crash recovery,
   denial/revocation paths, security corpus, cost/latency measurements and rollout
@@ -65,7 +67,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, task contract projections, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and S4.5 optimization | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection core implemented; engine wiring, assumptions, health observations and installed qualification remain open |
+| S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection, complete-request admission, private input evidence and resume fences are wired; assumptions, health observations, automatic summaries and installed qualification remain open |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
@@ -7472,3 +7474,56 @@ Prepared policy/counter pinning, initial-history receipts, verification evidence
 complete-request token admission and resume checks still need engine integration.
 Host tokenizers, scoped source hydration, semantic summary checks and installed
 provider qualification remain open. This packet does not close S4.1 or G4.
+
+
+### Context budgets in prepared execution
+
+You can install a trusted context policy with `engine.WithContextBudget`.
+Preparation freezes the policy and tokenizer revisions. Initial history is grouped
+into whole turns, and only turns explicitly classified as optional by host code
+can be omitted. Required history that exceeds the allowance stops preparation.
+The runtime counts the complete request before every synchronous or streaming
+provider call and reserves the configured output allowance. Tool-result growth
+that no longer fits leaves the run incomplete without another provider attempt.
+
+Run provenance stores the selection policy, item costs, source digests and omitted
+items without conversation text. Required verification retains both original and
+selected history in its private input artifact. Resume validates the record,
+selected history, task and frozen policy before claiming the pause, then checks
+the frozen continuation again before execution. Changed tokenizer revisions and
+unsupported schema downgrades cannot silently resume. Context-enabled prepared
+schemas are 7 and 8; schemas 2 and 6 retain their existing no-context behavior.
+
+SQLite, PostgreSQL and Mongo now share stored-message decoding. A malformed row
+within the requested history window rejects the read instead of silently removing
+part of the conversation. Corrupt rows outside that window do not affect the
+read. The regression failed before the fix and passed against all three stores,
+including real PostgreSQL and MongoDB containers.
+
+Runtime regressions cover synchronous and streaming selection, required overflow,
+complete-request recounting, tool-result growth, callback isolation, exact JSON
+integers, private verification inputs, approved resume, changed tokenizer
+revisions, altered continuations, unreadable pause previews and schema downgrade.
+The altered-preview tests failed before the pre-claim check was added. Focused
+context tests then passed in 1.716 seconds. Logs use
+`/tmp/cortex-context-runtime-`, `/tmp/cortex-context-resume-` and
+`/tmp/cortex-conversation-integrity-`.
+
+The root suite passed with only the documented macOS scopespy test exclusion.
+Engine, MongoDB, PostgreSQL and SQLite completed in 110.403, 106.021, 65.160 and
+61.155 seconds; the database suites did not skip. Docs type checks, lint and build
+passed. Scoped `make f`, all-module `make l`, root build and diff checks passed.
+The final race suite passed: engine in 775.834 seconds, cognitive in 1.197,
+run in 1.132, verification in 3.796, memory in 1.198 and suspension in 1.139.
+No race-suite timeout or retry was needed. The stored-history fix is committed
+separately as `28f3a9b` and confirmed on remote main.
+
+The latest prior-head CI run, 40377797236 at `f3f6db6`, passed root tests,
+security, lint, format, docs and all sub-module jobs. Its optimization MongoDB
+conformance job failed on a concurrent operator-command retry with a Mongo
+`WriteConflict`. That separate workstream still needs a fix and integrated CI.
+
+This packet does not provide a production tokenizer or automatic active-turn
+compaction. Its test counter measures fixture costs only. Host source retention,
+semantic summary validation, installed provider checks and the remaining S4.1
+work stay open. The full four-stage program remains incomplete.

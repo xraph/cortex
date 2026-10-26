@@ -228,12 +228,15 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
 			return nil, nil, decodeErr
 		} else if snap != nil {
+			if contextErr := e.requireContextPolicy(snap.Config.Context); contextErr != nil {
+				return nil, nil, contextErr
+			}
 			if policyErr := e.requirePublication(snap.Config.Publication); policyErr != nil {
 				return nil, nil, policyErr
 			}
 		}
 		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
-			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredPreparedSchemaVersion {
+			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredPreparedSchemaVersion || susp.Cont.SchemaVersion == requiredContextPreparedSchemaVersion {
 				vErr = cortex.ErrResultsMismatch
 			}
 			return nil, nil, vErr
@@ -258,6 +261,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 	if in.agentReplyVersion != nil && snapshot.Revision != in.agentReplyVersion.RunRevision {
 		return nil, nil, cortex.ErrRunConflict
+	}
+	if contextErr := e.checkContextResume(snapshot, preview, previewErr); contextErr != nil {
+		return nil, nil, contextErr
 	}
 	if bindingErr := e.checkPreparedTeamResume(ctx, snapshot, preview); bindingErr != nil {
 		return nil, nil, bindingErr

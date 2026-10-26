@@ -10,6 +10,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/knowledge"
@@ -23,7 +24,8 @@ import (
 // resolvedConfig holds the effective configuration after merging
 // agent config, engine defaults, and per-run overrides.
 type resolvedConfig struct {
-	Verification  *requiredPolicy `json:",omitempty"`
+	Context       *cognitive.ContextPolicy `json:",omitempty"`
+	Verification  *requiredPolicy          `json:",omitempty"`
 	Publication   safety.Policy
 	Model         string
 	Temperature   *float64

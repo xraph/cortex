@@ -80,8 +80,8 @@ type ContextPolicy struct {
 // ContextInput lists atomic items oldest first. FixedTokens accounts for system
 // instructions, tools and request framing that are never eligible for omission.
 type ContextInput struct {
-	FixedTokens int
-	Items       []ContextItem
+	FixedTokens int           `json:"fixed_tokens"`
+	Items       []ContextItem `json:"items"`
 }
 
 // ContextSelection preserves order and source metadata in detached slices.

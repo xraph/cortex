@@ -17,12 +17,17 @@ For ordinary runs, you receive `cortex.ErrConversationUnavailable` through a
 `PreparedStartError`, and the created run is recorded as incomplete with
 `execution_error`. If that terminal write also fails, the error retains both
 causes and the run identity so you can inspect its durable state. The returned
-error text omits storage details. Required-verification runs keep their existing
-`cortex.ErrVerificationUnavailable` failure before run creation.
+error text omits storage details. With a context budget, the history read happens
+before run creation and returns `cortex.ErrConversationUnavailable` directly.
+Required-verification runs keep their existing `cortex.ErrVerificationUnavailable`
+read failure before run creation.
 
 This applies to synchronous and streaming execution, including prepared agents.
-The engine still requests at most 100 history messages; token-aware selection
-and automatic summaries are not implemented.
+By default the engine requests at most 100 history messages. Opt-in
+[`WithContextBudget`](/docs/human-model/cognitive#context-budgets) reads up to
+4096 messages, refuses a truncated read window and omits only turns the
+host explicitly marks optional. Malformed stored messages fail the entire read
+in every backend. Automatic summaries are not implemented.
 
 You read and clear it through the engine:
 
