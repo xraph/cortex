@@ -7388,3 +7388,24 @@ qualification remain open. CI on the preceding `519809d` revision failed
 `TestPreparedTeamPrivateAskContinuesWithinCoordinator/parallel` with a missing run;
 the local broader run passed that test. The CI failure needs reconciliation and
 is not counted as an integrated pass.
+
+### Parallel child admission and messaging scans
+
+The missing-run CI failure reproduced locally in repeated parallel private-ask
+runs. Child reservation links an ID to its parent before `CreateRun` writes the
+child. A sibling can finish during that interval and scan the parent's IDs for
+paused askers. The scan treated the unwritten child as a fatal read failure.
+
+Asker recovery now skips `ErrRunNotFound` after the existing host grant check.
+It still propagates other read failures and cannot dispatch or retry a child
+because its row is absent. A deterministic fixture holds one parallel child
+before creation until its sibling observes the missing row. The fixture failed
+with the CI error before the fix and now completes both workers and the
+aggregator exactly once.
+
+The forced-ordering regression and original private-ask test passed 20 race
+repetitions in 129.590 seconds. Final formatted-code regressions, including
+nested asks, current grants, shared budgets and held-question process crashes,
+passed in 35.878 seconds. All-module lint, root build and diff checks passed.
+Logs use `/tmp/cortex-messaging-admission-`; the original CI job log is
+`/tmp/cortex-ci-121739046399.log`. Exact-head CI remains required after push.

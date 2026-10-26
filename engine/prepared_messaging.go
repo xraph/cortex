@@ -300,6 +300,11 @@ func (r *preparedTeamRunner) recoverMessageAskers(ctx context.Context) (int, err
 			return resumed, authErr
 		}
 		child, readErr := r.eng.store.GetRun(ctx, key)
+		if errors.Is(readErr, cortex.ErrRunNotFound) {
+			// Parallel reservations link child IDs before their runs are created.
+			// This scan only recovers existing askers; absence grants no dispatch.
+			continue
+		}
 		if readErr != nil {
 			return resumed, readErr
 		}
