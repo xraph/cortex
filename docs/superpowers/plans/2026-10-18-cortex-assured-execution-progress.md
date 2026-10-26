@@ -64,7 +64,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S1.6 | active | this chat | Public outcomes, capabilities, audit/metrics and dashboard integration implemented; local installed checks pass; live scanner/provider qualification remains open |
 | S2.1 | implemented | this chat | Evidence, report, verifier and all backend contracts pass race tests; runtime activation remains separate |
 | S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; scoped recovery and callback renewal implemented; qualified host adapters, durable effect recovery, multi-scope worker deployment and durable public delivery remain open |
-| S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
+| S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command and authenticated online authority client are implemented; authority provisioning, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, task contract projections, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and S4.5 optimization | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
 | S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection, complete-request admission, private input evidence and resume fences are wired; assumptions, health observations, automatic summaries and installed qualification remain open |
@@ -88,6 +88,24 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 - User instructions require primary `main`, commit and push. Those explicit instructions override the skill's worktree and repeated push-approval defaults.
 
 ## Verification log
+
+### Installed sandbox command and qualification transport, 2026-10-26
+
+`integrations/sandbox/cmd/cortex-sandboxd` now loads protected broker and authority
+configuration, then owns the installed daemon through signal cancellation and
+shutdown. The online client uses TLS 1.3 with CA/hostname and SPKI verification,
+mTLS, fresh nonces and exact deployment/host/boot/kernel binding. It checks current
+revocation and complete live probe metadata on every observation. Requests,
+responses, concurrency and time are bounded; changed credentials, fixture data,
+missing probes, redirects and stale decisions deny admission.
+
+The full sandbox module race suite, final all-module lint, formatting, module
+build, Linux-specific lint and Linux amd64/arm64 cross-builds passed. An independent source review found no remaining must-fix issue. The
+protocol README states the deployment boundary: you still need to implement and
+provision the evidence authority and select the Linux worker. The client does
+not collect live probes or qualify its own installation. S2.4 remains open for
+that explicitly deferred live work.
+
 
 ### Measured reliability runtime integration, 2026-10-26
 
