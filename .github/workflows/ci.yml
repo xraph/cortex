@@ -99,9 +99,26 @@ jobs:
         run: go build ./...
 
       - name: Test
+        if: matrix.module != 'optimization'
         env:
-          TEST_TIMEOUT: ${{ matrix.module == 'optimization' && '30m' || '10m' }}
-        run: go test -race -count=1 -timeout="$TEST_TIMEOUT" ./...
+          GOWORK: 'off'
+        run: go test -race -count=1 -timeout=10m ./...
+
+      - name: Test optimizer services and memory store
+        if: matrix.module == 'optimization'
+        env:
+          GOWORK: 'off'
+        shell: bash
+        run: |
+          go list ./... > "$RUNNER_TEMP/cortex-optimizer-packages.txt"
+          packages=()
+          while IFS= read -r package; do
+            case "$package" in
+              github.com/xraph/cortex/optimization/store/mongo|github.com/xraph/cortex/optimization/store/postgres|github.com/xraph/cortex/optimization/store/sqlite) ;;
+              *) packages+=("$package") ;;
+            esac
+          done < "$RUNNER_TEMP/cortex-optimizer-packages.txt"
+          go test -race -count=1 -timeout=30m "${packages[@]}"
 
       - name: Compile deferred Linux qualification probes
         if: matrix.module == 'integrations/sandbox'
@@ -125,6 +142,35 @@ jobs:
           sudo -- "$RUNNER_TEMP/cortex-workspace.test" -test.v -test.timeout=60s
           GOWORK=off go test -race -c -tags=sandbox_mount_kernel -o "$RUNNER_TEMP/cortex-worker-pipeline.test" ./internal/worker
           sudo -- "$RUNNER_TEMP/cortex-worker-pipeline.test" -test.run='^TestWorkerKernel' -test.v -test.timeout=60s
+
+  # Database suites get separate runners so race instrumentation and container
+  # workloads do not compete for the same runner's CPU and package timeout.
+  optimization-stores:
+    name: Optimization store (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres, mongo]
+    defaults:
+      run:
+        working-directory: optimization
+    env:
+      GOWORK: 'off'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: optimization/go.mod
+          cache: true
+          cache-dependency-path: optimization/go.sum
+
+      - name: Test database store
+        run: go test -race -count=1 -timeout=30m ./store/${{ matrix.backend }}
 
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:

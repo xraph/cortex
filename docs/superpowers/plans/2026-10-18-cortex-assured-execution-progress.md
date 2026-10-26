@@ -6803,3 +6803,17 @@ This closes the validation-to-claim replacement window. It does not persist a
 resume payload, bind an old ask to its original pause or reconcile a lost resume
 acknowledgment. Those are the next pieces of the same recovery flow. An ambiguous
 transaction returns no suspension and grants no execution authority.
+
+### Optimizer database CI isolation
+
+CI run `40245377068` for `d3b7e8a` failed when the optimizer MongoDB package
+reached its 30-minute timeout. PostgreSQL and SQLite also took nearly that long
+while the three race-instrumented database suites shared one runner. The workflow
+now assigns each database its own runner and keeps service and memory tests in
+the existing submodule job. The package timeout and race checks are unchanged.
+
+Actionlint passes. Executing the workflow's package-selection script and comparing
+it with `go list ./...` confirms that all 13 optimizer packages are selected
+exactly once: ten service/support/memory packages and three database packages.
+This validates coverage of the split, not its runtime performance. A successful
+new CI run is still required.
