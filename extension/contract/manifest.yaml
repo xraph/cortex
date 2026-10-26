@@ -5,6 +5,12 @@ contributor:
   capabilities: [cortex.read, cortex.manage, cortex.run, cortex.approve, cortex.overlay, cortex.optimization.read, cortex.optimization.run, cortex.optimization.manage, cortex.optimization.activate]
   app: {displayName: Cortex, slug: cortex, icon: bot, home: /, priority: 40}
 intents:
+  - {name: cognitive.review, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+  - {name: learning.publications, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+  - {name: learning.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+  - {name: learning.accept, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [learning.publications, learning.detail]}
+  - {name: learning.revoke, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [learning.publications, learning.detail]}
+  - {name: learning.retry, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [learning.publications, learning.detail]}
   - {name: agents.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: agents.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
   - {name: agents.create, kind: command, version: 1, capability: write, requires: {all: [scope:cortex.manage]}, invalidates: [agents.list, agents.detail, overview.stats, prompt.preview, tools.list, tools.usage, references.list]}

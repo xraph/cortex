@@ -193,7 +193,56 @@ func (s *service) prepareExecution(ctx context.Context, in ExecuteInput) (contex
 	if checkErr := s.validate(ctx, &effective); checkErr != nil {
 		return ctx, nil, nil, checkErr
 	}
-	return ctx, ag, in.Overrides.engine(sid), nil
+	overrides := in.Overrides.engine(sid)
+	if s.deps.ExecutionBudget != nil {
+		if in.Overrides.Model != "" {
+			effective.Model = in.Overrides.Model
+		}
+		if in.Overrides.MaxSteps > 0 {
+			effective.MaxSteps = in.Overrides.MaxSteps
+		}
+		if in.Overrides.MaxTokens > 0 {
+			effective.MaxTokens = in.Overrides.MaxTokens
+		}
+		if effective.Model == "" {
+			effective.Model = s.deps.Engine.Config().DefaultModel
+		}
+		if effective.MaxSteps == 0 {
+			effective.MaxSteps = s.deps.Engine.Config().DefaultMaxSteps
+		}
+		if effective.MaxTokens == 0 {
+			effective.MaxTokens = s.deps.Engine.Config().DefaultMaxTokens
+		}
+		body, encodeErr := json.Marshal(effective)
+		if encodeErr != nil {
+			return ctx, nil, nil, bad("Invalid effective agent configuration")
+		}
+		var detached agent.Config
+		if decodeErr := json.Unmarshal(body, &detached); decodeErr != nil {
+			return ctx, nil, nil, bad("Invalid effective agent configuration")
+		}
+		budget, budgetErr := s.deps.ExecutionBudget(ctx, &detached)
+		if budgetErr != nil {
+			return ctx, nil, nil, budgetErr
+		}
+		if budget.Validate() != nil {
+			return ctx, nil, nil, bad("The host supplied an invalid execution budget")
+		}
+		if effective.MaxSteps > 0 && (budget.MaxSteps == 0 || effective.MaxSteps < budget.MaxSteps) {
+			budget.MaxSteps = effective.MaxSteps
+		}
+		if effective.MaxTokens > 0 && (budget.MaxTokens == 0 || effective.MaxTokens < budget.MaxTokens) {
+			budget.MaxTokens = effective.MaxTokens
+		}
+		if deadline, ok := ctx.Deadline(); ok && (budget.Deadline.IsZero() || deadline.Before(budget.Deadline)) {
+			budget.Deadline = deadline
+		}
+		if !budget.Deadline.IsZero() && !time.Now().Before(budget.Deadline) {
+			return ctx, nil, nil, cortex.ErrBudgetExhausted
+		}
+		overrides.Budget = &budget
+	}
+	return ctx, ag, overrides, nil
 }
 func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 	binds := []func() error{

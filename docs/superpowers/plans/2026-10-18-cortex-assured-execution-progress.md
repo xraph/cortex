@@ -78,6 +78,38 @@ MongoDB fixture. All-module lint and the root build passed. These checks qualify
 the implemented recovery mechanisms; installed worker qualification and the
 remaining stage gates are still separate.
 
+## Operator review and measured reliability, 2026-10-26
+
+The dashboard contract now exposes bounded historical reflection pages and
+metadata for governed lesson publication. Current run and source grants are
+checked before disclosure and again after evidence access. Deleted evidence
+withholds assumptions and service observations while preserving decision
+metadata. These views work when adaptation is disabled. Reliability remains
+unknown unless a separate compatible measurement is available.
+
+Lesson acceptance derives its source from a current committed result. Operators
+can inspect delivery metadata, correct or revoke a lesson, and request another
+delivery attempt at its exact retained generation. A retry does not restore
+eligibility. Host authorization receives a detached scope; specific lesson grants
+are checked again before returning a publication page.
+
+Hosts can supply cumulative execution budgets before dashboard preparation and
+serialize agent mutations with current publication-policy reads. Client limits
+can narrow the host budget. They cannot extend its deadline or raise its caps.
+
+The Sentinel adapter now reads immutable calibration cohorts and reproduces their
+statistics for an exact agent/model/runtime binding. Missing, cancelled and
+failed planned trials remain in the success denominator. Sparse evidence stays
+unknown. Frozen benchmark rosters preserve required failures, incomplete jobs and
+unknown cost. Deterministic tests cover six task groups; those fixtures do not
+establish installed model accuracy.
+
+Calibration passed the full Sentinel race suite, build and all-module lint.
+Operator checks cover denied reads and writes, evidence deletion, revocation
+during disclosure, retained history, stale retry generations and budget clamps.
+The learning grant regressions ran against SQLite, PostgreSQL and MongoDB.
+Installed dashboard verification and the remaining stage gates are still open.
+
 ## Ownership and contracts
 
 This chat owns the runtime integrator, persistence, contract and progress roles for the active packet. The optimization chat owns Sentinel recorded evaluation and cortex/optimization. A fresh reviewer inspected S1.1 without editing files. Other implementation packets remain unassigned. Inspect status before each packet; the optimization workstream shares prepared execution and evaluation contracts and must consume these foundation commits.
@@ -178,7 +210,8 @@ correction from a different source run with deletion; a deterministic Postgres
 race test covers the stale-revision case. Fabriq active-row and vector deletion
 is implemented, but its pinned core retains event and outbox history. The receipt
 therefore keeps `HistoryErased=false`. Upstream retained-history erasure remains
-pending the requested Fabriq main fast-forward approval and implementation.
+implemented and pushed in Fabriq after the approved fast-forward. Its release,
+dependency pin and Cortex adapter integration remain open.
 
 Evidence includes race checks on SQLite, real Postgres 16 and the pinned Mongo
 fixture; the installed Fabriq/Postgres flow covers publication, retrieval,

@@ -18,7 +18,10 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
+	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/execution"
+	"github.com/xraph/cortex/learning"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
@@ -34,12 +37,22 @@ var manifest []byte
 // A present but invalid claim never falls back to it.
 type Deps struct {
 	Engine         *engine.Engine
-	Optimization   *optimization.Optimizer
-	DefaultScope   cortex.Scope
-	ResolveScope   func(context.Context, dc.Principal) (cortex.Scope, error)
-	Audit          func(context.Context, AuditEvent) error
-	ExecutionLabel string
-	Catalogs       map[string]CatalogQuery
+	AdaptiveReview *engine.AdaptiveReviewer
+	Learning       *learning.Guard
+	// ExecutionBudget supplies host-owned cumulative limits before preparation.
+	// The callback receives a detached effective agent. Client limits can only
+	// narrow its result; clients cannot supply their own deadline authority.
+	ExecutionBudget func(context.Context, *agent.Config) (execution.Budget, error)
+	// AgentMutationFence serializes dashboard agent writes with host policy reads.
+	// The host must hold current authority until its synchronous callback returns.
+	// Other agent writers must participate in the same host fence.
+	AgentMutationFence func(context.Context, func(context.Context) error) error
+	Optimization       *optimization.Optimizer
+	DefaultScope       cortex.Scope
+	ResolveScope       func(context.Context, dc.Principal) (cortex.Scope, error)
+	Audit              func(context.Context, AuditEvent) error
+	ExecutionLabel     string
+	Catalogs           map[string]CatalogQuery
 }
 type AuditEvent struct {
 	At         time.Time    `json:"at"`
@@ -76,7 +89,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return checkErr
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage, s.bindOptimization} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage, s.bindOptimization, s.bindAdaptive} {
 		if checkErr := bind(d); checkErr != nil {
 			return checkErr
 		}

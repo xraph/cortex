@@ -35,6 +35,7 @@ func reflectionFixture(t *testing.T, backend store.Store) (context.Context, cogn
 
 // ReflectionExecution covers atomic decisions, stale authority inputs and recovery.
 func ReflectionExecution(t *testing.T, newStore func(*testing.T) store.Store) {
+	t.Run("history", func(t *testing.T) { reflectionHistory(t, newStore(t)) })
 	t.Run("retained_evidence_and_assumptions", func(t *testing.T) { reflectionEvidence(t, newStore(t)) })
 	t.Run("one_fresh_admission_and_restart", func(t *testing.T) {
 		backend := newStore(t)

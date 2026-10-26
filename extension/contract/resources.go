@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/communication"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/internal/hostport"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/perception"
 	"github.com/xraph/cortex/persona"
@@ -59,13 +60,38 @@ func (s *service) bindAgent(d *dispatcher.Dispatcher) error {
 			return s.deps.Engine.Store().Get(ctx, v)
 		},
 		create: func(ctx context.Context, v *agent.Config) error {
-			return s.deps.Engine.CreateAgent(ctx, v)
+			return s.mutateAgent(ctx, func(guarded context.Context) error { return s.deps.Engine.CreateAgent(guarded, v) })
 		},
-		update: s.deps.Engine.UpdateAgent,
-		remove: func(ctx context.Context, v *agent.Config) error { return s.deps.Engine.DeleteAgent(ctx, v.ID) },
-		scope:  func(v *agent.Config) cortex.Scope { return v.Scope },
-		name:   func(v *agent.Config) string { return v.Name },
+		update: func(ctx context.Context, v *agent.Config) error {
+			return s.mutateAgent(ctx, func(guarded context.Context) error { return s.deps.Engine.UpdateAgent(guarded, v) })
+		},
+		remove: func(ctx context.Context, v *agent.Config) error {
+			return s.mutateAgent(ctx, func(guarded context.Context) error { return s.deps.Engine.DeleteAgent(guarded, v.ID) })
+		},
+		scope: func(v *agent.Config) cortex.Scope { return v.Scope },
+		name:  func(v *agent.Config) string { return v.Name },
 	})
+}
+
+func (s *service) mutateAgent(ctx context.Context, apply func(context.Context) error) error {
+	if s.deps.AgentMutationFence == nil {
+		return apply(ctx)
+	}
+	invalid := denied("Agent mutation authority is unavailable")
+	_, err := hostport.WithSynchronousFence(ctx, invalid, s.deps.AgentMutationFence, func(attempt, guarded context.Context) (struct{}, error) {
+		if guarded == nil || cortex.ScopeFromContext(guarded).Canonical() != cortex.ScopeFromContext(ctx).Canonical() {
+			return struct{}{}, invalid
+		}
+		if contextErr := attempt.Err(); contextErr != nil {
+			return struct{}{}, contextErr
+		}
+		writeCtx, cancel := context.WithCancel(guarded)
+		stop := context.AfterFunc(attempt, cancel)
+		defer stop()
+		defer cancel()
+		return struct{}{}, apply(writeCtx)
+	})
+	return err
 }
 
 type PersonaPatch struct {

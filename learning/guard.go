@@ -62,7 +62,11 @@ func (g *Guard) Authorize(ctx context.Context, action Action, identifier id.ID, 
 	if err != nil {
 		return err
 	}
-	return g.config.Authority.AuthorizeLesson(ctx, action, Resource{Scope: scope, ID: identifier, Domain: domain})
+	scope.Levels = append([]cortex.Level(nil), scope.Levels...)
+	if authErr := g.config.Authority.AuthorizeLesson(ctx, action, Resource{Scope: scope, ID: identifier, Domain: domain}); authErr != nil {
+		return authErr
+	}
+	return ctx.Err()
 }
 
 func (g *Guard) withResult(ctx context.Context, request verification.ResultReadRequest, action func(context.Context) error) error {
