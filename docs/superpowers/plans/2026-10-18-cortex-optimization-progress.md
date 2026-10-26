@@ -2190,3 +2190,39 @@ extension race tests and both builds pass. Temporary modfiles with every local
 replacement removed also pass optimization HTTP/contract race tests and builds
 against the published pins. Task 16 remains open for frozen creation, authorized
 catalogs, readiness, artifact export and richer review summaries.
+
+## Scoped capability reporting
+
+`Optimizer.Capabilities` and the shared operator reader now separate current
+permissions from integration readiness. You can request scope diagnostics or
+select a frozen experiment. Scope diagnostics cannot establish trial readiness.
+The selected experiment binds the host probe to its exact scope, agent, baseline,
+controller and evaluation plan. Editable dimensions come from its saved policy.
+
+The host supplies a read-only `CapabilityProbe` for running workers, durable
+storage, environment guarantees, evaluation, accounting and scope mapping.
+Absent probes report unavailable checks; omitted checks from an installed probe
+remain unknown. Probe results cannot override missing production engine,
+compatibility, artifact-verification or lesson dependencies. Storage reachability
+is checked directly. A successful ping does not attest durable storage.
+
+Trial readiness requires every relevant check. Dollar budgets also require a
+qualified price revision matching the frozen budget. Token-only experiments
+retain unknown dollar prices. These observations grant no authority and do not
+replace command checks for state, budget, the original requester or current
+resource permissions. Raw provider errors and invented status strings are not
+returned to operators.
+
+Tests cover foreign and missing scope, mismatched reports, revoked access,
+changed caller identity, missing prerequisites, unqualified and changed pricing,
+unrecoverable environments, token-only budgets, cancellation, detached response
+maps and private execution contexts. REST/dashboard bindings and concrete host
+probe wiring remain the next step; this service does not qualify live providers.
+
+The final optimizer core race suite passes in 49.019s, the operator suite in
+4.677s, and the optimizer build and scoped lint pass. Scoped `make f` is clean.
+Repository-wide `make l` was run twice after formatting. Its remaining failures
+are in the runtime chat's concurrent prepared-messaging implementation, first
+missing APIs and then unchecked assertions and formatting. Those files are left
+with their owner. Full API and extension race tests also pass against the
+published runtime while the new local capability service is being exercised.

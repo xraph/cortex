@@ -60,6 +60,9 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 				}
 
 				if purpose != run.PurposeNormal {
+					if _, capabilityErr := op.Capabilities(callCtx, bundle.Experiment.ID); !errors.Is(capabilityErr, optimization.ErrPolicyDenied) {
+						t.Errorf("private capability read reached %s: %v", purpose, capabilityErr)
+					}
 					if _, commandErr := op.RetryLessonCommand(callCtx, optimization.RetryLessonRequest{}); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
 						t.Errorf("private lesson retry reached %s: %v", purpose, commandErr)
 					}

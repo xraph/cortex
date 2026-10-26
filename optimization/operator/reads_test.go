@@ -54,6 +54,13 @@ func TestReadAdapters(t *testing.T) {
 		name string
 		read func(operator.Reader, context.Context) error
 	}{
+		{"capabilities", func(r operator.Reader, c context.Context) error {
+			v, e := r.Capabilities(c, operator.CapabilitiesInput{ExperimentID: key})
+			if e == nil && (v.TrialsReady || v.Target.ExperimentID.String() != key || v.Checks[opt.CapabilityEvaluation] != opt.ReadinessUnavailable) {
+				t.Fatalf("missing capability probe: %+v", v)
+			}
+			return e
+		}},
 		{"experiments", func(r operator.Reader, c context.Context) error {
 			p, e := r.Experiments(c, operator.ExperimentsInput{})
 			if e == nil && (len(p.Items) != 1 || !p.Complete) {
