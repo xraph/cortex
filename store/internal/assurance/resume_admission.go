@@ -10,7 +10,6 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/internal/runstate"
 	"github.com/xraph/cortex/suspension"
 )
@@ -183,25 +182,18 @@ func (s *Repository) StartResume(ctx context.Context, runID id.AgentRunID, key i
 		if !errors.Is(priorErr, suspension.ErrResumeAdmissionNotFound) {
 			return priorErr
 		}
-		current, readErr := tx.GetRun(tc, admitted.Request.Version.RunID)
+		_, expiryErr := repo.GetResumeExpiry(tc, runID, key)
+		if expiryErr == nil {
+			return cortex.ErrSuspensionExpired
+		}
+		if !errors.Is(expiryErr, suspension.ErrResumeAdmissionNotFound) {
+			return expiryErr
+		}
+		current, paused, readErr := lockAdmittedResume(tc, tx, admitted)
 		if readErr != nil {
 			return readErr
 		}
-		if current == nil || current.ID != admitted.Request.Version.RunID || current.Scope.Canonical() != admitted.Request.Scope.Canonical() || current.State != run.StateRunning || current.Revision != admitted.ClaimedRevision {
-			return cortex.ErrRunConflict
-		}
-		locked, supported := tx.(SuspensionTransaction)
-		if !supported {
-			return suspension.ErrResumeAdmissionUnavailable
-		}
-		paused, readErr := locked.LockSuspension(tc, current.ID)
-		if readErr != nil {
-			return readErr
-		}
-		data, encodeErr := json.Marshal(paused)
-		if encodeErr != nil || paused == nil || evidence.Digest(data) != admitted.SuspensionDigest {
-			return suspension.ErrResumeAdmissionConflict
-		}
+
 		at := s.clock.Now().UTC()
 		if paused.ExpiresAt != nil && !paused.ExpiresAt.After(at) {
 			return cortex.ErrSuspensionExpired

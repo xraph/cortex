@@ -13,7 +13,8 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution and expired admissions. Private prepared-team messaging and
+  started execution. Expired admissions that never started now terminate
+  atomically. Private prepared-team messaging and
   durable held-question release are wired; installed recovery qualification is
   still open. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
@@ -27,8 +28,8 @@ the path to acceptance without reading the chronological evidence below.
 
 The runtime now connects retained answers, guarded resume admissions and private
 prepared-team messaging, including recovery of interrupted question release.
-The next coordination boundary is recovery of ambiguous starts and expired
-admissions, followed by installed qualification.
+The next coordination boundary is authenticated recovery of ambiguous starts,
+followed by installed qualification.
 Production verification rollout remains disabled. No completion percentage or
 production readiness is claimed.
 
@@ -7175,3 +7176,56 @@ run is recorded as failed, not converted to a pass. Linux CI remains the broader
 regression check. These local process fixtures do not qualify installed provider
 adapters, host grant services or durable lifecycle events. Production verification
 rollout remains disabled.
+
+
+## Resume expiry and retained discovery, 2026-10-26
+
+Recovery now distinguishes an expired admission that never started from execution
+that may already be in flight. `ExpireResumeAdmission` shares the run lock with
+`StartResume`, validates the exact admission and unchanged pause, and refuses an
+existing start receipt. A successful expiry atomically records an incomplete
+deadline outcome, immutable expiry receipt and public terminal metadata event.
+Retries preserve their identities. The operation does not execute a provider,
+release a reservation or claim verified success.
+
+The native discovery queries also include running admissions after rehydration
+removed the pause row. Each backend merges two bounded exact-scope identity
+projections, removes duplicates and keeps the exclusive run-ID cursor. Recovery
+uses the retained admission to identify the old start and report uncertainty;
+it never treats a historical receipt as permission to execute. Global recovery
+and the private coordinator share the pause/history lookup. Current authorization
+is checked before the fallback private read and before expiry.
+
+Evidence so far:
+
+- The discovery regression first failed because deleting a started run's pause
+  removed it from the next page. The expiry tests first failed on the absent API.
+- A terminal-event regression then failed because expiry did not retain its public
+  observation. The state, receipt and metadata event now use one transaction.
+- Runtime tests first failed on a stranded expired admission, missing discovery
+  after pause deletion, and permission revocation before expiry. The initial
+  focused race run passed in 21.090 seconds after those paths were wired.
+- The initial native matrices passed all three databases, including expiry
+  racing with start, rollback, lost acknowledgment and unchanged admission tests.
+  Final SQLite and PostgreSQL checks passed in 18.211 and 48.579 seconds. MongoDB
+  failed during reaper startup before executing tests; its isolated retry passed
+  in 90.361 seconds. No database cases skipped.
+- The broader affected engine and coordination race suites passed in 319.339 and
+  1.405 seconds. Final expiry and private-read revocation tests passed in 22.621
+  seconds. A real subprocess was killed inside the resumed provider call after
+  pause deletion. A reopened engine rediscovered the uncertain run, retained its
+  start receipt and made zero provider calls. That race test passed in 4.429
+  seconds using the existing owned-process crash harness.
+- Scoped `make f`, the final all-module `make l`, root build, docs type checks,
+  docs lint and production docs build passed. Formatting and staging preserve
+  the concurrent Sentinel optimization work.
+- Integrated CI on `cb044a5` reported a sandbox cancellation-test failure:
+  `TestTLSServerCancelsAndJoinsActiveAuthentication` rejected a request whose
+  HTTP client returned no transport error. That separate failure remains under
+  investigation; this packet does not claim a green integrated CI run.
+
+Possibly started execution remains unresolved until authenticated provider/effect
+proof and worker fencing establish a safe continuation or terminal disposition.
+This change closes unstarted expiry and lost discovery, not that reconciliation
+protocol or installed host qualification. Production verification rollout remains
+disabled.

@@ -309,22 +309,20 @@ func (r *preparedTeamRunner) recoverMessageAskers(ctx context.Context) (int, err
 		if child.State != run.StatePaused && child.State != run.StateRunning {
 			continue
 		}
-		paused, readErr := r.eng.store.GetSuspension(ctx, key)
-		if errors.Is(readErr, cortex.ErrNotSuspended) {
-			continue
-		}
-		if readErr != nil {
-			return resumed, readErr
-		}
-		if paused.Reason != suspension.ReasonAgentReply {
-			continue
-		}
-		result, recoverErr := r.eng.RecoverAgentReply(ctx, key, paused.ID, func(ac context.Context, runID id.AgentRunID) error {
+		authorize := func(ac context.Context, runID id.AgentRunID) error {
 			if authErr := r.authorizeMessagingCoordinator(ac, r.policy.ExecutionID); authErr != nil {
 				return authErr
 			}
 			return r.eng.authorizePreparedMessaging(ac, r.policy.ExecutionID, runID)
-		})
+		}
+		pauseID, pauseErr := r.eng.replyRecoveryPause(ctx, child, authorize)
+		if pauseErr != nil {
+			return resumed, pauseErr
+		}
+		if pauseID.IsNil() {
+			continue
+		}
+		result, recoverErr := r.eng.RecoverAgentReply(ctx, key, pauseID, authorize)
 		if errors.Is(recoverErr, suspension.ErrResumeAdmissionNotFound) || errors.Is(recoverErr, suspension.ErrResumeAlreadyStarted) {
 			continue
 		}

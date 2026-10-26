@@ -112,20 +112,14 @@ func (r *agentReplyRecovery) Recover(ctx context.Context, key id.AgentRunID) err
 	if authErr := r.authorize(ctx, key); authErr != nil {
 		return authErr
 	}
-	paused, err := r.engine.store.GetSuspension(ctx, key)
-	if errors.Is(err, cortex.ErrNotSuspended) {
-		return nil
-	}
+	pauseID, err := r.engine.replyRecoveryPause(ctx, current, r.authorize)
 	if err != nil {
 		return err
 	}
-	if paused == nil || paused.RunID != key || paused.Scope.Canonical() != scope.Canonical() {
-		return suspension.ErrResumeAdmissionConflict
-	}
-	if paused.Reason != suspension.ReasonAgentReply {
+	if pauseID.IsNil() {
 		return nil
 	}
-	_, err = r.engine.RecoverAgentReply(ctx, key, paused.ID, r.authorize)
+	_, err = r.engine.RecoverAgentReply(ctx, key, pauseID, r.authorize)
 	if errors.Is(err, suspension.ErrResumeAdmissionNotFound) {
 		return nil
 	}

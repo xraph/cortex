@@ -503,11 +503,11 @@ at most 256 distinct scopes and rechecks discovery permission after each query.
 Recovery rechecks the run's current state, scope and suspension before entering
 the same guarded resume path used by explicit recovery. Waiting questions stay
 paused. Completed runs are skipped. A retained start receipt produces
-`ErrResumeAlreadyStarted`, and an expired admission produces
-`ErrSuspensionExpired`; your `ReportError` handler can route these to host
-reconciliation. Polling never clears either condition or retries uncertain
-execution. Error reporting must return promptly and callbacks must honor
-cancellation.
+`ErrResumeAlreadyStarted`; your `ReportError` handler can route it to host
+reconciliation. Running admissions remain discoverable after their pause row is
+removed. An expired admission that never started is finalized through the atomic
+expiry path below. Polling never retries uncertain execution. Error reporting
+must return promptly and callbacks must honor cancellation.
 
 `AgentReplyRecoveryStatus` reports whether the service is configured and its
 local active/failure counters. These counters contain no run content or scope
@@ -660,7 +660,7 @@ It does not automatically supply external tool results.
 Every restart restores the original prepared team and continuation. A global
 reply-recovery worker cannot assume the private coordinator's authority. An
 existing start receipt means execution may already have happened and prevents
-another start. Expired admissions and ambiguous starts still need reconciliation.
+another start. Ambiguous starts still need execution reconciliation.
 New held questions use the durable release path below. Lifecycle hooks remain
 best effort. Local integration tests do not qualify an installed host's grants,
 provider behavior or event delivery.
@@ -712,3 +712,30 @@ as unreleased work. Their existing delivery or timeout paths remain available;
 ambiguous legacy execution needs reconciliation. Ordinary `Hold` and `Release`
 remain available for legacy hosts. Versioned release supports engine-origin
 questions, not messages that also answer an earlier ask through `InReplyTo`.
+
+
+## Expire an admission that never started
+
+An admitted reply can reach its pause deadline before execution begins. Native
+stores implement `suspension.ResumeRecoveryStore`, which lets `RecoverAgentReply`
+and background recovery end that run as `incomplete` with stop reason `deadline`.
+Recovery rechecks current run permission before the expiry transaction.
+
+Expiry locks the same run as `StartResume`. It validates the original admission,
+run revision and unchanged pause, then requires that no start receipt exists.
+The terminal state, a `ResumeExpiry` receipt and an `execution_finished` metadata
+event commit together. Output is empty and verification remains unchecked. A
+retry returns the same receipt and event identity; it cannot reopen execution.
+Reservations remain available for their existing settlement path.
+
+An existing start receipt refuses expiry even when the deadline has passed.
+Elapsed time cannot establish that an in-flight provider or tool stopped. A host
+must reconcile that execution using authenticated provider/effect evidence and
+worker fencing before deciding what can happen next. This expiry path does not
+supply that proof or authorize another attempt.
+
+`LatestResumeAdmission` reads retained history for a run, ordered by suspension
+ID. Recovery uses it when the live pause is gone. The native discovery queries
+merge bounded, exact-scope pause and running-admission projections, deduplicate
+run IDs and preserve the exclusive cursor. Terminal runs without a pause are
+excluded. Authorize these reads; their retained inputs are private execution data.

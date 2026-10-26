@@ -151,6 +151,9 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 		return nil, authErr
 	}
 	paused, err := startAdmittedResume(ctx, durable, admitted)
+	if errors.Is(err, cortex.ErrSuspensionExpired) {
+		return e.expireAdmittedReply(ctx, admitted)
+	}
 	if err != nil {
 		return nil, err
 	}

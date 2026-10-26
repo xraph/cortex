@@ -70,9 +70,11 @@ type ResumeAdmissionStore interface {
 }
 
 // ReplyDiscoveryStore lists only run identities with retained agent-reply
-// suspensions in the exact context scope. Results are ordered by run ID after
+// suspensions or running resume admissions in the exact context scope. Results
+// are ordered by run ID after
 // the exclusive cursor. Limit must be between 1 and 256. Discovery includes
-// expired and already-admitted suspensions so hosts can reconcile them.
+// expired and already-admitted suspensions, plus running admissions after their
+// pause was deleted, so hosts can reconcile interrupted execution.
 type ReplyDiscoveryStore interface {
 	ListAgentReplyRuns(context.Context, id.AgentRunID, int) ([]id.AgentRunID, error)
 }

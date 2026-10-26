@@ -41,9 +41,16 @@ func (f replyRecoverySource) ListAgentReplyRuns(ctx context.Context, req coordin
 }
 
 func TestAgentReplyBackgroundRecovery(t *testing.T) {
-	for _, boundary := range []string{"seal_lost", "admit_lost", "before_start", "start_lost"} {
+	for _, boundary := range []string{"seal_lost", "admit_lost", "before_start", "start_lost", "running_without_pause"} {
 		t.Run(boundary, func(t *testing.T) {
-			st, ctx, current, pauseID := admittedReplyFixture(t, boundary)
+			fixtureBoundary := boundary
+			if boundary == "running_without_pause" {
+				fixtureBoundary = "start_lost"
+			}
+			st, ctx, current, pauseID := admittedReplyFixture(t, fixtureBoundary)
+			if boundary == "running_without_pause" {
+				require.NoError(t, st.DeleteSuspension(ctx, current.ID))
+			}
 			client := &backgroundReplyClient{scriptedLLM: &scriptedLLM{answered: true}}
 			var checks, failures atomic.Int32
 			discovery, available := st.(suspension.ReplyDiscoveryStore)
@@ -75,7 +82,7 @@ func TestAgentReplyBackgroundRecovery(t *testing.T) {
 			cancel()
 			t.Cleanup(func() { require.NoError(t, fresh.Stop(context.Background())) })
 			require.Eventually(t, func() bool {
-				if boundary == "start_lost" {
+				if boundary == "start_lost" || boundary == "running_without_pause" {
 					return failures.Load() > 1
 				}
 				stored, readErr := st.GetRun(ctx, current.ID)
@@ -83,7 +90,7 @@ func TestAgentReplyBackgroundRecovery(t *testing.T) {
 			}, 10*time.Second, 5*time.Millisecond)
 			require.NoError(t, fresh.Stop(context.Background()))
 			want := int32(1)
-			if boundary == "start_lost" {
+			if boundary == "start_lost" || boundary == "running_without_pause" {
 				want = 0
 			}
 			require.Equal(t, want, client.calls.Load())
