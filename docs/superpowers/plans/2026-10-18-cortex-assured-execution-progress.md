@@ -73,7 +73,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
 | S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
-| S3.2 | active | this chat | Durable ownership, guarded readiness/capacity admission, fair bounded scheduling, prepared engine worker dispatch, claim renewal storage, expiry and verified completion implemented; automatic renewal, concrete host services, lifecycle/event delivery and recovery qualification remain open |
+| S3.2 | active | this chat | Durable ownership, guarded readiness/capacity admission, fair bounded scheduling, prepared engine worker dispatch, claim renewal storage, automatic renewal with expiry watchdogs, expiry and verified completion implemented; concrete host services, lifecycle/event delivery and recovery qualification remain open |
 | S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; bounded proposal policy and shared-account validation implemented; runtime accounting and automatic replan execution remain open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
@@ -7527,3 +7527,24 @@ This packet does not provide a production tokenizer or automatic active-turn
 compaction. Its test counter measures fixture costs only. Host source retention,
 semantic summary validation, installed provider checks and the remaining S4.1
 work stay open. The full four-stage program remains incomplete.
+
+
+### MongoDB fence contention and CI recovery
+
+The optimization MongoDB CI failure came from fence acquisition before the
+transaction callback. Eight exponential retries allowed about 0.6 seconds of
+contention, which was too short for concurrent same-scope operator commands.
+Acquisition now retries within a five-second window with a capped delay. Caller
+cancellation remains effective. Once the fence is acquired, the callback is
+invoked once; callback failures and uncertain commits are never replayed.
+
+A real MongoDB regression holds the first transaction beyond the old retry
+window. It failed before the change, then passed with cancellation and callback
+non-replay checks. The original concurrent-command conformance case and both
+fence tests passed three race repetitions in 39.794 seconds. Scoped formatting,
+all-module lint, MongoDB adapter build and diff checks passed. Logs use
+`/tmp/cortex-stage-gates-mongo-`. Exact-head CI remains required after push.
+
+The S3.2 summary now reflects the existing scheduler renewal integration and its
+watchdog. Concrete host services and installed qualification remain open; this
+correction does not claim a new implementation or close the stage.

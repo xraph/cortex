@@ -188,15 +188,23 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 	if err != nil {
 		return err
 	}
-	for attempt := range 8 {
+	retryUntil := time.Now().Add(5 * time.Second)
+	for attempt := 0; ; attempt++ {
 		var fenced bool
 		err = b.updateOnce(ctx, scope, update, &fenced)
-		if err == nil || fenced || !errors.Is(err, optimization.ErrConflict) || attempt == 7 {
+		if err == nil || fenced || !errors.Is(err, optimization.ErrConflict) {
 			return err
 		}
 		// Retry only fence acquisition, before reading state or invoking the
 		// caller. An unknown commit or a failed callback must never be replayed.
-		timer := time.NewTimer(5 * time.Millisecond * time.Duration(1<<attempt))
+		// Bound contention by elapsed time, not a short burst of eight attempts.
+		// The caller's deadline still governs the admitted transaction itself.
+		remaining := time.Until(retryUntil)
+		if remaining <= 0 {
+			return err
+		}
+		delay := min(5*time.Millisecond*time.Duration(1<<min(attempt, 5)), 100*time.Millisecond, remaining)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -204,7 +212,6 @@ func (b *backend) Update(ctx context.Context, key string, update func([]state.Re
 		case <-timer.C:
 		}
 	}
-	return err
 }
 
 func (b *backend) updateOnce(ctx context.Context, scope scoped.Index, update func([]state.Record) ([]state.Mutation, error), fenced *bool) error {
