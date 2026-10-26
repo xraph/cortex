@@ -2370,7 +2370,8 @@ all local replacements removed pass catalog race tests (API 2.197s, contract
 Sentinel grants and live provider readiness remain unqualified.
 
 Final scoped formatting and API/extension lint pass. The final repository-wide
-pass reported one shadowed variable in the concurrent runtime change. Its owner
-has corrected the source; that root-only recheck and the remaining nested-module
-lint work are still live under shared lint contention. The transport commit does
-not include runtime files or claim a completed green repository-wide rerun.
+pass reported one shadowed variable in the concurrent runtime change; every
+nested module finished with zero findings. Its owner corrected the source, and
+`make l GO_MODULES=.` passes on the corrected root. The original invocation keeps
+its failing exit status, while the root recheck supplies the missing clean
+result. The transport commits contain no runtime files.
