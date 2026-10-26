@@ -60,6 +60,12 @@ type taskLifecycleService interface {
 
 func (e *Engine) taskServices() []taskLifecycleService {
 	var services []taskLifecycleService
+	if e.verificationRecovery != nil {
+		services = append(services, e.verificationRecovery)
+	}
+	if e.effectContinuation != nil {
+		services = append(services, e.effectContinuation)
+	}
 	if e.agentReplyRecovery != nil {
 		services = append(services, e.agentReplyRecovery)
 	}

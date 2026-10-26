@@ -29,10 +29,13 @@ type taskRecoveryFixture struct {
 }
 
 type taskRecoveryOptions struct {
-	Acquire        func(context.Context, coordination.ClaimRequest, planning.Plan) (coordination.Claim, error)
-	ProviderUsage  execution.ReservationUsage
-	VerifierBudget *verification.EvaluationBudget
-	Ordinary       bool
+	Effect           *execution.EffectRequirement
+	EffectNotApplied bool
+	EffectPending    bool
+	Acquire          func(context.Context, coordination.ClaimRequest, planning.Plan) (coordination.Claim, error)
+	ProviderUsage    execution.ReservationUsage
+	VerifierBudget   *verification.EvaluationBudget
+	Ordinary         bool
 }
 
 func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.Driver, mode string, options ...taskRecoveryOptions) taskRecoveryFixture {
@@ -113,13 +116,22 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 	effect.RunID = model.RunID
 	effect.Deadline = claim.ExpiresAt
 	effect.RunCall = &tool
+	if option.Effect != nil {
+		effect.Requirement = *option.Effect
+	}
 	if mode == "legacy effect" {
 		effect.RunCall = nil
 	}
 	_, err = repo.BeginEffect(ctx, effect)
 	require.NoError(t, err)
-	if mode != "pending effect" {
-		require.NoError(t, repo.CompleteEffect(ctx, effect, storedEffectReceipt(t, effect)))
+	if mode != "pending effect" && !option.EffectPending {
+		receipt := storedEffectReceipt(t, effect)
+		if option.EffectNotApplied {
+			receipt.Outcome = execution.EffectNotApplied
+			receipt.ExternalID = ""
+			receipt.ExternalVersion = ""
+		}
+		require.NoError(t, repo.CompleteEffect(ctx, effect, receipt))
 	}
 	if option.Ordinary {
 		clock := &jobClock{at: time.Now().UTC()}
@@ -141,6 +153,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 // ownership records. Fixture proof references do not qualify a host authenticator.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("effect continuation", func(t *testing.T) { EffectContinuationExecution(t, backend, driver) })
 	t.Run("plan replan", func(t *testing.T) { PlanReplanRecovery(t, backend, driver) })
 	t.Run("task retirement", func(t *testing.T) { TaskRetirement(t, backend, driver) })
 	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })

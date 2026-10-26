@@ -87,7 +87,7 @@ func effectNil(v any) bool {
 // Execute reserves before dispatch. An error after reservation is uncertain even
 // if no adapter call occurred; recovery must inspect the original operation.
 func (e *EffectExecutor) Execute(ctx context.Context, request EffectRequest, args []byte) (EffectReceipt, error) {
-	if len(args) > 64<<10 || evidence.Digest(args) != request.ArgsDigest {
+	if IsCompensationOperationKey(request.OperationKey) || len(args) > 64<<10 || evidence.Digest(args) != request.ArgsDigest {
 		return EffectReceipt{}, ErrInvalidEffect
 	}
 	data := append([]byte(nil), args...)

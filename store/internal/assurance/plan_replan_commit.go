@@ -148,6 +148,9 @@ func (s *Repository) checkReplanOwnership(ctx context.Context, req coordination.
 	return nil
 }
 func (s *Repository) checkReplanClaim(ctx context.Context, claim coordination.Claim, proof coordination.TaskRecoveryProof) error {
+	if continuationErr := s.checkRunEffectContinuations(ctx, claim.RunID, false, proof.ObservedAt); continuationErr != nil {
+		return continuationErr
+	}
 	reader, ok := s.driver.(SubmissionRunReader)
 	if !ok {
 		return coordination.ErrAssignmentUnavailable

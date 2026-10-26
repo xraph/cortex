@@ -8,7 +8,9 @@ The four-stage program is incomplete. Passing packet tests does not close a stag
 gate. The following list groups the remaining work by deliverable so you can see
 the path to acceptance without reading the chronological evidence below.
 
-- Trust: qualify the installed provider and publication scanner, then close G1.
+- Trust: the installed Ollama provider and bounded publication scanner now pass
+  the recorded host matrix below. Finish outage and revocation qualification,
+  then close G1 against the integrated revision.
 - Verification: finish evaluator and effect recovery, concrete host adapters,
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
@@ -29,8 +31,9 @@ the path to acceptance without reading the chronological evidence below.
   Conversation read failures now stop ordinary execution before provider dispatch;
   context budgets now select initial history, preserve source identities and
   recount complete requests before dispatch. Frozen tokenizer revisions and
-  selection records are checked on resume. Automatic summaries, provider
-  tokenizer qualification and installed context flows remain open.
+  selection records are checked on resume. Extractive summaries now preserve
+  original private history and required constraints. Provider tokenizer
+  qualification and installed context flows remain open.
   Optimization implementation and evidence remain in its separate progress ledger.
 - Acceptance: run the installed API/dashboard and provider flows, crash recovery,
   denial/revocation paths, security corpus, cost/latency measurements and rollout
@@ -46,6 +49,34 @@ proof of permanent worker and tool quiescence; local fixtures do not supply that
 proof for installed providers.
 Production verification rollout remains disabled. No completion percentage or
 production readiness is claimed.
+
+## Recovery services and governed summaries, 2026-10-26
+
+Captured verification jobs now have an opt-in recovery service with bounded,
+exact-scope discovery and current authorization. Restart recovery uses the
+existing evaluator worker. It does not regenerate the candidate or repeat tools.
+Tests cover lost evaluator replies, lost commit acknowledgments, active leases,
+revoked grants, cancellation and joined shutdown.
+
+Effect retries and compensation keep the original sealed run unchanged. Each
+attempt reserves its own shared-budget allowance and requires current authority,
+retained provider proof and pinned retry or compensation policy. Unknown effects
+remain charged and block retirement. A successful continuation cannot accept the
+old candidate. You must prepare and verify a new result. Managed discovery now
+bounds resolver time, rechecks grants before disclosing snapshots and reports
+per-effect failures without starving later work.
+
+Optional history summaries are deterministic UTF-8 excerpts. Required messages
+stay verbatim, and the original history remains in private captured inputs.
+Resume validates the summary policy, source bytes and excerpt spans. Missing
+capture support rejects the configuration. Summaries never turn untrusted history
+into authority or validated recall.
+
+Focused race suites passed across cognitive, coordination, engine and SQLite.
+The continuation conformance matrix ran against real PostgreSQL 16 and the pinned
+MongoDB fixture. All-module lint and the root build passed. These checks qualify
+the implemented recovery mechanisms; installed worker qualification and the
+remaining stage gates are still separate.
 
 ## Ownership and contracts
 

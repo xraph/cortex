@@ -79,6 +79,9 @@ func (s *Repository) RetireTaskClaim(ctx context.Context, request coordination.T
 		if readErr != nil {
 			return readErr
 		}
+		if continuationErr := tx.checkRunEffectContinuations(tc, snapshot.Claim.RunID, false, req.Recovery.ObservedAt); continuationErr != nil {
+			return continuationErr
+		}
 		claim := snapshot.Claim
 		started := s.clock.Now()
 		if _, retireErr := coordination.RetireRecoveredClaim(claim, req, started); retireErr != nil {

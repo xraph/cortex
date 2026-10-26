@@ -13,6 +13,7 @@ import (
 // ContextRecord preserves the initial selection without storing conversation text
 // in run metadata. Original history belongs in private verification evidence.
 type ContextRecord struct {
+	Summary        *HistorySummary  `json:"summary,omitempty"`
 	SchemaVersion  int              `json:"schema_version"`
 	Policy         ContextPolicy    `json:"policy"`
 	Input          ContextInput     `json:"input"`
@@ -25,7 +26,13 @@ type ContextRecord struct {
 // Validate checks the bounded deterministic selection and its content identities.
 // It does not establish token-counter accuracy or source availability.
 func (r ContextRecord) Validate() error {
-	if r.SchemaVersion != 1 || !evidence.ValidDigest(r.OriginalDigest) || !evidence.ValidDigest(r.SelectedDigest) || !evidence.ValidDigest(r.FixedDigest) {
+	if (r.SchemaVersion != 1 && r.SchemaVersion != 2) || !evidence.ValidDigest(r.OriginalDigest) || !evidence.ValidDigest(r.SelectedDigest) || !evidence.ValidDigest(r.FixedDigest) {
+		return ErrInvalidContext
+	}
+	if r.SchemaVersion == 1 && (r.Summary != nil || r.Policy.Summary.Enabled()) || r.SchemaVersion == 2 && !r.Policy.Summary.Enabled() {
+		return ErrInvalidContext
+	}
+	if r.Summary != nil && (r.Summary.Validate() != nil || r.Summary.Policy != r.Policy.Summary) {
 		return ErrInvalidContext
 	}
 	selection, err := r.Policy.Select(r.Input)
@@ -114,6 +121,19 @@ func (r ContextRecord) ValidateHistory(original, selected []llm.Message) error {
 		if keep[strconv.Itoa(i)] {
 			expected = append(expected, group...)
 		}
+	}
+	if r.Summary != nil {
+		var omitted []int
+		for index := range groups {
+			if !keep[strconv.Itoa(index)] {
+				omitted = append(omitted, index)
+			}
+		}
+		summary, text, summaryErr := SummarizeHistory(r.Policy.Summary, original, omitted)
+		if summaryErr != nil || !reflect.DeepEqual(summary, r.Summary) {
+			return ErrInvalidContext
+		}
+		expected = append([]llm.Message{{Role: "user", Content: text}}, expected...)
 	}
 	expectedDigest, err := ContextHistoryDigest(expected)
 	if err != nil || expectedDigest != selectedDigest {

@@ -22,6 +22,9 @@ var _ execution.EffectDiscoveryStore = (*Repository)(nil)
 // BeginEffect grants dispatch only after a confirmed fresh insert. An identical
 // existing row never grants permission, even after a lost insert acknowledgement.
 func (s *Repository) BeginEffect(ctx context.Context, request execution.EffectRequest) (bool, error) {
+	if execution.IsCompensationOperationKey(request.OperationKey) {
+		return false, execution.ErrInvalidEffect
+	}
 	if err := require(ctx, request.Scope); err != nil {
 		return false, err
 	}

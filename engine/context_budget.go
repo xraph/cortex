@@ -181,6 +181,10 @@ func (e *Engine) selectContextHistory(ctx context.Context, snap *preparedSnapsho
 		}
 		selected = append(selected, groups[index]...)
 	}
+	selected, err = e.summarizeContextHistory(ctx, snap, current, record, original, selected)
+	if err != nil {
+		return nil, err
+	}
 	record.SelectedDigest, err = cognitive.ContextHistoryDigest(selected)
 	if err != nil || record.ValidateHistory(original, selected) != nil {
 		return nil, cognitive.ErrInvalidContext

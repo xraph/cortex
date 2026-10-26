@@ -363,6 +363,9 @@ func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.
 		deadline = minAcceptanceDeadline(deadline, reviewDeadline)
 	}
 	if req.Recovery != nil {
+		if continuationErr := s.checkRunEffectContinuations(ctx, claim.RunID, true, req.Recovery.ObservedAt); continuationErr != nil {
+			return taskAcceptanceMaterial{}, 0, continuationErr
+		}
 		if current.AgentID.String() != claim.Worker.Agent || current.Provenance.TaskClaimID != claim.ID.String() || current.Provenance.PreparedDigest != req.Current.Context.PreparedDigest {
 			return taskAcceptanceMaterial{}, 0, coordination.ErrInvalidTaskAcceptance
 		}

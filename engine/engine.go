@@ -51,6 +51,8 @@ type Engine struct {
 	taskScheduling        *coordination.TaskService
 	claimRecovery         *coordination.ClaimRecoveryService
 	providerRecovery      *coordination.ProviderRecoveryService
+	verificationRecovery  *coordination.VerificationRecoveryService
+	effectContinuation    *coordination.EffectContinuationService
 	effectRecovery        *coordination.EffectRecoveryService
 	taskAdoption          *coordination.TaskAdoptionService
 	taskSettlement        *coordination.TaskSettlementService
@@ -170,8 +172,14 @@ func New(opts ...Option) (*Engine, error) {
 	if err := e.configureVerificationWorker(); err != nil {
 		return nil, err
 	}
+	if err := e.configureVerificationRecovery(); err != nil {
+		return nil, err
+	}
 
 	if err := e.configureRequiredVerification(); err != nil {
+		return nil, err
+	}
+	if err := e.configureContextSummary(); err != nil {
 		return nil, err
 	}
 
@@ -227,6 +235,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		return lockErr
 	}
 	defer release()
+	if err := e.configureVerificationRecovery(); err != nil {
+		return err
+	}
 	if err := e.configurePreparedTeamMessaging(); err != nil {
 		return err
 	}

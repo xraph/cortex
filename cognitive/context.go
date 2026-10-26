@@ -71,10 +71,11 @@ type ContextItem struct {
 // Costs are supplied by the host. Before provider dispatch, the caller must count
 // the complete assembled request to check framing and nonadditive tokenization.
 type ContextPolicy struct {
-	Revision        string `json:"revision"`
-	CounterRevision string `json:"counter_revision"`
-	MaxTokens       int    `json:"max_tokens"`
-	ReservedTokens  int    `json:"reserved_tokens"`
+	Summary         HistorySummaryPolicy `json:"summary,omitzero"`
+	Revision        string               `json:"revision"`
+	CounterRevision string               `json:"counter_revision"`
+	MaxTokens       int                  `json:"max_tokens"`
+	ReservedTokens  int                  `json:"reserved_tokens"`
 }
 
 // ContextInput lists atomic items oldest first. FixedTokens accounts for system
@@ -101,6 +102,9 @@ type ContextSelection struct {
 // origin or removes source references. The caller owns scoped source retrieval,
 // publication screening, persistence and model-message construction.
 func (p ContextPolicy) Select(in ContextInput) (ContextSelection, error) {
+	if p.Summary.Validate() != nil {
+		return ContextSelection{}, ErrInvalidContext
+	}
 	if !contextText(p.Revision, 256) || !contextText(p.CounterRevision, 256) || p.MaxTokens <= 0 || p.ReservedTokens < 0 || p.ReservedTokens > p.MaxTokens || in.FixedTokens < 0 || len(in.Items) > 4096 {
 		return ContextSelection{}, ErrInvalidContext
 	}
