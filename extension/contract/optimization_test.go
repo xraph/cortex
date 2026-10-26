@@ -84,6 +84,8 @@ func TestOptimizationReadContracts(t *testing.T) {
 		payload any
 		want    error
 	}{
+		{"optimization.capabilities", map[string]any{}, nil},
+		{"optimization.capabilities", map[string]any{"experiment_id": key}, nil},
 		{"optimization.experiments.list", map[string]any{}, nil},
 		{"optimization.experiments.detail", map[string]any{"id": key}, nil},
 		{"optimization.candidates.list", map[string]any{"id": key}, nil},

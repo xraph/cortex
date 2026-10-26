@@ -45,7 +45,7 @@ func optimizationHTTPFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthori
 	return service, auth, bundle, ctx
 }
 
-func optimizationHTTPRecoveryFixture(t *testing.T) (*opt.Optimizer, *optimizationAuthority, opt.ExperimentBundle, context.Context, func() *opt.Optimizer) {
+func optimizationHTTPRecoveryFixture(t *testing.T, probes ...opt.CapabilityProbe) (*opt.Optimizer, *optimizationAuthority, opt.ExperimentBundle, context.Context, func() *opt.Optimizer) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "optimization.db")
 	open := func() *optsqlite.Store { return openOptimizationHTTPStore(t, path) }
@@ -61,8 +61,12 @@ func optimizationHTTPRecoveryFixture(t *testing.T) (*opt.Optimizer, *optimizatio
 	repo = open()
 	t.Cleanup(func() { _ = repo.Close() })
 	auth := &optimizationAuthority{}
+	var probe opt.CapabilityProbe
+	if len(probes) > 0 {
+		probe = probes[0]
+	}
 	newService := func() *opt.Optimizer {
-		service, err := opt.NewOptimizer(opt.OptimizerConfig{Repository: repo, Caller: auth, Authorizer: auth, IdentityResolver: auth, Handler: auth, Worker: opt.DefaultWorkerConfig()})
+		service, err := opt.NewOptimizer(opt.OptimizerConfig{Capabilities: probe, Repository: repo, Caller: auth, Authorizer: auth, IdentityResolver: auth, Handler: auth, Worker: opt.DefaultWorkerConfig()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,6 +96,7 @@ func TestOptimizationReadHTTP(t *testing.T) {
 		path   string
 		status int
 	}{
+		{"/capabilities", 200}, {"/capabilities?experiment_id=" + bundle.Experiment.ID.String(), 200},
 		{"/experiments", 200}, {experiment, 200}, {experiment + "/candidates", 200},
 		{experiment + "/candidates/" + id.New(opt.PrefixCandidate).String(), 404},
 		{experiment + "/trials", 200}, {experiment + "/trials/" + id.New(opt.PrefixTrial).String(), 404},
@@ -132,7 +137,7 @@ func TestOptimizationReadHTTP(t *testing.T) {
 			}
 		})
 	}
-	for _, path := range []string{"/experiments?limit=-1", "/experiments?limit=101", "/experiments?agent_id=" + bundle.Experiment.ID.String(), experiment + "/trials?version_id=" + bundle.Experiment.ID.String(), "/versions?agent_id=bad", "/experiments/bad", experiment + "/events?cursor=bad"} {
+	for _, path := range []string{"/capabilities?experiment_id=bad", "/capabilities?experiment_id=" + bundle.Experiment.ID.String() + "&experiment_id=" + bundle.Experiment.ID.String(), "/experiments?limit=-1", "/experiments?limit=101", "/experiments?agent_id=" + bundle.Experiment.ID.String(), experiment + "/trials?version_id=" + bundle.Experiment.ID.String(), "/versions?agent_id=bad", "/experiments/bad", experiment + "/events?cursor=bad"} {
 		got := optimizationGET(ctx, handler, path)
 		if got.Code != 400 {
 			t.Errorf("%s: %d %s", path, got.Code, got.Body)

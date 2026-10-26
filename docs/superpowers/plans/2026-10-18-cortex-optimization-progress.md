@@ -2226,3 +2226,31 @@ are in the runtime chat's concurrent prepared-messaging implementation, first
 missing APIs and then unchecked assertions and formatting. Those files are left
 with their owner. Full API and extension race tests also pass against the
 published runtime while the new local capability service is being exercised.
+
+## Capability transport bindings
+
+`GET /v1/optimization/capabilities` and the dashboard
+`optimization.capabilities` query share the optimizer reader. Both accept an
+optional experiment ID. REST responses use `no-store`; dashboard permission
+flags intersect current domain grants with the caller's independent read,
+manage, run, activate and artifact scopes. Missing optimizer, denied access,
+malformed IDs and duplicate query values retain their existing public errors.
+
+The HTTP fixture changes worker availability before and after reopening SQLite.
+Every request invokes the probe, and a restart cannot revive the previous ready
+status. Dashboard grant tests go through the real HTTP dispatcher, including a
+reader with no write grants. Public transport tests first failed on the absent
+route and intent before the bindings were added.
+
+Both consumers pin optimizer `v0.0.0-20261026144948-9979c3e88ed7`. Final API race
+tests pass in 39.925s and extension contract race tests in 30.371s, with both builds
+passing against the current checkout. Temporary modfiles with every local replace
+removed also pass the optimization transport race suites and full builds. The
+private-purpose and capability regressions pass against the current runtime in
+1.366s. Scoped formatting and owned-module lint pass; repository-wide lint still
+reports the runtime owner's concurrent messaging edits. No live environment,
+Sentinel worker, pricing source or Fabriq destination is qualified by these fixtures.
+
+Task 16 still needs authorized frozen creation/catalogs, concrete host probe
+composition, artifact export and richer review summaries. Dashboard pages and
+persistent browser flows remain open.

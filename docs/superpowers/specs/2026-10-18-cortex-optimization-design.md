@@ -411,6 +411,16 @@ Revocation pauses experiments that consume the lesson, so its invalidations also
 
 The implementation expands query families into exact intent names in `manifest.yaml` and tests the invalidation sets. Add matching REST routes under the API module's `/optimization` group with the same service DTOs and authorization. Missing optimizer returns unavailable; a configured optimizer with no experiments returns an empty list. Unauthorized resource IDs never reveal whether another scope owns the resource.
 
+Capability reads accept an optional `experiment_id`. Without it, you get scope
+setup diagnostics. With it, the service checks prerequisites for that frozen
+experiment and derives editable dimensions from its saved policy. The response
+keeps `checks`, `permissions`, pricing quality and `trials_ready` separate.
+`trials_ready` does not override lifecycle, budget or command authorization.
+Dashboard permissions also require the signed-in user's matching optimization
+scope. An unavailable host probe leaves readiness unavailable, not an empty
+successful result. Every request probes again; restarting the host cannot restore
+an earlier readiness observation.
+
 ### Pages and interaction
 
 Add one Optimization nav item under Cortex. Routes are scope-relative inside the plugin:

@@ -13,6 +13,7 @@ import (
 func (s *service) bindOptimization(d *dispatcher.Dispatcher) error {
 	reader := operator.Reader{Optimizer: s.deps.Optimization}
 	binds := []func() error{
+		func() error { return s.bindOptimizationCapabilities(d, reader) },
 		func() error { return optimizationQuery(d, s, "optimization.experiments.list", reader.Experiments) },
 		func() error { return optimizationQuery(d, s, "optimization.experiments.detail", reader.Experiment) },
 		func() error { return optimizationQuery(d, s, "optimization.candidates.list", reader.Candidates) },

@@ -19,6 +19,7 @@ func (a *API) registerOptimizationRoutes(router forge.Router) error {
 		path, name             string
 		handler, input, output any
 	}{
+		{"/capabilities", "optimizationCapabilities", optimizationRead(reader.Capabilities), operator.CapabilitiesInput{}, opt.CapabilitySnapshot{}},
 		{"/experiments", "optimizationExperiments", optimizationRead(reader.Experiments), operator.ExperimentsInput{}, opt.ResourcePage[opt.Experiment]{}},
 		{"/experiments/:id", "optimizationExperiment", optimizationRead(reader.Experiment), operator.IDInput{}, opt.Experiment{}},
 		{"/experiments/:id/candidates", "optimizationCandidates", optimizationRead(reader.Candidates), operator.ExperimentPageInput{}, opt.ResourcePage[opt.Candidate]{}},
