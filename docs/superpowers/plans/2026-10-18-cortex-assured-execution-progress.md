@@ -27,7 +27,8 @@ the path to acceptance without reading the chronological evidence below.
   An opt-in capability tool now observes the frozen allowlist, current visibility,
   executor registration and remaining limits through the normal tool path.
   Conversation read failures now stop ordinary execution before provider dispatch;
-  token-aware context selection and automatic summaries remain open.
+  a bounded context selection core now preserves required items and source
+  references. Engine integration and automatic summaries remain open.
   Optimization implementation and evidence remain in its separate progress ledger.
 - Acceptance: run the installed API/dashboard and provider flows, crash recovery,
   denial/revocation paths, security corpus, cost/latency measurements and rollout
@@ -64,7 +65,7 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, task contract projections, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
 | S2.3 and S4.5 optimization | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
-| S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection, assumptions, health observations and installed qualification remain open |
+| S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection core implemented; engine wiring, assumptions, health observations and installed qualification remain open |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
@@ -7440,3 +7441,34 @@ same engine selection passed in 78.164 seconds. No timeout was relaxed. Logs are
 `/tmp/cortex-context-selection-lint-final.log`,
 `/tmp/cortex-context-selection-recovery-race.log` and
 `/tmp/cortex-reply-pause-gap-recovery-recheck.log`. Exact-head CI remains open.
+
+### Bounded context selection core
+
+`cognitive.ContextPolicy.Select` retains required context before admitting
+optional items from newest to oldest. Every item is pinned by default. Trusted
+host classifications for objectives, constraints, acceptance criteria, plans
+and blockers cannot be optional. Required material that exceeds the allowance
+returns `ErrContextBudgetExceeded` with no partial selection. Costs use
+subtraction so large token counts cannot wrap into an available allowance.
+
+Retained and omitted items preserve their source references, digests and origins.
+Selection keeps atomic groups whole, preserves original order and does not merge
+contradictory observations. Summaries require source references and an explicit
+uncertainty statement. The selector preserves those fields but cannot establish
+that a summary faithfully represents its sources. Classification and costs come
+from trusted host code; retrieved content cannot supply authority or omission
+flags directly.
+
+The API-absence regression was recorded before implementation. Tests cover
+required overflow, optional groups, provenance retention, source detachment,
+origin restrictions, integer boundaries and bounded metadata. Cognitive race
+tests passed, as did scoped formatting, all-module lint, root build and docs
+types/lint/build. The broader root suite found the initial-pause recovery issue
+documented above, then passed after its separate fix. Logs use
+`/tmp/cortex-context-selection-`.
+
+This is a domain API. No existing engine prompt is compacted by this change.
+Prepared policy/counter pinning, initial-history receipts, verification evidence,
+complete-request token admission and resume checks still need engine integration.
+Host tokenizers, scoped source hydration, semantic summary checks and installed
+provider qualification remain open. This packet does not close S4.1 or G4.

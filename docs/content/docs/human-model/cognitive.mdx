@@ -58,6 +58,39 @@ and configuration. The tool reads only the executing run and accepts no run,
 principal or scope arguments. It does not change the prepared prompt or start
 reflection, replanning or learning.
 
+## Context selection core
+
+You can use `cognitive.ContextPolicy.Select` to select atomic context items within
+a token allowance. The engine does not call it yet. Automatic conversation
+compaction, prepared-policy pinning and resume receipts still need runtime wiring.
+
+Supply a policy revision, a token-counter revision, a finite `MaxTokens` and
+`ReservedTokens` for output. `ContextInput.FixedTokens` accounts for system
+instructions, tool definitions and framing. Items are ordered oldest first, and
+each carries a source reference, digest, origin and measured token cost.
+
+Every item is required by default. Objectives, constraints, acceptance criteria,
+the current plan and unresolved blockers must come from trusted host
+classification and cannot be optional. Once those items fit, the selector tries
+optional history, observations and summaries from newest to oldest, keeping each
+item whole and preserving the original order. Group dependent messages into one
+item so a tool request and its result cannot be split.
+
+The result includes detached retained and omitted items with their source
+references. A summary must include its source references and an explicit
+uncertainty statement; selection preserves both, but does not verify that the
+summary faithfully represents those sources. Conflicting required observations
+remain separate. Retrieved or generated material cannot declare itself a task
+constraint through this API.
+
+Required context that does not fit returns `cognitive.ErrContextBudgetExceeded`
+with no partial selection. You must resolve that failure before dispatch. Count
+the complete assembled request again with the pinned provider counter because
+item costs alone do not account for every framing or tokenization interaction.
+Source access, freshness, publication screening and persistence remain host
+responsibilities. Never populate trusted classifications or omission flags
+directly from model output.
+
 ## Structure
 
 ```go
