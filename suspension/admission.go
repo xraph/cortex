@@ -68,3 +68,11 @@ type ResumeAdmissionStore interface {
 	StartResume(context.Context, id.AgentRunID, id.SuspensionID, string) (ResumeStart, error)
 	GetResumeStart(context.Context, id.AgentRunID, id.SuspensionID) (ResumeStart, error)
 }
+
+// ReplyDiscoveryStore lists only run identities with retained agent-reply
+// suspensions in the exact context scope. Results are ordered by run ID after
+// the exclusive cursor. Limit must be between 1 and 256. Discovery includes
+// expired and already-admitted suspensions so hosts can reconcile them.
+type ReplyDiscoveryStore interface {
+	ListAgentReplyRuns(context.Context, id.AgentRunID, int) ([]id.AgentRunID, error)
+}

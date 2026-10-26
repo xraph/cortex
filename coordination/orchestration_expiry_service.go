@@ -68,7 +68,7 @@ func NewOrchestrationExpiryService(config OrchestrationExpiryConfig) (*Orchestra
 	if config.AttemptTimeout < time.Millisecond || config.AttemptTimeout > time.Minute {
 		return nil, ErrInvalidScheduler
 	}
-	service, err := newOrchestrationOperation(TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, config.AttemptTimeout, config.Expirer.Expire)
+	service, err := newIdentityOperation(id.PrefixOrchestration, TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, config.AttemptTimeout, config.Expirer.Expire)
 	if err != nil {
 		return nil, err
 	}

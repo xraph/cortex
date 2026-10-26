@@ -42,6 +42,7 @@ type registeredTool struct {
 type Engine struct {
 	orchestrationExpiry   *coordination.OrchestrationExpiryService
 	orchestrationRecovery *coordination.OrchestrationRecoveryService
+	agentReplyRecovery    *coordination.AgentReplyRecoveryService
 	lifecycle             lifecycleGate
 	taskScheduling        *coordination.TaskService
 	claimRecovery         *coordination.ClaimRecoveryService
@@ -187,6 +188,9 @@ func New(opts ...Option) (*Engine, error) {
 	if err := e.configureTaskScheduling(); err != nil {
 		return nil, err
 	}
+	if err := e.configureAgentReplyRecovery(); err != nil {
+		return nil, err
+	}
 	if err := e.configureOrchestrationRecovery(); err != nil {
 		return nil, err
 	}
@@ -214,6 +218,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	defer release()
 	if err := e.configureTaskScheduling(); err != nil {
+		return err
+	}
+	if err := e.configureAgentReplyRecovery(); err != nil {
 		return err
 	}
 	if err := e.configureOrchestrationRecovery(); err != nil {

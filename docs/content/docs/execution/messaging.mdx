@@ -462,6 +462,55 @@ execution material. Neither admission nor start observations carry execution
 authority.
 
 Changed run revisions, replaced or edited suspensions, expired pauses and wrong
-scope fail before a start grant. Expired admitted work still needs host
-reconciliation. Background discovery, reconciliation after a possible start,
-deferred recipient completion and private prepared-team messaging remain open.
+scope fail before a start grant. Expired admitted work and execution that may
+already have started still need host reconciliation. Deferred recipient
+completion and private prepared-team messaging remain open.
+
+### Run recovery in the background
+
+Configure discovery with the exact scopes your host service owns. The native
+SQLite, PostgreSQL and MongoDB stores implement `suspension.ReplyDiscoveryStore`:
+
+```go
+source, err := coordination.NewScopedAgentReplySource(
+    replyDiscoveryStore, scopes, authorizeScopeDiscovery,
+)
+if err != nil {
+    return err
+}
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithLLM(client),
+    engine.WithA2A(a2a.Options{}),
+    engine.WithAgentReplyRecovery(engine.AgentReplyRecoveryConfig{
+        Service: coordination.AgentReplyRecoveryConfig{Discovery: source},
+        Authorize: authorizeRunRecovery,
+    }),
+)
+```
+
+Start and stop the engine through its normal lifecycle. Startup context values
+carry your host service identity; canceling the startup request does not stop
+the service. `Stop` cancels discovery and active attempts, then waits for them
+to return. A timed-out stop leaves the service stopping, so keep its store and
+provider dependencies alive until a later stop succeeds.
+
+Defaults are four concurrent runs, one per scope, one-second polling,
+five-second discovery and one-minute attempts. You can configure those bounds;
+attempts cannot exceed thirty minutes. Discovery pages contain at most 256 run
+IDs and never load answer bodies or continuations. The scoped source detaches
+at most 256 distinct scopes and rechecks discovery permission after each query.
+
+Recovery rechecks the run's current state, scope and suspension before entering
+the same guarded resume path used by explicit recovery. Waiting questions stay
+paused. Completed runs are skipped. A retained start receipt produces
+`ErrResumeAlreadyStarted`, and an expired admission produces
+`ErrSuspensionExpired`; your `ReportError` handler can route these to host
+reconciliation. Polling never clears either condition or retries uncertain
+execution. Error reporting must return promptly and callbacks must honor
+cancellation.
+
+`AgentReplyRecoveryStatus` reports whether the service is configured and its
+local active/failure counters. These counters contain no run content or scope
+values. The host still supplies current authorization and installs the service;
+adding `WithA2A` alone does not enable background recovery.

@@ -41,7 +41,7 @@ func NewOrchestrationRecoveryService(config OrchestrationRecoveryConfig) (*Orche
 	if config.AttemptTimeout < time.Millisecond || config.AttemptTimeout > 30*time.Minute {
 		return nil, ErrInvalidScheduler
 	}
-	service, err := newOrchestrationOperation(TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, config.AttemptTimeout, config.Recoverer.Recover)
+	service, err := newIdentityOperation(id.PrefixOrchestration, TaskServiceConfig{Discovery: orchestrationPlanSource{source: config.Discovery}, Interval: config.Interval, DiscoveryTimeout: config.DiscoveryTimeout, MaxInFlight: config.MaxInFlight, Scheduler: SchedulerConfig{MaxPerScope: config.MaxPerScope}, ReportError: config.ReportError}, config.AttemptTimeout, config.Recoverer.Recover)
 	if err != nil {
 		return nil, err
 	}
@@ -59,38 +59,3 @@ func (s *OrchestrationRecoveryService) Stop(ctx context.Context) error { return 
 
 // Status returns local counters without team content or scope values.
 func (s *OrchestrationRecoveryService) Status() TaskServiceStatus { return s.service.Status() }
-
-func newOrchestrationOperation(config TaskServiceConfig, timeout time.Duration, operation func(context.Context, id.OrchestrationID) error) (*TaskService, error) {
-	if config.MaxInFlight == 0 {
-		config.MaxInFlight = 4
-	}
-	if config.Scheduler.MaxPerScope == 0 {
-		config.Scheduler.MaxPerScope = 1
-	}
-	if config.Scheduler.MaxPerScope < 1 || config.Scheduler.MaxPerScope > 4096 {
-		return nil, ErrInvalidScheduler
-	}
-	service, err := newPlanService(config, func() (serviceScheduler, error) {
-		return orchestrationOperationScheduler{operation: operation, timeout: timeout}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	service.identityPrefix = id.PrefixOrchestration
-	return service, nil
-}
-
-type orchestrationOperationScheduler struct {
-	operation func(context.Context, id.OrchestrationID) error
-	timeout   time.Duration
-}
-
-func (s orchestrationOperationScheduler) Tick(ctx context.Context, team id.ID) error {
-	attempt, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-	if err := s.operation(attempt, team); err != nil {
-		return err
-	}
-	return attempt.Err()
-}
-func (orchestrationOperationScheduler) Shutdown(context.Context) error { return nil }

@@ -12,7 +12,7 @@ the path to acceptance without reading the chronological evidence below.
 - Verification: finish evaluator and effect recovery, concrete host adapters,
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
-- Coordination: wire bounded resume-recovery discovery and reconcile possibly
+- Coordination: qualify installed resume-recovery discovery and reconcile possibly
   started execution and expired admissions. Recover paused recipients and
   integrate the private prepared-team bus. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
@@ -6905,3 +6905,58 @@ assurance package races also pass. Initial lint findings in the owned code were
 formatting and one redundant reassignment; both were fixed. A later lint pass
 encountered concurrent API formatting, which its owner fixed before the final
 all-module pass.
+
+### Bounded background agent-reply recovery
+
+`WithAgentReplyRecovery` installs the guarded resume path in the engine's normal
+Start/Stop lifecycle. Discovery retains host service identity, restores exact
+scope, bounds concurrent attempts and joins callbacks on shutdown. Startup
+request cancellation does not detach the service, and a timed-out stop leaves
+the engine stopping until its callbacks drain. Defaults are four concurrent
+runs, one per scope, one-second polling, five-second discovery and one-minute
+attempts; attempts cannot exceed thirty minutes.
+
+The service shares discovery, fairness and drainage code with task and team
+recovery. Team expiry and recovery use the same extracted identity-operation
+adapter. Scoped team and reply discovery share detached, bounded scope-inventory
+validation. No second execution loop or polling loop was introduced.
+
+Native SQLite, PostgreSQL and MongoDB stores expose `ReplyDiscoveryStore` through
+exact-scope, keyset queries that select only run IDs. Pages exclude other
+suspension reasons and include expired or admitted reply suspensions for host
+reconciliation. `NewScopedAgentReplySource` walks up to 256 configured scopes and
+checks current discovery permission before and after each page. The engine
+checks current run permission before reading the run and suspension, then uses
+the explicit recovery path's admission, start and per-call authority checks.
+
+The initial lifecycle and discovery tests failed because their public contracts
+did not exist. Fresh-engine lifecycle tests now recover lost answer-seal and
+admission acknowledgments and crashes before start. A lost start acknowledgment
+produces a reconciliation error and no planner execution. Competing engines
+execute the planner once; denied recovery leaves its admission unstarted.
+Service tests cover cancellation, blocked callback drainage, restart rejection
+during shutdown, malformed identities, duplicate pages and missing scopes.
+
+The first lifecycle fixture also counted the bus delivering the original queued
+question to its worker. The assertion now distinguishes that worker from the
+interrupted planner; no production behavior was changed to suppress delivery.
+Native discovery conformance covers pagination, scope isolation, admitted runs,
+other suspension reasons, missing scope and invalid bounds/cursors. SQLite,
+PostgreSQL and MongoDB race tests ran without skips. The broader engine resume,
+task-call and recovery race suite passed in 92.407s; the full coordination race
+suite passed in 27.529s.
+
+This enables configured background recovery before an acknowledged execution
+start. Host deployment and installed authorization qualification remain open.
+Expired admitted runs and possibly started execution still require reconciliation;
+the service reports these conditions without clearing receipts or replaying
+uncertain work. Deferred recipient completion and private team messaging remain
+part of the unfinished end-to-end coordination milestone.
+
+Final scoped `make f`, all-ten-module `make l`, root build, diff checks and docs
+types/lint/build pass. Final engine lifecycle races passed in 37.855s and the
+coordination recheck in 1.704s. Native discovery races passed without skips on
+SQLite (4.912s), PostgreSQL (44.598s) and MongoDB (52.476s). The initial owned lint
+findings were shadowed or reassigned error variables and were fixed. Concurrent
+optimizer adapter/formatting findings were resolved by their owner before the
+final all-module lint pass. CI qualification remains separate.
