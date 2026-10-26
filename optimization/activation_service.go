@@ -80,7 +80,7 @@ func (o *Optimizer) activate(ctx context.Context, change ActivationChange, actio
 	if err != nil {
 		return nil, err
 	}
-	if !validActivationReason(change.Reason) {
+	if !validReviewReason(change.Reason) {
 		return nil, ErrInvalidSpec
 	}
 	if o.config.ArtifactVerifier == nil {
@@ -298,7 +298,7 @@ func (o *Optimizer) Deactivate(ctx context.Context, request DeactivationRequest)
 	if err != nil {
 		return nil, err
 	}
-	if !validActivationReason(request.Reason) {
+	if !validReviewReason(request.Reason) {
 		return nil, ErrInvalidSpec
 	}
 	var value Activation
@@ -313,7 +313,7 @@ func (o *Optimizer) Deactivate(ctx context.Context, request DeactivationRequest)
 	return &value, nil
 }
 
-func validActivationReason(reason string) bool {
+func validReviewReason(reason string) bool {
 	return strings.TrimSpace(reason) != "" && len(reason) <= 512 && utf8.ValidString(reason)
 }
 

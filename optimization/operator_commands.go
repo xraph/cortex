@@ -37,14 +37,22 @@ func (o *Optimizer) operatorCommand(ctx context.Context, request CommandRequest,
 	if err := allowOptimizationInvocation(ctx); err != nil {
 		return Experiment{}, err
 	}
-	if _, err := ParseID(request.ExperimentID.String(), PrefixExperiment); err != nil {
+	change, err := operatorTransition(request, action, next)
+	if err != nil {
 		return Experiment{}, err
 	}
+	return o.executeCommand(ctx, change, action)
+}
+
+func operatorTransition(request CommandRequest, action Action, next State) (Transition, error) {
+	if _, err := ParseID(request.ExperimentID.String(), PrefixExperiment); err != nil {
+		return Transition{}, err
+	}
 	if request.ExpectedRevision < 1 || !ValidOpaqueKey(request.IdempotencyKey) {
-		return Experiment{}, ErrInvalidSpec
+		return Transition{}, ErrInvalidSpec
 	}
 	// Keep caller-provided keys out of persistent metadata. The namespace also
 	// separates them from existing host and worker transition keys.
 	key := fmt.Sprintf("operator/%x", sha256.Sum256([]byte(request.IdempotencyKey)))
-	return o.executeCommand(ctx, Transition{ExperimentID: request.ExperimentID, ExpectedRevision: request.ExpectedRevision, NextState: next, IdempotencyKey: key, CommandAction: action}, action)
+	return Transition{ExperimentID: request.ExperimentID, ExpectedRevision: request.ExpectedRevision, NextState: next, IdempotencyKey: key, CommandAction: action}, nil
 }

@@ -45,12 +45,16 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if experiment.Revision != change.ExpectedRevision {
 		return optimization.ErrConflict
 	}
-	if change.NextState != optimization.StateCancelled {
+	if change.NextState != optimization.StateCancelled && change.CommandAction != optimization.ActionRetain {
 		if lessonErr := checkLessonBindings(tx.data, experiment, tx.now); lessonErr != nil {
 			return lessonErr
 		}
 	}
-	allowed := experiment.State == optimization.StateDraft && change.NextState == optimization.StateQueued
+	retained, err := tx.prepareRetainedBaseline(experiment, change)
+	if err != nil {
+		return err
+	}
+	allowed := retained != nil || experiment.State == optimization.StateDraft && change.NextState == optimization.StateQueued
 	allowed = allowed || (experiment.State == optimization.StateDraft || experiment.State == optimization.StateQueued) && change.NextState == optimization.StateCancelled
 	finishing := experiment.State == optimization.StateRunning && experiment.Phase == optimization.PhaseReflect && (change.NextState == optimization.StateReviewRequired || change.NextState == optimization.StateCompleted)
 	if finishing {
@@ -160,6 +164,13 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 			return err
 		}
 	}
+	if retained != nil {
+		payload, err = canonical.Marshal(retained)
+		if err != nil {
+			return err
+		}
+		experiment.RetainedBaseline = retained
+	}
 	previousState := experiment.State
 	experiment.State = change.NextState
 	if !control {
@@ -218,8 +229,14 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 	if change.NextPhase != "" {
 		eventType = string(change.NextPhase)
 	}
+	if retained != nil {
+		eventType = "baseline_retained"
+	}
 	event := tx.appendEvent(experiment, eventType, change.Actor)
 	event.Payload = payload
+	if retained != nil {
+		event.Resources = append(event.Resources, retained.DecisionID, retained.Baseline.ID)
+	}
 	if decision != nil {
 		event.Resources = append(event.Resources, decision.ID, decision.AllocationID)
 	}

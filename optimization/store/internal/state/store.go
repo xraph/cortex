@@ -276,7 +276,7 @@ func (tx *transaction) CreateExperiment(bundle optimization.ExperimentBundle) er
 	if e.State != "" && e.State != optimization.StateDraft {
 		return optimization.ErrInvalidSpec
 	}
-	if !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.ParentGeneration != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
+	if e.RetainedBaseline != nil || !e.DecisionID.IsNil() || e.Revision != 0 || e.Phase != "" || e.Lease.Generation != 0 || e.Lease.ParentGeneration != 0 || e.Lease.Owner != "" || !e.Lease.ExpiresAt.IsZero() || !e.Lease.ExperimentID.IsNil() {
 		return optimization.ErrInvalidSpec
 	}
 	if len(e.FrozenLessons) != 0 {

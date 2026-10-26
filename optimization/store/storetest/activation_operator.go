@@ -18,7 +18,13 @@ import (
 // Its deterministic evidence is not a live-provider qualification.
 func ReviewedActivationFixture(t *testing.T, factory Factory) (store.Store, context.Context, optimization.ActivationChange) {
 	t.Helper()
-	return activationFixture(t, factory)
+	s, ctx, change := activationFixture(t, factory)
+	decision, err := s.GetDecision(ctx, change.DecisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishReviewFixture(ctx, t, s, decision.ExperimentID)
+	return s, ctx, change
 }
 
 func activationOperator(t *testing.T, factory Factory) {

@@ -103,6 +103,7 @@ type ClaimRequest struct {
 // Transition binds a requested state change to its prior revision and actor.
 // Idempotency keys can be reused only with identical request content.
 type Transition struct {
+	Retain *RetainDecision `json:"retain,omitempty"`
 	// CommandAction binds operator retries to their lifecycle intent. Omitted
 	// values retain the digest of existing host and worker transitions.
 	CommandAction    Action               `json:"command_action,omitempty"`

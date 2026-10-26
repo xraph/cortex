@@ -26,10 +26,11 @@ type ActivationQuery struct {
 // ComparisonDetail keeps the immutable decision and a bounded page of original
 // evaluation records. A missing decision means comparison has not been recorded.
 type ComparisonDetail struct {
-	ExperimentID id.ID                    `json:"experiment_id"`
-	Revision     int64                    `json:"revision"`
-	Decision     *Decision                `json:"decision,omitempty"`
-	Evaluations  ResourcePage[Evaluation] `json:"evaluations"`
+	RetainedBaseline *RetainedBaseline        `json:"retained_baseline,omitempty"`
+	ExperimentID     id.ID                    `json:"experiment_id"`
+	Revision         int64                    `json:"revision"`
+	Decision         *Decision                `json:"decision,omitempty"`
+	Evaluations      ResourcePage[Evaluation] `json:"evaluations"`
 }
 
 func operatorPage(query PageQuery) (PageQuery, error) {
@@ -175,7 +176,7 @@ func (o *Optimizer) GetComparison(ctx context.Context, experimentID id.ID, query
 	if err != nil {
 		return empty, err
 	}
-	result := ComparisonDetail{ExperimentID: experiment.ID, Revision: experiment.Revision}
+	result := ComparisonDetail{ExperimentID: experiment.ID, Revision: experiment.Revision, RetainedBaseline: experiment.RetainedBaseline}
 	if !experiment.DecisionID.IsNil() {
 		decision, readErr := o.config.Repository.GetDecision(copyScopeContext(ctx), experiment.DecisionID)
 		if readErr != nil {

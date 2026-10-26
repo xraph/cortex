@@ -52,6 +52,9 @@ func ActivationKind(kind HarnessKind) (HarnessKind, error) {
 // Current authorization, retained artifacts and source compatibility belong to
 // the service; satisfying this check alone does not enable active execution.
 func ValidateActivationEvidence(change ActivationChange, experiment Experiment, decision Decision, version HarnessVersion) error {
+	if experiment.RetainedBaseline != nil {
+		return ErrPolicyDenied
+	}
 	experimentScope, err := ScopeKey(experiment.Spec.Scope)
 	if err != nil {
 		return err

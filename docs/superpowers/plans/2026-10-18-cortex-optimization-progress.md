@@ -2052,3 +2052,32 @@ pages and persistent browser qualification.
 Final scoped formatting and full all-module lint pass. Public-only dependency
 checks pass API (10.372s), extension (1.752s) and contract (4.117s), followed by
 both builds. Temporary modfiles remove every local replacement for these checks.
+
+## Retain-baseline review foundation
+
+You can close a pending review with `RetainCommand`, using the experiment revision,
+measured decision ID, reason and transport command key. The store records the
+review separately from the immutable measured decision. Comparisons expose both.
+A controller review retains the original controller, not the execution harness.
+
+Retaining does not change a production route. It rejects a decision still used by
+an active route, and subsequent activation rejects a retained experiment. The
+same transaction fences both operations so competing activation and retain
+commands cannot both commit. Retries preserve the original review and event;
+changed actors, reasons, actions or revisions conflict. Each retry still checks
+the reviewer's current grant. The original requester's availability, artifact
+content and model execution are not needed to retain the baseline.
+
+The shared operator adapter takes its key separately from payload fields.
+Conformance tests cover immutable measurements, activation races, forged worker
+payloads, controller identity and current permissions. SQLite, PostgreSQL and
+MongoDB reopen tests recover the review after a lost response. Transport tests
+first fail on the missing REST route and dashboard intent; bindings follow in a
+separate commit. Task 16 remains in progress.
+
+Final scoped formatting, all-module lint and the optimizer build pass. The full
+optimizer core race suite passes in 103.955s; operator adapters and internal state
+also pass. Expanded retain, lifecycle and activation store regressions pass on
+memory (82.374s), SQLite (207.780s), PostgreSQL (220.463s) and MongoDB (281.841s).
+A redundant embedded-field selector reported by lint was simplified, followed
+by adapter/private-purpose race checks and a clean full lint run.

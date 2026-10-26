@@ -69,3 +69,5 @@ func TestOperatorCommandRecovery(t *testing.T) { testRecovery(t, storetest.Opera
 func TestOperatorActivationRecovery(t *testing.T) {
 	testRecovery(t, storetest.OperatorActivationRecovery)
 }
+
+func TestRetainRecovery(t *testing.T) { testRecovery(t, storetest.RetainRecovery) }

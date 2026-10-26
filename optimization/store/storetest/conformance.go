@@ -26,6 +26,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Helper()
 	lifecycle(t, factory)
 	operatorCommands(t, factory)
+	retainCommands(t, factory)
 	leases(t, factory)
 	accounting(t, factory)
 	improvementFamily(t, factory)

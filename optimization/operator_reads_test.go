@@ -63,6 +63,9 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 					command := optimization.CommandRequest{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 1, IdempotencyKey: "private-command"}
 					commands := []func() (optimization.Experiment, error){
 						func() (optimization.Experiment, error) { return op.StartCommand(callCtx, command) },
+						func() (optimization.Experiment, error) {
+							return op.RetainCommand(callCtx, optimization.RetainRequest{CommandRequest: command})
+						},
 						func() (optimization.Experiment, error) { return op.CancelCommand(callCtx, command) },
 						func() (optimization.Experiment, error) { return op.ResumeCommand(callCtx, command) },
 						func() (optimization.Experiment, error) { return op.Start(callCtx, bundle.Experiment.ID, 1) },

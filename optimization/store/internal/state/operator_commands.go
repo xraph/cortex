@@ -5,6 +5,9 @@ import "github.com/xraph/cortex/optimization"
 // Operator commands cannot carry worker evidence or skip lifecycle admission.
 // This check runs after identical committed retries have been recognized.
 func validateOperatorTransition(experiment optimization.Experiment, change optimization.Transition) error {
+	if change.Retain != nil && change.CommandAction != optimization.ActionRetain {
+		return optimization.ErrInvalidSpec
+	}
 	if change.CommandAction == "" {
 		return nil
 	}
@@ -12,6 +15,17 @@ func validateOperatorTransition(experiment optimization.Experiment, change optim
 		return optimization.ErrInvalidSpec
 	}
 	switch change.CommandAction {
+	case optimization.ActionRetain:
+		if change.Retain == nil || change.NextState != optimization.StateCompleted {
+			return optimization.ErrInvalidSpec
+		}
+		if err := change.Retain.Validate(); err != nil {
+			return err
+		}
+		if experiment.State != optimization.StateReviewRequired || experiment.Spec.Parent != nil || experiment.RetainedBaseline != nil {
+			return optimization.ErrConflict
+		}
+
 	case optimization.ActionStart:
 		if change.NextState != optimization.StateQueued {
 			return optimization.ErrInvalidSpec

@@ -38,6 +38,7 @@ type Artifact struct {
 type Action string
 
 const (
+	ActionRetain            Action = "optimization.retain"
 	ActionRead              Action = "optimization.read"
 	ActionCreate            Action = "optimization.create"
 	ActionStart             Action = "optimization.start"
