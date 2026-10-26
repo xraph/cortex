@@ -12,8 +12,8 @@ the path to acceptance without reading the chronological evidence below.
 - Verification: finish evaluator and effect recovery, concrete host adapters,
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
-- Coordination: retain resume admission for the original pause and reconcile
-  ambiguous execution. Recover paused recipients and
+- Coordination: wire bounded resume-recovery discovery and reconcile possibly
+  started execution and expired admissions. Recover paused recipients and
   integrate the private prepared-team bus. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
@@ -6855,3 +6855,53 @@ types/lint/build pass. The final correlated-answer, version-claim and messaging
 end-to-end race recheck passes in 75.978s. The built messaging page contains the
 new correlation and upgrade guidance. Initial lint reported two formatting
 findings in the owned struct fields; both are fixed.
+
+### Durable resume admission and guarded explicit recovery
+
+Native agent replies now claim their pause and retain the exact resume input in
+one transaction. A second immutable record grants execution once. Both records
+use the existing assurance table and run transaction. The versioned claim path
+shares its validation and state transition with admission rather than duplicating
+the backend logic.
+
+Admission binds the exact scope, run, suspension, run revision, input bytes and
+suspension digest. Start checks that the claimed run and suspension are unchanged
+and unexpired. Only a fresh acknowledged start returns a suspension to execute.
+An error returns no authority, including after a successful commit whose reply
+was lost. Reads and identical retries return observations. Getter and start
+queries bind both run and suspension IDs; a grant for another run cannot read
+this input through the recovery path. History is paged within exact scope.
+
+`Engine.RecoverAgentReply` takes current host authorization for the requested
+run. It can continue a retained answer after a lost seal acknowledgment, a lost
+admission acknowledgment or a crash before start. A fresh engine uses the same
+answer assembly, resume checks and execution loop. Authorization is rechecked
+before private reads, before starting and before every provider/tool call.
+Revocation during a provider response prevents its requested tool from running.
+
+An existing start returns `ErrResumeAlreadyStarted` without executing anything.
+This includes an acknowledged start, an ambiguous start acknowledgment and a run
+that later completed. The host must inspect current run and effect evidence;
+the record is not proof of completion and cannot be cleared to authorize replay.
+
+TDD evidence: the initial native test failed on the missing admission capability.
+The engine recovery test failed on the missing host entry point. A separate lost
+seal acknowledgment case then failed because no admission existed; the guarded
+unadmitted path now assembles the retained answers and enters the same admission
+flow. The broader engine messaging, resume, recovery and task-call race suite
+passes in 90.685s. Native admission, version-claim, rollback, lost acknowledgment,
+history, resource-binding and expiry races pass without skips on SQLite
+(16.719s), PostgreSQL (8.154s) and MongoDB (15.845s). Final checks follow below.
+
+Background discovery is not installed by this packet. Expired admitted work and
+possibly started executions still require host reconciliation. Deferred recipient
+completion and private prepared-team bus ownership remain open. This is explicit
+host recovery for the global bus, not completion of Stage 3 or the full program.
+
+Final scoped `make f`, all-ten-module `make l`, root build and docs
+types/lint/build pass. The final engine admission, authorization, messaging and
+task-call race recheck passes in 31.917s. A2A, suspension, orchestration and shared
+assurance package races also pass. Initial lint findings in the owned code were
+formatting and one redundant reassignment; both were fixed. A later lint pass
+encountered concurrent API formatting, which its owner fixed before the final
+all-module pass.

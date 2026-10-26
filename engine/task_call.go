@@ -202,7 +202,7 @@ func taskCallRequest(ctx context.Context, scope cortex.Scope, runID id.AgentRunI
 }
 
 func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.Request) (response *llm.Response, err error) {
-	if checkErr := e.checkTeamCall(ctx, r.ID, r.Provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(ctx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	if r.Provenance.TaskClaimID == "" {
@@ -221,7 +221,7 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	if checkErr := e.checkTeamCall(callCtx, r.ID, r.Provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(callCtx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	response, err = e.llm.Complete(callCtx, &detached)
@@ -235,7 +235,7 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 }
 
 func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Request) (result llm.Stream, err error) {
-	if checkErr := e.checkTeamCall(ctx, r.ID, r.Provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(ctx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	if r.Provenance.TaskClaimID == "" {
@@ -259,7 +259,7 @@ func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Re
 			err = errors.Join(err, release())
 		}
 	}()
-	if checkErr := e.checkTeamCall(callCtx, r.ID, r.Provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(callCtx, r.ID, r.Provenance); checkErr != nil {
 		return nil, checkErr
 	}
 	stream, err := e.llm.CompleteStream(callCtx, &detached)
@@ -378,7 +378,7 @@ func (s *taskLeaseStream) Usage() *llm.Usage {
 // live task authority after the ordinary tool authorizer has allowed a call.
 func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call llm.ToolCall) (result string, outcome toolOutcome, err error) {
 	provenance, _ := ExecutionProvenanceFromContext(ctx)
-	if checkErr := e.checkTeamCall(ctx, subject.RunID, provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(ctx, subject.RunID, provenance); checkErr != nil {
 		return "", outcomeFailed, checkErr
 	}
 	if provenance.TaskClaimID == "" {
@@ -407,7 +407,7 @@ func (e *Engine) dispatchTool(ctx context.Context, subject cortex.Subject, call 
 		}
 	}()
 	subject.Scope.Levels = append([]cortex.Level(nil), subject.Scope.Levels...)
-	if checkErr := e.checkTeamCall(callCtx, subject.RunID, provenance); checkErr != nil {
+	if checkErr := e.checkExecutionCall(callCtx, subject.RunID, provenance); checkErr != nil {
 		return "", outcomeFailed, checkErr
 	}
 	result, outcome, err = e.dispatchAuthorizedTool(callCtx, subject, call)

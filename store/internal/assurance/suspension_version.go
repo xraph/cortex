@@ -35,43 +35,9 @@ func (s *Repository) ClaimSuspensionVersion(ctx context.Context, req suspension.
 	var result *suspension.Suspension
 	err = driver.TransactRun(ctx, req.RunID, func(tc context.Context, tx RunTransaction) error {
 		result = nil
-		locked, supported := tx.(SuspensionTransaction)
-		if !supported {
-			return suspension.ErrVersionClaimUnavailable
-		}
-		current, readErr := tx.GetRun(tc, req.RunID)
-		if readErr != nil {
-			return readErr
-		}
-		if current == nil || current.ID != req.RunID || current.Scope.Canonical() != scope.Canonical() || current.State != run.StatePaused {
-			return cortex.ErrNotSuspended
-		}
-		if current.Revision != req.RunRevision {
-			return cortex.ErrRunConflict
-		}
-		paused, readErr := locked.LockSuspension(tc, req.RunID)
-		if readErr != nil {
-			return readErr
-		}
-		if paused == nil || paused.ID != req.SuspensionID || paused.RunID != req.RunID || paused.Scope.Canonical() != scope.Canonical() {
-			return cortex.ErrNotSuspended
-		}
-		at := s.clock.Now().UTC()
-		if paused.ExpiresAt != nil && !paused.ExpiresAt.After(at) {
-			return cortex.ErrSuspensionExpired
-		}
-		next, revisionErr := runstate.NextRevision(current.Revision)
-		if revisionErr != nil {
-			return revisionErr
-		}
-		current.State = run.StateRunning
-		if writeErr := tx.SetRunCandidate(tc, current, at); writeErr != nil {
-			return writeErr
-		}
-		current.Revision, current.UpdatedAt = next, at
-		paused.ClaimedRun = current
-		result = paused
-		return tc.Err()
+		var claimErr error
+		result, claimErr = s.claimVersionInTransaction(tc, tx, scope, req)
+		return claimErr
 	})
 	if err != nil {
 		if errors.Is(err, verification.ErrCommitUnavailable) {
@@ -80,4 +46,43 @@ func (s *Repository) ClaimSuspensionVersion(ctx context.Context, req suspension.
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Repository) claimVersionInTransaction(tc context.Context, tx RunTransaction, scope cortex.Scope, req suspension.ClaimVersion) (*suspension.Suspension, error) {
+	locked, supported := tx.(SuspensionTransaction)
+	if !supported {
+		return nil, suspension.ErrVersionClaimUnavailable
+	}
+	current, readErr := tx.GetRun(tc, req.RunID)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if current == nil || current.ID != req.RunID || current.Scope.Canonical() != scope.Canonical() || current.State != run.StatePaused {
+		return nil, cortex.ErrNotSuspended
+	}
+	if current.Revision != req.RunRevision {
+		return nil, cortex.ErrRunConflict
+	}
+	paused, readErr := locked.LockSuspension(tc, req.RunID)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if paused == nil || paused.ID != req.SuspensionID || paused.RunID != req.RunID || paused.Scope.Canonical() != scope.Canonical() {
+		return nil, cortex.ErrNotSuspended
+	}
+	at := s.clock.Now().UTC()
+	if paused.ExpiresAt != nil && !paused.ExpiresAt.After(at) {
+		return nil, cortex.ErrSuspensionExpired
+	}
+	next, revisionErr := runstate.NextRevision(current.Revision)
+	if revisionErr != nil {
+		return nil, revisionErr
+	}
+	current.State = run.StateRunning
+	if writeErr := tx.SetRunCandidate(tc, current, at); writeErr != nil {
+		return nil, writeErr
+	}
+	current.Revision, current.UpdatedAt = next, at
+	paused.ClaimedRun = current
+	return paused, tc.Err()
 }

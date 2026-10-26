@@ -186,6 +186,8 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("SuspensionVersionClaim", func(t *testing.T) { testSuspensionVersionClaim(t, newStore) })
 	t.Run("SuspensionVersionExpiry", func(t *testing.T) { testSuspensionVersionExpiry(t, newStore) })
 	t.Run("SuspensionQuestionBinding", func(t *testing.T) { testSuspensionQuestionBinding(t, newStore) })
+	t.Run("ResumeAdmission", func(t *testing.T) { testResumeAdmission(t, newStore) })
+	t.Run("ResumeAdmissionBoundaries", func(t *testing.T) { testResumeAdmissionBoundaries(t, newStore) })
 	t.Run("ClaimSuspensionConcurrency", func(t *testing.T) { testClaimSuspensionConcurrency(t, newStore) })
 
 	// Expiry is part of the claim's own condition rather than a check the

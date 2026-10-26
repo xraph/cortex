@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/suspension"
@@ -61,32 +62,41 @@ func checkAgentReplyVersion(paused *suspension.Suspension, in ResumeInput, sourc
 // Another pending question may still be waiting; its later answer will perform
 // the same bounded read. The version claim arbitrates concurrent final answers.
 func (a a2aResumer) ResumeAgentResolution(ctx context.Context, resolution a2a.AskResolution) error {
+	current, in, err := a.assembleResolvedQuestions(ctx, resolution, id.SuspensionID{})
+	if err != nil || in == nil {
+		return err
+	}
+	_, err = a.eng.resume(ctx, current.ID, *in, resumeSourceAgentReply)
+	return err
+}
+
+func (a a2aResumer) assembleResolvedQuestions(ctx context.Context, resolution a2a.AskResolution, expected id.SuspensionID) (*run.Run, *ResumeInput, error) {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	// This adapter belongs to the engine's global bus. Private prepared-team
 	// buses need their own fixed partition and coordinator authority.
 	if resolution.Ask.OrchestrationID != "" || resolution.Ask.Scope.Canonical() != scope.Canonical() {
-		return a2a.ErrAskResolutionConflict
+		return nil, nil, a2a.ErrAskResolutionConflict
 	}
 	reader, ok := a.eng.store.(a2a.AskResolutionStore)
 	if !ok {
-		return a2a.ErrAskResolutionUnavailable
+		return nil, nil, a2a.ErrAskResolutionUnavailable
 	}
 	current, err := a.eng.store.GetRun(ctx, resolution.Ask.AskerRunID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if current.State != run.StatePaused || current.Scope.Canonical() != scope.Canonical() {
-		return cortex.ErrNotSuspended
+		return nil, nil, cortex.ErrNotSuspended
 	}
 	paused, err := a.eng.store.GetSuspension(ctx, current.ID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if paused.Reason != suspension.ReasonAgentReply || paused.Scope.Canonical() != scope.Canonical() || len(paused.Pending) == 0 || len(paused.Pending) > maxPendingQuestions {
-		return a2a.ErrAskResolutionConflict
+	if (!expected.IsNil() && paused.ID != expected) || paused.Reason != suspension.ReasonAgentReply || paused.Scope.Canonical() != scope.Canonical() || len(paused.Pending) == 0 || len(paused.Pending) > maxPendingQuestions {
+		return nil, nil, a2a.ErrAskResolutionConflict
 	}
 	matched := false
 	for _, call := range paused.Pending {
@@ -95,7 +105,7 @@ func (a a2aResumer) ResumeAgentResolution(ctx context.Context, resolution a2a.As
 		}
 	}
 	if !matched {
-		return a2a.ErrAskResolutionConflict
+		return nil, nil, a2a.ErrAskResolutionConflict
 	}
 	in := ResumeInput{agentReplyVersion: &suspension.ClaimVersion{RunID: current.ID, SuspensionID: paused.ID, RunRevision: current.Revision}}
 	complete := true
@@ -103,37 +113,36 @@ func (a a2aResumer) ResumeAgentResolution(ctx context.Context, resolution a2a.As
 	seen := make(map[string]bool, len(paused.Pending))
 	for _, call := range paused.Pending {
 		if call.ReplyWith == "" || call.Name != toolAgentAsk || seen[call.ReplyWith] {
-			return a2a.ErrAskResolutionConflict
+			return nil, nil, a2a.ErrAskResolutionConflict
 		}
 		seen[call.ReplyWith] = true
 		retained, readErr := reader.GetAskResolution(ctx, call.ReplyWith)
 		if errors.Is(readErr, a2a.ErrAskResolutionNotFound) {
 			if call.ReplyWith == resolution.Ask.ReplyWith {
-				return a2a.ErrAskResolutionConflict
+				return nil, nil, a2a.ErrAskResolutionConflict
 			}
 			complete = false
 			continue
 		}
 		if readErr != nil {
-			return readErr
+			return nil, nil, readErr
 		}
 		if len(retained.Payload) > maxAgentReplyBytes-resultBytes {
-			return safety.ErrLimit
+			return nil, nil, safety.ErrLimit
 		}
 		resultBytes += len(retained.Payload)
 		if retained.Ask.AskerRunID != current.ID || retained.Ask.ToolCallID != call.ID || retained.Ask.ReplyWith != call.ReplyWith || retained.Ask.Scope.Canonical() != scope.Canonical() || retained.Ask.OrchestrationID != "" || retained.Ask.ClaimedAt == nil {
-			return a2a.ErrAskResolutionConflict
+			return nil, nil, a2a.ErrAskResolutionConflict
 		}
 		if call.ReplyWith == resolution.Ask.ReplyWith && (retained.ResolutionID != resolution.ResolutionID || retained.BindingDigest != resolution.BindingDigest || retained.OutcomeDigest != resolution.OutcomeDigest || retained.Payload != resolution.Payload) {
-			return a2a.ErrAskResolutionConflict
+			return nil, nil, a2a.ErrAskResolutionConflict
 		}
 		in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: call.ID, Content: retained.Payload})
 	}
 	if !complete {
-		return nil
+		return current, nil, nil
 	}
-	_, err = a.eng.resume(ctx, current.ID, in, resumeSourceAgentReply)
-	return err
+	return current, &in, nil
 }
 
 var _ a2a.ResolutionResumer = a2aResumer{}

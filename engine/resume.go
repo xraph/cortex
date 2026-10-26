@@ -120,7 +120,11 @@ const (
 //
 // Every resume, public, approved or answered by a peer agent, is one run
 // agent span marked resumed.
-func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (r *run.Run, err error) {
+func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
+	return e.traceResume(ctx, runID, source, func(tc context.Context) (*run.Run, error) { return e.resumeRun(tc, runID, in, source) })
+}
+
+func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, source resumeSource, action func(context.Context) (*run.Run, error)) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, resumeSourceLabel(source)))
@@ -131,7 +135,7 @@ func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 		}
 		rt.end(r, err)
 	}()
-	return e.resumeRun(ctx, runID, in, source)
+	return action(ctx)
 }
 
 func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
@@ -267,7 +271,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, cortex.ErrVerificationUnavailable
 	}
 	var susp *suspension.Suspension
-	if versioned, supported := e.store.(suspension.VersionedStore); supported {
+	if in.agentReplyVersion != nil {
+		susp, err = e.admitAgentReply(ctx, in, preview)
+	} else if versioned, supported := e.store.(suspension.VersionedStore); supported {
 		if previewErr != nil {
 			return nil, nil, fmt.Errorf("read suspension version: %w", previewErr)
 		}
@@ -276,14 +282,22 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		}
 		susp, err = versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: runID, SuspensionID: preview.ID, RunRevision: snapshot.Revision})
 	} else {
-		if in.agentReplyVersion != nil {
-			return nil, nil, suspension.ErrVersionClaimUnavailable
-		}
 		susp, err = e.store.ClaimSuspension(ctx, runID)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
 	}
+	if in.agentReplyVersion != nil {
+		if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
+			return nil, nil, e.failResume(ctx, susp.ClaimedRun, susp.ClaimedRun.AgentID, authErr)
+		}
+	}
+
+	return e.rehydrateResume(ctx, in, source, snapshot, susp)
+}
+
+func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source resumeSource, snapshot *run.Run, susp *suspension.Suspension) (context.Context, *resumption, error) {
+	runID := susp.RunID
 
 	// The claim requires the run's exact scope. Retain its stored identity
 	// for every resumed write and authorization check.

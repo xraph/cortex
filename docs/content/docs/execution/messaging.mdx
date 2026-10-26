@@ -387,9 +387,9 @@ as opaque.
 The bus invokes its resumer only after a fresh seal acknowledgment. Reading a
 receipt or repeating an identical seal does not invoke it again. If resume
 fails, the selected answer remains available, but the receipt does not say
-whether resume started or finished. Durable resume admission and execution
-reconciliation are still required before automatic retry is safe. Private
-prepared-team messaging remains disabled.
+whether resume started or finished. The engine's separate admission and start
+records support the guarded recovery path below. Private prepared-team messaging
+remains disabled.
 
 When timeout or cancellation cannot read the source message and collected
 answers, the native path returns the error and keeps the ask pending. It does
@@ -420,11 +420,48 @@ tool-call ID matches.
 Drain existing agent-reply pauses on their compatible workers before upgrading.
 Older pauses have no question token, and this path refuses to infer one. Custom
 stores without retained outcomes keep their legacy behavior. A store that
-provides retained outcomes must also provide versioned suspension claims.
+provides retained outcomes must also provide versioned suspension claims and
+durable resume admission.
 Drain older messaging dispatchers too. They ignore the correlation field and
 must not service new correlated pauses during a mixed-version rollout.
 
 This correlates normal delivery, including several answers arriving across an
-engine restart. It does not recover a lost final resume acknowledgment or start
-resume from history alone. Those cases still need durable admission and
-reconciliation evidence.
+engine restart. Reading history alone does not authorize another execution.
+
+## Recover an interrupted reply
+
+Use the host recovery entry point with the run ID, original suspension ID and
+a callback that checks your current service identity's permission for that run:
+
+```go
+recovered, err := eng.RecoverAgentReply(ctx, runID, suspensionID, authorizeRecovery)
+```
+
+The context needs the run's exact scope. Permission is checked before reading
+private input, before starting, and before every provider or tool call. This is a
+host API; Cortex does not expose it as a model tool or an unauthenticated route.
+If some questions still lack answers, the returned run remains paused.
+
+Native stores commit a `ResumeAdmission` with the paused-to-running transition.
+It retains the exact encoded input, suspension digest and expected run revision.
+A separate `ResumeStart` transaction grants execution once. Only its fresh,
+acknowledged result carries the suspension to execute. The engine reuses the
+normal resume checks and loop after that grant.
+
+Recovery can continue after a lost answer-seal acknowledgment, a lost admission
+acknowledgment or a crash before the start transaction. If a start record already
+exists, recovery returns `suspension.ErrResumeAlreadyStarted` and executes
+nothing. That record means execution may have started, even when the original
+worker never received its acknowledgment. Inspect the run and effect evidence;
+do not clear the record to force another attempt.
+
+`suspension.ResumeAdmissionStore` exposes reads bound to both run and suspension
+IDs. Its history is exact-scope, defaults to 64 records and caps pages at 256.
+Admission input is bounded to 8 MiB, including JSON escaping. Treat it as private
+execution material. Neither admission nor start observations carry execution
+authority.
+
+Changed run revisions, replaced or edited suspensions, expired pauses and wrong
+scope fail before a start grant. Expired admitted work still needs host
+reconciliation. Background discovery, reconciliation after a possible start,
+deferred recipient completion and private prepared-team messaging remain open.

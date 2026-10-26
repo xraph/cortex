@@ -188,6 +188,9 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 			if _, versioned := e.store.(suspension.VersionedStore); !versioned {
 				return "", suspension.ErrVersionClaimUnavailable
 			}
+			if _, durable := e.store.(suspension.ResumeAdmissionStore); !durable {
+				return "", suspension.ErrResumeAdmissionUnavailable
+			}
 			pend.calls, err = bindPendingQuestions(pend)
 			if err != nil {
 				return "", err
