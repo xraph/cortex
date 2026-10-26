@@ -40,6 +40,7 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	operationalAwareness  *OperationalAwarenessConfig
 	contextBudget         *ContextBudgetConfig
 	preparedMessaging     *PreparedTeamMessagingConfig
 	orchestrationExpiry   *coordination.OrchestrationExpiryService

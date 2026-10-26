@@ -22,8 +22,18 @@ var errOperationalUnavailable = errors.New("cortex: operational observations una
 // current tools and remaining limits. Include ToolOperationalCapabilities in
 // explicit tool allowlists. The normal authorizer, accounting, publication and
 // transcript paths apply; registration does not enable adaptive execution.
-func WithOperationalAwareness() Option {
+func WithOperationalAwareness(config ...OperationalAwarenessConfig) Option {
 	return func(e *Engine) error {
+		if len(config) > 1 {
+			return cognitive.ErrInvalidCalibration
+		}
+		var c OperationalAwarenessConfig
+		if len(config) == 1 {
+			c = config[0]
+		}
+		if !validOperationalConfig(c) {
+			return cognitive.ErrInvalidCalibration
+		}
 		for _, def := range e.toolDefinitions(nil, false) {
 			if def.Name == ToolOperationalCapabilities {
 				return cortex.ErrAlreadyExists
@@ -33,7 +43,12 @@ func WithOperationalAwareness() Option {
 		if err := WithTool(def, e.operationalCapabilities)(e); err != nil {
 			return err
 		}
-		return WithToolRevision(ToolOperationalCapabilities, "cortex.capabilities/v1")(e)
+		e.operationalAwareness = &c
+		revision := "cortex.capabilities/v1"
+		if c.Calibration != nil {
+			revision = "cortex.capabilities/v2"
+		}
+		return WithToolRevision(ToolOperationalCapabilities, revision)(e)
 	}
 }
 
@@ -86,15 +101,26 @@ func (e *Engine) operationalCapabilities(ctx context.Context, inv cortex.Invocat
 	if err != nil {
 		return "", err
 	}
+	measurement := e.operationalReliability(ctx, observation, view)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	view.Reliability = measurement.Status
 	result := struct {
 		cognitive.Snapshot
-		PreparedDigest            string           `json:"prepared_digest"`
-		Model                     string           `json:"model"`
-		ModelRevision             string           `json:"model_revision,omitempty"`
-		ProviderHealth            cognitive.Health `json:"provider_health"`
-		CallAuthorizationRequired bool             `json:"call_authorization_required"`
-	}{Snapshot: view, PreparedDigest: st.provenance.PreparedDigest, Model: observation.config.Model, ModelRevision: st.provenance.ModelRevision, ProviderHealth: cognitive.HealthUnknown, CallAuthorizationRequired: e.authorizer != nil}
+		Measurement               cognitive.ReliabilityMeasurement `json:"measurement"`
+		PreparedDigest            string                           `json:"prepared_digest"`
+		Model                     string                           `json:"model"`
+		ModelRevision             string                           `json:"model_revision,omitempty"`
+		ProviderHealth            cognitive.Health                 `json:"provider_health"`
+		CallAuthorizationRequired bool                             `json:"call_authorization_required"`
+	}{Snapshot: view, Measurement: measurement, PreparedDigest: st.provenance.PreparedDigest, Model: observation.config.Model, ModelRevision: st.provenance.ModelRevision, ProviderHealth: cognitive.HealthUnknown, CallAuthorizationRequired: e.authorizer != nil}
 	data, err := json.Marshal(result)
+	if err == nil && len(data) > 128<<10 && result.Measurement.Cohort != nil {
+		result.Reliability = "unknown"
+		result.Measurement = cognitive.ReliabilityMeasurement{Status: "unknown", Reason: "cohort_too_large"}
+		data, err = json.Marshal(result)
+	}
 	if err != nil || len(data) > 128<<10 {
 		return "", cognitive.ErrInvalidSnapshot
 	}

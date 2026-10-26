@@ -58,6 +58,53 @@ and configuration. The tool reads only the executing run and accepts no run,
 principal or scope arguments. It does not change the prepared prompt or start
 reflection, replanning or learning.
 
+## Measured reliability
+
+You can connect a trusted evaluation adapter to the capability tool:
+
+```go
+engine.WithOperationalAwareness(engine.OperationalAwarenessConfig{
+    Calibration: evaluationAdapter,
+    Policy: cognitive.CalibrationPolicy{
+        MinimumTrials: 50,
+        MaxAge:        24 * time.Hour,
+    },
+})
+```
+
+This registers revision `cortex.capabilities/v2`. Your adapter implements
+`ObserveCalibration(context.Context, engine.OperationalCalibrationRequest)`.
+The request identifies the current run and scope, prepared configuration, model,
+effective prompt digest, acceptance digest, visible tool revisions and deadline.
+The policy digest covers frozen configuration except the absolute deadline.
+Check that the cohort's wall-time constraints apply to the supplied deadline.
+
+Return `engine.OperationalCalibrationObservation` with the current binding and
+an authenticated `cognitive.CalibrationObservation`. You supply task-class,
+provider, controller and environment revisions from trusted host configuration.
+The engine compares its own pins and applies sample, freshness, retention,
+revocation and discovery/holdout separation checks. It calls the adapter only
+when the run has a frozen verification contract and model/tool revisions.
+
+Your adapter must authenticate the evaluator, match the profile to retained
+evidence bytes, check current availability and revocation, and authorize disclosure
+to this run. A valid digest does not establish those facts. Calls have a five-second
+timeout; the adapter must honor cancellation. No live evaluation service is
+installed by this option.
+
+A compatible cohort produces `reliability: measured` and a `measurement.cohort`
+containing the evaluator's estimate, uncertainty method, interval level, counts
+and evidence reference. Missing results, grader errors and cancelled trials stay
+in the total count. Only success and failure verdicts count toward `MinimumTrials`.
+The engine does not calculate confidence from the model's own claims.
+
+Absent, incompatible, revoked or stale evidence keeps reliability unknown, with
+no numeric estimate. Adapter failures expose a fixed reason without private error
+text. If cohort metadata exceeds the tool's output bound, the response preserves
+capabilities and reports `cohort_too_large`. Visibility changes cannot disclose an
+old cohort's withdrawn tools. These observations never satisfy a verifier check,
+change a budget, authorize work or predict the result of an individual run.
+
 ## Context budgets
 
 Register a context budget when you want the engine to select initial history

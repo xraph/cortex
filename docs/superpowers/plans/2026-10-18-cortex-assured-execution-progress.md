@@ -89,6 +89,28 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 
 ## Verification log
 
+### Measured reliability runtime integration, 2026-10-26
+
+The opt-in capability tool now accepts authenticated cohort observations through
+`OperationalCalibrationProvider`. Engine-owned scope, model, prompt, policy,
+acceptance and current visible tool pins must match. The host owns task class,
+provider/controller/environment identity, producer authentication, retained-byte
+matching, current revocation and disclosure authorization. Missing pins, sparse
+or incompatible cohorts, leakage, expiry and adapter failure preserve unknown.
+Counts retain missing/grader/cancelled trials, and uncertainty names its method
+and level. Absolute run deadlines stay out of reusable policy digests but reach
+the adapter with the caller's tighter deadline. Oversize cohorts preserve the
+capability response with an unknown measurement.
+
+Red tests captured the absent API, then visibility and oversized-output regressions.
+Focused sync/stream, authorization, required transcript/approval-resume and
+calibration race tests passed (engine 35.367s, cognitive 1.183s). An independent
+review found and verified fixes for visibility, effective deadlines and output
+bounds. Final formatting, all-module lint, root build and docs lint/type checks
+also passed. This does not supply live cohorts, a benchmark service, adaptive policy
+or stage completion.
+
+
 S1.1 implements explicit incomplete outcomes and stop reasons across synchronous, streaming, mock and resume paths. Final answers remain unchecked. Terminal storage failure prevents completion hooks and done events. Truncated tool calls never dispatch; unknown finish reasons, malformed responses and streams missing their finish marker stay incomplete. The orchestration adapter rejects incomplete workers, A2A projects them as terminal failures, and the sweeper cleans their orphaned suspension rows.
 
 Checks completed:
