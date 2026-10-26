@@ -89,6 +89,39 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 
 ## Verification log
 
+### Governed lessons and recall provenance, 2026-10-26
+
+Ordinary learning now accepts only the exact output of a current, committed
+verified normal run. Acceptance and its delivery outbox are atomic. Correction
+withdraws the prior revision and publishes the replacement in one transaction;
+revocation, expiry and current source grants are checked again when you recall a
+lesson. The shared lesson transport serves both normal retrieval and optimizer
+adapters without changing the optimizer's legacy serialized lesson contract.
+
+The installed Fabriq adapter now supplies lesson IDs, revisions and digests to
+both prepared skill knowledge and runtime `knowledge_search`. Cortex retains
+those identities before exposing the text to a model. A run that used recalled
+lessons cannot publish them as new validated learning, even when a caller omits
+those sources from the verification binding. Conversation messages carry a
+source-run lookup hint and must match retained message digests on that run.
+Recalled or unattributed history stays ineligible across later runs; stripping
+metadata cannot make it clean. Ordinary execution can still use legacy history.
+
+Deletion empties local historical lesson, publication and delivery bodies and
+writes a permanent identity tombstone. A shared lesson revision fence serializes
+correction from a different source run with deletion; a deterministic Postgres
+race test covers the stale-revision case. Fabriq active-row and vector deletion
+is implemented, but its pinned core retains event and outbox history. The receipt
+therefore keeps `HistoryErased=false`. Upstream retained-history erasure remains
+pending the requested Fabriq main fast-forward approval and implementation.
+
+Evidence includes race checks on SQLite, real Postgres 16 and the pinned Mongo
+fixture; the installed Fabriq/Postgres flow covers publication, retrieval,
+revocation and rejection of actual recalled engine output by `AcceptLesson`
+after committing a verification result with an empty source list. Focused engine
+race tests cover prompt/tool recall, required verification, streaming, approval
+resume, inherited history, tampered attribution and failed receipt persistence.
+
 ### Completion closure and bounded reflection, 2026-10-26
 
 The completion worker now handles a finished producer that has not submitted its

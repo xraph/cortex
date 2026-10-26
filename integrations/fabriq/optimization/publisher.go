@@ -2,14 +2,13 @@ package optimization
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
-	"github.com/xraph/fabriq/core/agent"
-	"github.com/xraph/fabriq/core/fabriqerr"
 	"github.com/xraph/fabriq/core/tenant"
 
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/fabriq/internal/lessontransport"
+	"github.com/xraph/cortex/learning"
 	opt "github.com/xraph/cortex/optimization"
 )
 
@@ -71,69 +70,28 @@ func (a *Adapter) eligible(ctx context.Context, p opt.Publication) error {
 }
 
 func (a *Adapter) reconcile(ctx context.Context, p opt.Publication, tenantID string) (lessonRow, error) {
-	row, readErr := a.read(ctx, p.RemoteAggregateID)
-	if readErr == nil && row.matches(p, tenantID) {
-		return row, nil
-	}
-	if readErr != nil && !errors.Is(readErr, fabriqerr.ErrNotFound) {
-		return lessonRow{}, opt.ErrUnavailable
-	}
-	operation, version := "create", int64(0)
-	var previous *opt.Publication
-	if readErr == nil {
-		if p.Operation != opt.PublicationRevoke {
-			return lessonRow{}, opt.ErrConflict
-		}
-		prior, err := a.config.Repository.GetPublication(ctx, p.LessonID, p.LocalRevision-1)
-		if err != nil {
-			return lessonRow{}, err
-		}
-		if prior.Operation != opt.PublicationPublish || !row.matches(prior, tenantID) {
-			return lessonRow{}, opt.ErrConflict
-		}
-		operation, version = "update", row.Version
-		previous = &prior
-	}
-	payload, err := json.Marshal(rowFor(p))
-	if err != nil {
-		return lessonRow{}, opt.ErrInvalidSpec
-	}
-	_, writeErr := a.toolkit.Remember(ctx, agent.RememberRequest{Entity: a.config.Entity, Op: operation, AggID: p.RemoteAggregateID, ExpectedVersion: &version, Payload: payload})
-	// A successful response and an ambiguous write require the same source lookup.
-	// A version conflict alone never proves this payload was published.
-	row, readErr = a.read(ctx, p.RemoteAggregateID)
-	if readErr != nil {
-		var denied *agent.WriteError
-		if errors.As(writeErr, &denied) && denied.Code == "not_allowed" {
-			return lessonRow{}, opt.ErrPolicyDenied
-		}
-		return lessonRow{}, opt.ErrUnavailable
-	}
-	if !row.matches(p, tenantID) {
-		if previous != nil && row.Version == version && row.matches(*previous, tenantID) && writeErr != nil {
-			var denied *agent.WriteError
-			if errors.As(writeErr, &denied) && denied.Code == "not_allowed" {
-				return lessonRow{}, opt.ErrPolicyDenied
-			}
-			return lessonRow{}, opt.ErrUnavailable
-		}
-		return lessonRow{}, opt.ErrConflict
-	}
-	return row, nil
+	row, err := lessontransport.Reconcile(ctx, a.toolkit, a.fabric, a.config.Entity, tenantID, sharedPublication(p), func(c context.Context) (learning.Publication, error) {
+		prior, readErr := a.config.Repository.GetPublication(c, p.LessonID, p.LocalRevision-1)
+		return sharedPublication(prior), readErr
+	})
+	return row, transportError(err)
 }
 
-func (a *Adapter) read(ctx context.Context, aggregate string) (lessonRow, error) {
-	var rows []map[string]any
-	if err := a.fabric.Relational().GetMany(ctx, a.config.Entity, []string{aggregate}, &rows); err != nil {
-		return lessonRow{}, err
+func transportError(err error) error {
+	switch {
+	case errors.Is(err, learning.ErrDenied):
+		return opt.ErrPolicyDenied
+	case errors.Is(err, learning.ErrConflict):
+		return opt.ErrConflict
+	case errors.Is(err, learning.ErrInvalid):
+		return opt.ErrInvalidSpec
+	case errors.Is(err, learning.ErrIneligible):
+		return opt.ErrIncompleteEvidence
+	case errors.Is(err, learning.ErrUnavailable):
+		return opt.ErrUnavailable
+	default:
+		return err
 	}
-	if len(rows) == 0 {
-		return lessonRow{}, fabriqerr.ErrNotFound
-	}
-	if len(rows) != 1 {
-		return lessonRow{}, opt.ErrIncompleteEvidence
-	}
-	return decodeRow(rows[0])
 }
 
 // Publish delivers an already accepted local lesson. The outbox remains authoritative.

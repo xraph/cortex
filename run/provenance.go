@@ -46,14 +46,20 @@ type ExecutionProvenance struct {
 	VerificationIntentID  string `json:"verification_intent_id,omitempty"`
 	// SourceValidation distinguishes read-set checks from atomic store capture.
 	// read_set_checked detects observed changes but is not an atomic snapshot.
-	SourceSnapshot    SourceSnapshot           `json:"source_snapshot,omitzero"`
-	SourceValidation  string                   `json:"source_validation,omitempty"`
-	SourceReads       []Revision               `json:"source_reads,omitempty"`
-	PublicationStatus safety.PublicationStatus `json:"publication_status,omitempty"`
-	SchemaVersion     int                      `json:"schema_version"`
-	PreparedDigest    string                   `json:"prepared_digest"`
-	DerivedFrom       string                   `json:"derived_from,omitempty"`
-	Purpose           ExecutionPurpose         `json:"purpose"`
+	SourceSnapshot   SourceSnapshot `json:"source_snapshot,omitzero"`
+	SourceValidation string         `json:"source_validation,omitempty"`
+	SourceReads      []Revision     `json:"source_reads,omitempty"`
+	// RecalledLessons retains trusted retrieval identities before their content is used.
+	RecalledLessons []Revision `json:"recalled_lessons,omitempty"`
+	// ConversationWrites binds emitted memory messages to this source run.
+	ConversationWrites []Revision `json:"conversation_writes,omitempty"`
+	// UnattributedHistory excludes history with unavailable source receipts from learning.
+	UnattributedHistory bool                     `json:"unattributed_history,omitempty"`
+	PublicationStatus   safety.PublicationStatus `json:"publication_status,omitempty"`
+	SchemaVersion       int                      `json:"schema_version"`
+	PreparedDigest      string                   `json:"prepared_digest"`
+	DerivedFrom         string                   `json:"derived_from,omitempty"`
+	Purpose             ExecutionPurpose         `json:"purpose"`
 	// AssignmentDigest binds a trusted host execution to its sealed handoff.
 	AssignmentDigest     string     `json:"assignment_digest,omitempty"`
 	ParentRunID          string     `json:"parent_run_id,omitempty"`

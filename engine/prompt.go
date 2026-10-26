@@ -349,6 +349,10 @@ func (e *Engine) knowledgeSections(ctx context.Context, skills []*skill.Skill) (
 				diagnostics = append(diagnostics, "knowledge retrieval empty: "+ref.Source)
 				continue
 			}
+			if err := e.recordRecalledKnowledge(ctx, chunks); err != nil {
+				diagnostics = append(diagnostics, "knowledge provenance unavailable: "+ref.Source)
+				continue
+			}
 
 			seen[ref.Source]++
 			sectionID := "knowledge:" + ref.Source

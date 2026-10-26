@@ -183,6 +183,7 @@ func (e *Engine) collectPreparedAgent(ctx context.Context, ag *agent.Config, ove
 		return nil, verificationErr
 	}
 	provenance := run.ExecutionProvenance{Diagnostics: diagnostics, SchemaVersion: 1, Purpose: run.PurposeNormal, ModelRevision: e.modelRevisions[cfg.Model]}
+	provenance.RecalledLessons = readSet.recalledLessons
 	if provenance.ModelRevision == "" {
 		provenance.Diagnostics = append(provenance.Diagnostics, "model revision is not pinned")
 	}

@@ -17,7 +17,10 @@ type sourceRead struct {
 	check    func(context.Context) error
 }
 
-type sourceReadSet struct{ reads []sourceRead }
+type sourceReadSet struct {
+	reads           []sourceRead
+	recalledLessons []run.Revision
+}
 
 // readPreparedSource records the exact value consumed by preparation. Ordinary
 // prompt assembly has no read set and keeps its existing single-read behavior.

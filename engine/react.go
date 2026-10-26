@@ -881,6 +881,10 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 		return
 	}
 	convMsgs := llmToMemory(st.messages[st.newMessagesFrom:])
+	if err := e.recordConversationSources(ctx, st, convMsgs); err != nil {
+		e.logError("record conversation sources", err, log.String("agent_id", agentID.String()))
+		return
+	}
 	if err := e.store.SaveConversation(ctx, agentID, st.sessionID, convMsgs); err != nil {
 		e.logError("save conversation", err, log.String("agent_id", agentID.String()))
 	}

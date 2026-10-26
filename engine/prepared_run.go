@@ -294,6 +294,7 @@ func (e *Engine) loadPreparedHistory(ctx context.Context, snap *preparedSnapshot
 	if snap.Config.Context != nil && len(history) >= limit {
 		return nil, cortex.ErrConversationUnavailable
 	}
+	e.inheritConversationSources(ctx, r, history)
 	messages := memoryToLLM(history)
 	if scanErr := e.checkMessages(ctx, &snap.Agent, r, snap.Config.Publication, messages); scanErr != nil {
 		return nil, scanErr

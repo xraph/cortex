@@ -6,6 +6,7 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/learning"
 )
 
 // LessonStore publishes governed lessons through the host's shared knowledge store.
@@ -24,31 +25,12 @@ type LessonDraft struct {
 	EvidenceIDs       []id.ID  `json:"evidence_ids"`
 }
 
-// Lesson retains local eligibility even if remote publication or revocation fails.
-type Lesson struct {
-	ID                id.ID         `json:"id"`
-	Scope             cortex.Scope  `json:"scope"`
-	Domain            string        `json:"domain"`
-	HarnessSchema     int           `json:"harness_schema"`
-	Statement         string        `json:"statement"`
-	Applicability     []string      `json:"applicability"`
-	Contraindications []string      `json:"contraindications"`
-	DecisionIDs       []id.ID       `json:"decision_ids"`
-	TrialIDs          []id.ID       `json:"trial_ids"`
-	EvidenceClass     EvidenceClass `json:"evidence_class"`
-	Revision          int64         `json:"revision"`
-	CreatedAt         time.Time     `json:"created_at"`
-	ExpiresAt         time.Time     `json:"expires_at"`
-	RevokedAt         time.Time     `json:"revoked_at"`
-	RevocationReason  string        `json:"revocation_reason,omitempty"`
-}
+// Lesson shares the root learning schema while optimizer acceptance retains its
+// decision and trial provenance rules.
+type Lesson = learning.Lesson
 
 // LessonRef freezes local eligibility and content at experiment creation.
-type LessonRef struct {
-	ID       id.ID  `json:"id"`
-	Revision int64  `json:"revision"`
-	Digest   string `json:"digest"`
-}
+type LessonRef = learning.Ref
 
 // PublicationRequest accepts one reflection under its current worker lease.
 // The store assigns payload revision, digest and timestamps before any remote call.

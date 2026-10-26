@@ -4,68 +4,25 @@ import (
 	"context"
 
 	"github.com/xraph/fabriq/core/agent"
-	"github.com/xraph/fabriq/core/command"
 	"github.com/xraph/fabriq/core/query"
 	"github.com/xraph/fabriq/core/registry"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/integrations/fabriq/internal/lessontransport"
 	opt "github.com/xraph/cortex/optimization"
 )
 
-// LessonToolkit owns an immutable lesson write policy and strict semantic recall.
-// Embedding this type in a decorator preserves its policy attestation.
-type LessonToolkit struct {
-	toolkit *agent.Toolkit
-	entity  string
-}
+// LessonToolkit binds the shared typed schema and guarded recall policy.
+type LessonToolkit = lessontransport.Toolkit
 
-// NewLessonToolkit binds the lesson write policy and semantic retrieval configuration.
+// NewLessonToolkit constructs strict recall with an explicit write policy.
 func NewLessonToolkit(fabric query.Fabric, reg *registry.Registry, embedder agent.Embedder, entity string) (*LessonToolkit, error) {
-	if fabric == nil || reg == nil || embedder == nil || !validEntity(entity) {
-		return nil, opt.ErrInvalidSpec
-	}
-	registered, ok := reg.Get(entity)
-	if !ok || registered.Spec.Schema == nil || registered.Spec.Kind != registry.KindAggregate || registered.Spec.Embed == nil || len(registered.Spec.Embed.Fields) != 1 || registered.Spec.Embed.Fields[0] != "content" {
-		return nil, opt.ErrInvalidSpec
-	}
-	for _, required := range LessonSpec(entity).Schema.Columns {
-		found := false
-		for _, column := range registered.Spec.Schema.Columns {
-			if column.Name == required.Name && column.Type == required.Type && column.NotNull == required.NotNull {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, opt.ErrInvalidSpec
-		}
-	}
-	toolkit, err := agent.NewToolkit(fabric, reg, embedder, agent.Config{Strict: true, VectorDims: embedder.Dims(), Write: LessonWritePolicy(entity)})
+	toolkit, err := lessontransport.NewToolkit(fabric, reg, embedder, entity)
 	if err != nil {
-		return nil, err
+		return nil, opt.ErrInvalidSpec
 	}
-	return &LessonToolkit{toolkit: toolkit, entity: entity}, nil
-}
-
-// Remember delegates to the configured guarded command plane.
-func (t *LessonToolkit) Remember(ctx context.Context, request agent.RememberRequest) (command.Result, error) {
-	if t == nil || t.toolkit == nil {
-		return command.Result{}, opt.ErrUnavailable
-	}
-	return t.toolkit.Remember(ctx, request)
-}
-
-// Recall delegates to strict semantic retrieval.
-func (t *LessonToolkit) Recall(ctx context.Context, request agent.RecallRequest) (agent.ContextPack, error) {
-	if t == nil || t.toolkit == nil {
-		return agent.ContextPack{}, opt.ErrUnavailable
-	}
-	return t.toolkit.Recall(ctx, request)
-}
-
-func (t *LessonToolkit) lessonWritePolicy(entity string) bool {
-	return t != nil && t.toolkit != nil && entity == t.entity
+	return toolkit, nil
 }
 
 // CheckReady verifies provisioned columns, the bound toolkit policy and semantic
@@ -75,8 +32,7 @@ func (a *Adapter) CheckReady(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	bound, ok := a.toolkit.(interface{ lessonWritePolicy(string) bool })
-	if !ok || !bound.lessonWritePolicy(a.config.Entity) {
+	if !lessontransport.BoundPolicy(a.toolkit, a.config.Entity) {
 		return opt.ErrUnavailable
 	}
 	scope := cortex.ScopeFromContext(ctx)

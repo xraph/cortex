@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
+	"github.com/xraph/cortex/learning"
 	"github.com/xraph/cortex/run"
 )
 
@@ -90,12 +91,13 @@ func (p *Plugin) OnRunCompleted(ctx context.Context, agentID id.AgentID, runID i
 	payload, err := json.Marshal(map[string]any{
 		"content": content,
 		"meta": map[string]any{
-			"kind":      "completed",
-			"agentId":   agentID.String(),
-			"runId":     runID.String(),
-			"input":     in,
-			"output":    output,
-			"elapsedMs": elapsed.Milliseconds(),
+			"kind":           "completed",
+			"evidence_class": learning.ClassifyActivity(run.StateCompleted),
+			"agentId":        agentID.String(),
+			"runId":          runID.String(),
+			"input":          in,
+			"output":         output,
+			"elapsedMs":      elapsed.Milliseconds(),
 		},
 	})
 	if err != nil {
@@ -134,12 +136,13 @@ func (p *Plugin) OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.A
 	payload, err := json.Marshal(map[string]any{
 		"content": content,
 		"meta": map[string]any{
-			"kind":    "failed",
-			"agentId": agentID.String(),
-			"runId":   runID.String(),
-			"input":   in,
-			"error":   errStr,
-			"failed":  true,
+			"kind":           "failed",
+			"evidence_class": learning.ClassifyActivity(run.StateFailed),
+			"agentId":        agentID.String(),
+			"runId":          runID.String(),
+			"input":          in,
+			"error":          errStr,
+			"failed":         true,
 		},
 	})
 	if err != nil {

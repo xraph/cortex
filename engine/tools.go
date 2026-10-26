@@ -97,6 +97,10 @@ func (e *Engine) executeKnowledgeSearch(ctx context.Context, inv cortex.Invocati
 	if len(chunks) == 0 {
 		return jsonResult("status", "no relevant results found")
 	}
+	if err := e.recordRecalledKnowledge(ctx, chunks); err != nil {
+		noteToolFailure(ctx, err)
+		return jsonResult("error", "knowledge provenance unavailable")
+	}
 
 	results := make([]map[string]any, len(chunks))
 	for i, c := range chunks {

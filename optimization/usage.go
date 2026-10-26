@@ -3,6 +3,8 @@ package optimization
 import (
 	"fmt"
 	"strings"
+
+	"github.com/xraph/cortex/learning"
 )
 
 // UsageQuality describes accounting provenance, independently of result quality.
@@ -15,12 +17,12 @@ const (
 )
 
 // EvidenceClass describes which claims a comparison can support.
-type EvidenceClass string
+type EvidenceClass = learning.EvidenceClass
 
 const (
-	EvidenceValidated   EvidenceClass = "validated"
-	EvidenceContrastive EvidenceClass = "contrastive"
-	EvidenceExploratory EvidenceClass = "exploratory"
+	EvidenceValidated   EvidenceClass = learning.EvidenceValidated
+	EvidenceContrastive EvidenceClass = learning.EvidenceContrastive
+	EvidenceExploratory EvidenceClass = learning.EvidenceExploratory
 )
 
 // Usage keeps token and money provenance separate. Missing quality is unknown.

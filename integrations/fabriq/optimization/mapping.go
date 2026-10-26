@@ -2,67 +2,27 @@ package optimization
 
 import (
 	"context"
-	"encoding/json"
-	"time"
 
 	"github.com/xraph/fabriq/core/tenant"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/integrations/fabriq/internal/lessontransport"
+	"github.com/xraph/cortex/learning"
 	opt "github.com/xraph/cortex/optimization"
 )
 
-type lessonRow struct {
-	ID            string            `json:"id,omitempty"`
-	Tenant        string            `json:"tenant_id,omitempty"`
-	Version       int64             `json:"version,omitempty"`
-	ScopeKey      string            `json:"scope_key"`
-	Domain        string            `json:"domain"`
-	HarnessSchema int               `json:"harness_schema"`
-	EvidenceClass opt.EvidenceClass `json:"evidence_class"`
-	LocalRevision int64             `json:"local_revision"`
-	Digest        string            `json:"payload_digest"`
-	ExperimentID  string            `json:"experiment_id"`
-	Content       string            `json:"content"`
-	Active        bool              `json:"active"`
-	CreatedAt     time.Time         `json:"created_at"`
-	ExpiresAt     *time.Time        `json:"expires_at"`
-	Lesson        opt.Lesson        `json:"lesson"`
-}
+type lessonRow = lessontransport.Row
 
-func rowFor(p opt.Publication) lessonRow {
-	row := lessonRow{ScopeKey: p.Payload.Scope.Canonical(), Domain: p.Payload.Domain, HarnessSchema: p.Payload.HarnessSchema, EvidenceClass: p.Payload.EvidenceClass, LocalRevision: p.LocalRevision, Digest: p.PayloadDigest, ExperimentID: p.ExperimentID.String(), Content: p.Payload.Statement, Active: p.Operation == opt.PublicationPublish, CreatedAt: p.Payload.CreatedAt, Lesson: p.Payload}
-	if !p.Payload.ExpiresAt.IsZero() {
-		expiry := p.Payload.ExpiresAt
-		row.ExpiresAt = &expiry
-	}
-	return row
+func sharedPublication(p opt.Publication) learning.Publication {
+	return learning.Publication{LessonID: p.LessonID, Revision: p.LocalRevision, SourceID: p.ExperimentID, Operation: string(p.Operation), Payload: p.Payload, PayloadDigest: p.PayloadDigest, AggregateID: p.RemoteAggregateID}
 }
-
+func rowFor(p opt.Publication) lessonRow { return lessontransport.For(sharedPublication(p)) }
 func decodeRow(raw map[string]any) (lessonRow, error) {
-	// SQL drivers may expose JSON columns as bytes; preserve JSON rather than
-	// encoding those bytes as a base64 string.
-	if data, ok := raw["lesson"].([]byte); ok {
-		raw["lesson"] = json.RawMessage(data)
-	}
-	var row lessonRow
-	encoded, err := json.Marshal(raw)
+	row, err := lessontransport.Decode(raw)
 	if err != nil {
-		return row, opt.ErrIncompleteEvidence
-	}
-	if err = json.Unmarshal(encoded, &row); err != nil {
-		return row, opt.ErrIncompleteEvidence
+		return lessonRow{}, opt.ErrIncompleteEvidence
 	}
 	return row, nil
-}
-
-func (row lessonRow) matches(p opt.Publication, tenantID string) bool {
-	digest, err := opt.LessonDigest(row.Lesson)
-	expected := rowFor(p)
-	sameExpiry := row.ExpiresAt == nil && expected.ExpiresAt == nil
-	if row.ExpiresAt != nil && expected.ExpiresAt != nil {
-		sameExpiry = row.ExpiresAt.Truncate(time.Microsecond).Equal(expected.ExpiresAt.Truncate(time.Microsecond))
-	}
-	return err == nil && digest == p.PayloadDigest && row.Digest == digest && row.ID == p.RemoteAggregateID && row.Tenant == tenantID && row.Version > 0 && row.ScopeKey == expected.ScopeKey && row.Domain == expected.Domain && row.HarnessSchema == expected.HarnessSchema && row.EvidenceClass == expected.EvidenceClass && row.LocalRevision == expected.LocalRevision && row.ExperimentID == expected.ExperimentID && row.Content == expected.Content && row.Active == expected.Active && row.CreatedAt.Truncate(time.Microsecond).Equal(expected.CreatedAt.Truncate(time.Microsecond)) && sameExpiry
 }
 
 func (a *Adapter) mapped(ctx context.Context) (context.Context, error) {

@@ -1,24 +1,12 @@
 package optimization
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
-	"unicode/utf8"
-
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/optimization/internal/canonical"
+	"github.com/xraph/cortex/learning"
 )
 
 // LessonDigest identifies the complete immutable publication payload.
-func LessonDigest(lesson Lesson) (string, error) {
-	encoded, err := canonical.Marshal(lesson)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
-}
+func LessonDigest(lesson Lesson) (string, error) { return learning.Digest(lesson) }
 
 // ValidateLessonDraft checks bounded reflection content before storage resolves evidence.
 func ValidateLessonDraft(lesson Lesson) error {
@@ -27,6 +15,9 @@ func ValidateLessonDraft(lesson Lesson) error {
 	}
 	if _, err := ScopeKey(lesson.Scope); err != nil {
 		return err
+	}
+	if lesson.Result != nil || len(lesson.SourceReports) != 0 || lesson.Corrects != nil || lesson.SupersededBy != nil {
+		return ErrInvalidSpec
 	}
 	if lesson.HarnessSchema != 1 || lesson.Revision != 0 || !lesson.CreatedAt.IsZero() || !lesson.RevokedAt.IsZero() || lesson.RevocationReason != "" {
 		return ErrInvalidSpec
@@ -61,18 +52,8 @@ func ValidateLessonDraft(lesson Lesson) error {
 }
 
 func validateLessonContent(domain, statement string, applicability, contraindications []string) error {
-	if strings.TrimSpace(domain) == "" || len(domain) > 256 || !utf8.ValidString(domain) || strings.TrimSpace(statement) == "" || len(statement) > 32768 || !utf8.ValidString(statement) {
+	if learning.ValidateContent(domain, statement, applicability, contraindications) != nil {
 		return ErrInvalidSpec
-	}
-	for _, conditions := range [][]string{applicability, contraindications} {
-		if len(conditions) > 64 {
-			return ErrInvalidSpec
-		}
-		for _, value := range conditions {
-			if strings.TrimSpace(value) == "" || len(value) > 4096 || !utf8.ValidString(value) {
-				return ErrInvalidSpec
-			}
-		}
 	}
 	return nil
 }

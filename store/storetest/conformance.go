@@ -41,6 +41,7 @@ import (
 func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("ReflectionExecution", func(t *testing.T) { ReflectionExecution(t, newStore) })
 	t.Run("PlanReplanExecution", func(t *testing.T) { PlanReplanExecution(t, newStore) })
+	t.Run("QualifiedLearning", func(t *testing.T) { QualifiedLearning(t, newStore) })
 	t.Run("TaskCompletionLifecycle", func(t *testing.T) { TaskCompletionLifecycle(t, newStore) })
 	t.Run("TaskCompletionAbandonment", func(t *testing.T) { TaskCompletionAbandonment(t, newStore) })
 	t.Run("TaskCompletionAdmission", func(t *testing.T) { TaskCompletionAdmission(t, newStore) })

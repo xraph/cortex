@@ -77,7 +77,7 @@ func TestPlugin_WritesMemoryOnRunCompleted(t *testing.T) {
 	if !ok {
 		t.Fatalf("meta missing or not an object: %v", payload["meta"])
 	}
-	if meta["input"] != "what is fabriq?" || meta["output"] != "a data fabric" {
+	if meta["evidence_class"] != "observation" || meta["input"] != "what is fabriq?" || meta["output"] != "a data fabric" {
 		t.Fatalf("meta = %v", meta)
 	}
 }
@@ -130,7 +130,7 @@ func TestPlugin_OnRunFailedCleansUpAndRecords(t *testing.T) {
 	if !ok {
 		t.Fatalf("meta missing: %v", payload["meta"])
 	}
-	if meta["failed"] != true || meta["error"] != context.DeadlineExceeded.Error() {
+	if meta["evidence_class"] != "failed_approach" || meta["failed"] != true || meta["error"] != context.DeadlineExceeded.Error() {
 		t.Fatalf("meta = %v", meta)
 	}
 }

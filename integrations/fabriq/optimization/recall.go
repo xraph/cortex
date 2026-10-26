@@ -78,7 +78,7 @@ func (a *Adapter) Recall(ctx context.Context, request opt.RecallQuery) (opt.Less
 		if lookupErr != nil {
 			return opt.LessonPage{}, lookupErr
 		}
-		if !row.matches(p, tenantID) {
+		if !row.Matches(sharedPublication(p), tenantID) {
 			continue
 		}
 		resolved, cleanup, authErr := a.authorize(ctx, p, opt.ActionRead)
