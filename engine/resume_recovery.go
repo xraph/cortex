@@ -57,6 +57,27 @@ func (e *Engine) replyRecoveryPause(ctx context.Context, current *run.Run, autho
 		if paused.Reason != suspension.ReasonAgentReply {
 			return id.Nil, nil
 		}
+		if current.State == run.StateRunning {
+			// Initial suspension writes its row before changing the run state.
+			// A running run is recoverable only with a durable resume admission.
+			durable, ok := e.store.(suspension.ResumeAdmissionStore)
+			if !ok {
+				return id.Nil, nil
+			}
+			if authErr := authorize(ctx, current.ID); authErr != nil {
+				return id.Nil, authErr
+			}
+			admitted, readErr := durable.GetResumeAdmission(ctx, current.ID, paused.ID)
+			if errors.Is(readErr, suspension.ErrResumeAdmissionNotFound) {
+				return id.Nil, nil
+			}
+			if readErr != nil {
+				return id.Nil, readErr
+			}
+			if admitted.Request.Version.RunID != current.ID || admitted.Request.Version.SuspensionID != paused.ID || admitted.Request.Scope.Canonical() != current.Scope.Canonical() {
+				return id.Nil, suspension.ErrResumeAdmissionConflict
+			}
+		}
 		return paused.ID, nil
 	}
 	if !errors.Is(err, cortex.ErrNotSuspended) {

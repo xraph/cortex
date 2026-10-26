@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/sqlite"
 	"github.com/xraph/cortex/suspension"
@@ -94,34 +96,89 @@ type missingReplyPauseStore struct {
 	*sqlite.Store
 	revoke         func()
 	admissionReads int
+	present        bool
 }
 
-func (s *missingReplyPauseStore) GetSuspension(context.Context, id.AgentRunID) (*suspension.Suspension, error) {
+func (s *missingReplyPauseStore) GetSuspension(ctx context.Context, key id.AgentRunID) (*suspension.Suspension, error) {
 	s.revoke()
+	if s.present {
+		return s.Store.GetSuspension(ctx, key)
+	}
 	return nil, cortex.ErrNotSuspended
 }
+
+func (s *missingReplyPauseStore) GetResumeAdmission(ctx context.Context, key id.AgentRunID, pause id.SuspensionID) (suspension.ResumeAdmission, error) {
+	s.admissionReads++
+	return s.Store.GetResumeAdmission(ctx, key, pause)
+}
+
 func (s *missingReplyPauseStore) LatestResumeAdmission(ctx context.Context, key id.AgentRunID) (suspension.ResumeAdmission, error) {
 	s.admissionReads++
 	return s.Store.LatestResumeAdmission(ctx, key)
 }
 
 func TestAgentReplyRecoveryRechecksAuthorityBeforeRetainedAdmissionRead(t *testing.T) {
-	st, ctx, current, _ := admittedReplyFixture(t, "start_lost")
+	for _, present := range []bool{false, true} {
+		st, ctx, current, _ := admittedReplyFixture(t, "start_lost")
+		native, ok := st.(*sqlite.Store)
+		require.True(t, ok)
+		allowed := true
+		wrapped := &missingReplyPauseStore{Store: native, present: present, revoke: func() { allowed = false }}
+		client := &countedResumeClient{scriptedLLM: &scriptedLLM{answered: true}}
+		fresh, err := New(WithStore(wrapped), WithLLM(client))
+		require.NoError(t, err)
+		denied := errors.New("admission read permission withdrawn")
+		recovery := agentReplyRecovery{engine: fresh, authorize: func(context.Context, id.AgentRunID) error {
+			if !allowed {
+				return denied
+			}
+			return nil
+		}}
+		require.ErrorIs(t, recovery.Recover(ctx, current.ID), denied)
+		require.Zero(t, wrapped.admissionReads)
+		require.Zero(t, client.calls.Load())
+	}
+}
+
+type stagingReplyPauseStore struct {
+	*sqlite.Store
+	beforePause func(context.Context, *run.Run)
+}
+
+func (s *stagingReplyPauseStore) UpdateRun(ctx context.Context, current *run.Run) error {
+	if current.State == run.StatePaused {
+		s.beforePause(ctx, current)
+	}
+	return s.Store.UpdateRun(ctx, current)
+}
+
+func TestAgentReplyRecoveryWaitsForInitialPauseStateWrite(t *testing.T) {
+	e, st, ctx := a2aEngine(t, []llm.ToolCall{{ID: "question", Name: toolAgentAsk, Arguments: `{"to":"worker","content":"check"}`}})
 	native, ok := st.(*sqlite.Store)
 	require.True(t, ok)
-	allowed := true
-	wrapped := &missingReplyPauseStore{Store: native, revoke: func() { allowed = false }}
 	client := &countedResumeClient{scriptedLLM: &scriptedLLM{answered: true}}
-	fresh, err := New(WithStore(wrapped), WithLLM(client))
+	fresh, err := New(WithStore(native), WithLLM(client), WithA2A(a2a.Options{}))
 	require.NoError(t, err)
-	denied := errors.New("admission read permission withdrawn")
-	recovery := agentReplyRecovery{engine: fresh, authorize: func(context.Context, id.AgentRunID) error {
-		if !allowed {
-			return denied
-		}
-		return nil
+	recovery := agentReplyRecovery{engine: fresh, authorize: func(context.Context, id.AgentRunID) error { return nil }}
+	observed := false
+	wrapped := &stagingReplyPauseStore{Store: native, beforePause: func(callCtx context.Context, current *run.Run) {
+		observed = true
+		stored, readErr := native.GetRun(callCtx, current.ID)
+		require.NoError(t, readErr)
+		require.Equal(t, run.StateRunning, stored.State)
+		paused, readErr := native.GetSuspension(callCtx, current.ID)
+		require.NoError(t, readErr, "the suspension is durable before its run becomes paused")
+		require.NoError(t, recovery.Recover(callCtx, current.ID), "discovery must leave an initial pause write in progress alone")
+		_, readErr = native.GetHeldAskRelease(callCtx, paused.Pending[0].ReplyWith)
+		require.ErrorIs(t, readErr, a2a.ErrHeldAskNotFound)
+		_, readErr = native.GetResumeAdmission(callCtx, current.ID, paused.ID)
+		require.ErrorIs(t, readErr, suspension.ErrResumeAdmissionNotFound)
 	}}
-	require.ErrorIs(t, recovery.Recover(ctx, current.ID), denied)
-	require.Zero(t, wrapped.admissionReads)
-	require.Zero(t, client.calls.Load())
+	e.store = wrapped
+	require.NoError(t, e.buildA2A())
+	current, err := e.RunAgent(ctx, "planner", "ask", nil)
+	require.NoError(t, err)
+	require.True(t, observed)
+	require.Equal(t, run.StatePaused, current.State)
+	require.Zero(t, client.calls.Load(), "an uncommitted pause must not dispatch a resumed call")
 }

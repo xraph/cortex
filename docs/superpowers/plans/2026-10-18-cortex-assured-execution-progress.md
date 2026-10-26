@@ -7409,3 +7409,34 @@ nested asks, current grants, shared budgets and held-question process crashes,
 passed in 35.878 seconds. All-module lint, root build and diff checks passed.
 Logs use `/tmp/cortex-messaging-admission-`; the original CI job log is
 `/tmp/cortex-ci-121739046399.log`. Exact-head CI remains required after push.
+
+### Recovery during an initial suspension write
+
+The broader root suite exposed another parallel private-ask failure, this time
+`ErrNotSuspended`. Suspension creation writes the pause before changing the run
+state. Recovery could observe that row while the run still said running, then
+try to release its held questions before the state write finished.
+
+Discovery now requires an exact durable resume admission before returning a
+live pause for a running run. The lookup rechecks host authority and validates
+the run, suspension and scope. An initial pause with no admission is left alone;
+admitted restart recovery still uses the existing start receipt and guards.
+
+`TestAgentReplyRecoveryWaitsForInitialPauseStateWrite` holds execution at the
+actual store boundary and reproduced the error before the fix. It now verifies
+that discovery neither releases a question nor creates an admission or provider
+call before the state write. The regression and original private-ask tests
+passed 20 race repetitions in 106.069 seconds. Parallel private asks also passed
+100 ordinary repetitions in 14.797 seconds. Logs use
+`/tmp/cortex-reply-pause-gap-`.
+
+Final formatting, all-module lint and root build passed. The root suite passed
+with only the documented macOS `TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches`
+exclusion. Mongo, PostgreSQL and SQLite ran without skips, completing in 95.807,
+49.133 and 52.117 seconds. The first broader recovery race run hit a deadline in
+`TestPreparedTeamPrivateAskRecoversAfterRecipientResume`; a separate run of the
+same engine selection passed in 78.164 seconds. No timeout was relaxed. Logs are
+`/tmp/cortex-context-selection-root-final.log`,
+`/tmp/cortex-context-selection-lint-final.log`,
+`/tmp/cortex-context-selection-recovery-race.log` and
+`/tmp/cortex-reply-pause-gap-recovery-recheck.log`. Exact-head CI remains open.
