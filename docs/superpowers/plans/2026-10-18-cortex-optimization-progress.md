@@ -1939,3 +1939,10 @@ SQLite (1.988s), PostgreSQL (11.288s) and MongoDB (14.289s), followed by the
 optimizer build. Scoped formatting and full all-module lint pass after the
 runtime owner formatted its concurrent resume fields. These command changes
 remain service-level until the HTTP and dashboard bindings are implemented.
+
+The shared operator package now adapts lifecycle commands through `LifecycleInput`
+and `Commands`. The key is a separate argument supplied by the transport, so a
+payload's `idempotency_key` cannot replace a missing REST header or dashboard
+envelope key. Adapter race tests pass in 1.294s, along with the build, scoped
+formatting and full all-module lint. The shared Forge dispatcher accessor is in
+verification before the dashboard mutation bindings are added.
