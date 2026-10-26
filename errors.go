@@ -7,6 +7,8 @@ var (
 	ErrNoStore         = errors.New("cortex: no store configured")
 	ErrStoreClosed     = errors.New("cortex: store closed")
 	ErrMigrationFailed = errors.New("cortex: migration failed")
+	// ErrConversationUnavailable prevents execution with an unreadable session history.
+	ErrConversationUnavailable = errors.New("cortex: conversation history unavailable")
 
 	// Not found errors.
 	ErrAgentNotFound                    = errors.New("cortex: agent not found")

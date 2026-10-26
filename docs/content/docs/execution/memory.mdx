@@ -11,6 +11,19 @@ The memory store has three kinds of memory. Only the first is used by the engine
 
 The message history between a user and an agent, kept per session. A run loads its session's history before it calls the model and saves the new messages when it finishes, so the next run in the same session carries on the conversation. A run that names no session uses the agent's default session for the caller's scope. See [Sessions](/docs/concepts/sessions).
 
+If the history read fails, execution stops before calling the model. An empty
+history is valid. Partial messages returned alongside a storage error are discarded.
+For ordinary runs, you receive `cortex.ErrConversationUnavailable` through a
+`PreparedStartError`, and the created run is recorded as incomplete with
+`execution_error`. If that terminal write also fails, the error retains both
+causes and the run identity so you can inspect its durable state. The returned
+error text omits storage details. Required-verification runs keep their existing
+`cortex.ErrVerificationUnavailable` failure before run creation.
+
+This applies to synchronous and streaming execution, including prepared agents.
+The engine still requests at most 100 history messages; token-aware selection
+and automatic summaries are not implemented.
+
 You read and clear it through the engine:
 
 ```go

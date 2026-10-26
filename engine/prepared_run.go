@@ -232,6 +232,11 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 		var err error
 		messages, err = e.loadPreparedHistory(ctx, snap, r)
 		if err != nil {
+			if errors.Is(err, cortex.ErrConversationUnavailable) {
+				r.Error = cortex.ErrConversationUnavailable.Error()
+				endErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopExecutionError})
+				return ctx, rz, &PreparedStartError{runID: r.ID, cause: errors.Join(err, endErr)}
+			}
 			return ctx, rz, &PreparedStartError{runID: r.ID, cause: e.stopPublication(ctx, r, &reactState{}, err)}
 		}
 	}
@@ -272,7 +277,7 @@ func (e *Engine) loadPreparedHistory(ctx context.Context, snap *preparedSnapshot
 		if snap.Config.Verification != nil {
 			return nil, cortex.ErrVerificationUnavailable
 		}
-		r.Provenance.Diagnostics = append(r.Provenance.Diagnostics, "conversation history unavailable")
+		return nil, cortex.ErrConversationUnavailable
 	}
 	messages := memoryToLLM(history)
 	if scanErr := e.checkMessages(ctx, &snap.Agent, r, snap.Config.Publication, messages); scanErr != nil {

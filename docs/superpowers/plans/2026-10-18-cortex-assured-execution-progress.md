@@ -24,6 +24,8 @@ the path to acceptance without reading the chronological evidence below.
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
   governed lessons, calibration, operator surfaces and end-to-end benchmarks.
+  Conversation read failures now stop ordinary execution before provider dispatch;
+  token-aware context selection and automatic summaries remain open.
   Optimization implementation and evidence remain in its separate progress ledger.
 - Acceptance: run the installed API/dashboard and provider flows, crash recovery,
   denial/revocation paths, security corpus, cost/latency measurements and rollout
@@ -7319,3 +7321,30 @@ still requires authenticated external recovery evidence or incomplete closure.
 Installed provider qualification and integrated CI remain open. The prior
 `0a5c5ea` CI run passed its security, lint, docs and sandbox jobs while root tests
 and database qualification were still running; that is not a full CI pass.
+
+### S4.1 conversation read failures
+
+Ordinary runs now stop before provider dispatch when conversation loading fails.
+Previously they recorded a diagnostic and continued with missing or partial
+history. The shared prepared startup path now returns
+`cortex.ErrConversationUnavailable`, records an incomplete execution and retains
+the run identity. A failed terminal write remains visible through the startup
+error without exposing its private text. Required-verification preparation keeps
+its existing unavailable error before run creation.
+
+Ruling: close this context-loss defect before adding adaptive context selection.
+It uses the existing startup and terminal persistence paths, needs no migration
+and deliberately stops callers that previously continued through a history-store
+outage. An empty successful read still permits execution.
+
+All four ordinary/prepared and synchronous/streaming regressions failed before
+the fix because startup returned no error. They passed after the shared change.
+The final focused race run passed in 63.272 seconds, including partial-read
+discard, terminal-write failure, empty history, required preparation and existing
+session, history publication, resume and task-preparation regressions. Scoped
+`make f`, all-module `make l`, root build, docs types, docs lint, production docs
+build and diff checks passed. Logs use `/tmp/cortex-context-history-`.
+
+This closes one S4.1 failure path. The 100-message history request remains;
+token-aware selection, source-retaining summaries, operational capability
+snapshots and bounded reflection still need implementation and integration.
