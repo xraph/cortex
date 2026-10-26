@@ -2,7 +2,7 @@ schemaVersion: 1
 contributor:
   name: cortex
   envelope: {supports: [v1], preferred: v1}
-  capabilities: [cortex.read, cortex.manage, cortex.run, cortex.approve, cortex.overlay]
+  capabilities: [cortex.read, cortex.manage, cortex.run, cortex.approve, cortex.overlay, cortex.optimization.read]
   app: {displayName: Cortex, slug: cortex, icon: bot, home: /, priority: 40}
 intents:
   - {name: agents.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
@@ -84,3 +84,18 @@ intents:
   - {name: agents.stats, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
 
   - {name: tools.usage, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.read]}}
+
+  - {name: optimization.experiments.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.experiments.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.candidates.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.candidates.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.trials.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.trials.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.comparison, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.events.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.versions.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.versions.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.lessons.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.lessons.detail, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.publications.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}
+  - {name: optimization.activations.list, kind: query, version: 1, capability: read, requires: {all: [scope:cortex.optimization.read]}}

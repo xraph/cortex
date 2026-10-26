@@ -470,3 +470,17 @@ activate versions. Evaluation, trial and optimization-controller execution
 contexts cannot use the operator read path to access private evidence. The
 existing `Get` and `List` methods use the same checks; `List` retains its original
 response type and uses the operator page limits.
+
+Pass `api.WithOptimization(optimizer)` when you construct the REST API. Read
+routes live under `/v1/optimization`: experiments, their candidates, trials,
+comparison and events, plus versions, lessons, publications and activation
+history. The host must supply the optimizer's authenticated caller and current
+authorizer. Responses disable HTTP caching and use fixed public failure codes.
+
+For the Forge dashboard, use `extension.WithOptimization(optimizer)` or set
+`contract.Deps.Optimization`. The extension option takes precedence and works
+with either ordering of `WithDashboard`. These read intents require
+`cortex.optimization.read` as well as the optimizer's host grants. Broader Cortex
+read, manage and run permissions do not grant optimization access. Both
+transports share the types and parsing in `optimization/operator`; neither starts
+a worker. The host still owns worker scopes and shutdown.

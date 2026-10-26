@@ -23,9 +23,13 @@ import (
 )
 
 func query[I, O any](d *dispatcher.Dispatcher, s *service, name string, fn func(context.Context, I) (O, error)) error {
+	return queryWithPermission(d, s, name, "read", fn)
+}
+
+func queryWithPermission[I, O any](d *dispatcher.Dispatcher, s *service, name, permission string, fn func(context.Context, I) (O, error)) error {
 	return dispatcher.RegisterQuery(d, ContributorName, name, 1, func(ctx context.Context, in I, p dc.Principal) (O, error) {
 		var zero O
-		ctx, err := s.context(ctx, p, "read")
+		ctx, err := s.context(ctx, p, permission)
 		if err != nil {
 			return zero, err
 		}

@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/run"
 )
 
@@ -32,6 +33,7 @@ var manifest []byte
 // A present but invalid claim never falls back to it.
 type Deps struct {
 	Engine         *engine.Engine
+	Optimization   *optimization.Optimizer
 	DefaultScope   cortex.Scope
 	ResolveScope   func(context.Context, dc.Principal) (cortex.Scope, error)
 	Audit          func(context.Context, AuditEvent) error
@@ -73,7 +75,7 @@ func Register(d *dispatcher.Dispatcher, reg dc.Registry, wreg dc.WardenRegistry,
 		return checkErr
 	}
 	s := &service{deps: deps}
-	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage} {
+	for _, bind := range []func(*dispatcher.Dispatcher) error{s.bindAgent, s.bindPersona, s.bindSkill, s.bindTrait, s.bindBehavior, s.bindOrchestration, s.bindOperations, s.bindExecution, s.bindRuntime, s.bindStream, s.bindReplay, s.bindResultContent, s.bindAdvanced, s.bindReferences, s.bindStats, s.bindToolUsage, s.bindOptimization} {
 		if checkErr := bind(d); checkErr != nil {
 			return checkErr
 		}

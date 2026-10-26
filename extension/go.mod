@@ -9,6 +9,7 @@ replace github.com/xraph/cortex/sentinel => ../sentinel
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
+	github.com/xraph/cortex/optimization v0.0.0-20261026115254-8788a2a78cdd
 	github.com/xraph/cortex/sentinel v1.7.0
 	github.com/xraph/forge v1.12.10
 	github.com/xraph/go-utils v1.4.1
@@ -157,3 +158,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/xraph/cortex/optimization => ../optimization

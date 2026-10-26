@@ -36,8 +36,9 @@ passed its full qualification gate.
 | 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
 | 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
 | 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
-| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces and reviewed production routing | Full database gate, private messaging support and final qualification |
-| 16-18: API and dashboard | Designed | Authenticated contracts, review UI and persistent browser flows |
+| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces and reviewed production routing pass the frozen database race gate | Private messaging support and final qualification |
+| 16: API and contracts | Shared operator reads, authenticated HTTP/dashboard bindings and reopened SQLite transport tests | Catalogs, readiness, review summaries, idempotent commands and final contract audit |
+| 17-18: dashboard and browser flows | Designed | Review UI and persistent browser qualification |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
 
@@ -1864,3 +1865,42 @@ configuration, current grant denial, foreign IDs, invalid entity kinds and the
 page limit. HTTP and dashboard transport tests follow in the next packet.
 Scoped formatting, the operator build, whitespace checks and full all-module
 `make l` pass for this adapter packet.
+
+## HTTP and dashboard operator reads
+
+Fourteen read routes under `/v1/optimization` and matching dashboard intents now
+use `optimization/operator`. This includes local lesson detail and publication
+status alongside the planned experiment, candidate, trial, comparison, version,
+activation and event reads. Responses preserve the existing service records.
+Version compatibility probes and capability/catalog responses remain pending.
+
+The dashboard checks `cortex.optimization.read` before resolving its host caller.
+General Cortex permissions and optimization manage/activate permissions cannot
+substitute for this read grant. The optimizer still checks current resource
+authority. API errors contain fixed codes and messages, and both missing and
+invalid host scopes are denied because the runtime masks invalid scope identity.
+HTTP reads disable caching and reject duplicate query keys.
+
+`api.WithOptimization` preserves existing API constructors. The Forge extension
+accepts `WithOptimization` independently of `WithDashboard` option order, while
+hosts can also pass the service directly in contract dependencies. No worker
+starts during registration. API and extension require the published optimizer
+adapter commit and retain intentional local module replacements.
+
+Contract permission tests pass in 2.149s. HTTP tests create persisted experiments,
+close the SQLite connection and reopen it before route reads. They cover every
+route, denial, unavailable services, foreign IDs, malformed input, bounded pages
+and the configured empty state. Complete API and extension race suites are
+running before the final formatting and lint gate.
+
+The complete API race suite passes in 93.832s. Extension races pass in 2.280s
+and the contract package in 91.240s; both module builds pass. With local root
+and optimizer replacements removed in temporary modfiles, the HTTP workflow
+tests pass against the published dependencies in 6.147s, extension option tests
+in 1.964s and dashboard read tests in 1.819s. The first final lint run found a
+test helper's context parameter order; that helper is corrected before the
+repeat lint and focused HTTP checks.
+Final scoped `make f` and full `make l` pass. The focused HTTP race recheck
+passes in 9.148s after the helper fix. Task 16 remains incomplete: creation,
+lifecycle and review commands, catalogs, readiness probes and richer review
+summaries still need implementation and transport qualification.

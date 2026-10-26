@@ -22,6 +22,7 @@ import (
 	cortexcontract "github.com/xraph/cortex/extension/contract"
 	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
+	"github.com/xraph/cortex/optimization"
 	shieldsafety "github.com/xraph/cortex/safety/shield"
 	sentineladapter "github.com/xraph/cortex/sentinel"
 	"github.com/xraph/cortex/store"
@@ -53,6 +54,7 @@ type Extension struct {
 	engineOpts    []engine.Option
 	useGrove      bool
 	dashboardDeps cortexcontract.Deps
+	optimization  *optimization.Optimizer
 }
 
 // New creates a Cortex Forge extension with the given options.
