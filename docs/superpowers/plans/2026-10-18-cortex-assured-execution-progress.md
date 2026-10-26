@@ -2,43 +2,74 @@
 
 Plan: `2026-10-18-cortex-assured-execution.md`. Implementation baseline: `cd4c746`. Execution is inline in the primary checkout on `main`.
 
-## Completion boundary, 2026-10-26
+## Implementation and qualification boundary, 2026-10-26
 
-The four-stage program is incomplete. The remaining work is integration and
-acceptance of the implemented mechanisms. The fixed assurance corpus and reporting path are implemented; their fixture report is synthetic, not an installed accuracy claim.
-The chronological entries below describe each packet at its original revision;
-the current list here supersedes their old implementation-gap statements.
+The four stages now have runtime, persistence, transport and operator implementations.
+The selected local host has passed real-model execution, guarded publication,
+planner-producer-reviewer coordination and a bounded optimization workflow.
+You can exercise these paths through the Forge dashboard demo. Production rollout
+remains opt-in, and the live Linux sandbox qualification is deferred at the user's
+request. These results do not close every deployment gate or establish perfect
+answers, general model accuracy or production identity.
 
-| Stage | Implemented | Remaining acceptance work |
+| Stage | Delivered implementation and evidence | Deployment qualification still separate |
 | --- | --- | --- |
-| 1: trustworthy execution | Frozen preparation, budgets, truthful outcomes, buffered screening, scoped transports and strict delegation | Integrated CI, final installed outage/revocation matrix |
-| 2: verified results | Private candidate capture, independent checks, atomic result/outbox commit, guarded content reads, durable evaluator recovery, broker and concrete grading adapter | Installed evaluator/export composition; live Linux isolation remains user-deferred |
-| 3: durable coordination | Claims, renewals, review adjudication, accepted dependency checks, shared budgets, effect reconciliation and continuation, retirement, bounded replanning, artifact board and durable team events | Team operator/API/UI integration and installed planner-producer-reviewer restart/revocation journey |
-| 4: governed adaptation | Operational context, reflection, retained assumptions, constrained summaries, governed lessons, frozen reliability cohorts and existing optimizer lifecycle | Installed retention pin, optimizer capability/catalog composition, improvement activation/rollback journey and final operator review |
+| 1: trustworthy execution | Frozen preparation, budgets, truthful outcomes, buffered screening, scoped transports and strict delegation; installed generation, approval/resume, truncation, cancellation, restart and revocation checks | Qualify the deployment's identity, provider and publication policy; the local pattern scanner is bounded |
+| 2: verified results | Private capture, independent checks, atomic result/outbox commit, guarded reads, durable evaluator recovery, broker/daemon and concrete grading adapter; installed fixed-value/schema/context verification and retained-artifact invalidation across three stores | Install and qualify the Linux worker, candidate/grader isolation and deployment-specific export destinations |
+| 3: durable coordination | Claims, reviews, accepted prerequisites, shared budgets, effect reconciliation, bounded replanning, artifact board and team events; installed planner-producer-reviewer acceptance, restart, duplicate command, reader denial and current-grant revocation | Qualify distributed workers, external effects and remote service operations for each deployment |
+| 4: governed adaptation | Operational context, reflection, assumptions, summaries, governed lessons, reliability cohorts, retained-history cleanup and optimizer catalog/review lifecycle; installed lesson review and bounded optimizer baseline-retention flow | Qualify useful improvements on representative tasks before activation; fixture activation/rollback does not prove a real-model winner |
 
-The selected installed host is the Forge dashboard demo with the real pinned
-Ollama Qwen3 4B model and the bounded `local-publication-1` scanner. Its narrow
-warehouse-record workflow now passes generation, independent fixed-value/schema/
-context checks, guarded publication, metadata replay, lesson acceptance/revocation,
-reader permission and foreign-scope denial. A deliberately wrong real-model
-answer remains uncommitted. Restarting with a different source revision denies
-historical content on both the restarted operator and the old reader process.
-These checks do not estimate general model accuracy or qualify production identity.
+The selected host uses the pinned local Ollama Qwen3 4B model and bounded
+`local-publication-1` scanner. Its warehouse-record workflow checks the expected
+value, schema and source context independently. A wrong model answer stays
+uncommitted. Restarting against a different source revision denies historical
+content on both the restarted operator and the old reader process. Scanner
+patterns do not establish semantic safety or arbitrary secret detection.
 
-The local graded-job adapter retains dispatch intents and original job identities.
-Recovery inspects the original job; it cannot redispatch an ambiguous submission.
-SQLite, PostgreSQL and MongoDB tests verify that deleted or expired observation
-artifacts invalidate current result reads. Candidate/grader process isolation
-still requires the Linux worker that the user chose to configure later.
+### Installed coordination
 
-Current commits include `70a53cf` (operator contracts), `d4f476b` (artifact board
-and team events), and `e3f594c` (durable grading and report observations). All-module
-lint and focused race checks passed before these commits. Real PostgreSQL and
-MongoDB conformance checks ran. Exact integrated-head CI and the installed team
-and improvement flows still need to pass before closing their stage gates.
+A fresh team run completed planning, explicit graph acceptance, production of the
+verified record and independent review. Restart preserved run and acceptance IDs.
+Replaying the original acceptance command after the HTTP cache was cleared did
+not trigger another model call. Readers could inspect the team but could not
+dispatch work. Rotating current authority denied all six old operator/reader
+planning-list, planning-detail and result reads. Desktop and 390px views retained
+usable controls without page overflow.
 
-Production verification rollout remains disabled. No completion percentage or
-production readiness is claimed.
+Structured model responses constrain shape, not truth. The schemas do not force
+the expected value or a favorable reviewer verdict. Earlier truncated and timed
+out attempts remain retained failures; they were not replayed or relabeled.
+
+### Retention and optimization
+
+Fabriq v1.10.0 supplies authorized aggregate erasure with a permanent resurrection
+fence. Cortex pins that release and reconciles lost acknowledgments using the
+original receipt. Real PostgreSQL checks cover row, outbox, embedding and spatial
+payload cleanup, denied grants, scope conflicts and resurrection refusal. The
+receipt distinguishes those four local targets from six unconfirmed downstream
+targets. `HistoryErased` remains false; local cleanup is not a claim that every
+external copy disappeared.
+
+The installed optimizer used two discovery and twenty distinct synthetic
+validation cases. All 22 executions and evaluations completed, but only 16 of 20
+validation cases passed the strict record checks. All 24 native model calls have
+settled known token usage, totaling 8,825 tokens. Monetary usage remains unknown.
+The controller proposed no edits, so the candidate was rejected and the decision
+retained the baseline. Evidence is exploratory, comparison is incomplete and
+activation is blocked. One exploratory lesson is retained locally with zero
+delivery attempts. No improved model or production activation is claimed.
+
+Separate deterministic host tests cover recommendation, activation, bound active
+execution, deactivation, rollback, stale grants, recovery and retained-artifact
+deletion. The fixed 60-slot assurance report is also synthetic. Neither fixture
+is an installed accuracy measurement.
+
+Current implementation commits include `70a53cf`, `d4f476b`, `e3f594c`,
+`ceb2f94`, `3b311f4`, `de864c5` and `ad21480`. All-module lint, relevant race
+suites and builds passed before publication. PostgreSQL and MongoDB checks ran
+against real disposable containers. The chronological entries and packet table
+below preserve their original revision's status; this section supersedes earlier
+statements that the operator, team host, optimizer host or retention pin are missing.
 
 ## Recovery services and governed summaries, 2026-10-26
 
@@ -100,7 +131,7 @@ during disclosure, retained history, stale retry generations and budget clamps.
 The learning grant regressions ran against SQLite, PostgreSQL and MongoDB.
 Installed dashboard verification and the remaining stage gates are still open.
 
-## Ownership and contracts
+## Historical packet ownership and contracts
 
 This chat owns the runtime integrator, persistence, contract and progress roles for the active packet. The optimization chat owns Sentinel recorded evaluation and cortex/optimization. A fresh reviewer inspected S1.1 without editing files. Other implementation packets remain unassigned. Inspect status before each packet; the optimization workstream shares prepared execution and evaluation contracts and must consume these foundation commits.
 

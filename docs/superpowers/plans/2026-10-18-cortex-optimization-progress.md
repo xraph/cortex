@@ -1,8 +1,8 @@
 # Cortex optimization implementation progress
 
-Plan: [Optimization implementation](2026-10-18-cortex-optimization.md). Scope: all seven phases and 21 tasks, using DRY and TDD. No phase is complete yet.
+Plan: [Optimization implementation](2026-10-18-cortex-optimization.md). Scope: all seven phases and 21 tasks. Runtime, persistence, operator transport and the selected local host are implemented. Qualification boundaries are recorded below.
 
-## Shared contracts and ownership
+## Historical shared contracts and ownership
 
 The user authorized direct coordination with **Improve Cortex agent execution**. That chat owns the root runtime, outcomes, prepared execution, continuation and root backend integration. This chat owns Sentinel's recorded evaluation foundation, optimization, adapters and product integration. We consume the shared runtime commits rather than maintaining two execution loops.
 
@@ -14,39 +14,65 @@ Reproducibility still needs a stronger source snapshot guarantee. The runtime ow
 
 Runtime commit `281d727` adds publication safety and prepared schema 2. Follow-up `77ee8b9` adds read-set conflict detection with explicit atomic-snapshot-unavailable diagnostics. Schema 1 requires new preparation and evaluation before adoption. Optimization tests run against both the published v1.8.0 dependency and the current checkout; the temporary published-dependency modfile is not committed.
 
-## Current state
+## Current implementation and qualification, 2026-10-26
 
-This table summarizes the implementation. The sections below retain the checks
-and limitations recorded for each commit. Implemented does not mean a phase has
-passed its full qualification gate.
+You can create and review bounded experiments through the installed Forge
+dashboard host. The implementation covers the planned service and storage paths;
+production qualification depends on the configured model, environment, identity,
+billing and destination adapters. The dated entries below preserve the evidence
+available at each commit. Their old pending-work statements do not override this
+current inventory.
 
-| Task | Implementation | Remaining gate |
+| Tasks | Delivered implementation and checks | Qualification boundary |
 | --- | --- | --- |
-| 1: prepared execution | Published prepared execution, atomic built-in store snapshots and current runtime binding checks | Installed external-source and provider consistency qualification |
-| 2: optimization contracts | Sealed versions, specifications, policies and validated service configuration | Final public API and release audit |
-| 3: atomic memory storage | Transactional leases, usage, trials, decisions, activation and lesson records | Final conformance audit against all plan requirements |
-| 4: durable persistence | SQLite, PostgreSQL and Mongo; indexed reads, retention and deletion recovery | Throughput and full-system qualification |
-| 5: durable worker recovery | Call reservations, controller execution, scoped workers and late receipts | Full-system crash/reconnect qualification |
-| 6: Sentinel foundation | Published v1.9.2 recorded evaluation and comparison | Deployment qualification with persistent queues and workers |
-| 7: Sentinel bridge | Captured evaluation, metered judges and cost provenance | Live-provider and product-flow qualification |
-| 8: isolated trials | Trial execution, environment receipts, recovery and recorded scoring | Production environment qualification |
-| 9: sequential refinement | Controller proposal/composition/reflection and phase handlers | Full persistent workflow qualification |
-| 10: validation and decisions | Frozen holdout allocations, deterministic comparison and decision gates | End-to-end acceptance audit |
-| 11: activation | Review commands, deactivation, bound production execution and current-source compatibility pass module verification | Product capability wiring and final workflow qualification |
-| 12: Fabriq lessons | Governed publication/recall, operator retry, readiness and frozen lesson creation pushed | Final task audit and dashboard application flows |
-| 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
-| 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
-| 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces, reviewed production routing and private prepared-team messaging are implemented | Installed team routing, billing and full-system qualification |
-| 16: API and contracts | Authenticated reads, lifecycle/activation/lesson commands, scoped capabilities, frozen creation and authorized catalog transport are implemented | Concrete installed readiness and preparation composition, governed artifact export, richer review summaries and final contract audit |
-| 17-18: dashboard and browser flows | Designed | Review UI and persistent browser qualification |
-| 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
-| 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
+| 1-2: preparation and contracts | Frozen preparation, atomic built-in snapshots, source/runtime checks, sealed specifications and edit policies | External source consistency requires a qualified provider |
+| 3-5: storage and recovery | Memory, SQLite, PostgreSQL and Mongo stores; fenced leases, reservations, late receipts, deletion and restart reconciliation | Deployment throughput and distributed operational recovery |
+| 6-8: recorded evaluation and trials | Sentinel captured scoring/comparison, immutable inputs, trial environments, metered usage and retained artifacts | Live Linux isolation remains user-deferred; monetary usage can remain unknown |
+| 9-10: refinement and decisions | Bounded proposals, composition, reflection, frozen holdouts and decision gates; installed no-edit proposal safely retains baseline | No real-model improvement qualified by the installed run |
+| 11: activation | Current-source review gates, activation, bound execution, deactivation and rollback; fixture host lifecycle passes | Installed run has no qualified winner, so activation remains blocked |
+| 12: lessons | Governed publication/recall, retry, revocation and Fabriq v1.10.0 erasure; actual PostgreSQL retention checks | Downstream copies remain unconfirmed until their destinations acknowledge cleanup |
+| 13-15: advanced optimization | Bounded parallel/task-local trials, controller improvement, orchestration presets, paired evidence and reviewed routing | Production destinations, distributed team routing and billing require deployment evidence |
+| 16: API and contracts | Current-authority catalog, readiness, preparation, artifact reads and lifecycle/lesson/activation commands | Host grants must match the deployed identity system |
+| 17-18: dashboard | Catalog, experiment creation, trials, comparisons, decisions, lessons and guarded actions; persistent browser review and denial checks | Demo evidence is local and narrowly scoped |
+| 19: operations and docs | Audit/metrics hooks, recovery, private journals, deletion handling, host setup and qualification instructions | Operators must configure production policies and retention destinations |
+| 20-21: qualification and release | Module/backend race suites, builds, lint, consumer checks, CI and installed bounded workflow | A release or passing fixture does not certify general model quality |
 
-The table reflects the current implementation audit. The dated entries below
-preserve what was known at each checkpoint; their earlier pending-work statements
-do not override later code. Runtime foundations, experiment/adoption services and
-operator transport can be reused by assured execution. Host adapters, dashboard
-review workflows and installed qualification still need their own evidence.
+### Installed bounded experiment
+
+The host pins local Ollama Qwen3 4B and a synthetic warehouse-record corpus with
+two discovery cases and twenty distinct validation cases. Every arm has the same
+structural response schema, output cap and task checks. The schema does not supply
+the expected answer. Reflection feedback is bounded and retains original evidence
+identities and digests; held-out feedback is not admitted into discovery.
+
+Experiment `oexp_01m5x73jxfetaa82c780cb44rv` finished at `review_required` with
+retain decision `odec_01m5x74xzseg08g7w2mycft729`. Discovery passed 2/2 and
+validation passed 16/20. All 22 executions and evaluations completed without
+execution or evaluator errors. The four validation failures are quality failures.
+All 24 native calls settled known token usage, totaling 8,825 tokens; money is
+unknown. The controller's no-edit proposal was rejected for invalid edit count.
+The baseline remains `hrev_01m5x73jvpezds476j09hjv99c`.
+
+This is exploratory evidence with `comparison_complete=false`, not a qualified
+improvement. Activation is blocked. One exploratory lesson remains local with
+zero delivery attempts and no remote version. Fixture host tests separately cover
+a qualified recommendation, activation, active execution, deactivation and
+rollback. They do not convert this installed run into a successful improvement.
+
+Earlier installed attempts exposed prompt accounting, bounded feedback, response
+shape and reflection routing defects. Those failures retain their original IDs,
+usage and journals. The final host fixes the defects without replaying ambiguous
+calls, changing expected answers or relaxing validation thresholds.
+
+### Retained-history integration
+
+Cortex `ad21480` pins published Fabriq v1.10.0 and uses its optional aggregate
+eraser before the legacy vector-only path. Current grants and exact scope are
+checked around erasure. Denied, conflicted or ambiguous acknowledgments cannot
+fall back to a weaker deletion path. A checked receipt reconciles the original
+operation after restart. Real PostgreSQL checks verify local row, outbox,
+embedding and spatial cleanup and permanent resurrection refusal. Six downstream
+targets remain unconfirmed and `HistoryErased` stays false.
 
 ## Sentinel evidence
 
