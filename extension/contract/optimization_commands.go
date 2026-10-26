@@ -12,6 +12,9 @@ import (
 
 func (s *service) bindOptimizationCommands(d *dispatcher.Dispatcher) error {
 	commands := operator.Commands{Optimizer: s.deps.Optimization}
+	if err := optimizationCommand(d, s, "optimization.experiments.create", "optimization.manage", func(in operator.CreateInput) string { return in.Selection.Agent.Ref }, commands.Create); err != nil {
+		return err
+	}
 	for _, binding := range []struct {
 		action string
 		invoke func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)

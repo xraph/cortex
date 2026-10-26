@@ -399,7 +399,7 @@ All command DTOs include an idempotency key through the transport and an expecte
 
 | Command intent                                                  | Permission | Invalidated query families                               |
 | --------------------------------------------------------------- | ---------- | -------------------------------------------------------- |
-| `optimization.experiments.create`                               | manage     | experiments                                              |
+| `optimization.experiments.create`                               | manage     | experiments, capabilities, events                        |
 | `optimization.experiments.start`, `.cancel`, `.resume`          | run        | experiments, trials, comparison, events                  |
 | `optimization.decisions.retain`                                 | manage     | experiments, comparison, events                          |
 | `optimization.activations.activate`, `.rollback`, `.deactivate` | activate   | activations, versions, experiments, capabilities, events |
@@ -410,6 +410,15 @@ All command DTOs include an idempotency key through the transport and an expecte
 Revocation pauses experiments that consume the lesson, so its invalidations also refresh experiment state and comparison revisions. A successful command confirms local withdrawal and a queued remote revocation, not completed remote delivery.
 
 The implementation expands query families into exact intent names in `manifest.yaml` and tests the invalidation sets. Add matching REST routes under the API module's `/optimization` group with the same service DTOs and authorization. Missing optimizer returns unavailable; a configured optimizer with no experiments returns an empty list. Unauthorized resource IDs never reveal whether another scope owns the resource.
+
+Creation accepts selected catalog references and optional bounds. The host
+authorizes the selections and prepares immutable content; the request cannot
+supply its own policy, executable bundle or caller identity. You submit the
+idempotency key through the transport envelope or REST header. The draft and a
+receipt binding its accepted specification commit together, so a retry returns
+the original experiment's current state without preparing it again. Current
+creation and catalog grants still apply. Creation saves a draft and runs no
+trials.
 
 Capability reads accept an optional `experiment_id`. Without it, you get scope
 setup diagnostics. With it, the service checks prerequisites for that frozen

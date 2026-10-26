@@ -2283,3 +2283,37 @@ MongoDB, with no skipped creation cases.
 This provides the creation service and durable storage. Task 16 still needs its
 HTTP/dashboard bindings, authorized catalog listing and concrete host catalog
 and readiness composition. No live provider qualification is implied.
+
+## Creation transport bindings
+
+You can save a catalog-selected draft through `POST /v1/optimization/experiments`
+or the dashboard `optimization.experiments.create` command. Both use the shared
+operator service and pin published optimizer `62b71d6`. The REST header and
+dashboard envelope carry the command key; fields embedded in the request body
+cannot replace it or supply a host bundle.
+
+The dashboard command requires `cortex.optimization.manage` and the existing
+audit path. Its exact invalidations refresh experiment list/detail, capabilities
+and events. It bypasses generic response caching so a retry checks current grants
+and recovers the durable creation receipt. REST responses use `no-store`.
+
+The REST test creates and queues a draft, reopens SQLite, then recovers that
+experiment while catalog preparation is unavailable. The dashboard test loses
+the successful audit outcome and recovers the accepted draft without preparing
+twice. Tests cover missing transport keys, permission separation, foreign scope,
+changed selection, revoked catalog and creation grants, unavailable dependencies,
+CSRF and exact invalidations through the real HTTP dispatcher.
+
+Full API race tests pass in 153.063s. Extension race tests pass, including the
+contract suite in 109.428s, and both module builds pass. Task 16 remains open for
+authorized catalog listing, concrete host composition, artifact export and
+richer review summaries.
+
+Temporary modfiles with every local replacement removed also pass the creation
+race tests and both module builds against published dependencies. The API check
+passes in 2.768s and the contract check in 2.096s. These fixtures do not qualify a
+live Sentinel catalog, model provider or Fabriq destination.
+
+Final scoped `make f`, formatting review and repository-wide `make l` pass for
+the transport packet. The runtime chat's private-team changes remain in their
+own commit.

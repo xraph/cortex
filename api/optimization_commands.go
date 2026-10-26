@@ -14,6 +14,9 @@ import (
 func (a *API) registerOptimizationCommands(router forge.Router) error {
 	commands := operator.Commands{Optimizer: a.optimization}
 	group := router.Group("/v1/optimization", forge.WithGroupTags("optimization"))
+	if err := group.POST("/experiments", optimizationValueMutation(commands.Create), forge.WithOperationID("createOptimizationExperiment"), forge.WithRequestSchema(operator.CreateInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment state", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+		return fmt.Errorf("register optimization creation command: %w", err)
+	}
 	for _, route := range []struct {
 		action, name string
 		invoke       func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)
