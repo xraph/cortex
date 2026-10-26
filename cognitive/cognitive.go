@@ -1,11 +1,9 @@
-// Package cognitive defines the CognitiveStyle value object — how an agent thinks.
-//
-// Replaces rigid reasoning loop selection with a phase-based thinking strategy
-// chain. The cognitive engine manages transitions between strategies based on
-// conditions.
+// Package cognitive defines persona cognitive settings and trusted operational
+// observations. Persona phases describe intended behavior; the runtime does not
+// yet execute phase transitions or reflection from these settings.
 package cognitive
 
-// Strategy represents a thinking approach, each maps to a reasoning loop implementation.
+// Strategy names an intended thinking approach, not a separate runtime algorithm.
 type Strategy string
 
 const (

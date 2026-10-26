@@ -1,11 +1,62 @@
 ---
 title: Cognitive Style
-description: Define how an agent thinks, as phase-based reasoning strategies.
+description: Inspect runtime capabilities and configure descriptive cognitive styles.
 ---
 
 A cognitive style describes thinking as a chain of phases. Instead of picking a single strategy, you define several phases that hand over to each other when a condition is met.
 
 The style is a value object on a persona. It's stored and returned with the persona, but the engine doesn't apply it yet: every run uses the ReAct loop, no phase transitions happen, and the `OnCognitivePhaseChanged` plugin hook never fires. The tables below describe what each value is meant for.
+
+## Operational observations
+
+Register the capability inspection tool when you want a model to inspect its
+current tools and remaining execution limits:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithLLM(client),
+    engine.WithToolAuthorizer(authorizer),
+    engine.WithOperationalAwareness(),
+)
+```
+
+The tool is named `cortex_capabilities` and takes an empty object, `{}`. Include
+`engine.ToolOperationalCapabilities` in any explicit agent or run tool allowlist.
+It is registered with implementation revision `cortex.capabilities/v1`, so a
+prepared run pins it like other registered tools.
+
+The response contains a versioned `cognitive.Snapshot`, the prepared digest,
+model identity and configured revision. Tools come from the frozen allowlist,
+current registrations and a fresh `ToolAuthorizer.Visible` check. Hidden names
+are omitted. A persona claiming an ability cannot add it to this list.
+
+| Value | Meaning |
+| --- | --- |
+| `requestable` | Registered, currently visible, and within the observed tool budget. Call authorization and approval still apply. |
+| `unavailable` | The frozen tool has no current executor registration. |
+| `budget_exhausted` | A token, tool-call or deadline limit prevents another tool call. |
+| `health: unknown` | No service-health observation was collected. |
+| `reliability: unknown` | No compatible measured cohort is attached. |
+
+The lower-level `cognitive.BuildSnapshot` also distinguishes permission denial
+and an observed service outage when a trusted host supplies those observations.
+The runtime tool does not probe services and never reports hidden tools as denied
+entries. External tools are identified as external; registration does not prove
+that a host worker is available to execute them.
+
+Remaining allowances include the inspection call itself and the model step that
+requested it. A `null` allowance means that limit was not configured; zero means
+it is exhausted. Reported token use and conservative charges remain separate in
+`usage`. These values are observations at `observed_at`, so a saved response
+cannot authorize a later action or reserve resources.
+
+The inspection uses normal tool authorization, approvals, accounting and output
+checks. On a verified run its result is captured in the private execution
+transcript. Approved calls can resume on a fresh engine with the same registration
+and configuration. The tool reads only the executing run and accepts no run,
+principal or scope arguments. It does not change the prepared prompt or start
+reflection, replanning or learning.
 
 ## Structure
 
@@ -79,7 +130,7 @@ cognitive.Style{
 }
 ```
 
-This style starts with analytical examination, reflects on initial findings, then methodically addresses each issue.
+This records the intended sequence. The current runtime does not execute it.
 
 ## Embedding in a persona
 

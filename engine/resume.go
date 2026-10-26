@@ -512,6 +512,7 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 // audit trail, and one that suspends and then fails must not look like a
 // success.
 func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState, cfg resolvedConfig) error {
+	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	byID := make(map[string]ToolResult, len(results))
 	for _, res := range results {
 		byID[res.ToolCallID] = res

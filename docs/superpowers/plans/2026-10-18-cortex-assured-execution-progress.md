@@ -24,6 +24,8 @@ the path to acceptance without reading the chronological evidence below.
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
   governed lessons, calibration, operator surfaces and end-to-end benchmarks.
+  An opt-in capability tool now observes the frozen allowlist, current visibility,
+  executor registration and remaining limits through the normal tool path.
   Conversation read failures now stop ordinary execution before provider dispatch;
   token-aware context selection and automatic summaries remain open.
   Optimization implementation and evidence remain in its separate progress ledger.
@@ -61,7 +63,8 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.2 | active | this chat | Atomic result/outbox storage, guarded commit API, leased jobs, budgeted dispatch and evaluator executor implemented; experimental runtime gate binds inputs and private transcripts across tools and resume; scoped recovery and callback renewal implemented; qualified host adapters, durable effect recovery, multi-scope worker deployment and durable public delivery remain open |
 | S2.4 broker/runtime | broker, worker, transport, protected providers, input provisioning, configured assembly and recovery implemented; deployment pending | this chat | Race and Linux fixtures cover staging, capture, attestation, input delivery and independent service discovery; standalone broker command, complete installation and live qualification remain open |
 | S3.1 | active | this chat | Bounded graphs, immutable backend revisions, task contract projections, dependency evidence, effect/source manifests and pure strategy adapters implemented; runtime integration remains open |
-| S2.3 and Stage 4 | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
+| S2.3 and S4.5 optimization | active | optimization owner | Trial execution and recorded Sentinel optimization adapters are committed in `7f96edf` and `c6b5483`; remaining integration and qualification work is tracked in the optimization progress ledger |
+| S4.1 | active | this chat | Conversation-read failures stop dispatch; bounded operational snapshots and the opt-in capability tool are wired through sync, streaming and approved resume. Context selection, assumptions, health observations and installed qualification remain open |
 | S2.6 | active | this chat | Atomic lifecycle replay, REST/dashboard pages, bounded SSE, A2A pages and remote subscriptions, ordinary terminal recording, verified-result artifact announcements, fresh snapshots, guarded host content reads and HTTP/dashboard/A2A content adapters with protected historical projections implemented; arbitrary artifact producers and installed qualification remain open |
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
@@ -7348,3 +7351,40 @@ build and diff checks passed. Logs use `/tmp/cortex-context-history-`.
 This closes one S4.1 failure path. The 100-message history request remains;
 token-aware selection, source-retaining summaries, operational capability
 snapshots and bounded reflection still need implementation and integration.
+
+### S4.1 operational capability observations
+
+`WithOperationalAwareness` registers `cortex_capabilities` with a pinned
+implementation revision. It observes the executing run's frozen tool definitions,
+current visibility, executor registrations and cumulative limits. Hidden names
+are omitted; missing executors remain unavailable. The inspection itself consumes
+a tool call. Remaining limits include the model step that requested it, and an
+exhausted token/tool/deadline allowance prevents a requestable capability state.
+
+`cognitive.BuildSnapshot` validates and detaches bounded observations, orders tools
+deterministically and distinguishes missing registration, denied visibility,
+observed outage and exhausted budget. Registration supplies no health evidence.
+The runtime reports service health and reliability as unknown and accepts no
+persona claims or model-authored confidence values.
+
+Ruling: deliver runtime observations through the existing tool path. This keeps
+authorization, approvals, accounting, publication and private transcript capture
+in one implementation without changing frozen prompts. Hosts opt in and include
+the inspection tool in explicit allowlists; each observation costs a tool call.
+Saved observations do not authorize later calls.
+
+Tests first failed for the absent snapshot/runtime APIs, then exposed an
+overcounted model step and a requestable tool after budget exhaustion. Those
+regressions now pass. Focused race tests passed in 1.117 seconds for cognitive and
+14.462 seconds for engine, including sync/stream execution, current revocation,
+scope/run binding, missing executors, verified private transcripts and approval
+on a fresh engine. Final broader race regressions passed in 1.129 and 279.507
+seconds. Scoped formatting, all-module lint, root build, docs types/lint/build and
+diff checks passed. Logs use `/tmp/cortex-cognitive-`.
+
+This is an observation integration. Context selection, persisted assumptions,
+fresh health evidence, bounded reflection, measured cohorts and installed
+qualification remain open. CI on the preceding `519809d` revision failed
+`TestPreparedTeamPrivateAskContinuesWithinCoordinator/parallel` with a missing run;
+the local broader run passed that test. The CI failure needs reconciliation and
+is not counted as an integrated pass.

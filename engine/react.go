@@ -143,6 +143,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
+	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
@@ -427,6 +428,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
+	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
 
 	var finalOutput string
