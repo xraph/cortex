@@ -154,6 +154,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
 	t.Run("effect continuation", func(t *testing.T) { EffectContinuationExecution(t, backend, driver) })
+	t.Run("artifact board transactions", func(t *testing.T) { ArtifactBoardTransactions(t, backend, driver) })
 	t.Run("plan replan", func(t *testing.T) { PlanReplanRecovery(t, backend, driver) })
 	t.Run("task retirement", func(t *testing.T) { TaskRetirement(t, backend, driver) })
 	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })

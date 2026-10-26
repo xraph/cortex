@@ -59,6 +59,8 @@ type Engine struct {
 	taskRetirement        *coordination.TaskRetirementService
 	taskCompletion        *coordination.TaskCompletionService
 	planReplanning        *coordination.PlanReplanService
+	coordinationEvents    *coordination.EventService
+	artifactPublication   *coordination.ArtifactPublicationService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard

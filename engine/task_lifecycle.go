@@ -102,6 +102,12 @@ func (e *Engine) taskServices() []taskLifecycleService {
 	if e.planReplanning != nil {
 		services = append(services, e.planReplanning)
 	}
+	if e.coordinationEvents != nil {
+		services = append(services, e.coordinationEvents)
+	}
+	if e.artifactPublication != nil {
+		services = append(services, e.artifactPublication)
+	}
 	return services
 }
 
