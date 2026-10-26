@@ -84,6 +84,9 @@ func (s *Repository) SaveReport(ctx context.Context, r verification.Report) erro
 	if checkErr := verification.ValidateReportForContract(c, r); checkErr != nil {
 		return checkErr
 	}
+	if _, loadErr := s.loadReportObservations(ctx, r, 4<<20); loadErr != nil {
+		return loadErr
+	}
 	row, err := record(KindReport, r.ID.String(), r.Digest, r.Binding.RunID.String(), r.Binding.Scope, r)
 	if err != nil {
 		return err

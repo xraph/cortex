@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 )
 
@@ -30,6 +31,7 @@ type HumanRequest struct{ CheckRequest }
 // report identity or binding. The host supplies those after evaluation.
 type CheckResult struct {
 	StateObservations []StateObservation
+	ObservationRefs   []evidence.Ref
 	Status            Status
 	Score             *float64
 	EvidenceIDs       []id.ID

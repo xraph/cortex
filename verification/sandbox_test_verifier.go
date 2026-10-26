@@ -57,6 +57,7 @@ type SandboxAssessment struct {
 	CandidateDigest    string
 	GraderDigest       string
 	Checks             []SupervisedCheck
+	ObservationRefs    []evidence.Ref
 }
 
 // SandboxSupervisor obtains authoritative observations outside both workloads.
@@ -121,7 +122,7 @@ func NewSandboxTestVerifier(config SandboxTestConfig) (*SandboxTestVerifier, err
 	inputs := make(map[id.ID]bool)
 	for _, plan := range plans {
 		m, ok := manifests[plan.ManifestDigest]
-		if !ok || v.plans[plan.ManifestDigest].ManifestDigest != "" || validateSandboxPlan(plan, m) != nil {
+		if !ok || v.plans[plan.ManifestDigest].ManifestDigest != "" || ValidateSandboxTestPlan(plan, m) != nil {
 			return nil, ErrInvalid
 		}
 		for _, job := range []sandbox.Job{plan.Candidate, plan.Grader} {
@@ -143,7 +144,11 @@ func NewSandboxTestVerifier(config SandboxTestConfig) (*SandboxTestVerifier, err
 	return v, nil
 }
 
-func validateSandboxPlan(plan SandboxTestPlan, m EvaluationManifest) error {
+// ValidateSandboxTestPlan checks exact protected inputs and reserved job identities.
+func ValidateSandboxTestPlan(plan SandboxTestPlan, m EvaluationManifest) error {
+	if m.Validate() != nil || plan.ManifestDigest != m.Digest || plan.Candidate.ID == plan.Grader.ID || plan.Candidate.Key == plan.Grader.Key {
+		return ErrInvalid
+	}
 	for _, job := range []sandbox.Job{plan.Candidate, plan.Grader} {
 		if job.Validate() != nil || job.Scope.Canonical() != m.Binding.Scope.Canonical() || job.Principal != m.Binding.Context.PrincipalRef || len(job.Env) != 0 || len(job.Outputs) != 1 {
 			return ErrInvalid
@@ -256,7 +261,15 @@ func (v *SandboxTestVerifier) EvaluateTests(ctx context.Context, req TestRequest
 	if err != nil {
 		return CheckResult{}, err
 	}
-	return CheckResult{Status: status, EvidenceIDs: []id.ID{m.Binding.Candidate.ID, m.TestBundle.ID, m.FixtureDataset.ID, m.ResultSchema.ID}, Reason: "protected supervisor assessment"}, nil
+	if len(assessment.ObservationRefs) > 16 {
+		return CheckResult{}, ErrInvalid
+	}
+	for _, ref := range assessment.ObservationRefs {
+		if readErr := v.readSandboxEvidence(ctx, req, m, ref); readErr != nil {
+			return CheckResult{}, readErr
+		}
+	}
+	return CheckResult{Status: status, ObservationRefs: assessment.ObservationRefs, EvidenceIDs: []id.ID{m.Binding.Candidate.ID, m.TestBundle.ID, m.FixtureDataset.ID, m.ResultSchema.ID}, Reason: "protected supervisor assessment"}, nil
 }
 
 func (v *SandboxTestVerifier) authorizeSandbox(ctx context.Context, req TestRequest, m EvaluationManifest) error {

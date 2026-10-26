@@ -31,6 +31,11 @@ func CheckFreshness(report Report, current Binding, at time.Time) Status {
 		}
 	}
 	for _, outcome := range report.Outcomes {
+		for _, ref := range outcome.ObservationRefs {
+			if ref.CreatedAt.After(at) || !ref.RetainUntil.After(at) {
+				return StatusStale
+			}
+		}
 		for _, observation := range outcome.StateObservations {
 			if observation.FinishedAt.After(at) || !observation.ExpiresAt.After(at) {
 				return StatusStale

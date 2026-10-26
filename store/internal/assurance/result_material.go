@@ -59,6 +59,11 @@ func (s *Repository) loadResultMaterialBounded(ctx context.Context, req verifica
 		if total > limit {
 			return resultMaterial{}, verification.ErrInvalid
 		}
+		observedBytes, observationErr := s.loadReportObservations(ctx, report, limit-total)
+		if observationErr != nil {
+			return resultMaterial{}, observationErr
+		}
+		total += observedBytes
 		reports = append(reports, report)
 		digests = append(digests, report.Digest)
 	}

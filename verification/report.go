@@ -24,6 +24,7 @@ type HumanVerdict struct {
 // Status is the authoritative verdict; scores never turn failures into passes.
 type Outcome struct {
 	StateObservations []StateObservation `json:"state_observations,omitempty"`
+	ObservationRefs   []evidence.Ref     `json:"observation_refs,omitempty"`
 	CriterionID       string             `json:"criterion_id"`
 	Verifier          string             `json:"verifier"`
 	VerifierRevision  string             `json:"verifier_revision"`
@@ -86,6 +87,9 @@ func (r Report) validateFields() error {
 		if source.RetrievedAt.After(r.CheckedAt) {
 			return ErrInvalid
 		}
+	}
+	if _, err := collectObservationRefs(r); err != nil {
+		return err
 	}
 	seen := make(map[string]bool, len(r.Outcomes))
 	for _, outcome := range r.Outcomes {

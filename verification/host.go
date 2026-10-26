@@ -134,7 +134,7 @@ func (v *registeredVerifier) Verify(ctx context.Context, req Request) (Report, e
 		if contextErr := ctx.Err(); contextErr != nil {
 			return Report{}, contextErr
 		}
-		report.Outcomes = append(report.Outcomes, Outcome{CriterionID: criterion.ID, Verifier: criterion.Verifier, VerifierRevision: criterion.VerifierRevision, Status: result.Status, Score: result.Score, EvidenceIDs: result.EvidenceIDs, Human: result.Human, Reason: result.Reason, StateObservations: result.StateObservations})
+		report.Outcomes = append(report.Outcomes, Outcome{CriterionID: criterion.ID, Verifier: criterion.Verifier, VerifierRevision: criterion.VerifierRevision, Status: result.Status, Score: result.Score, EvidenceIDs: result.EvidenceIDs, Human: result.Human, Reason: result.Reason, StateObservations: result.StateObservations, ObservationRefs: result.ObservationRefs})
 		expiry := started.Add(criterion.MaxAge)
 		if expiry.Before(report.ExpiresAt) {
 			report.ExpiresAt = expiry
