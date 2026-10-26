@@ -23,6 +23,44 @@ Checked-segment streaming requires an explicit `safety.IncrementalGate`. An acce
 
 Content screening covers input, output, retrieved content, tool results and public error text. If screening would rewrite tool arguments, execution stops instead of issuing a changed command. A scanner decision describes content screening only. It cannot certify the answer's factual accuracy.
 
+### Host rule scanner
+
+You can use `safety/rules.New` for an explicit host policy with bounded regular
+expressions. Supply a nonempty revision, a byte limit and block or redact rules.
+The constructor rejects duplicate IDs, unsupported decisions, malformed patterns
+and expressions that can consume zero bytes. The scanner checks both directions,
+keeps matched content out of findings and applies block rules before redaction.
+It checks the transformed result again, so a later replacement cannot expose a
+pattern that an earlier rule already checked.
+
+```go
+scanner, err := rules.New(rules.Config{
+    Revision: "host-policy-1",
+    MaxBytes: 1 << 20,
+    Rules: []rules.Rule{{
+        ID: "private-key",
+        Pattern: `-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`,
+        Decision: safety.DecisionBlock,
+    }},
+})
+if err != nil {
+    return err
+}
+eng, err := engine.New(
+    engine.WithSafety(scanner),
+    engine.WithPublicationPolicy(safety.Policy{
+        Required: true,
+        Mode: safety.ModeBuffered,
+    }),
+)
+```
+
+Import `github.com/xraph/cortex/safety/rules` alongside `engine` and `safety`.
+These rules cover their configured patterns. They do not detect arbitrary
+obfuscation, prompt injection or semantic harm. Qualify your policy against your
+own corpus and keep those limits visible. A rule match is a content-screening
+result, never evidence that an answer is correct.
+
 ## Installed capabilities
 
 `Engine.RuntimeCapabilities()` and the dashboard's `runtime.detail.assurance` describe process configuration. They report prepared-execution support, publication mode, whether a gate is installed and whether that gate advertises incremental checking. Presence does not certify provider health or effectiveness.
