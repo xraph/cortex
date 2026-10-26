@@ -16,11 +16,14 @@ import (
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/coordination"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/event"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
+	"github.com/xraph/cortex/verification"
 )
 
 const resumeCrashBoundaryEnv = "CORTEX_TEST_RESUME_CRASH_BOUNDARY"
@@ -117,4 +120,76 @@ func TestAgentReplyRecoveryAfterExecutionProcessCrash(t *testing.T) {
 	retained, err := storage.GetResumeStart(ctx, manifest.RunID, manifest.PauseID)
 	require.NoError(t, err)
 	require.Equal(t, start, retained)
+	// The harness has killed and joined the only fixture worker. Its provider
+	// has no external work, so this fixture can attest to complete quiescence.
+	// An installed provider needs its own authenticated delayed-action evidence.
+	admitted, err := storage.GetResumeAdmission(ctx, manifest.RunID, manifest.PauseID)
+	require.NoError(t, err)
+	startDigest, err := retained.Digest()
+	require.NoError(t, err)
+	proof, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	request := suspension.ResumeClosureRequest{SchemaVersion: 1, Scope: manifest.Scope, Version: admitted.Request.Version, AdmissionDigest: admitted.RequestDigest, StartDigest: startDigest, RunRevision: after.Revision, Actor: "test supervisor", Issuer: "owned subprocess harness", IssuerRevision: "1", ProofRef: "joined fixture worker with no external effects", ProofDigest: evidence.Digest(proof), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+	allowed := false
+	denied := errors.New("closure permission revoked")
+	closer, err := fresh.NewResumeCloser(resumeClosureFence(func(_ context.Context, req suspension.ResumeClosureRequest, next func(suspension.ResumeClosureRequest) error) error {
+		return next(req)
+	}), resumeClosureAuthority(func(_ context.Context, req suspension.ResumeClosureRequest) error {
+		if !allowed {
+			return denied
+		}
+		require.Equal(t, request, req)
+		return nil
+	}))
+	require.NoError(t, err)
+	_, err = closer.Close(ctx, request)
+	require.ErrorIs(t, err, denied)
+	allowed = true
+	closed, err := closer.Close(ctx, request)
+	require.NoError(t, err)
+	require.True(t, closed.Fresh)
+	require.NoError(t, closed.Validate())
+	terminal, err := storage.GetRun(ctx, manifest.RunID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateIncomplete, terminal.State)
+	require.Equal(t, verification.StatusUnchecked, terminal.VerificationStatus)
+	require.Empty(t, terminal.Output)
+	require.Equal(t, before.Budget, terminal.Budget)
+	require.Equal(t, before.Usage, terminal.Usage)
+	require.Zero(t, calls.Load())
+	page, err := storage.ReadPublicEvents(ctx, event.ReadRequest{After: event.Cursor{SchemaVersion: 1, RunID: manifest.RunID}, Limit: 100})
+	require.NoError(t, err)
+	var terminalEvents int
+	for _, entry := range page.Events {
+		if entry.ID == closed.EventID {
+			terminalEvents++
+			require.Equal(t, event.ExecutionFinished, entry.Type)
+		}
+	}
+	require.Equal(t, 1, terminalEvents)
+	// Reopening storage recovers the original receipt and cannot restart work.
+	reopened := openSQLiteStoreForTest(t, manifest.Database+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	historical, err := reopened.GetResumeClosure(ctx, manifest.RunID, manifest.PauseID)
+	require.NoError(t, err)
+	require.Equal(t, closed.RequestDigest, historical.RequestDigest)
+	require.False(t, historical.Fresh)
+	allowed = false
+	_, err = closer.Close(ctx, request)
+	require.ErrorIs(t, err, denied)
+	listed, err := reopened.ListAgentReplyRuns(ctx, id.Nil, 256)
+	require.NoError(t, err)
+	require.NotContains(t, listed, manifest.RunID)
+}
+
+type resumeClosureFence func(context.Context, suspension.ResumeClosureRequest, func(suspension.ResumeClosureRequest) error) error
+
+func (f resumeClosureFence) WithResumeClosure(ctx context.Context, request suspension.ResumeClosureRequest, next func(suspension.ResumeClosureRequest) error) error {
+	return f(ctx, request, next)
+}
+
+type resumeClosureAuthority func(context.Context, suspension.ResumeClosureRequest) error
+
+func (f resumeClosureAuthority) AuthorizeResumeClosure(ctx context.Context, request suspension.ResumeClosureRequest) error {
+	return f(ctx, request)
 }

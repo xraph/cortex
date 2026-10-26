@@ -739,3 +739,41 @@ ID. Recovery uses it when the live pause is gone. The native discovery queries
 merge bounded, exact-scope pause and running-admission projections, deduplicate
 run IDs and preserve the exclusive cursor. Terminal runs without a pause are
 excluded. Authorize these reads; their retained inputs are private execution data.
+
+## Close an uncertain resume as incomplete
+
+Use `eng.NewResumeCloser(fence, authorizer)` when you need to terminate a resumed
+run whose start is retained but whose outcome cannot be recovered. Both host ports
+are required. `ResumeClosureFence` must hold current run and team permissions and
+prove that every original worker, tool and delayed external action has stopped
+permanently. `ResumeClosureAuthorizer` authenticates the actor, issuer revision and
+proof against that exact execution. A timeout or a killed local process cannot
+prove that a remote provider stopped.
+
+Authorize before reading the run, its latest admission and its start receipt.
+Build a `suspension.ResumeClosureRequest` using the admission's `Version` and
+`RequestDigest`, the start's `Digest()`, and the current run revision. Include the
+authenticated proof reference, digest, issuer and observation window. The window
+must be positive and at most five minutes. Then call `closer.Close(ctx, request)`
+with the exact run scope. The operation has a thirty-second deadline; host ports
+must honor cancellation.
+
+Closure commits `incomplete`, stop reason `execution_error`, an immutable receipt
+and an `execution_finished` metadata event together. Output is empty and
+verification remains unchecked. It preserves usage, budgets, claim ownership and
+effect records for their existing reconciliation paths. It cannot adopt a result,
+refund a reservation or authorize another attempt.
+
+The native transaction checks the latest admission, original start, current run
+revision and proof window. A changed run, newer admission, absent start or expired
+proof refuses closure. The live pause may already be gone. If the commit response
+is lost, retry identical request contents to recover the receipt, even after its
+original proof window expires. Current permission and authentic original proof
+are still required. A late worker using its old run revision cannot overwrite
+the terminal state.
+
+This is a host API. No model tool or unauthenticated route exposes it. The killed
+worker fixture covers a local provider with no external effects; you still need
+to qualify proof authentication and worker fencing for your installed providers.
+Recovering a successful result requires the separate verification and acceptance
+contracts and sufficient retained result evidence.

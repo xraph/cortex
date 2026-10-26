@@ -13,7 +13,9 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution. Expired admissions that never started now terminate
+  started execution. Host-authenticated closure can terminate an uncertain start
+  as incomplete; successful recovery still needs retained result evidence and
+  verified acceptance. Expired admissions that never started terminate
   atomically. Private prepared-team messaging and
   durable held-question release are wired; installed recovery qualification is
   still open. Complete task scheduling, review,
@@ -28,8 +30,10 @@ the path to acceptance without reading the chronological evidence below.
 
 The runtime now connects retained answers, guarded resume admissions and private
 prepared-team messaging, including recovery of interrupted question release.
-The next coordination boundary is authenticated recovery of ambiguous starts,
-followed by installed qualification.
+The next coordination boundary is recovery of successful results after ambiguous
+starts, followed by installed qualification. Incomplete closure requires host
+proof of permanent worker and tool quiescence; local fixtures do not supply that
+proof for installed providers.
 Production verification rollout remains disabled. No completion percentage or
 production readiness is claimed.
 
@@ -7242,3 +7246,39 @@ did not reproduce the CI timing.
 The corrected test passed 100 race-enabled repetitions in 5.854 seconds. The TLS
 server test group passed in 3.008 seconds. Scoped `make f` and repository-wide
 `make l` passed. Integrated Linux CI still needs to verify the published revision.
+
+### Guarded incomplete closure after a resume start
+
+You can use `Engine.NewResumeCloser` to terminate uncertain resumed execution
+after the host authenticates permanent worker and tool quiescence. The proof
+binds the exact scope, admission, start and current run revision. Current run and
+team permission must remain held through the synchronous operation, including
+historical retries. The native transaction rejects absent starts, newer admissions,
+changed runs and expired proof, then commits an incomplete outcome, immutable
+receipt and public terminal metadata event together. It preserves usage, budgets,
+provenance, claim ownership and effect records. No output is accepted or replay
+authorized. A lost acknowledgment returns the same receipt on an identical retry.
+
+Validation:
+
+- SQLite first failed because native closure was absent. The implemented native
+  contract passed with race detection on SQLite (5.073 seconds), PostgreSQL
+  (9.160 seconds) and pinned MongoDB (14.966 seconds), with no skips. Cases include
+  rollback, lost acknowledgment, competing closures, deleted pauses, newer
+  admissions, scope and digest substitution, cancellation, proof time bounds and
+  late stale-worker writes. Nonzero usage and reservation provenance survive.
+- Host boundary tests cover denied and revoked access, cancellation, request
+  substitution, mutated authorization inputs, missing/repeated/escaped callbacks,
+  invalid receipts and errors after a possible commit. The suspension race suite
+  passed in 1.121 seconds.
+- The actual killed-worker fixture now closes the uncertain run after explicit
+  authorization, reopens storage, reads the receipt and observes one terminal
+  event with zero provider replays. Related engine recovery race tests passed in
+  35.135 seconds; the closure-only crash test passed in 3.081 seconds.
+- Scoped `make f`, final all-module `make l`, root build, docs type checks, docs
+  lint and production docs build passed. Integrated CI remains a separate gate.
+
+This supplies an incomplete terminal disposition. It does not reconstruct a lost
+successful result or authenticate an installed provider's quiescence. The crash
+fixture owns its only process and has no external provider effects. Concrete host
+proof, successful result recovery and installed qualification remain open.

@@ -94,6 +94,7 @@ func TestConformance(t *testing.T) {
 	t.Run("A2AHeldReleaseTransactions", func(t *testing.T) { storetest.A2AHeldReleaseTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("SuspensionVersionTransactions", func(t *testing.T) { storetest.SuspensionVersionTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("ResumeExpiryTransactions", func(t *testing.T) { storetest.ResumeExpiryTransactions(t, s, assuranceDriver{store: s}) })
+	t.Run("ResumeClosureTransactions", func(t *testing.T) { storetest.ResumeClosureTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("ResumeAdmissionTransactions", func(t *testing.T) { storetest.ResumeAdmissionTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("A2AReplyTransactions", func(t *testing.T) { storetest.A2AReplyTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("RunCallTransactions", func(t *testing.T) { storetest.RunCallTransactions(t, assuranceDriver{store: s}) })

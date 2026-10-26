@@ -49,6 +49,10 @@ func TestConformance(t *testing.T) {
 		s := newTestStore(t)
 		storetest.ResumeExpiryTransactions(t, s, assuranceDriver{store: s})
 	})
+	t.Run("ResumeClosureTransactions", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.ResumeClosureTransactions(t, s, assuranceDriver{store: s})
+	})
 	t.Run("ResumeAdmissionTransactions", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.ResumeAdmissionTransactions(t, s, assuranceDriver{store: s})
