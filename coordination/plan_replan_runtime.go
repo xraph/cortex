@@ -30,20 +30,41 @@ type PlanReplanRuntime interface {
 	ExecutePlanReplan(context.Context, PlanReplanAdmission) error
 }
 
+// PlanReplannerConfig bounds a fresh model dispatch.
+type PlanReplannerConfig struct {
+	// ExecutionTimeout defaults to 30 seconds and cannot exceed 30 minutes.
+	// The reservation and caller deadlines can only shorten this limit.
+	ExecutionTimeout time.Duration
+}
+
 // PlanReplanner coordinates guarded admission, observation and graph commit.
 type PlanReplanner struct {
-	store      PlanReplanStore
-	fence      PlanReplanFence
-	authorizer PlanReplanAuthorizer
-	runtime    PlanReplanRuntime
+	store            PlanReplanStore
+	fence            PlanReplanFence
+	authorizer       PlanReplanAuthorizer
+	runtime          PlanReplanRuntime
+	executionTimeout time.Duration
 }
 
 // NewPlanReplanner requires explicit authority and the bounded prepared runtime.
-func NewPlanReplanner(store PlanReplanStore, fence PlanReplanFence, authorizer PlanReplanAuthorizer, runtime PlanReplanRuntime) (*PlanReplanner, error) {
+func NewPlanReplanner(store PlanReplanStore, fence PlanReplanFence, authorizer PlanReplanAuthorizer, runtime PlanReplanRuntime, configs ...PlanReplannerConfig) (*PlanReplanner, error) {
 	if hostport.IsNil(store) || hostport.IsNil(fence) || hostport.IsNil(authorizer) || hostport.IsNil(runtime) {
 		return nil, planning.ErrInvalid
 	}
-	return &PlanReplanner{store: store, fence: fence, authorizer: authorizer, runtime: runtime}, nil
+	if len(configs) > 1 {
+		return nil, planning.ErrInvalid
+	}
+	config := PlanReplannerConfig{}
+	if len(configs) == 1 {
+		config = configs[0]
+	}
+	if config.ExecutionTimeout < 0 || config.ExecutionTimeout > 30*time.Minute {
+		return nil, planning.ErrInvalid
+	}
+	if config.ExecutionTimeout == 0 {
+		config.ExecutionTimeout = 30 * time.Second
+	}
+	return &PlanReplanner{store: store, fence: fence, authorizer: authorizer, runtime: runtime, executionTimeout: config.ExecutionTimeout}, nil
 }
 func (r *PlanReplanner) guard() taskAuthority[PlanReplanControl] {
 	return taskAuthority[PlanReplanControl]{operation: "plan replan", invalid: planning.ErrInvalid, conflict: planning.ErrConflict, scope: func(c PlanReplanControl) cortex.Scope { return c.Request.Progress.Plan.Scope }, fence: r.fence.WithPlanReplanFence, authorize: r.authorizer.AuthorizePlanReplan}
@@ -52,7 +73,7 @@ func (r *PlanReplanner) guard() taskAuthority[PlanReplanControl] {
 // Execute admits and dispatches once. Any error or historical acknowledgment is
 // observation-only; callers must never infer permission from a retained receipt.
 func (r *PlanReplanner) Execute(ctx context.Context, request PlanReplanRequest) (PlanReplanAdmission, error) {
-	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bounded, cancel := context.WithTimeout(ctx, r.executionTimeout)
 	defer cancel()
 	return withTaskAuthority(bounded, PlanReplanControl{Request: request, Operation: "dispatch"}, r.guard(), func(tc context.Context, c PlanReplanControl, _ string) (PlanReplanAdmission, error) {
 		a, err := r.store.AdmitPlanReplan(tc, c.Request)
@@ -72,7 +93,9 @@ func (r *PlanReplanner) Execute(ctx context.Context, request PlanReplanRequest) 
 		if !time.Now().Before(a.Request.Reservation.Deadline) {
 			return a, planning.ErrConflict
 		}
-		return a, r.runtime.ExecutePlanReplan(tc, a)
+		dispatch, stop := context.WithDeadline(tc, a.Request.Reservation.Deadline)
+		defer stop()
+		return a, r.runtime.ExecutePlanReplan(dispatch, a)
 	})
 }
 

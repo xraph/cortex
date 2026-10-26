@@ -62,6 +62,9 @@ type TaskReviewAuthorizer interface {
 // TaskReviewRuntimeConfig connects private resolution and explicit current authority.
 // EvidenceAuthorizer separately covers reads of captured private review output.
 type TaskReviewRuntimeConfig struct {
+	// ExecutionTimeout bounds one dispatch. Zero uses 30 seconds; the maximum
+	// is 30 minutes. The handoff and caller deadlines can only shorten it.
+	ExecutionTimeout   time.Duration
 	Resolver           TaskReviewWorkResolver
 	Fence              TaskReviewFence
 	Authorizer         TaskReviewAuthorizer
@@ -86,6 +89,12 @@ func (e *Engine) NewTaskReviewRuntime(c TaskReviewRuntimeConfig) (coordination.T
 	if e == nil || hostport.IsNil(c.Resolver) || hostport.IsNil(c.Fence) || hostport.IsNil(c.Authorizer) || hostport.IsNil(c.EvidenceAuthorizer) {
 		return nil, coordination.ErrInvalidReview
 	}
+	if c.ExecutionTimeout < 0 || c.ExecutionTimeout > 30*time.Minute {
+		return nil, coordination.ErrInvalidReview
+	}
+	if c.ExecutionTimeout == 0 {
+		c.ExecutionTimeout = 30 * time.Second
+	}
 	storage, ok := e.store.(taskReviewRuntimeStore)
 	if !ok || e.llm == nil {
 		return nil, coordination.ErrInvalidReview
@@ -102,7 +111,11 @@ func (w *taskReviewRuntime) guarded(ctx context.Context, action TaskReviewAction
 		return nil, err
 	}
 	frozen.Fresh = c.Fresh
-	deadline := time.Now().Add(30 * time.Second)
+	timeout := 30 * time.Second
+	if action == TaskReviewExecute {
+		timeout = w.config.ExecutionTimeout
+	}
+	deadline := time.Now().Add(timeout)
 	if action == TaskReviewExecute && c.Request.Handoff.Deadline.Before(deadline) {
 		deadline = c.Request.Handoff.Deadline
 	}

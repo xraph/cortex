@@ -259,3 +259,51 @@ func TestTaskReviewRuntimeRejectsAlteredRetainedExecution(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskReviewRuntimeExecutionDeadlineBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+		parent  time.Duration
+		observe bool
+		want    time.Duration
+	}{
+		{name: "default", want: 30 * time.Second},
+		{name: "configured", timeout: 45 * time.Second, want: 45 * time.Second},
+		{name: "handoff ceiling", timeout: 5 * time.Minute, want: time.Minute},
+		{name: "caller ceiling", timeout: 5 * time.Minute, parent: 10 * time.Second, want: 10 * time.Second},
+		{name: "observation stays short", timeout: 5 * time.Minute, observe: true, want: 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, e, storage, client, cfg := reviewRuntimeFixture(t)
+			cfg.ExecutionTimeout = tc.timeout
+			if tc.parent > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.parent)
+				defer cancel()
+			}
+			stopped := errors.New("deadline inspected before dispatch")
+			cfg.Fence = reviewRuntimeFence(func(bounded context.Context, _ engine.TaskReviewAction, _ coordination.TaskCompletion, _ func(coordination.TaskCompletion) error) error {
+				deadline, ok := bounded.Deadline()
+				require.True(t, ok)
+				require.InDelta(t, float64(tc.want), float64(time.Until(deadline)), float64(time.Second))
+				return stopped
+			})
+			worker, err := e.NewTaskReviewRuntime(cfg)
+			require.NoError(t, err)
+			if tc.observe {
+				_, err = worker.Observe(ctx, storage.receipt)
+			} else {
+				err = worker.Execute(ctx, storage.receipt)
+			}
+			require.ErrorIs(t, err, stopped)
+			require.Zero(t, client.calls)
+		})
+	}
+	for _, timeout := range []time.Duration{-time.Second, 30*time.Minute + time.Nanosecond} {
+		_, e, _, _, cfg := reviewRuntimeFixture(t)
+		cfg.ExecutionTimeout = timeout
+		_, err := e.NewTaskReviewRuntime(cfg)
+		require.ErrorIs(t, err, coordination.ErrInvalidReview)
+	}
+}
