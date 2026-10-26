@@ -121,6 +121,13 @@ func (e *Engine) preparedMessageWorkReady(ctx context.Context, parent *orchestra
 			return false, a2a.ErrAskResolutionConflict
 		}
 		for _, call := range paused.Pending {
+			pending, pendingErr := bus.HeldAskPending(ctx, call.ReplyWith)
+			if pendingErr != nil {
+				return false, pendingErr
+			}
+			if pending {
+				return true, e.authorizePreparedMessaging(ctx, parent.ID, key)
+			}
 			retained, replyErr := reader.GetAskResolution(ctx, call.ReplyWith)
 			if errors.Is(replyErr, a2a.ErrAskResolutionNotFound) {
 				continue

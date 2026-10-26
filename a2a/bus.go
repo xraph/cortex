@@ -74,6 +74,7 @@ type Bus struct {
 	recipientRecovery *RecipientRecoveryConfig
 	recipientObserver RecipientObserver
 	resolutions       AskResolutionStore
+	heldAsks          HeldAskStore
 	recorder          AtomicMessageStore
 	replyCommitter    ReservedReplyStore
 	roster            *frozenRoster
@@ -199,6 +200,13 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		if !supported {
 			return nil, ErrAskResolutionUnavailable
 		}
+	}
+	if _, supported := backend.(HeldAskStore); supported {
+		writer, available := routing.(HeldAskStore)
+		if !available || !atomicResolutions {
+			return nil, ErrHeldAskUnavailable
+		}
+		b.heldAsks = writer
 	}
 	if atomicMessages {
 		var supported bool
@@ -507,6 +515,9 @@ type AskParams struct {
 	// has nothing to resume: the asker then waits on an answer that has
 	// already come and gone.
 	Hold bool
+	// DurableHold requires a native versioned release after the run is paused.
+	// It supports engine-origin questions, not replies to another pending ask.
+	DurableHold bool
 }
 
 // AskResult identifies the message and the token a reply must carry.
@@ -533,6 +544,27 @@ type AskResult struct {
 //
 // Everything that can refuse the send happens before the first write.
 func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
+	if p.DurableHold {
+		if !p.Hold || b.heldAsks == nil || p.OriginRunID != p.AskerRunID || p.AskerRunID.Prefix() != id.PrefixAgentRun || p.InReplyTo != "" {
+			return nil, ErrHeldAskUnavailable
+		}
+		if p.ToolCallID == "" || len(p.Receivers) > 256 {
+			return nil, ErrHeldAskConflict
+		}
+		seen := make(map[Address]bool, len(p.Receivers))
+		for _, receiver := range p.Receivers {
+			if seen[receiver] {
+				return nil, ErrHeldAskConflict
+			}
+			seen[receiver] = true
+		}
+		metadata := make(map[string]any, len(p.Metadata)+1)
+		for key, value := range p.Metadata {
+			metadata[key] = value
+		}
+		metadata[HeldAskMetadata] = "v1"
+		p.Metadata = metadata
+	}
 	if p.Performative == "" {
 		p.Performative = Request
 	}
@@ -603,6 +635,9 @@ func (b *Bus) Release(ctx context.Context, res *AskResult) error {
 		return nil
 	}
 	e := res.held
+	if e.Metadata[HeldAskMetadata] == "v1" {
+		return ErrHeldAskUnavailable
+	}
 	res.held = nil
 	_, err := b.route(ctx, e)
 	return err

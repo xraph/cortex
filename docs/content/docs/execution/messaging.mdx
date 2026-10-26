@@ -660,7 +660,55 @@ It does not automatically supply external tool results.
 Every restart restores the original prepared team and continuation. A global
 reply-recovery worker cannot assume the private coordinator's authority. An
 existing start receipt means execution may already have happened and prevents
-another start. Expired admissions, ambiguous starts and a crash between recording
-a held question and releasing it still need reconciliation. Lifecycle hooks are
+another start. Expired admissions and ambiguous starts still need reconciliation.
+New held questions use the durable release path below. Lifecycle hooks remain
 best effort. Local integration tests do not qualify an installed host's grants,
 provider behavior or event delivery.
+
+## Recover a question interrupted before release
+
+Native engine `agent_ask` calls now retain a versioned release marker in the saved
+message. Once the run is paused, release validates its exact scope, routing
+partition, run revision, suspension ID and stored question token. The recipient
+queue entries and their `HeldAskReceipt` commit together. No provider call happens
+inside that transaction.
+
+If a worker dies before release, `WithAgentReplyRecovery` can discover the paused
+run and release its saved question after checking current host permission. Private
+prepared teams do this through `WithOrchestrationRecovery`, after acquiring their
+coordinator lease. The same paths recover a lost release acknowledgment: they
+find the retained queue entries and continue through the existing dispatcher.
+They do not create another recipient delivery.
+
+Custom hosts can opt into this protocol with `AskParams{Hold: true,
+DurableHold: true}` on a bus whose `SupportsHeldAskRelease()` returns true. Supply
+`OriginRunID`, the matching `AskerRunID` and the tool-call ID. After saving the
+correlated pause, authorize the run and call:
+
+```go
+receipt, err := bus.ReleasePausedAsk(ctx, a2a.HeldAskRequest{
+    RunID:        runID,
+    SuspensionID: pauseID,
+    RunRevision:  pausedRevision,
+    ReplyWith:    question.ReplyWith,
+})
+```
+
+Check `err` before using the receipt. Retrying the same request returns the
+original delivery IDs with `Fresh: false`, even after the run has continued.
+`HeldAskPending(ctx, token)` observes whether a marked question still lacks its
+release receipt. Authorize the run before either operation. Neither a receipt nor
+a readiness observation grants permission to execute a recipient.
+
+All three native stores implement `a2a.HeldAskStore` through their existing
+transaction layer. Release refuses replaced or expired pauses, changed question
+bindings, claimed questions, closed conversations and wrong scope or team. It
+supports up to 256 distinct recipients and does not charge another conversation
+hop. MongoDB requires transactions, as it does for reserved replies.
+
+The marker is `cortex.held_ask: "v1"` in message metadata. Questions from older
+binaries lack proof that they were never queued, so recovery does not adopt them
+as unreleased work. Their existing delivery or timeout paths remain available;
+ambiguous legacy execution needs reconciliation. Ordinary `Hold` and `Release`
+remain available for legacy hosts. Versioned release supports engine-origin
+questions, not messages that also answer an earlier ask through `InReplyTo`.

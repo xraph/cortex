@@ -177,6 +177,7 @@ func (e *Engine) recoverUnadmittedReply(ctx context.Context, runID id.AgentRunID
 		return nil, a2a.ErrAskResolutionUnavailable
 	}
 	resumer := a2aResumer{eng: e}
+	bus := e.a2a
 	if runner, bound := ctx.Value(preparedMessagingKey{}).(*preparedTeamRunner); bound {
 		var readerErr error
 		reader, readerErr = runner.resolutionReader()
@@ -184,6 +185,13 @@ func (e *Engine) recoverUnadmittedReply(ctx context.Context, runID id.AgentRunID
 			return nil, readerErr
 		}
 		resumer.team, resumer.reader = runner.policy.ExecutionID, reader
+		bus, readerErr = runner.messagingBus()
+		if readerErr != nil {
+			return nil, readerErr
+		}
+	}
+	if releaseErr := e.releasePendingQuestions(ctx, paused, bus); releaseErr != nil {
+		return nil, releaseErr
 	}
 	for _, call := range paused.Pending {
 		if call.ReplyWith == "" {

@@ -54,8 +54,13 @@ type preparedTeamFixture struct {
 
 func newPreparedTeamFixture(t *testing.T, strategy string) preparedTeamFixture {
 	t.Helper()
+	return newPreparedTeamFixtureAt(t, strategy, filepath.Join(t.TempDir(), "team.db"))
+}
+
+func newPreparedTeamFixtureAt(t *testing.T, strategy, database string) preparedTeamFixture {
+	t.Helper()
 	ctx := overlayCtx("team-runtime")
-	s := openSQLiteStoreForTest(t, filepath.Join(t.TempDir(), "team.db")+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	s := openSQLiteStoreForTest(t, database+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	for _, name := range []string{"a", "b", "judge"} {
 		ag := &agent.Config{ID: id.NewAgentID(), Name: name, SystemPrompt: "frozen " + name, Model: "team-model"}
 		require.NoError(t, s.Create(ctx, ag))

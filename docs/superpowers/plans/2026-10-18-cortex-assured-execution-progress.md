@@ -13,8 +13,8 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution, expired admissions and interrupted held-question release.
-  Private prepared-team messaging is wired; installed recovery qualification is
+  started execution and expired admissions. Private prepared-team messaging and
+  durable held-question release are wired; installed recovery qualification is
   still open. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
@@ -26,8 +26,9 @@ the path to acceptance without reading the chronological evidence below.
   substitute for this evidence.
 
 The runtime now connects retained answers, guarded resume admissions and private
-prepared-team messaging. The next coordination boundary is recovery of ambiguous
-starts and interrupted question release, followed by installed qualification.
+prepared-team messaging, including recovery of interrupted question release.
+The next coordination boundary is recovery of ambiguous starts and expired
+admissions, followed by installed qualification.
 Production verification rollout remains disabled. No completion percentage or
 production readiness is claimed.
 
@@ -7114,3 +7115,63 @@ Possibly started executions, expired admissions and interrupted held-question
 release remain reconciliation work. Installed host authorization, provider
 behavior, durable lifecycle events and worker crash qualification remain open.
 Production verification rollout remains disabled.
+
+
+## Durable held-question release and process recovery, 2026-10-26
+
+Native engine questions now opt into versioned durable release. The original
+message carries a marker, and the saved pause binds its correlation token.
+Release locks the run, suspension, pending ask and conversation, validates the
+exact pause and partition, then commits every recipient queue entry and one
+immutable receipt. Identical retries return the original delivery IDs, including
+after resume. A rollback or ambiguous acknowledgment returns no receipt.
+
+The bus keeps legacy held questions on their existing path. They have no durable
+proof of whether an older dispatcher queued them, so recovery cannot adopt them
+as new work. New durable questions reject duplicate recipients, cap their roster
+at 256 and do not consume another conversation hop during release.
+
+Global reply recovery and private coordinator recovery both pick up unreleased
+questions after current run authorization. The existing dispatcher and prepared
+runner still own recipient admission, execution and shared budget charging. The
+private readiness probe can now distinguish an unreleased question from a team
+that is waiting for an external result.
+
+Current evidence:
+
+- The native release tests first failed on the absent API. SQLite release,
+  concurrency and rollback/lost-acknowledgment tests pass. PostgreSQL and MongoDB
+  also pass the initial release and existing ask-resolution suites.
+- The fresh-engine lifecycle regression first failed because the old path queued
+  the question despite the injected release interruption. It now leaves a paused
+  run and no queue, refuses recovery without permission, then runs one recipient
+  and resumes the original asker after permission is restored.
+- A SQLite subprocess test kills the actual prepared-team worker before release
+  and after its commit. A fresh engine waits for ownership expiry and recovers
+  both cases. It preserves the original asker, publishes one recipient delivery,
+  creates three total team children and charges fan-out three. The two-boundary
+  race test passed in 21.444 seconds.
+- The final native release suite passed with race detection on SQLite (39.392
+  seconds), PostgreSQL (55.273 seconds) and MongoDB (137.094 seconds). No database
+  cases skipped. It covers expiry, binding, claimed questions, closed
+  conversations, scope, team, cancellation, legacy questions and atomic release
+  to two recipients under rollback and lost acknowledgment.
+- The affected runtime run found a missing pause-to-delivery trace link and an
+  authorization test coupled to callback counts. Release now retains its trace
+  link. The test revokes permission at stored admission/start boundaries and
+  asserts zero provider calls. Both regressions passed with race detection in
+  33.362 seconds. The broader affected engine suite then passed in 366.511
+  seconds, including reply recovery, private-team messaging, tracing and both
+  process-crash harnesses.
+- A2A and orchestration race suites passed in 1.254 and 2.352 seconds. The root
+  build and docs type checks, lint and production build passed. Scoped `make f`
+  completed after the final code edits, and its diff was inspected. The final
+  `make l` passed all ten modules after the owned lint findings were fixed.
+
+The previous packet's full local engine race run ended at the thirty-minute
+package timeout. It also reported a scheduler ownership-renewal deadline failure
+under heavy host load; that exact test passed alone in 6.987 seconds. The broad
+run is recorded as failed, not converted to a pass. Linux CI remains the broader
+regression check. These local process fixtures do not qualify installed provider
+adapters, host grant services or durable lifecycle events. Production verification
+rollout remains disabled.

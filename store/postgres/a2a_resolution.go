@@ -12,8 +12,7 @@ import (
 )
 
 func (d assuranceDriver) TransactAskResolution(ctx context.Context, token string, callback func(context.Context, assurance.AskResolutionTransaction) error) error {
-	scope, err := cortex.RequireScope(ctx)
-	if err != nil {
+	if _, err := cortex.RequireScope(ctx); err != nil {
 		return err
 	}
 	tx, err := d.store.pgdb.BeginTxQuery(ctx, nil)
@@ -22,25 +21,39 @@ func (d assuranceDriver) TransactAskResolution(ctx context.Context, token string
 	}
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // Rollback after commit is harmless.
 	transactional := assuranceDriver{store: d.store, transaction: tx}
-	q := tx.NewUpdate((*a2aPendingAskModel)(nil)).Set("updated_at = updated_at").Where("reply_with = ?", token).Where("scope_canon = ?", scope.Canonical()).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx))
-	for _, p := range scopePredicates(scope, true) {
-		q = q.Where(p.Column+" = ?", p.Value)
-	}
-	changed, err := q.Exec(ctx)
-	if err != nil {
-		return err
-	}
-	count, err := changed.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return a2a.ErrAskNotFound
+	if _, lockErr := transactional.LockPendingAsk(ctx, token); lockErr != nil {
+		return lockErr
 	}
 	if callbackErr := callback(ctx, transactional); callbackErr != nil {
 		return callbackErr
 	}
 	return tx.Commit()
+}
+
+func (d assuranceDriver) LockPendingAsk(ctx context.Context, token string) (*a2a.PendingAsk, error) {
+	if d.transaction == nil {
+		return nil, a2a.ErrAskResolutionUnavailable
+	}
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	q := d.queries().NewUpdate((*a2aPendingAskModel)(nil)).Set("updated_at = updated_at").Where("reply_with = ?", token).Where("scope_canon = ?", scope.Canonical()).Where("orchestration_id = ?", a2a.RoutingOrchestration(ctx))
+	for _, p := range scopePredicates(scope, true) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	changed, err := q.Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	count, err := changed.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if count != 1 {
+		return nil, a2a.ErrAskNotFound
+	}
+	return d.ReadPendingAsk(ctx, token)
 }
 
 func (d assuranceDriver) ReadPendingAsk(ctx context.Context, token string) (*a2a.PendingAsk, error) {

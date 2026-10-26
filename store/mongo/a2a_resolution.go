@@ -30,8 +30,7 @@ func resolutionAskFilter(ctx context.Context, token string) (bson.M, error) {
 }
 
 func (d assuranceDriver) TransactAskResolution(ctx context.Context, token string, callback func(context.Context, assurance.AskResolutionTransaction) error) error {
-	filter, err := resolutionAskFilter(ctx, token)
-	if err != nil {
+	if _, err := cortex.RequireScope(ctx); err != nil {
 		return err
 	}
 	session, err := d.store.mdb.Client().StartSession()
@@ -40,14 +39,11 @@ func (d assuranceDriver) TransactAskResolution(ctx context.Context, token string
 	}
 	defer session.EndSession(ctx)
 	_, err = session.WithTransaction(ctx, func(sc context.Context) (any, error) {
-		changed, lockErr := d.store.mdb.Collection(colA2APendingAsks).UpdateOne(sc, filter, bson.M{"$inc": bson.M{"resolution_fence": int64(1)}})
-		if lockErr != nil {
+		transactional := assuranceDriver{store: d.store, resultTransaction: true}
+		if _, lockErr := transactional.LockPendingAsk(sc, token); lockErr != nil {
 			return nil, lockErr
 		}
-		if changed.MatchedCount != 1 {
-			return nil, a2a.ErrAskNotFound
-		}
-		return true, callback(sc, assuranceDriver{store: d.store, resultTransaction: true})
+		return true, callback(sc, transactional)
 	}, options.Transaction().SetReadConcern(readconcern.Snapshot()).SetWriteConcern(writeconcern.Majority()))
 	if err != nil {
 		var commandErr mongo.CommandError
@@ -90,4 +86,22 @@ func (d assuranceDriver) ClaimResolvedAsk(ctx context.Context, token string, at 
 		return a2a.ErrAskAlreadyClaimed
 	}
 	return nil
+}
+
+func (d assuranceDriver) LockPendingAsk(ctx context.Context, token string) (*a2a.PendingAsk, error) {
+	if err := d.messagingSession(ctx); err != nil {
+		return nil, err
+	}
+	filter, err := resolutionAskFilter(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := d.store.mdb.Collection(colA2APendingAsks).UpdateOne(ctx, filter, bson.M{"$inc": bson.M{"resolution_fence": int64(1)}})
+	if err != nil {
+		return nil, err
+	}
+	if changed.MatchedCount != 1 {
+		return nil, a2a.ErrAskNotFound
+	}
+	return d.ReadPendingAsk(ctx, token)
 }

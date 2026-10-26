@@ -283,6 +283,7 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation, bus
 	// find no paused run to resume.
 	step := stepPendingCalls(ctx, inv.RunID)
 	params.Hold = step != nil
+	params.DurableHold = params.Hold && bus.SupportsHeldAskRelease()
 
 	res, err := bus.Ask(ctx, params)
 	if err != nil {

@@ -112,6 +112,15 @@ func TestClaimRecoveryCrashWorker(t *testing.T) {
 }
 
 func killTaskWorkerAtBoundary(t *testing.T, boundary string) taskCrashManifest {
+	return killCrashWorkerAtBoundary(t, boundary, crashWorkerConfig{Test: "TestClaimRecoveryCrashWorker", BoundaryEnv: crashBoundaryEnv, ManifestEnv: crashManifestEnv}, func(manifest taskCrashManifest) {
+		require.Equal(t, boundary, manifest.Boundary)
+		require.NoError(t, manifest.Claim.Validate())
+	})
+}
+
+type crashWorkerConfig struct{ Test, BoundaryEnv, ManifestEnv string }
+
+func killCrashWorkerAtBoundary[T any](t *testing.T, boundary string, config crashWorkerConfig, validate func(T)) T {
 	t.Helper()
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, "boundary.json")
@@ -121,8 +130,8 @@ func killTaskWorkerAtBoundary(t *testing.T, boundary string) taskCrashManifest {
 	t.Cleanup(func() { require.NoError(t, logFile.Close()) })
 	binary, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestClaimRecoveryCrashWorker$", "-test.count=1", "-test.timeout=2m")
-	cmd.Env = append(os.Environ(), crashBoundaryEnv+"="+boundary, crashManifestEnv+"="+manifestPath, "TMPDIR="+root, "TMP="+root, "TEMP="+root)
+	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^"+config.Test+"$", "-test.count=1", "-test.timeout=2m")
+	cmd.Env = append(os.Environ(), config.BoundaryEnv+"="+boundary, config.ManifestEnv+"="+manifestPath, "TMPDIR="+root, "TMP="+root, "TEMP="+root)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	require.NoError(t, cmd.Start())
 	done := make(chan error, 1)
@@ -146,7 +155,7 @@ func killTaskWorkerAtBoundary(t *testing.T, boundary string) taskCrashManifest {
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	var manifest taskCrashManifest
+	var manifest T
 	for {
 		select {
 		case childErr := <-done:
@@ -165,8 +174,7 @@ func killTaskWorkerAtBoundary(t *testing.T, boundary string) taskCrashManifest {
 			}
 			require.NoError(t, readErr)
 			require.NoError(t, json.Unmarshal(data, &manifest))
-			require.Equal(t, boundary, manifest.Boundary)
-			require.NoError(t, manifest.Claim.Validate())
+			validate(manifest)
 			// Kill only this test's process, after it confirms the durable boundary.
 			require.NoError(t, cmd.Process.Kill())
 			select {

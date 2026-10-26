@@ -37,6 +37,10 @@ func TestConformance(t *testing.T) {
 		s := newTestStore(t)
 		storetest.A2AAskResolutionTransactions(t, s, assuranceDriver{store: s})
 	})
+	t.Run("A2AHeldReleaseTransactions", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.A2AHeldReleaseTransactions(t, s, assuranceDriver{store: s})
+	})
 	t.Run("SuspensionVersionTransactions", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.SuspensionVersionTransactions(t, s, assuranceDriver{store: s})

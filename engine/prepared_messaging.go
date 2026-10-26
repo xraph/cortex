@@ -256,6 +256,15 @@ func (r *preparedTeamRunner) ReconcileOrchestration(ctx context.Context) error {
 		}
 		progress += delivered + resumed
 		if progress == 0 {
+			queued, pendingErr := bus.PendingDispatch(ctx)
+			if pendingErr != nil {
+				return pendingErr
+			}
+			if queued {
+				progress++
+			}
+		}
+		if progress == 0 {
 			break
 		}
 	}
@@ -336,6 +345,7 @@ func (e *Engine) configurePreparedTeamMessaging() error {
 	if e.a2a == nil || e.store == nil {
 		return cortex.ErrInvalidPrepared
 	}
+	_, held := e.store.(a2a.HeldAskStore)
 	_, binding := e.store.(a2a.DeliveryRunBinder)
 	_, replies := e.store.(a2a.ReservedReplyStore)
 	_, resolutions := e.store.(a2a.AskResolutionStore)
@@ -343,7 +353,7 @@ func (e *Engine) configurePreparedTeamMessaging() error {
 	_, versions := e.store.(suspension.VersionedStore)
 	_, admissions := e.store.(suspension.ResumeAdmissionStore)
 	routing, scoped := e.store.(a2a.ScopedRoutingBackend)
-	if !binding || !replies || !resolutions || !discovery || !versions || !admissions || !scoped || !routing.SupportsScopedOrchestrationDiscovery() || !routing.SupportsOrchestrationRouting() {
+	if !held || !binding || !replies || !resolutions || !discovery || !versions || !admissions || !scoped || !routing.SupportsScopedOrchestrationDiscovery() || !routing.SupportsOrchestrationRouting() {
 		return cortex.ErrInvalidPrepared
 	}
 	return nil

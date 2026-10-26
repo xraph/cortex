@@ -283,8 +283,14 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 			e.logError("resolve private ask route", busErr)
 			continue
 		}
-		if err := bus.Release(ctx, ask); err != nil {
-			e.logError("release agent ask after suspending", err, log.String("run_id", r.ID.String()))
+		var releaseErr error
+		if bus.SupportsHeldAskRelease() {
+			_, releaseErr = bus.ReleasePausedAsk(ctx, a2a.HeldAskRequest{RunID: r.ID, SuspensionID: s.ID, RunRevision: r.Revision, ReplyWith: ask.ReplyWith})
+		} else {
+			releaseErr = bus.Release(ctx, ask)
+		}
+		if releaseErr != nil {
+			e.logError("release agent ask after suspending", releaseErr, log.String("run_id", r.ID.String()))
 		}
 	}
 	return reason, nil

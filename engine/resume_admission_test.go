@@ -28,39 +28,48 @@ type resumeAdmissionFaultStore struct {
 
 func TestAgentReplyRecoveryRequiresLiveAuthority(t *testing.T) {
 	for _, boundary := range []string{"before_start", "seal_lost"} {
-		for _, denyAt := range []int{0, 1, 2, 4} {
-			st, ctx, current, pauseID := admittedReplyFixture(t, boundary)
-			client := &countedResumeClient{scriptedLLM: &scriptedLLM{answered: true}}
-			fresh, err := New(WithStore(st), WithLLM(client), WithA2A(a2a.Options{HopCeiling: 4, Workers: 1}))
-			require.NoError(t, err)
-			denied := errors.New("recovery grant withdrawn")
-			checks := 0
-			var authorize func(context.Context, id.AgentRunID) error
-			if denyAt != 0 {
-				authorize = func(_ context.Context, key id.AgentRunID) error {
-					require.Equal(t, current.ID, key)
-					checks++
-					if checks >= denyAt {
-						return denied
+		for _, revoke := range []string{"no_authority", "before_read", "before_start", "after_start"} {
+			t.Run(boundary+"/"+revoke, func(t *testing.T) {
+				st, ctx, current, pauseID := admittedReplyFixture(t, boundary)
+				client := &countedResumeClient{scriptedLLM: &scriptedLLM{answered: true}}
+				fresh, err := New(WithStore(st), WithLLM(client), WithA2A(a2a.Options{HopCeiling: 4, Workers: 1}))
+				require.NoError(t, err)
+				durable, ok := st.(suspension.ResumeAdmissionStore)
+				require.True(t, ok)
+				denied := errors.New("recovery grant withdrawn")
+				checked := false
+				var authorize func(context.Context, id.AgentRunID) error
+				if revoke != "no_authority" {
+					authorize = func(_ context.Context, key id.AgentRunID) error {
+						require.Equal(t, current.ID, key)
+						_, admissionErr := durable.GetResumeAdmission(ctx, key, pauseID)
+						require.True(t, admissionErr == nil || errors.Is(admissionErr, suspension.ErrResumeAdmissionNotFound))
+						_, startErr := durable.GetResumeStart(ctx, key, pauseID)
+						require.True(t, startErr == nil || errors.Is(startErr, suspension.ErrResumeAdmissionNotFound))
+						withdrawn := revoke == "before_read" ||
+							(revoke == "before_start" && checked && admissionErr == nil) ||
+							(revoke == "after_start" && startErr == nil)
+						checked = true
+						if withdrawn {
+							return denied
+						}
+						return nil
 					}
-					return nil
 				}
-			}
-			_, err = fresh.RecoverAgentReply(ctx, current.ID, pauseID, authorize)
-			if denyAt == 0 {
-				require.ErrorIs(t, err, suspension.ErrResumeAdmissionUnavailable)
-			} else {
-				require.ErrorIs(t, err, denied)
-			}
-			require.Zero(t, client.calls.Load())
-			durable, ok := st.(suspension.ResumeAdmissionStore)
-			require.True(t, ok)
-			_, startErr := durable.GetResumeStart(ctx, current.ID, pauseID)
-			if denyAt < 3 {
-				require.ErrorIs(t, startErr, suspension.ErrResumeAdmissionNotFound)
-			} else {
-				require.NoError(t, startErr)
-			}
+				_, err = fresh.RecoverAgentReply(ctx, current.ID, pauseID, authorize)
+				if revoke == "no_authority" {
+					require.ErrorIs(t, err, suspension.ErrResumeAdmissionUnavailable)
+				} else {
+					require.ErrorIs(t, err, denied)
+				}
+				require.Zero(t, client.calls.Load())
+				_, startErr := durable.GetResumeStart(ctx, current.ID, pauseID)
+				if revoke == "after_start" {
+					require.NoError(t, startErr)
+				} else {
+					require.ErrorIs(t, startErr, suspension.ErrResumeAdmissionNotFound)
+				}
+			})
 		}
 	}
 }
