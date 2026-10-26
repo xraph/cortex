@@ -98,7 +98,11 @@ func PlanReplanRecovery(t *testing.T, backend store.Store, driver assurance.Driv
 				return
 			}
 			require.NoError(t, err)
-			now := f.clock.Now()
+			// Persist a later instant at the coarsest supported run timestamp precision.
+			// Admission JSON retains nanoseconds; Mongo run dates retain milliseconds.
+			f.clock.advance(time.Second)
+			now := f.clock.Now().Truncate(time.Millisecond)
+			require.True(t, now.After(admission.At))
 			data, err := json.Marshal(req.Progress.Plan)
 			require.NoError(t, err)
 			require.NoError(t, backend.CreateSession(f.ctx, &session.Session{ID: req.SessionID, AgentID: req.AgentID, Title: "Proposal"}))
