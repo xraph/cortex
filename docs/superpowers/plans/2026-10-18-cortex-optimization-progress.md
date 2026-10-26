@@ -2162,3 +2162,31 @@ case passes in 9.264s with a private Go build cache. A first isolated attempt ha
 failed during vet because shared build-cache files disappeared while compiling.
 The broad MongoDB invocation itself therefore remains a failed run; the isolated
 rerun supplies the missing case evidence rather than replacing that history.
+
+## Lesson operator transport bindings
+
+REST exposes `POST /v1/optimization/lessons/:id/retry` and `/revoke`. The URL owns
+the lesson ID and `Idempotency-Key` owns the command identity. Dashboard intents
+`optimization.lessons.retry` and `.revoke` require
+`cortex.optimization.manage`, use the existing audit path and bypass generic
+response caching. Both modules pin published optimizer `d9ce6d4`.
+
+The response reports local lesson or publication state. Remote delivery stays in
+the publisher's outbox. Both commands invalidate lesson list/detail, publication
+list, capabilities and events. Revocation also refreshes experiment list/detail
+and comparison because it pauses consumers of the withdrawn lesson. The design
+now states that consequence explicitly.
+
+The REST test queues a consumer, retries the failed publication, reopens SQLite,
+revokes the lesson, then reopens again. It checks preserved withdrawal, paused
+consumer state, one event per command and a pending remote revocation. Retrying
+the older publication command leaves it superseded. Dashboard tests recover
+outcome-audit failures, enforce current permissions, reject changed payloads and
+check CSRF plus the exact invalidation sets through real HTTP requests. These
+checks do not establish live Fabriq delivery.
+
+Final scoped `make f`, all ten modules' `make l`, API race tests (39.580s),
+extension race tests and both builds pass. Temporary modfiles with every local
+replacement removed also pass optimization HTTP/contract race tests and builds
+against the published pins. Task 16 remains open for frozen creation, authorized
+catalogs, readiness, artifact export and richer review summaries.

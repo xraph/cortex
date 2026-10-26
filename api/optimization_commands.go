@@ -26,23 +26,29 @@ func (a *API) registerOptimizationCommands(router forge.Router) error {
 			return fmt.Errorf("register optimization command %s: %w", route.name, err)
 		}
 	}
-	if err := group.POST("/decisions/retain", optimizationExperimentMutation(commands.Retain), forge.WithOperationID("retainOptimizationBaseline"), forge.WithRequestSchema(operator.RetainInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment and retained baseline review", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+	if err := group.POST("/decisions/retain", optimizationValueMutation(commands.Retain), forge.WithOperationID("retainOptimizationBaseline"), forge.WithRequestSchema(operator.RetainInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment and retained baseline review", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
 		return fmt.Errorf("register optimization retain command: %w", err)
+	}
+	if err := a.registerOptimizationLessonCommands(router); err != nil {
+		return err
 	}
 	return a.registerOptimizationActivationCommands(router)
 }
 
 func optimizationCommand(invoke func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)) func(forge.Context, *operator.LifecycleInput) (*opt.Experiment, error) {
-	handler := optimizationExperimentMutation(invoke)
-	return func(ctx forge.Context, in *operator.LifecycleInput) (*opt.Experiment, error) {
-		input := *in
-		input.ID = ctx.Param("id")
+	return optimizationPathMutation(invoke, func(in operator.LifecycleInput, key string) operator.LifecycleInput { in.ID = key; return in })
+}
+
+func optimizationPathMutation[I, O any](invoke func(context.Context, I, string) (O, error), identify func(I, string) I) func(forge.Context, *I) (*O, error) {
+	handler := optimizationValueMutation(invoke)
+	return func(ctx forge.Context, in *I) (*O, error) {
+		input := identify(*in, ctx.Param("id"))
 		return handler(ctx, &input)
 	}
 }
 
-func optimizationExperimentMutation[I any](invoke func(context.Context, I, string) (opt.Experiment, error)) func(forge.Context, *I) (*opt.Experiment, error) {
-	return optimizationMutation(func(ctx context.Context, in I, key string) (*opt.Experiment, error) {
+func optimizationValueMutation[I, O any](invoke func(context.Context, I, string) (O, error)) func(forge.Context, *I) (*O, error) {
+	return optimizationMutation(func(ctx context.Context, in I, key string) (*O, error) {
 		out, err := invoke(ctx, in, key)
 		return &out, err
 	})

@@ -27,6 +27,9 @@ func (s *service) bindOptimizationCommands(d *dispatcher.Dispatcher) error {
 	if err := optimizationCommand(d, s, "optimization.decisions.retain", "optimization.manage", func(in operator.RetainInput) string { return in.ID }, commands.Retain); err != nil {
 		return err
 	}
+	if err := s.bindOptimizationLessonCommands(d); err != nil {
+		return err
+	}
 	return s.bindOptimizationActivationCommands(d)
 }
 

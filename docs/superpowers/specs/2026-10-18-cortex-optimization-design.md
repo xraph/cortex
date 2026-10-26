@@ -403,8 +403,11 @@ All command DTOs include an idempotency key through the transport and an expecte
 | `optimization.experiments.start`, `.cancel`, `.resume`          | run        | experiments, trials, comparison, events                  |
 | `optimization.decisions.retain`                                 | manage     | experiments, comparison, events                          |
 | `optimization.activations.activate`, `.rollback`, `.deactivate` | activate   | activations, versions, experiments, capabilities, events |
-| `optimization.lessons.retry`, `.revoke`                         | manage     | lessons, capabilities, events                            |
+| `optimization.lessons.retry`                                   | manage     | lessons, capabilities, events                            |
+| `optimization.lessons.revoke`                                  | manage     | lessons, capabilities, experiments, comparison, events   |
 | `optimization.artifacts.export`                                 | artifacts  | events                                                   |
+
+Revocation pauses experiments that consume the lesson, so its invalidations also refresh experiment state and comparison revisions. A successful command confirms local withdrawal and a queued remote revocation, not completed remote delivery.
 
 The implementation expands query families into exact intent names in `manifest.yaml` and tests the invalidation sets. Add matching REST routes under the API module's `/optimization` group with the same service DTOs and authorization. Missing optimizer returns unavailable; a configured optimizer with no experiments returns an empty list. Unauthorized resource IDs never reveal whether another scope owns the resource.
 
