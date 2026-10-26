@@ -122,13 +122,19 @@ func TestTLSServerCancelsAndJoinsActiveAuthentication(t *testing.T) {
 		return broker.Identity{}, request.Context().Err()
 	}
 	url, client, stop := startBrokerServer(t, cfg, clientTLS, instance)
-	response := make(chan error, 1)
+	type clientOutcome struct {
+		err    error
+		status int
+	}
+	response := make(chan clientOutcome, 1)
 	go func() {
 		result, err := serverGET(t.Context(), client, url+"/v1/capabilities")
+		outcome := clientOutcome{err: err}
 		if result != nil {
+			outcome.status = result.StatusCode
 			_ = result.Body.Close()
 		}
-		response <- err
+		response <- outcome
 	}()
 	select {
 	case <-entered:
@@ -139,9 +145,10 @@ func TestTLSServerCancelsAndJoinsActiveAuthentication(t *testing.T) {
 		t.Fatal("active callback not joined", err)
 	}
 	select {
-	case err := <-response:
-		if err == nil {
-			t.Fatal("cancelled request succeeded")
+	case outcome := <-response:
+		// Authentication can return its denial before shutdown closes the socket.
+		if outcome.err == nil && outcome.status != http.StatusUnauthorized {
+			t.Fatalf("cancelled authentication returned HTTP %d", outcome.status)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("client remained blocked")

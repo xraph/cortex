@@ -7229,3 +7229,16 @@ proof and worker fencing establish a safe continuation or terminal disposition.
 This change closes unstarted expiry and lost discovery, not that reconciliation
 protocol or installed host qualification. Production verification rollout remains
 disabled.
+
+### Sandbox cancellation test correction
+
+CI job `121696638007` failed because the shutdown test required a transport error.
+The broker can return `401 Unauthorized` from canceled authentication before the
+socket closes. The test now accepts that explicit denial or a transport error,
+rejects a successful response, and still requires the authentication callback to
+join. Server behavior is unchanged. Thirty local repetitions of the original test
+did not reproduce the CI timing.
+
+The corrected test passed 100 race-enabled repetitions in 5.854 seconds. The TLS
+server test group passed in 3.008 seconds. Scoped `make f` and repository-wide
+`make l` passed. Integrated Linux CI still needs to verify the published revision.
