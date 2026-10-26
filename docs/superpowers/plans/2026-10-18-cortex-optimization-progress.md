@@ -2081,3 +2081,38 @@ also pass. Expanded retain, lifecycle and activation store regressions pass on
 memory (82.374s), SQLite (207.780s), PostgreSQL (220.463s) and MongoDB (281.841s).
 A redundant embedded-field selector reported by lint was simplified, followed
 by adapter/private-purpose race checks and a clean full lint run.
+
+## Retain review transport bindings
+
+`POST /v1/optimization/decisions/retain` and the dashboard intent
+`optimization.decisions.retain` use the shared durable command adapter. REST reads
+its key from `Idempotency-Key`; the dashboard reads the command envelope. The
+payload contains the experiment ID, expected revision, measured decision ID and
+reason. Dashboard retention requires `cortex.optimization.manage` and uses the
+existing attempt/outcome audit path. It invalidates the experiment list, detail,
+comparison and event queries.
+
+The REST integration test closes and reopens SQLite after review, retries the
+original command and checks that measured evidence and routing remain unchanged.
+It also checks stale revisions, foreign scope, malformed IDs and current denial.
+Dashboard tests recover an outcome-audit failure with the original key, reject
+changed review content and verify current grants on replay. The shared real HTTP
+fixture checks CSRF and exact invalidations for activation and retain commands.
+
+Both transports pin optimizer `b2b8b11`. Full API race tests pass in 66.057s;
+extension and contract tests pass in 1.921s and 52.162s. Both builds pass. Temporary
+modfiles without local replacements pass API tests (19.979s) and extension tests
+(1.855s, contract 5.919s), then both builds. The first published extension link ran
+out of disk space; a serial retry passed after the concurrent builds finished.
+
+Task 16 still needs frozen creation, authorized catalogs and readiness, lesson
+commands, artifact export and richer summaries. The review pages and persistent
+browser qualification in tasks 17 and 18 remain open.
+
+Scoped `make f` passes. Two subsequent full `make l` runs pass every nested
+module, including API, extension, optimization and Sentinel. The root check is
+currently blocked by the concurrent runtime work on deferred A2A replies: the
+first run found types still being introduced; the second found three formatting
+issues and an unchecked type assertion in those uncommitted files. These runtime
+changes are outside this commit. The preceding foundation commit passed full
+all-module lint before that runtime slice began.

@@ -192,14 +192,20 @@ func TestOptimizationActivationInvalidations(t *testing.T) {
 
 func activationHTTPReceipt(t *testing.T, d *dispatcher.Dispatcher, registry dc.Registry, wardens dc.WardenRegistry, p dc.Principal, action, key string, input any) opt.Activation {
 	t.Helper()
+	expected := []string{"optimization.activations.list", "optimization.versions.list", "optimization.versions.detail", "optimization.experiments.detail", "optimization.capabilities", "optimization.events.list"}
+	return optimizationHTTPReceipt[opt.Activation](t, d, registry, wardens, p, "optimization.activations."+action, key, input, expected)
+}
+
+func optimizationHTTPReceipt[O any](t *testing.T, d *dispatcher.Dispatcher, registry dc.Registry, wardens dc.WardenRegistry, p dc.Principal, intent, key string, input any, expected []string) O {
+	t.Helper()
 	csrf := security.NewCSRFManager()
 	handler := transport.NewHandlerWithCSRF(registry, wardens, d, dc.NoopAuditEmitter{}, csrf)
 	payload, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: "optimization.activations." + action, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: key, CSRF: csrf.GenerateToken(), Payload: payload}
-	var receipt opt.Activation
+	envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: intent, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: key, CSRF: csrf.GenerateToken(), Payload: payload}
+	var receipt O
 	for _, valid := range []bool{false, true} {
 		request := envelope
 		if !valid {
@@ -214,23 +220,22 @@ func activationHTTPReceipt(t *testing.T, d *dispatcher.Dispatcher, registry dc.R
 		handler.ServeHTTP(response, httpRequest)
 		if !valid {
 			if response.Code != http.StatusForbidden {
-				t.Fatalf("%s CSRF: %d %s", action, response.Code, response.Body)
+				t.Fatalf("%s CSRF: %d %s", intent, response.Code, response.Body)
 			}
 			continue
 		}
 		if response.Code != http.StatusOK {
-			t.Fatalf("%s HTTP: %d %s", action, response.Code, response.Body)
+			t.Fatalf("%s HTTP: %d %s", intent, response.Code, response.Body)
 		}
 		var result struct {
-			Data opt.Activation  `json:"data"`
+			Data O               `json:"data"`
 			Meta dc.ResponseMeta `json:"meta"`
 		}
 		if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		expected := []string{"optimization.activations.list", "optimization.versions.list", "optimization.versions.detail", "optimization.experiments.detail", "optimization.capabilities", "optimization.events.list"}
 		if !reflect.DeepEqual(result.Meta.Invalidates, expected) {
-			t.Fatalf("%s HTTP invalidates: %v", action, result.Meta.Invalidates)
+			t.Fatalf("%s HTTP invalidates: %v", intent, result.Meta.Invalidates)
 		}
 		receipt = result.Data
 	}

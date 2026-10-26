@@ -26,19 +26,26 @@ func (a *API) registerOptimizationCommands(router forge.Router) error {
 			return fmt.Errorf("register optimization command %s: %w", route.name, err)
 		}
 	}
+	if err := group.POST("/decisions/retain", optimizationExperimentMutation(commands.Retain), forge.WithOperationID("retainOptimizationBaseline"), forge.WithRequestSchema(operator.RetainInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment and retained baseline review", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+		return fmt.Errorf("register optimization retain command: %w", err)
+	}
 	return a.registerOptimizationActivationCommands(router)
 }
 
 func optimizationCommand(invoke func(context.Context, operator.LifecycleInput, string) (opt.Experiment, error)) func(forge.Context, *operator.LifecycleInput) (*opt.Experiment, error) {
-	handler := optimizationMutation(func(ctx context.Context, in operator.LifecycleInput, key string) (*opt.Experiment, error) {
-		out, err := invoke(ctx, in, key)
-		return &out, err
-	})
+	handler := optimizationExperimentMutation(invoke)
 	return func(ctx forge.Context, in *operator.LifecycleInput) (*opt.Experiment, error) {
 		input := *in
 		input.ID = ctx.Param("id")
 		return handler(ctx, &input)
 	}
+}
+
+func optimizationExperimentMutation[I any](invoke func(context.Context, I, string) (opt.Experiment, error)) func(forge.Context, *I) (*opt.Experiment, error) {
+	return optimizationMutation(func(ctx context.Context, in I, key string) (*opt.Experiment, error) {
+		out, err := invoke(ctx, in, key)
+		return &out, err
+	})
 }
 
 func optimizationMutation[I, O any](invoke func(context.Context, I, string) (O, error)) func(forge.Context, *I) (O, error) {
