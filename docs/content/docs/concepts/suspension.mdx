@@ -489,6 +489,27 @@ each suspension's own scope before it touches a run.
 `store/storetest`'s conformance suite covers all seven, including the claim
 concurrency and the deadline partition, on every backend. Run it against yours.
 
+## Claiming a validated pause
+
+The built-in stores implement `suspension.VersionedStore`. The engine uses
+`ClaimSuspensionVersion` to carry the suspension ID it validated and the run
+revision it read into the claim transaction. Storage locks both records, checks
+those identities and the deadline, then moves the run from paused to running.
+A replaced suspension or changed revision leaves the current pause untouched.
+An acknowledged claim returns the run snapshot with its incremented revision.
+
+A failed or ambiguous commit returns no suspension. Repeating the original claim
+cannot take a later pause, even if its tool-call IDs are identical. This prevents
+an old answer from reaching a new continuation. It does not retain the answer or
+prove whether an earlier resume executed; durable recovery needs that evidence
+separately.
+
+SQLite and PostgreSQL use native transactions. The versioned MongoDB path needs
+a replica set or another deployment supporting transactions. It fails closed
+when transactions are unavailable. Custom stores without this optional capability
+retain the earlier run-ID-only claim path; they do not provide the version guard.
+Implement the capability to qualify a custom store for the stronger resume path.
+
 ## See also
 
 - [Tool Authorization](/docs/concepts/authorization) for `ToolAuthorizer` and

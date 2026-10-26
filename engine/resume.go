@@ -256,7 +256,18 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	} else if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
 		return nil, nil, cortex.ErrVerificationUnavailable
 	}
-	susp, err := e.store.ClaimSuspension(ctx, runID)
+	var susp *suspension.Suspension
+	if versioned, supported := e.store.(suspension.VersionedStore); supported {
+		if previewErr != nil {
+			return nil, nil, fmt.Errorf("read suspension version: %w", previewErr)
+		}
+		if preview == nil {
+			return nil, nil, cortex.ErrNotSuspended
+		}
+		susp, err = versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: runID, SuspensionID: preview.ID, RunRevision: snapshot.Revision})
+	} else {
+		susp, err = e.store.ClaimSuspension(ctx, runID)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
 	}

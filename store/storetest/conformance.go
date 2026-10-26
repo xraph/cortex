@@ -182,6 +182,9 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	// inside a transaction on postgres and sqlite, a FindOneAndUpdate on
 	// mongo -- and proving the sqlite one says nothing about the mongo
 	// one, which is the least like the others.
+	t.Run("SuspensionVersionScope", func(t *testing.T) { testSuspensionVersionScope(t, newStore) })
+	t.Run("SuspensionVersionClaim", func(t *testing.T) { testSuspensionVersionClaim(t, newStore) })
+	t.Run("SuspensionVersionExpiry", func(t *testing.T) { testSuspensionVersionExpiry(t, newStore) })
 	t.Run("ClaimSuspensionConcurrency", func(t *testing.T) { testClaimSuspensionConcurrency(t, newStore) })
 
 	// Expiry is part of the claim's own condition rather than a check the

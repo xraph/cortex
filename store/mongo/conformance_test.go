@@ -56,6 +56,7 @@ func TestConformance(t *testing.T) {
 	t.Run("TaskRecoveryAdoption", func(t *testing.T) { storetest.TaskRecoveryAdoption(t, s, assuranceDriver{store: s}) })
 	t.Run("RunRecoveryTransactions", func(t *testing.T) { storetest.RunRecoveryTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("A2AAskResolutionTransactions", func(t *testing.T) { storetest.A2AAskResolutionTransactions(t, s, assuranceDriver{store: s}) })
+	t.Run("SuspensionVersionTransactions", func(t *testing.T) { storetest.SuspensionVersionTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("A2AReplyTransactions", func(t *testing.T) { storetest.A2AReplyTransactions(t, s, assuranceDriver{store: s}) })
 	t.Run("RunCallTransactions", func(t *testing.T) { storetest.RunCallTransactions(t, assuranceDriver{store: s}) })
 	t.Run("TaskRunTransactions", func(t *testing.T) {

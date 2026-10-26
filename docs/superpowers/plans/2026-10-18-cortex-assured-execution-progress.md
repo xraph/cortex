@@ -2,6 +2,32 @@
 
 Plan: `2026-10-18-cortex-assured-execution.md`. Implementation baseline: `cd4c746`. Execution is inline in the primary checkout on `main`.
 
+## Completion boundary, 2026-10-26
+
+The four-stage program is incomplete. Passing packet tests does not close a stage
+gate. The following list groups the remaining work by deliverable so you can see
+the path to acceptance without reading the chronological evidence below.
+
+- Trust: qualify the installed provider and publication scanner, then close G1.
+- Verification: finish evaluator and effect recovery, concrete host adapters,
+  durable public delivery and installed review flows. Live Linux sandbox
+  qualification remains deferred by the user's worker-selection decision.
+- Coordination: bind retained answers to their original pauses, retain resume
+  admission and reconcile ambiguous execution. Recover paused recipients and
+  integrate the private prepared-team bus. Complete task scheduling, review,
+  effect reconciliation, durable events and bounded replanning integration.
+- Adaptation: complete operational capability/context and reflection integration,
+  governed lessons, calibration, operator surfaces and end-to-end benchmarks.
+  Optimization implementation and evidence remain in its separate progress ledger.
+- Acceptance: run the installed API/dashboard and provider flows, crash recovery,
+  denial/revocation paths, security corpus, cost/latency measurements and rollout
+  checks. CI must pass for the integrated revision. Local packet checks cannot
+  substitute for this evidence.
+
+The immediate runtime priority is the complete answer-to-resume recovery flow,
+followed by private prepared-team messaging. Production verification rollout
+remains disabled. No completion percentage or production readiness is claimed.
+
 ## Ownership and contracts
 
 This chat owns the runtime integrator, persistence, contract and progress roles for the active packet. The optimization chat owns Sentinel recorded evaluation and cortex/optimization. A fresh reviewer inspected S1.1 without editing files. Other implementation packets remain unassigned. Inspect status before each packet; the optimization workstream shares prepared execution and evaluation contracts and must consume these foundation commits.
@@ -6756,3 +6782,24 @@ recovered answer to the original suspension and reconciling execution remain
 open. Private prepared-team messaging stays disabled until that path, deferred
 recipient completion and bus ownership are integrated. The full plan remains
 in progress.
+
+### Claiming the validated suspension version
+
+Native engine resumes now claim the suspension ID and run revision that passed
+validation. SQLite, PostgreSQL and MongoDB lock the run and suspension in one
+transaction before changing the run to running. A replacement pause, changed
+revision, expired pause or wrong scope fails without claiming the newer pause.
+MongoDB requires transactions for this path. Custom stores without the optional
+versioned capability retain their existing claim behavior.
+
+The engine regression first failed because resume used the unversioned claim.
+The final native race matrix covers replacement, expiry, scope, competing claims,
+rollback and lost acknowledgments without skips: SQLite 16.157s, PostgreSQL
+4.787s and MongoDB 7.112s. Engine resume, suspension, A2A and recovery races pass
+in 53.156s. Scoped formatting, all-ten-module lint, root build, docs types/lint/build
+and whitespace checks pass.
+
+This closes the validation-to-claim replacement window. It does not persist a
+resume payload, bind an old ask to its original pause or reconcile a lost resume
+acknowledgment. Those are the next pieces of the same recovery flow. An ambiguous
+transaction returns no suspension and grants no execution authority.
