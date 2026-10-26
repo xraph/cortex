@@ -741,14 +741,22 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 	if openedASuspendedRun(cp) {
 		if decision.Approved {
 			if err := e.resumeApproved(ctx, cp); err != nil {
-				if !errors.Is(err, cortex.ErrEffectUncertain) {
+				uncertain := errors.Is(err, cortex.ErrEffectUncertain)
+				exhausted := errors.Is(err, cortex.ErrMaxStepsReached)
+				if !uncertain && !exhausted {
 					return err
 				}
-				// Approval took effect even though its external action is
-				// unresolved. Confirm the durable stop before recording the
-				// decision; a failed terminal write must not count as one.
+				// The approved call already ran. Confirm its durable stop
+				// before recording the decision, including a final-step call
+				// with no remaining model step to produce an answer.
 				saved, readErr := e.store.GetRun(ctx, cp.RunID)
-				if readErr != nil || saved == nil || !isTerminalRunState(saved.State) || saved.Error != cortex.ErrEffectUncertain.Error() {
+				if readErr != nil || saved == nil || !isTerminalRunState(saved.State) {
+					return err
+				}
+				if uncertain && saved.Error != cortex.ErrEffectUncertain.Error() {
+					return err
+				}
+				if exhausted && (saved.State != run.StateIncomplete || saved.StopReason != run.StopStepLimit) {
 					return err
 				}
 				executionErr = err

@@ -21,6 +21,7 @@ import (
 	"github.com/xraph/cortex/engine"
 	"github.com/xraph/cortex/optimization"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/safety"
 )
 
 const ContributorName = "cortex"
@@ -169,6 +170,16 @@ func mapError(err error) error {
 	var ce *dc.Error
 	if errors.As(err, &ce) {
 		return ce
+	}
+	switch {
+	case errors.Is(err, cortex.ErrMaxStepsReached), errors.Is(err, cortex.ErrBudgetExhausted):
+		return &dc.Error{Code: dc.CodeConflict, Message: "The run exhausted its execution budget. Review its saved outcome."}
+	case errors.Is(err, safety.ErrBlocked):
+		return &dc.Error{Code: dc.CodePermissionDenied, Message: safety.ErrBlocked.Error()}
+	case errors.Is(err, safety.ErrLimit):
+		return &dc.Error{Code: dc.CodeBadRequest, Message: safety.ErrLimit.Error()}
+	case errors.Is(err, safety.ErrUnavailable):
+		return &dc.Error{Code: dc.CodeUnavailable, Message: safety.ErrUnavailable.Error(), Retryable: true}
 	}
 	if errors.Is(err, cortex.ErrRunConflict) {
 		return &dc.Error{Code: dc.CodeConflict, Message: cortex.ErrRunConflict.Error()}

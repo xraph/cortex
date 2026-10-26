@@ -89,6 +89,40 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 
 ## Verification log
 
+### Installed local model and approval exhaustion, 2026-10-26
+
+The Forge dashboard demo now has an explicit Ollama/Nexus provider using local
+Qwen3 4B. Startup and requests check its installed model digest. It uses the
+bounded `safety/rules` scanner with private-key and credential blocks, email
+redaction and required buffered publication. There is no deterministic fallback
+when the selected real provider fails. These patterns do not qualify semantic
+safety or arbitrary secret detection.
+
+The real HTTP workflow passed ordinary generation, redacted public output and
+steps, credential denial, tool selection, approval and resume, final-step
+exhaustion, truncated generation and cancellation. A separate reader host could
+read screened data but could not manage agents; an isolated tenant could not
+read the original tenant's agent or run. Restart retained redacted output and
+unchecked verification status. Desktop and 390px run-review checks showed the
+redacted output, screening status and unchecked status with no horizontal
+overflow; keyboard navigation reached the next action.
+
+The last-step workflow exposed a checkpoint inconsistency. The tool had run and
+the terminal incomplete state was durable, but approval returned before recording
+the decision. Cortex now records that decision after checking the saved terminal
+outcome, preserves the exhaustion error, rejects repeat approval, and maps that
+error to a nonretryable conflict. Publication denial, scanner limits and scanner
+unavailability also have distinct safe dashboard error mappings.
+
+The new approval regression and existing checkpoint resolution tests passed with
+the race detector; dashboard mapping tests, all-module lint and root build
+passed. The demo's Cortex race tests, `go vet` and build passed with Go 1.26.9.
+Its full suite still fails in the separate Ctrlplane demo seed because current
+managed-ownership rules reject `workloads.create`. The local dependency replaces
+also mean this is checkout integration, not published-consumer qualification.
+G1 remains open for the remaining outage/revocation transport matrix and exact
+integrated CI. Linux sandbox qualification remains explicitly deferred.
+
 ### Governed lessons and recall provenance, 2026-10-26
 
 Ordinary learning now accepts only the exact output of a current, committed
