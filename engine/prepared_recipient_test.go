@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -40,9 +41,19 @@ func TestPreparedRecipientObservationAfterIndependentResume(t *testing.T) {
 			return observerEngine.ObservePreparedRecipient(ctx, req, authorize)
 		}),
 	}
+
+	view, err := f.p.Inspect()
+	require.NoError(t, err)
+	roster := &a2a.Roster{Scope: cortex.ScopeFromContext(f.ctx)}
+	for name, prepared := range view.Participants {
+		captured, inspectErr := prepared.Inspect()
+		require.NoError(t, inspectErr)
+		roster.Participants = append(roster.Participants, a2a.RosterParticipant{Name: name, AgentID: captured.AgentID})
+	}
+	busConfig.Roster = roster
 	bus, err := a2a.NewBus(busConfig)
 	require.NoError(t, err)
-	sent, err := bus.Send(f.ctx, a2a.SendParams{Sender: a2a.Address{Agent: "reviewer"}, Receivers: []a2a.Address{{Agent: request.AgentName}}, Performative: a2a.Request, Content: "work"})
+	sent, err := bus.Send(f.ctx, a2a.SendParams{Sender: a2a.Address{Agent: "b"}, Receivers: []a2a.Address{{Agent: request.AgentName}}, Performative: a2a.Request, Content: "work"})
 	require.NoError(t, err)
 	private, err := a2a.NewRoutingStore(f.s, request.OrchestrationID)
 	require.NoError(t, err)
@@ -65,14 +76,28 @@ func TestPreparedRecipientObservationAfterIndependentResume(t *testing.T) {
 	fresh, err := engine.New(engine.WithStore(f.s), engine.WithExternalTool(llm.Tool{Name: "await"}))
 	require.NoError(t, err)
 	observerEngine = fresh
+	busConfig.Synchronous = false
+	busConfig.Options = a2a.Options{Workers: 1, SweepInterval: 10 * time.Millisecond}
+	busConfig.RecipientRecovery = &a2a.RecipientRecoveryConfig{
+		AuthorizeDiscovery: func(context.Context, id.OrchestrationID) error { return nil },
+		AuthorizeDelivery:  allowReply,
+	}
 	freshBus, err := a2a.NewBus(busConfig)
 	require.NoError(t, err)
-	reply, err := freshBus.RecoverRecipient(f.ctx, claimed.ID, allowReply)
-	require.NoError(t, err)
-	require.True(t, reply.Fresh)
-	_, err = freshBus.Drain(f.ctx)
-	require.NoError(t, err)
-	inbox, err := freshBus.Inbox(f.ctx, "reviewer", a2a.InboxFilter{UnreadOnly: true})
+	require.NoError(t, freshBus.Start(context.Background()))
+	t.Cleanup(freshBus.Stop)
+	replies, available := private.(a2a.ReservedReplyStore)
+	require.True(t, available)
+	require.Eventually(t, func() bool {
+		receipt, readErr := replies.GetReservedReply(f.ctx, claimed.ID)
+		if readErr != nil {
+			return false
+		}
+		delivered, readErr := private.GetDelivery(f.ctx, receipt.ReplyDeliveryID)
+		return readErr == nil && delivered.State == a2a.DeliveryDelivered
+	}, 5*time.Second, 10*time.Millisecond)
+	freshBus.Stop()
+	inbox, err := freshBus.Inbox(f.ctx, "b", a2a.InboxFilter{UnreadOnly: true})
 	require.NoError(t, err)
 	require.Len(t, inbox, 1)
 	require.Equal(t, "retained completion", inbox[0].Content)

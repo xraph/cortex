@@ -38,6 +38,8 @@ var (
 // BusConfig builds a Bus. Store and one runner are required. Structured
 // handoffs require HandoffHandler explicitly.
 type BusConfig struct {
+	// RecipientRecovery enables bounded automatic observation of deferred replies.
+	RecipientRecovery *RecipientRecoveryConfig
 	// Roster restricts a non-global bus to captured local participant identities.
 	Roster *Roster
 	// ReservedRunner replaces Runner for partitioned execution with durable admission.
@@ -69,6 +71,7 @@ type BusConfig struct {
 
 // Bus routes envelopes between agents.
 type Bus struct {
+	recipientRecovery *RecipientRecoveryConfig
 	recipientObserver RecipientObserver
 	resolutions       AskResolutionStore
 	recorder          AtomicMessageStore
@@ -206,6 +209,9 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 	}
 	if len(b.transports) == 0 {
 		b.transports = []Transport{inProcess{}}
+	}
+	if recoveryErr := b.configureRecipientRecovery(cfg.RecipientRecovery, backend); recoveryErr != nil {
+		return nil, recoveryErr
 	}
 	b.dispatch = newDispatcher(b, cfg.Synchronous)
 	return b, nil

@@ -463,8 +463,8 @@ authority.
 
 Changed run revisions, replaced or edited suspensions, expired pauses and wrong
 scope fail before a start grant. Expired admitted work and execution that may
-already have started still need host reconciliation. Automatic deferred-recipient
-discovery and private prepared-team messaging remain open.
+already have started still need host reconciliation. Private prepared-team
+messaging integration remains open.
 
 ### Run recovery in the background
 
@@ -555,5 +555,52 @@ receipt and drain the retained queue without observing or executing the child
 again. Lifecycle hooks remain best effort, so receipt recovery does not replay
 them as though they were a durable event log.
 
-This is an explicit host recovery API. Automatic discovery of bound deliveries
-and private prepared-team bus lifecycle wiring remain separate work.
+### Discover deferred replies automatically
+
+Set `RecipientRecovery` when you construct a reserved bus with a captured roster:
+
+```go
+config.RecipientRecovery = &a2a.RecipientRecoveryConfig{
+    AuthorizeDiscovery: authorizeTeamRecovery,
+    AuthorizeDelivery:  authorizeDeliveryRecovery,
+    BatchSize:         32,
+    AttemptTimeout:    5 * time.Second,
+    ReportError:       reportRecoveryError,
+}
+bus, err := a2a.NewBus(config)
+// Handle err before starting the bus.
+err = bus.Start(ctx)
+// Call bus.Stop() during shutdown and wait for it to return.
+```
+
+Your discovery callback authorizes the team's current service access, including
+reclaiming stale unbound deliveries. The delivery callback authorizes each
+specific reply recovery. Both callbacks and the recipient observer must honor
+cancellation. Keep the error reporter bounded so shutdown can join it.
+
+SQLite, PostgreSQL and MongoDB implement `a2a.RecipientDiscoveryStore`. Its reads
+select only delivery IDs in the exact scope and routing partition, with an
+exclusive cursor and a limit from 1 to 256. Completed deliveries, queued work and
+claims without a bound child are excluded. No message content is loaded during
+discovery. The bus checks discovery permission before and after the query, then
+checks each delivery's permission through `RecoverRecipient`.
+
+`Start` launches one recovery worker alongside dispatch. Each pass uses the
+captured roster scope, reclaims stale unbound deliveries and scans one page of
+bound recipients. It advances past waiting and failed observations, then returns
+to the beginning after reaching the end. This lets later children finish even
+when an earlier child remains paused. Restarting begins a fresh traversal;
+retained replies and delivery claims still control publication and dispatch.
+`Stop` cancels and joins the worker. Existing `SweepInterval` and
+`DeliveryClaimTTL` options control polling and abandoned-claim recovery.
+
+With `Synchronous: true`, you drive the passes through
+`bus.RecoverRecipients(ctx, after)`. The returned page contains counts and a
+`Next` cursor, without child output. A per-delivery error can accompany a page
+that made progress, so retain its cursor when continuing. A discovery error
+returns an empty page. You still drive stale-claim recovery and `Drain` explicitly
+in synchronous mode.
+
+This lifecycle recovers saved replies. Installing the private bus into prepared
+team tool dispatch, coordinator ownership and parent continuation remains
+separate integration work.

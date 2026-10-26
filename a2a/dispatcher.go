@@ -75,6 +75,13 @@ func (b *Bus) Start(ctx context.Context) error {
 			d.work(runCtx)
 		}()
 	}
+	if b.recipientRecovery != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			b.recoverRecipientsUntilStopped(runCtx)
+		}()
+	}
 	go func() {
 		wg.Wait()
 		close(done)

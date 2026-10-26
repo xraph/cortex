@@ -9,7 +9,6 @@ import (
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
-	"github.com/xraph/cortex/internal/hostport"
 )
 
 // ErrRecipientObservationUnavailable means no qualified observer was configured.
@@ -51,7 +50,7 @@ type RecipientObserver interface {
 // empty receipt. Equal retries return the committed receipt without observing
 // the child again. This API is not a model tool or an unauthenticated route.
 func (b *Bus) RecoverRecipient(ctx context.Context, key id.DeliveryID, authorize func(context.Context, id.OrchestrationID, id.DeliveryID) error) (ReservedReply, error) {
-	if authorize == nil || hostport.IsNil(b.recipientObserver) || b.reserved == nil || b.replyCommitter == nil || b.orchestrationID.IsNil() {
+	if authorize == nil || nilHostPort(b.recipientObserver) || b.reserved == nil || b.replyCommitter == nil || b.orchestrationID.IsNil() {
 		return ReservedReply{}, ErrRecipientObservationUnavailable
 	}
 	scope, err := cortex.RequireScope(ctx)

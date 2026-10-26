@@ -13,8 +13,8 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution and expired admissions. Install deferred recipient recovery
-  with the private prepared-team bus. Complete task scheduling, review,
+  started execution and expired admissions. Wire bounded deferred recipient recovery
+  into private prepared-team execution. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
   governed lessons, calibration, operator surfaces and end-to-end benchmarks.
@@ -7005,3 +7005,56 @@ writes. Inactive temporary lint caches were reclaimed, then the affected checks
 were rerun serially: A2A (1.175s), engine (7.441s), SQLite (24.226s), root build and
 all-module lint passed. No source or active test directories were removed.
 CI qualification remains separate.
+
+
+## Bounded deferred-recipient discovery, 2026-10-26
+
+You can configure `a2a.RecipientRecoveryConfig` on a reserved bus with a captured
+roster. The bus discovers saved child bindings, observes their outcomes and queues
+the retained reply. It needs current host callbacks for team discovery and each
+delivery. Native SQLite, PostgreSQL and MongoDB queries return only delivery IDs
+in the exact scope and routing partition, ordered after an exclusive cursor.
+Completed rows and claims without a child binding are excluded.
+
+One worker starts with the bus and uses the roster's captured scope. It processes
+one bounded page per interval, advances past waiting or failed observations and
+starts another traversal after reaching the end. Each query and observation has
+a timeout. Stop cancels and joins the worker. The same lifecycle reclaims stale
+unbound deliveries under current discovery permission, so a reply claimed by a
+crashed dispatcher can be carried after its claim TTL without rerunning the child.
+Synchronous buses expose the page pass and leave queue maintenance to their host.
+
+The regression first failed because discovery and lifecycle APIs did not exist.
+A separate deterministic crash fixture then showed that a fresh private bus left
+an abandoned reply claim in `delivering`; guarded reclaim closes that path.
+The initial concurrent delivery test stopped the bus before delivery completed.
+It now waits for delivery, while the separate crash fixture tests abandonment
+explicitly. No test interprets a committed reply receipt as delivered content.
+
+Validation on the final code:
+
+- Full A2A race tests pass. CI on `dcfcd28` had identified an A2A dependency-boundary
+  violation from importing the host-port helper. A local nil-port check removes
+  that dependency while preserving typed-nil rejection; the architecture test
+  remains unchanged and passes.
+- Prepared-team and reply-recovery engine race regressions pass in 74.685s. The
+  prepared-recipient test independently resumes a real child, creates a fresh
+  engine without an LLM client, and lets the bus discover and deliver its saved
+  result. Recovery never invokes the recipient runner or provider.
+- Native discovery, deferred reply, roster, shutdown and abandoned-claim races
+  pass on SQLite (25.516s), PostgreSQL (4.414s) and MongoDB (4.557s). Docker-backed
+  tests ran without skips. Cases cover exact scope, another team in the same
+  scope, pagination, excluded states, permission denial/revocation, malformed
+  pages, bounded callbacks, progress past a waiting child and joined shutdown.
+- Scoped `make f`, all ten modules under `make l`, root build, docs type checks,
+  docs lint and docs production build pass. The optimization chat fixed its
+  concurrent API lesson test shadow warnings before the final lint run.
+
+Initial commands failed before compiling the tests because files disappeared
+from the shared Go cache. These are not test evidence. Verification uses the
+private `/tmp/cortex-recipient-go-cache` cache.
+
+Private bus selection for prepared-team tools, coordinator-owned dispatch and
+parent continuation remain open. This packet does not enable those tools, resume
+a paused recipient, reconcile ambiguous execution starts or qualify installed
+host/provider behavior. Production verification rollout remains disabled.
