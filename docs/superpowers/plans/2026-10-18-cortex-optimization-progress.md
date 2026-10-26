@@ -2317,3 +2317,31 @@ live Sentinel catalog, model provider or Fabriq destination.
 Final scoped `make f`, formatting review and repository-wide `make l` pass for
 the transport packet. The runtime chat's private-team changes remain in their
 own commit.
+
+## Authorized catalog service
+
+`ListCatalog` exposes bounded metadata for approved agent, evaluation, controller
+and environment references. Scope, caller and kind bind each continuation. The
+service checks current domain and source grants, rejects mismatched provider
+responses, and detaches callback inputs so a host callback cannot mutate the
+scope of returned entries. Private optimization execution cannot use the reader.
+
+`ApprovedCatalog` supplies a shared registration for listing and creation. It
+copies and validates choices, excludes ordinary source denials, propagates
+outages and rejects duplicate revisions. Its pagination binds visible source
+revisions and permissions. Changed registrations require a fresh page instead of
+mixing snapshots. The host still supplies mapped source authorization and the
+preparation callback that freezes policy and executable content.
+
+The complete optimizer core and operator race suites pass in 128.037s and
+11.540s. Focused tests cover missing providers, empty installed catalogs, scope
+and actor changes, malformed and rebound cursors, source revocation, stale
+registrations, callback mutation, unavailable preparation and duplicate choices.
+The shared operator adapter uses the same service. Concrete Sentinel catalog
+mapping and installed host readiness composition remain open.
+
+Scoped `make f`, optimizer lint and the optimizer build pass. The first
+repository-wide `make l` reports five findings in the runtime chat's concurrent
+held-question changes; every other module passes. The owner has those findings,
+and the final repository-wide rerun is still in progress. Final focused catalog
+and private-access race tests pass in 1.707s, with the operator adapter in 1.375s.

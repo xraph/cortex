@@ -550,3 +550,37 @@ host's current resource grants. Other Cortex permissions do not grant activation
 These commands use the same durable audit and envelope-key handling as lifecycle
 commands. Successful receipts invalidate activation history, versions, experiment
 detail, capabilities and events so the review view refreshes current state.
+
+### Approved creation catalogs
+
+Use `NewApprovedCatalog` when your host registers approved agents, evaluation
+plans, controller versions and environment presets. Each `CatalogChoice` names
+its exact scope, kind, immutable `ContentRef` and display metadata. Registration
+copies the choices and rejects duplicate source revisions. Prompt bodies, private
+evaluation cases, credentials and executable policy stay out of catalog entries.
+
+Supply an `Authorize` callback that checks the current caller's source access.
+For evaluation choices, resolve your Cortex scope to Sentinel and check the
+mapped evaluation grant. Return `optimization.ErrPolicyDenied` to exclude a
+choice from discovery. Other errors fail the read, so an outage cannot look like
+an empty catalog. The callback receives a detached choice and scoped context.
+
+Your `Prepare` callback freezes the selected revisions into an `ExperimentBundle`.
+It owns policy, compatible combinations, source snapshots and host bounds. It
+must use the target experiment ID, scope and requester, honor cancellation and
+avoid running trials or starting background work. Leaving it unset supports a
+read-only catalog; preparation then returns unavailable.
+
+Pass the same registry to `OptimizerConfig.Catalog` and
+`OptimizerConfig.CreationCatalog`. Operator callers use `ListCatalog` to discover
+choices and `CreateCommand` to save a draft. Creation checks every registered
+revision again. An identical retry recovers its original frozen draft under
+current permissions, without calling `Prepare` a second time.
+
+Catalog queries accept an optional `kind` (`agent`, `evaluation`, `controller` or
+`environment`), `limit` and `cursor`. Pages default to 25 items and cap at 100.
+Transport cursors bind scope, caller and kind; they grant no access. A registry
+cursor also binds the currently visible registrations. If those registrations
+or grants change, restart pagination after the returned conflict. Missing catalog
+configuration is unavailable; an installed catalog with no permitted choices
+returns an empty, complete page. No total is inferred from pagination.

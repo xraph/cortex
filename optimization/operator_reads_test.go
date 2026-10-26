@@ -60,6 +60,9 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 				}
 
 				if purpose != run.PurposeNormal {
+					if _, catalogErr := op.ListCatalog(callCtx, optimization.CatalogQuery{}); !errors.Is(catalogErr, optimization.ErrPolicyDenied) {
+						t.Errorf("private catalog reached %s: %v", purpose, catalogErr)
+					}
 					if _, creationErr := op.CreateCommand(callCtx, optimization.CreationRequest{}); !errors.Is(creationErr, optimization.ErrPolicyDenied) {
 						t.Errorf("private create reached %s: %v", purpose, creationErr)
 					}
