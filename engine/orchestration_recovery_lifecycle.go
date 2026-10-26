@@ -208,5 +208,8 @@ func (r *preparedTeamRecovery) waitingReady(ctx context.Context, parent *orchest
 			return false, cortex.ErrInvalidContinuation
 		}
 	}
+	if waiting && !failed {
+		return r.engine.preparedMessageWorkReady(ctx, parent)
+	}
 	return failed || !waiting, nil
 }

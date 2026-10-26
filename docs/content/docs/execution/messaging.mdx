@@ -239,12 +239,10 @@ record. Its downgrade is refused because removing the partition would expose
 private traffic globally. MongoDB reads documents without the field as global
 traffic; new writes always persist the field.
 
-You still need a runner and resolver restricted to the team's frozen roster,
-shared-budget admission and authorized recovery before enabling agent execution.
-The prepared-team engine continues to reject messaging tools while that
-integration is unfinished. A storage partition does not authorize remote peers,
-provide an isolated tool environment or make stale delivery replay safe for
-external effects.
+The prepared-team integration below supplies captured-roster routing,
+shared-budget admission and authorized recovery. A storage partition alone does
+not authorize remote peers, provide an isolated tool environment or make stale
+delivery replay safe for external effects.
 
 ## Freeze a local participant roster
 
@@ -282,8 +280,8 @@ stores. Custom backends must honor `RoutingDiscoveryScope(ctx)` on queue reads,
 reclaim reads and writes, and expired-ask queries before reporting support.
 Without a roster, routing retains its existing discovery scope rules.
 
-This is a bus-level identity restriction. Prepared-team tools still need their
-private bus wiring and durable continuation before the engine enables them.
+This is a bus-level identity restriction. Use `WithPreparedTeamMessaging` below
+to bind it to prepared execution and durable continuation.
 
 ## Reserve directive execution before dispatch
 
@@ -321,9 +319,9 @@ A reserved child returning only `cortex.ErrOrchestrationWaiting` stays bound in
 pending. Repeated drains and timeout reclaim cannot dispatch that child again.
 If the result also contains a failure, it follows the failure path. Both A2A and
 orchestration use `cortex.IsOrchestrationWaiting` to classify wrapped and joined
-errors consistently. This preserves suspension; it does not yet recover a later
-child completion. Prepared-team messaging remains disabled until deferred
-completion and durable ask continuation are integrated.
+errors consistently. Deferred recipient recovery observes a later completion and
+commits its reply without executing the child again. The prepared-team integration
+drives that recovery while its coordinator owns the team.
 
 SQL migration `20261025000002` adds claim tokens and supports replay after an
 unrecorded schema change. MongoDB accepts missing tokens on legacy records;
@@ -331,8 +329,8 @@ new claims always receive a token. Stop older dispatchers before upgrading:
 older binaries do not enforce these fences. SQL downgrade is refused.
 
 This admission contract does not enable prepared-team messaging by itself.
-Frozen participant routing, parent linkage and durable suspension continuation
-still need the engine integration described above.
+Enable the engine integration below to connect frozen participant routing,
+parent linkage and durable suspension continuation.
 
 ## Atomic reserved replies
 
@@ -361,10 +359,10 @@ These transactions require a MongoDB replica set or another deployment supportin
 transactions. SQLite and PostgreSQL use native transactions. No provider calls or
 run resumes occur inside database transactions.
 
-The queued reply survives a restart before ask resolution. Claiming the pending
-ask and resuming its run are still separate operations, so a crash or ambiguous
-resume acknowledgment between them needs further recovery work. This change does
-not enable prepared-team messaging or qualify deferred child completion.
+The queued reply survives a restart before ask resolution. Retained ask outcomes
+and resume admissions bridge the later claim-to-resume steps. An acknowledged
+start permits execution once; a possibly started execution still requires
+reconciliation.
 
 ## Retained ask outcomes
 
@@ -388,8 +386,8 @@ The bus invokes its resumer only after a fresh seal acknowledgment. Reading a
 receipt or repeating an identical seal does not invoke it again. If resume
 fails, the selected answer remains available, but the receipt does not say
 whether resume started or finished. The engine's separate admission and start
-records support the guarded recovery path below. Private prepared-team messaging
-remains disabled.
+records support the guarded recovery path below. Prepared teams use the same
+records through their private routing partition and current coordinator.
 
 When timeout or cancellation cannot read the source message and collected
 answers, the native path returns the error and keeps the ask pending. It does
@@ -463,8 +461,9 @@ authority.
 
 Changed run revisions, replaced or edited suspensions, expired pauses and wrong
 scope fail before a start grant. Expired admitted work and execution that may
-already have started still need host reconciliation. Private prepared-team
-messaging integration remains open.
+already have started still need host reconciliation. For private prepared-team
+asks, recovery also requires an active coordinator lease. A run authorization
+callback alone cannot replace that lease.
 
 ### Run recovery in the background
 
@@ -601,6 +600,67 @@ that made progress, so retain its cursor when continuing. A discovery error
 returns an empty page. You still drive stale-claim recovery and `Drain` explicitly
 in synchronous mode.
 
-This lifecycle recovers saved replies. Installing the private bus into prepared
-team tool dispatch, coordinator ownership and parent continuation remains
-separate integration work.
+This lifecycle recovers saved replies. Prepared teams drive the synchronous bus
+through the coordinator integration below.
+
+
+## Enable private prepared-team messaging
+
+Configure the built-in messaging tools and current host permissions together:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithLLM(client),
+    engine.WithA2A(a2a.Options{}),
+    engine.WithPreparedTeamMessaging(engine.PreparedTeamMessagingConfig{
+        AuthorizeTeam: authorizeTeam,
+        AuthorizeRun:  authorizeTeamRun,
+    }),
+)
+// Handle err before preparing or running a team.
+```
+
+`AuthorizeTeam(ctx, teamID)` checks current permission to operate the team in the
+context's exact scope. `AuthorizeRun(ctx, teamID, runID)` checks permission for
+its individual child. Both must honor cancellation. Child authorization runs
+before provider and tool calls, including after a resume. It also runs during
+admission, when the assigned child ID may not yet have a stored run row. Base
+that decision on current host grants and the assigned team identity; do not
+require the child row to exist first.
+
+Without this option, prepared teams still reject messaging tools. Configuration
+also fails when the store lacks scoped private routing, recipient discovery,
+atomic reserved replies, retained ask outcomes or versioned resume admissions.
+The three native stores implement these contracts. MongoDB needs transactions.
+
+Each prepared team gets a synchronous private bus with the original participant
+names and agent IDs, the exact captured scope and the orchestration ID. Renaming
+a live agent does not change its captured address. `agent_send`, `agent_ask` and
+`agent_inbox` resolve this bus from the validated invocation. Global traffic,
+other teams, remote addresses and agents outside the roster remain inaccessible.
+Private buses use the default A2A limits; options for the global bus are not
+copied into them. Rosters support at most 256 participants.
+
+Recipient execution reserves from the same team account and links the child to
+the parent before starting it. Additional recipients consume fan-out, tool,
+step and token capacity. Messaging cannot enlarge that account. The coordinator
+drives queued delivery, expired asks, terminal recipient observation and retained
+answer recovery before replaying strategy work and before completing the parent.
+Nested asks use the same coordinator and bounded account.
+
+When a recipient needs an external tool result, the parent stays waiting. Your
+host may resume that child through the normal authorized resume path. To continue
+the parent automatically afterward, configure `WithOrchestrationRecovery` with
+current team authorization and a scoped discovery source. Recovery notices queued
+private replies, terminal recipients and admitted answers awaiting their first
+start. It reacquires coordinator ownership before dispatch or ask continuation.
+It does not automatically supply external tool results.
+
+Every restart restores the original prepared team and continuation. A global
+reply-recovery worker cannot assume the private coordinator's authority. An
+existing start receipt means execution may already have happened and prevents
+another start. Expired admissions, ambiguous starts and a crash between recording
+a held question and releasing it still need reconciliation. Lifecycle hooks are
+best effort. Local integration tests do not qualify an installed host's grants,
+provider behavior or event delivery.

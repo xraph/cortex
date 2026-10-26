@@ -201,3 +201,42 @@ func (b *Bus) reclaimRecipientReplies(ctx context.Context) error {
 	}
 	return err
 }
+
+// PendingDispatch reports queued deliveries or expired asks in the captured
+// roster scope. Current discovery authority is checked around the metadata read.
+// It never claims work, publishes a reply or resumes an agent.
+func (b *Bus) PendingDispatch(ctx context.Context) (bool, error) {
+	if b.recipientRecovery == nil {
+		return false, ErrRecipientDiscoveryUnavailable
+	}
+	if err := b.checkRosterScope(ctx); err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, b.recipientRecovery.AttemptTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := b.recipientRecovery.AuthorizeDiscovery(ctx, b.orchestrationID); err != nil {
+		return false, err
+	}
+	queued, err := b.store.ListQueuedDeliveries(ctx, 1)
+	if err != nil {
+		return false, err
+	}
+	ready := len(queued) > 0
+	if !ready {
+		expired, readErr := b.store.ListExpiredAsks(ctx, b.clock.Now(), 1)
+		if readErr != nil {
+			return false, readErr
+		}
+		ready = len(expired) > 0
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := b.recipientRecovery.AuthorizeDiscovery(ctx, b.orchestrationID); err != nil {
+		return false, err
+	}
+	return ready, nil
+}

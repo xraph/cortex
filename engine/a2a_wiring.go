@@ -87,7 +87,11 @@ func (e *Engine) A2A() *a2a.Bus { return e.a2a }
 // the only thing that reaches resumeSourceAgentReply: the bus gets here
 // having claimed the ledger row that proves the reply is genuine, and a
 // public caller has no such row to show.
-type a2aResumer struct{ eng *Engine }
+type a2aResumer struct {
+	eng    *Engine
+	team   id.OrchestrationID
+	reader a2a.AskResolutionStore
+}
 
 func (a a2aResumer) ResumeAgentReply(ctx context.Context, runID id.AgentRunID, callID, result string) error {
 	in := ResumeInput{ToolResults: []ToolResult{{ToolCallID: callID, Content: result}}}

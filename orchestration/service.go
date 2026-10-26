@@ -137,7 +137,26 @@ func (s *Service) executeConfig(ctx context.Context, cfg Config, input string, r
 		}
 	})
 
-	result, runErr := orch.Run(ctx, input, bb)
+	var work CoordinatorWork
+	if s.coordinated {
+		if candidate, supported := s.reserved.(CoordinatorWork); supported {
+			work = candidate
+		}
+	}
+	var runErr error
+	if work != nil {
+		runErr = work.ReconcileOrchestration(ctx)
+		if IsWaiting(runErr) {
+			runErr = nil
+		}
+	}
+	var result *Result
+	if runErr == nil {
+		result, runErr = orch.Run(ctx, input, bb)
+	}
+	if work != nil && (runErr == nil || IsWaiting(runErr)) {
+		runErr = errors.Join(runErr, work.ReconcileOrchestration(ctx))
+	}
 	if ctx.Err() != nil {
 		runErr = errors.Join(runErr, ctx.Err())
 	}

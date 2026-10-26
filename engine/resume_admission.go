@@ -106,8 +106,25 @@ func (e *Engine) RecoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 }
 
 func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key id.SuspensionID) (*run.Run, error) {
+	if e.store == nil {
+		return nil, cortex.ErrNoStore
+	}
 	if err := checkResumeRecoveryAuthority(ctx, runID); err != nil {
 		return nil, err
+	}
+	current, readErr := e.store.GetRun(ctx, runID)
+	if readErr != nil {
+		return nil, readErr
+	}
+	var bindingErr error
+	ctx, bindingErr = e.bindPreparedMessageRun(ctx, current)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
+	if runner, bound := ctx.Value(preparedMessagingKey{}).(*preparedTeamRunner); bound {
+		if authorityErr := runner.authorizeMessagingCoordinator(ctx, runner.policy.ExecutionID); authorityErr != nil {
+			return nil, authorityErr
+		}
 	}
 	durable, ok := e.store.(suspension.ResumeAdmissionStore)
 	if !ok {
@@ -159,6 +176,15 @@ func (e *Engine) recoverUnadmittedReply(ctx context.Context, runID id.AgentRunID
 	if !ok {
 		return nil, a2a.ErrAskResolutionUnavailable
 	}
+	resumer := a2aResumer{eng: e}
+	if runner, bound := ctx.Value(preparedMessagingKey{}).(*preparedTeamRunner); bound {
+		var readerErr error
+		reader, readerErr = runner.resolutionReader()
+		if readerErr != nil {
+			return nil, readerErr
+		}
+		resumer.team, resumer.reader = runner.policy.ExecutionID, reader
+	}
 	for _, call := range paused.Pending {
 		if call.ReplyWith == "" {
 			return nil, a2a.ErrAskResolutionConflict
@@ -173,7 +199,7 @@ func (e *Engine) recoverUnadmittedReply(ctx context.Context, runID id.AgentRunID
 		if resolution.Ask.AskerRunID != runID || resolution.Ask.ToolCallID != call.ID || resolution.Ask.ReplyWith != call.ReplyWith {
 			return nil, a2a.ErrAskResolutionConflict
 		}
-		current, in, assembleErr := (a2aResumer{eng: e}).assembleResolvedQuestions(ctx, resolution, key)
+		current, in, assembleErr := resumer.assembleResolvedQuestions(ctx, resolution, key)
 		if assembleErr != nil || in == nil {
 			return current, assembleErr
 		}

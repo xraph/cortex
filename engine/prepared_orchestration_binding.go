@@ -53,6 +53,11 @@ func (e *Engine) checkOrchestrationAuthority(ctx context.Context, key id.AgentRu
 	if err != nil {
 		return cortex.ErrInvalidPrepared
 	}
+	if snapshotUsesMessaging(snap) {
+		if authErr := e.authorizePreparedMessaging(ctx, team, key); authErr != nil {
+			return authErr
+		}
+	}
 	if authErr := checkTeamRecoveryAuthority(ctx, team); authErr != nil {
 		return authErr
 	}

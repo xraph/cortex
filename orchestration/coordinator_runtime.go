@@ -236,3 +236,23 @@ func (s *Service) executeCoordinated(ctx context.Context, cfg Config, input stri
 	}
 	return s.executeConfig(ctx, cfg, input, rec, replay)
 }
+
+// CoordinatorWork reconciles host-owned child work while the coordinator lease
+// is active. Waiting keeps the parent resumable without restarting a child.
+type CoordinatorWork interface{ ReconcileOrchestration(context.Context) error }
+
+// RequireCoordinator requires acknowledged ownership of this exact team.
+func RequireCoordinator(ctx context.Context, team id.OrchestrationID) error {
+	pass := coordinatorFromContext(ctx)
+	if pass == nil {
+		return cortex.ErrOrchestrationContinuationUnavailable
+	}
+	lease, err := pass.receipt()
+	if err != nil {
+		return err
+	}
+	if lease.TeamID != team {
+		return cortex.ErrInvalidContinuation
+	}
+	return CheckCoordinator(ctx)
+}

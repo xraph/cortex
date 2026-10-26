@@ -40,6 +40,7 @@ type registeredTool struct {
 
 // Engine is the central coordinator for the Cortex agent system.
 type Engine struct {
+	preparedMessaging     *PreparedTeamMessagingConfig
 	orchestrationExpiry   *coordination.OrchestrationExpiryService
 	orchestrationRecovery *coordination.OrchestrationRecoveryService
 	agentReplyRecovery    *coordination.AgentReplyRecoveryService
@@ -185,6 +186,9 @@ func New(opts ...Option) (*Engine, error) {
 		return nil, err
 	}
 
+	if err := e.configurePreparedTeamMessaging(); err != nil {
+		return nil, err
+	}
 	if err := e.configureTaskScheduling(); err != nil {
 		return nil, err
 	}
@@ -217,6 +221,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		return lockErr
 	}
 	defer release()
+	if err := e.configurePreparedTeamMessaging(); err != nil {
+		return err
+	}
 	if err := e.configureTaskScheduling(); err != nil {
 		return err
 	}

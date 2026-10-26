@@ -278,7 +278,12 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 	// correctly either way, and the ask's deadline turns a question that
 	// never went out into a failure the agent can read.
 	for _, ask := range pend.asks {
-		if err := e.a2a.Release(ctx, ask); err != nil {
+		bus, busErr := e.invocationMessageBus(ctx, cortex.Invocation{Subject: cortex.Subject{AgentID: r.AgentID, RunID: r.ID}})
+		if busErr != nil || bus == nil {
+			e.logError("resolve private ask route", busErr)
+			continue
+		}
+		if err := bus.Release(ctx, ask); err != nil {
 			e.logError("release agent ask after suspending", err, log.String("run_id", r.ID.String()))
 		}
 	}

@@ -3,10 +3,12 @@ package engine
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
@@ -17,8 +19,8 @@ import (
 
 // RunPreparedOrchestration executes frozen participants under explicit shared
 // capacity. Each child gets a fresh nondefault session. Token-only accounts are
-// supported; billing settlement remains host-owned. Messaging tools require an
-// isolated route and are refused until that route is available.
+// supported; billing settlement remains host-owned. Messaging tools require
+// WithPreparedTeamMessaging and use the captured team's private routing partition.
 func (e *Engine) RunPreparedOrchestration(ctx context.Context, p *PreparedOrchestration, input string, opts PreparedRunOptions) (rec *orchestration.Run, err error) {
 	if contextErr := ctx.Err(); contextErr != nil {
 		return nil, contextErr
@@ -107,9 +109,9 @@ func (e *Engine) preparedTeamPolicy(ctx context.Context, p *PreparedOrchestratio
 			return empty, noPolicy, cortex.ErrInvalidPrepared
 		}
 		policy.ParticipantDigests[name] = child.Digest()
-		for _, tool := range snap.Tools {
-			if tool.Name == toolAgentSend || tool.Name == toolAgentAsk || tool.Name == toolAgentInbox {
-				return empty, noPolicy, cortex.ErrInvalidPrepared
+		if snapshotUsesMessaging(snap) {
+			if authErr := e.authorizePreparedMessaging(ctx, policy.ExecutionID, id.Nil); authErr != nil {
+				return empty, noPolicy, authErr
 			}
 		}
 		if _, provenanceErr := preparedRunProvenance(child, snap, opts, snap.Provenance.PublicationStatus); provenanceErr != nil {
@@ -139,6 +141,11 @@ func preparedTeamAllocation(snap *preparedSnapshot) (execution.Resources, error)
 }
 
 type preparedTeamRunner struct {
+	busOnce sync.Once
+	bus     *a2a.Bus
+	busErr  error
+	busGate chan struct{}
+
 	eng    *Engine
 	policy orchestration.BudgetPolicy
 	view   PreparedOrchestrationView
@@ -201,8 +208,33 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 		}
 		record, runErr := r.execute(execCtx, draft)
 		runErr = errors.Join(runErr, r.checkUsage(record, allocation))
-		if runErr == nil && record != nil && record.State == run.StatePaused {
-			return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
+		if runErr == nil {
+			bus, busErr := r.messagingBus()
+			if busErr != nil {
+				return nil, busErr
+			}
+			if bus != nil {
+				workErr := r.ReconcileOrchestration(execCtx)
+				if workErr != nil && !orchestration.IsWaiting(workErr) {
+					return nil, workErr
+				}
+				if record != nil {
+					current, readErr := r.eng.store.GetRun(execCtx, record.ID)
+					if readErr != nil {
+						return nil, readErr
+					}
+					record = current
+					if observedErr := r.eng.checkOrchestrationObservation(execCtx, record, snap); observedErr != nil {
+						return nil, observedErr
+					}
+					if usageErr := r.checkUsage(record, allocation); usageErr != nil {
+						return nil, usageErr
+					}
+				}
+			}
+			if record != nil && record.State == run.StatePaused {
+				return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
+			}
 		}
 		return orchestrationAgentResult(name, record, runErr)
 	}
@@ -210,6 +242,12 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 }
 
 func (r *preparedTeamRunner) execute(ctx context.Context, draft *preparedRunDraft) (record *run.Run, err error) {
+	var bindErr error
+	ctx, bindErr = r.withMessaging(ctx)
+	if bindErr != nil {
+		return nil, bindErr
+	}
+	ctx = context.WithValue(ctx, resumeRecoveryAuthorityKey{}, nil)
 	ctx, cancel := context.WithDeadline(ctx, draft.cfg.Budget.Deadline)
 	defer cancel()
 	ctx = withExecutionProvenance(ctx, draft.run.Provenance)

@@ -75,20 +75,24 @@ func (a a2aResumer) assembleResolvedQuestions(ctx context.Context, resolution a2
 	if err != nil {
 		return nil, nil, err
 	}
-	// This adapter belongs to the engine's global bus. Private prepared-team
-	// buses need their own fixed partition and coordinator authority.
-	if resolution.Ask.OrchestrationID != "" || resolution.Ask.Scope.Canonical() != scope.Canonical() {
+	// Every retained answer must belong to this adapter's fixed partition.
+	if resolution.Ask.OrchestrationID != a.team.String() || resolution.Ask.Scope.Canonical() != scope.Canonical() {
 		return nil, nil, a2a.ErrAskResolutionConflict
 	}
-	reader, ok := a.eng.store.(a2a.AskResolutionStore)
-	if !ok {
-		return nil, nil, a2a.ErrAskResolutionUnavailable
+	reader := a.reader
+	if reader == nil {
+		var ok bool
+		reader, ok = a.eng.store.(a2a.AskResolutionStore)
+		if !ok {
+			return nil, nil, a2a.ErrAskResolutionUnavailable
+		}
 	}
+
 	current, err := a.eng.store.GetRun(ctx, resolution.Ask.AskerRunID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if current.State != run.StatePaused || current.Scope.Canonical() != scope.Canonical() {
+	if current.State != run.StatePaused || current.Scope.Canonical() != scope.Canonical() || current.Provenance.OrchestrationID != a.team.String() {
 		return nil, nil, cortex.ErrNotSuspended
 	}
 	paused, err := a.eng.store.GetSuspension(ctx, current.ID)
@@ -131,7 +135,7 @@ func (a a2aResumer) assembleResolvedQuestions(ctx context.Context, resolution a2
 			return nil, nil, safety.ErrLimit
 		}
 		resultBytes += len(retained.Payload)
-		if retained.Ask.AskerRunID != current.ID || retained.Ask.ToolCallID != call.ID || retained.Ask.ReplyWith != call.ReplyWith || retained.Ask.Scope.Canonical() != scope.Canonical() || retained.Ask.OrchestrationID != "" || retained.Ask.ClaimedAt == nil {
+		if retained.Ask.AskerRunID != current.ID || retained.Ask.ToolCallID != call.ID || retained.Ask.ReplyWith != call.ReplyWith || retained.Ask.Scope.Canonical() != scope.Canonical() || retained.Ask.OrchestrationID != a.team.String() || retained.Ask.ClaimedAt == nil {
 			return nil, nil, a2a.ErrAskResolutionConflict
 		}
 		if call.ReplyWith == resolution.Ask.ReplyWith && (retained.ResolutionID != resolution.ResolutionID || retained.BindingDigest != resolution.BindingDigest || retained.OutcomeDigest != resolution.OutcomeDigest || retained.Payload != resolution.Payload) {

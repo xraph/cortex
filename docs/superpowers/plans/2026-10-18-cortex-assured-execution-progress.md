@@ -13,8 +13,9 @@ the path to acceptance without reading the chronological evidence below.
   durable public delivery and installed review flows. Live Linux sandbox
   qualification remains deferred by the user's worker-selection decision.
 - Coordination: qualify installed resume-recovery discovery and reconcile possibly
-  started execution and expired admissions. Wire bounded deferred recipient recovery
-  into private prepared-team execution. Complete task scheduling, review,
+  started execution, expired admissions and interrupted held-question release.
+  Private prepared-team messaging is wired; installed recovery qualification is
+  still open. Complete task scheduling, review,
   effect reconciliation, durable events and bounded replanning integration.
 - Adaptation: complete operational capability/context and reflection integration,
   governed lessons, calibration, operator surfaces and end-to-end benchmarks.
@@ -24,9 +25,11 @@ the path to acceptance without reading the chronological evidence below.
   checks. CI must pass for the integrated revision. Local packet checks cannot
   substitute for this evidence.
 
-The immediate runtime priority is the complete answer-to-resume recovery flow,
-followed by private prepared-team messaging. Production verification rollout
-remains disabled. No completion percentage or production readiness is claimed.
+The runtime now connects retained answers, guarded resume admissions and private
+prepared-team messaging. The next coordination boundary is recovery of ambiguous
+starts and interrupted question release, followed by installed qualification.
+Production verification rollout remains disabled. No completion percentage or
+production readiness is claimed.
 
 ## Ownership and contracts
 
@@ -7058,3 +7061,56 @@ Private bus selection for prepared-team tools, coordinator-owned dispatch and
 parent continuation remain open. This packet does not enable those tools, resume
 a paused recipient, reconcile ambiguous execution starts or qualify installed
 host/provider behavior. Production verification rollout remains disabled.
+
+## Private prepared-team messaging integration, 2026-10-26
+
+Prepared execution now accepts messaging tools through explicit
+`WithPreparedTeamMessaging` host authorization. The engine builds a synchronous
+private bus from the original roster, scope and team ID. Tool dispatch and held
+question release resolve that bus from the validated invocation; they cannot
+fall back to global traffic. Renaming a live participant does not change its
+captured address.
+
+The existing prepared runner admits message recipients against the same durable
+team account and links each child before execution. Coordinator work reconciles
+private queues, expired asks, terminal recipients and retained answers around
+strategy replay. Nested questions share the coordinator. Independent external
+recipient resume restores private routing, while reply-driven continuation also
+requires acknowledged coordinator ownership. The existing resume admission/start
+transactions and ReAct loop remain the execution path.
+
+Background orchestration recovery now detects private queue work, completed
+recipients and retained answers ready for a first start. Its readiness probe does
+not execute children. It reclaims stale unbound queue claims under current team
+authority, then reacquires coordinator ownership before continuation. A plain
+run grant cannot replace the private coordinator lease.
+
+Validation recorded for this packet:
+
+- Focused engine race tests pass for sequential and parallel conversations,
+  nested questions, fresh-engine recovery after external recipient resume,
+  current team revocation, per-recipient denial, roster and remote-address
+  rejection, captured names, shared fan-out exhaustion and private queue isolation.
+  The final focused run passed in 53.753 seconds under heavy machine load.
+- A new regression caught one private asker read before run authorization during
+  reply assembly. The callback now precedes that read, and the same test passes
+  with no unauthorized read or additional provider call.
+- A2A and orchestration race suites passed in 1.164 and 2.232 seconds.
+- Native recipient/reply and private-readiness conformance passed with race
+  detection on SQLite (20.157 seconds), PostgreSQL (3.349 seconds) and MongoDB
+  (4.222 seconds), with no skipped database cases.
+- Root build and docs type checks, lint and production build passed. Scoped
+  `make f` completed and the formatting diff was inspected.
+- The first full engine race run reached the ten-minute package timeout while
+  executing a two-second SQLite fixture migration. A rerun with a thirty-minute
+  timeout is in progress; it has not yet supplied a passing result.
+- The first two repository-wide lint passes reported ten concurrent optimization
+  creation-code issues, with the other nine modules clean. Those issues were
+  fixed by their owner. The final `make l` after the answer-assembly permission
+  fix passed all ten modules. The root build also passed after that fix.
+
+These checks establish the local integration, not the full Stage 3 gate.
+Possibly started executions, expired admissions and interrupted held-question
+release remain reconciliation work. Installed host authorization, provider
+behavior, durable lifecycle events and worker crash qualification remain open.
+Production verification rollout remains disabled.

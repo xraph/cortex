@@ -252,6 +252,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("A2ADeferredReplyConcurrency", func(t *testing.T) { testA2ADeferredReplyConcurrency(t, newStore) })
 	t.Run("A2ARecipientRecoveryStop", func(t *testing.T) { testA2ARecipientRecoveryStop(t, newStore) })
 	t.Run("A2ARecipientRecoveryReclaimsReply", func(t *testing.T) { testA2ARecipientRecoveryReclaimsReply(t, newStore) })
+	t.Run("A2APrivateDispatchReadiness", func(t *testing.T) { testA2APrivateDispatchReadiness(t, newStore) })
 	t.Run("A2ARecipientDiscovery", func(t *testing.T) { testA2ARecipientDiscovery(t, newStore) })
 	t.Run("A2AAutomaticRecipientRecovery", func(t *testing.T) { testA2AAutomaticRecipientRecovery(t, newStore) })
 	t.Run("A2ARecipientRecoveryAuthority", func(t *testing.T) { testA2ARecipientRecoveryAuthority(t, newStore) })

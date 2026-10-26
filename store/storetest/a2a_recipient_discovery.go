@@ -246,3 +246,48 @@ func testA2ARecipientRecoveryReclaimsReply(t *testing.T, newStore func(*testing.
 	}, 2*time.Second, 10*time.Millisecond)
 	fresh.Stop()
 }
+
+func testA2APrivateDispatchReadiness(t *testing.T, newStore func(*testing.T) store.Store) {
+	backend := newStore(t)
+	ctx, private, first, replies := prepareReservedReply(t, backend)
+	allowed := true
+	denied := errors.New("discovery revoked")
+	config := allowRecipientRecovery()
+	config.AuthorizeDiscovery = func(context.Context, id.OrchestrationID) error {
+		if !allowed {
+			return denied
+		}
+		return nil
+	}
+	observer := recipientObserver(func(context.Context, a2a.RecipientRequest) (a2a.RecipientObservation, error) {
+		t.Error("readiness observed a child")
+		return a2a.RecipientObservation{}, denied
+	})
+	bus := recipientRecoveryBus(ctx, t, backend, first, observer, config, true)
+	ready, err := bus.PendingDispatch(ctx)
+	require.NoError(t, err)
+	require.False(t, ready)
+	_, err = replies.CommitReservedReply(ctx, first, "answer", true)
+	require.NoError(t, err)
+	ready, err = bus.PendingDispatch(ctx)
+	require.NoError(t, err)
+	require.True(t, ready)
+	_, err = bus.Drain(ctx)
+	require.NoError(t, err)
+	ready, err = bus.PendingDispatch(ctx)
+	require.NoError(t, err)
+	require.False(t, ready)
+	question, err := private.GetMessage(ctx, first.MessageID)
+	require.NoError(t, err)
+	deadline := time.Now().Add(-time.Minute)
+	require.NoError(t, private.CreatePendingAsk(ctx, &a2a.PendingAsk{Entity: cortex.NewEntity(), Scope: cortex.ScopeFromContext(ctx), ReplyWith: "expired-private", ConversationID: question.ConversationID, MessageID: question.ID, AskerRunID: id.NewAgentRunID(), AskerAgent: "planner", ToolCallID: "ask", Expected: first.Receiver, Deadline: &deadline}))
+	ready, err = bus.PendingDispatch(ctx)
+	require.NoError(t, err)
+	require.True(t, ready)
+	allowed = false
+	ready, err = bus.PendingDispatch(ctx)
+	require.ErrorIs(t, err, denied)
+	require.False(t, ready)
+	_, err = bus.PendingDispatch(ctxWithScope("foreign"))
+	require.ErrorIs(t, err, a2a.ErrRosterDenied)
+}

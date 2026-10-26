@@ -349,6 +349,13 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	ctx = withTaskCallIndex(ctx, st.stepIndex-1)
 	r.Provenance = st.provenance
 	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, r.Budget)
+	if snapshotUsesMessaging(snap) {
+		boundCtx, bindingErr := e.bindPreparedMessageRun(ctx, r)
+		if bindingErr != nil {
+			return nil, nil, e.failResume(ctx, r, ag.ID, bindingErr)
+		}
+		ctx = boundCtx
+	}
 	r.Usage = st.usage
 	if snap != nil {
 		sourceStatus, checkErr := e.validatePreparedPublication(ctx, snap)

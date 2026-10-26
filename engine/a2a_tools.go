@@ -132,16 +132,23 @@ func (e *Engine) a2aTools() []llm.Tool {
 // the result: agent_ask does not complete, it pends, and the loop suspends
 // the step around it.
 func (e *Engine) executeA2ATool(ctx context.Context, inv cortex.Invocation) (string, toolOutcome, bool) {
-	if e.a2a == nil {
+	if inv.Call.Name != toolAgentSend && inv.Call.Name != toolAgentAsk && inv.Call.Name != toolAgentInbox {
+		return "", outcomeCompleted, false
+	}
+	bus, err := e.invocationMessageBus(ctx, inv)
+	if err != nil {
+		return jsonResult("error", err.Error()), outcomeFailed, true
+	}
+	if bus == nil {
 		return "", outcomeCompleted, false
 	}
 	switch inv.Call.Name {
 	case toolAgentSend:
-		return e.executeAgentSend(ctx, inv), outcomeCompleted, true
+		return e.executeAgentSend(ctx, inv, bus), outcomeCompleted, true
 	case toolAgentInbox:
-		return e.executeAgentInbox(ctx, inv), outcomeCompleted, true
+		return e.executeAgentInbox(ctx, inv, bus), outcomeCompleted, true
 	case toolAgentAsk:
-		return e.executeAgentAsk(ctx, inv)
+		return e.executeAgentAsk(ctx, inv, bus)
 	default:
 		return "", outcomeCompleted, false
 	}
@@ -193,7 +200,7 @@ type agentInboxArgs struct {
 	ConversationID string `json:"conversation_id"`
 }
 
-func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation) string {
+func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation, bus *a2a.Bus) string {
 	var args agentSendArgs
 	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
 		return jsonResult("error", "invalid arguments: "+err.Error())
@@ -202,7 +209,7 @@ func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation) st
 		return jsonResult("error", "to and content are required")
 	}
 
-	sender, err := e.a2aSelf(ctx, inv)
+	sender, err := e.a2aSelf(ctx, inv, bus)
 	if err != nil {
 		return jsonResult("error", err.Error())
 	}
@@ -221,7 +228,7 @@ func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation) st
 		params.ConversationID = convID
 	}
 
-	res, err := e.a2a.Send(ctx, params)
+	res, err := bus.Send(ctx, params)
 	if err != nil {
 		return jsonResult("error", err.Error())
 	}
@@ -238,7 +245,7 @@ func (e *Engine) executeAgentSend(ctx context.Context, inv cortex.Invocation) st
 //
 // Everything that can refuse the ask happens before the pend: a run
 // suspended on a message that was never sent is a run nothing can resume.
-func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (string, toolOutcome, bool) {
+func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation, bus *a2a.Bus) (string, toolOutcome, bool) {
 	var args agentAskArgs
 	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
 		return jsonResult("error", "invalid arguments: "+err.Error()), outcomeFailed, true
@@ -247,7 +254,7 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 		return jsonResult("error", "to and content are required"), outcomeFailed, true
 	}
 
-	sender, err := e.a2aSelf(ctx, inv)
+	sender, err := e.a2aSelf(ctx, inv, bus)
 	if err != nil {
 		return jsonResult("error", err.Error()), outcomeFailed, true
 	}
@@ -277,7 +284,7 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 	step := stepPendingCalls(ctx, inv.RunID)
 	params.Hold = step != nil
 
-	res, err := e.a2a.Ask(ctx, params)
+	res, err := bus.Ask(ctx, params)
 	if err != nil {
 		// A refused ask goes back to the model as an ordinary tool error.
 		// It can pick another agent, or answer without one.
@@ -289,12 +296,12 @@ func (e *Engine) executeAgentAsk(ctx context.Context, inv cortex.Invocation) (st
 	return "", outcomePending, true
 }
 
-func (e *Engine) executeAgentInbox(ctx context.Context, inv cortex.Invocation) string {
+func (e *Engine) executeAgentInbox(ctx context.Context, inv cortex.Invocation, bus *a2a.Bus) string {
 	var args agentInboxArgs
 	if err := json.Unmarshal([]byte(inv.Call.Arguments), &args); err != nil {
 		return jsonResult("error", "invalid arguments: "+err.Error())
 	}
-	self, err := e.a2aSelf(ctx, inv)
+	self, err := e.a2aSelf(ctx, inv, bus)
 	if err != nil {
 		return jsonResult("error", err.Error())
 	}
@@ -306,7 +313,7 @@ func (e *Engine) executeAgentInbox(ctx context.Context, inv cortex.Invocation) s
 		filter.ConversationID = convID
 	}
 
-	items, err := e.a2a.Inbox(ctx, self.Agent, filter)
+	items, err := bus.Inbox(ctx, self.Agent, filter)
 	if err != nil {
 		return jsonResult("error", err.Error())
 	}
@@ -323,7 +330,10 @@ func (e *Engine) executeAgentInbox(ctx context.Context, inv cortex.Invocation) s
 // a2aSelf resolves the address of the agent making the call. It reads the
 // agent's own name from the store rather than trusting an argument: an
 // agent that could name its own sender could impersonate any peer.
-func (e *Engine) a2aSelf(ctx context.Context, inv cortex.Invocation) (a2a.Address, error) {
+func (e *Engine) a2aSelf(ctx context.Context, inv cortex.Invocation, bus *a2a.Bus) (a2a.Address, error) {
+	if provenance, _ := ExecutionProvenanceFromContext(ctx); hasOrchestrationBinding(provenance) {
+		return bus.ParticipantAddress(ctx, inv.AgentID)
+	}
 	if e.store == nil {
 		return a2a.Address{}, cortex.ErrNoStore
 	}
