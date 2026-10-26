@@ -83,13 +83,30 @@ row and vector. Schedule `SweepDeleted` over durable tombstones to resume cleanu
 after an outage or restart. The retention worker needs its own current delete
 grant; the original publisher's old permission is insufficient.
 
-There is a destination limit. Fabriq core v1.8.2 retains command event history when
-an aggregate is deleted and exposes no per-aggregate event-history erasure API.
-`LessonDeletion.ActiveCopiesRemoved` reports active row/vector removal;
-`HistoryErased` remains false. Do not interpret that result as full historical
-erasure. An upstream generic retention guarantee is still required. Source result
-artifacts, database backups and transaction logs also follow their own authorized
-retention policies; deleting a lesson does not change those policies.
+Fabriq core v1.10.0 supplies `command.AggregateEraser`. When your installed facade
+implements that capability, configure it with
+`fabriq.WithErasureAuthorizer`. That authority must hold a current deletion grant
+for the exact tenant, entity, aggregate and Fabriq scope throughout its callback.
+The adapter submits `ExpectedVersion: 0` after deleting the row and always uses
+`cortex_retention` as the remote reason. Retries reconcile that same request and
+receipt, including after a lost acknowledgement. The default `LessonSpec` uses
+Cortex's `scope_key` and has no native Fabriq `scope_id` column. Its native Fabriq
+scope must be empty. If you provision a scoped entity, its retained rows and
+projections must carry that same scope. The adapter never removes a caller's
+native scope to make erasure succeed.
+
+`LessonDeletion.LocalPayloadsErased` confirms four named local targets: the
+aggregate row, command outbox payloads, embeddings and spatial rows. `LocalErasure`
+contains the checked receipt. Fabriq keeps a content-free tombstone that blocks
+writes under the erased identity. A missing grant returns a denial; a changed
+target returns a conflict. A lost acknowledgement stays unavailable until your
+worker reconciles the same request under current authority. Older transports
+without that capability still report active row/vector removal only.
+
+`HistoryErased` remains false. The receipt lists streams, graph, search, cache,
+live subscribers and backups as unconfirmed. Source result artifacts, database
+backups and transaction logs follow their own authorized retention policies;
+deleting a lesson does not change those policies or erase delivered remote copies.
 
 ## Verification
 
@@ -99,5 +116,8 @@ It runs on SQLite and real Postgres and Mongo containers. The integration test
 `TestQualifiedLearningInstalledFabriq` uses the installed Fabriq API and a real
 Postgres destination to check restart, lost responses, guarded retrieval,
 prepared and runtime engine recall, rejection of promotion from recalled context,
-correction, stale recall, active-copy deletion and idempotent cleanup. These are
+correction, stale recall, active-copy deletion and idempotent cleanup.
+`TestQualifiedLessonRetentionInstalledFabriq` checks the optional erasure capability,
+current grants, lost row-delete and erasure acknowledgements, exact retry receipts,
+local outbox/vector cleanup and irreversible identity fences. These are
 local integration results, not live host qualification.

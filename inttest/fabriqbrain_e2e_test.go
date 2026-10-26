@@ -107,6 +107,11 @@ func TestE2E_LearningLoop_WriteVectorizeRecall(t *testing.T) {
 
 func openLearningFabric(t *testing.T, specs ...registry.EntitySpec) *fabriq.Fabriq {
 	t.Helper()
+	return openLearningFabricOptions(t, nil, specs...)
+}
+
+func openLearningFabricOptions(t *testing.T, options []fabriq.Option, specs ...registry.EntitySpec) *fabriq.Fabriq {
+	t.Helper()
 	ctx := context.Background()
 	superDSN := fabriqtest.StartPostgres(t)
 
@@ -150,7 +155,7 @@ func openLearningFabric(t *testing.T, specs ...registry.EntitySpec) *fabriq.Fabr
 	appDSN := fabriqtest.CreateAppRole(t, superDSN)
 	f, _, err := fabriq.Open(ctx, reg, fabriq.Config{
 		Postgres: fabriq.PostgresConfig{DSN: appDSN},
-	})
+	}, options...)
 	if err != nil {
 		t.Fatalf("fabriq.Open: %v", err)
 	}

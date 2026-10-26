@@ -225,7 +225,7 @@ func TestQualifiedLearningInstalledFabriq(t *testing.T) {
 	}
 	sink := &qualifiedLostReply{LessonToolkit: toolkit, lose: true}
 	makeAdapter := func() *fabriqbrain.LessonAdapter {
-		adapter, createErr := fabriqbrain.NewLessonStore(sink, fabric, fabriqbrain.LessonConfig{Entity: entity, Repository: local, Guard: guard, Tenant: func(context.Context, cortex.Scope) (string, error) { return "acme", nil }})
+		adapter, createErr := fabriqbrain.NewLessonStore(sink, qualifiedLegacyFabric{Fabric: fabric}, fabriqbrain.LessonConfig{Entity: entity, Repository: local, Guard: guard, Tenant: func(context.Context, cortex.Scope) (string, error) { return "acme", nil }})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}

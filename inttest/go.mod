@@ -13,9 +13,9 @@ replace github.com/xraph/cortex/integrations/fabriq => ../integrations/fabriq
 require (
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/cortex/integrations/fabriq v0.0.0-20260827002006-bb2528ddd778
-	github.com/xraph/fabriq v1.8.2
-	github.com/xraph/fabriq/core v1.8.2
-	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
+	github.com/xraph/fabriq v1.10.0
+	github.com/xraph/fabriq/core v1.10.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.9.1
 )
 
 require (
@@ -106,7 +106,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
+	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.44.0 // indirect
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.43.0 // indirect
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 // indirect
@@ -116,12 +116,12 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xraph/cortex/optimization v0.0.0-20261025141439-37b94d6cbe98
-	github.com/xraph/go-utils v1.4.1 // indirect
-	github.com/xraph/grove v1.9.0
-	github.com/xraph/grove/drivers/pgdriver v1.9.0 // indirect
-	github.com/xraph/grove/kv v1.9.0 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.9.0 // indirect
-	github.com/xraph/trove v1.7.1 // indirect
+	github.com/xraph/go-utils v1.5.0 // indirect
+	github.com/xraph/grove v1.9.1
+	github.com/xraph/grove/drivers/pgdriver v1.9.1 // indirect
+	github.com/xraph/grove/kv v1.9.1 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.9.1 // indirect
+	github.com/xraph/trove v1.8.1 // indirect
 	github.com/xraph/vessel v1.0.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect

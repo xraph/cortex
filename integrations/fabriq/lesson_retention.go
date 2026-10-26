@@ -12,18 +12,21 @@ import (
 	"github.com/xraph/cortex/learning"
 )
 
-// LessonDeletion reports active-copy removal separately from historical retention.
-// Fabriq v1.8.2 retains command event history; HistoryErased remains false.
+// LessonDeletion distinguishes active removal and named local payload erasure.
+// HistoryErased remains false because downstream copies are not confirmed.
 type LessonDeletion struct {
 	Tombstone           learning.Tombstone
 	ActiveCopiesRemoved bool
 	HistoryErased       bool
+	LocalPayloadsErased bool
+	LocalErasure        *command.ErasureReceipt
 }
 
 // Delete erases local payloads, then removes the authoritative remote row and
 // vector using the installed tenant-scoped command API. Repeating this call
-// reconciles a lost delete response. Host policy must separately erase retained
-// destination event history before claiming full historical erasure.
+// reconciles lost acknowledgments. An optional configured AggregateEraser also
+// removes the named local history targets and irreversibly reserves the identity.
+// Downstream copies remain unconfirmed.
 func (a *LessonAdapter) Delete(ctx context.Context, request learning.DeletionRequest) (LessonDeletion, error) {
 	tombstone, err := a.config.Guard.Delete(ctx, request)
 	if err != nil {
@@ -51,6 +54,9 @@ func (a *LessonAdapter) Delete(ctx context.Context, request learning.DeletionReq
 		if !errors.Is(afterErr, fabriqerr.ErrNotFound) {
 			return result, errors.Join(learning.ErrUnavailable, writeErr)
 		}
+	}
+	if eraser, supported := a.fabric.(command.AggregateEraser); supported {
+		return a.eraseLessonHistory(ctx, mapped, eraser, result)
 	}
 	if err = a.fabric.Vector().Delete(mapped, a.config.Entity, tombstone.AggregateID); err != nil && !errors.Is(err, fabriqerr.ErrNotFound) {
 		return result, learning.ErrUnavailable
