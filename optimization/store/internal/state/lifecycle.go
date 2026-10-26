@@ -39,6 +39,9 @@ func (tx *transaction) CommitTransition(change optimization.Transition) error {
 		}
 		return nil
 	}
+	if commandErr := validateOperatorTransition(experiment, change); commandErr != nil {
+		return commandErr
+	}
 	if experiment.Revision != change.ExpectedRevision {
 		return optimization.ErrConflict
 	}

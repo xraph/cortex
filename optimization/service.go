@@ -181,21 +181,37 @@ func (o *Optimizer) authorizeCommand(ctx context.Context, experimentID id.ID, ac
 }
 
 func (o *Optimizer) command(ctx context.Context, experimentID id.ID, revision int64, action Action, next State) (Experiment, error) {
-	_, actor, err := o.authorizeCommand(ctx, experimentID, action)
+	change := Transition{ExperimentID: experimentID, ExpectedRevision: revision, NextState: next, IdempotencyKey: fmt.Sprintf("command/%s/%s/%d", action, next, revision)}
+	return o.executeCommand(ctx, change, action)
+}
+
+func (o *Optimizer) executeCommand(ctx context.Context, change Transition, action Action) (Experiment, error) {
+	if err := allowOptimizationInvocation(ctx); err != nil {
+		return Experiment{}, err
+	}
+	callerContext := ctx
+	_, actor, err := o.authorizeCommand(ctx, change.ExperimentID, action)
 	if err != nil {
 		return Experiment{}, err
 	}
 	if action == ActionStart || action == ActionResume {
-		resolved, done, resolveErr := o.meter.authorizeAction(ctx, experimentID, action)
+		resolved, done, resolveErr := o.meter.authorizeAction(ctx, change.ExperimentID, action)
 		if resolveErr != nil {
 			return Experiment{}, resolveErr
 		}
 		defer done()
 		ctx = resolved
+		_, currentActor, authErr := o.authorizeCommand(callerContext, change.ExperimentID, action)
+		if authErr != nil {
+			return Experiment{}, authErr
+		}
+		if currentActor != actor {
+			return Experiment{}, ErrPolicyDenied
+		}
 	}
-	change := Transition{ExperimentID: experimentID, ExpectedRevision: revision, NextState: next, IdempotencyKey: fmt.Sprintf("command/%s/%s/%d", action, next, revision), Actor: actor}
+	change.Actor = actor
 	if commitErr := o.config.Repository.Transact(ctx, func(tx Transaction) error { return tx.CommitTransition(change) }); commitErr != nil {
 		return Experiment{}, commitErr
 	}
-	return o.config.Repository.GetExperiment(ctx, experimentID)
+	return o.config.Repository.GetExperiment(ctx, change.ExperimentID)
 }

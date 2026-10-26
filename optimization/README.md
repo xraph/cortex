@@ -484,3 +484,22 @@ with either ordering of `WithDashboard`. These read intents require
 read, manage and run permissions do not grant optimization access. Both
 transports share the types and parsing in `optimization/operator`; neither starts
 a worker. The host still owns worker scopes and shutdown.
+
+### Lifecycle command recovery
+
+Use `StartCommand`, `CancelCommand` and `ResumeCommand` for operator requests.
+Each takes a `CommandRequest` with the experiment ID, expected revision and a
+caller-supplied idempotency key. Keep that key when retrying a lost response.
+Keys are bound to the action, revision and authenticated actor within the exact
+scope and experiment; changed content returns a conflict. They are hashed before
+persistence and kept separate from worker and legacy host transition keys.
+
+Start queues a draft; Resume queues a paused experiment. Neither runs a model
+or worker in the request. An identical retry returns the experiment's current
+state without another transition or event, even after a later cancellation.
+Current grants still apply to retries. After resolving the original requester,
+the service checks the operator's identity and grant again before committing.
+
+The existing `Start`, `Cancel`, `Pause` and `Resume` methods retain their generated
+keys for host callers. Both command paths refuse evaluation, optimization trial
+and optimization controller execution contexts.

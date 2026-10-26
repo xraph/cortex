@@ -25,6 +25,7 @@ type Factory func(*testing.T, func() time.Time) store.Store
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 	lifecycle(t, factory)
+	operatorCommands(t, factory)
 	leases(t, factory)
 	accounting(t, factory)
 	improvementFamily(t, factory)

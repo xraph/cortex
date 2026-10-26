@@ -37,7 +37,7 @@ passed its full qualification gate.
 | 13: parallel and task-local | Bounded parallel trials, task-local selection, artifact adoption and persistent recovery pass module verification | Production destination adapter and product capability wiring |
 | 14: controller improvement | Parent scheduling, isolated discovery, paired validation, Sentinel comparison and reviewed controller adoption | Full module race gate and final task audit |
 | 15: orchestration presets | Approved presets, guidance edits, captured team trials, Sentinel traces and reviewed production routing pass the frozen database race gate | Private messaging support and final qualification |
-| 16: API and contracts | Shared operator reads, authenticated HTTP/dashboard bindings and reopened SQLite transport tests | Catalogs, readiness, review summaries, idempotent commands and final contract audit |
+| 16: API and contracts | Authenticated HTTP/dashboard reads and durable lifecycle command services pass module tests | Catalogs, readiness, review summaries, command transport bindings and final contract audit |
 | 17-18: dashboard and browser flows | Designed | Review UI and persistent browser qualification |
 | 19: operations and documentation | Artifact retention/deletion foundation implemented | Operations, audit, metrics and user documentation |
 | 20-21: qualification and release | Targeted module and consumer checks recorded below | Full-system qualification, CI and release workflow |
@@ -1904,3 +1904,38 @@ Final scoped `make f` and full `make l` pass. The focused HTTP race recheck
 passes in 9.148s after the helper fix. Task 16 remains incomplete: creation,
 lifecycle and review commands, catalogs, readiness probes and richer review
 summaries still need implementation and transport qualification.
+
+## Durable operator lifecycle commands
+
+Task 16 now has explicit `StartCommand`, `CancelCommand` and `ResumeCommand`
+service methods. The caller supplies an idempotency key and expected revision.
+The transaction digest binds that key to the action, revision and actor; repeated
+identical requests return current state without appending another event. Raw keys
+are hashed into an operator namespace before persistence. An omitted action field
+preserves existing host and worker transition digests.
+
+The store checks command admission atomically. Start accepts drafts, Resume
+accepts paused work, and operator commands cannot carry worker evidence. Current
+authority applies to retries. Requester resolution is followed by another caller
+grant and identity check. Private evaluation/trial/controller contexts cannot
+invoke either operator or legacy host lifecycle methods.
+
+The command conformance and reopen tests pass memory (1.674s), SQLite (2.078s),
+PostgreSQL (6.058s) and MongoDB (8.919s). Tests include simultaneous retries,
+changed action/revision/actor, stale requests, forged worker payloads, grant
+withdrawal and start/cancel response loss across database reopen. Retrying an
+older Start after cancellation returns the cancelled record without reviving it.
+The complete core race suite passes in 50.477s, shared state in 1.199s and operator
+adapters in 1.266s. Two lint findings, a shadowed error and a blank line, are fixed
+before the final verification gate.
+
+Lifecycle HTTP and dashboard commands are still pending. The dashboard dispatcher
+accepts an envelope idempotency key but does not pass it to typed handlers in the
+current Forge API; its durable-domain command integration needs qualification
+before those commands are exposed.
+
+Final focused command and reopen checks pass core (1.364s), memory (1.490s),
+SQLite (1.988s), PostgreSQL (11.288s) and MongoDB (14.289s), followed by the
+optimizer build. Scoped formatting and full all-module lint pass after the
+runtime owner formatted its concurrent resume fields. These command changes
+remain service-level until the HTTP and dashboard bindings are implemented.

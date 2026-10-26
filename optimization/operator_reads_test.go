@@ -58,6 +58,21 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 						t.Errorf("private operator read reached %s: %v", purpose, readErr)
 					}
 				}
+
+				if purpose != run.PurposeNormal {
+					command := optimization.CommandRequest{ExperimentID: bundle.Experiment.ID, ExpectedRevision: 1, IdempotencyKey: "private-command"}
+					commands := []func() (optimization.Experiment, error){
+						func() (optimization.Experiment, error) { return op.StartCommand(callCtx, command) },
+						func() (optimization.Experiment, error) { return op.CancelCommand(callCtx, command) },
+						func() (optimization.Experiment, error) { return op.ResumeCommand(callCtx, command) },
+						func() (optimization.Experiment, error) { return op.Start(callCtx, bundle.Experiment.ID, 1) },
+					}
+					for _, invoke := range commands {
+						if _, commandErr := invoke(); !errors.Is(commandErr, optimization.ErrPolicyDenied) {
+							t.Errorf("private lifecycle command reached %s: %v", purpose, commandErr)
+						}
+					}
+				}
 				return &llm.Response{Content: "done", FinishReason: "stop", Usage: llm.Usage{TotalTokens: 1}}, nil
 			}}
 			runtime, err := engine.New(engine.WithStore(scopespy.New()), engine.WithLLM(model), engine.WithModelRevision("fixture", "1"))
