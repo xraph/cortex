@@ -24,6 +24,7 @@ type Factory func(*testing.T, func() time.Time) store.Store
 // Run checks store semantics with populated records and exact identity assertions.
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	creationCommands(t, factory)
 	lifecycle(t, factory)
 	operatorCommands(t, factory)
 	retainCommands(t, factory)

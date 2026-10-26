@@ -26,6 +26,7 @@ type Store struct {
 }
 
 type scopeData struct {
+	CreationReceipts    map[string]optimization.CreationReceipt        `json:"creation_receipts"`
 	LessonCommands      map[string]string                              `json:"lesson_commands"`
 	DiscoveryLessons    map[string]optimization.DiscoveryLessons       `json:"discovery_lessons"`
 	Artifacts           map[string]optimization.ArtifactRetention      `json:"artifacts"`

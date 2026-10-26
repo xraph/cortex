@@ -18,6 +18,7 @@ type CallerIdentity interface {
 // OptimizerConfig supplies explicit persistence, authority and phase execution.
 // A Handler must reconcile durable external attempts before dispatching effects.
 type OptimizerConfig struct {
+	CreationCatalog         CreationCatalog
 	Capabilities            CapabilityProbe
 	Repository              Repository
 	Authorizer              Authorizer

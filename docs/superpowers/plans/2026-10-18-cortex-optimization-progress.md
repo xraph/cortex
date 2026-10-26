@@ -2254,3 +2254,32 @@ Sentinel worker, pricing source or Fabriq destination is qualified by these fixt
 Task 16 still needs authorized frozen creation/catalogs, concrete host probe
 composition, artifact export and richer review summaries. Dashboard pages and
 persistent browser flows remain open.
+
+## Durable catalog-selected creation
+
+You can submit catalog references and optional bounds through the shared
+operator creation command. The host authorizes those revisions and prepares the
+frozen bundle. Client input cannot supply executable snapshots, policy or caller
+identity. Preparation must preserve the selected agent, evaluation, controller
+and explicit bounds. Current catalog and creation grants are checked again
+before storage.
+
+The draft and its creation receipt commit together. The receipt binds the exact
+scope, caller, selected inputs and accepted specification digest; it stores a
+hash of the transport key. An identical retry returns the original experiment's
+current state without preparing again, even when preparation is now unavailable.
+Changed input or identity conflicts. Current grant revocation still denies the
+retry. Competing transactions converge on one accepted draft.
+
+Memory and native-store tests cover transaction rollback, competing requests,
+lost commit acknowledgments, foreign scope, changed callers, revoked grants and
+ignored requested bounds. SQLite, PostgreSQL and MongoDB reopen tests pass with
+real local database containers for the latter two. The complete optimizer core,
+operator and internal-state race suites pass, as does the optimizer build.
+Final scoped `make f` and repository-wide `make l` pass. The final native
+creation runs pass in 2.590s on SQLite, 32.564s on PostgreSQL and 26.762s on
+MongoDB, with no skipped creation cases.
+
+This provides the creation service and durable storage. Task 16 still needs its
+HTTP/dashboard bindings, authorized catalog listing and concrete host catalog
+and readiness composition. No live provider qualification is implied.

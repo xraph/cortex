@@ -43,6 +43,10 @@ func TestPointReadersRequestOneIdentity(t *testing.T) {
 		read func(context.Context, *Store) error
 	}{
 		{"artifact", RecordKey{Kind: "artifacts", Key: artifactBinding}, func(ctx context.Context, s *Store) error { _, err := s.GetArtifact(ctx, artifact); return err }},
+		{"creation", RecordKey{Kind: "creation_receipts", Key: "operator/" + strings.Repeat("a", 64)}, func(ctx context.Context, s *Store) error {
+			_, err := s.GetCreationReceipt(ctx, "operator/"+strings.Repeat("a", 64))
+			return err
+		}},
 		{"experiment", RecordKey{Kind: "experiments", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetExperiment(ctx, entity); return err }},
 		{"version", RecordKey{Kind: "versions", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetVersion(ctx, entity); return err }},
 		{"candidate", RecordKey{Kind: "candidates", Key: entity.String()}, func(ctx context.Context, s *Store) error { _, err := s.GetCandidate(ctx, entity); return err }},

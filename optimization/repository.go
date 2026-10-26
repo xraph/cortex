@@ -10,6 +10,7 @@ import (
 // Repository owns exactly scoped persistence. Transaction implementations must
 // publish all changes together and return detached resource values.
 type Repository interface {
+	GetCreationReceipt(context.Context, string) (CreationReceipt, error)
 	Transact(context.Context, func(Transaction) error) error
 	GetExperiment(context.Context, id.ID) (Experiment, error)
 	GetDiscoveryLessons(context.Context, id.ID) (DiscoveryLessons, error)
@@ -51,6 +52,7 @@ type Repository interface {
 // Transaction is valid only during its synchronous callback. Callers must not
 // retain it or use it from concurrent goroutines.
 type Transaction interface {
+	CreateExperimentCommand(CreationCommand) (CreationReceipt, error)
 	RegisterArtifact(ArtifactRegistration) error
 	BeginArtifactDeletion(ArtifactDeletion) error
 	CompleteArtifactDeletion(ArtifactRef, string) error

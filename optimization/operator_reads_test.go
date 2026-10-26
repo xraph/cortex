@@ -60,6 +60,9 @@ func TestOperatorEvidenceCannotBeReadFromOptimizationExecution(t *testing.T) {
 				}
 
 				if purpose != run.PurposeNormal {
+					if _, creationErr := op.CreateCommand(callCtx, optimization.CreationRequest{}); !errors.Is(creationErr, optimization.ErrPolicyDenied) {
+						t.Errorf("private create reached %s: %v", purpose, creationErr)
+					}
 					if _, capabilityErr := op.Capabilities(callCtx, bundle.Experiment.ID); !errors.Is(capabilityErr, optimization.ErrPolicyDenied) {
 						t.Errorf("private capability read reached %s: %v", purpose, capabilityErr)
 					}
