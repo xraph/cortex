@@ -49,11 +49,15 @@ type TaskAcceptanceRequest struct {
 	Actor              string                         `json:"actor"`
 	Reason             string                         `json:"reason"`
 	Recovery           *TaskRecoveryProof             `json:"recovery,omitempty"`
+	Adjudication       *TaskAdjudicationRef           `json:"adjudication,omitempty"`
 }
 
 // Freeze detaches bounded trusted host input. Digests are not credentials.
 func (r TaskAcceptanceRequest) Freeze() (TaskAcceptanceRequest, string, error) {
-	if r.SchemaVersion != 1 || r.ID.IsNil() || r.ID.Prefix() != PrefixTaskAcceptance || r.Claim.Validate() != nil || r.AssignmentID.IsNil() || r.AssignmentID.Prefix() != PrefixAssignment || r.AssignmentRevision < 1 || r.AssignmentRevision == math.MaxInt64 || !evidence.ValidDigest(r.AssignmentDigest) || r.Result.Validate() != nil || r.Current.Validate() != nil || r.Current.RunID != r.Result.RunID || len(r.Dependencies) > 255 || !handoffText(r.Actor, 512) || !handoffText(r.Reason, 4096) {
+	if (r.SchemaVersion != 1 && r.SchemaVersion != 2) || r.ID.IsNil() || r.ID.Prefix() != PrefixTaskAcceptance || r.Claim.Validate() != nil || r.AssignmentID.IsNil() || r.AssignmentID.Prefix() != PrefixAssignment || r.AssignmentRevision < 1 || r.AssignmentRevision == math.MaxInt64 || !evidence.ValidDigest(r.AssignmentDigest) || r.Result.Validate() != nil || r.Current.Validate() != nil || r.Current.RunID != r.Result.RunID || len(r.Dependencies) > 255 || !handoffText(r.Actor, 512) || !handoffText(r.Reason, 4096) {
+		return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
+	}
+	if (r.SchemaVersion == 1 && r.Adjudication != nil) || (r.SchemaVersion == 2 && (r.Adjudication == nil || r.Adjudication.Validate() != nil)) {
 		return TaskAcceptanceRequest{}, "", ErrInvalidTaskAcceptance
 	}
 	if !validAcceptedDependencies(r.Dependencies, r.Current.Scope, r.ID) {

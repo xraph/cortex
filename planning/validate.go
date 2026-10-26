@@ -14,7 +14,7 @@ func validateFields(p Plan, limits Limits) error {
 	if err != nil {
 		return err
 	}
-	if p.SchemaVersion != 1 || p.ID.IsNil() || p.ID.Prefix() != PrefixPlan || p.Revision < 1 || !textValid(p.Objective, p.Actor, p.Reason, p.Scope.Canonical()) {
+	if (p.SchemaVersion != 1 && p.SchemaVersion != 2) || p.ID.IsNil() || p.ID.Prefix() != PrefixPlan || p.Revision < 1 || !textValid(p.Objective, p.Actor, p.Reason, p.Scope.Canonical()) {
 		return invalid("identity or audit metadata")
 	}
 	if err = cortex.ValidateScope(p.Scope); err != nil {
@@ -56,9 +56,14 @@ func validateFields(p Plan, limits Limits) error {
 	tasks := make(map[id.ID]Task, len(p.Tasks))
 	artifacts := make(map[string]bool, len(p.Tasks))
 	edges := 0
+	hasReview := false
 	for _, task := range p.Tasks {
 		if task.ID.IsNil() || task.ID.Prefix() != PrefixTask || !textValid(task.Instruction, task.Owner) || !owners[task.Owner] {
 			return invalid("task identity or owner")
+		}
+		hasReview = hasReview || task.Review != nil
+		if task.Review != nil && (p.SchemaVersion != 2 || !textValid(task.Review.ReviewerAgent, task.Review.ReviewerPrincipal, task.Review.PolicyRevision) || len(task.Review.ReviewerAgent) > 256 || len(task.Review.ReviewerPrincipal) > 512 || len(task.Review.PolicyRevision) > 256) {
+			return invalid("review requirement")
 		}
 		if _, exists := tasks[task.ID]; exists {
 			return invalid("duplicate task")
@@ -95,6 +100,9 @@ func validateFields(p Plan, limits Limits) error {
 			return invalid("edge count")
 		}
 		tasks[task.ID] = task
+	}
+	if p.SchemaVersion == 2 && !hasReview {
+		return invalid("review schema requires a review policy")
 	}
 	for _, criterion := range p.Contract.Criteria {
 		if criterion.Required && !covered[criterion.ID] {

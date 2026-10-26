@@ -90,6 +90,12 @@ func (e *Engine) taskServices() []taskLifecycleService {
 	if e.taskRetirement != nil {
 		services = append(services, e.taskRetirement)
 	}
+	if e.taskCompletion != nil {
+		services = append(services, e.taskCompletion)
+	}
+	if e.planReplanning != nil {
+		services = append(services, e.planReplanning)
+	}
 	return services
 }
 

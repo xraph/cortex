@@ -53,6 +53,15 @@ type ArtifactRequirement struct {
 	MaxBytes  int64  `json:"max_bytes"`
 }
 
+// ReviewRequirement pins the independent reviewer and host review policy. A
+// matching review is required before task acceptance; it cannot replace verifier
+// evidence. Hosts authenticate these identities and prepare independent context.
+type ReviewRequirement struct {
+	ReviewerAgent     string `json:"reviewer_agent"`
+	ReviewerPrincipal string `json:"reviewer_principal"`
+	PolicyRevision    string `json:"policy_revision"`
+}
+
 // Task is an immutable definition, separate from claims and execution state.
 // Criteria reference the plan's host-authored acceptance contract.
 type Task struct {
@@ -66,6 +75,7 @@ type Task struct {
 	Output      ArtifactRequirement `json:"output"`
 	Effects     []string            `json:"effects,omitempty"`
 	Sources     []string            `json:"sources,omitempty"`
+	Review      *ReviewRequirement  `json:"review,omitempty"`
 }
 
 // Origin pins the execution configuration used to derive a graph. It is

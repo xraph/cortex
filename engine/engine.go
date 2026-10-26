@@ -54,6 +54,8 @@ type Engine struct {
 	taskAdoption          *coordination.TaskAdoptionService
 	taskSettlement        *coordination.TaskSettlementService
 	taskRetirement        *coordination.TaskRetirementService
+	taskCompletion        *coordination.TaskCompletionService
+	planReplanning        *coordination.PlanReplanService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard

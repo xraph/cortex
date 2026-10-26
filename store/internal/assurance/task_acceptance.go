@@ -135,6 +135,9 @@ func (s *Repository) acceptTaskResult(ctx context.Context, request coordination.
 		if checkErr := validateTaskAcceptanceMaterials(p, req.Claim.TaskID, materials, finished); checkErr != nil {
 			return checkErr
 		}
+		if _, checkErr := tx.validateTaskAdjudication(tc, p, req); checkErr != nil {
+			return checkErr
+		}
 		result = accepted
 		result.Fresh = true
 		return nil
@@ -301,6 +304,11 @@ func (s *Repository) acceptedPrerequisiteMaterials(ctx context.Context, p planni
 }
 
 func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.Plan, req coordination.TaskAcceptanceRequest, claim coordination.Claim, limit int, recoveryAt time.Time) (taskAcceptanceMaterial, int, error) {
+	reviewDeadline, err := s.validateTaskAdjudication(ctx, p, req)
+	if err != nil {
+		return taskAcceptanceMaterial{}, 0, err
+	}
+
 	assignment, err := s.GetAssignment(ctx, req.AssignmentID)
 	if err != nil {
 		return taskAcceptanceMaterial{}, 0, err
@@ -351,6 +359,9 @@ func (s *Repository) loadTaskAcceptanceMaterial(ctx context.Context, p planning.
 		return taskAcceptanceMaterial{}, 0, err
 	}
 	deadline := h.Deadline
+	if !reviewDeadline.IsZero() {
+		deadline = minAcceptanceDeadline(deadline, reviewDeadline)
+	}
 	if req.Recovery != nil {
 		if current.AgentID.String() != claim.Worker.Agent || current.Provenance.TaskClaimID != claim.ID.String() || current.Provenance.PreparedDigest != req.Current.Context.PreparedDigest {
 			return taskAcceptanceMaterial{}, 0, coordination.ErrInvalidTaskAcceptance

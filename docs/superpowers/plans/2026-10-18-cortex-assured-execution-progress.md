@@ -72,9 +72,9 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 | S2.7 | active | this chat | Guarded React result views and durable metadata polling implemented and fixture-tested; installed host qualification remains open |
 | S2.5 | active | this chat | Registered manifests, separate candidate/grader dispatch, broker authentication, contextual state observations and approved local export implemented; concrete supervisor, durable evaluation recovery and live qualification remain open |
 | S3.4 | active | this chat | Durable effect reservations, provider receipts, engine handlers and bounded exact-scope discovery/reconciliation implemented; continuation, retries, compensation, conflict handling and worker fencing remain open |
-| S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication, concrete host grant fences, scheduler integration and installed qualification remain open |
+| S3.3 | active | this chat | Sealed handoffs, transport bindings, durable submissions/reviews, atomic verified task acceptance and its guarded host entry point implemented; review adjudication and managed completion are implemented; concrete host grant fences and installed qualification remain open |
 | S3.2 | active | this chat | Durable ownership, guarded readiness/capacity admission, fair bounded scheduling, prepared engine worker dispatch, claim renewal storage, automatic renewal with expiry watchdogs, expiry and verified completion implemented; concrete host services, lifecycle/event delivery and recovery qualification remain open |
-| S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; bounded proposal policy and shared-account validation implemented; runtime accounting and automatic replan execution remain open |
+| S3.5 | active | this chat | Transactional parent/child reservations, conservative settlement and pinned monetary accounting implemented; bounded proposal policy and shared-account validation implemented; bounded automatic proposal execution, conservative settlement and guarded revision commits are implemented; installed runtime accounting qualification remains open |
 | S3.6 | queued | shared owners | Production verification rollout remains disabled pending G1 |
 
 ## Interface rulings
@@ -88,6 +88,43 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 - User instructions require primary `main`, commit and push. Those explicit instructions override the skill's worktree and repeated push-approval defaults.
 
 ## Verification log
+
+### Independent task review and bounded replanning, 2026-10-26
+
+Plans can now require an independent reviewer before execution begins. The
+schema-2 task policy freezes reviewer identity and policy revision. Completion
+reserves stable review, run, session, adjudication and acceptance identities with
+shared capacity before dispatch. A restart observes the retained run instead of
+starting another reviewer. Machine adjudication requires supporting evidence for
+every required criterion; missing evidence, contradictions and stale sources
+still block acceptance. A human actor cannot override the verifier through an
+adjudication receipt.
+
+The engine review adapter uses the prepared ReAct loop with an isolated session,
+no tools, bounded model capacity and evaluation provenance. It rechecks current
+authority, the saved intent and unsettled reservation before starting. Terminal
+reviewer usage is settled conservatively, including failed and malformed reviews.
+An absent run remains pending and charged until an authenticated closure exists.
+`WithTaskCompletion` owns the managed service and drains callbacks on shutdown.
+
+Replanning now reserves its attempt and model capacity before execution, validates
+the proposed graph against retained progress and preserves accounting on malformed
+output or uncertain starts. A revision commit requires affected ownership to be
+quiescent, call journals sealed and accounting retained. It preserves review
+requirements, historical artifacts and explicit evidence reuse decisions.
+`WithPlanReplanning` owns discovery, observation and guarded commits. The prepared
+proposal runs in its own session with evaluation provenance and cannot invoke
+tools or auxiliary verifier/context models.
+
+Focused race tests cover the runtime, lifecycle, coordination and assurance
+contracts. The integrated run passed engine (21.398s), coordination (1.451s),
+assurance (1.113s), SQLite (56.164s), PostgreSQL (21.792s) and MongoDB (21.049s).
+All-module lint and root build passed. PostgreSQL and MongoDB admission, review,
+adjudication and replanning checks ran without skips. The first PostgreSQL run exposed a missing parent
+agent in a new fixture; the corrected fixture passed. These are local integration
+results. Concrete host proof/fence qualification, remaining event/effect flows and
+G3 acceptance remain open.
+
 
 ### Unsuccessful task retirement and replacement, 2026-10-26
 
