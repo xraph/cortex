@@ -2375,3 +2375,41 @@ nested module finished with zero findings. Its owner corrected the source, and
 `make l GO_MODULES=.` passes on the corrected root. The original invocation keeps
 its failing exit status, while the root recheck supplies the missing clean
 result. The transport commits contain no runtime files.
+
+## Sentinel creation catalog grants
+
+`sentinel/optimization.CatalogAccess` connects approved evaluation choices to the
+existing evaluator. You supply the current evaluation grant check. The adapter
+maps the exact Cortex scope to the bound Sentinel app and tenant, checks the grant
+before reading a private frozen plan, and repeats the check before returning.
+Discovery and creation share the evaluator's task, criterion and scorer checks.
+They do not dispatch a target or judge.
+
+The registry integration distinguishes denied sources from unavailable grant
+checks. SQLite reopen tests rebuild the adapter and check current permissions,
+including revocation during a read, stale references, foreign scope and conflicting
+mapping. Callback inputs cannot mutate the caller's scope. The metered improvement
+creation fixture now uses the guarded adapter before and after reopening both
+stores and verifies that no model calls or reservations were created.
+
+Sentinel pins published optimizer `1b6f6bc`. With all local replacements removed,
+the catalog and metered creation race tests pass in 2.870s and the module builds.
+Task 16 still needs installed host readiness and preparation composition,
+governed artifact export and richer review summaries. These tests use local
+fixtures; installed identity-provider grants and live provider operation remain
+unqualified.
+
+Final scoped formatting, focused race tests (3.115s), Sentinel lint and the module
+build pass. The initial repository-wide lint run caught four assignment-style
+findings in this helper and two concurrent runtime findings. Both owners fixed
+their findings. Sentinel's recheck and the runtime chat's corrected root check
+report zero issues; every other module passed the original run. The original
+invocation still records its failing exit status.
+
+The full Sentinel race suite passes in 569.206s, followed by a successful module
+build. It includes metered sequential and parallel recovery, task-local selection,
+original-cost provenance, lost-answer/late-receipt recovery, catalog reopen and
+metered creation. No tests skipped. The first full invocation reached Go's default
+ten-minute package timeout during the metered parallel case. The successful retry
+used a thirty-minute package budget. The shared final repository-wide lint run
+also completed with zero findings in every module.

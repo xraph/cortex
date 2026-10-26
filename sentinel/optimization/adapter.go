@@ -23,7 +23,8 @@ import (
 	"github.com/xraph/cortex/run"
 )
 
-// ScopeMapper resolves an explicit host mapping while preserving caller cancellation.
+// ScopeMapper resolves an explicit host mapping while preserving caller identity
+// and cancellation. Mapping identifies the destination; it does not grant access.
 type ScopeMapper interface {
 	Map(context.Context, cortex.Scope) (context.Context, error)
 }
@@ -124,6 +125,7 @@ func (e *Evaluator) mapped(ctx context.Context, b Binding) (context.Context, con
 	if tenant := sentinel.TenantFromContext(ctx); tenant != "" && tenant != b.TenantID {
 		return nil, nil, opt.ErrPolicyDenied
 	}
+	ctx = detachedScope(ctx)
 	mapped, err := e.config.Mapper.Map(ctx, cortex.Scope{Levels: slices.Clone(b.Scope.Levels)})
 	if err != nil {
 		return nil, nil, err
@@ -233,6 +235,10 @@ func (e *Evaluator) plan(ctx context.Context, b Binding) (*evalplan.Plan, opt.Ev
 
 // Freeze resolves a previously frozen, host-bound Sentinel plan.
 func (e *Evaluator) Freeze(ctx context.Context, r opt.EvaluationSpec) (opt.EvaluationPlan, error) {
+	return e.freeze(ctx, r, nil)
+}
+
+func (e *Evaluator) freeze(ctx context.Context, r opt.EvaluationSpec, authorize func(context.Context) error) (opt.EvaluationPlan, error) {
 	b, err := e.binding(ctx, r.Source)
 	if err != nil {
 		return opt.EvaluationPlan{}, err
@@ -258,6 +264,14 @@ func (e *Evaluator) Freeze(ctx context.Context, r opt.EvaluationSpec) (opt.Evalu
 		return opt.EvaluationPlan{}, err
 	}
 	defer done()
+	if authorize != nil {
+		if grantErr := authorize(detachedScope(mapped)); grantErr != nil {
+			return opt.EvaluationPlan{}, grantErr
+		}
+	}
+	if contextErr := mapped.Err(); contextErr != nil {
+		return opt.EvaluationPlan{}, contextErr
+	}
 	_, plan, err := e.plan(mapped, b)
 	if err != nil {
 		return opt.EvaluationPlan{}, err
@@ -266,6 +280,14 @@ func (e *Evaluator) Freeze(ctx context.Context, r opt.EvaluationSpec) (opt.Evalu
 		if !slices.ContainsFunc(plan.Criteria, func(c opt.CriterionDefinition) bool { return c.ID == required && c.Required }) {
 			return opt.EvaluationPlan{}, opt.ErrIncompleteEvidence
 		}
+	}
+	if authorize != nil {
+		if grantErr := authorize(detachedScope(mapped)); grantErr != nil {
+			return opt.EvaluationPlan{}, grantErr
+		}
+	}
+	if contextErr := mapped.Err(); contextErr != nil {
+		return opt.EvaluationPlan{}, contextErr
 	}
 	return plan, nil
 }

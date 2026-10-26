@@ -1,7 +1,7 @@
 # Sentinel optimization adapter
 
 Use this package as the `optimization.Evaluator` supplied to Cortex's trial
-handler. It scores captured executions through Sentinel v1.9.2 and compares exact
+handler. It scores captured executions through Sentinel v1.10.0 and compares exact
 recorded job sets. Cortex keeps ownership of execution, budgets and selection.
 
 ## Wiring
@@ -134,3 +134,27 @@ do not execute the team. Missing child captures and partial execution remain
 incomplete evidence. Usage comes from original host-authenticated settlements;
 conservative reserved capacity cannot supply a measured cost or cost ratio.
 Token-only teams keep monetary usage unknown.
+
+## Creation catalog access
+
+Use `NewCatalogAccess(evaluator, authorizer)` for evaluation choices in your
+`ApprovedCatalog.Authorize` callback. The authorizer receives the current caller's
+context mapped to the bound Sentinel app and tenant, plus the exact plan reference.
+Check the caller's current evaluation grant there. Return
+`optimization.ErrPolicyDenied` for denied access and an availability error when
+you cannot check the grant. The registry filters denials and propagates outages.
+You still supply the source grants for agent, controller and environment choices.
+
+Use `CatalogAccess.Freeze` in your creation preparation callback. Both entry points
+check the mapped grant before reading private frozen-plan content and again before
+returning. They reuse the evaluator's task, criterion and scorer revision checks,
+including metered-judge qualification. Neither runs a target or judge. The
+worker-facing `Evaluator.Freeze` keeps its existing execution authorization path;
+use the guarded catalog adapter when serving operator requests.
+
+The SQLite tests reopen the Sentinel store and rebuild the adapter before checking
+current grants again. They cover denied and unavailable grants, revocation during
+a read, stale references, conflicting mappings and callback scope mutation. The
+metered creation fixture also uses this path before and after reopen and verifies
+that no model calls or reservations were created. These fixtures do not qualify a
+host's installed identity provider or live Sentinel permissions.

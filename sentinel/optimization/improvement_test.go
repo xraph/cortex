@@ -89,7 +89,24 @@ func TestSentinelImprovementCreationSurvivesReopen(t *testing.T) {
 		return evaluator
 	}
 	evaluator := makeEvaluator()
-	bundle.Experiment.EvaluationPlan, err = evaluator.Freeze(ctx, opt.EvaluationSpec{Source: ref, Tasks: bundle.Experiment.Spec.Tasks})
+	makeCatalogAccess := func(value *adapter.Evaluator) *adapter.CatalogAccess {
+		t.Helper()
+		access, accessErr := adapter.NewCatalogAccess(value, catalogGrant(func(mapped context.Context, selected opt.ContentRef) error {
+			if sentinel.AppFromContext(mapped) != "app" || sentinel.TenantFromContext(mapped) != "tenant" || selected != ref {
+				return opt.ErrPolicyDenied
+			}
+			return nil
+		}))
+		if accessErr != nil {
+			t.Fatal(accessErr)
+		}
+		choice := opt.CatalogChoice{Scope: bundle.Experiment.Spec.Scope, Kind: opt.CatalogEvaluation, Ref: ref, Name: "Metered evaluation"}
+		if accessErr = access.Authorize(ctx, choice); accessErr != nil {
+			t.Fatal(accessErr)
+		}
+		return access
+	}
+	bundle.Experiment.EvaluationPlan, err = makeCatalogAccess(evaluator).Freeze(ctx, opt.EvaluationSpec{Source: ref, Tasks: bundle.Experiment.Spec.Tasks})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +150,7 @@ func TestSentinelImprovementCreationSurvivesReopen(t *testing.T) {
 	if err != nil || stored.State != opt.StateDraft || !reflect.DeepEqual(stored.Spec.Improvement, created.Spec.Improvement) || !reflect.DeepEqual(stored.EvaluationPlan, created.EvaluationPlan) {
 		t.Fatalf("changed comparison after reopen: %v", err)
 	}
-	reopenedPlan, err := makeEvaluator().Freeze(ctx, opt.EvaluationSpec{Source: ref, Tasks: stored.Spec.Tasks})
+	reopenedPlan, err := makeCatalogAccess(makeEvaluator()).Freeze(ctx, opt.EvaluationSpec{Source: ref, Tasks: stored.Spec.Tasks})
 	if err != nil || !reflect.DeepEqual(reopenedPlan, stored.EvaluationPlan) {
 		t.Fatalf("changed Sentinel plan after reopen: %v", err)
 	}
