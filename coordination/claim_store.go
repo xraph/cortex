@@ -59,8 +59,11 @@ func ValidateClaimSuccessor(previous, next Claim) error {
 	if previous.Validate() != nil || next.Validate() != nil || next.Revision != previous.Revision+1 || next.PreviousDigest != previous.Digest || next.PlanID != previous.PlanID || next.TaskID != previous.TaskID || next.Scope.Canonical() != previous.Scope.Canonical() || next.At.Before(previous.At) {
 		return ErrInvalidClaim
 	}
+	if next.SchemaVersion != previous.SchemaVersion && (previous.SchemaVersion != 1 || next.SchemaVersion != 2 || next.State != ClaimRetired) {
+		return ErrInvalidClaim
+	}
 	if next.ID != previous.ID {
-		if (previous.State != ClaimReleased && (previous.State != ClaimCompleted || next.PlanRevision <= previous.PlanRevision)) || next.State != ClaimHeld || next.Fence != previous.Fence+1 || !next.AcquiredAt.Equal(next.At) || next.PlanRevision < previous.PlanRevision {
+		if (previous.State != ClaimReleased && previous.State != ClaimRetired && (previous.State != ClaimCompleted || next.PlanRevision <= previous.PlanRevision)) || next.State != ClaimHeld || next.Fence != previous.Fence+1 || !next.AcquiredAt.Equal(next.At) || next.PlanRevision < previous.PlanRevision {
 			return ErrInvalidClaim
 		}
 		return nil
@@ -78,6 +81,8 @@ func ValidateClaimSuccessor(previous, next Claim) error {
 		} else {
 			rebuilt, err = CompleteClaim(previous, previous.Token(), *next.AcceptanceID, next.At)
 		}
+	case ClaimRetired:
+		rebuilt, err = retireRecoveredClaim(previous, next.RetirementDigest, next.At)
 	case ClaimReleased, ClaimRecovering:
 		rebuilt, err = ExpireClaim(previous, previous.Revision, next.At)
 	default:

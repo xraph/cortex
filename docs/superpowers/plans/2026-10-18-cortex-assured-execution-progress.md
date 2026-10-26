@@ -89,6 +89,32 @@ Baseline inventory: Cortex `cd4c746` is clean; Sentinel `efbad75` has an untrack
 
 ## Verification log
 
+### Unsuccessful task retirement and replacement, 2026-10-26
+
+Recovering task ownership can now retire after authenticated permanent worker/tool
+quiescence, complete sealed call evidence, unsuccessful run closure and final
+accounting agree. The atomic transaction retains a schema-2 retired claim and
+receipt, preserving its original run, fence and lease. Replacement advances the
+fence through ordinary guarded scheduler admission. Settlement alone does not
+release a task, and unknown external outcomes still block retirement.
+
+`engine.WithTaskRetirement` owns bounded discovery, proof resolution and guarded
+retirement through shutdown. Pending proof waits; historical retries authenticate
+current access and retain the original receipt even after replacement. Discovery
+must include old plans with outstanding ownership. The host supplies the resolver,
+proof authentication and execution fence; the service never dispatches a retry.
+
+TDD covered the missing API and engine lifecycle option. Full coordination race,
+focused SQLite/engine race, and real PostgreSQL/Mongo retirement conformance passed.
+The final focused timings were coordination 1.402s, SQLite 10.963s, engine 1.324s,
+PostgreSQL 9.167s and MongoDB 11.582s, with no database skips. Cases include changed
+terminal state, missing accounting, unresolved calls, concurrent retirement,
+rollback, expired proof, late completion and lost commit acknowledgment. Independent
+core/storage and service/lifecycle reviews found no must-fix issues. Final owned
+formatting and all-module lint passed. Installed proof/fence qualification remains
+open; this closes the local retirement path, not G3.
+
+
 ### Installed sandbox command and qualification transport, 2026-10-26
 
 `integrations/sandbox/cmd/cortex-sandboxd` now loads protected broker and authority

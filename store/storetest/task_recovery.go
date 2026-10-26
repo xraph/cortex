@@ -141,6 +141,7 @@ func newTaskRecoveryFixture(t *testing.T, backend store.Store, driver assurance.
 // ownership records. Fixture proof references do not qualify a host authenticator.
 func TaskRecoveryAdoption(t *testing.T, backend store.Store, driver assurance.Driver) {
 	t.Helper()
+	t.Run("task retirement", func(t *testing.T) { TaskRetirement(t, backend, driver) })
 	t.Run("accepted task call seal", func(t *testing.T) { testTaskCallSeal(t, backend, driver) })
 	t.Run("guarded usage settlement", func(t *testing.T) { testTaskUsageSettlement(t, backend, driver) })
 	t.Run("terminal usage settlement", func(t *testing.T) { testTaskTerminalUsage(t, backend, driver) })

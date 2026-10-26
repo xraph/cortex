@@ -53,6 +53,7 @@ type Engine struct {
 	effectRecovery        *coordination.EffectRecoveryService
 	taskAdoption          *coordination.TaskAdoptionService
 	taskSettlement        *coordination.TaskSettlementService
+	taskRetirement        *coordination.TaskRetirementService
 	taskSchedulingWork    TaskWorkerConfig
 	taskRunAdmitter       coordination.TaskRunAdmitter
 	taskCallGuard         TaskCallGuard

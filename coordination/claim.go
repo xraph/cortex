@@ -31,6 +31,7 @@ const (
 	ClaimDispatching ClaimState = "dispatching"
 	ClaimRecovering  ClaimState = "recovering"
 	ClaimReleased    ClaimState = "released"
+	ClaimRetired     ClaimState = "retired"
 	ClaimCompleted   ClaimState = "completed"
 )
 
@@ -80,27 +81,28 @@ type ClaimToken struct {
 // Claim is an immutable ownership revision. Dispatching is recorded before an
 // external call. Its expiry enters recovery, never permission to repeat work.
 type Claim struct {
-	SchemaVersion  int           `json:"schema_version"`
-	ID             id.ID         `json:"id"`
-	Scope          cortex.Scope  `json:"scope"`
-	PlanID         id.ID         `json:"plan_id"`
-	PlanRevision   int64         `json:"plan_revision"`
-	PlanDigest     string        `json:"plan_digest"`
-	TaskID         id.ID         `json:"task_id"`
-	Worker         Identity      `json:"worker"`
-	GrantRef       string        `json:"grant_ref"`
-	Fence          uint64        `json:"fence"`
-	Revision       int64         `json:"revision"`
-	State          ClaimState    `json:"state"`
-	RunID          id.AgentRunID `json:"run_id,omitempty"`
-	AcquiredAt     time.Time     `json:"acquired_at"`
-	At             time.Time     `json:"at"`
-	ExpiresAt      time.Time     `json:"expires_at"`
-	Deadline       time.Time     `json:"deadline"`
-	PreviousDigest string        `json:"previous_digest,omitempty"`
-	Digest         string        `json:"digest"`
-	AcceptanceID   *id.ID        `json:"acceptance_id,omitempty"`
-	RecoveryDigest string        `json:"recovery_digest,omitempty"`
+	SchemaVersion    int           `json:"schema_version"`
+	ID               id.ID         `json:"id"`
+	Scope            cortex.Scope  `json:"scope"`
+	PlanID           id.ID         `json:"plan_id"`
+	PlanRevision     int64         `json:"plan_revision"`
+	PlanDigest       string        `json:"plan_digest"`
+	TaskID           id.ID         `json:"task_id"`
+	Worker           Identity      `json:"worker"`
+	GrantRef         string        `json:"grant_ref"`
+	Fence            uint64        `json:"fence"`
+	Revision         int64         `json:"revision"`
+	State            ClaimState    `json:"state"`
+	RunID            id.AgentRunID `json:"run_id,omitempty"`
+	AcquiredAt       time.Time     `json:"acquired_at"`
+	At               time.Time     `json:"at"`
+	ExpiresAt        time.Time     `json:"expires_at"`
+	Deadline         time.Time     `json:"deadline"`
+	PreviousDigest   string        `json:"previous_digest,omitempty"`
+	Digest           string        `json:"digest"`
+	AcceptanceID     *id.ID        `json:"acceptance_id,omitempty"`
+	RecoveryDigest   string        `json:"recovery_digest,omitempty"`
+	RetirementDigest string        `json:"retirement_digest,omitempty"`
 }
 
 // Token identifies this exact immutable observation of ownership.
@@ -110,10 +112,17 @@ func (c Claim) Token() ClaimToken {
 
 func sealClaim(c Claim) (Claim, error) {
 	c.Digest = ""
-	if c.SchemaVersion != 1 || c.ID.IsNil() || c.ID.Prefix() != PrefixClaim || cortex.ValidateScope(c.Scope) != nil || c.PlanID.IsNil() || c.PlanID.Prefix() != planning.PrefixPlan || c.PlanRevision < 1 || !evidence.ValidDigest(c.PlanDigest) || c.TaskID.IsNil() || c.TaskID.Prefix() != planning.PrefixTask || !c.Worker.valid() || !handoffText(c.GrantRef, 512) || c.Fence == 0 || c.Revision < 1 || c.AcquiredAt.IsZero() || c.At.Before(c.AcquiredAt) || !c.ExpiresAt.After(c.AcquiredAt) || c.ExpiresAt.After(c.Deadline) || c.ExpiresAt.After(c.At.Add(MaxClaimDuration)) {
+	if (c.SchemaVersion != 1 && c.SchemaVersion != 2) || c.ID.IsNil() || c.ID.Prefix() != PrefixClaim || cortex.ValidateScope(c.Scope) != nil || c.PlanID.IsNil() || c.PlanID.Prefix() != planning.PrefixPlan || c.PlanRevision < 1 || !evidence.ValidDigest(c.PlanDigest) || c.TaskID.IsNil() || c.TaskID.Prefix() != planning.PrefixTask || !c.Worker.valid() || !handoffText(c.GrantRef, 512) || c.Fence == 0 || c.Revision < 1 || c.AcquiredAt.IsZero() || c.At.Before(c.AcquiredAt) || !c.ExpiresAt.After(c.AcquiredAt) || c.ExpiresAt.After(c.Deadline) || c.ExpiresAt.After(c.At.Add(MaxClaimDuration)) {
 		return Claim{}, ErrInvalidClaim
 	}
 	if (c.Revision == 1 && (c.PreviousDigest != "" || c.Fence != 1)) || (c.Revision > 1 && !evidence.ValidDigest(c.PreviousDigest)) {
+		return Claim{}, ErrInvalidClaim
+	}
+	if c.State == ClaimRetired {
+		if c.SchemaVersion != 2 || !evidence.ValidDigest(c.RetirementDigest) {
+			return Claim{}, ErrInvalidClaim
+		}
+	} else if c.RetirementDigest != "" {
 		return Claim{}, ErrInvalidClaim
 	}
 	if c.State == ClaimCompleted {
@@ -144,6 +153,10 @@ func sealClaim(c Claim) (Claim, error) {
 			return Claim{}, ErrInvalidClaim
 		}
 	case ClaimRecovering:
+		if c.RunID.IsNil() || c.RunID.Prefix() != id.PrefixAgentRun || c.At.Before(c.ExpiresAt) {
+			return Claim{}, ErrInvalidClaim
+		}
+	case ClaimRetired:
 		if c.RunID.IsNil() || c.RunID.Prefix() != id.PrefixAgentRun || c.At.Before(c.ExpiresAt) {
 			return Claim{}, ErrInvalidClaim
 		}
@@ -205,9 +218,10 @@ func AcquireClaim(previous *Claim, request ClaimRequest, p planning.Plan, at tim
 		if previous.Validate() != nil {
 			return Claim{}, ErrInvalidClaim
 		}
-		if (previous.State != ClaimReleased && (previous.State != ClaimCompleted || req.PlanRevision <= previous.PlanRevision)) || req.PlanRevision < previous.PlanRevision || previous.ID == req.ID || previous.PlanID != req.PlanID || previous.TaskID != req.TaskID || previous.Scope.Canonical() != p.Scope.Canonical() || previous.Revision != req.ExpectedRevision || previous.Revision == math.MaxInt64 || previous.Fence == math.MaxUint64 || at.Before(previous.At) {
+		if (previous.State != ClaimReleased && previous.State != ClaimRetired && (previous.State != ClaimCompleted || req.PlanRevision <= previous.PlanRevision)) || req.PlanRevision < previous.PlanRevision || previous.ID == req.ID || previous.PlanID != req.PlanID || previous.TaskID != req.TaskID || previous.Scope.Canonical() != p.Scope.Canonical() || previous.Revision != req.ExpectedRevision || previous.Revision == math.MaxInt64 || previous.Fence == math.MaxUint64 || at.Before(previous.At) {
 			return Claim{}, ErrClaimConflict
 		}
+		c.SchemaVersion = previous.SchemaVersion
 		c.Fence, c.Revision, c.PreviousDigest = previous.Fence+1, previous.Revision+1, previous.Digest
 	}
 	return sealClaim(c)
