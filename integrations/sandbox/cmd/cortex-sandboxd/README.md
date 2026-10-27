@@ -22,11 +22,11 @@ daemon still checks its installed deployment before and after each observation.
 
 ## Qualification authority
 
-You must provide the authority service. This repository implements its client
-protocol, not the service that collects, retains and verifies live probe evidence.
-No authority is deployed by this command. Linux worker selection and live
-systemd/runsc qualification remain deferred, so passing these client tests does
-not qualify an installation or close S2.4.
+Install the separate [evidence authority](../cortex-sandbox-authority/README.md)
+to verify signed retained probe records under current client and producer policy.
+This command does not deploy it. Linux worker selection, production credentials
+and live systemd/runsc probes remain deferred. Passing local client/authority
+tests does not qualify an installation or close S2.4.
 
 Install `service.QualificationClientConfig` as canonical JSON in a root-owned,
 single-link mode-0600 file no larger than one MiB. Marshal the Go type to preserve

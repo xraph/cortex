@@ -602,3 +602,43 @@ func TestTLSServerSingleLifetimeAndListenerOwnership(t *testing.T) {
 		t.Fatal("rejected reuse took listener ownership", err)
 	}
 }
+
+func TestTLSServerServesAuthorityHandlerAndJoins(t *testing.T) {
+	cfg, clientTLS := serverFixtureConfig(t)
+	server, err := broker.NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- server.ServeHandler(ctx, listener, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("authority")) }))
+	}()
+	transport := &http.Transport{TLSClientConfig: clientTLS}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+listener.Addr().String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "authority" {
+		t.Fatal("handler not served", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler server did not join")
+	}
+}

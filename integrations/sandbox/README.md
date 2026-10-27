@@ -5,11 +5,18 @@ You can embed this broker behind an authenticated HTTPS server. It accepts seale
 keeps job identity across retries and restarts. The root `sandbox` package carries
 only the contracts. This module owns HTTP, durable state and export handling.
 
-The production runtime adapter and daemon are still pending. An internal runsc
-worker driver and lifecycle supervisor are implemented, but no qualified worker
-ships here. Unit tests use explicit fixture drivers and cannot establish live
-isolation or resource enforcement. The Linux worker will be selected separately,
-as agreed on October 18, 2026.
+The runtime adapter, supervised worker, installed broker command and separate
+[evidence authority](cmd/cortex-sandbox-authority/README.md) are implemented. The
+authority verifies signed retained probe output and current policy over mTLS.
+No qualified Linux worker ships here. Unit tests use explicit fixtures and cannot
+establish live isolation or resource enforcement. Linux worker selection and
+qualification remain deferred by request.
+
+The implementation sections below retain some earlier delivery notes. The current
+entry points are `cmd/cortex-sandboxd`, `cmd/cortex-sandbox-worker`,
+`cmd/cortex-sandbox-input` and `cmd/cortex-sandbox-authority`. Their command guides
+and the current assured-execution ledger supersede earlier statements that a
+daemon, runtime adapter or authority service is missing.
 
 ## Host integration
 
@@ -100,7 +107,8 @@ The trusted owner must keep those files unchanged while the worker uses them.
 Recheck before dispatch and stop admission during upgrades. This check does not
 freeze files against their owner, execute the runtime or issue a qualification.
 The production adapter must bind this complete inventory digest to its worker
-attestation. Its implementation remains pending.
+attestation. The installed adapter performs this binding; live qualification
+remains a separate deployment check.
 
 ```sh
 GOWORK=off go test -race -count=1 ./...

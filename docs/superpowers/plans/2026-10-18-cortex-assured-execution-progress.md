@@ -2,6 +2,43 @@
 
 Plan: `2026-10-18-cortex-assured-execution.md`. Implementation baseline: `cd4c746`. Execution is inline in the primary checkout on `main`.
 
+## Local evidence authority closure, 2026-10-26
+
+The separate `cortex-sandbox-authority` command now serves the broker's existing
+qualification protocol through the shared bounded TLS listener. It verifies a
+protected policy grant for the authenticated client certificate, exact host boot
+and deployment, an approved producer's signature, and every retained probe log.
+It requires complete passing test events for all required groups and refuses
+fixture records, failed or skipped tests, stale timestamps and changed files.
+Current policy and retained bytes are rechecked before each decision. The oldest
+probe observation, signed capability expiry and current policy bound validity.
+
+Local tests cover signed evidence, restart, revocation, protocol limits, incomplete
+subtests, parallel pause/resume transitions, timestamp substitution, real mTLS
+client/authority exchange, slow request-body deadlines and joined shutdown. The command does not run or sign probes. Linux qualification remains
+deferred: production credentials, approved producer output and the selected
+worker's full live matrix are still required. Earlier entries describing a
+missing authority service are superseded by this implementation.
+
+Validation passed: root `make f` and `make l` across every module; the full sandbox
+`GOWORK=off go test -race -count=1 -timeout=10m ./...` suite; a final authority/probe
+race run after the test lint correction; sandbox `go build ./...`; Linux amd64
+and arm64 authority cross-builds; and Linux-target lint of the authority command
+and service. Independent review found incomplete subtest event handling and a
+request-body timeout mismatch. Both regressions failed before their fixes and
+now pass. Timestamped rejection cases also exercise the intended failure paths.
+These checks validate implementation, not the deferred live isolation matrix.
+
+The Ctrlplane fixture follow-up is pushed as dashboard `a664401`. Its complete
+demo Go race suite passed with 34 tests and two opt-in Ollama skips; the real
+PostgreSQL restart/isolation test ran. Dashboard CI `40424435450` passed. This
+supersedes the earlier local report's unrelated full-demo failure.
+
+Local release wiring already includes sandbox and optimization module verification,
+pinning and consumer checks. Publishing a new version and qualifying a deployment
+remain distinct operations. No release or live Linux qualification was performed
+by this follow-up.
+
 ## Implementation and qualification boundary, 2026-10-26
 
 The four stages now have runtime, persistence, transport and operator implementations.

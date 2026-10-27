@@ -40,8 +40,8 @@ type ServerConfig struct {
 	Limits       ServerLimits
 }
 
-// Server owns one bounded TLS listener lifetime. It exposes only Broker.Handler,
-// disables HTTP multiplexing and closes each expired request's connection.
+// Server owns one bounded TLS listener lifetime for a broker or an independently
+// authenticated handler. It disables HTTP multiplexing and closes expired connections.
 // Construction copies certificate/key material and the client trust pool.
 type Server struct {
 	tls          *tls.Config
@@ -77,8 +77,18 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 // then returns. The caller owns the broker journal and closes it afterward.
 // Later calls return ErrConflict without taking ownership of their listeners.
 func (s *Server) Serve(ctx context.Context, listener net.Listener, instance *Broker) error {
-	if listener == nil || instance == nil {
-		return fmt.Errorf("cortex: missing sandbox HTTP listener or broker")
+	if instance == nil {
+		return fmt.Errorf("cortex: missing sandbox HTTP broker")
+	}
+	return s.ServeHandler(ctx, listener, instance.Handler(s.authenticate))
+}
+
+// ServeHandler owns the same bounded TLS lifetime for an independently
+// authenticated authority handler. The handler must enforce its own current
+// authorization; the broker-specific Authenticate callback is not invoked.
+func (s *Server) ServeHandler(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	if listener == nil || handler == nil {
+		return fmt.Errorf("cortex: missing sandbox HTTP listener or handler")
 	}
 	s.mu.Lock()
 	if s.started {
@@ -94,7 +104,6 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, instance *Bro
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
 	requests := &serverRequests{accepting: true, slots: make(chan struct{}, s.limits.Connections)}
-	handler := instance.Handler(s.authenticate)
 	server := &http.Server{
 		TLSConfig:         s.tls,
 		TLSNextProto:      map[string]func(*http.Server, *tls.Conn, http.Handler){},
