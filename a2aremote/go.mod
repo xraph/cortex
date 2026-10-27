@@ -7,8 +7,8 @@ replace github.com/xraph/cortex => ../
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.6.1
-	github.com/xraph/grove v1.9.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
+	github.com/xraph/grove v1.10.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
 )
 
 require (
@@ -24,7 +24,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/xraph/go-utils v1.4.1 // indirect
+	github.com/xraph/go-utils v1.5.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.45.0 // indirect

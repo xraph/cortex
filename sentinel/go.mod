@@ -7,8 +7,8 @@ replace github.com/xraph/cortex => ../
 require (
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/cortex/optimization v0.0.0-20261026160546-1b6f6bc9f367
-	github.com/xraph/grove v1.9.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
+	github.com/xraph/grove v1.10.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
 	github.com/xraph/sentinel v1.10.0
 	github.com/xraph/vessel v1.0.4
 )
@@ -97,17 +97,20 @@ require (
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/forge v1.12.10 // indirect
-	github.com/xraph/go-utils v1.4.1 // indirect
+	github.com/xraph/forge v1.13.2-0.20261026124101-97dbf04160fd // indirect
+	github.com/xraph/go-utils v1.5.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	go.opentelemetry.io/otel v1.45.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.45.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0 // indirect
+	go.opentelemetry.io/otel/log v0.21.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
+	go.opentelemetry.io/otel/sdk/log v0.21.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect

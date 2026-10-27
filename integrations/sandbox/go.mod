@@ -10,8 +10,8 @@ require (
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.0
-	github.com/xraph/grove v1.9.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.9.0
+	github.com/xraph/grove v1.10.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.58.0
 )
@@ -43,7 +43,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/xraph/go-utils v1.4.1 // indirect
+	github.com/xraph/go-utils v1.5.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
