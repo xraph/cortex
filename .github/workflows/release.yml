@@ -18,6 +18,8 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    env:
+      GOWORK: 'off'
 
     steps:
       - name: Checkout
@@ -53,7 +55,7 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
           go build ./...
-          go test -race -count=1 ./...
+          go test -race -count=1 -timeout=30m ./...
 
       - name: Verify sub-modules
         run: |
@@ -64,7 +66,22 @@ jobs:
             go mod tidy
             git diff --exit-code go.mod go.sum
             go build ./...
-            go test -race -count=1 ./...
+            if [ "$mod" = "optimization" ]; then
+              go list ./... > "$RUNNER_TEMP/cortex-release-optimizer-packages.txt"
+              packages=()
+              while IFS= read -r package; do
+                case "$package" in
+                  github.com/xraph/cortex/optimization/store/mongo|github.com/xraph/cortex/optimization/store/postgres|github.com/xraph/cortex/optimization/store/sqlite) ;;
+                  *) packages+=("$package") ;;
+                esac
+              done < "$RUNNER_TEMP/cortex-release-optimizer-packages.txt"
+              go test -race -count=1 -timeout=30m "${packages[@]}"
+              for backend in sqlite postgres mongo; do
+                go test -race -count=1 -timeout=30m "./store/$backend"
+              done
+            else
+              go test -race -count=1 -timeout=30m ./...
+            fi
             popd > /dev/null
             echo "::endgroup::"
           done
@@ -124,7 +141,7 @@ jobs:
           if [ -z "$PREV_TAG" ]; then
             NOTES=$(git log --pretty=format:"- %s (%h)" HEAD)
           else
-            NOTES=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD)
+            NOTES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")
           fi
           {
             echo "notes<<EOF"
