@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
 	cortexcontract "github.com/xraph/cortex/extension/contract"
 	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
@@ -38,7 +39,7 @@ const ExtensionName = "cortex"
 const ExtensionDescription = "Human-emulating AI agent orchestration"
 
 // ExtensionVersion is the semantic version.
-const ExtensionVersion = "0.1.0"
+const ExtensionVersion = cortex.Version
 
 // Ensure Extension implements forge.Extension at compile time.
 var _ forge.Extension = (*Extension)(nil)
