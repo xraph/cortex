@@ -132,7 +132,7 @@ A replica that's waiting retries `pg_try_advisory_lock` with a pause that starts
 In practice:
 
 - `Migrate` waits for as long as your context allows. Give it a deadline or cancel it and it returns an error that matches `context.DeadlineExceeded` or `context.Canceled`, with no lock request left behind. Once a replica holds the cortex lock, grove waits up to five minutes for key 1 if something else holds it.
-- It takes two connections from the pool at once, one for the cortex lock and one that grove's executor uses for key 1. pgdriver's default pool has more than that. With `pool_max_conns=1`, `Migrate` waits until your context ends.
+- It takes two connections from the pool at once, one for the cortex lock and one that grove's executor uses for key 1. pgdriver sizes its pool from `driver.WithPoolSize`, which is 10 unless you set it and wins over any `pool_max_conns` in the DSN. Give it a pool of one and `Migrate` waits five seconds for a second connection, then fails with an error saying it needs two.
 - Session-level advisory locks need a real session. Run `Migrate` against Postgres directly or through PgBouncer in session mode, not transaction mode. Grove's own lock has the same requirement.
 - Other grove users on the database don't take the cortex lock. On a fresh database one of them can create grove's tracking tables at the same moment as a cortex replica, and Postgres fails the loser with `42P07` or `42710`. `Migrate` retries that up to five times with a short pause, which is long enough for the tables to exist.
 

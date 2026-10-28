@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +16,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/xraph/grove"
+	"github.com/xraph/grove/driver"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 	"github.com/xraph/grove/migrate"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/id"
 )
 
 // TestMigrateLockKeyDerivation pins migrateLockKey to its documented
@@ -174,6 +179,221 @@ func TestMigrateConcurrentReplicas(t *testing.T) {
 	if n := countAdvisoryLocks(ctx, t, conn); n != 0 {
 		t.Fatalf("%d advisory locks left after every replica returned, want 0", n)
 	}
+}
+
+// TestMigrateConcurrentReplicasWithLegacyRows seeds rows written before
+// v1.8.0 (no scope, conversations with no session), then starts eight
+// replicas at once with one shared Rescoper. The rescope and the session
+// backfill run after grove has released key 1, so only the cortex lock keeps
+// replicas from running them side by side. Every replica must succeed, the
+// Rescoper must be asked about each legacy identifier exactly once, every
+// row must end up scoped, and each agent must get exactly one default
+// session holding all of its conversation rows.
+func TestMigrateConcurrentReplicasWithLegacyRows(t *testing.T) {
+	ctx, dsn := startMigratePostgres(t)
+
+	seed := New(openMigrateDB(ctx, t, dsn))
+	if err := seed.Migrate(ctx); err != nil {
+		t.Fatalf("schema migrate: %v", err)
+	}
+
+	const (
+		apps           = 4
+		agentsPerApp   = 2
+		messagesPerRow = 3
+	)
+	agentIDs := make([]string, 0, apps*agentsPerApp)
+	for a := range apps {
+		app := fmt.Sprintf("app-%d", a)
+		for n := range agentsPerApp {
+			agentID := id.NewAgentID().String()
+			agentIDs = append(agentIDs, agentID)
+			if _, err := seed.pgdb.Exec(ctx, `INSERT INTO cortex_agents
+    (id, name, app_id, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon, enabled)
+    VALUES ($1, $2, $3, '', '', '', '{}', '', true)`, agentID, fmt.Sprintf("agent-%d", n), app); err != nil {
+				t.Fatalf("insert legacy agent: %v", err)
+			}
+			for m := range messagesPerRow {
+				if _, err := seed.pgdb.Exec(ctx, `INSERT INTO cortex_memories
+    (agent_id, tenant_id, session_id, kind, content, metadata, scope_l0, scope_l1, scope_l2, scope_extra, scope_canon)
+    VALUES ($1, $2, '', 'conversation', $3, '{}', '', '', '', '{}', '')`,
+					agentID, app, fmt.Sprintf(`{"role":"user","content":"message %d"}`, m)); err != nil {
+					t.Fatalf("insert legacy conversation row: %v", err)
+				}
+			}
+		}
+	}
+
+	rescoper := &countingRescoper{delay: 100 * time.Millisecond, calls: make(map[[2]string]int)}
+	const replicas = 8
+	stores := make([]*Store, replicas)
+	for i := range stores {
+		stores[i] = New(openMigrateDB(ctx, t, dsn))
+	}
+
+	start := make(chan struct{})
+	errs := make([]error, replicas)
+	var wg sync.WaitGroup
+	for i, s := range stores {
+		wg.Go(func() {
+			<-start
+			errs[i] = s.Migrate(ctx, cortex.WithRescoper(rescoper))
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("replica %d migrate: %v", i, err)
+		}
+	}
+
+	calls := rescoper.snapshot()
+	// Agents carry app_id and conversation rows carry tenant_id, so each
+	// app reaches the Rescoper under two identifiers.
+	if want := 2 * apps; len(calls) != want {
+		t.Errorf("Rescoper saw %d distinct identifiers, want %d: %v", len(calls), want, calls)
+	}
+	for key, n := range calls {
+		if n != 1 {
+			t.Errorf("Rescoper called %d times for app=%q tenant=%q, want once", n, key[0], key[1])
+		}
+	}
+
+	conn := connectPG(ctx, t, dsn)
+	for _, q := range []struct{ what, sql string }{
+		{"unscoped agents", `SELECT count(*) FROM cortex_agents WHERE scope_canon = ''`},
+		{"unscoped memories", `SELECT count(*) FROM cortex_memories WHERE scope_canon = ''`},
+		{"conversation rows without a session", `SELECT count(*) FROM cortex_memories WHERE kind = 'conversation' AND session_id = ''`},
+		{"agents with more than one default session", `SELECT count(*) FROM (SELECT agent_id FROM cortex_sessions
+			WHERE is_default GROUP BY agent_id, scope_canon HAVING count(*) > 1) d`},
+		{"conversation rows outside their agent's default session", `SELECT count(*) FROM cortex_memories m
+			WHERE m.kind = 'conversation' AND NOT EXISTS (SELECT 1 FROM cortex_sessions s
+			WHERE s.id = m.session_id AND s.is_default AND s.agent_id = m.agent_id AND s.scope_canon = m.scope_canon)`},
+	} {
+		var n int
+		if err := conn.QueryRow(ctx, q.sql).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", q.what, err)
+		}
+		if n != 0 {
+			t.Errorf("%d %s, want 0", n, q.what)
+		}
+	}
+
+	var sessions int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM cortex_sessions WHERE is_default`).Scan(&sessions); err != nil {
+		t.Fatalf("count default sessions: %v", err)
+	}
+	if sessions != len(agentIDs) {
+		t.Errorf("%d default sessions, want one per agent (%d)", sessions, len(agentIDs))
+	}
+	if n := countAdvisoryLocks(ctx, t, conn); n != 0 {
+		t.Errorf("%d advisory locks left after every replica returned, want 0", n)
+	}
+}
+
+// countingRescoper maps a legacy app or tenant to a workspace and counts
+// how often each (appID, tenantID) pair is asked for. Each call takes delay,
+// the way a Rescoper that looks the mapping up somewhere would; that keeps
+// the rescope running longer than grove's key-1 retry staggers replicas, so
+// overlapping passes would show. It is shared by every replica in a test, so
+// it is safe for concurrent use.
+type countingRescoper struct {
+	delay time.Duration
+	mu    sync.Mutex
+	calls map[[2]string]int
+}
+
+func (r *countingRescoper) Rescope(ctx context.Context, appID, tenantID string) (cortex.Scope, error) {
+	r.mu.Lock()
+	r.calls[[2]string{appID, tenantID}]++
+	r.mu.Unlock()
+	if err := sleepCtx(ctx, r.delay); err != nil {
+		return cortex.Scope{}, err
+	}
+	workspace := appID
+	if workspace == "" {
+		workspace = tenantID
+	}
+	return cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: workspace}}}, nil
+}
+
+func (r *countingRescoper) snapshot() map[[2]string]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return maps.Clone(r.calls)
+}
+
+// TestMigrateFailsFastOnPoolOfOne gives Migrate a pool of one connection,
+// which it cannot run on, and expects a prompt error that says why rather
+// than a hang. A pool of two is enough.
+func TestMigrateFailsFastOnPoolOfOne(t *testing.T) {
+	ctx, dsn := startMigratePostgres(t)
+
+	done := make(chan error, 1)
+	small := New(openMigrateDB(ctx, t, dsn, driver.WithPoolSize(1)))
+	go func() { done <- small.Migrate(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errMigratePoolTooSmall) {
+			t.Fatalf("Migrate on a pool of one = %v, want errMigratePoolTooSmall", err)
+		}
+	case <-time.After(migrateConnProbeTimeout + 10*time.Second):
+		t.Fatal("Migrate on a pool of one did not return")
+	}
+
+	if err := New(openMigrateDB(ctx, t, dsn, driver.WithPoolSize(2))).Migrate(ctx); err != nil {
+		t.Fatalf("Migrate on a pool of two: %v", err)
+	}
+}
+
+// TestWithMigrateLockReleasesOnErrorAndPanic checks that the cortex lock is
+// given back when the work under it fails and when it panics, so another
+// session can take it straight away.
+func TestWithMigrateLockReleasesOnErrorAndPanic(t *testing.T) {
+	ctx, dsn := startMigratePostgres(t)
+	s := New(openMigrateDB(ctx, t, dsn))
+	observer := connectPG(ctx, t, dsn)
+
+	assertReleased := func(t *testing.T) {
+		t.Helper()
+		if n := countAdvisoryLocks(ctx, t, observer); n != 0 {
+			t.Fatalf("%d advisory locks left, want 0", n)
+		}
+		var acquired bool
+		if err := observer.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", migrateLockKey).Scan(&acquired); err != nil {
+			t.Fatalf("try cortex lock: %v", err)
+		}
+		if !acquired {
+			t.Fatal("cortex lock still held by the Store's session")
+		}
+		if _, err := observer.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrateLockKey); err != nil {
+			t.Fatalf("release cortex lock: %v", err)
+		}
+	}
+
+	t.Run("error", func(t *testing.T) {
+		boom := errors.New("boom")
+		err := s.withMigrateLock(ctx, func(context.Context) error { return boom })
+		if !errors.Is(err, boom) {
+			t.Fatalf("withMigrateLock = %v, want the work's error", err)
+		}
+		assertReleased(t)
+	})
+
+	t.Run("panic", func(t *testing.T) {
+		recovered := func() (r any) {
+			defer func() { r = recover() }()
+			_ = s.withMigrateLock(ctx, func(context.Context) error { panic("boom") })
+			return nil
+		}()
+		if recovered != "boom" {
+			t.Fatalf("recovered %v, want the work's panic to reach the caller", recovered)
+		}
+		assertReleased(t)
+	})
 }
 
 // TestMigrateAlongsideOtherGroveGroups races four cortex replicas against
@@ -381,10 +601,10 @@ func startMigratePostgres(t *testing.T) (context.Context, string) {
 
 // openMigrateDB opens a grove database with a connection pool of its own,
 // the way a separate replica would.
-func openMigrateDB(ctx context.Context, t *testing.T, dsn string) *grove.DB {
+func openMigrateDB(ctx context.Context, t *testing.T, dsn string, opts ...driver.Option) *grove.DB {
 	t.Helper()
 	drv := pgdriver.New()
-	if err := drv.Open(ctx, dsn); err != nil {
+	if err := drv.Open(ctx, dsn, opts...); err != nil {
 		t.Fatalf("open pg driver: %v", err)
 	}
 	db, err := grove.Open(drv)

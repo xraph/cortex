@@ -25,7 +25,10 @@ const migrateLockKey int64 = -918477416930547652
 // inside Migrate; cancelling ctx abandons the wait.
 //
 // fn runs on other pooled connections (grove's executor takes one for its
-// own lock), so Migrate needs at least two connections in the pool.
+// own lock), so Migrate needs at least two connections in the pool. Before
+// waiting for the lock it checks that a second one comes free within
+// migrateConnProbeTimeout, so a pool of one fails with an error that says
+// so instead of hanging until ctx ends.
 func (s *Store) withMigrateLock(ctx context.Context, fn func(ctx context.Context) error) (err error) {
 	conn, err := s.pgdb.AcquireConn(ctx)
 	if err != nil {
@@ -33,17 +36,55 @@ func (s *Store) withMigrateLock(ctx context.Context, fn func(ctx context.Context
 	}
 	defer conn.Release()
 
+	if probeErr := s.probeSecondConn(ctx); probeErr != nil {
+		return fmt.Errorf("cortex: acquire migration lock: %w", probeErr)
+	}
+
 	if lockErr := waitForMigrateLock(ctx, conn); lockErr != nil {
 		return fmt.Errorf("cortex: acquire migration lock: %w", lockErr)
 	}
 	defer func() {
-		if unlockErr := releaseMigrateLock(context.WithoutCancel(ctx), conn); unlockErr != nil {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), migrateUnlockTimeout)
+		defer cancel()
+		if unlockErr := releaseMigrateLock(unlockCtx, conn); unlockErr != nil {
 			err = errors.Join(err, unlockErr)
 		}
 	}()
 
 	return fn(ctx)
 }
+
+// migrateConnProbeTimeout bounds how long probeSecondConn waits for a second
+// pooled connection. migrateUnlockTimeout bounds the unlock, which runs even
+// after ctx is cancelled, so an unreachable database cannot hold Migrate past
+// it.
+const (
+	migrateConnProbeTimeout = 5 * time.Second
+	migrateUnlockTimeout    = 5 * time.Second
+)
+
+// probeSecondConn takes and returns one more pooled connection while the
+// caller holds the lock connection. grove's driver does not report the pool
+// size, so this is how Migrate finds out that the pool is too small to run.
+func (s *Store) probeSecondConn(ctx context.Context) error {
+	probeCtx, cancel := context.WithTimeout(ctx, migrateConnProbeTimeout)
+	defer cancel()
+
+	conn, err := s.pgdb.AcquireConn(probeCtx)
+	if err == nil {
+		conn.Release()
+		return nil
+	}
+	if ctx.Err() == nil && errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w: no second connection came free within %s (check driver.WithPoolSize)",
+			errMigratePoolTooSmall, migrateConnProbeTimeout)
+	}
+	return withContextErr(ctx, err)
+}
+
+// errMigratePoolTooSmall is what Migrate reports when it cannot get the two
+// pooled connections it needs at once.
+var errMigratePoolTooSmall = errors.New("migrate needs two connections from the pool at once")
 
 // Polling bounds for waitForMigrateLock: the first retry comes after
 // migrateLockMinWait and the pause doubles up to migrateLockMaxWait.
