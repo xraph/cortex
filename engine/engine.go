@@ -98,6 +98,11 @@ type Engine struct {
 	// one suspends the run so the host can execute it.
 	externalTools []llm.Tool
 
+	// retrySafeNames is what WithToolRetrySafe collected; New checks each
+	// against tools and folds them into retrySafe.
+	retrySafeNames []string
+	retrySafe      map[string]bool
+
 	// suspensionTTL is how long a paused run waits before the sweeper
 	// fails it. Zero switches expiry off entirely: suspensions are
 	// written with no deadline and no sweeper runs.
@@ -172,6 +177,10 @@ func New(opts ...Option) (*Engine, error) {
 		if err := opt(e); err != nil {
 			return nil, fmt.Errorf("cortex: apply engine option: %w", err)
 		}
+	}
+
+	if err := e.configureRetrySafe(); err != nil {
+		return nil, err
 	}
 
 	if err := e.configurePublication(); err != nil {

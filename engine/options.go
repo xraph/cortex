@@ -143,6 +143,17 @@ func WithTool(def llm.Tool, h ToolHandler) Option {
 	}
 }
 
+// WithToolRetrySafe marks registered tools as safe to run again after a
+// crash: they only read, or they are idempotent through the effect
+// journal. Every name must be registered with WithTool by the time New
+// returns, or New fails.
+func WithToolRetrySafe(names ...string) Option {
+	return func(e *Engine) error {
+		e.retrySafeNames = append(e.retrySafeNames, names...)
+		return nil
+	}
+}
+
 // WithToolAuthorizer installs the host's authorization decisions. A nil
 // authorizer, or none at all, allows every tool and every call.
 func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
