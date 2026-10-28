@@ -32,7 +32,7 @@ if err := s.Migrate(ctx); err != nil {
 }
 ```
 
-The blank `pgmigrate` import registers Grove's migration executor for PostgreSQL. Without it `Migrate` fails with "no executor registered for driver". If you run Cortex as a Forge extension, the extension can build this store for you from a `*grove.DB` in the container and migrates it on start.
+The blank `pgmigrate` import registers Grove's migration executor for PostgreSQL, which you need when you run grove migrations through the executor registry yourself. `store/postgres` imports `pgmigrate` as well, so `Migrate` works with or without it. If you run Cortex as a Forge extension, the extension can build this store for you from a `*grove.DB` in the container and migrates it on start.
 
 ## Internals
 
@@ -120,6 +120,29 @@ type Store interface {
 ## Migrations
 
 Migrations are written in Go in `store/postgres/migrations.go`, compiled into your binary, and applied when you call `Migrate()`. You don't need an external migration tool. The `.sql` files under `store/postgres/migrations/` aren't loaded by anything, so editing them changes nothing.
+
+## Migrations with several replicas
+
+You can call `Migrate` from every replica at boot. They take turns. The first one to get there runs the migrations, the rest wait until it's done, and then they find nothing left to apply. You won't see "migration lock is held by another process" from a replica that simply started a second late.
+
+The turn-taking is a session-level advisory lock with the key `-918477416930547652`, the FNV-1a 64-bit hash of `github.com/xraph/cortex/store/postgres.Migrate` read as a signed integer. It's a key of cortex's own because grove's migration lock uses key 1 for every group on a database, so sharing it would make cortex wait on (or block) migrations that have nothing to do with it. `Migrate` takes the lock on one dedicated connection and holds it for the whole call: grove creating `grove_migrations` and `grove_migration_locks`, the cortex migration group, then the legacy rescope and the default-session backfill. It releases the lock on that same connection before handing it back to the pool.
+
+A replica that's waiting retries `pg_try_advisory_lock` with a pause that starts at 50ms and grows to a second. It doesn't block in `pg_advisory_lock`, and that's deliberate: a blocked call keeps its snapshot open, several cortex migrations build indexes with `CREATE INDEX CONCURRENTLY`, and that waits for every older snapshot to finish, so the replica holding the lock would end up waiting on the ones queued behind it.
+
+In practice:
+
+- `Migrate` waits for as long as your context allows. Give it a deadline or cancel it and it returns an error that matches `context.DeadlineExceeded` or `context.Canceled`, with no lock request left behind. Once a replica holds the cortex lock, grove waits up to five minutes for key 1 if something else holds it.
+- It takes two connections from the pool at once, one for the cortex lock and one that grove's executor uses for key 1. pgdriver's default pool has more than that. With `pool_max_conns=1`, `Migrate` waits until your context ends.
+- Session-level advisory locks need a real session. Run `Migrate` against Postgres directly or through PgBouncer in session mode, not transaction mode. Grove's own lock has the same requirement.
+- Other grove users on the database don't take the cortex lock. On a fresh database one of them can create grove's tracking tables at the same moment as a cortex replica, and Postgres fails the loser with `42P07` or `42710`. `Migrate` retries that up to five times with a short pause, which is long enough for the tables to exist.
+
+### Running the cortex group in your own migration pass
+
+If your host runs every grove group in one central pass and turns off the extension's migration (Loomplane does this with `WithDisableMigrate`), add `postgres.Migrations` to that pass. The group creates every table cortex needs on its own.
+
+The cortex lock isn't taken in that case, so keeping the pass safe across replicas is up to you. Grove's key 1 keeps the migrations themselves apart. On a fresh database you'll also want to retry `42P07` and `42710` around the pass, the same way `Migrate` does, because grove creates its tracking tables before it takes key 1.
+
+The rescope and the session backfill that `Migrate` runs after the group only change rows written before v1.8.0. On a database that never held those you can leave them out. If yours did, call `Migrate` once with `cortex.WithRescoper` and your `cortex.Rescoper`. It's safe to run while your pass is running: `Migrate` holds the cortex key while it waits for key 1, and your pass never asks for the cortex key, so neither ends up waiting on the other.
 
 ## Usage with engine
 

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
-	"github.com/xraph/grove/migrate"
+	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/store"
@@ -42,39 +42,47 @@ func New(db *grove.DB) *Store {
 }
 
 // Migrate runs programmatic migrations via the grove orchestrator.
+//
+// It holds the cortex migration lock (migrateLockKey) for the whole call, so
+// replicas starting together on one database run it one at a time: a second
+// caller waits for the first to finish rather than failing. The lock also
+// covers grove's own tracking-table creation and the backfills after the
+// migration group. Cancelling ctx stops the wait. A lost race on grove's
+// tracking tables against another grove user is retried (see migrateGroup).
 func (s *Store) Migrate(ctx context.Context, opts ...cortex.MigrateOption) error {
 	o := cortex.ApplyMigrateOptions(opts...)
 
-	executor := &pgMigrateExecutor{pgdb: s.pgdb}
+	return s.withMigrateLock(ctx, func(ctx context.Context) error {
+		executor := pgmigrate.New(s.pgdb)
 
-	orch := migrate.NewOrchestrator(executor, Migrations)
-	if _, err := orch.Migrate(ctx); err != nil {
-		return fmt.Errorf("cortex: migration failed: %w", err)
-	}
+		if err := migrateGroup(ctx, executor); err != nil {
+			return fmt.Errorf("cortex: migration failed: %w", err)
+		}
 
-	if err := s.rescopeLegacyRows(ctx, o); err != nil {
-		return fmt.Errorf("cortex: rescope legacy rows: %w", err)
-	}
+		if err := s.rescopeLegacyRows(ctx, o); err != nil {
+			return fmt.Errorf("cortex: rescope legacy rows: %w", err)
+		}
 
-	// Runs after rescopeLegacyRows, unconditionally on every Migrate()
-	// call, rather than only inside migration 20260824000004's one-shot
-	// Up (see that migration's Comment for why the one-shot version was
-	// wrong): a host jumping straight from pre-v1.8.0 to this version in
-	// one Migrate() call has every legacy conversation row sitting at
-	// scope_canon = '' at the point the migration group runs, so a
-	// one-shot Up run before rescoping finds nothing to backfill and,
-	// because grove never retries a recorded version, never gets another
-	// chance -- those rows would stay scoped (reachable to every other
-	// query) but permanently orphaned from a session. Calling this here
-	// instead closes that gap: it runs after every row in this call has
-	// its real scope, and it is safe to run on every boot because its
-	// own filter (session_id = '' on kind = 'conversation') has nothing
-	// left to find once a scope's rows have been backfilled once.
-	if err := backfillDefaultSessions(ctx, executor); err != nil {
-		return fmt.Errorf("cortex: backfill default sessions: %w", err)
-	}
+		// Runs after rescopeLegacyRows, unconditionally on every Migrate()
+		// call, rather than only inside migration 20260824000004's one-shot
+		// Up (see that migration's Comment for why the one-shot version was
+		// wrong): a host jumping straight from pre-v1.8.0 to this version in
+		// one Migrate() call has every legacy conversation row sitting at
+		// scope_canon = '' at the point the migration group runs, so a
+		// one-shot Up run before rescoping finds nothing to backfill and,
+		// because grove never retries a recorded version, never gets another
+		// chance -- those rows would stay scoped (reachable to every other
+		// query) but permanently orphaned from a session. Calling this here
+		// instead closes that gap: it runs after every row in this call has
+		// its real scope, and it is safe to run on every boot because its
+		// own filter (session_id = '' on kind = 'conversation') has nothing
+		// left to find once a scope's rows have been backfilled once.
+		if err := backfillDefaultSessions(ctx, executor); err != nil {
+			return fmt.Errorf("cortex: backfill default sessions: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // Ping verifies the database connection.

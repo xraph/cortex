@@ -8,6 +8,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -359,7 +360,7 @@ VALUES ($1, '', 'conversation', '{"role":"user","content":"skipped-version"}', '
 		t.Fatalf("create organic session: %v", err)
 	}
 
-	executor := &pgMigrateExecutor{pgdb: s.pgdb}
+	executor := pgmigrate.New(s.pgdb)
 	if err = unbackfillDefaultSessions(ctx, executor); err != nil {
 		t.Fatalf("unbackfillDefaultSessions: %v", err)
 	}
