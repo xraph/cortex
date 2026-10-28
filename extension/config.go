@@ -37,8 +37,8 @@ type Config struct {
 
 	// RunConcurrency caps how many agent runs execute at once in this
 	// process, applied with engine.WithRunConcurrency. Zero, the default,
-	// is unlimited. Runs the experimental task workers start are not
-	// counted.
+	// is unlimited. Runs started by the experimental task workers, prepared
+	// orchestrations and plan replanning are not counted.
 	RunConcurrency int `json:"run_concurrency" mapstructure:"run_concurrency" yaml:"run_concurrency"`
 
 	// GroveDatabase is the name of a grove.DB registered in the DI container.

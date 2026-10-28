@@ -130,6 +130,11 @@ func (d *dispatcher) work(ctx context.Context) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
+		if isStopping(err) {
+			// The host is draining. The rows stay queued for other
+			// workers; retrying fast here would only be refused again.
+			err = nil
+		}
 
 		// retry stays nil on success, so a healthy worker waits for real
 		// work rather than spinning.
@@ -155,7 +160,9 @@ func (d *dispatcher) work(ctx context.Context) {
 }
 
 // Drain delivers everything currently queued and reports how many rows it
-// carried. Tests call it directly; workers call it in a loop.
+// carried. Tests call it directly; workers call it in a loop. When the
+// bus's Admitter refuses with cortex.ErrEngineStopping, Drain stops and
+// returns that error, leaving the remaining rows queued.
 //
 // The count includes replies the directives produced, because a reply is
 // itself a queued delivery and a drain that left them behind would stop
@@ -171,7 +178,14 @@ func (b *Bus) Drain(ctx context.Context) (int, error) {
 			return n, nil
 		}
 		for _, row := range rows {
-			err := b.deliverOne(cortex.WithScope(ctx, row.Scope), row.ID)
+			// Admission comes before the claim: a host that is draining
+			// refuses here, and the row stays queued for another worker.
+			admitted, release, admitErr := b.admit(cortex.WithScope(ctx, row.Scope))
+			if admitErr != nil {
+				return n, admitErr
+			}
+			err := b.deliverOne(admitted, row.ID)
+			release()
 			switch {
 			case errors.Is(err, ErrDeliveryAlreadyClaimed):
 				continue

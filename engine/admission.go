@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/xraph/cortex"
 )
@@ -42,7 +41,9 @@ type admissionTicket struct {
 	adm      *admission
 	holdSlot bool
 	once     sync.Once
-	released atomic.Bool
+	// released is guarded by adm.mu, so a child cannot join a parent in
+	// the moment between the parent leaving and drain seeing idle.
+	released bool
 }
 
 type admissionTicketKey struct{}
@@ -64,14 +65,12 @@ func (a *admission) configure(limit int) {
 // and refusing the child would fail the parent's tool call halfway
 // through the drain. It is still counted, so Stop waits for it too.
 func (a *admission) admit(ctx context.Context) (context.Context, func(), error) {
-	if parent, ok := ctx.Value(admissionTicketKey{}).(*admissionTicket); ok && parent.adm == a && !parent.released.Load() {
-		a.mu.Lock()
+	a.mu.Lock()
+	if parent, ok := ctx.Value(admissionTicketKey{}).(*admissionTicket); ok && parent.adm == a && !parent.released {
 		a.enterLocked()
 		a.mu.Unlock()
 		return a.issue(ctx, false)
 	}
-
-	a.mu.Lock()
 	if a.stopping {
 		a.mu.Unlock()
 		return ctx, func() {}, cortex.ErrEngineStopping
@@ -111,11 +110,11 @@ func (a *admission) issue(ctx context.Context, holdSlot bool) (context.Context, 
 
 func (t *admissionTicket) release() {
 	t.once.Do(func() {
-		t.released.Store(true)
 		if t.holdSlot && t.adm.slots != nil {
 			<-t.adm.slots
 		}
 		t.adm.mu.Lock()
+		t.released = true
 		t.adm.leaveLocked()
 		t.adm.mu.Unlock()
 	})

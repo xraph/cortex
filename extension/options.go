@@ -11,9 +11,11 @@ import (
 // ExtOption configures the Cortex Forge extension.
 type ExtOption func(*Extension)
 
-// WithStore sets the composite store.
+// WithStore sets the composite store. It wins over any grove database in
+// the container, and the extension then skips discovering a default one.
 func WithStore(s store.Store) ExtOption {
 	return func(e *Extension) {
+		e.hostStore = true
 		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
 	}
 }

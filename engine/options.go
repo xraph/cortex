@@ -83,8 +83,8 @@ func WithConfig(cfg cortex.Config) Option {
 // agent-reply recovery start. A stream holds its slot until its channel
 // closes. A run started from inside an admitted run, on the ctx it was
 // given, shares its parent's slot, so a tool that runs another agent
-// cannot deadlock on a limit of one. Runs the experimental task workers
-// and prepared orchestrations start are not counted.
+// cannot deadlock on a limit of one. Runs started by the experimental task
+// workers, prepared orchestrations and plan replanning are not counted.
 //
 // cortex.Config.RunConcurrency is not read by the engine; the Forge
 // extension applies its run_concurrency setting through this option.

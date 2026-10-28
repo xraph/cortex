@@ -317,6 +317,9 @@ func (e *Engine) Start(ctx context.Context) error {
 // executing to finish. A run started from inside one of those (a tool
 // calling RunAgent on the ctx it was given) is still let through, because
 // its parent is one of the runs being waited for. Start admits runs again.
+// The message bus is under the same admission: while Stop drains it claims
+// no new delivery or ask, leaving them queued for another worker, and a
+// delivery it was already carrying finishes, resume included.
 //
 // If ctx ends before the last run finishes, Stop still signals task
 // services and returns ctx's error, but leaves the sweeper and the message
@@ -356,8 +359,15 @@ func (e *Engine) Store() store.Store { return e.store }
 // Extensions returns the plugin registry.
 func (e *Engine) Extensions() *plugin.Registry { return e.extensions }
 
-// Config returns the engine configuration.
-func (e *Engine) Config() cortex.Config { return e.config }
+// Config returns the engine configuration. RunConcurrency is the cap the
+// engine applies (WithRunConcurrency), zero for none.
+func (e *Engine) Config() cortex.Config {
+	c := e.config
+	// The cap in force, which WithRunConcurrency sets, not whatever a
+	// WithConfig passed in the struct.
+	c.RunConcurrency = e.admission.limit
+	return c
+}
 
 // UpdateConfig applies partial runtime configuration updates.
 // Only non-zero fields in the update are applied. Changes are in-memory only.
@@ -377,7 +387,7 @@ func (e *Engine) UpdateConfig(update cortex.Config) cortex.Config {
 	if update.DefaultReasoningLoop != "" {
 		e.config.DefaultReasoningLoop = update.DefaultReasoningLoop
 	}
-	return e.config
+	return e.Config()
 }
 
 // ──────────────────────────────────────────────────

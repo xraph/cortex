@@ -30,6 +30,12 @@ func (b *Bus) deliverOne(ctx context.Context, deliveryID id.DeliveryID) error {
 	// list the same row, and the loser must not walk off with it.
 	ctx, tr := b.startDelivery(ctx, d, b.dispatch.links.take(deliveryID))
 	err = b.carry(ctx, d, tr)
+	if isStopping(err) {
+		// Nothing ran and nothing was answered. Put the row back so another
+		// worker carries it on its next pass, instead of leaving it claimed
+		// until the claim goes stale.
+		err = errors.Join(err, b.requeueDelivery(ctx, d))
+	}
 	tr.end(d, err)
 	return err
 }
@@ -103,6 +109,12 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 		}
 	} else {
 		out, runErr = b.runner.RunAgent(ctx, d.Receiver.Agent, RenderInput(e), nil)
+		if out == nil && isStopping(runErr) {
+			// The host refused to start the run. That is no answer from
+			// the recipient, so no Failure goes to the asker; deliverOne
+			// requeues the delivery for another worker.
+			return runErr
+		}
 	}
 	if out == nil && runErr == nil {
 		runErr = cortex.ErrRunIncomplete
@@ -239,6 +251,13 @@ func (b *Bus) resolveAskWithFailure(ctx context.Context, replyWith, reason strin
 	if replyWith == "" {
 		return nil
 	}
+	// Admitted before the claim or seal, for the same reason as resolveAsk.
+	admitted, release, admitErr := b.admit(ctx)
+	if admitErr != nil {
+		return admitErr
+	}
+	defer release()
+	ctx = admitted
 	if b.resolutions != nil {
 		return b.resolveSealedFailure(ctx, replyWith, reason)
 	}

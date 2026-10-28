@@ -60,6 +60,10 @@ type BusConfig struct {
 	Transports     []Transport
 	Options        Options
 
+	// Admitter, when set, is asked before the bus claims anything that can
+	// start or resume a run. Nil admits everything.
+	Admitter Admitter
+
 	// Metrics records the bus's delivery counter. Nil, the default,
 	// records nothing; the engine passes whatever WithMetrics gave it.
 	Metrics gometrics.Metrics
@@ -85,6 +89,7 @@ type Bus struct {
 	store             Store
 	runner            cortex.AgentRunner
 	resumer           Resumer
+	admitter          Admitter
 	resolver          Resolver
 	hooks             HookEmitter
 	clock             Clock
@@ -176,6 +181,7 @@ func NewBus(cfg BusConfig) (*Bus, error) {
 		store:             routing,
 		runner:            cfg.Runner,
 		resumer:           cfg.Resumer,
+		admitter:          cfg.Admitter,
 		resolver:          cfg.Resolver,
 		hooks:             cfg.Hooks,
 		clock:             cfg.Clock,
@@ -437,6 +443,12 @@ func (b *Bus) route(ctx context.Context, e *Envelope) (*SendResult, error) {
 	// resume, so queueing a delivery as well would hand the same agent the
 	// same words twice.
 	resumed, err := b.resolveAsk(ctx, e)
+	if isStopping(err) {
+		// This process may not resume the asker now, and the ask was left
+		// unclaimed. Queueing the reply hands it to whichever worker can:
+		// carrying it resolves the same ask.
+		resumed, err = false, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -691,6 +703,16 @@ func (b *Bus) resolveAsk(ctx context.Context, e *Envelope) (bool, error) {
 		// so nothing is lost by waiting for them.
 		return false, nil
 	}
+
+	// Admitted before the claim, so a refusal leaves the ask for another
+	// worker, and a granted resume finishes even if the host starts
+	// draining after the claim.
+	admitted, release, admitErr := b.admit(ctx)
+	if admitErr != nil {
+		return false, admitErr
+	}
+	defer release()
+	ctx = admitted
 
 	if b.resolutions != nil {
 		return b.resumeSealedAsk(ctx, pending, AskReply{Replies: replies, Complete: true})

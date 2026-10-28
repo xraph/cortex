@@ -24,6 +24,20 @@ type Resumer interface {
 	ResumeAgentReply(ctx context.Context, runID id.AgentRunID, callID, result string) error
 }
 
+// Admitter lets the host decide whether this process may carry work that
+// can start or resume a run. The bus asks before it claims a delivery and
+// before it claims or seals a waiting ask, so a refusal leaves both
+// untouched for another worker. A refusal matching cortex.ErrEngineStopping
+// means "not here, not now": the bus stops carrying and sends no reply.
+//
+// The returned context must be used for the work and release called when
+// it ends. A context that is already admitted is admitted again at once,
+// which is what lets a resume that follows a consumed claim finish while
+// the host drains.
+type Admitter interface {
+	AdmitRun(ctx context.Context) (context.Context, func(), error)
+}
+
 // ResolutionResumer consumes a retained outcome with its question identity.
 // Native buses prefer it to the legacy run-ID-only resumer. Receiving a receipt
 // does not grant authority to replay a previously attempted resume.

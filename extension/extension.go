@@ -56,8 +56,11 @@ type Extension struct {
 	useGrove    bool
 	// noAutoAdapters skips the nexus, shield, weave and sentinel discovery.
 	noAutoAdapters bool
-	dashboardDeps  cortexcontract.Deps
-	optimization   *optimization.Optimizer
+	// hostStore is set by WithStore, which makes discovering a default
+	// grove database pointless.
+	hostStore     bool
+	dashboardDeps cortexcontract.Deps
+	optimization  *optimization.Optimizer
 }
 
 // New creates a Cortex Forge extension with the given options.
@@ -164,7 +167,7 @@ func (e *Extension) init(fapp forge.App) error {
 			return err
 		}
 		opts = append(opts, engine.WithStore(s))
-	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil && !e.hostStore {
 		// Auto-discover default grove.DB from container (matches warden/authsome pattern).
 		s, err := e.buildStoreFromGroveDB(db)
 		if err != nil {

@@ -31,6 +31,9 @@ func (b *Bus) ReclaimStaleDeliveries(ctx context.Context) (int, error) {
 // peer that did not answer is something the asking agent can react to, and
 // killing the run throws that away. The engine sweep stays as the outer
 // backstop for anything this missed.
+//
+// When the bus's Admitter refuses with cortex.ErrEngineStopping, the pass
+// ends early without an error and the remaining asks stay unclaimed.
 func (b *Bus) SweepExpiredAsks(ctx context.Context) (int, error) {
 	asks, err := b.store.ListExpiredAsks(ctx, b.clock.Now(), sweepBatch)
 	if err != nil {
@@ -40,6 +43,11 @@ func (b *Bus) SweepExpiredAsks(ctx context.Context) (int, error) {
 	for _, a := range asks {
 		askCtx := cortex.WithScope(ctx, a.Scope)
 		if err := b.resolveAskWithFailure(askCtx, a.ReplyWith, b.timeoutReason(askCtx, a)); err != nil {
+			if isStopping(err) {
+				// The host is draining. The ask was not claimed, so a later
+				// sweep here or on another worker resolves it.
+				return n, nil
+			}
 			return n, err
 		}
 		n++
