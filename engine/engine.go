@@ -801,10 +801,10 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // Two operators deciding the same checkpoint at once both pass the
 // pending guard. MarkReady lets one of them move the run and the store
 // keeps the first record of a decision, so the other is told
-// cortex.ErrInvalidState, fires no hook and continues nothing. A
-// checkpoint whose pause the run has already left (its record was lost
-// and the run continued) is closed as superseded, and deciding it is
-// cortex.ErrInvalidState too: it never approves the run's next pause.
+// cortex.ErrInvalidState, fires no hook and continues nothing. Deciding a
+// checkpoint whose pause the run has already left is cortex.ErrInvalidState
+// too, so it never approves the run's next pause; when the run is waiting
+// on a different pause, the stale checkpoint is closed as superseded.
 //
 // RunReady fires between the two halves. A host that continues ready runs
 // from that hook should decide with DecideCheckpoint: with
@@ -854,7 +854,7 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 
 	var executionErr error
 	if openedASuspendedRun(cp) {
-		susp, bindErr := e.boundSuspension(ctx, cp)
+		susp, bindErr := e.boundSuspension(ctx, cp, false)
 		if bindErr != nil {
 			return bindErr
 		}

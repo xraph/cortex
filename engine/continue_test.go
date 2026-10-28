@@ -918,3 +918,93 @@ func TestCancelRunCancelsContinuableRuns(t *testing.T) {
 		require.Equal(t, 1, f.ended.of(paused.ID))
 	})
 }
+
+// A decider who acts first and records second owns the record. A second
+// decider arriving in between is refused and closes nothing, on the
+// ready path (a default rejection) and on the legacy path (an approval
+// carried out before it is recorded).
+func TestDeciderInFlightKeepsTheRecord(t *testing.T) {
+	t.Run("default rejection", func(t *testing.T) {
+		f, st := newFlakyFixture(t)
+		paused, cp := f.pause(t)
+		var late error
+		second := func() {
+			late = f.e.DecideCheckpoint(as(f.ctx, carol), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "carol"})
+			require.Equal(t, checkpointStatePending, f.checkpointState(t, cp.ID).State, "the late decider closed a checkpoint whose decider is still recording")
+		}
+		st.beforeResolve.Store(&second)
+
+		require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{DecidedBy: "bob", Reason: "no"}))
+		require.ErrorIs(t, late, cortex.ErrInvalidState)
+		recorded := f.checkpointState(t, cp.ID)
+		require.Equal(t, "bob", recorded.Decision.DecidedBy)
+		require.False(t, recorded.Decision.Approved)
+		require.Equal(t, run.StateFailed, f.runState(t, paused.ID).State)
+		require.Len(t, f.cps.resolvedEvents(), 1)
+		require.Zero(t, f.ran.Load())
+	})
+	t.Run("legacy approval", func(t *testing.T) {
+		ctx := cortex.WithScope(context.Background(), approvalScope())
+		st := &flakyResolveStore{Store: newApprovalStore(ctx, t)}
+		f := buildContinueFixture(ctx, t, hiddenContinuationStore{st}, []llm.ToolCall{{ID: "call-1", Name: gatedTool().Name, Arguments: `{}`}})
+		paused, cp := f.pause(t)
+		var late error
+		second := func() {
+			late = f.e.ResolveCheckpoint(as(ctx, carol), cp.ID, checkpoint.Decision{DecidedBy: "carol", Reason: "too late"})
+			require.Equal(t, checkpointStatePending, f.checkpointState(t, cp.ID).State, "the late decider closed a checkpoint whose decider is still recording")
+		}
+		st.beforeResolve.Store(&second)
+
+		require.NoError(t, f.e.ResolveCheckpoint(as(ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+		require.ErrorIs(t, late, cortex.ErrInvalidState)
+		recorded := f.checkpointState(t, cp.ID)
+		require.True(t, recorded.Decision.Approved)
+		require.Equal(t, "bob", recorded.Decision.DecidedBy)
+		require.Equal(t, run.StateCompleted, f.runState(t, paused.ID).State)
+		require.EqualValues(t, 1, f.ran.Load())
+	})
+}
+
+// A job can claim the run between DecideCheckpoint's MarkReady and its
+// record, and record the decision itself. The decider's own write then
+// finds its decision already there and succeeds.
+func TestDecisionRecordedByAJobInFlight(t *testing.T) {
+	t.Run("job continued the run", func(t *testing.T) {
+		f, st := newFlakyFixture(t)
+		paused, cp := f.pause(t)
+		job := func() {
+			done, err := f.e.ContinueRun(f.ctx, paused.ID)
+			require.NoError(t, err)
+			require.Equal(t, run.StateCompleted, done.State)
+		}
+		st.beforeResolve.Store(&job)
+
+		require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+		recorded := f.checkpointState(t, cp.ID)
+		require.True(t, recorded.Decision.Approved)
+		require.Equal(t, "bob", recorded.Decision.DecidedBy)
+		require.Equal(t, "recorded when the run continued", recorded.Decision.Reason)
+		_, notices, _ := f.ready.snapshot()
+		require.Empty(t, notices, "RunReady fired for a run a job had already claimed")
+		require.Len(t, f.cps.resolvedEvents(), 1)
+		require.EqualValues(t, 1, f.ran.Load())
+	})
+	t.Run("run still ready", func(t *testing.T) {
+		f, st := newFlakyFixture(t)
+		paused, cp := f.pause(t)
+		principal, err := cortex.JSONPrincipalCodec[testPrincipal]().EncodePrincipal(f.ctx, bob)
+		require.NoError(t, err)
+		same := func() {
+			require.NoError(t, st.Store.Resolve(f.ctx, cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob", DecidedByPrincipal: principal, DecidedAt: time.Now().UTC()}))
+		}
+		st.beforeResolve.Store(&same)
+
+		require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+		_, notices, _ := f.ready.snapshot()
+		require.Len(t, notices, 1)
+		require.Equal(t, run.StateReady, f.runState(t, paused.ID).State)
+		_, err = f.e.ContinueRun(f.ctx, paused.ID)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, f.ran.Load())
+	})
+}

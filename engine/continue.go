@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -68,13 +69,13 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if !openedASuspendedRun(cp) {
 		return nil, e.recordDecision(ctx, cp, cp.Scope, d)
 	}
-	susp, err := e.boundSuspension(ctx, cp)
+	susp, err := e.boundSuspension(ctx, cp, true)
 	if err != nil {
 		return nil, err
 	}
 	if !d.Approved && !e.rejectionsToModel {
 		if rejectErr := e.failRejected(ctx, cp, d); rejectErr != nil {
-			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.readyForCheckpoint(ctx, cp) {
+			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.runMovedOn(ctx, cp) {
 				return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
 			}
 			return nil, rejectErr
@@ -102,7 +103,19 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	// closed the checkpoint, is refused here with ErrInvalidState and
 	// fires no hook: the first record stands.
 	if err := e.recordDecision(ctx, cp, ready.Scope, d); err != nil {
-		return nil, err
+		if !errors.Is(err, cortex.ErrInvalidState) || !e.recordedAs(ctx, cp, d) {
+			return nil, err
+		}
+		// A job claimed the run between MarkReady and this write and
+		// recorded this very decision for it. The decision stands, so it
+		// is a success. RunReady goes out only if nobody has claimed the
+		// run yet; a claimed run needs no job.
+		current, stillReady := e.readyForCheckpoint(ctx, cp)
+		if !stillReady {
+			return nil, nil
+		}
+		e.emitRunReady(ctx, current)
+		return current, nil
 	}
 	e.emitRunReady(ctx, ready)
 	return ready, nil
@@ -111,22 +124,33 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 // boundSuspension returns the suspension a loop checkpoint was opened for,
 // which is the only pause a decision on it may answer.
 //
-// A checkpoint can outlive its pause: its record was lost after the run
-// was made ready, and the run continued and maybe paused again. Approving
-// it then must not approve whatever the run is waiting on now, which
-// nobody has decided. Such a checkpoint is closed as superseded and the
-// decision is refused with cortex.ErrInvalidState.
-func (e *Engine) boundSuspension(ctx context.Context, cp *checkpoint.Checkpoint) (*suspension.Suspension, error) {
+// A run with no suspension is refused with cortex.ErrInvalidState and the
+// checkpoint is left alone: that is also what the run looks like while
+// another decider is between acting and recording, and the record is
+// theirs to write.
+//
+// A run waiting on a different suspension has left this checkpoint's
+// pause behind, and approving it must not approve what the run is waiting
+// on now, which nobody has decided. The decision is refused with
+// cortex.ErrInvalidState. With closeStale, the ContinuationStore path, the
+// checkpoint is also closed as superseded: there a decision is recorded
+// before the run acts, so a checkpoint still pending on a run that moved
+// on is one whose record was lost. The legacy path acts before recording
+// and never closes one, since its own decider may still be writing.
+func (e *Engine) boundSuspension(ctx context.Context, cp *checkpoint.Checkpoint, closeStale bool) (*suspension.Suspension, error) {
 	susp, err := e.store.GetSuspension(ctx, cp.RunID)
-	if err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+	if errors.Is(err, cortex.ErrNotSuspended) {
+		return nil, fmt.Errorf("resolve checkpoint %s: the run is not waiting on it: %w", cp.ID, cortex.ErrInvalidState)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("load suspension for checkpoint %s: %w", cp.ID, err)
 	}
-	if err == nil {
-		if opened, ok := cp.Metadata[checkpointSuspensionKey].(string); ok && opened == susp.ID.String() {
-			return susp, nil
-		}
+	if opened, ok := cp.Metadata[checkpointSuspensionKey].(string); ok && opened == susp.ID.String() {
+		return susp, nil
 	}
-	e.closeCheckpoint(ctx, cp, "superseded: the run is no longer waiting on the pause this checkpoint was opened for")
+	if closeStale {
+		e.closeCheckpoint(ctx, cp, "superseded: the run is no longer waiting on the pause this checkpoint was opened for")
+	}
 	return nil, fmt.Errorf("resolve checkpoint %s: the run is no longer waiting on it: %w", cp.ID, cortex.ErrInvalidState)
 }
 
@@ -206,6 +230,12 @@ func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint,
 		return nil, fmt.Errorf("load run %s for a repeated decision: %w", cp.RunID, err)
 	}
 	if r.State != run.StateReady || r.Ready == nil || r.Ready.CheckpointID != cp.ID {
+		if r.State != run.StatePaused {
+			// Another decision moved the run first (a rejection that
+			// failed it, or an approval already carried out) and has not
+			// been recorded yet. It stands.
+			return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
+		}
 		return nil, refused
 	}
 	if r.Ready.Source != source {
@@ -217,12 +247,33 @@ func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint,
 	return r, nil
 }
 
-// readyForCheckpoint reports whether the run behind cp is ready on a
-// decision about cp, so a rejection whose claim lost to it can say the
-// checkpoint was already decided.
-func (e *Engine) readyForCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) bool {
+// readyForCheckpoint returns the run behind cp when it is ready on a
+// decision about cp.
+func (e *Engine) readyForCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) (*run.Run, bool) {
 	r, err := e.store.GetRun(ctx, cp.RunID)
-	return err == nil && r.State == run.StateReady && r.Ready != nil && r.Ready.CheckpointID == cp.ID
+	if err != nil || r.State != run.StateReady || r.Ready == nil || r.Ready.CheckpointID != cp.ID {
+		return nil, false
+	}
+	return r, true
+}
+
+// runMovedOn reports whether the run behind cp has left paused, which is
+// what a decision losing to another one finds.
+func (e *Engine) runMovedOn(ctx context.Context, cp *checkpoint.Checkpoint) bool {
+	r, err := e.store.GetRun(ctx, cp.RunID)
+	return err == nil && r.State != run.StatePaused
+}
+
+// recordedAs reports whether cp already carries d: the same outcome by the
+// same decider. That is a job recording this decision on its own when it
+// claimed the run first.
+func (e *Engine) recordedAs(ctx context.Context, cp *checkpoint.Checkpoint, d checkpoint.Decision) bool {
+	current, err := e.store.GetCheckpoint(ctx, cp.ID)
+	if err != nil || current.Decision == nil {
+		return false
+	}
+	got := current.Decision
+	return got.Approved == d.Approved && got.DecidedBy == d.DecidedBy && bytes.Equal(got.DecidedByPrincipal, d.DecidedByPrincipal)
 }
 
 // decisionInput is what a decision hands back for each pending call. An
@@ -481,8 +532,9 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 }
 
 // recordLostDecision records the decision a ready run carries on its
-// checkpoint, when the checkpoint is still pending because DecideCheckpoint
-// lost that write. The run is being carried out on the decision, so the
+// checkpoint, when the checkpoint is still pending: DecideCheckpoint lost
+// that write, or has not made it yet. In the second case the decider's own
+// write then finds this record and treats it as its own. The run is being carried out on the decision, so the
 // queue must not go on asking for it. The decider is the one the
 // readiness kept; a readiness without one is recorded as the engine's,
 // with a reason saying the original record was lost.
@@ -502,7 +554,7 @@ func (e *Engine) recordLostDecision(ctx context.Context, ready *run.Readiness) {
 		Approved:           ready.Source == run.ReadyApproval,
 		DecidedBy:          ready.DecidedBy,
 		DecidedByPrincipal: append([]byte(nil), ready.DecidedByPrincipal...),
-		Reason:             "recorded when the run continued, because the first record of this decision was lost",
+		Reason:             "recorded when the run continued",
 		DecidedAt:          ready.At,
 	}
 	if d.DecidedBy == "" && len(d.DecidedByPrincipal) == 0 {
