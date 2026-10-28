@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -30,8 +31,13 @@ type PrincipalCodec interface {
 // one. A principal of any other type is refused rather than written,
 // because it would come back as a T the host never put on the context.
 //
-// It has no way to tell a revoked identity from a live one. A host that
-// needs that check writes its own codec, or wraps this one.
+// Stored bytes that no longer decode into a T, because they are not JSON
+// or because T changed shape since the run was created, are reported as
+// ErrPrincipalRevoked: retrying cannot change them, so the run is failed
+// rather than left paused. Any other decode error stays transient.
+//
+// It has no other way to tell a revoked identity from a live one. A host
+// that needs that check writes its own codec, or wraps this one.
 func JSONPrincipalCodec[T any]() PrincipalCodec {
 	return jsonPrincipalCodec[T]{}
 }
@@ -54,6 +60,11 @@ func (jsonPrincipalCodec[T]) EncodePrincipal(_ context.Context, principal any) (
 func (jsonPrincipalCodec[T]) DecodePrincipal(_ context.Context, data []byte) (any, error) {
 	var principal T
 	if err := json.Unmarshal(data, &principal); err != nil {
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+			return nil, fmt.Errorf("cortex: stored principal is unreadable: %w: %w", ErrPrincipalRevoked, err)
+		}
 		return nil, fmt.Errorf("cortex: decode principal: %w", err)
 	}
 	return principal, nil

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
@@ -359,7 +361,8 @@ func TestRevokedPrincipalFailsResume(t *testing.T) {
 		codec := newSwitchCodec()
 		handlers := &handlerPrincipals{}
 		model := &sequenceLLM{responses: []llm.Response{callsTool("call-1", externalTool().Name), callsTool("call-2", "probe")}}
-		e, err := New(WithStore(st), WithToolAuthorizer(&principalRecorder{}), WithPrincipalCodec(codec),
+		logger := log.NewTestLogger()
+		e, err := New(WithStore(st), WithToolAuthorizer(&principalRecorder{}), WithPrincipalCodec(codec), WithLogger(logger),
 			WithLLM(model), WithExternalTool(externalTool()), handlers.tool("probe"))
 		if err != nil {
 			t.Fatalf("New: %v", err)
@@ -377,6 +380,23 @@ func TestRevokedPrincipalFailsResume(t *testing.T) {
 		failed, err := st.GetRun(ctx, paused.ID)
 		if err != nil || failed.State != run.StateFailed {
 			t.Fatalf("run after a revoked resume = %+v, %v; want failed", failed, err)
+		}
+		if !strings.Contains(failed.Error, "gone") || !strings.Contains(failed.Error, cortex.ErrPrincipalRevoked.Error()) {
+			t.Errorf("failed run's error = %q, want the codec's reason and the revocation", failed.Error)
+		}
+		capture, ok := logger.(*log.TestLogger)
+		if !ok {
+			t.Fatalf("NewTestLogger returned %T", logger)
+		}
+		warned := false
+		for _, entry := range capture.GetLogs() {
+			if entry.Message == "fail a resumed run whose principal was revoked" {
+				id, has := entry.Field("run_id")
+				warned = has && id == paused.ID.String()
+			}
+		}
+		if !warned {
+			t.Errorf("no warning names the run failed for a revoked principal: %+v", capture.GetLogs())
 		}
 		if got := handlers.of("probe"); len(got) != 0 {
 			t.Errorf("probe ran %d times after the principal was revoked", len(got))
@@ -574,4 +594,91 @@ func TestAgentReplyRecoveryKeepsOriginalPrincipal(t *testing.T) {
 			t.Errorf("the model was called %d times under a revoked principal", model.callCount())
 		}
 	})
+}
+
+// A run that pauses again after a resume keeps its caller through the
+// second pause too, so the second resume is as much alice's as the first.
+func TestSecondPauseKeepsOriginalPrincipal(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := principalStore(ctx, t)
+	auth := &principalRecorder{}
+	handlers := &handlerPrincipals{}
+	e, err := New(WithStore(st), WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[testPrincipal]()),
+		WithLLM(&sequenceLLM{responses: []llm.Response{callsTool("call-1", externalTool().Name), callsTool("call-2", externalTool().Name), callsTool("call-3", "probe")}}),
+		WithExternalTool(externalTool()), handlers.tool("probe"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	paused, err := e.RunAgent(as(ctx, alice), "steady", "ask twice", nil)
+	if err != nil || paused.State != run.StatePaused {
+		t.Fatalf("RunAgent = %+v, %v; want a paused run", paused, err)
+	}
+	again, err := e.Resume(as(ctx, bob), paused.ID, ResumeInput{ToolResults: []ToolResult{{ToolCallID: "call-1", Content: "yes"}}})
+	if err != nil || again.State != run.StatePaused {
+		t.Fatalf("first Resume = %+v, %v; want the run paused a second time", again, err)
+	}
+	stored, err := st.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if len(stored.Principal) == 0 {
+		t.Fatal("the second pause dropped the run's principal bytes")
+	}
+
+	auth.since()
+	done, err := e.Resume(as(ctx, carol), paused.ID, ResumeInput{ToolResults: []ToolResult{{ToolCallID: "call-2", Content: "still yes"}}})
+	if err != nil || done.State != run.StateCompleted {
+		t.Fatalf("second Resume = %+v, %v; want completed", done, err)
+	}
+	visible, authorize := auth.snapshot()
+	requireAll(t, "Visible", visible, alice)
+	requireAll(t, "Authorize", authorize, alice)
+	requireAll(t, "probe handler", handlers.of("probe"), alice)
+}
+
+// A decode that fails for now during an approval moves nothing: the run
+// stays paused, the checkpoint stays pending, and the same decision can
+// be made again once the decoder recovers.
+func TestTransientPrincipalErrorDuringApprovalLeavesCheckpointPending(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := principalStore(ctx, t)
+	codec := newSwitchCodec()
+	handlers := &handlerPrincipals{}
+	e, err := New(WithStore(st), WithToolAuthorizer(&principalRecorder{gated: "deploy"}), WithPrincipalCodec(codec),
+		WithLLM(&sequenceLLM{responses: []llm.Response{callsTool("call-1", "deploy")}}), handlers.tool("deploy"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	paused, err := e.RunAgent(as(ctx, alice), "steady", "deploy it", nil)
+	if err != nil || paused.State != run.StatePaused {
+		t.Fatalf("RunAgent = %+v, %v; want a paused run", paused, err)
+	}
+	pending, err := e.ListPendingCheckpoints(ctx, &checkpoint.ListFilter{Limit: 10})
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("ListPendingCheckpoints = %d rows, %v; want 1", len(pending), err)
+	}
+	decision := checkpoint.Decision{Approved: true, DecidedBy: "bob"}
+
+	codec.failDecode(errors.New("db down"))
+	err = e.ResolveCheckpoint(as(ctx, bob), pending[0].ID, decision)
+	if !errors.Is(err, cortex.ErrPrincipalUnavailable) || errors.Is(err, cortex.ErrPrincipalRevoked) {
+		t.Fatalf("ResolveCheckpoint with a transient decode error = %v, want ErrPrincipalUnavailable and not revoked", err)
+	}
+	still, err := st.GetRun(ctx, paused.ID)
+	if err != nil || still.State != run.StatePaused {
+		t.Fatalf("run after a transient decode error = %+v, %v; want still paused", still, err)
+	}
+	cp, err := e.GetCheckpoint(ctx, pending[0].ID)
+	if err != nil || cp.State != checkpointStatePending || cp.Decision != nil {
+		t.Fatalf("checkpoint after a transient decode error = %+v, %v; want still pending and undecided", cp, err)
+	}
+	if got := handlers.of("deploy"); len(got) != 0 {
+		t.Fatalf("deploy ran %d times while the principal could not be decoded", len(got))
+	}
+
+	codec.failDecode(nil)
+	if err = e.ResolveCheckpoint(as(ctx, bob), pending[0].ID, decision); err != nil {
+		t.Fatalf("ResolveCheckpoint after the decoder recovered: %v", err)
+	}
+	requireAll(t, "deploy handler", handlers.of("deploy"), alice)
 }

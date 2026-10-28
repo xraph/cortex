@@ -18,6 +18,10 @@ type Decision struct {
 	// cortex.PrincipalCodec encoded it. ResolveCheckpoint fills it from
 	// the context and overwrites whatever the caller supplied. It records
 	// who decided; the run itself continues under its own principal.
+	//
+	// It is serialized because the SQL stores persist a decision as JSON.
+	// Anything that serves a checkpoint to a reader goes through
+	// Checkpoint.Public, which drops it.
 	DecidedByPrincipal []byte `json:"decided_by_principal,omitempty"`
 }
 
@@ -33,4 +37,33 @@ type Checkpoint struct {
 	State     string          `json:"state"`
 	Decision  *Decision       `json:"decision,omitempty"`
 	Metadata  map[string]any  `json:"metadata,omitempty"`
+}
+
+// Public is a copy of c for a reader outside the engine, such as an API
+// response or a dashboard. It drops Decision.DecidedByPrincipal: the
+// store keeps the decider's codec bytes as the record of who decided,
+// and they are the host's own, so no reader of the checkpoint gets them.
+func (c *Checkpoint) Public() *Checkpoint {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.Decision != nil {
+		decision := *c.Decision
+		decision.DecidedByPrincipal = nil
+		out.Decision = &decision
+	}
+	return &out
+}
+
+// PublicList applies Public to every checkpoint in cps.
+func PublicList(cps []*Checkpoint) []*Checkpoint {
+	if cps == nil {
+		return nil
+	}
+	out := make([]*Checkpoint, len(cps))
+	for i, cp := range cps {
+		out[i] = cp.Public()
+	}
+	return out
 }

@@ -298,9 +298,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	// from the same pre-claim snapshot. A decode that fails for now leaves
 	// the run paused; a revoked principal is held until the claim below
 	// makes the run this call's to fail.
-	ctx, principalErr := e.restorePrincipal(ctx, snapshot)
-	if principalErr != nil && !errors.Is(principalErr, cortex.ErrPrincipalRevoked) {
-		return nil, nil, principalErr
+	ctx, revoked, err := e.restorePrincipal(ctx, snapshot)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var susp *suspension.Suspension
@@ -320,8 +320,8 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
 	}
-	if principalErr != nil {
-		return nil, nil, e.failRevokedResume(ctx, snapshot, susp, principalErr)
+	if revoked != nil {
+		return nil, nil, e.failRevokedResume(ctx, snapshot, susp, revoked)
 	}
 	if in.agentReplyVersion != nil {
 		if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {

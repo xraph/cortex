@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -42,34 +44,42 @@ func (e *Engine) encodePrincipal(ctx context.Context) ([]byte, error) {
 // The returned context carries nil when the run has no principal or no
 // codec is installed. Never the resumer's.
 //
-// A revoked principal comes back with the error and a nil principal, and
-// the caller claims the run and fails it with that error: the identity is
-// gone and nothing will bring it back. Any other decode failure says
-// nothing about the run, so the caller returns before the claim and the
-// run stays paused for the next attempt. Tell the two apart with
-// errors.Is(err, cortex.ErrPrincipalRevoked).
-func (e *Engine) restorePrincipal(ctx context.Context, r *run.Run) (context.Context, error) {
+// It sorts a failed decode for the caller, so a claim site only has to
+// act on what it gets back:
+//
+//   - err is a decode that failed for now (wrapping
+//     cortex.ErrPrincipalUnavailable). It says nothing about the run, so
+//     the caller returns it before the claim and the run stays paused for
+//     the next attempt.
+//   - revoked is a principal that is gone for good (wrapping
+//     cortex.ErrPrincipalRevoked), with a nil principal on ctx. The caller
+//     claims the run anyway and hands revoked to failRevokedResume, since
+//     the claim is what makes the run its to fail.
+func (e *Engine) restorePrincipal(ctx context.Context, r *run.Run) (restored context.Context, revoked, err error) {
 	if e.principalCodec == nil || len(r.Principal) == 0 {
-		return cortex.WithPrincipal(ctx, nil), nil
+		return cortex.WithPrincipal(ctx, nil), nil, nil
 	}
 	// Decoded under the run's own scope, since the identity being looked
 	// up is the run's.
-	principal, err := e.principalCodec.DecodePrincipal(cortex.WithScope(ctx, r.Scope), slices.Clone(r.Principal))
-	if errors.Is(err, cortex.ErrPrincipalRevoked) {
-		return cortex.WithPrincipal(ctx, nil), fmt.Errorf("cortex: restore run principal: %w", err)
+	principal, decodeErr := e.principalCodec.DecodePrincipal(cortex.WithScope(ctx, r.Scope), slices.Clone(r.Principal))
+	if errors.Is(decodeErr, cortex.ErrPrincipalRevoked) {
+		return cortex.WithPrincipal(ctx, nil), fmt.Errorf("cortex: restore run principal: %w", decodeErr), nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("cortex: restore run principal: %w: %w", cortex.ErrPrincipalUnavailable, err)
+	if decodeErr != nil {
+		return nil, nil, fmt.Errorf("cortex: restore run principal: %w: %w", cortex.ErrPrincipalUnavailable, decodeErr)
 	}
-	return cortex.WithPrincipal(ctx, principal), nil
+	return cortex.WithPrincipal(ctx, principal), nil, nil
 }
 
 // failRevokedResume fails a run claimed for a resume whose principal was
 // revoked. The claim made the run this call's, so it is failed rather
 // than left running, under its own scope like every other write a resume
-// makes, with the codec's reason on it.
+// makes, with the codec's reason on it. The warning is there because a
+// run failing for its caller's identity is something an operator should
+// see without reading every run.
 func (e *Engine) failRevokedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension, revoked error) error {
 	ctx = cortex.WithScope(ctx, susp.Scope)
 	r := e.claimedRun(ctx, susp.RunID, snapshot, susp.ClaimedRun)
+	e.logWarn("fail a resumed run whose principal was revoked", revoked, log.String("run_id", r.ID.String()))
 	return e.failResume(ctx, r, r.AgentID, revoked)
 }

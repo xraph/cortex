@@ -90,6 +90,13 @@ func (e *Engine) checkExecutionCall(ctx context.Context, key id.AgentRunID, prov
 // before every provider/tool call. An existing or ambiguous start cannot be
 // replayed; ErrResumeAlreadyStarted requires inspection and reconciliation.
 // This host API is not exposed as a tool or an unauthenticated transport route.
+//
+// The callback reads the principal on the context it is handed, and that
+// changes once. The checks before the resume reads the run back run under
+// ctx's principal, the recoverer's. The engine then restores the run's own
+// principal, just before it admits or starts the resume, and every later
+// check, including the one before each provider and tool call, runs under
+// the run's principal.
 func (e *Engine) RecoverAgentReply(ctx context.Context, runID id.AgentRunID, key id.SuspensionID, authorize func(context.Context, id.AgentRunID) error) (*run.Run, error) {
 	if authorize == nil || runID.Prefix() != id.PrefixAgentRun || key.Prefix() != id.PrefixSuspension {
 		return nil, suspension.ErrResumeAdmissionUnavailable
@@ -163,9 +170,9 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	}
 	// The run read above is the pre-claim snapshot, and StartResume below
 	// is the claim. claimForResume explains the order.
-	ctx, principalErr := e.restorePrincipal(ctx, current)
-	if principalErr != nil && !errors.Is(principalErr, cortex.ErrPrincipalRevoked) {
-		return nil, principalErr
+	ctx, revoked, err := e.restorePrincipal(ctx, current)
+	if err != nil {
+		return nil, err
 	}
 	paused, err := startAdmittedResume(ctx, durable, admitted)
 	if errors.Is(err, cortex.ErrSuspensionExpired) {
@@ -174,8 +181,8 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if err != nil {
 		return nil, err
 	}
-	if principalErr != nil {
-		return nil, e.failRevokedResume(ctx, current, paused, principalErr)
+	if revoked != nil {
+		return nil, e.failRevokedResume(ctx, current, paused, revoked)
 	}
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, e.failResume(ctx, paused.ClaimedRun, paused.ClaimedRun.AgentID, authErr)

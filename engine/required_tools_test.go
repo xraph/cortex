@@ -358,3 +358,44 @@ func TestRequiredVerificationResumeRejectsChangedPolicy(t *testing.T) {
 		})
 	}
 }
+
+// revocableCodec is the JSON codec with a switch that reports the
+// principal as revoked.
+type revocableCodec struct{ revoked bool }
+
+func (c *revocableCodec) EncodePrincipal(ctx context.Context, principal any) ([]byte, error) {
+	return cortex.JSONPrincipalCodec[string]().EncodePrincipal(ctx, principal)
+}
+
+func (c *revocableCodec) DecodePrincipal(ctx context.Context, data []byte) (any, error) {
+	if c.revoked {
+		return nil, fmt.Errorf("operator removed: %w", cortex.ErrPrincipalRevoked)
+	}
+	return cortex.JSONPrincipalCodec[string]().DecodePrincipal(ctx, data)
+}
+
+// A required run hides most failure reasons behind
+// ErrVerificationUnavailable. A revoked principal is not one of them: the
+// caller and the operator both need to know the run failed because its
+// caller's identity is gone.
+func TestRequiredVerificationRevokedPrincipalKeepsItsReason(t *testing.T) {
+	f := newWorkerFixture(t)
+	codec := &revocableCodec{}
+	client := &requiredToolClient{}
+	e := requiredToolEngine(t, f, client, &requiredToolAuthority{}, engine.WithExternalTool(llm.Tool{Name: "probe"}), engine.WithPrincipalCodec(codec))
+	ag, overrides := requiredToolAgent(t, f)
+	r, err := e.RunAgent(cortex.WithPrincipal(f.ctx, "alice"), ag.Name, "work", overrides)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, r.State)
+	calls := client.calls
+
+	codec.revoked = true
+	_, err = e.Resume(cortex.WithPrincipal(f.ctx, "bob"), r.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "SECRET-ID", Content: "SECRET result"}}})
+	require.ErrorIs(t, err, cortex.ErrPrincipalRevoked)
+	require.NotErrorIs(t, err, cortex.ErrVerificationUnavailable)
+	require.Equal(t, calls, client.calls)
+	saved, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateFailed, saved.State)
+	require.Equal(t, cortex.ErrPrincipalRevoked.Error(), saved.Error)
+}

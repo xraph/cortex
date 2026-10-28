@@ -1,11 +1,14 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/xraph/forge"
 
+	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
 )
 
@@ -100,5 +103,29 @@ func TestDecisionFromRequest_ApprovedAndRejectedAreNotInterchangeable(t *testing
 				t.Errorf("Reason = %q, want the reason carried through; a rejection puts it on the run", got.Reason)
 			}
 		})
+	}
+}
+
+// The store keeps the decider's principal bytes as the record of who
+// decided. They are the host's own, so a checkpoint the API serves never
+// carries them, and the row the engine holds keeps them.
+func TestCheckpointResponseOmitsDecidedByPrincipal(t *testing.T) {
+	stored := &checkpoint.Checkpoint{
+		ID:       id.NewCheckpointID(),
+		State:    "resolved",
+		Decision: &checkpoint.Decision{Approved: true, DecidedBy: "bob", DecidedByPrincipal: []byte(`{"user":"bob"}`)},
+	}
+	body, err := json.Marshal(newListCheckpointsResponse([]*checkpoint.Checkpoint{stored}))
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if strings.Contains(string(body), "decided_by_principal") {
+		t.Errorf("checkpoint response carries the decider's principal: %s", body)
+	}
+	if !strings.Contains(string(body), `"decided_by":"bob"`) {
+		t.Errorf("checkpoint response lost the decision: %s", body)
+	}
+	if len(stored.Decision.DecidedByPrincipal) == 0 {
+		t.Error("building the response cleared the stored checkpoint's principal")
 	}
 }

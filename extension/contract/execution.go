@@ -387,7 +387,7 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if rows == nil {
 					rows = []*checkpoint.Checkpoint{}
 				}
-				return ListOutput[checkpoint.Checkpoint]{rows, n, in.Limit, in.Offset}, err
+				return ListOutput[checkpoint.Checkpoint]{checkpoint.PublicList(rows), n, in.Limit, in.Offset}, err
 			})
 		},
 		func() error {
@@ -396,7 +396,8 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err != nil {
 					return nil, bad("Invalid checkpoint ID")
 				}
-				return s.deps.Engine.GetCheckpoint(ctx, v)
+				cp, err := s.deps.Engine.GetCheckpoint(ctx, v)
+				return cp.Public(), err
 			})
 		},
 		func() error {

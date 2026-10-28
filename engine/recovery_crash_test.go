@@ -58,6 +58,7 @@ func TestClaimRecoveryCrashWorker(t *testing.T) {
 			require.NoError(t, engine.WithLLM(&requiredToolClient{})(e))
 			require.NoError(t, engine.WithToolRevision("probe", "1")(e))
 			require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{})(e))
+			require.NoError(t, engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]())(e))
 			require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, inv cortex.Invocation) (string, error) { return handler(ctx, inv) })(e))
 		})
 	}

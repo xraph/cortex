@@ -46,7 +46,39 @@ func TestJSONPrincipalCodecRefusesOtherTypes(t *testing.T) {
 	if _, err := codec.EncodePrincipal(context.Background(), "alice"); err == nil {
 		t.Fatal("EncodePrincipal accepted a string for a testPrincipal codec")
 	}
-	if _, err := codec.DecodePrincipal(context.Background(), []byte("{")); err == nil || errors.Is(err, cortex.ErrPrincipalRevoked) {
-		t.Fatalf("DecodePrincipal on malformed bytes = %v, want a transient error", err)
+}
+
+// failingPrincipal refuses to decode for a reason that is not about its
+// bytes, the way a type that looks itself up somewhere can.
+type failingPrincipal struct{}
+
+func (*failingPrincipal) UnmarshalJSON([]byte) error { return errors.New("directory unreachable") }
+
+// Bytes that can never decode into a T are revoked, because no retry
+// changes them. A decode that failed for any other reason may work next
+// time, so it stays transient.
+func TestJSONPrincipalCodecClassesUnreadableBytesAsRevoked(t *testing.T) {
+	ctx := context.Background()
+	stored, err := cortex.JSONPrincipalCodec[testPrincipal]().EncodePrincipal(ctx, testPrincipal{User: "alice", Org: "o1"})
+	if err != nil {
+		t.Fatalf("EncodePrincipal: %v", err)
+	}
+	for name, decode := range map[string]func() error{
+		"corrupt bytes": func() error {
+			_, decodeErr := cortex.JSONPrincipalCodec[testPrincipal]().DecodePrincipal(ctx, []byte("{"))
+			return decodeErr
+		},
+		"type changed": func() error {
+			_, decodeErr := cortex.JSONPrincipalCodec[int]().DecodePrincipal(ctx, stored)
+			return decodeErr
+		},
+	} {
+		if decodeErr := decode(); !errors.Is(decodeErr, cortex.ErrPrincipalRevoked) {
+			t.Errorf("%s: DecodePrincipal = %v, want ErrPrincipalRevoked", name, decodeErr)
+		}
+	}
+	_, err = cortex.JSONPrincipalCodec[failingPrincipal]().DecodePrincipal(ctx, []byte("{}"))
+	if err == nil || errors.Is(err, cortex.ErrPrincipalRevoked) {
+		t.Errorf("DecodePrincipal with a failing UnmarshalJSON = %v, want a transient error", err)
 	}
 }

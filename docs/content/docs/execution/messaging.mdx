@@ -438,6 +438,14 @@ recovered, err := eng.RecoverAgentReply(ctx, runID, suspensionID, authorizeRecov
 The context needs the run's exact scope. Permission is checked before reading
 private input, before starting, and before every provider or tool call. This is a
 host API; Cortex does not expose it as a model tool or an unauthenticated route.
+
+Your callback sees two principals if it reads `cortex.PrincipalFromContext`. The
+checks before the run is read back see the principal on the `ctx` you passed in.
+Just before the resume is admitted or started, the engine puts the run's own
+principal back on the context (see [Tool
+Authorization](/docs/concepts/authorization#keeping-the-principal-across-a-pause)),
+and every check after that, including the one before each provider and tool
+call, sees the run's principal.
 If some questions still lack answers, the returned run remains paused.
 
 Native stores commit a `ResumeAdmission` with the paused-to-running transition.

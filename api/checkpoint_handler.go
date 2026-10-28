@@ -46,8 +46,14 @@ func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("list checkpoints: %w", err)
 	}
-	resp := &ListCheckpointsResponse{Items: cps}
+	resp := newListCheckpointsResponse(cps)
 	return resp, ctx.JSON(http.StatusOK, resp)
+}
+
+// newListCheckpointsResponse serves checkpoints without the decider's
+// principal bytes, which are the host's and stay in the store.
+func newListCheckpointsResponse(cps []*checkpoint.Checkpoint) *ListCheckpointsResponse {
+	return &ListCheckpointsResponse{Items: checkpoint.PublicList(cps)}
 }
 
 // Decision values the API accepts on the wire. These are the only two

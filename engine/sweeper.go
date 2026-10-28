@@ -60,8 +60,9 @@ type sweeper struct {
 // startSweeper launches the expiry loop, unless there is no store to
 // sweep. It runs even with a zero suspension TTL: that only drops the
 // default deadline, and an approval, an external tool or an agent reply
-// can still carry a deadline of its own. Calling it twice is a no-op: a second Start on a
-// running engine must not leave two loops failing the same runs.
+// can still carry a deadline of its own. Calling it twice is a no-op: a
+// second Start on a running engine must not leave two loops failing the
+// same runs.
 func (e *Engine) startSweeper() {
 	if e.store == nil {
 		return
