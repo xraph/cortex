@@ -97,7 +97,7 @@ require (
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/forge v1.13.2-0.20261026124101-97dbf04160fd // indirect
+	github.com/xraph/forge v1.13.2 // indirect
 	github.com/xraph/go-utils v1.5.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
