@@ -32,6 +32,16 @@ func WithEngineOption(opt engine.Option) ExtOption {
 	}
 }
 
+// WithoutAutoAdapters stops the extension from discovering nexus, shield,
+// weave and sentinel in the DI container. Without it, each one found is
+// wired into the engine: nexus as the model client, shield as the safety
+// scanner (and so the publication gate), weave as the knowledge provider
+// and sentinel as an extension. Use it when the host wires those itself,
+// or wants none of them.
+func WithoutAutoAdapters() ExtOption {
+	return func(e *Extension) { e.noAutoAdapters = true }
+}
+
 // WithConfig sets the extension configuration.
 func WithConfig(cfg Config) ExtOption {
 	return func(e *Extension) { e.config = cfg }

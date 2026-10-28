@@ -258,14 +258,14 @@ extensions:
     default_max_tokens: 4096
     default_temperature: 0.7
     default_reasoning_loop: react
-    run_concurrency: 4
+    run_concurrency: 0      # runs at once in this process; 0 is no limit
     shutdown_timeout: 30s
     grove_database: ""      # a named grove.DB; empty uses the default one
     disable_routes: false
     disable_migrate: false
 ```
 
-Those are the defaults. `default_model` is `smart`, which only means something if your gateway has an alias with that name. In code you have `WithStore`, `WithGroveDatabase`, `WithEngineOption`, `WithExtension`, `WithConfig`, `WithBasePath`, `WithDisableMigrate`, `WithRequireConfig` and `WithDashboard`.
+Those are the defaults. `default_model` is `smart`, which only means something if your gateway has an alias with that name. In code you have `WithStore`, `WithGroveDatabase`, `WithEngineOption`, `WithExtension`, `WithConfig`, `WithBasePath`, `WithDisableMigrate`, `WithRequireConfig`, `WithDashboard` and `WithoutAutoAdapters`. Anything you pass with `WithEngineOption` or `WithStore` wins over the config and over the services the extension finds in the container.
 
 ## Lifecycle hooks
 

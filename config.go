@@ -20,9 +20,13 @@ type Config struct {
 	DefaultReasoningLoop string
 
 	// ShutdownTimeout is the maximum time to wait for graceful shutdown.
+	// The Forge extension applies it, bounding Engine.Stop from its own
+	// Stop; engine.New alone does not read it.
 	ShutdownTimeout time.Duration
 
-	// RunConcurrency is the maximum number of agent runs processed concurrently.
+	// RunConcurrency is the maximum number of agent runs executing at once,
+	// zero for no limit (the default). The Forge extension applies it with
+	// engine.WithRunConcurrency; engine.New alone does not read it.
 	RunConcurrency int
 }
 
@@ -35,6 +39,6 @@ func DefaultConfig() Config {
 		DefaultTemperature:   0.7,
 		DefaultReasoningLoop: "react",
 		ShutdownTimeout:      30 * time.Second,
-		RunConcurrency:       4,
+		RunConcurrency:       0,
 	}
 }

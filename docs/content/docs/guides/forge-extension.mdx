@@ -80,23 +80,38 @@ Leave `WithRoutes` out and you still get the engine in the container, migrations
 |----------------|-----------|
 | `Register` | Loads config, resolves a store, adds the Nexus, Shield, Weave and Sentinel engine options, builds the engine, provides `*engine.Engine` in the DI container, and mounts the route set if you passed `WithRoutes` (unless routes are disabled) |
 | `Start` | Runs `store.Migrate(ctx)` (unless disabled), then calls `engine.Start(ctx)` |
-| `Stop` | Calls `engine.Stop(ctx)`, which stops the sweeper and emits `OnShutdown` to all plugins |
+| `Stop` | Calls `engine.Stop(ctx)` under `shutdown_timeout`. The engine refuses new runs, waits for the ones in flight, then stops the sweeper and emits `OnShutdown` to all plugins |
 | `Health` | Calls `store.Ping(ctx)`. With no store it reports "cortex: no store configured" |
 
-The Nexus, Shield, Weave and Sentinel options look for their service in the container. Each one does nothing when its service isn't registered, so a plain app with no gateway runs agents in echo mode. Put a `*nexus.Gateway` in the container (for example with the Nexus Forge extension) and agents talk to real models without any Cortex config. The lookup happens once, in `Register`, so the gateway has to be there by the time Cortex registers. A gateway found this way replaces an LLM client you passed with `WithEngineOption(engine.WithLLM(...))`.
+The Nexus, Shield, Weave and Sentinel options look for their service in the container. Each one does nothing when its service isn't registered, so a plain app with no gateway runs agents in echo mode. Put a `*nexus.Gateway` in the container (for example with the Nexus Forge extension) and agents talk to real models without any Cortex config. The lookup happens once, in `Register`, so the gateway has to be there by the time Cortex registers. If you'd rather wire all of this yourself, pass `WithoutAutoAdapters()` and the extension looks for none of them.
+
+## Option precedence
+
+You can override anything the extension sets up. Engine options are setters, so when two of them set the same thing the last one wins, and `Register` builds the list in this order:
+
+1. The app's metrics and logger.
+2. The extension config: `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature`, `default_reasoning_loop`, `shutdown_timeout`, plus `run_concurrency` through `engine.WithRunConcurrency`.
+3. The store built from a Grove database the extension found.
+4. The Nexus, Shield, Weave and Sentinel adapters found in the container, unless you passed `WithoutAutoAdapters()`.
+5. Your own options (`WithStore`, `WithExtension`, `WithEngineOption`), in the order you gave them.
+
+So `WithEngineOption(engine.WithLLM(client))` beats a Nexus gateway in the container, `WithStore(s)` beats a discovered Grove database, and `WithEngineOption(engine.WithConfig(...))` replaces the whole engine config the extension built from YAML. Options that add rather than set, like `engine.WithTool` and `WithExtension`, add to each other wherever they sit.
+
+Shield needs one extra step. The Shield adapter installs the safety scanner, and the engine screens publication through that scanner unless a publication gate is set. If you replace Shield with `engine.WithSafety`, the new scanner takes over both jobs. If you only pass `engine.WithPublicationGate(gate)`, your gate screens publication, but `engine.Safety()` still returns the Shield adapter. When you want Shield gone completely, use `WithoutAutoAdapters()` and wire what you need yourself.
 
 ## Extension options
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `WithStore(s)` | `store.Store` | Use this store. A Grove database found in the container takes precedence (see below) |
+| `WithStore(s)` | `store.Store` | Use this store. It wins over a Grove database found in the container |
 | `WithGroveDatabase(name)` | `string` | Resolve the named `*grove.DB` from DI and build the matching store. An empty name uses the default DB |
 | `WithRoutes(build)` | `func(*engine.Engine, forge.Router) extension.RouteSet` | Mount a route set, normally `api.New` |
 | `WithBasePath(p)` | `string` | URL prefix for the routes. Defaults to `/cortex` |
 | `WithDisableRoutes()` | | Skip mounting the route set even when `WithRoutes` is set |
 | `WithDisableMigrate()` | | Skip `Migrate` on start |
 | `WithExtension(x)` | `plugin.Extension` | Register a Cortex plugin (lifecycle hooks) |
-| `WithEngineOption(o)` | `engine.Option` | Pass any engine option through, such as `engine.WithLLM`, `engine.WithTool` or `engine.WithConfig` |
+| `WithEngineOption(o)` | `engine.Option` | Pass any engine option through, such as `engine.WithLLM`, `engine.WithTool` or `engine.WithConfig`. It overrides the config and the automatic adapters |
+| `WithoutAutoAdapters()` | | Don't look for Nexus, Shield, Weave or Sentinel in the container |
 | `WithConfig(c)` | `extension.Config` | Set the whole extension config |
 | `WithRequireConfig(b)` | `bool` | Fail `Register` when no `extensions.cortex` or `cortex` config is found |
 | `WithDashboard(deps)` | `contract.Deps` | Supply the scope mapping and audit sink for the dashboard contract |
@@ -116,13 +131,15 @@ type Config struct {
     DefaultTemperature   float64       // default: 0.7
     DefaultReasoningLoop string        // default: "react"
     ShutdownTimeout      time.Duration // default: 30s
-    RunConcurrency       int           // default: 4
+    RunConcurrency       int           // default: 0 (no limit)
     GroveDatabase        string        // name of the grove.DB to resolve from DI
     RequireConfig        bool          // not read from YAML
 }
 ```
 
-The extension reads `DefaultModel`, `DefaultMaxSteps`, `DefaultMaxTokens`, `DefaultTemperature`, `DefaultReasoningLoop`, `ShutdownTimeout` and `RunConcurrency` but doesn't pass them to the engine, so setting them has no effect yet. The engine runs on `cortex.DefaultConfig()`, which happens to have the same values. To change the engine defaults, pass them in code with `WithEngineOption(engine.WithConfig(...))`. `ShutdownTimeout` and `RunConcurrency` aren't used by the engine either.
+The `Default*` fields become the engine's config, so `engine.Config()` returns what you set. A zero field takes the default shown above. `ShutdownTimeout` bounds `Stop` and `RunConcurrency` caps parallel runs; both are covered in [Run concurrency and shutdown](#run-concurrency-and-shutdown).
+
+You can also set the engine config in code. This replaces the whole struct the extension built, YAML included:
 
 ```go
 cortexExt := cortexext.New(
@@ -150,13 +167,37 @@ extensions:
     grove_database: "cortex"
 ```
 
-The `default_*`, `shutdown_timeout` and `run_concurrency` keys are accepted too, with the caveat above.
+The `default_*`, `shutdown_timeout` and `run_concurrency` keys work too:
+
+```yaml
+extensions:
+  cortex:
+    default_model: "gpt-4o"
+    shutdown_timeout: "45s"
+    run_concurrency: 8
+```
 
 ### Config resolution order
 
 1. YAML values are loaded first (from `extensions.cortex` or `cortex`).
 2. Programmatic values (`WithConfig`, `WithBasePath` and so on) fill any field the YAML left empty. `WithDisableRoutes` and `WithDisableMigrate` always win when set.
 3. Remaining zero fields get the defaults from `extension.DefaultConfig()`.
+
+## Run concurrency and shutdown
+
+By default a process runs as many agents at once as you ask it to. Set `run_concurrency` to cap that:
+
+```yaml
+extensions:
+  cortex:
+    run_concurrency: 8
+```
+
+With a cap of 8, the ninth run waits for a slot. It waits only as long as its `ctx` allows, so a run started with a 30-second deadline gives up after 30 seconds with an error that matches `context.DeadlineExceeded`, and it leaves no run row behind. The cap is per process: four replicas with `run_concurrency: 8` run up to 32 agents between them.
+
+The cap covers `RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream`, `ResolveCheckpoint`, and the resumes the message bus and agent-reply recovery start. A stream holds its slot until its channel closes. A run started from inside another run, such as a tool that calls `RunAgent` on the `ctx` it was handed, shares its parent's slot, so a cap of 1 can't deadlock on it. Runs started by the experimental task workers and by prepared orchestrations aren't counted against `run_concurrency`; the task scheduler has its own limits.
+
+`Stop` drains before it shuts anything down. From the moment it starts, new runs get `cortex.ErrEngineStopping`, and the runs already executing get up to `shutdown_timeout` (30s by default) to finish. A host that queues work can treat `ErrEngineStopping` as "try another worker". If the timeout runs out, `Stop` returns an error matching `context.DeadlineExceeded`, the runs it was waiting for keep executing and record their own result when they finish, and `OnShutdown` isn't sent. Call `Stop` again to finish the shutdown before you close the store. `Start` admits runs again.
 
 ### Requiring configuration
 
@@ -273,11 +314,11 @@ The YAML equivalent is `grove_database: cortex`. `Register` fails if that name i
 
 ### Store resolution order
 
-1. If `WithGroveDatabase` or `grove_database` is set, the named (or default) `*grove.DB` is resolved and its store is used.
-2. Otherwise, if the container has a default `*grove.DB`, its store is used.
-3. Otherwise, the store from `WithStore` is used.
+1. The store from `WithStore`, when you pass one.
+2. Otherwise, if `WithGroveDatabase` or `grove_database` is set, the named (or default) `*grove.DB` is resolved and its store is used.
+3. Otherwise, if the container has a default `*grove.DB`, its store is used.
 
-A Grove database in the container wins over `WithStore`. If you pass your own store, don't register a Grove database the extension can find. With none of the three there's no store at all: the engine's CRUD methods return `cortex.ErrNoStore` and the health check fails. There's no in-memory fallback.
+`WithStore` wins over a Grove database in the container, so you can keep a Grove database registered for other extensions and still hand Cortex its own store. A `grove_database` that names a database the container doesn't have still fails `Register`. With none of the three there's no store at all: the engine's CRUD methods return `cortex.ErrNoStore` and the health check fails. There's no in-memory fallback.
 
 ## Complete example
 

@@ -124,7 +124,15 @@ func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput
 	return e.traceResume(ctx, runID, source, func(tc context.Context) (*run.Run, error) { return e.resumeRun(tc, runID, in, source) })
 }
 
+// traceResume is also where a synchronous resume is admitted, so Resume,
+// ResolveCheckpoint, the message bus's resumes and RecoverAgentReply all
+// count against WithRunConcurrency and are refused while Stop drains.
 func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, source resumeSource, action func(context.Context) (*run.Run, error)) (r *run.Run, err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	ctx, rt := e.startRun(ctx, modeSync, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, resumeSourceLabel(source)))
@@ -147,17 +155,25 @@ func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeIn
 }
 
 // ResumeStream is Resume over the streaming loop. The channel is closed
-// when execution completes, same as StreamAgent's.
+// when execution completes, same as StreamAgent's, and the run's admission
+// slot is held until then.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		close(events)
+		return err
+	}
 	ctx, rt := e.startRun(ctx, modeStream, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, resumeSourceLabel(resumeSourcePublic)))
 	defer func() {
 		if p := recover(); p != nil {
+			done()
 			rt.end(nil, telemetry.ErrPanic)
 			panic(p)
 		}
 		if err != nil {
+			done()
 			rt.end(nil, err)
 		}
 	}()
@@ -169,6 +185,7 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 
 	go func() {
 		defer close(events)
+		defer done()
 		defer func() {
 			if p := recover(); p != nil {
 				rt.end(rz.run, telemetry.ErrPanic)

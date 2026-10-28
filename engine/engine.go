@@ -48,6 +48,8 @@ type Engine struct {
 	orchestrationRecovery *coordination.OrchestrationRecoveryService
 	agentReplyRecovery    *coordination.AgentReplyRecoveryService
 	lifecycle             lifecycleGate
+	admission             admission
+	runConcurrency        int
 	taskScheduling        *coordination.TaskService
 	claimRecovery         *coordination.ClaimRecoveryService
 	providerRecovery      *coordination.ProviderRecoveryService
@@ -123,6 +125,18 @@ func (e *Engine) Safety() safety.Scanner { return e.safety }
 // Knowledge returns the configured knowledge provider, or nil if none is set.
 func (e *Engine) Knowledge() knowledge.Provider { return e.knowledge }
 
+// RunConcurrency returns how many runs may execute at once, or zero when
+// there is no limit. See WithRunConcurrency.
+func (e *Engine) RunConcurrency() int { return e.admission.limit }
+
+// admit lets a run start under the engine's concurrency limit, or returns
+// why it cannot: cortex.ErrEngineStopping while Stop drains, or ctx's
+// error when no slot freed in time. The returned ctx carries the run's
+// ticket and must be the one the run executes on.
+func (e *Engine) admit(ctx context.Context) (context.Context, func(), error) {
+	return e.admission.admit(ctx)
+}
+
 // RunOverrides allows overriding agent configuration for a single run.
 type RunOverrides struct {
 	Model           string
@@ -185,6 +199,9 @@ func New(opts ...Option) (*Engine, error) {
 		return nil, err
 	}
 
+	// Sized after the options, so the last WithRunConcurrency wins.
+	e.admission.configure(e.runConcurrency)
+
 	// Instruments are declared once here, after every option has run, so
 	// WithMetrics can sit anywhere in the caller's list.
 	e.instr = newEngineMetrics(e.metrics)
@@ -237,6 +254,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		return lockErr
 	}
 	defer release()
+	// A Stop refuses new runs until the next Start, including one that
+	// gave up at its deadline.
+	e.admission.reopen()
 	if err := e.configureVerificationRecovery(); err != nil {
 		return err
 	}
@@ -291,6 +311,19 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the engine.
 //
+// It first drains: from the moment Stop starts, RunAgent, StreamAgent,
+// RunPrepared, StreamPrepared, Resume, ResumeStream and ResolveCheckpoint
+// return cortex.ErrEngineStopping, and Stop waits for the runs already
+// executing to finish. A run started from inside one of those (a tool
+// calling RunAgent on the ctx it was given) is still let through, because
+// its parent is one of the runs being waited for. Start admits runs again.
+//
+// If ctx ends before the last run finishes, Stop still signals task
+// services and returns ctx's error, but leaves the sweeper and the message
+// bus running and announces no shutdown. The runs it was waiting for keep
+// executing and write their own outcome when they finish. Call Stop again
+// to complete the shutdown before disposing stores.
+//
 // The sweeper is joined, not merely signalled, and it is joined before
 // the shutdown hook fires: a subscriber told the engine has stopped
 // while a sweep is still failing runs has been told something untrue. Optional
@@ -304,6 +337,9 @@ func (e *Engine) Stop(ctx context.Context) error {
 		return lockErr
 	}
 	defer release()
+	if err := e.admission.drain(ctx); err != nil {
+		return errors.Join(err, e.stopTaskServices(ctx))
+	}
 	if err := e.stopTaskServices(ctx); err != nil {
 		return err
 	}
@@ -1074,6 +1110,11 @@ type StreamEvent struct {
 //
 // The run is traced as one run agent span covering the whole call.
 func (e *Engine) RunAgent(ctx context.Context, agentName, input string, overrides *RunOverrides) (r *run.Run, err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	ctx, rt := e.startRun(ctx, modeSync, false)
 	defer func() {
 		if p := recover(); p != nil {
@@ -1116,23 +1157,33 @@ func (e *Engine) runAgent(ctx context.Context, agentName, input string, override
 // When an LLM client is configured, it uses the ReAct reasoning loop with streaming.
 // Otherwise, it falls back to mock/echo mode.
 //
-// The run agent span lasts until the stream's goroutine finishes, not until
-// this call returns.
+// The run agent span, and the run's admission slot, last until the stream's
+// goroutine finishes, not until this call returns.
 func (e *Engine) StreamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) (err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		close(events)
+		return err
+	}
 	ctx, rt := e.startRun(ctx, modeStream, false)
 	defer func() {
 		if p := recover(); p != nil {
+			done()
 			rt.end(nil, telemetry.ErrPanic)
 			panic(p)
 		}
 		if err != nil {
+			done()
 			rt.end(nil, err)
 		}
 	}()
-	return e.streamAgent(ctx, agentName, input, overrides, events)
+	return e.streamAgent(ctx, agentName, input, overrides, events, done)
 }
 
-func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+// streamAgent hands done to the stream's goroutine, which calls it when it
+// closes events. On an error return the goroutine never started and the
+// caller still owns done.
+func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overrides *RunOverrides, events chan<- StreamEvent, done func()) error {
 	if e.store == nil {
 		close(events)
 		return cortex.ErrNoStore
@@ -1155,11 +1206,11 @@ func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overr
 
 	// Use real execution if LLM client is available.
 	if e.llm != nil {
-		return e.streamReAct(ctx, ag, input, overrides, events)
+		return e.streamReAct(ctx, ag, input, overrides, events, done)
 	}
 
 	// Fallback: mock/echo execution.
-	return e.streamMock(ctx, ag, input, events)
+	return e.streamMock(ctx, ag, input, events, done)
 }
 
 // runMock is the mock/echo fallback for RunAgent.
@@ -1217,7 +1268,7 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 }
 
 // streamMock is the mock/echo fallback for StreamAgent.
-func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string, events chan<- StreamEvent) error {
+func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string, events chan<- StreamEvent, done func()) error {
 	now := time.Now().UTC()
 	r := &run.Run{
 		Entity:     cortex.NewEntity(),
@@ -1246,6 +1297,7 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 
 	go func() {
 		defer close(events)
+		defer done()
 		defer func() {
 			if p := recover(); p != nil {
 				rt.end(r, telemetry.ErrPanic)

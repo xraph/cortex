@@ -30,10 +30,15 @@ type Config struct {
 	// DefaultReasoningLoop is the reasoning loop strategy (e.g., "react").
 	DefaultReasoningLoop string `json:"default_reasoning_loop" mapstructure:"default_reasoning_loop" yaml:"default_reasoning_loop"`
 
-	// ShutdownTimeout is the maximum time to wait for graceful shutdown.
+	// ShutdownTimeout bounds Stop: how long it waits for runs in flight to
+	// finish. Zero takes the default, 30s; a negative value leaves Stop
+	// bounded only by its ctx.
 	ShutdownTimeout time.Duration `json:"shutdown_timeout" mapstructure:"shutdown_timeout" yaml:"shutdown_timeout"`
 
-	// RunConcurrency controls how many agent runs can execute in parallel.
+	// RunConcurrency caps how many agent runs execute at once in this
+	// process, applied with engine.WithRunConcurrency. Zero, the default,
+	// is unlimited. Runs the experimental task workers start are not
+	// counted.
 	RunConcurrency int `json:"run_concurrency" mapstructure:"run_concurrency" yaml:"run_concurrency"`
 
 	// GroveDatabase is the name of a grove.DB registered in the DI container.
@@ -56,6 +61,6 @@ func DefaultConfig() Config {
 		DefaultTemperature:   0.7,
 		DefaultReasoningLoop: "react",
 		ShutdownTimeout:      30 * time.Second,
-		RunConcurrency:       4,
+		RunConcurrency:       0,
 	}
 }

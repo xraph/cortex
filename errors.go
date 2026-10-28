@@ -71,6 +71,10 @@ var (
 	ErrBudgetExhausted  = errors.New("cortex: budget exhausted")
 	ErrMaxStepsReached  = errors.New("cortex: maximum steps reached")
 	ErrMaxTokensReached = errors.New("cortex: maximum tokens reached")
+	// ErrEngineStopping refuses a run that would start while Stop drains the
+	// engine. Nothing was written for it; retry on another worker, or after
+	// Start.
+	ErrEngineStopping = errors.New("cortex: engine is stopping")
 
 	// ErrInvalidDelegationPlan rejects a manager plan before worker dispatch.
 	ErrInvalidDelegationPlan = errors.New("cortex: invalid delegation plan")

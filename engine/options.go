@@ -73,6 +73,31 @@ func WithConfig(cfg cortex.Config) Option {
 	}
 }
 
+// WithRunConcurrency caps how many runs execute at once. A run that finds
+// every slot taken waits for one, or for its ctx to end, in which case it
+// returns an error matching ctx.Err() and leaves no run row. Zero, the
+// default, is unlimited; a negative n is an error.
+//
+// It covers RunAgent, StreamAgent, RunPrepared, StreamPrepared, Resume,
+// ResumeStream, ResolveCheckpoint and the resumes the message bus and
+// agent-reply recovery start. A stream holds its slot until its channel
+// closes. A run started from inside an admitted run, on the ctx it was
+// given, shares its parent's slot, so a tool that runs another agent
+// cannot deadlock on a limit of one. Runs the experimental task workers
+// and prepared orchestrations start are not counted.
+//
+// cortex.Config.RunConcurrency is not read by the engine; the Forge
+// extension applies its run_concurrency setting through this option.
+func WithRunConcurrency(n int) Option {
+	return func(e *Engine) error {
+		if n < 0 {
+			return fmt.Errorf("cortex: run concurrency %d is negative; use 0 for no limit", n)
+		}
+		e.runConcurrency = n
+		return nil
+	}
+}
+
 // WithLLM sets the LLM client for real model execution.
 // When set, RunAgent and StreamAgent use this client instead of mock/echo mode.
 func WithLLM(client llm.Client) Option {

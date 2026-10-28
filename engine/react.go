@@ -418,13 +418,13 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 }
 
 // streamReAct executes an agent using the ReAct reasoning loop with streaming.
-func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent, done func()) error {
 	p, err := e.prepareAgent(ctx, ag, overrides)
 	if err != nil {
 		close(events)
 		return err
 	}
-	return e.streamPrepared(ctx, p, input, preparedOptions(overrides), events)
+	return e.streamPrepared(ctx, p, input, preparedOptions(overrides), events, done)
 }
 
 // continueStreamReAct is continueReAct's streaming twin: same contract,

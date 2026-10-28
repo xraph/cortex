@@ -14,12 +14,12 @@ type Config struct {
     DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
     DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
     DefaultReasoningLoop string        // reasoning strategy (default: "react")
-    ShutdownTimeout      time.Duration // default: 30s, not used by the engine
-    RunConcurrency       int           // default: 4, not used by the engine
+    ShutdownTimeout      time.Duration // default: 30s, applied by the Forge extension
+    RunConcurrency       int           // default: 0 (no limit), applied by the Forge extension
 }
 ```
 
-`ShutdownTimeout` and `RunConcurrency` are carried in the struct but nothing reads them yet: runs aren't throttled and `Stop` doesn't time out. `DefaultReasoningLoop` is recorded on each run, but ReAct is the only loop there is.
+`engine.New` doesn't read `ShutdownTimeout` or `RunConcurrency`. The Forge extension does: it bounds `Stop` with `shutdown_timeout` and passes `run_concurrency` to `engine.WithRunConcurrency`. Without the extension, set the cap with `engine.WithRunConcurrency(n)` and put a deadline on the `ctx` you hand `Stop`. `DefaultReasoningLoop` is recorded on each run, but ReAct is the only loop there is.
 
 `DefaultModel` is `smart`, which only means something if your model gateway has an alias with that name. Set a real model here or on each agent.
 
@@ -34,7 +34,7 @@ cortex.DefaultConfig() // returns:
 //     DefaultTemperature:   0.7,
 //     DefaultReasoningLoop: "react",
 //     ShutdownTimeout:      30 * time.Second,
-//     RunConcurrency:       4,
+//     RunConcurrency:       0,
 // }
 ```
 
@@ -77,9 +77,26 @@ A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel`
 | `engine.WithSuspensionTTL(d)` | How long a suspended run waits before it's failed. Zero turns expiry off |
 | `engine.WithSuspensionSweepInterval(d)` | How often the expiry sweeper runs |
 | `engine.WithSuspensionSweepLimit(n)` | How many expired suspensions one sweep handles |
+| `engine.WithRunConcurrency(n)` | Caps how many runs execute at once. Zero, the default, is no limit; a negative `n` fails `New`. See [Run concurrency](#run-concurrency) |
 | `engine.WithExtension(ext)` | Registers a plugin extension |
 | `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger; the Forge extension passes the app's logger |
 | `engine.WithMetrics(m)` | Records the engine's metrics on a go-utils metrics sink. Nil, the default, records nothing; the Forge extension passes the app's metrics |
+
+## Run concurrency
+
+```go
+eng, err := engine.New(
+    engine.WithStore(pgStore),
+    engine.WithLLM(client),
+    engine.WithRunConcurrency(8),
+)
+```
+
+With a cap of 8 the ninth run waits for a slot, and only for as long as its `ctx` allows. When the `ctx` ends first you get an error matching `ctx.Err()` (usually `context.DeadlineExceeded`) and no run row is written, so a job runner can put the work back on its queue. `eng.RunConcurrency()` reports the cap.
+
+`RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream` and `ResolveCheckpoint` are all counted, as are the resumes the message bus and agent-reply recovery start. A stream keeps its slot until its channel closes. A run started on the `ctx` of a run that already has a slot (a tool calling `RunAgent`, say) shares that slot, which is why a cap of 1 can't deadlock on nested runs. Runs started by the experimental task workers and prepared orchestrations aren't counted against the cap.
+
+`eng.Stop(ctx)` stops admitting first. New runs get `cortex.ErrEngineStopping` and `Stop` waits for the runs already executing. If `ctx` ends before they finish, `Stop` returns its error and leaves them running, so they still record their own result; no shutdown hook fires. Call `Stop` again to complete the shutdown. `eng.Start(ctx)` admits runs again.
 
 ## Agent-level overrides
 
@@ -111,26 +128,27 @@ type Config struct {
     DefaultTemperature   float64       // default: 0.7
     DefaultReasoningLoop string        // default: "react"
     ShutdownTimeout      time.Duration // default: 30s
-    RunConcurrency       int           // default: 4
+    RunConcurrency       int           // default: 0 (no limit)
     GroveDatabase        string        // grove.DB name for DI resolution
     RequireConfig        bool          // fail Register when no config is found; not read from YAML
 }
 ```
 
-The extension doesn't hand `DefaultModel`, `DefaultMaxSteps`, `DefaultMaxTokens`, `DefaultTemperature`, `DefaultReasoningLoop`, `ShutdownTimeout` or `RunConcurrency` to the engine, so in a Forge app they have no effect yet. Pass engine defaults with `extension.WithEngineOption(engine.WithConfig(...))` instead.
+All of these are applied now. The `Default*` fields and `ShutdownTimeout` become the engine's `cortex.Config`, `RunConcurrency` goes to `engine.WithRunConcurrency`, and the extension's `Stop` waits at most `ShutdownTimeout` for runs in flight. An engine option you pass with `extension.WithEngineOption` still wins over all of them, because the host's options are applied last. [Forge Extension](/docs/guides/forge-extension#option-precedence) has the full order.
 
 ### Extension options
 
 | Option | Description |
 |--------|-------------|
-| `extension.WithStore(s)` | Sets the composite store (a Grove database in the container takes precedence) |
+| `extension.WithStore(s)` | Sets the composite store. It wins over a Grove database in the container |
 | `extension.WithGroveDatabase(name)` | Sets the grove.DB to resolve from DI |
 | `extension.WithRoutes(build)` | Mounts a route set, normally `api.New` from the `api` module |
 | `extension.WithBasePath(path)` | Sets the URL prefix |
 | `extension.WithDisableRoutes()` | Skips mounting the route set |
 | `extension.WithDisableMigrate()` | Disables auto-migration |
 | `extension.WithExtension(x)` | Registers a Cortex plugin extension |
-| `extension.WithEngineOption(opt)` | Passes an engine option directly |
+| `extension.WithEngineOption(opt)` | Passes an engine option directly. It overrides the config and the automatic adapters |
+| `extension.WithoutAutoAdapters()` | Skips looking for Nexus, Shield, Weave and Sentinel in the container |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
 | `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
@@ -149,14 +167,13 @@ extensions:
     disable_migrate: false
     base_path: "/cortex"
     grove_database: "cortex"
-    # Accepted, but not passed to the engine yet:
     default_model: "gpt-4o"
     default_max_steps: 50
     default_max_tokens: 8192
     default_temperature: 0.7
     default_reasoning_loop: "react"
     shutdown_timeout: "30s"
-    run_concurrency: 8
+    run_concurrency: 8  # 0 or unset means no limit
 ```
 
 ### Merge behaviour

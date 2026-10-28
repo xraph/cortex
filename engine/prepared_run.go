@@ -34,6 +34,11 @@ type PreparedRunOptions struct {
 // A failure after acknowledged creation returns the run alongside the error.
 // PreparedStartError also identifies uncertain creation attempts.
 func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (r *run.Run, err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	ctx, rt := e.startRun(ctx, modeSync, false)
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -57,36 +62,48 @@ func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string
 }
 
 // StreamPrepared streams the same prepared execution used by RunPrepared.
+// The run's admission slot is held until the stream's goroutine closes
+// events.
 func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) (err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		close(events)
+		return err
+	}
 	ctx, rt := e.startRun(ctx, modeStream, false)
 	defer func() {
 		if rec := recover(); rec != nil {
+			done()
 			rt.end(nil, telemetry.ErrPanic)
 			panic(rec)
 		}
 		if err != nil {
+			done()
 			rt.end(nil, err)
 		}
 	}()
-	return e.streamPrepared(ctx, p, input, opts, events)
+	return e.streamPrepared(ctx, p, input, opts, events, done)
 }
 
 // streamPrepared starts the stream's goroutine, which ends the pass's run
-// agent span when it finishes.
-func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) error {
+// agent span and calls done when it finishes.
+func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent, done func()) error {
 	ctx, rz, err := e.startPrepared(ctx, p, input, opts)
 	if err != nil {
 		close(events)
 		return err
 	}
-	e.launchPreparedStream(ctx, rz, events)
+	e.launchPreparedStream(ctx, rz, events, done)
 	return nil
 }
 
-func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, events chan<- StreamEvent) {
+// launchPreparedStream runs the stream on its own goroutine, which owns
+// events and calls done just before closing it.
+func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, events chan<- StreamEvent, done func()) {
 	rt := runTraceFrom(ctx)
 	go func() {
 		defer close(events)
+		defer done()
 		defer func() {
 			if rec := recover(); rec != nil {
 				rt.end(rz.run, telemetry.ErrPanic)

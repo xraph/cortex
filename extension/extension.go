@@ -48,14 +48,16 @@ var _ forge.Extension = (*Extension)(nil)
 type Extension struct {
 	*forge.BaseExtension
 
-	config        Config
-	eng           *engine.Engine
-	routes        RouteSet
-	buildRoutes   func(*engine.Engine, forge.Router) RouteSet
-	engineOpts    []engine.Option
-	useGrove      bool
-	dashboardDeps cortexcontract.Deps
-	optimization  *optimization.Optimizer
+	config      Config
+	eng         *engine.Engine
+	routes      RouteSet
+	buildRoutes func(*engine.Engine, forge.Router) RouteSet
+	engineOpts  []engine.Option
+	useGrove    bool
+	// noAutoAdapters skips the nexus, shield, weave and sentinel discovery.
+	noAutoAdapters bool
+	dashboardDeps  cortexcontract.Deps
+	optimization   *optimization.Optimizer
 }
 
 // New creates a Cortex Forge extension with the given options.
@@ -109,6 +111,22 @@ func (e *Extension) Register(fapp forge.App) error {
 }
 
 // init builds the engine and API handler.
+//
+// The engine options are assembled in a fixed order, and the order is the
+// precedence rule: engine options are setters, so the last one wins.
+//
+//  1. the app's metrics and logger;
+//  2. the extension config (default model, steps, tokens, temperature,
+//     reasoning loop, shutdown timeout) and run_concurrency;
+//  3. the store built from the grove database the extension found;
+//  4. the nexus, shield, weave and sentinel adapters found in the
+//     container, unless WithoutAutoAdapters;
+//  5. the host's own options (WithStore, WithExtension, WithEngineOption)
+//     in the order given.
+//
+// So anything the host passes overrides what the extension discovered or
+// read from config. Additive options (engine.WithTool, WithExtension) add
+// to each other whatever their position.
 func (e *Extension) init(fapp forge.App) error {
 	// The app's metrics and logger go in first, so an engine option the
 	// host passed (WithEngineOption(engine.WithMetrics(nil)) or its own
@@ -117,11 +135,23 @@ func (e *Extension) init(fapp forge.App) error {
 	// here. Every line the engine logs names errors by type and carries
 	// IDs and counts, never run content or scope values, and each one is
 	// throttled, which is what makes it safe to hand over the app's logger.
-	base := []engine.Option{engine.WithMetrics(e.Metrics())}
+	opts := []engine.Option{engine.WithMetrics(e.Metrics())}
 	if l := e.Logger(); l != nil {
-		base = append(base, engine.WithLogger(l))
+		opts = append(opts, engine.WithLogger(l))
 	}
-	e.engineOpts = append(base, e.engineOpts...)
+
+	opts = append(opts,
+		engine.WithConfig(cortex.Config{
+			DefaultModel:         e.config.DefaultModel,
+			DefaultMaxSteps:      e.config.DefaultMaxSteps,
+			DefaultMaxTokens:     e.config.DefaultMaxTokens,
+			DefaultTemperature:   e.config.DefaultTemperature,
+			DefaultReasoningLoop: e.config.DefaultReasoningLoop,
+			ShutdownTimeout:      e.config.ShutdownTimeout,
+			RunConcurrency:       e.config.RunConcurrency,
+		}),
+		engine.WithRunConcurrency(e.config.RunConcurrency),
+	)
 
 	// Resolve store from grove DI if configured.
 	if e.useGrove {
@@ -133,26 +163,33 @@ func (e *Extension) init(fapp forge.App) error {
 		if err != nil {
 			return err
 		}
-		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+		opts = append(opts, engine.WithStore(s))
 	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
 		// Auto-discover default grove.DB from container (matches warden/authsome pattern).
 		s, err := e.buildStoreFromGroveDB(db)
 		if err != nil {
 			return err
 		}
-		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+		opts = append(opts, engine.WithStore(s))
 		e.Logger().Info("cortex: auto-discovered grove.DB from container",
 			forge.F("driver", db.Driver().Name()),
 		)
 	}
 
-	// Optional: discover installed LLM, safety, knowledge and evaluation services from DI.
-	e.engineOpts = append(e.engineOpts,
-		nexusllm.EngineOption(fapp.Container()),
-		shieldsafety.EngineOption(fapp.Container()),
-		weaveknowledge.EngineOption(fapp.Container()),
-		sentineladapter.EngineOption(fapp.Container()),
-	)
+	// Optional: discover installed LLM, safety, knowledge and evaluation
+	// services from DI. The shield adapter sets the safety scanner, and the
+	// engine screens publication through it unless a publication gate is
+	// set, so a host replacing shield sets engine.WithPublicationGate too.
+	if !e.noAutoAdapters {
+		opts = append(opts,
+			nexusllm.EngineOption(fapp.Container()),
+			shieldsafety.EngineOption(fapp.Container()),
+			weaveknowledge.EngineOption(fapp.Container()),
+			sentineladapter.EngineOption(fapp.Container()),
+		)
+	}
+
+	e.engineOpts = append(opts, e.engineOpts...)
 
 	eng, err := engine.New(e.engineOpts...)
 	if err != nil {
@@ -190,9 +227,18 @@ func (e *Extension) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down the Cortex engine.
+// Stop gracefully shuts down the Cortex engine. It waits for runs in
+// flight for at most shutdown_timeout (when positive), or until ctx ends,
+// whichever comes first. If the wait runs out, Stop returns an error
+// matching context.DeadlineExceeded and leaves the extension started;
+// calling Stop again completes the shutdown.
 func (e *Extension) Stop(ctx context.Context) error {
 	if e.eng != nil {
+		if e.config.ShutdownTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, e.config.ShutdownTimeout)
+			defer cancel()
+		}
 		if err := e.eng.Stop(ctx); err != nil {
 			return err
 		}
@@ -343,9 +389,7 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = defaults.ShutdownTimeout
 	}
-	if cfg.RunConcurrency == 0 {
-		cfg.RunConcurrency = defaults.RunConcurrency
-	}
+	// RunConcurrency stays as given: zero means no limit, not "unset".
 	return cfg
 }
 
