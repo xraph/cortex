@@ -6,6 +6,7 @@ package tool
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -31,7 +32,7 @@ func rootSchema[In any]() (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("generate schema: %w", err)
 	}
 	if s.Type != "object" {
-		return nil, fmt.Errorf("input must be a struct, got schema type %q", s.Type)
+		return nil, errors.New("input must be a struct")
 	}
 	s.Schema = ""
 	s.ID = ""

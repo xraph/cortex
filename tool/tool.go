@@ -82,6 +82,8 @@ func build[In, Out any](name, description string, fn func(ctx context.Context, i
 		if args == "" {
 			args = "{}"
 		}
+		// Decoded as plain float64: jsonschema-go reads a json.Number as a
+		// string, so UseNumber here would fail every numeric property.
 		var generic map[string]any
 		if err := json.Unmarshal([]byte(args), &generic); err != nil {
 			return "", fmt.Errorf("tool %q: invalid arguments: %w", name, err)

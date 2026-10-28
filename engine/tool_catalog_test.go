@@ -104,3 +104,30 @@ func TestRegisterAddsRetrySafe(t *testing.T) {
 		t.Error("write should not be retry-safe")
 	}
 }
+
+func TestToolsListsOnlyTheDefinitionDispatchReaches(t *testing.T) {
+	e, err := engine.New(
+		engine.WithTool(llm.Tool{Name: "a", Description: "first"}, catalogHandler),
+		engine.WithTool(llm.Tool{Name: "a", Description: "shadowed"}, catalogHandler),
+		engine.WithExternalTool(llm.Tool{Name: "a", Description: "external"}),
+		engine.WithExternalTool(llm.Tool{Name: "b"}),
+		engine.WithKnowledge(catalogKnowledge{}),
+		engine.WithTool(llm.Tool{Name: "knowledge_search", Description: "shadowed by builtin"}, catalogHandler),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got := e.Tools()
+	if len(got) != 3 {
+		t.Fatalf("Tools() = %+v, want 3 entries", got)
+	}
+	if got[0].Def.Name != "knowledge_search" || got[0].Kind != engine.ToolBuiltin {
+		t.Errorf("entry 0 = %+v", got[0])
+	}
+	if got[1].Def.Description != "first" || got[1].Kind != engine.ToolRegistered {
+		t.Errorf("entry 1 = %+v", got[1])
+	}
+	if got[2].Def.Name != "b" {
+		t.Errorf("entry 2 = %+v", got[2])
+	}
+}

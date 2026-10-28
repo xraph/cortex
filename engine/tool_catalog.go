@@ -27,14 +27,16 @@ type ToolInfo struct {
 }
 
 // Tools lists every tool in dispatch order: the builtins enabled for this
-// engine, then WithTool registrations (the first one per name), then
-// external tools.
+// external tools. A name is listed once, at the first definition dispatch
+// reaches.
 func (e *Engine) Tools() []ToolInfo {
 	builtin := e.builtinTools()
-	out := make([]ToolInfo, 0, len(builtin)+len(e.tools)+len(e.externalTools))
-	seen := make(map[string]bool, len(e.tools))
+	external := e.externalToolDefs()
+	out := make([]ToolInfo, 0, len(builtin)+len(e.tools)+len(external))
+	seen := make(map[string]bool, cap(out))
 
 	for _, def := range builtin {
+		seen[def.Name] = true
 		out = append(out, ToolInfo{Def: def, Kind: ToolBuiltin, RetrySafe: e.retrySafe[def.Name]})
 	}
 	for _, rt := range e.tools {
@@ -44,7 +46,11 @@ func (e *Engine) Tools() []ToolInfo {
 		seen[rt.def.Name] = true
 		out = append(out, ToolInfo{Def: rt.def, Kind: ToolRegistered, RetrySafe: e.retrySafe[rt.def.Name]})
 	}
-	for _, def := range e.externalToolDefs() {
+	for _, def := range external {
+		if seen[def.Name] {
+			continue
+		}
+		seen[def.Name] = true
 		out = append(out, ToolInfo{Def: def, Kind: ToolExternal, RetrySafe: e.retrySafe[def.Name]})
 	}
 

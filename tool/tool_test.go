@@ -71,23 +71,37 @@ func TestNewGeneratesObjectSchema(t *testing.T) {
 			t.Errorf("schema carries %s", k)
 		}
 	}
-	// Numbers must be json.Number, not float64, to match the builtin shape.
-	var walk func(v any)
-	walk = func(v any) {
-		switch x := v.(type) {
-		case float64:
-			t.Errorf("found float64 %v in schema", x)
-		case map[string]any:
-			for _, c := range x {
-				walk(c)
-			}
-		case []any:
-			for _, c := range x {
-				walk(c)
-			}
-		}
+}
+
+type pairInput struct {
+	Pair [2]int `json:"pair"`
+}
+
+// TestSchemaNumbersAreJSONNumber pins the shape of numeric keywords. The
+// engine's hand-written schemas decode with UseNumber, and prepared
+// snapshots hash both alike.
+func TestSchemaNumbersAreJSONNumber(t *testing.T) {
+	s, err := tool.Schema[pairInput]()
+	if err != nil {
+		t.Fatalf("Schema: %v", err)
 	}
-	walk(p)
+	pair := s["properties"].(map[string]any)["pair"].(map[string]any)
+	if got, ok := pair["minItems"].(json.Number); !ok || got != "2" {
+		t.Errorf("minItems = %#v, want json.Number(2)", pair["minItems"])
+	}
+}
+
+func TestNewPanicsWhenInputIsPointer(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("New did not panic")
+		}
+		if msg := fmt.Sprint(r); msg != `tool "p": input must be a struct` {
+			t.Errorf("panic = %q", msg)
+		}
+	}()
+	tool.New("p", "bad", func(context.Context, cortex.Invocation, *listInput) (string, error) { return "", nil })
 }
 
 func TestSchemaGolden(t *testing.T) {
