@@ -101,7 +101,7 @@ func TestRescope(t *testing.T) {
 		t.Helper()
 		if _, err := s.pgdb.Exec(ctx, `TRUNCATE TABLE
 			cortex_tool_calls, cortex_steps, cortex_checkpoints,
-			cortex_memories, cortex_runs, cortex_agents
+			cortex_memories, cortex_run_progress, cortex_runs, cortex_agents
 			RESTART IDENTITY CASCADE`); err != nil {
 			t.Fatalf("truncate before subtest: %v", err)
 		}

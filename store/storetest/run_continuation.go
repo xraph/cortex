@@ -27,10 +27,13 @@ func RunContinuation(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("ClaimContinuationOnce", func(t *testing.T) { testClaimContinuationOnce(t, newStore) })
 	t.Run("ClaimContinuationReclaimable", func(t *testing.T) { testClaimContinuationReclaimable(t, newStore) })
 	t.Run("ClaimContinuationWithoutLease", func(t *testing.T) { testClaimContinuationWithoutLease(t, newStore) })
+	t.Run("ClaimContinuationRefusesHalfLease", func(t *testing.T) { testClaimContinuationRefusesHalfLease(t, newStore) })
+	t.Run("ClaimContinuationExactScope", func(t *testing.T) { testClaimContinuationExactScope(t, newStore) })
 	t.Run("HoldLeaseRules", func(t *testing.T) { testHoldLeaseRules(t, newStore) })
 	t.Run("ListLapsedAcrossScopes", func(t *testing.T) { testListLapsedAcrossScopes(t, newStore) })
 	t.Run("MarkReclaimableLapsed", func(t *testing.T) { testMarkReclaimableLapsed(t, newStore) })
 	t.Run("MarkReclaimableHandOff", func(t *testing.T) { testMarkReclaimableHandOff(t, newStore) })
+	t.Run("MarkReclaimableExactScope", func(t *testing.T) { testMarkReclaimableExactScope(t, newStore) })
 	t.Run("UpdateRunLeaseColumns", func(t *testing.T) { testUpdateRunLeaseColumns(t, newStore) })
 	t.Run("Notified", func(t *testing.T) { testContinuableNotified(t, newStore) })
 }
@@ -646,5 +649,73 @@ func testContinuableNotified(t *testing.T, newStore func(t *testing.T) store.Sto
 	}
 	if got := mustGetRun(t, s, ctxB, reclaimable.ID); got.NotifiedAt != nil || got.Revision != reclaimable.Revision {
 		t.Fatalf("refused MarkNotified left notified %v revision %d", got.NotifiedAt, got.Revision)
+	}
+}
+
+// testClaimContinuationRefusesHalfLease pins HoldLease's rule on the claim:
+// a lease with an owner and no expiry never lapses, and one with an expiry
+// and no owner can be held by anyone. Both are refused and the run stays
+// ready for a proper claim.
+func testClaimContinuationRefusesHalfLease(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctx := ctxWithScope("claim-half-lease")
+	ready := mustReadyRun(t, s, ctx)
+
+	halves := map[string]run.Lease{
+		"owner_without_expiry": {Owner: "w1"},
+		"expiry_without_owner": {ExpiresAt: time.Now().Add(time.Minute).UTC()},
+	}
+	for name, lease := range halves {
+		if _, err := cs.ClaimContinuation(ctx, ready.ID, lease); !errors.Is(err, cortex.ErrRunLeaseLost) {
+			t.Errorf("ClaimContinuation with %s = %v, want ErrRunLeaseLost", name, err)
+		}
+	}
+	if after := mustGetRun(t, s, ctx, ready.ID); after.State != run.StateReady || after.Revision != ready.Revision || after.Lease != nil {
+		t.Fatalf("a refused half-lease claim changed the run to %s/%d lease %+v", after.State, after.Revision, after.Lease)
+	}
+	lease := leaseAt("w1", time.Now().Add(time.Minute))
+	if got, err := cs.ClaimContinuation(ctx, ready.ID, lease); err != nil || !sameLease(got.Lease, lease) {
+		t.Fatalf("ClaimContinuation with a whole lease after the refusals = %+v, %v", got, err)
+	}
+}
+
+func testClaimContinuationExactScope(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctx := ctxWithScope("ws_claim", "p1")
+	ready := mustReadyRun(t, s, ctx)
+	lease := leaseAt("w1", time.Now().Add(time.Minute))
+
+	if _, err := cs.ClaimContinuation(ctxWithScope("ws_claim"), ready.ID, lease); !errors.Is(err, cortex.ErrRunNotContinuable) {
+		t.Fatalf("ClaimContinuation from a covering scope = %v, want ErrRunNotContinuable", err)
+	}
+	if after := mustGetRun(t, s, ctx, ready.ID); after.State != run.StateReady || after.Revision != ready.Revision || after.Lease != nil {
+		t.Fatalf("covering-scope ClaimContinuation changed the run to %s/%d lease %+v", after.State, after.Revision, after.Lease)
+	}
+	if _, err := cs.ClaimContinuation(ctx, ready.ID, lease); err != nil {
+		t.Fatalf("ClaimContinuation from the run's own scope after the refusal: %v", err)
+	}
+}
+
+func testMarkReclaimableExactScope(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctx := ctxWithScope("ws_reclaim", "p1")
+	lapsed := leaseAt("w1", time.Now().Add(-time.Minute))
+	r := mustRunningRun(t, s, ctx, &lapsed)
+	covering := ctxWithScope("ws_reclaim")
+
+	if _, err := cs.MarkReclaimable(covering, r.ID, time.Now().UTC(), ""); !errors.Is(err, cortex.ErrRunNotFound) {
+		t.Fatalf("sweep from a covering scope = %v, want ErrRunNotFound", err)
+	}
+	if _, err := cs.MarkReclaimable(covering, r.ID, time.Now().UTC(), "w1"); !errors.Is(err, cortex.ErrRunNotFound) {
+		t.Fatalf("hand-off from a covering scope = %v, want ErrRunNotFound", err)
+	}
+	if after := mustGetRun(t, s, ctx, r.ID); after.State != run.StateRunning || after.Revision != r.Revision || !sameLease(after.Lease, lapsed) || after.Reclaims != 0 {
+		t.Fatalf("covering-scope MarkReclaimable changed the run to %s/%d lease %+v reclaims %d", after.State, after.Revision, after.Lease, after.Reclaims)
+	}
+	if _, err := cs.MarkReclaimable(ctx, r.ID, time.Now().UTC(), ""); err != nil {
+		t.Fatalf("MarkReclaimable from the run's own scope after the refusals: %v", err)
 	}
 }

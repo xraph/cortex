@@ -50,6 +50,7 @@ type Spy struct {
 	suspendErr    error
 	claimed       map[id.AgentRunID]bool
 	runs          map[id.AgentRunID]run.Run
+	progress      map[id.AgentRunID]suspension.Progress
 	steps         []run.Step
 	toolCalls     []run.ToolCall
 	checkpoints   []*checkpoint.Checkpoint

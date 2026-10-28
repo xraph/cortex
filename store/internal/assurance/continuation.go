@@ -108,11 +108,17 @@ func (s *Repository) MarkReady(ctx context.Context, runID id.AgentRunID, ready r
 
 // ClaimContinuation moves a ready or reclaimable run to running under
 // lease. Of two concurrent callers, the second reads the running state the
-// first one committed and gets ErrRunNotContinuable.
+// first one committed and gets ErrRunNotContinuable. A half lease, an owner
+// with no expiry or an expiry with no owner, is refused with
+// ErrRunLeaseLost, as HoldLease refuses it: the first would never lapse and
+// the second could be held by anyone.
 func (s *Repository) ClaimContinuation(ctx context.Context, runID id.AgentRunID, lease run.Lease) (*run.Run, error) {
 	scope, err := cortex.RequireScope(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if (lease.Owner == "") != lease.ExpiresAt.IsZero() {
+		return nil, cortex.ErrRunLeaseLost
 	}
 	if runID.Prefix() != id.PrefixAgentRun {
 		return nil, cortex.ErrRunNotContinuable

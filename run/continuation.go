@@ -57,7 +57,8 @@ type ContinuationStore interface {
 	MarkReclaimable(ctx context.Context, runID id.AgentRunID, now time.Time, owner string) (*Run, error)
 	// ClaimContinuation moves a ready or reclaimable run to running under lease, clears Ready and
 	// NotifiedAt, advances Revision. ErrRunNotContinuable otherwise. Two callers: exactly one wins.
-	// A zero Lease claims the run with no lease, which the lapsed listing never returns.
+	// A zero Lease claims the run with no lease, which the lapsed listing never returns. A lease
+	// with an owner and no expiry, or an expiry and no owner, is refused with ErrRunLeaseLost.
 	ClaimContinuation(ctx context.Context, runID id.AgentRunID, lease Lease) (*Run, error)
 	// ListLapsedAcrossScopes lists running runs whose lease expiry is set and at or before now,
 	// oldest expiry first. It deliberately bypasses scope, for the sweeper only.

@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 )
 
 // overriddenMethods probes every method on the store.Store interface by
@@ -322,7 +323,20 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 // embedded nil Store. The two AcrossScopes listings are the sweeper's and
 // run without a scope, so they are probed with none.
 func TestSpy_OverridesContinuationStore(t *testing.T) {
-	capability := reflect.TypeOf((*run.ContinuationStore)(nil)).Elem()
+	probeCapability(t, reflect.TypeOf((*run.ContinuationStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesProgressStore does the same for suspension.ProgressStore,
+// the other optional capability the engine asserts by type.
+func TestSpy_OverridesProgressStore(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem())
+}
+
+// probeCapability calls every method of capability on a fresh Spy with zero
+// arguments and checks each one records exactly its own call, with a scope
+// unless it is an AcrossScopes listing.
+func probeCapability(t *testing.T, capability reflect.Type) {
+	t.Helper()
 	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
 	scoped := cortex.WithScope(context.Background(), cortex.Scope{
 		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},

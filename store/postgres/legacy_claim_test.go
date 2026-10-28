@@ -13,13 +13,15 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
-// The two claim UPDATEs v1.9.0 sends, as its query builder renders them
-// (`git show v1.9.0:store/postgres/suspension.go`, ClaimSuspension and
-// ClaimExpiredSuspension) for a scope of one level. They are frozen here as
-// text so a later change to this package's builders cannot quietly change
-// what the old worker is proven to do. During a rolling upgrade a v1.9.0
-// replica shares the database, and its claim must not take a run this
-// version made ready or reclaimable: it would run it a second time.
+// The two claim UPDATEs v1.9.0 sends (`git show v1.9.0:store/postgres/suspension.go`,
+// ClaimSuspension and ClaimExpiredSuspension) for a scope of one level.
+// v1.9.0's query builder binds the two paused states as parameters; the
+// text here writes them inline as 'paused' and 'paused_prepared'. The
+// predicate is the same. They are frozen here as text so a later change to
+// this package's builders cannot quietly change what the old worker is
+// proven to do. During a rolling upgrade a v1.9.0 replica shares the
+// database, and its claim must not take a run this version made ready or
+// reclaimable: it would run it a second time.
 const (
 	legacyClaimSQL        = `UPDATE "cortex_runs" SET state = $1, revision = revision + 1, updated_at = $2 WHERE revision >= 0 AND revision < $3 AND id = $4 AND state IN ('paused', 'paused_prepared') AND EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = $5 AND (cs.expires_at IS NULL OR cs.expires_at > $6) AND cs.scope_l0 = $7 AND cs.scope_l1 = $8 AND cs.scope_l2 = $9 AND cs.scope_canon = $10 AND cs.scope_extra = $11) AND scope_l0 = $12 AND scope_l1 = $13 AND scope_l2 = $14 AND scope_canon = $15 AND scope_extra = $16`
 	legacyExpiredClaimSQL = `UPDATE "cortex_runs" SET state = $1, revision = revision + 1, updated_at = $2 WHERE revision >= 0 AND revision < $3 AND id = $4 AND state IN ('paused', 'paused_prepared') AND EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = $5 AND cs.expires_at IS NOT NULL AND cs.expires_at <= $6 AND cs.scope_l0 = $7 AND cs.scope_l1 = $8 AND cs.scope_l2 = $9 AND cs.scope_canon = $10 AND cs.scope_extra = $11) AND scope_l0 = $12 AND scope_l1 = $13 AND scope_l2 = $14 AND scope_canon = $15 AND scope_extra = $16`

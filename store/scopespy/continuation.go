@@ -84,11 +84,15 @@ func (s *Spy) MarkReclaimable(ctx context.Context, runID id.AgentRunID, now time
 	return &r, nil
 }
 
-// ClaimContinuation lets exactly one caller take a ready or reclaimable run.
+// ClaimContinuation lets exactly one caller take a ready or reclaimable
+// run, and refuses a half lease the way the stores do.
 func (s *Spy) ClaimContinuation(ctx context.Context, runID id.AgentRunID, lease run.Lease) (*run.Run, error) {
 	s.record(ctx, "ClaimContinuation")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if (lease.Owner == "") != lease.ExpiresAt.IsZero() {
+		return nil, cortex.ErrRunLeaseLost
+	}
 	r, ok := s.runs[runID]
 	if !ok || (r.State != run.StateReady && r.State != run.StateReclaimable) {
 		return nil, cortex.ErrRunNotContinuable

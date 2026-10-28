@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/storetest"
 )
@@ -139,6 +140,17 @@ func TestConformance(t *testing.T) {
 	t.Run("VerifiedResultRollback", func(t *testing.T) {
 		s := newTestStore(t)
 		storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s})
+	})
+	t.Run("RunCandidateLease", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.RunCandidateLease(t, s, assuranceDriver{store: s})
+	})
+	t.Run("RunProgressCascade", func(t *testing.T) {
+		s := newTestStore(t)
+		storetest.RunProgressCascade(t, s, func(ctx context.Context, runID id.AgentRunID) error {
+			_, err := s.sdb.Exec(ctx, "DELETE FROM cortex_runs WHERE id = ?", runID.String())
+			return err
+		})
 	})
 	storetest.Conformance(t, func(t *testing.T) store.Store {
 		return newTestStore(t)

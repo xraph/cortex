@@ -14,13 +14,15 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
-// The two claim UPDATEs v1.9.0 sends, as its query builder renders them
-// (`git show v1.9.0:store/sqlite/suspension.go`, ClaimSuspension and
-// ClaimExpiredSuspension) for a scope of one level. They are frozen here as
-// text so a later change to this package's builders cannot quietly change
-// what the old worker is proven to do. During a rolling upgrade a v1.9.0
-// replica shares the database, and its claim must not take a run this
-// version made ready or reclaimable: it would run it a second time.
+// The two claim UPDATEs v1.9.0 sends (`git show v1.9.0:store/sqlite/suspension.go`,
+// ClaimSuspension and ClaimExpiredSuspension) for a scope of one level.
+// v1.9.0's query builder binds the two paused states as parameters; the
+// text here writes them inline as 'paused' and 'paused_prepared'. The
+// predicate is the same. They are frozen here as text so a later change to
+// this package's builders cannot quietly change what the old worker is
+// proven to do. During a rolling upgrade a v1.9.0 replica shares the
+// database, and its claim must not take a run this version made ready or
+// reclaimable: it would run it a second time.
 const (
 	legacyClaimSQL        = `UPDATE "cortex_runs" SET state = ?, revision = revision + 1, updated_at = ? WHERE revision >= 0 AND revision < ? AND id = ? AND state IN ('paused', 'paused_prepared') AND EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ? AND (cs.expires_at IS NULL OR cs.expires_at > ?) AND cs.scope_l0 = ? AND cs.scope_l1 = ? AND cs.scope_l2 = ? AND cs.scope_canon = ? AND json(cs.scope_extra) = ?) AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ? AND scope_canon = ? AND json(scope_extra) = ?`
 	legacyExpiredClaimSQL = `UPDATE "cortex_runs" SET state = ?, revision = revision + 1, updated_at = ? WHERE revision >= 0 AND revision < ? AND id = ? AND state IN ('paused', 'paused_prepared') AND EXISTS (SELECT 1 FROM cortex_suspensions cs WHERE cs.run_id = ? AND cs.expires_at IS NOT NULL AND cs.expires_at <= ? AND cs.scope_l0 = ? AND cs.scope_l1 = ? AND cs.scope_l2 = ? AND cs.scope_canon = ? AND json(cs.scope_extra) = ?) AND scope_l0 = ? AND scope_l1 = ? AND scope_l2 = ? AND scope_canon = ? AND json(scope_extra) = ?`

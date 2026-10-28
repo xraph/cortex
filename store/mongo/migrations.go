@@ -379,6 +379,11 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			},
 			scopeIndex,
 		},
+		// One progress snapshot per run, keyed by the run id in _id, so
+		// the scope index is the only one it needs.
+		colRunProgress: {
+			scopeIndex,
+		},
 		colOverlays: {
 			// One overlay per agent per scope. Prompt assembly reads
 			// "the" overlay for an agent at a scope, so two documents

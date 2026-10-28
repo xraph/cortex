@@ -134,6 +134,9 @@ var (
 	// ErrRunLeased is returned when a run's lease has not lapsed yet, so
 	// the run still belongs to the worker holding it.
 	ErrRunLeased = errors.New("cortex: run lease is still held")
+	// ErrProgressNotFound is returned when a run has no saved progress
+	// snapshot at the caller's scope.
+	ErrProgressNotFound = errors.New("cortex: run progress not found")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.
