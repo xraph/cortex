@@ -20,7 +20,12 @@ func (d assuranceDriver) SetRunCandidate(ctx context.Context, r *run.Run, at tim
 	}
 	m := runToModel(r)
 	m.Revision, m.UpdatedAt = revision, at
-	q := d.queries().NewUpdate(m).Column("revision", "state", "stop_reason", "finish_reason", "output", "verification_status", "result_ref", "step_count", "tokens_used", "usage", "completed_at", "updated_at").WherePK().Where("revision = ?", r.Revision).Where("scope_canon = ?", scope.Canonical())
+	columns := []string{"revision", "state", "stop_reason", "finish_reason", "output", "verification_status", "result_ref", "step_count", "tokens_used", "usage", "completed_at", "updated_at"}
+	if r.State != run.StateRunning {
+		m.LeaseOwner, m.LeaseExpiresAt = "", nil
+		columns = append(columns, leaseRunColumns...)
+	}
+	q := d.queries().NewUpdate(m).Column(columns...).WherePK().Where("revision = ?", r.Revision).Where("scope_canon = ?", scope.Canonical())
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}

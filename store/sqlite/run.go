@@ -19,7 +19,9 @@ import (
 // scope-matching) context would silently overwrite a row's narrower
 // stored scope. principal is absent for the same reason: the codec bytes
 // are written when the run is created, and a resume decodes them to find
-// the run's caller, so no later writer may replace them.
+// the run's caller, so no later writer may replace them. The lease,
+// readiness, reclaim count and notification time are absent too: they
+// belong to run.ContinuationStore.
 var mutableRunColumns = []string{
 	"revision",
 	"agent_id",
@@ -38,6 +40,11 @@ var mutableRunColumns = []string{
 	"created_at",
 	"updated_at",
 }
+
+// leaseRunColumns hold a running run's lease. UpdateRun writes them only
+// to clear them, when the run leaves running; HoldLease and the
+// continuation transitions are the only other writers.
+var leaseRunColumns = []string{"lease_owner", "lease_expires_at"}
 
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	return (assuranceDriver{store: s}).insertRun(ctx, r, time.Now().UTC())
@@ -103,7 +110,16 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 	m := runToModel(r)
 	m.Revision = next
 	m.UpdatedAt = at
-	q := d.queries().NewUpdate(m).Column(mutableRunColumns...).WherePK().Where("revision = ?", r.Revision)
+	columns := mutableRunColumns
+	if r.State != run.StateRunning {
+		// Only a running run is held. Leaving running releases the lease,
+		// and nothing else UpdateRun does may touch it: a heartbeat moves
+		// the expiry without advancing the revision, so a step write from
+		// the same worker would otherwise wind it back.
+		m.LeaseOwner, m.LeaseExpiresAt = "", nil
+		columns = append(append([]string(nil), mutableRunColumns...), leaseRunColumns...)
+	}
+	q := d.queries().NewUpdate(m).Column(columns...).WherePK().Where("revision = ?", r.Revision)
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -120,6 +136,9 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 	}
 	r.Revision = m.Revision
 	r.UpdatedAt = m.UpdatedAt
+	if r.State != run.StateRunning {
+		r.Lease = nil
+	}
 	return nil
 }
 

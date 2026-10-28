@@ -88,7 +88,10 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // builds an explicit $set instead of passing the model through — leaving
 // out scope_l0/l1/l2/extra/canon rather than relying on them happening to
 // already match. principal is left out too: it is written once, when the
-// run is created, and a resume decodes it to find the run's caller.
+// run is created, and a resume decodes it to find the run's caller. The
+// lease, readiness, reclaim count and notification time belong to
+// run.ContinuationStore; UpdateRun only clears the lease when the run
+// leaves running.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	return (assuranceDriver{store: s}).UpdateRunSnapshot(ctx, r, now())
 }
@@ -138,6 +141,13 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 		"metadata":            m.Metadata,
 		"updated_at":          m.UpdatedAt,
 	}
+	if r.State != run.StateRunning {
+		// Only a running run is held. Leaving running releases the lease,
+		// and nothing else UpdateRun does may touch it: a heartbeat moves
+		// the expiry without advancing the revision, so a step write from
+		// the same worker would otherwise wind it back.
+		set["lease_owner"], set["lease_expires_at"] = "", nil
+	}
 
 	res, err := d.store.mdb.NewUpdate((*runModel)(nil)).
 		Filter(filter).
@@ -153,6 +163,9 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 
 	r.Revision = m.Revision
 	r.UpdatedAt = m.UpdatedAt
+	if r.State != run.StateRunning {
+		r.Lease = nil
+	}
 	return nil
 }
 

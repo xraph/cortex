@@ -120,6 +120,20 @@ var (
 	// authorizer is installed without a principal codec. Without one,
 	// every resumed run would reach the authorizer as nobody.
 	ErrPrincipalCodecRequired = errors.New("cortex: a tool authorizer needs a principal codec so resumed runs keep their principal")
+
+	// Run continuation errors.
+	//
+	// ErrRunNotContinuable is returned when a continuation targets a run
+	// that is not ready or reclaimable: another replica already continued
+	// it, or it never got that far.
+	ErrRunNotContinuable = errors.New("cortex: run is not ready to continue")
+	// ErrRunLeaseLost is returned to a worker whose lease on a running run
+	// is gone: another worker holds it, or the run left running. The
+	// worker must stop writing the run.
+	ErrRunLeaseLost = errors.New("cortex: run lease lost")
+	// ErrRunLeased is returned when a run's lease has not lapsed yet, so
+	// the run still belongs to the worker holding it.
+	ErrRunLeased = errors.New("cortex: run lease is still held")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.

@@ -22,6 +22,12 @@ const (
 	StateFailed     State = "failed"
 	StateCancelled  State = "cancelled"
 	StatePaused     State = "paused"
+	// StateReady is a paused run whose decision or answers are recorded. It
+	// waits for ContinueRun, and any replica may continue it.
+	StateReady State = "ready"
+	// StateReclaimable is a running run whose worker's lease lapsed or was
+	// handed off. It waits for ContinueRun, and any replica may continue it.
+	StateReclaimable State = "reclaimable"
 )
 
 // Run represents a single execution of an agent.
@@ -56,6 +62,19 @@ type Run struct {
 	// under it, never under whoever resumed. Stores persist it and never
 	// rewrite it; it is never serialized, so an API reader cannot see it.
 	Principal []byte `json:"-"`
+	// Lease names the worker that holds a running run and when its hold
+	// lapses. Nil means no worker holds a lease on the run.
+	Lease *Lease `json:"lease,omitempty"`
+	// Ready is what a ready run continues with. Stores persist it; it is
+	// never serialized, because Results carries tool output.
+	Ready *Readiness `json:"-"`
+	// Reclaims counts how many times a lapsed lease moved the run to
+	// StateReclaimable.
+	Reclaims int `json:"reclaims,omitempty"`
+	// NotifiedAt is when the host was last told a ready or reclaimable run
+	// is waiting. It is store bookkeeping for the sweeper and never
+	// serialized.
+	NotifiedAt *time.Time `json:"-"`
 }
 
 // MarshalJSON makes unchecked explicit for legacy runs and zero-value structs.

@@ -3,6 +3,7 @@ package scopespy
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -309,6 +310,55 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 	for name := range overridden {
 		if !reached[name] {
 			t.Errorf("Spy overrides %q, but neither RunAgent nor StreamAgent called it in this test — either the override is dead, or reachedMethods needs a scenario that reaches it", name)
+		}
+	}
+}
+
+// TestSpy_OverridesContinuationStore probes every run.ContinuationStore
+// method the way overriddenMethods probes store.Store. The capability is
+// optional, so it is not part of store.Store and the test above cannot
+// see it; an engine that finds the spy implements it will call these
+// methods, and each one has to record its call rather than panic on the
+// embedded nil Store. The two AcrossScopes listings are the sweeper's and
+// run without a scope, so they are probed with none.
+func TestSpy_OverridesContinuationStore(t *testing.T) {
+	capability := reflect.TypeOf((*run.ContinuationStore)(nil)).Elem()
+	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	scoped := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	for i := 0; i < capability.NumMethod(); i++ {
+		name := capability.Method(i).Name
+		acrossScopes := strings.HasSuffix(name, "AcrossScopes")
+		ctx := scoped
+		if acrossScopes {
+			ctx = context.Background()
+		}
+		spy := New()
+		mv := reflect.ValueOf(spy).MethodByName(name)
+		args := make([]reflect.Value, mv.Type().NumIn())
+		for j := range args {
+			if pt := mv.Type().In(j); pt == ctxType {
+				args[j] = reflect.ValueOf(ctx)
+			} else {
+				args[j] = reflect.Zero(pt)
+			}
+		}
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Errorf("Spy.%s fell through to the embedded nil Store: %v", name, recovered)
+				}
+			}()
+			mv.Call(args)
+		}()
+		calls := spy.Calls()
+		if len(calls) != 1 || calls[0].Method != name {
+			t.Errorf("Spy.%s recorded %+v, want exactly one %s call", name, calls, name)
+			continue
+		}
+		if !acrossScopes && calls[0].Scope.IsZero() {
+			t.Errorf("Spy.%s recorded no scope", name)
 		}
 	}
 }

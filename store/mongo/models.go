@@ -170,11 +170,51 @@ type runModel struct {
 
 	BudgetDeadlineExact string `grove:"budget_deadline_exact" bson:"budget_deadline_exact,omitempty"`
 	Principal           []byte `grove:"principal" bson:"principal,omitempty"`
+
+	LeaseOwner     string         `grove:"lease_owner" bson:"lease_owner"`
+	LeaseExpiresAt *time.Time     `grove:"lease_expires_at" bson:"lease_expires_at,omitempty"`
+	Ready          *readyDocument `grove:"ready" bson:"ready,omitempty"`
+	ReclaimCount   int            `grove:"reclaim_count" bson:"reclaim_count"`
+	NotifiedAt     *time.Time     `grove:"notified_at" bson:"notified_at,omitempty"`
+}
+
+// readyDocument is the stored form of run.Readiness. Results are kept as
+// BSON binary, so the engine's bytes come back exactly as written.
+type readyDocument struct {
+	Source       string    `bson:"source"`
+	Results      []byte    `bson:"results,omitempty"`
+	CheckpointID string    `bson:"checkpoint_id,omitempty"`
+	At           time.Time `bson:"at"`
+}
+
+func readyToDocument(ready *run.Readiness) *readyDocument {
+	if ready == nil {
+		return nil
+	}
+	return &readyDocument{Source: string(ready.Source), Results: ready.Results, CheckpointID: ready.CheckpointID.String(), At: ready.At.UTC()}
+}
+
+func readyFromDocument(doc *readyDocument) (*run.Readiness, error) {
+	if doc == nil {
+		return nil, nil
+	}
+	ready := &run.Readiness{Source: run.ReadySource(doc.Source), At: doc.At.UTC()}
+	if doc.Results != nil {
+		ready.Results = append(json.RawMessage(nil), doc.Results...)
+	}
+	if doc.CheckpointID != "" {
+		checkpointID, err := id.ParseCheckpointID(doc.CheckpointID)
+		if err != nil {
+			return nil, fmt.Errorf("run readiness: %w", err)
+		}
+		ready.CheckpointID = checkpointID
+	}
+	return ready, nil
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
-	return &runModel{
+	m := &runModel{
 		Provenance: r.Provenance, Usage: r.Usage, Budget: r.Budget,
 		BudgetDeadlineExact: exactBudgetDeadline(r.Budget.Deadline),
 
@@ -202,9 +242,13 @@ func runToModel(r *run.Run) *runModel {
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
 		Principal:          r.Principal,
+		ReclaimCount:       r.Reclaims,
+		NotifiedAt:         r.NotifiedAt,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}
+	m.LeaseOwner, m.LeaseExpiresAt = runstate.LeaseColumns(r.Lease)
+	return m
 }
 
 func runFromModel(m *runModel) (*run.Run, error) {
@@ -228,7 +272,15 @@ func runFromModel(m *runModel) (*run.Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("run %s: %w", runID, err)
 	}
+	ready, err := readyFromDocument(m.Ready)
+	if err != nil {
+		return nil, fmt.Errorf("run %s: %w", runID, err)
+	}
 	return &run.Run{
+		Lease:      runstate.LeaseFromColumns(m.LeaseOwner, m.LeaseExpiresAt),
+		Ready:      ready,
+		Reclaims:   m.ReclaimCount,
+		NotifiedAt: runstate.UTCTime(m.NotifiedAt),
 		Provenance: m.Provenance, Usage: m.Usage, Budget: budget,
 		Entity:             cortex.Entity{CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt},
 		ID:                 runID,
