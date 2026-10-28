@@ -119,7 +119,12 @@ func (s effectStopFailureStore) UpdateRun(ctx context.Context, r *run.Run) error
 	}
 	return s.Spy.UpdateRun(ctx, r)
 }
-func TestUncertainEffectDoesNotResolveApprovalWithoutDurableStop(t *testing.T) {
+
+// The approval is recorded before the run continues, so a terminal write
+// that fails after an uncertain effect leaves the decision recorded and the
+// run running from its claim. Repeating the decision is refused, and the
+// claim is what keeps the action from being dispatched again.
+func TestUncertainEffectWithoutDurableStopKeepsApprovalRecorded(t *testing.T) {
 	store := effectStopFailureStore{Spy: scopespy.New()}
 	client := &effectLoopClient{}
 	var calls int
@@ -137,13 +142,16 @@ func TestUncertainEffectDoesNotResolveApprovalWithoutDurableStop(t *testing.T) {
 	require.ErrorIs(t, err, cortex.ErrEffectUncertain)
 	saved, err := store.GetRun(ctx, r.ID)
 	require.NoError(t, err)
-	require.False(t, isTerminalRunState(saved.State))
+	require.Equal(t, run.StateRunning, saved.State)
 	cp, err := store.GetCheckpoint(ctx, cps[0].ID)
 	require.NoError(t, err)
-	require.Equal(t, "pending", cp.State)
-	require.Nil(t, cp.Decision)
+	require.Equal(t, "resolved", cp.State)
+	require.NotNil(t, cp.Decision)
+	require.True(t, cp.Decision.Approved)
 	require.Equal(t, 1, calls)
-	require.Error(t, e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}))
+	require.ErrorIs(t, e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}), cortex.ErrInvalidState)
+	_, err = e.ContinueRun(ctx, r.ID)
+	require.ErrorIs(t, err, cortex.ErrRunLeased)
 	require.Equal(t, 1, calls)
 }
 

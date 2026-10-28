@@ -77,9 +77,16 @@ func (e *Engine) restorePrincipal(ctx context.Context, r *run.Run) (restored con
 // makes, with the codec's reason on it. The warning is there because a
 // run failing for its caller's identity is something an operator should
 // see without reading every run.
+//
+// A checkpoint the pause opened is closed too, so nobody is left deciding
+// a run that has failed. An approval that got this far has usually been
+// recorded already; this catches the one whose record was lost and the
+// path that acts before it records.
 func (e *Engine) failRevokedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension, revoked error) error {
 	ctx = cortex.WithScope(ctx, susp.Scope)
 	r := e.claimedRun(ctx, susp.RunID, snapshot, susp.ClaimedRun)
 	e.logWarn("fail a resumed run whose principal was revoked", revoked, log.String("run_id", r.ID.String()))
-	return e.failResume(ctx, r, r.AgentID, revoked)
+	err := e.failResume(ctx, r, r.AgentID, revoked)
+	e.closePendingCheckpoints(ctx, r.ID, "the run's principal was revoked, so there is nothing left to decide")
+	return err
 }

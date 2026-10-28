@@ -134,6 +134,10 @@ var (
 	// ErrRunLeased is returned when a run's lease has not lapsed yet, so
 	// the run still belongs to the worker holding it.
 	ErrRunLeased = errors.New("cortex: run lease is still held")
+	// ErrContinuationUnavailable is returned by the engine calls that make a
+	// run ready or continue one when the store does not implement
+	// run.ContinuationStore.
+	ErrContinuationUnavailable = errors.New("cortex: store cannot hold ready runs")
 	// ErrProgressNotFound is returned when a run has no saved progress
 	// snapshot at the caller's scope.
 	ErrProgressNotFound = errors.New("cortex: run progress not found")

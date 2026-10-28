@@ -46,15 +46,36 @@ type Decision struct {
 3. A human reviews the checkpoint through `Engine.ListPendingCheckpoints` or the
    REST endpoint
 4. The human resolves it with a Decision (approve or reject)
-5. An approval resumes the run and finally dispatches the call. A rejection
-   fails the run, with the decision's `Reason` on `run.Error`
+5. An approval moves the run to `ready`, records the decision, and the run
+   continues and finally dispatches the call. A rejection fails the run, with
+   the decision's `Reason` on `run.Error`
 
 ```
 Run (running) -> Checkpoint created (pending) -> Run (paused)
                                                  |
-                                Decision made -> Run (running) [approved]
-                                              -> Run (failed)  [rejected]
+                                Decision made -> Run (ready) -> Run (running) [approved]
+                                              -> Run (failed)                 [rejected]
 ```
+
+`eng.ResolveCheckpoint` does all of it and returns when the run does.
+`eng.DecideCheckpoint` stops at `ready`: it records the decision without
+calling the model, `plugin.RunReady` fires, and you continue the run later with
+`eng.ContinueRun`, typically from a background job:
+
+```go
+if err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{Approved: true, DecidedBy: "ops@example.com"}); err != nil {
+    return err
+}
+// Later, in a job that carries the run's scope:
+r, err := eng.ContinueRun(jobCtx, runID)
+```
+
+With `engine.WithRejectionsReturnToModel()`, a rejection goes through `ready`
+too: the model reads `rejected by <DecidedBy>: <Reason>` as each call's result
+and the run carries on. A decision on a checkpoint whose deadline has passed is
+`cortex.ErrSuspensionExpired`, and the checkpoint stays pending for the sweeper.
+See [Suspension](/docs/concepts/suspension#continuing-from-a-job) for the
+details.
 
 A checkpoint left undecided expires with its run. The deadline is the
 approval's own TTL, or the engine's suspension TTL when it gave none, and once
@@ -87,7 +108,7 @@ type Store interface {
 }
 ```
 
-On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint` and `eng.ResolveCheckpoint(ctx, cpID, decision)`. Resolve through the engine, not the store: the engine is what resumes or fails the run.
+On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint`, `eng.ResolveCheckpoint(ctx, cpID, decision)` and `eng.DecideCheckpoint(ctx, cpID, decision)`. Decide through the engine, not the store: the engine is what continues or fails the run.
 
 ### List filter
 

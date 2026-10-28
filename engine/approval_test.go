@@ -871,41 +871,50 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *te
 	}
 }
 
-// TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending
-// is the approving twin. The checkpoint store has no un-resolve, so a row
-// recorded decided against a run that never continued is a lie no
-// operator can correct and no queue shows them.
-func TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending(t *testing.T) {
+// TestResolveCheckpoint_AnApprovalThatCannotContinueStaysRecorded is the
+// approving twin. The decision is recorded before the run continues, so a
+// continuation that fails after its claim leaves the decision recorded
+// and the run failed. Deciding again is refused rather than a second try
+// at an action the first decision already owned.
+func TestResolveCheckpoint_AnApprovalThatCannotContinueStaysRecorded(t *testing.T) {
 	rec := &checkpointEventRecorder{}
 	spy := scopespy.New()
 	e := approvalEngine(t, WithStore(spy), WithExtension(rec))
 	ctx := cortex.WithScope(context.Background(), approvalScope())
 
-	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
+	r, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
 		t.Fatalf("RunAgent: %v", err)
 	}
 	cps := spy.Checkpoints()
 	if len(cps) != 1 {
 		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
 	}
-	// A continuation the resume will refuse, which is the cheapest way to
-	// make the acting half fail after the decision has been made.
+	// A continuation the resume will refuse after its claim, which is the
+	// cheapest way to make the acting half fail once the decision is made.
 	spy.Suspensions()[0].Cont.Config = suspension.RunConfig{}
 
-	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
+	err = e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
 	if !errors.Is(err, cortex.ErrInvalidContinuation) {
-		t.Fatalf("ResolveCheckpoint on a run that cannot resume = %v, want the resume's own error", err)
+		t.Fatalf("ResolveCheckpoint on a run that cannot continue = %v, want the continuation's own error", err)
 	}
 
 	stored, err := spy.GetCheckpoint(ctx, cps[0].ID)
 	if err != nil {
 		t.Fatalf("reload the checkpoint: %v", err)
 	}
-	if stored.State != "pending" {
-		t.Errorf("checkpoint state = %q, want %q; nothing acted on this decision", stored.State, "pending")
+	if stored.State != "resolved" || stored.Decision == nil || !stored.Decision.Approved {
+		t.Errorf("checkpoint = %+v, want the approval recorded before the run continued", stored)
 	}
-	if got := rec.resolvedEvents(); len(got) != 0 {
-		t.Errorf("OnCheckpointResolved fired %v, want nothing: no decision took effect", got)
+	if got := rec.resolvedEvents(); len(got) != 1 {
+		t.Errorf("OnCheckpointResolved fired %v, want once for the recorded decision", got)
+	}
+	failed, err := spy.GetRun(ctx, r.ID)
+	if err != nil || failed.State != run.StateFailed {
+		t.Fatalf("run after a continuation that failed past its claim = %+v, %v; want failed", failed, err)
+	}
+	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}); !errors.Is(again, cortex.ErrInvalidState) {
+		t.Errorf("deciding again = %v, want ErrInvalidState", again)
 	}
 }
 

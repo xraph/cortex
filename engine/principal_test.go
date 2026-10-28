@@ -436,6 +436,9 @@ func TestRevokedPrincipalFailsResume(t *testing.T) {
 		if got := handlers.of("deploy"); len(got) != 0 {
 			t.Errorf("the approved call ran %d times under a revoked principal", len(got))
 		}
+		if cp, cpErr := e.GetCheckpoint(ctx, pending[0].ID); cpErr != nil || cp.State == checkpointStatePending {
+			t.Errorf("checkpoint after a revoked approval = %+v, %v; want it closed with the run", cp, cpErr)
+		}
 	})
 }
 
@@ -636,10 +639,10 @@ func TestSecondPauseKeepsOriginalPrincipal(t *testing.T) {
 	requireAll(t, "probe handler", handlers.of("probe"), alice)
 }
 
-// A decode that fails for now during an approval moves nothing: the run
-// stays paused, the checkpoint stays pending, and the same decision can
-// be made again once the decoder recovers.
-func TestTransientPrincipalErrorDuringApprovalLeavesCheckpointPending(t *testing.T) {
+// A decode that fails for now during an approval records the decision and
+// leaves the run ready: nothing ran, and ContinueRun finishes the run as
+// its caller once the decoder recovers.
+func TestTransientPrincipalErrorDuringApprovalLeavesRunReady(t *testing.T) {
 	ctx := cortex.WithScope(context.Background(), approvalScope())
 	st := principalStore(ctx, t)
 	codec := newSwitchCodec()
@@ -665,20 +668,23 @@ func TestTransientPrincipalErrorDuringApprovalLeavesCheckpointPending(t *testing
 		t.Fatalf("ResolveCheckpoint with a transient decode error = %v, want ErrPrincipalUnavailable and not revoked", err)
 	}
 	still, err := st.GetRun(ctx, paused.ID)
-	if err != nil || still.State != run.StatePaused {
-		t.Fatalf("run after a transient decode error = %+v, %v; want still paused", still, err)
+	if err != nil || still.State != run.StateReady {
+		t.Fatalf("run after a transient decode error = %+v, %v; want ready", still, err)
 	}
 	cp, err := e.GetCheckpoint(ctx, pending[0].ID)
-	if err != nil || cp.State != checkpointStatePending || cp.Decision != nil {
-		t.Fatalf("checkpoint after a transient decode error = %+v, %v; want still pending and undecided", cp, err)
+	if err != nil || cp.State != "resolved" || cp.Decision == nil || !cp.Decision.Approved {
+		t.Fatalf("checkpoint after a transient decode error = %+v, %v; want the approval recorded", cp, err)
 	}
 	if got := handlers.of("deploy"); len(got) != 0 {
 		t.Fatalf("deploy ran %d times while the principal could not be decoded", len(got))
 	}
+	if err = e.ResolveCheckpoint(as(ctx, bob), pending[0].ID, decision); !errors.Is(err, cortex.ErrInvalidState) {
+		t.Fatalf("deciding again = %v, want ErrInvalidState", err)
+	}
 
 	codec.failDecode(nil)
-	if err = e.ResolveCheckpoint(as(ctx, bob), pending[0].ID, decision); err != nil {
-		t.Fatalf("ResolveCheckpoint after the decoder recovered: %v", err)
+	if _, err = e.ContinueRun(as(ctx, bob), paused.ID); err != nil {
+		t.Fatalf("ContinueRun after the decoder recovered: %v", err)
 	}
 	requireAll(t, "deploy handler", handlers.of("deploy"), alice)
 }

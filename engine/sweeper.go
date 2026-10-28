@@ -359,7 +359,7 @@ func isTerminalRunState(s run.State) bool {
 	switch s {
 	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled:
 		return true
-	case run.StateCreated, run.StateRunning, run.StatePaused:
+	case run.StateCreated, run.StateRunning, run.StatePaused, run.StateReady, run.StateReclaimable:
 		return false
 	default:
 		return false

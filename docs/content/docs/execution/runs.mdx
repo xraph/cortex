@@ -31,7 +31,7 @@ type Run struct {
 
 ### Run states
 
-Runs follow a state machine with 7 states:
+Runs follow a state machine with 9 states:
 
 | State | Description |
 |-------|-------------|
@@ -42,6 +42,8 @@ Runs follow a state machine with 7 states:
 | `failed` | Run terminated with an error |
 | `cancelled` | Run was cancelled through `CancelRun` |
 | `paused` | Run is suspended, waiting for an approval or an external tool result |
+| `ready` | A decision or the external results are recorded, and the run waits for `ContinueRun` |
+| `reclaimable` | The worker holding the run let go of it or stopped renewing its lease, and the run waits for `ContinueRun` |
 
 ### State transitions
 
@@ -50,12 +52,30 @@ running → completed
         → incomplete
         → failed
         → cancelled
-        → paused → running (after Resume or an approved checkpoint)
+        → paused → running (after Resume, or ResolveCheckpoint on a store without ready runs)
+                 → ready → running (ContinueRun)
+                         → cancelled
                  → failed (rejected checkpoint or expired suspension)
                  → cancelled
 ```
 
-The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` only accepts a running or paused run, and answers `cortex.ErrInvalidState` for anything else.
+The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` accepts a running, paused, ready or reclaimable run, and answers `cortex.ErrInvalidState` for anything else.
+
+### Continuing a run from a job
+
+A run doesn't have to continue in the request that answered it. `eng.DecideCheckpoint` and `eng.ProvideResults` write the decision or the results, move the run to `ready` and return without calling the model. `eng.ContinueRun` picks it up later, from a background job on any replica:
+
+```go
+// In the HTTP handler: quick, no model call.
+err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{Approved: true, DecidedBy: "ops@example.com"})
+
+// In the job, under the run's scope: runs the approved call and the rest of the loop.
+r, err := eng.ContinueRun(ctx, runID)
+```
+
+`plugin.RunReady` fires when a run becomes ready, with the run's scope on its `ctx`, so it's the natural place to queue that job. `ContinueRun` runs the tool under the principal that started the run, not the job's. It needs a store that implements `run.ContinuationStore`; the built-in SQLite, PostgreSQL and MongoDB stores all do. A store without it gets `cortex.ErrContinuationUnavailable`. See [Suspension](/docs/concepts/suspension#continuing-from-a-job) for the full rules.
+
+`ContinueRun` refuses a run that isn't ready with `cortex.ErrRunNotContinuable`. The error also matches `cortex.ErrRunLeased` when the run is running, and `cortex.ErrRunAlreadyDone` when it has ended, in which case you get the run back too.
 
 See [Execution outcomes and safety](/docs/execution/assurance) for verification, publication and compatibility semantics.
 
@@ -160,6 +180,6 @@ These exist when you mount the `api` module through `extension.WithRoutes` (path
 | `POST` | `/cortex/v1/agents/:name/stream` | Run an agent and stream events over SSE |
 | `GET` | `/cortex/v1/runs` | List runs in the caller's scope (`limit`, `offset`) |
 | `GET` | `/cortex/v1/runs/:id` | Get a specific run |
-| `POST` | `/cortex/v1/runs/:id/cancel` | Cancel a running or paused run |
+| `POST` | `/cortex/v1/runs/:id/cancel` | Cancel a running, paused, ready or reclaimable run |
 
 The list route doesn't filter by agent. Use `eng.ListRuns` with `AgentID` for that. Steps and tool calls have no routes; read them with `eng.ListSteps` and `eng.ListToolCalls`.

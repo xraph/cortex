@@ -300,3 +300,18 @@ func TestLiveCancelInsideProviderRetainsCancelledState(t *testing.T) {
 		t.Fatalf("cancel overwritten: %+v", result)
 	}
 }
+
+func TestRunStateFilterAcceptsNewStates(t *testing.T) {
+	d, _, _ := testService(t)
+	p := principal("state-filter")
+	for _, state := range []run.State{run.StateIncomplete, run.StateReady, run.StateReclaimable} {
+		if _, err := dispatch(t, d, p, "runs.list", RunListInput{State: state}); err != nil {
+			t.Fatalf("runs.list state %q: %v", state, err)
+		}
+	}
+	_, err := dispatch(t, d, p, "runs.list", RunListInput{State: "bogus"})
+	var failure *dc.Error
+	if !errors.As(err, &failure) || failure.Code != dc.CodeBadRequest {
+		t.Fatalf("runs.list state bogus = %v, want a bad request", err)
+	}
+}

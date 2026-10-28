@@ -359,8 +359,10 @@ return eng.ResolveCheckpoint(ctx, pending[0].ID, checkpoint.Decision{
 })
 ```
 
-An approval resumes the run synchronously, the same way `RunAgent` runs
-synchronously, so the call returns when the run does. You don't build the
+An approval continues the run synchronously, the same way `RunAgent` runs
+synchronously, so the call returns when the run does. If you'd rather not hold
+a request open for the rest of the run, decide with `DecideCheckpoint` and
+continue from a job; see [Continuing from a job](#continuing-from-a-job). You don't build the
 `ResumeInput` yourself: a person granting permission hands back permission, not
 a result, so cortex turns each pending call into a result asking the engine to
 execute it now. The authorizer isn't consulted a second time. It already
@@ -381,16 +383,24 @@ Whoever finds that run later reads your words in `run.Error` rather than a bare
 "rejected". Over HTTP the same field is `reason` on the resolve body.
 
 Two operators deciding the same checkpoint at once is safe. Both pass the
-pending guard, but both then go through the same atomic claim, so exactly one
-of them moves the run and the other gets `cortex: run not suspended` back.
+pending guard, but only one of them can move the run out of `paused`, so the
+run continues once and the approved call is dispatched once. The other gets
+`cortex.ErrInvalidState`, or, when it read the checkpoint before the first
+decision was recorded, records the same decision again and moves nothing.
 There's no interleaving where a rejection stomps a run an approval already
 finished.
 
 Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
-The decision is recorded only after it has taken effect, so a decision that
-couldn't be carried out leaves the checkpoint pending and you can decide again.
+The decision is recorded before the run continues. If the continuation then
+fails, the decision stays recorded and the run is failed (when it failed after
+claiming the run) or still `ready` (when it was refused before), and
+`ContinueRun` can pick a ready run up again. Deciding again is refused, so an
+approval can never run its action twice. On a store without
+`run.ContinuationStore` the older order applies: the decision is recorded only
+after it has taken effect, and one that couldn't be carried out leaves the
+checkpoint pending for you to decide again.
 
-`ResolveCheckpoint` is the only way to answer an approval. `Resume` against a
+`ResolveCheckpoint` and `DecideCheckpoint` are the only ways to answer an approval. `Resume` against a
 run waiting on one is refused, whatever you put in the results: an escalated
 call answered with `Execute` would dispatch a tool nobody granted, and one
 answered with `Content` would feed the model output no tool produced and finish
@@ -532,6 +542,86 @@ where it would otherwise ask an operator to decide a run that ended hours ago.
 That resolve is best effort. If the write fails the row stays and the failure
 is logged, because the run really did fail and that's the part worth telling
 you about.
+
+## Continuing from a job
+
+`ResolveCheckpoint` and `Resume` hold your caller until the run finishes, which
+might be many model calls away. When the answer arrives in an HTTP handler you
+usually want to write it down, return, and let a background job run the rest.
+Three calls split it that way:
+
+```go
+// The approval handler. Records the decision and returns; no model call.
+err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{
+    Approved:  true,
+    DecidedBy: "ops@example.com",
+})
+
+// The external-tool handler. Same idea for a pause your host answers.
+err := eng.ProvideResults(ctx, runID, engine.ResumeInput{
+    ToolResults: []engine.ToolResult{{ToolCallID: callID, Content: answer}},
+})
+
+// The job, on any replica, under the run's scope.
+r, err := eng.ContinueRun(ctx, runID)
+```
+
+`DecideCheckpoint` and `ProvideResults` run every check `Resume` would run
+before anything moves: one result per pending call, who may answer this kind of
+pause, the frozen context and publication policies, a prepared team's binding,
+and required verification. A refusal leaves the run paused. Past that, the run
+moves to `ready` with the decision or the results stored on it, and
+`plugin.RunReady` fires:
+
+```go
+func (q jobQueue) OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error {
+    return q.Enqueue(ctx, cortex.ScopeFromContext(ctx), runID)
+}
+```
+
+The hook's `ctx` carries the run's scope. Keep it with the job, because
+`ContinueRun` claims the run at exactly that scope. `n.Source` says what made the
+run ready (`approval`, `rejection` or `external_results`) and `n.CheckpointID`
+names the decided checkpoint.
+
+A decision on a suspension past its deadline is `cortex.ErrSuspensionExpired`.
+The run stays paused, the checkpoint stays pending, and the sweeper fails them
+both on its next pass. A ready run has no deadline: the decision is in, so the
+sweeper leaves it alone.
+
+`ContinueRun` is the same work a synchronous resume does, from the claim on. It
+restores the principal the run started under, runs the checks again as that
+principal, claims the run, executes the approved calls (or hands the model your results) and carries
+on to the end. A principal the codec says is revoked fails the run, and closes
+its checkpoint if one is still pending. One that can't be decoded right now
+leaves the run `ready` for the next attempt. Two jobs continuing the same run is
+safe: one runs it, the other gets `cortex.ErrRunNotContinuable`.
+`ContinueRunStream` is the streaming version and opens with `run_started`
+carrying `"resumed": true`, like `ResumeStream`.
+
+A store has to implement `run.ContinuationStore` for any of this. The built-in
+stores do. Without it the three calls return `cortex.ErrContinuationUnavailable`,
+and `ResolveCheckpoint` and `Resume` work as they always have.
+
+### Sending a rejection back to the model
+
+By default a rejection fails the run. With `engine.WithRejectionsReturnToModel()`
+it goes back to the model instead, and the run carries on:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithRejectionsReturnToModel(),
+)
+```
+
+Each pending call gets an error result reading
+`rejected by <DecidedBy>: <Reason>`, with "a reviewer" and "no reason given"
+standing in for whatever you left empty. Nothing is dispatched. Each call fires
+`ToolDenied`, the same event an authorizer's refusal fires, and the model reads
+the rejection as its tool message and decides what to do next. The run goes
+through `ready` exactly as an approval does, and `ResolveCheckpoint` with a
+rejection continues it before returning.
 
 ## Hearing about every pause
 

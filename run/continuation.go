@@ -31,6 +31,19 @@ type Readiness struct {
 	At           time.Time       `json:"at"`
 }
 
+// ReadyNotice is what a host hears when a run becomes ready to continue:
+// what made it ready, and when. The run's scope travels on the hook's ctx.
+type ReadyNotice struct {
+	Source ReadySource
+	// CheckpointID is the checkpoint whose decision made the run ready. It
+	// is zero when Source is ReadyExternalResults.
+	CheckpointID id.CheckpointID
+	At           time.Time
+	// Renotified is true when the sweeper repeats the notice for a run
+	// that has waited longer than it should, false the first time.
+	Renotified bool
+}
+
 // Lease is one worker's hold on a running run. A lease whose ExpiresAt has
 // passed has lapsed, and the sweeper may hand the run to another replica.
 type Lease struct {

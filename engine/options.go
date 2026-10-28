@@ -182,6 +182,21 @@ func WithPrincipalCodec(c cortex.PrincipalCodec) Option {
 	}
 }
 
+// WithRejectionsReturnToModel makes a rejected approval an error result the
+// model reads, and the run continues. Each pending call is answered with
+// "rejected by <DecidedBy>: <Reason>" and recorded as denied; none of them
+// is dispatched. DecideCheckpoint marks the run ready, exactly as an
+// approval does, and ResolveCheckpoint continues it before returning.
+//
+// Without it, the default, a rejection fails the run with the decider's
+// reason.
+func WithRejectionsReturnToModel() Option {
+	return func(e *Engine) error {
+		e.rejectionsToModel = true
+		return nil
+	}
+}
+
 // WithExternalTool registers a tool the engine advertises but never
 // executes. When the model calls one, the run suspends and waits for the
 // caller to run it and hand the result back.

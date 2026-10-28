@@ -89,6 +89,11 @@ type runSuspendedEntry struct {
 	hook RunSuspended
 }
 
+type runReadyEntry struct {
+	name string
+	hook RunReady
+}
+
 type checkpointCreatedEntry struct {
 	name string
 	hook CheckpointCreated
@@ -148,6 +153,7 @@ type Registry struct {
 	runCompleted           []runCompletedEntry
 	runFailed              []runFailedEntry
 	runSuspended           []runSuspendedEntry
+	runReady               []runReadyEntry
 	stepStarted            []stepStartedEntry
 	stepCompleted          []stepCompletedEntry
 	toolCalled             []toolCalledEntry
@@ -196,6 +202,9 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(RunSuspended); ok {
 		r.runSuspended = append(r.runSuspended, runSuspendedEntry{name, h})
+	}
+	if h, ok := e.(RunReady); ok {
+		r.runReady = append(r.runReady, runReadyEntry{name, h})
 	}
 	if h, ok := e.(StepStarted); ok {
 		r.stepStarted = append(r.stepStarted, stepStartedEntry{name, h})
@@ -289,6 +298,16 @@ func (r *Registry) EmitRunSuspended(ctx context.Context, agentID id.AgentID, run
 	for _, e := range r.runSuspended {
 		if err := e.hook.OnRunSuspended(ctx, agentID, runID, n); err != nil {
 			r.logHookError("OnRunSuspended", e.name, err)
+		}
+	}
+}
+
+// EmitRunReady notifies every RunReady hook that a run is ready to
+// continue.
+func (r *Registry) EmitRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) {
+	for _, e := range r.runReady {
+		if err := e.hook.OnRunReady(ctx, agentID, runID, n); err != nil {
+			r.logHookError("OnRunReady", e.name, err)
 		}
 	}
 }

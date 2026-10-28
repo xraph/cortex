@@ -1293,11 +1293,19 @@ existing cancellation or deadline determines its terminal state. Private provide
 errors and unfinished tool messages are not published as results. Required
 verification does not evaluate or publish a candidate from this stop.
 
-Approval remains a separate fact. When an approved action becomes uncertain,
-the engine records the approval after confirming the durable stop, then returns
-the uncertainty error. Repeating the checkpoint decision cannot run the action
-again. If the terminal write fails, the checkpoint remains pending for host audit;
-the claimed suspension still prevents repeated dispatch.
+Approval remains a separate fact. The engine records the approval before the
+run continues: `DecideCheckpoint` (and `ResolveCheckpoint`, which calls it)
+marks the run `ready`, records the decision, and only then does `ContinueRun`
+claim the run and dispatch the action. When the approved action becomes
+uncertain, the decision is already recorded and you get the uncertainty error
+back from the continuation. Repeating the checkpoint decision can't run the
+action again: it returns `cortex.ErrInvalidState`, because the checkpoint is
+resolved. If the terminal write fails, the run is left in `running` from the
+claim, and the claim is what stops a second dispatch. A continuation refused
+before its claim leaves the run `ready` for the next `ContinueRun`.
+
+On a store without `run.ContinuationStore`, `ResolveCheckpoint` keeps the older
+order: it acts first, confirms the durable stop, then records the approval.
 
 Reconcile the retained request through `EffectExecutor.Reconcile` with current
 host authorization. Saving a recovered provider receipt does not resume the run,

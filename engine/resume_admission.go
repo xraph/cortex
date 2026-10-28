@@ -108,7 +108,7 @@ func (e *Engine) RecoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 		return nil, cortex.ErrNoLLM
 	}
 	ctx = context.WithValue(ctx, resumeRecoveryAuthorityKey{}, resumeRecoveryAuthority{runID: runID, authorize: authorize})
-	return e.traceResume(ctx, runID, resumeSourceAgentReply, func(tc context.Context) (*run.Run, error) {
+	return e.traceResume(ctx, runID, resumeSourceLabel(resumeSourceAgentReply), func(tc context.Context) (*run.Run, error) {
 		return e.recoverAgentReply(tc, runID, key)
 	})
 }

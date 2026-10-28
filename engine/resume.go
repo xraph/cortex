@@ -64,6 +64,10 @@ type ToolResult struct {
 type ResumeInput struct {
 	ToolResults       []ToolResult `json:"tool_results"`
 	agentReplyVersion *suspension.ClaimVersion
+	// rejected says every result is a reviewer's rejection going back to
+	// the model, so each call is recorded as denied rather than failed.
+	// Only ContinueRun sets it, from a run made ready by a rejection.
+	rejected bool
 }
 
 // resumption is the rehydrated run a claim produced, ready for whichever
@@ -107,8 +111,9 @@ type resumeSource int
 const (
 	// resumeSourcePublic is an ordinary caller through Resume.
 	resumeSourcePublic resumeSource = iota
-	// resumeSourceApproval is ResolveCheckpoint, reaching here having
-	// read a pending checkpoint for the run.
+	// resumeSourceApproval is a checkpoint decision: DecideCheckpoint or
+	// ResolveCheckpoint having read a pending checkpoint for the run, or
+	// ContinueRun carrying out a decision one of them recorded.
 	resumeSourceApproval
 	// resumeSourceAgentReply is the messaging bus, reaching here having
 	// claimed the pending-ask row that proves the reply is genuine.
@@ -121,13 +126,14 @@ const (
 // Every resume, public, approved or answered by a peer agent, is one run
 // agent span marked resumed.
 func (e *Engine) resume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource) (*run.Run, error) {
-	return e.traceResume(ctx, runID, source, func(tc context.Context) (*run.Run, error) { return e.resumeRun(tc, runID, in, source) })
+	return e.traceResume(ctx, runID, resumeSourceLabel(source), func(tc context.Context) (*run.Run, error) { return e.resumeRun(tc, runID, in, source) })
 }
 
 // traceResume is also where a synchronous resume is admitted, so Resume,
-// ResolveCheckpoint, the message bus's resumes and RecoverAgentReply all
-// count against WithRunConcurrency and are refused while Stop drains.
-func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, source resumeSource, action func(context.Context) (*run.Run, error)) (r *run.Run, err error) {
+// ResolveCheckpoint, ContinueRun, the message bus's resumes and
+// RecoverAgentReply all count against WithRunConcurrency and are refused
+// while Stop drains. label is the span's resume source.
+func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, label string, action func(context.Context) (*run.Run, error)) (r *run.Run, err error) {
 	ctx, done, err := e.admit(ctx)
 	if err != nil {
 		return nil, err
@@ -135,7 +141,7 @@ func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, source re
 	defer done()
 	ctx, rt := e.startRun(ctx, modeSync, true,
 		attribute.String(attrRunID, runID.String()),
-		attribute.String(attrRunResumeSource, resumeSourceLabel(source)))
+		attribute.String(attrRunResumeSource, label))
 	defer func() {
 		if p := recover(); p != nil {
 			rt.end(r, telemetry.ErrPanic)
@@ -183,31 +189,36 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 		return err
 	}
 
-	go func() {
-		defer close(events)
-		defer done()
-		defer func() {
-			if p := recover(); p != nil {
-				rt.end(rz.run, telemetry.ErrPanic)
-				panic(p)
-			}
-			rt.end(rz.run, nil)
-		}()
-
-		// A resumed stream announces itself as started, because that is
-		// the event every existing consumer already waits for before it
-		// will render anything. A brand-new event type would be silently
-		// dropped by all of them; the flag is there for the ones that
-		// draw a timeline and care about the difference.
-		sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
-			"run_id":   rz.run.ID.String(),
-			"agent_id": rz.ag.ID.String(),
-			"resumed":  true,
-		}})
-
-		e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
-	}()
+	go e.streamResumed(ctx, rz, rt, events, done)
 	return nil
+}
+
+// streamResumed runs a claimed resumption over the streaming loop on its
+// own goroutine, closing events and releasing the admission slot when it
+// ends.
+func (e *Engine) streamResumed(ctx context.Context, rz *resumption, rt *runTrace, events chan<- StreamEvent, done func()) {
+	defer close(events)
+	defer done()
+	defer func() {
+		if p := recover(); p != nil {
+			rt.end(rz.run, telemetry.ErrPanic)
+			panic(p)
+		}
+		rt.end(rz.run, nil)
+	}()
+
+	// A resumed stream announces itself as started, because that is the
+	// event every existing consumer already waits for before it will
+	// render anything. A brand-new event type would be silently dropped by
+	// all of them; the flag is there for the ones that draw a timeline and
+	// care about the difference.
+	sendEvent(ctx, events, StreamEvent{Type: EventRunStarted, Data: map[string]any{
+		"run_id":   rz.run.ID.String(),
+		"agent_id": rz.ag.ID.String(),
+		"resumed":  true,
+	}})
+
+	e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
 }
 
 // claimForResume takes ownership of a paused run and rebuilds everything
@@ -227,71 +238,13 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		return nil, nil, scopeErr
 	}
 
-	// The results are checked twice, and the first check is the one that
-	// is kind rather than correct. A caller that got the call ids wrong
-	// has its run left paused and can retry, because nothing has moved
-	// yet. Checking only after the claim would fail the run over a
-	// malformed request, which is a cliff external-tool integrations
-	// would fall off constantly. The authoritative check is the one
-	// below, against the suspension the claim actually returned.
 	preview, previewErr := e.store.GetSuspension(ctx, runID)
 	if previewErr != nil && in.agentReplyVersion != nil {
 		return nil, nil, fmt.Errorf("read correlated suspension: %w", previewErr)
 	}
-	if bindingErr := checkAgentReplyVersion(preview, in, source); bindingErr != nil {
-		return nil, nil, bindingErr
-	}
-	if susp := preview; previewErr == nil {
-		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
-			return nil, nil, decodeErr
-		} else if snap != nil {
-			if contextErr := e.requireContextPolicy(snap.Config.Context); contextErr != nil {
-				return nil, nil, contextErr
-			}
-			if policyErr := e.requirePublication(snap.Config.Publication); policyErr != nil {
-				return nil, nil, policyErr
-			}
-		}
-		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
-			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredPreparedSchemaVersion || susp.Cont.SchemaVersion == requiredContextPreparedSchemaVersion {
-				vErr = cortex.ErrResultsMismatch
-			}
-			return nil, nil, vErr
-		}
-		if aErr := checkResumeAuthority(susp.Reason, source); aErr != nil {
-			return nil, nil, aErr
-		}
-	}
-
-	// The run is read BEFORE the claim, and a read that does not come
-	// back ends the resume here. Nothing has moved at that point: the run
-	// is still paused, its suspension is still claimable, and the caller
-	// can try again. Reading only after the claim is what used to strand
-	// a run on a store hiccup, since a claimed run nobody fails is
-	// running forever.
-	//
-	// The caller's scope is enough for this read. A claim matches on a
-	// exact scope, while this read may also serve an authorized ancestor.
-	snapshot, err := e.store.GetRun(ctx, runID)
+	snapshot, err := e.previewResume(ctx, runID, in, source, preview, previewErr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load run to resume: %w", err)
-	}
-	if in.agentReplyVersion != nil && snapshot.Revision != in.agentReplyVersion.RunRevision {
-		return nil, nil, cortex.ErrRunConflict
-	}
-	if contextErr := e.checkContextResume(snapshot, preview, previewErr); contextErr != nil {
-		return nil, nil, contextErr
-	}
-	if bindingErr := e.checkPreparedTeamResume(ctx, snapshot, preview); bindingErr != nil {
-		return nil, nil, bindingErr
-	}
-
-	if previewErr == nil {
-		if policyErr := e.checkRequiredResume(ctx, snapshot, preview); policyErr != nil {
-			return nil, nil, policyErr
-		}
-	} else if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
-		return nil, nil, cortex.ErrVerificationUnavailable
+		return nil, nil, err
 	}
 
 	// The resumer's principal is replaced with the run's before the claim,
@@ -330,6 +283,94 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 
 	return e.rehydrateResume(ctx, in, source, snapshot, susp)
+}
+
+// previewResume runs every check that can refuse a resume before anything
+// moves, and returns the run it read. A refusal here leaves the run where
+// it was, paused or ready, for the caller to try again.
+//
+// Every path that answers a paused run calls it before its first write:
+// claimForResume before the claim, DecideCheckpoint and ProvideResults
+// before MarkReady, ContinueRun before ClaimContinuation. That is what
+// keeps an approval or an answer recorded for later from skipping a check
+// a synchronous resume would have run. It checks, in order:
+//
+//   - an agent reply's binding to the exact pause it answers;
+//   - the frozen context and publication policies, against this engine's;
+//   - in the results, exactly one per pending call;
+//   - that source may answer a pause of this reason;
+//   - an agent reply's run revision;
+//   - the context selection the run was prepared with;
+//   - a prepared team run's orchestration binding;
+//   - required verification, which also refuses a run whose suspension
+//     could not be read.
+//
+// susp and suspErr are the caller's read of the suspension, since some
+// callers need it before they can build in.
+//
+// The results are checked twice, and this first check is the one that is
+// kind rather than correct. A caller that got the call ids wrong has its
+// run left as it was and can retry, because nothing has moved yet.
+// Checking only after the claim would fail the run over a malformed
+// request, which is a cliff external-tool integrations would fall off
+// constantly. The authoritative check is rehydrateResume's, against the
+// suspension the claim actually returned.
+func (e *Engine) previewResume(ctx context.Context, runID id.AgentRunID, in ResumeInput, source resumeSource, susp *suspension.Suspension, suspErr error) (*run.Run, error) {
+	if bindingErr := checkAgentReplyVersion(susp, in, source); bindingErr != nil {
+		return nil, bindingErr
+	}
+	if suspErr == nil {
+		if _, snap, decodeErr := decodeContinuation(susp.Cont); decodeErr != nil {
+			return nil, decodeErr
+		} else if snap != nil {
+			if contextErr := e.requireContextPolicy(snap.Config.Context); contextErr != nil {
+				return nil, contextErr
+			}
+			if policyErr := e.requirePublication(snap.Config.Publication); policyErr != nil {
+				return nil, policyErr
+			}
+		}
+		if vErr := validateResults(susp.Pending, in.ToolResults); vErr != nil {
+			if susp.Cont.Provenance.VerificationRequired || susp.Cont.SchemaVersion == requiredPreparedSchemaVersion || susp.Cont.SchemaVersion == requiredContextPreparedSchemaVersion {
+				vErr = cortex.ErrResultsMismatch
+			}
+			return nil, vErr
+		}
+		if aErr := checkResumeAuthority(susp.Reason, source); aErr != nil {
+			return nil, aErr
+		}
+	}
+
+	// The run is read BEFORE any write, and a read that does not come
+	// back ends the resume here. Nothing has moved at that point, and the
+	// caller can try again. Reading only after the claim is what used to
+	// strand a run on a store hiccup, since a claimed run nobody fails is
+	// running forever.
+	//
+	// The caller's scope is enough for this read. A claim matches on an
+	// exact scope, while this read may also serve an authorized ancestor.
+	snapshot, err := e.store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("load run to resume: %w", err)
+	}
+	if in.agentReplyVersion != nil && snapshot.Revision != in.agentReplyVersion.RunRevision {
+		return nil, cortex.ErrRunConflict
+	}
+	if contextErr := e.checkContextResume(snapshot, susp, suspErr); contextErr != nil {
+		return nil, contextErr
+	}
+	if bindingErr := e.checkPreparedTeamResume(ctx, snapshot, susp); bindingErr != nil {
+		return nil, bindingErr
+	}
+
+	if suspErr == nil {
+		if policyErr := e.checkRequiredResume(ctx, snapshot, susp); policyErr != nil {
+			return nil, policyErr
+		}
+	} else if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
+		return nil, cortex.ErrVerificationUnavailable
+	}
+	return snapshot, nil
 }
 
 func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source resumeSource, snapshot *run.Run, susp *suspension.Suspension) (context.Context, *resumption, error) {
@@ -436,7 +477,7 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 		}
 	}
 	toolCtx, cancelTools := runDeadline(ctx, resumeConfig)
-	resultErr := e.recordResumedCalls(toolCtx, ag, r, susp, in.ToolResults, st, resumeConfig)
+	resultErr := e.recordResumedCalls(toolCtx, ag, r, susp, in, st, resumeConfig)
 	if errors.Is(resultErr, cortex.ErrEffectUncertain) {
 		// Preserve an elapsed run deadline before releasing this context.
 		// Cancelling it first would mislabel every uncertain action cancelled.
@@ -547,10 +588,14 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 // tool call that suspends and then completes must not vanish from an
 // audit trail, and one that suspends and then fails must not look like a
 // success.
-func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState, cfg resolvedConfig) error {
+//
+// A rejection that goes back to the model (in.rejected) is the one
+// exception to completed or failed: the call was refused by a person, so
+// it emits ToolDenied, the event an authorizer's refusal emits.
+func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, in ResumeInput, st *reactState, cfg resolvedConfig) error {
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
-	byID := make(map[string]ToolResult, len(results))
-	for _, res := range results {
+	byID := make(map[string]ToolResult, len(in.ToolResults))
+	for _, res := range in.ToolResults {
 		byID[res.ToolCallID] = res
 	}
 
@@ -619,15 +664,18 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			}
 		}
 
-		if errText != "" {
-			e.emitToolFailed(ctx, r.ID, p.Name, errors.New(errText))
-		} else {
-			e.emitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
-		}
-
 		source := verification.ToolExternal
 		if res.Execute {
 			source = verification.ToolLocal
+		}
+		switch {
+		case in.rejected && errText != "":
+			outcome, source = outcomeDenied, verification.ToolLocal
+			e.emitToolDenied(ctx, r.ID, p.Name, errText)
+		case errText != "":
+			e.emitToolFailed(ctx, r.ID, p.Name, errors.New(errText))
+		default:
+			e.emitToolCompleted(ctx, r.ID, p.Name, content, completedAt.Sub(startedAt))
 		}
 		st.recordToolResult(p.ID, outcome, source)
 		st.messages = append(st.messages, llm.Message{
@@ -747,8 +795,9 @@ func (e *Engine) stepForPendingCalls(ctx context.Context, runID id.AgentRunID, n
 // privileged is dispatched that way, so it is not the hole Execute was,
 // but it is the same authority arriving by a different door.
 //
-// So an approval suspension is resumable only through ResolveCheckpoint,
-// which reaches this having read a pending checkpoint for the run. Every
+// So an approval suspension is resumable only through a checkpoint
+// decision, which reaches this having read a pending checkpoint for the
+// run, or through ContinueRun carrying one out. Every
 // other pause is unaffected: an external-tool suspension never went to a
 // human in the first place, and Resume is exactly how it is meant to be
 // answered.

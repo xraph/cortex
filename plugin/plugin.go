@@ -57,6 +57,15 @@ type RunSuspended interface {
 	OnRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n suspension.Notice) error
 }
 
+// RunReady is called when a paused run becomes ready to continue: a
+// reviewer decided its checkpoint, or a caller supplied its external
+// results. It fires once the ready state is written, with ctx carrying the
+// run's own scope. A host usually answers it by queueing a job that calls
+// engine.ContinueRun, on any replica.
+type RunReady interface {
+	OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error
+}
+
 // ──────────────────────────────────────────────────
 // Reasoning lifecycle hooks
 // ──────────────────────────────────────────────────

@@ -230,7 +230,8 @@ func (m *engineMetrics) publicationChecked(source string, direction safety.Direc
 
 func runStateLabel(s run.State) string {
 	switch s {
-	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled, run.StatePaused:
+	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled, run.StatePaused,
+		run.StateReady, run.StateReclaimable:
 		return string(s)
 	default:
 		return labelOther
@@ -503,7 +504,7 @@ func benignRunError(err error) (string, bool) {
 	switch {
 	case errors.Is(err, cortex.ErrAgentNotFound), errors.Is(err, cortex.ErrRunNotFound):
 		return "not_found", true
-	case errors.Is(err, cortex.ErrNotSuspended):
+	case errors.Is(err, cortex.ErrNotSuspended), errors.Is(err, cortex.ErrRunNotContinuable):
 		return "claim_lost", true
 	default:
 		return "", false

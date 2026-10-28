@@ -28,6 +28,7 @@ import (
 	"github.com/xraph/cortex/safety"
 	"github.com/xraph/cortex/skill"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/trait"
 	"github.com/xraph/cortex/verification"
 )
@@ -90,11 +91,16 @@ type Engine struct {
 	knowledge             knowledge.Provider
 	authorizer            cortex.ToolAuthorizer
 	principalCodec        cortex.PrincipalCodec
-	extensions            *plugin.Registry
-	pendingExts           []plugin.Extension
-	tools                 []registeredTool
-	toolRevisions         map[string]string
-	modelRevisions        map[string]string
+	// continuation is the store's run.ContinuationStore, nil when it has
+	// none. DecideCheckpoint, ProvideResults and ContinueRun need it.
+	continuation run.ContinuationStore
+	// rejectionsToModel is WithRejectionsReturnToModel.
+	rejectionsToModel bool
+	extensions        *plugin.Registry
+	pendingExts       []plugin.Extension
+	tools             []registeredTool
+	toolRevisions     map[string]string
+	modelRevisions    map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []registeredExternal
@@ -183,6 +189,12 @@ func New(opts ...Option) (*Engine, error) {
 		if err := opt(e); err != nil {
 			return nil, fmt.Errorf("cortex: apply engine option: %w", err)
 		}
+	}
+
+	// Asserted once, after every option, so WithStore can sit anywhere in
+	// the caller's list.
+	if continuation, ok := e.store.(run.ContinuationStore); ok {
+		e.continuation = continuation
 	}
 
 	// After every option, so WithToolAuthorizer and WithPrincipalCodec can
@@ -767,7 +779,17 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // ResolveCheckpoint records a human decision, and, when the checkpoint
 // belongs to a run the loop paused, carries that decision to the run: an
 // approval continues it, a rejection ends it with the reason the decider
-// gave.
+// gave (or, with WithRejectionsReturnToModel, continues it with the
+// rejection as each call's result).
+//
+// It is DecideCheckpoint followed by ContinueRun on the caller's
+// goroutine, so the caller waits for the run rather than getting a
+// receipt for one, same as RunAgent. The decision is recorded before the
+// run continues, because the ready state between the two is durable: a
+// continuation that fails leaves the decision recorded and the run either
+// failed (a failure after the claim) or still ready for ContinueRun (a
+// refusal before it). Repeating the decision then is cortex.ErrInvalidState
+// and never runs the approved action again.
 //
 // A checkpoint a host wrote itself resolves exactly as it always has,
 // with nothing else touched. Only the loop knows how to pause a run, so
@@ -776,61 +798,62 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // that has been writing its own rows since before suspension existed.
 // openedASuspendedRun is what tells the two apart.
 //
-// Acting before recording is deliberate. The checkpoint store has no
-// un-resolve, so recording the decision up front and then failing to act
-// on it leaves a row marked resolved against a run still paused, dropped
-// out of ListPending, with nothing but a direct Resume call able to
-// recover it. That is the audit lie this surface exists to prevent.
-// Written this way round, a decision that could not be carried out
-// leaves the checkpoint exactly as it found it and the caller can decide
-// again.
+// Two operators deciding the same checkpoint at once both pass the
+// pending guard, and MarkReady lets exactly one of them move the run. The
+// other is told cortex.ErrInvalidState, or, when it read the checkpoint
+// before the first decision was recorded, records the same decision again
+// and continues nothing twice.
 //
-// An approved run is resumed synchronously, same as RunAgent: the caller
-// waits for the run rather than getting a receipt for one.
+// RunReady fires between the two halves. A host that continues ready runs
+// from that hook should decide with DecideCheckpoint: with
+// ResolveCheckpoint one of the two continuations is refused with
+// cortex.ErrRunNotContinuable.
 //
-// The cost is that two operators deciding the same checkpoint at once
-// both pass the pending guard. Nothing runs twice for it: ClaimSuspension
-// is atomic, so the second approval gets ErrNotSuspended back rather than
-// a second dispatch. Closing that window properly needs a state the store
-// can move a checkpoint into while a decision is in flight, which is a
-// store interface change rather than an engine one.
+// A store without run.ContinuationStore keeps the older order, acting on
+// the decision before recording it; see resolveInPlace.
 func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
 	}
-	if decision.DecidedAt.IsZero() {
-		decision.DecidedAt = time.Now().UTC()
+	if e.continuation == nil {
+		return e.resolveInPlace(ctx, cpID, decision)
 	}
+	ready, err := e.decideCheckpoint(ctx, cpID, decision)
+	if err != nil || ready == nil {
+		return err
+	}
+	if _, err := e.ContinueRun(ctx, ready.ID); err != nil {
+		return fmt.Errorf("continue run %s after checkpoint %s: %w", ready.ID, cpID, err)
+	}
+	return nil
+}
 
-	// Read before write: the row is what says which run this decision is
-	// about, and Resolve does not hand it back.
-	cp, err := e.store.GetCheckpoint(ctx, cpID)
+// resolveInPlace is ResolveCheckpoint for a store that cannot hold a ready
+// run: the run is resumed on the caller's goroutine first, and the
+// decision is recorded once it has taken effect.
+//
+// Acting before recording is deliberate here. The checkpoint store has no
+// un-resolve, so recording the decision up front and then failing to act
+// on it would leave a row marked resolved against a run still paused,
+// dropped out of ListPending, with nothing but a direct Resume call able
+// to recover it. Written this way round, a decision that could not be
+// carried out leaves the checkpoint exactly as it found it and the caller
+// can decide again.
+//
+// The cost is that two operators deciding the same checkpoint at once
+// both pass the pending guard. Nothing runs twice for it: ClaimSuspension
+// is atomic, so the second approval gets ErrNotSuspended back rather than
+// a second dispatch.
+func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decision checkpoint.Decision) error {
+	cp, decision, err := e.openDecision(ctx, cpID, decision)
 	if err != nil {
-		return fmt.Errorf("load checkpoint: %w", err)
+		return err
 	}
-	if cp.State != checkpointStatePending {
-		// A decided checkpoint is not re-decidable. Without this, a
-		// rejection could be followed by an approval that tries to
-		// resume a run the rejection already failed, and the caller
-		// would read the claim's refusal instead of being told the
-		// decision was already made.
-		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
-	}
-
-	// The decider is recorded from the context, never from the caller's
-	// decision, and before anything moves: a decision whose decider cannot
-	// be recorded is not acted on. The run itself resumes under its own
-	// principal, which the resume restores.
-	decidedBy, err := e.encodePrincipal(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
-	}
-	decision.DecidedByPrincipal = decidedBy
 
 	var executionErr error
 	if openedASuspendedRun(cp) {
-		if decision.Approved {
-			if err := e.resumeApproved(ctx, cp); err != nil {
+		if decision.Approved || e.rejectionsToModel {
+			if err := e.resumeDecided(ctx, cp, decision); err != nil {
 				uncertain := errors.Is(err, cortex.ErrEffectUncertain)
 				exhausted := errors.Is(err, cortex.ErrMaxStepsReached)
 				if !uncertain && !exhausted {
@@ -895,31 +918,27 @@ func decisionLabel(d checkpoint.Decision) string {
 	return "rejected"
 }
 
-// resumeApproved continues a run whose pending calls a human just
-// granted.
+// resumeDecided continues a run whose pending calls a human just
+// decided, for resolveInPlace.
 //
-// Every pending call is handed back as a result asking the engine to
-// execute it, which is what an approval actually means: the calls were
-// stopped before dispatch, so there is no result to report, only
-// permission to go and get one. Building the input here rather than
-// making the caller do it is the point of the method: a REST client
-// resolving a checkpoint has no idea what the run was waiting on.
-func (e *Engine) resumeApproved(ctx context.Context, cp *checkpoint.Checkpoint) error {
+// Every pending call is handed back with what the decision means for it:
+// an approval asks the engine to execute it, since the calls were stopped
+// before dispatch and there is no result to report, only permission to go
+// and get one. A rejection that returns to the model answers it with an
+// error. Building the input here rather than making the caller do it is
+// the point of the method: a REST client resolving a checkpoint has no
+// idea what the run was waiting on.
+func (e *Engine) resumeDecided(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
 	susp, err := e.store.GetSuspension(ctx, cp.RunID)
 	if err != nil {
-		return fmt.Errorf("load suspension for approved checkpoint: %w", err)
-	}
-
-	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(susp.Pending))}
-	for _, p := range susp.Pending {
-		in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true})
+		return fmt.Errorf("load suspension for decided checkpoint: %w", err)
 	}
 
 	// resume rather than Resume: this is the one caller allowed to say a
-	// checkpoint approved these calls, and it says so having just read a
+	// checkpoint decided these calls, and it says so having just read a
 	// pending checkpoint for this run.
-	if _, err := e.resume(ctx, cp.RunID, in, resumeSourceApproval); err != nil {
-		return fmt.Errorf("resume approved run %s: %w", cp.RunID, err)
+	if _, err := e.resume(ctx, cp.RunID, decisionInput(susp.Pending, decision), resumeSourceApproval); err != nil {
+		return fmt.Errorf("resume decided run %s: %w", cp.RunID, err)
 	}
 	return nil
 }
@@ -1009,6 +1028,9 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 // opened is resolved, so nobody is left holding a decision on a run that
 // has ended.
 //
+// A ready or reclaimable run is claimed with ClaimContinuation, the same
+// transition ContinueRun takes, and then ended exactly like a paused one.
+//
 // A run that is merely running is cancelled as before, with no claim to
 // take: there is no suspension behind it, and a running run has no
 // engine-side transition to race with that a store predicate could
@@ -1022,11 +1044,14 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	if err != nil {
 		return fmt.Errorf("load run to cancel: %w", err)
 	}
-	if r.State != run.StateRunning && r.State != run.StatePaused {
-		return fmt.Errorf("cancel run %s: run is %s, which is not cancellable: %w", runID, r.State, cortex.ErrInvalidState)
-	}
-	if r.State == run.StatePaused {
+	switch r.State {
+	case run.StateRunning:
+	case run.StatePaused:
 		return e.cancelPaused(ctx, r)
+	case run.StateReady, run.StateReclaimable:
+		return e.cancelContinuable(ctx, r)
+	default:
+		return fmt.Errorf("cancel run %s: run is %s, which is not cancellable: %w", runID, r.State, cortex.ErrInvalidState)
 	}
 
 	r.State = run.StateCancelled
@@ -1040,10 +1065,10 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 	return nil
 }
 
-// cancelPaused is the claimed half of CancelRun. Once the claim succeeds
-// the run belongs to this call and is no longer paused, so every exit
-// below either ends it or says why it could not, exactly as the resume
-// and rejection paths do.
+// cancelPaused is the claimed half of CancelRun for a paused run. Once the
+// claim succeeds the run belongs to this call and is no longer paused, so
+// every exit below either ends it or says why it could not, exactly as
+// the resume and rejection paths do.
 func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	susp, err := e.store.ClaimSuspension(ctx, r.ID)
 	if err != nil {
@@ -1059,14 +1084,36 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	// The run already read above is the snapshot, so a read that fails
 	// after the claim cannot leave the run running with nothing able to
 	// take it again.
-	r = e.claimedRun(ctx, r.ID, r, susp.ClaimedRun)
+	return e.cancelClaimed(ctx, e.claimedRun(ctx, r.ID, r, susp.ClaimedRun))
+}
+
+// cancelContinuable is the claimed half of CancelRun for a ready or
+// reclaimable run. ClaimContinuation takes it exactly as a ContinueRun
+// would, so a cancel and a continuation racing for the same run cannot
+// both win, and the cancel then ends it through the same path a paused
+// run takes.
+func (e *Engine) cancelContinuable(ctx context.Context, r *run.Run) error {
+	if e.continuation == nil {
+		return fmt.Errorf("cancel run %s: %w", r.ID, cortex.ErrContinuationUnavailable)
+	}
+	claimed, err := e.continuation.ClaimContinuation(ctx, r.ID, run.Lease{})
+	if err != nil {
+		return fmt.Errorf("claim run %s to cancel: %w", r.ID, err)
+	}
+	return e.cancelClaimed(cortex.WithScope(ctx, claimed.Scope), claimed)
+}
+
+// cancelClaimed ends a run this call claimed, then drops what it was
+// waiting with: the suspension, any progress snapshot, and the checkpoints
+// it left in the decision queue.
+func (e *Engine) cancelClaimed(ctx context.Context, r *run.Run) error {
 	r.State = run.StateCancelled
 	r.StopReason = run.StopCancelled
 	if err := e.persistRun(context.WithoutCancel(ctx), r); err != nil {
 		// The suspension stays. It is the only record of what the run was
 		// waiting on, and the run is still running from the claim, so
 		// dropping the row now would throw that away for nothing.
-		return fmt.Errorf("cancel paused run %s: %w", r.ID, err)
+		return fmt.Errorf("cancel run %s: %w", r.ID, err)
 	}
 
 	e.emitTerminalOutcome(context.WithoutCancel(ctx), r)
@@ -1075,6 +1122,11 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	// row is dead weight, and dropping it is what makes the cancel final.
 	if err := e.store.DeleteSuspension(ctx, r.ID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logError("delete suspension of a cancelled run", err, log.String("run_id", r.ID.String()))
+	}
+	if progress, ok := e.store.(suspension.ProgressStore); ok {
+		if err := progress.DeleteProgress(ctx, r.ID); err != nil {
+			e.logError("delete progress of a cancelled run", err, log.String("run_id", r.ID.String()))
+		}
 	}
 	e.closePendingCheckpoints(ctx, r.ID, "the run was cancelled, so there is nothing left to decide")
 	return nil

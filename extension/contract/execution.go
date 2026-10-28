@@ -244,6 +244,19 @@ func (s *service) prepareExecution(ctx context.Context, in ExecuteInput) (contex
 	}
 	return ctx, ag, overrides, nil
 }
+
+// knownRunState says whether a runs.list state filter names a state a run
+// can be in. Empty means no filter.
+func knownRunState(s run.State) bool {
+	switch s {
+	case "", run.StateCreated, run.StateRunning, run.StateCompleted, run.StateIncomplete, run.StateFailed,
+		run.StateCancelled, run.StatePaused, run.StateReady, run.StateReclaimable:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 	binds := []func() error{
 		func() error {
@@ -252,7 +265,7 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err := in.normalize(); err != nil {
 					return out, err
 				}
-				if in.State != "" && in.State != "created" && in.State != "running" && in.State != "completed" && in.State != "failed" && in.State != "cancelled" && in.State != "paused" {
+				if !knownRunState(in.State) {
 					return out, bad("Unknown run state")
 				}
 				f := &run.ListFilter{AgentID: in.AgentID, State: in.State, Exact: in.Exact, Limit: in.Limit, Offset: in.Offset}
