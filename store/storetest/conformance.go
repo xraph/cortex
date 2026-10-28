@@ -93,6 +93,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevisionConcurrent", func(t *testing.T) { testRunRevisionConcurrent(t, newStore) })
 	t.Run("RunRevisionDenied", func(t *testing.T) { testRunRevisionDenied(t, newStore) })
 	t.Run("RunRevision", func(t *testing.T) { testRunRevision(t, newStore) })
+	t.Run("RunPrincipal", func(t *testing.T) { RunPrincipal(t, newStore) })
 	t.Run("Effects", func(t *testing.T) { testEffects(t, newStore) })
 	t.Run("BoundEffects", func(t *testing.T) { testBoundEffects(t, newStore) })
 	t.Run("BoundEffectCompletionRace", func(t *testing.T) { testBoundEffectCompletionRace(t, newStore) })

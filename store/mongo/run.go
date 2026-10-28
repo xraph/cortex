@@ -87,7 +87,8 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // default (confirmed by reading mongodriver's query_update.go), so this
 // builds an explicit $set instead of passing the model through — leaving
 // out scope_l0/l1/l2/extra/canon rather than relying on them happening to
-// already match.
+// already match. principal is left out too: it is written once, when the
+// run is created, and a resume decodes it to find the run's caller.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {
 	return (assuranceDriver{store: s}).UpdateRunSnapshot(ctx, r, now())
 }

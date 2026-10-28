@@ -623,6 +623,7 @@ type runModel struct {
 	Provenance         string     `grove:"provenance"`
 	Budget             string     `grove:"budget"`
 	Usage              string     `grove:"usage"`
+	Principal          []byte     `grove:"principal"`
 }
 
 func runToModel(r *run.Run) *runModel {
@@ -652,6 +653,7 @@ func runToModel(r *run.Run) *runModel {
 		ScopeL2:            l2,
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
+		Principal:          r.Principal,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}
@@ -694,6 +696,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		StartedAt:          m.StartedAt,
 		CompletedAt:        m.CompletedAt,
 		PersonaRef:         m.PersonaRef,
+		Principal:          m.Principal,
 	}
 	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
 		return nil, err

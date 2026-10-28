@@ -17,6 +17,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/store/scopespy"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
 	"github.com/xraph/cortex/suspension"
 )
@@ -89,7 +90,7 @@ func TestApprovalTTLSetsSuspensionDeadline(t *testing.T) {
 		[]llm.ToolCall{{ID: "call-1", Name: "deploy", Arguments: `{"env":"prod"}`}},
 		ttlTool("deploy"),
 		WithSuspensionTTL(24*time.Hour),
-		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: 168 * time.Hour}}),
+		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: 168 * time.Hour}}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	susp := pausedSuspension(ctx, t, st, r)
 	requireDeadlineNear(t, susp.ExpiresAt, 168*time.Hour)
@@ -114,7 +115,7 @@ func TestApprovalWithoutTTLUsesEngineDefault(t *testing.T) {
 		[]llm.ToolCall{{ID: "call-1", Name: "deploy", Arguments: `{}`}},
 		ttlTool("deploy"),
 		WithSuspensionTTL(24*time.Hour),
-		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ErrRequiresApproval}),
+		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ErrRequiresApproval}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	susp := pausedSuspension(ctx, t, st, r)
 	requireDeadlineNear(t, susp.ExpiresAt, 24*time.Hour)
@@ -134,7 +135,7 @@ func TestShortestTTLWinsWithinStep(t *testing.T) {
 		WithToolAuthorizer(ttlAuthorizer{
 			"deploy": cortex.ApprovalRequired{Reason: "deploy", TTL: 3 * time.Hour},
 			"rotate": cortex.ApprovalRequired{Reason: "rotate", TTL: time.Hour},
-		}),
+		}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	susp := pausedSuspension(ctx, t, st, r)
 	if len(susp.Pending) != 2 {
@@ -199,7 +200,7 @@ func TestNegativeApprovalTTLDeniesCall(t *testing.T) {
 		WithLLM(model),
 		ttlTool("deploy"),
 		WithExtension(denied),
-		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: -time.Second}}),
+		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: -time.Second}}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -330,7 +331,7 @@ func TestSweeperHonoursPerSuspensionDeadline(t *testing.T) {
 		WithExtension(hook),
 		WithSuspensionTTL(0),
 		WithSuspensionSweepInterval(10*time.Millisecond),
-		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "quick look", TTL: 50 * time.Millisecond}}),
+		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "quick look", TTL: 50 * time.Millisecond}}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -405,7 +406,7 @@ func TestRunSuspendedFiresForEveryReason(t *testing.T) {
 				hook.st = st
 				e, err := New(WithStore(st), WithExtension(hook), ttlTool("deploy"),
 					WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: "deploy", Arguments: `{}`}}}),
-					WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: 2 * time.Hour}}))
+					WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy", TTL: 2 * time.Hour}}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()))
 				if err != nil {
 					t.Fatalf("New: %v", err)
 				}
@@ -489,6 +490,9 @@ func pendingNames(calls []suspension.PendingCall) []string {
 	return out
 }
 
+// errPauseInjected is the one failure pauseFailStore produces.
+var errPauseInjected = errors.New("injected: cannot pause")
+
 // pauseFailStore refuses the flip to paused, and nothing else.
 type pauseFailStore struct {
 	*sqlitestore.Store
@@ -496,7 +500,7 @@ type pauseFailStore struct {
 
 func (p pauseFailStore) UpdateRun(ctx context.Context, r *run.Run) error {
 	if r.State == run.StatePaused {
-		return errors.New("injected: cannot pause")
+		return errPauseInjected
 	}
 	return p.Store.UpdateRun(ctx, r)
 }
@@ -507,12 +511,12 @@ func TestRunSuspendedNotFiredWhenPauseFails(t *testing.T) {
 	hook := &suspendedRecorder{st: st}
 	e, err := New(WithStore(st), WithExtension(hook), ttlTool("deploy"),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: "deploy", Arguments: `{}`}}}),
-		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy"}}))
+		WithToolAuthorizer(ttlAuthorizer{"deploy": cortex.ApprovalRequired{Reason: "prod deploy"}}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := e.RunAgent(ctx, "assistant", "deploy it", nil); err == nil {
-		t.Fatal("RunAgent returned no error though the run could not be paused")
+	if _, err := e.RunAgent(ctx, "assistant", "deploy it", nil); !errors.Is(err, errPauseInjected) {
+		t.Fatalf("RunAgent = %v, want the injected pause failure", err)
 	}
 	notices, _, created := hook.snapshot()
 	if len(notices) != 0 {
@@ -520,6 +524,62 @@ func TestRunSuspendedNotFiredWhenPauseFails(t *testing.T) {
 	}
 	if created != 0 {
 		t.Errorf("OnCheckpointCreated fired %d times for a run that never paused", created)
+	}
+}
+
+// scopeHook records the scope each RunSuspended hook ran under.
+type scopeHook struct {
+	mu     sync.Mutex
+	scopes []cortex.Scope
+}
+
+func (h *scopeHook) Name() string { return "scope-hook" }
+
+func (h *scopeHook) OnRunSuspended(ctx context.Context, _ id.AgentID, _ id.AgentRunID, _ suspension.Notice) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.scopes = append(h.scopes, cortex.ScopeFromContext(ctx))
+	return nil
+}
+
+// The hook runs under the run's own scope, whatever the context that
+// reached the pause carried. No public path reaches suspendRun with a
+// different scope today: a run starts under the scope it is created in
+// and a resume rebinds to the suspension's. So this calls suspendRun
+// directly, against a store that does not enforce scope, to pin the
+// rebind for the day a path that does not rebind is added.
+func TestRunSuspendedHookRunsUnderTheRunScope(t *testing.T) {
+	hook := &scopeHook{}
+	e, err := New(WithStore(scopespy.New()), WithExtension(hook), WithExternalTool(externalTool()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r := &run.Run{ID: id.NewAgentRunID(), AgentID: id.NewAgentID(), Scope: approvalScope(), State: run.StateRunning}
+	var pend pendingCalls
+	pend.add(llm.ToolCall{ID: "call-1", Name: externalTool().Name, Arguments: `{}`}, suspension.ReasonExternalTool, 0, "")
+
+	for name, ctx := range map[string]context.Context{
+		"no scope":    context.Background(),
+		"other scope": cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_other"}}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			hook.mu.Lock()
+			hook.scopes = nil
+			hook.mu.Unlock()
+			paused := *r
+			paused.ID = id.NewAgentRunID()
+			if _, suspendErr := e.suspendRun(ctx, &paused, pend, suspension.Continuation{}); suspendErr != nil {
+				t.Fatalf("suspendRun: %v", suspendErr)
+			}
+			hook.mu.Lock()
+			defer hook.mu.Unlock()
+			if len(hook.scopes) != 1 {
+				t.Fatalf("OnRunSuspended fired %d times, want 1", len(hook.scopes))
+			}
+			if got := hook.scopes[0].Canonical(); got != approvalScope().Canonical() {
+				t.Errorf("OnRunSuspended ran under scope %q, want the run's %q", got, approvalScope().Canonical())
+			}
+		})
 	}
 }
 

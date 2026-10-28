@@ -676,7 +676,7 @@ func checkResumePublicationError(t *testing.T, failure error) {
 	e, err := New(WithStore(s), WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call", Name: "probe", Arguments: `{}`}}}), WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
 		t.Error("revoked tool executed")
 		return "", nil
-	}), WithToolAuthorizer(auth), WithSafety(publicationScanner{output: func(r *safety.ScanRequest) (*safety.ScanResult, error) {
+	}), WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithSafety(publicationScanner{output: func(r *safety.ScanRequest) (*safety.ScanResult, error) {
 		if strings.Contains(r.Content, "secret-value") {
 			return &safety.ScanResult{Decision: safety.DecisionBlock}, nil
 		}

@@ -212,7 +212,7 @@ func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in Resum
 
 // claimForResume takes ownership of a paused run and rebuilds everything
 // the loop needs to continue it. The returned context carries the run's
-// own scope.
+// own scope and the run's own principal, not the caller's.
 //
 // Once ClaimSuspension succeeds the run is running and it belongs to this
 // call: every exit below either hands the loop a runnable state or fails
@@ -293,6 +293,16 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	} else if snapshot.Provenance.VerificationRequired || snapshot.Provenance.VerificationIntentID != "" || e.requiredVerification != nil {
 		return nil, nil, cortex.ErrVerificationUnavailable
 	}
+
+	// The resumer's principal is replaced with the run's before the claim,
+	// from the same pre-claim snapshot. A decode that fails for now leaves
+	// the run paused; a revoked principal is held until the claim below
+	// makes the run this call's to fail.
+	ctx, principalErr := e.restorePrincipal(ctx, snapshot)
+	if principalErr != nil && !errors.Is(principalErr, cortex.ErrPrincipalRevoked) {
+		return nil, nil, principalErr
+	}
+
 	var susp *suspension.Suspension
 	if in.agentReplyVersion != nil {
 		susp, err = e.admitAgentReply(ctx, in, preview)
@@ -309,6 +319,9 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("claim suspension: %w", err)
+	}
+	if principalErr != nil {
+		return nil, nil, e.failRevokedResume(ctx, snapshot, susp, principalErr)
 	}
 	if in.agentReplyVersion != nil {
 		if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
@@ -546,7 +559,9 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 
 	// The subject an approved call is dispatched under. It is the run's
 	// own, rebuilt from the run rather than the resumer, for the same
-	// reason the whole resume path re-derives scope from the suspension.
+	// reason the whole resume path re-derives scope from the suspension:
+	// the scope is the suspension's, and the principal on ctx is the one
+	// restorePrincipal decoded from the run before the claim.
 	subject := cortex.Subject{
 		Scope:     cortex.ScopeFromContext(ctx),
 		Principal: cortex.PrincipalFromContext(ctx),

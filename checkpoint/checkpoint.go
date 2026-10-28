@@ -14,6 +14,11 @@ type Decision struct {
 	DecidedBy string    `json:"decided_by,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
 	DecidedAt time.Time `json:"decided_at"`
+	// DecidedByPrincipal is the decider's principal, as the engine's
+	// cortex.PrincipalCodec encoded it. ResolveCheckpoint fills it from
+	// the context and overwrites whatever the caller supplied. It records
+	// who decided; the run itself continues under its own principal.
+	DecidedByPrincipal []byte `json:"decided_by_principal,omitempty"`
 }
 
 // Checkpoint represents a point where a run pauses for approval.

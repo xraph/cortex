@@ -179,7 +179,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 			llm.Tool{Name: approvalToolName, Description: "test-only tool for approval coverage"},
 			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
-		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("engine.New (approval): %v", err)
@@ -223,7 +223,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 			llm.Tool{Name: cancelToolName, Description: "test-only tool for cancel coverage"},
 			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
-		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("engine.New (cancel): %v", err)

@@ -146,7 +146,7 @@ func TestRequiredVerificationRequiresRevisionPins(t *testing.T) {
 			auth := &requiredToolAuthority{}
 			cfg := requiredConfiguration(t, f)
 			cfg.HandoffAuthorizer = auth
-			opts := []engine.Option{engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithToolAuthorizer(auth), engine.WithExternalTool(llm.Tool{Name: "probe"})}
+			opts := []engine.Option{engine.WithStore(f.storage), engine.WithLLM(client), engine.WithVerificationWorker(f.config), engine.WithRequiredVerification(cfg), engine.WithToolAuthorizer(auth), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithExternalTool(llm.Tool{Name: "probe"})}
 			if mode != "model" {
 				opts = append(opts, engine.WithModelRevision("smart", "1"))
 			}

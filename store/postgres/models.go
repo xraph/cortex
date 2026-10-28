@@ -615,6 +615,7 @@ type runModel struct {
 	Provenance         string            `grove:"provenance,type:jsonb"`
 	Budget             string            `grove:"budget,type:jsonb"`
 	Usage              string            `grove:"usage,type:jsonb"`
+	Principal          []byte            `grove:"principal,type:bytea"`
 }
 
 func runToModel(r *run.Run) *runModel {
@@ -644,6 +645,7 @@ func runToModel(r *run.Run) *runModel {
 		ScopeL2:            l2,
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
+		Principal:          r.Principal,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}
@@ -686,6 +688,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		StartedAt:          m.StartedAt,
 		CompletedAt:        m.CompletedAt,
 		PersonaRef:         m.PersonaRef,
+		Principal:          m.Principal,
 	}
 	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
 		return nil, err

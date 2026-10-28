@@ -137,7 +137,7 @@ func TestResolveTools_ExternalToolsObeyCfgToolsNames(t *testing.T) {
 func TestResolveTools_ExternalToolsGoThroughVisible(t *testing.T) {
 	e, err := New(
 		WithExternalTool(externalTool()),
-		WithToolAuthorizer(&recordingAuthorizer{visible: nil}),
+		WithToolAuthorizer(&recordingAuthorizer{visible: nil}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -174,7 +174,7 @@ func TestExecuteTool_DeniedExternalToolStaysDenied(t *testing.T) {
 	rec := &toolEventRecorder{}
 	e, err := New(
 		WithExternalTool(def),
-		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}),
+		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {

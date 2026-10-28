@@ -51,6 +51,11 @@ type Run struct {
 	CompletedAt        *time.Time          `json:"completed_at,omitempty"`
 	PersonaRef         string              `json:"persona_ref,omitempty"`
 	Metadata           map[string]any      `json:"metadata,omitempty"`
+	// Principal is the run's caller, as the engine's cortex.PrincipalCodec
+	// encoded it when the run was created. A resume decodes it and runs
+	// under it, never under whoever resumed. Stores persist it and never
+	// rewrite it; it is never serialized, so an API reader cannot see it.
+	Principal []byte `json:"-"`
 }
 
 // MarshalJSON makes unchecked explicit for legacy runs and zero-value structs.

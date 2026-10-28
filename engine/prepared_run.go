@@ -153,6 +153,12 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	if scope.Canonical() != snap.Scope.Canonical() {
 		return nil, nil, fmt.Errorf("cortex: prepared scope mismatch: %w", cortex.ErrInvalidPrepared)
 	}
+	// Before the session is resolved, which can write one: a run whose
+	// principal cannot be kept is refused before anything exists for it.
+	principal, principalErr := e.encodePrincipal(ctx)
+	if principalErr != nil {
+		return nil, nil, principalErr
+	}
 	if verificationErr := e.requireVerification(snap); verificationErr != nil {
 		return nil, nil, verificationErr
 	}
@@ -186,7 +192,7 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 		return nil, nil, fmt.Errorf("cortex: prepared session: %w", err)
 	}
 	now := time.Now().UTC()
-	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget}
+	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget, Principal: principal}
 	safeInput, scanErr := e.checkPublication(ctx, &snap.Agent, r, cfg.Publication, input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
 		return nil, nil, scanErr

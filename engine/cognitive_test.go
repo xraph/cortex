@@ -85,7 +85,7 @@ func TestOperationalCapabilityToolUsesCurrentRuntime(t *testing.T) {
 			s := newSQLiteStoreForTest(t)
 			client := &capabilityClient{requiredToolClient: requiredToolClient{name: engine.ToolOperationalCapabilities}}
 			auth := &capabilityAuthority{}
-			e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(auth), engine.WithOperationalAwareness(), engine.WithTool(namedTool("probe"), noopHandler), engine.WithTool(namedTool("secret"), noopHandler), engine.WithExternalTool(namedTool("remote")))
+			e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(auth), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithOperationalAwareness(), engine.WithTool(namedTool("probe"), noopHandler), engine.WithTool(namedTool("secret"), noopHandler), engine.WithExternalTool(namedTool("remote")))
 			require.NoError(t, err)
 			ag := &agent.Config{ID: id.NewAgentID(), Name: "capabilities", SystemPrompt: "I can fly and always know the answer."}
 			require.NoError(t, s.Create(ctx, ag))
@@ -123,7 +123,7 @@ func TestRevokedGrantRemovesCapability(t *testing.T) {
 	s := newSQLiteStoreForTest(t)
 	auth := &capabilityAuthority{}
 	client := &capabilityClient{requiredToolClient: requiredToolClient{name: engine.ToolOperationalCapabilities}, before: func() { auth.hideProbe = true }}
-	e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(auth), engine.WithOperationalAwareness(), engine.WithTool(namedTool("probe"), noopHandler))
+	e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(auth), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithOperationalAwareness(), engine.WithTool(namedTool("probe"), noopHandler))
 	require.NoError(t, err)
 	ag := &agent.Config{ID: id.NewAgentID(), Name: "capabilities"}
 	require.NoError(t, s.Create(ctx, ag))
@@ -138,7 +138,7 @@ func TestOperationalCapabilityToolCannotBypassAuthorization(t *testing.T) {
 	ctx := overlayCtx("denied-capability")
 	s := newSQLiteStoreForTest(t)
 	client := &capabilityClient{requiredToolClient: requiredToolClient{name: engine.ToolOperationalCapabilities}}
-	e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(&capabilityAuthority{denied: true}), engine.WithOperationalAwareness())
+	e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(&capabilityAuthority{denied: true}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithOperationalAwareness())
 	require.NoError(t, err)
 	ag := &agent.Config{ID: id.NewAgentID(), Name: "capabilities"}
 	require.NoError(t, s.Create(ctx, ag))

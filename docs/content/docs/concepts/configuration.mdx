@@ -70,7 +70,8 @@ A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel`
 | `engine.WithLLM(client)` | Sets the `llm.Client`. Without one, runs echo their input |
 | `engine.WithTool(def, handler)` | Registers a tool the engine runs when the model calls it |
 | `engine.WithExternalTool(def)` | Registers a tool the caller runs; the run suspends until `Resume` |
-| `engine.WithToolAuthorizer(a)` | Installs your `cortex.ToolAuthorizer` |
+| `engine.WithToolAuthorizer(a)` | Installs your `cortex.ToolAuthorizer`. Needs `WithPrincipalCodec` too |
+| `engine.WithPrincipalCodec(c)` | Installs the `cortex.PrincipalCodec` that keeps a run's principal across a pause. See [Tool Authorization](/docs/concepts/authorization#keeping-the-principal-across-a-pause) |
 | `engine.WithSafety(scanner)` | Scans input and output through a `safety.Scanner` |
 | `engine.WithKnowledge(provider)` | Sets the `knowledge.Provider` for skill knowledge and the `knowledge_search` tool |
 | `engine.WithA2A(opts)` | Turns on agent-to-agent messaging |

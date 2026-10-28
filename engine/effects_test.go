@@ -45,7 +45,7 @@ func TestUncertainEffectStopsEngineBeforeSiblingOrNextModelCall(t *testing.T) {
 				return "secret provider reply", fmt.Errorf("secret provider failure: %w", cortex.ErrEffectUncertain)
 			})}
 			if mode == "approval" {
-				opts = append(opts, WithToolAuthorizer(escalatingAuthorizer{tool: "write"}))
+				opts = append(opts, WithToolAuthorizer(escalatingAuthorizer{tool: "write"}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()))
 			}
 			e, err := New(opts...)
 			require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestUncertainEffectDoesNotResolveApprovalWithoutDurableStop(t *testing.T) {
 	store := effectStopFailureStore{Spy: scopespy.New()}
 	client := &effectLoopClient{}
 	var calls int
-	e, err := New(WithStore(store), WithLLM(client), WithToolAuthorizer(escalatingAuthorizer{tool: "write"}), WithTool(llm.Tool{Name: "write"}, func(context.Context, cortex.Invocation) (string, error) {
+	e, err := New(WithStore(store), WithLLM(client), WithToolAuthorizer(escalatingAuthorizer{tool: "write"}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithTool(llm.Tool{Name: "write"}, func(context.Context, cortex.Invocation) (string, error) {
 		calls++
 		return "", cortex.ErrEffectUncertain
 	}))
@@ -150,7 +150,7 @@ func TestUncertainEffectDoesNotResolveApprovalWithoutDurableStop(t *testing.T) {
 func TestUncertainApprovedEffectPreservesRunDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := scopespy.New()
-		e, err := New(WithStore(store), WithLLM(&effectLoopClient{}), WithToolAuthorizer(escalatingAuthorizer{tool: "write"}), WithTool(llm.Tool{Name: "write"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
+		e, err := New(WithStore(store), WithLLM(&effectLoopClient{}), WithToolAuthorizer(escalatingAuthorizer{tool: "write"}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithTool(llm.Tool{Name: "write"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
 			<-ctx.Done()
 			return "", cortex.ErrEffectUncertain
 		}))

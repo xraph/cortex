@@ -103,6 +103,23 @@ var (
 	// sends an operator to raise the budget for a run whose real problem
 	// is a continuation nothing could have resumed.
 	ErrInvalidContinuation = errors.New("cortex: suspension continuation is unusable")
+
+	// Principal errors.
+	//
+	// ErrPrincipalRevoked is what a PrincipalCodec wraps when a run's
+	// identity is permanently gone: the member was removed, the key
+	// revoked. A resume that meets it fails the run with the codec's
+	// reason rather than continuing under nobody or under the resumer.
+	ErrPrincipalRevoked = errors.New("cortex: principal no longer valid")
+	// ErrPrincipalUnavailable means a principal could not be encoded or
+	// decoded right now. A run is not created without its principal, and a
+	// paused run whose principal cannot be decoded stays paused for the
+	// next resume to try again.
+	ErrPrincipalUnavailable = errors.New("cortex: principal unavailable")
+	// ErrPrincipalCodecRequired is returned by engine.New when a tool
+	// authorizer is installed without a principal codec. Without one,
+	// every resumed run would reach the authorizer as nobody.
+	ErrPrincipalCodecRequired = errors.New("cortex: a tool authorizer needs a principal codec so resumed runs keep their principal")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.

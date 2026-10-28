@@ -63,7 +63,7 @@ func TestCancellationDuringAuthorizationPreventsToolDispatch(t *testing.T) {
 			ctx, cancel := context.WithCancel(cortex.WithScope(context.Background(), scopeA()))
 			defer cancel()
 			calls := 0
-			e, err := New(WithToolAuthorizer(&cancellingAuthorizer{cancel: cancel}), WithTool(llm.Tool{Name: "effect"}, func(context.Context, cortex.Invocation) (string, error) { calls++; return "effect happened", nil }))
+			e, err := New(WithToolAuthorizer(&cancellingAuthorizer{cancel: cancel}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithTool(llm.Tool{Name: "effect"}, func(context.Context, cortex.Invocation) (string, error) { calls++; return "effect happened", nil }))
 			if err != nil {
 				t.Fatal(err)
 			}

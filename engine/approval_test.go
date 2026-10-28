@@ -64,7 +64,7 @@ func approvalEngine(t *testing.T, opts ...Option) *Engine {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	}
 	e, err := New(append(base, opts...)...)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestExecuteTool_ApprovalIsPendingNotDenied(t *testing.T) {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestExecuteTool_AnOrdinaryDenialIsStillADenial(t *testing.T) {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}),
+		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
@@ -452,7 +452,7 @@ func TestRunAgent_AStepPendingForBothReasonsIsRefused(t *testing.T) {
 				WithLLM(&scriptedLLM{toolCalls: tc.calls}),
 				WithExternalTool(ext),
 				WithTool(gated, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
-				WithToolAuthorizer(escalatingAuthorizer{tool: gated.Name}),
+				WithToolAuthorizer(escalatingAuthorizer{tool: gated.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 			)
 			if err != nil {
 				t.Fatalf("New: %v", err)
@@ -521,7 +521,7 @@ func TestResolveCheckpoint_ApprovalRunsTheCallAndFinishesTheRun(t *testing.T) {
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 		WithExtension(tools),
 	)
@@ -613,7 +613,7 @@ func TestResolveCheckpoint_RejectionFailsTheRunWithTheDecisionsReason(t *testing
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
@@ -721,7 +721,7 @@ func TestResolveCheckpoint_ApprovalSatisfiesFreshEscalation(t *testing.T) {
 		WithStore(spy),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
-		WithToolAuthorizer(auth),
+		WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -771,7 +771,7 @@ func TestResolveCheckpoint_AnApprovedExternalCallIsClosedAsAFailure(t *testing.T
 		WithStore(spy),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
 		WithExternalTool(def),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(tools),
 	)
 	if err != nil {
@@ -964,7 +964,7 @@ func TestResume_ExecuteOnAnApprovalSuspensionIsRefused(t *testing.T) {
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1097,7 +1097,7 @@ func TestResolveCheckpoint_ApproveAndRejectRacingOneCheckpointHaveOneWinner(t *t
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1213,7 +1213,7 @@ func TestResolveCheckpoint_ARejectionArrivingMidApprovalCannotStompTheRun(t *tes
 			<-release
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

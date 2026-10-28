@@ -155,10 +155,29 @@ func WithToolRetrySafe(names ...string) Option {
 }
 
 // WithToolAuthorizer installs the host's authorization decisions. A nil
-// authorizer, or none at all, allows every tool and every call.
+// authorizer, or none at all, allows every tool and every call. A non-nil
+// one needs WithPrincipalCodec as well, so a resumed run reaches it under
+// the principal that started the run.
 func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 	return func(e *Engine) error {
 		e.authorizer = a
+		return nil
+	}
+}
+
+// WithPrincipalCodec installs the codec that carries a run's principal
+// across a pause. The engine encodes cortex.PrincipalFromContext when it
+// creates a run and stores the bytes with it; every resume decodes them
+// and continues under that principal, not the resumer's. ResolveCheckpoint
+// also encodes the decider's principal into Decision.DecidedByPrincipal.
+//
+// A host that installs a tool authorizer must install one, or New returns
+// cortex.ErrPrincipalCodecRequired: without it, an authorizer would see
+// every resumed run as nobody. Without a codec a resumed run has a nil
+// principal.
+func WithPrincipalCodec(c cortex.PrincipalCodec) Option {
+	return func(e *Engine) error {
+		e.principalCodec = c
 		return nil
 	}
 }

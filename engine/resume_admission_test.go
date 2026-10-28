@@ -191,11 +191,18 @@ func TestAgentReplyResumeAdmissionRecovery(t *testing.T) {
 
 func admittedReplyFixture(t *testing.T, boundary string, options ...Option) (store.Store, context.Context, *run.Run, id.SuspensionID) {
 	t.Helper()
+	return admittedReplyFixtureAs(t, boundary, nil, options...)
+}
+
+// admittedReplyFixtureAs is admittedReplyFixture with the asking run
+// started under principal.
+func admittedReplyFixtureAs(t *testing.T, boundary string, principal any, options ...Option) (store.Store, context.Context, *run.Run, id.SuspensionID) {
+	t.Helper()
 	e, st, ctx := a2aEngine(t, []llm.ToolCall{{ID: "call-1", Name: toolAgentAsk, Arguments: `{"to":"worker","content":"status?"}`}})
 	for _, option := range options {
 		require.NoError(t, option(e))
 	}
-	current, err := e.RunAgent(ctx, "planner", "ask", nil)
+	current, err := e.RunAgent(cortex.WithPrincipal(ctx, principal), "planner", "ask", nil)
 	require.NoError(t, err)
 	paused, err := st.GetSuspension(ctx, current.ID)
 	require.NoError(t, err)

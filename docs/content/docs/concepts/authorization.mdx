@@ -116,12 +116,15 @@ func (permissionAuthorizer) Authorize(_ context.Context, s cortex.Subject, call 
 }
 ```
 
-Install it with `engine.WithToolAuthorizer`:
+Install it with `engine.WithToolAuthorizer`, next to the principal codec
+every authorizer needs (see [Keeping the principal across a
+pause](#keeping-the-principal-across-a-pause)):
 
 ```go
 eng, err := engine.New(
     engine.WithStore(pgStore),
     engine.WithToolAuthorizer(permissionAuthorizer{}),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]()),
 )
 ```
 
@@ -132,6 +135,7 @@ and `extension.WithEngineOption` is how an engine option reaches it:
 ```go
 ext := extension.New(
     extension.WithEngineOption(engine.WithToolAuthorizer(permissionAuthorizer{})),
+    extension.WithEngineOption(engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]())),
 )
 ```
 
@@ -173,6 +177,62 @@ That's a property of how you write the authorizer, not something cortex
 enforces: writing `Visible`/`Authorize` to fail open on a missing principal
 instead of closed is a choice available to you, just not the one the example
 above makes.
+
+## Keeping the principal across a pause
+
+If you install a tool authorizer, you also have to install a principal codec.
+`engine.New` returns `cortex.ErrPrincipalCodecRequired` when it sees one
+without the other, whichever order you pass the options in.
+
+```go
+eng, err := engine.New(
+    engine.WithStore(pgStore),
+    engine.WithToolAuthorizer(permissionAuthorizer{}),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]()),
+)
+```
+
+You need it because the principal lives on the context, and a context doesn't
+survive a pause. A run that waits on an approval or an external tool is stored, and
+whoever picks it up again brings a context of their own: the approver who
+resolved the checkpoint, the service that posted the tool's result, the
+messaging bus delivering a peer's reply. None of them is the person who started
+the run. Without a codec, your authorizer would be asked about the approver,
+which is exactly the wrong question after an approval.
+
+So the engine encodes `cortex.PrincipalFromContext(ctx)` when it creates a run
+and stores the bytes on `run.Run.Principal`. Every resume decodes them before
+it claims the run, and the rest of the run, every `Visible`, every `Authorize`
+and every `Invocation.Principal` a handler sees, gets the original caller back.
+The resumer's principal is dropped. A run that has no stored principal, or an
+engine with no codec, resumes with a `nil` principal and never borrows the
+resumer's.
+
+`cortex.JSONPrincipalCodec[T]()` covers the common case: `json.Marshal` on the
+way in, `json.Unmarshal` into a `T` on the way out, so your type assertion holds
+on a resumed run too. It refuses a principal that isn't a `T`. You can write
+your own `cortex.PrincipalCodec` instead, and you'll want to if the identity can
+go away. A codec that stores only a user ID and looks the user up again in
+`DecodePrincipal` is how a removed member or a revoked key gets noticed when the
+run comes back.
+
+What a decode error does depends on what it wraps:
+
+- An error wrapping `cortex.ErrPrincipalRevoked` means the identity is gone for
+  good. The engine claims the run and fails it with your error as the reason.
+  It never carries on under `nil`, and never under whoever resumed it.
+- Any other error is treated as transient (your identity service is down, say).
+  The resume returns an error wrapping `cortex.ErrPrincipalUnavailable` before
+  it claims anything, so the run stays paused and the next resume can try again.
+
+Encoding can fail too. If `EncodePrincipal` errors, the run is refused with
+`cortex.ErrPrincipalUnavailable` and nothing is created for it. A nil principal
+skips the codec and stores nothing.
+
+`ResolveCheckpoint` also encodes the decider's principal into
+`checkpoint.Decision.DecidedByPrincipal`, taken from the context and never from
+the decision you pass in. That's the record of who approved. The run itself
+still continues as its own caller.
 
 ## What a denial looks like to the model
 

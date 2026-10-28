@@ -89,6 +89,7 @@ type Engine struct {
 	publicationGate       safety.PublicationGate
 	knowledge             knowledge.Provider
 	authorizer            cortex.ToolAuthorizer
+	principalCodec        cortex.PrincipalCodec
 	extensions            *plugin.Registry
 	pendingExts           []plugin.Extension
 	tools                 []registeredTool
@@ -182,6 +183,12 @@ func New(opts ...Option) (*Engine, error) {
 		if err := opt(e); err != nil {
 			return nil, fmt.Errorf("cortex: apply engine option: %w", err)
 		}
+	}
+
+	// After every option, so WithToolAuthorizer and WithPrincipalCodec can
+	// come in either order.
+	if e.authorizer != nil && e.principalCodec == nil {
+		return nil, cortex.ErrPrincipalCodecRequired
 	}
 
 	if err := e.configureRetrySafe(); err != nil {
@@ -810,6 +817,16 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 		return fmt.Errorf("resolve checkpoint %s: already %s: %w", cpID, cp.State, cortex.ErrInvalidState)
 	}
 
+	// The decider is recorded from the context, never from the caller's
+	// decision, and before anything moves: a decision whose decider cannot
+	// be recorded is not acted on. The run itself resumes under its own
+	// principal, which the resume restores.
+	decidedBy, err := e.encodePrincipal(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
+	}
+	decision.DecidedByPrincipal = decidedBy
+
 	var executionErr error
 	if openedASuspendedRun(cp) {
 		if decision.Approved {
@@ -1239,6 +1256,10 @@ func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overr
 
 // runMock is the mock/echo fallback for RunAgent.
 func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*run.Run, error) {
+	principal, principalErr := e.encodePrincipal(ctx)
+	if principalErr != nil {
+		return nil, principalErr
+	}
 	now := time.Now().UTC()
 	r := &run.Run{
 		Entity:     cortex.NewEntity(),
@@ -1248,6 +1269,7 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 		Input:      input,
 		StartedAt:  &now,
 		PersonaRef: ag.PersonaRef,
+		Principal:  principal,
 	}
 	safeInput, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
@@ -1293,6 +1315,11 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 
 // streamMock is the mock/echo fallback for StreamAgent.
 func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string, events chan<- StreamEvent, done func()) error {
+	principal, principalErr := e.encodePrincipal(ctx)
+	if principalErr != nil {
+		close(events)
+		return principalErr
+	}
 	now := time.Now().UTC()
 	r := &run.Run{
 		Entity:     cortex.NewEntity(),
@@ -1302,6 +1329,7 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 		Input:      input,
 		StartedAt:  &now,
 		PersonaRef: ag.PersonaRef,
+		Principal:  principal,
 	}
 	safeInput, scanErr := e.checkPublication(ctx, ag, r, e.frozenPublication(), input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
@@ -1399,10 +1427,19 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 	return nil
 }
 
-// CreateRun creates a run record directly (for external use).
+// CreateRun creates a run record directly (for external use). A run that
+// carries no principal bytes gets the context's, encoded the same way the
+// engine's own runs are.
 func (e *Engine) CreateRun(ctx context.Context, r *run.Run) error {
 	if e.store == nil {
 		return cortex.ErrNoStore
+	}
+	if r.Principal == nil {
+		principal, err := e.encodePrincipal(ctx)
+		if err != nil {
+			return err
+		}
+		r.Principal = principal
 	}
 	return e.store.CreateRun(ctx, r)
 }

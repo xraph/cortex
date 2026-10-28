@@ -19,7 +19,9 @@ import (
 // NewUpdate builds SET from every model field by default, so without this
 // explicit whitelist an UpdateRun issued from a broader (but still
 // scope-matching) context would silently overwrite a row's narrower
-// stored scope.
+// stored scope. principal is absent for the same reason: the codec bytes
+// are written when the run is created, and a resume decodes them to find
+// the run's caller, so no later writer may replace them.
 var mutableRunColumns = []string{
 	"revision",
 	"agent_id",

@@ -161,12 +161,21 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, authErr
 	}
+	// The run read above is the pre-claim snapshot, and StartResume below
+	// is the claim. claimForResume explains the order.
+	ctx, principalErr := e.restorePrincipal(ctx, current)
+	if principalErr != nil && !errors.Is(principalErr, cortex.ErrPrincipalRevoked) {
+		return nil, principalErr
+	}
 	paused, err := startAdmittedResume(ctx, durable, admitted)
 	if errors.Is(err, cortex.ErrSuspensionExpired) {
 		return e.expireAdmittedReply(ctx, admitted)
 	}
 	if err != nil {
 		return nil, err
+	}
+	if principalErr != nil {
+		return nil, e.failRevokedResume(ctx, current, paused, principalErr)
 	}
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, e.failResume(ctx, paused.ClaimedRun, paused.ClaimedRun.AgentID, authErr)

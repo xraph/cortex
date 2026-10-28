@@ -79,7 +79,7 @@ func runToolCallWithRecorder(t *testing.T, authorizer cortex.ToolAuthorizer, han
 		WithStore(scopespy.New()),
 		WithLLM(scopespy.ToolCallingLLM(def.Name)),
 		WithTool(def, handler),
-		WithToolAuthorizer(authorizer),
+		WithToolAuthorizer(authorizer), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestToolEvents_StreamingDeniedFiresDeniedOnly(t *testing.T) {
 		WithStore(scopespy.New()),
 		WithLLM(scopespy.ToolCallingStreamLLM(def.Name)),
 		WithTool(def, okHandler),
-		WithToolAuthorizer(authz),
+		WithToolAuthorizer(authz), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
