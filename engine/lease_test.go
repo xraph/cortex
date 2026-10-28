@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -102,9 +103,19 @@ type progressSpy struct {
 	mu    sync.Mutex
 	saved []suspension.Progress
 	holds atomic.Int32
+	// failStarted fails that many saves that record a started call, with
+	// an ordinary store error rather than a lost lease.
+	failStarted atomic.Int32
+	// failHolds fails that many HoldLease calls the same way.
+	failHolds atomic.Int32
 }
 
+var errStoreDown = errors.New("store unavailable")
+
 func (s *progressSpy) SaveProgress(ctx context.Context, p *suspension.Progress) error {
+	if len(p.Started) > 0 && s.failStarted.Add(-1) >= 0 {
+		return errStoreDown
+	}
 	if err := s.Store.SaveProgress(ctx, p); err != nil {
 		return err
 	}
@@ -120,6 +131,9 @@ func (s *progressSpy) SaveProgress(ctx context.Context, p *suspension.Progress) 
 
 func (s *progressSpy) HoldLease(ctx context.Context, runID id.AgentRunID, lease run.Lease) error {
 	s.holds.Add(1)
+	if s.failHolds.Add(-1) >= 0 {
+		return errStoreDown
+	}
 	return s.Store.HoldLease(ctx, runID, lease)
 }
 
@@ -529,4 +543,182 @@ func requireUnleased(ctx context.Context, t *testing.T, st *sqlitestore.Store, r
 	require.Nil(t, r.Lease)
 	_, err = st.GetProgress(ctx, runID)
 	require.ErrorIs(t, err, cortex.ErrProgressNotFound)
+}
+
+// A call that is not retry-safe is never dispatched without a durable
+// Started record. One failed save is retried; when the retry fails too the
+// call does not run, nothing is recorded as done, and the pass ends
+// without a terminal write, leaving the lease to lapse for a reclaim.
+func TestStartedSaveFailureStopsBeforeDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures int32
+		ran      int32
+	}{
+		{"retry succeeds", 1, 1},
+		{"retry fails", 2, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "write", Arguments: `{}`}))
+			var ran atomic.Int32
+			f := newLeaseFixture(t, model, engine.WithRunLease(300*time.Millisecond), engine.WithTool(llm.Tool{Name: "write", Description: "writes"}, func(context.Context, cortex.Invocation) (string, error) {
+				ran.Add(1)
+				return "written", nil
+			}))
+			f.store.failStarted.Store(tc.failures)
+			r, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+			require.Equal(t, tc.ran, ran.Load())
+			if tc.ran == 1 {
+				require.NoError(t, err)
+				require.Equal(t, run.StateCompleted, r.State)
+				return
+			}
+			require.ErrorIs(t, err, cortex.ErrRunInterrupted)
+			stored := f.onlyRun(t)
+			require.Equal(t, run.StateRunning, stored.State, "the pass wrote a state instead of leaving the lease to lapse")
+			_, failed, terminated, notices := f.hooks.counts()
+			require.Zero(t, failed)
+			require.Zero(t, terminated)
+			require.Empty(t, notices)
+			p, err := f.store.GetProgress(leaseScope(), stored.ID)
+			require.NoError(t, err)
+			require.Empty(t, p.Started)
+			require.Empty(t, p.Done)
+			require.Equal(t, 1, p.Cont.StepIndex)
+			holds := f.store.holds.Load()
+			time.Sleep(400 * time.Millisecond)
+			require.Equal(t, holds, f.store.holds.Load(), "the heartbeat kept renewing a lease the pass gave up")
+		})
+	}
+}
+
+// A run started from inside a leased run's tool while Stop drains runs to
+// the end: its lifetime follows the tool call that started it. The parent
+// records the child's answer and hands off at its next boundary.
+func TestNestedRunFinishesWhileStopDrains(t *testing.T) {
+	model := newLeaseLLM(
+		toolCalls(llm.ToolCall{ID: "call-spawn", Name: "spawn", Arguments: `{}`}),
+		&llm.Response{Content: "child done", FinishReason: "stop"},
+	)
+	entered := make(chan struct{})
+	gate := make(chan struct{})
+	var eng *engine.Engine
+	var child *run.Run
+	var childErr error
+	f := newLeaseFixture(t, model, engine.WithTool(llm.Tool{Name: "spawn", Description: "runs a nested agent"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
+		close(entered)
+		<-gate
+		child, childErr = eng.RunAgent(ctx, "assistant", "child", nil)
+		if childErr != nil {
+			return "", childErr
+		}
+		return child.Output, nil
+	}))
+	eng = f.eng
+	require.NoError(t, eng.Start(context.Background()))
+	done := f.start()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the spawn tool never ran")
+	}
+
+	stopped := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		stopped <- eng.Stop(ctx)
+	}()
+	probe, cancelProbe := context.WithCancel(leaseScope())
+	cancelProbe()
+	require.Eventually(t, func() bool {
+		_, err := eng.RunAgent(probe, "assistant", "late", nil)
+		return errors.Is(err, cortex.ErrEngineStopping)
+	}, 2*time.Second, 10*time.Millisecond)
+	close(gate)
+
+	out := waitOutcome(t, done)
+	require.ErrorIs(t, out.err, cortex.ErrRunInterrupted)
+	require.NoError(t, childErr, "the nested run was handed off instead of finishing")
+	require.Equal(t, run.StateCompleted, child.State)
+	select {
+	case err := <-stopped:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+	parent, err := eng.GetRun(leaseScope(), out.run.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateReclaimable, parent.State)
+	p, err := f.store.GetProgress(leaseScope(), parent.ID)
+	require.NoError(t, err)
+	answered := false
+	for _, m := range p.Cont.Messages {
+		if m.Role == "tool" && m.ToolCallID == "call-spawn" && m.Content == "child done" {
+			answered = true
+		}
+	}
+	require.True(t, answered, "the parent's progress lost the child's answer: %+v", p.Cont.Messages)
+}
+
+// A tool whose error says its own nested run was handed off interrupts the
+// parent: the call is not recorded as done or failed, and the parent hands
+// off with no terminal write.
+func TestToolReportingAHandOffInterruptsTheRun(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "delegate", Arguments: `{}`}))
+	f := newLeaseFixture(t, model, engine.WithTool(llm.Tool{Name: "delegate", Description: "runs a nested agent"}, func(context.Context, cortex.Invocation) (string, error) {
+		return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
+	}))
+	r, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.ErrorIs(t, err, cortex.ErrRunInterrupted)
+	require.Equal(t, 1, model.callCount())
+	stored := f.onlyRun(t)
+	require.Equal(t, run.StateReclaimable, stored.State)
+	require.Equal(t, r.ID, stored.ID)
+	_, failed, terminated, notices := f.hooks.counts()
+	require.Zero(t, failed)
+	require.Zero(t, terminated)
+	require.Len(t, notices, 1)
+	p, err := f.store.GetProgress(leaseScope(), stored.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"call-1"}, startedIDs(p.Started))
+	require.Empty(t, p.Done, "the interrupted call was recorded as done")
+}
+
+// A resume whose lease cannot be taken after the claim retries briefly;
+// when every attempt fails the pass ends with no terminal write, and
+// nothing of the resume runs.
+func TestResumeWithoutALeaseEndsThePass(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures int32
+		resumed  bool
+	}{
+		{"a retry takes the lease", 1, true},
+		{"no attempt takes it", 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "ask_human", Arguments: `{}`}))
+			f := newLeaseFixture(t, model, engine.WithExternalTool(llm.Tool{Name: "ask_human", Description: "answered by the host"}))
+			paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+			require.NoError(t, err)
+			require.Equal(t, run.StatePaused, paused.State)
+
+			f.store.failHolds.Store(tc.failures)
+			resumed, err := f.eng.Resume(leaseScope(), paused.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "call-1", Content: "yes"}}})
+			if tc.resumed {
+				require.NoError(t, err)
+				require.Equal(t, run.StateCompleted, resumed.State)
+				return
+			}
+			require.ErrorIs(t, err, cortex.ErrRunInterrupted)
+			require.Equal(t, 1, model.callCount(), "the resume called the model without a lease")
+			stored := f.onlyRun(t)
+			require.Equal(t, run.StateRunning, stored.State)
+			require.Nil(t, stored.Lease)
+			_, failed, terminated, _ := f.hooks.counts()
+			require.Zero(t, failed)
+			require.Zero(t, terminated)
+		})
+	}
 }

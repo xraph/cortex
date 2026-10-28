@@ -831,9 +831,13 @@ func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
 // pins the order inside the rejection. The suspension goes after the
 // state write, never before: it is the only record of what the run was
 // waiting on, and a delete that landed while the state write failed would
-// throw that away for nothing. The decision is not recorded either, so
-// deciding again is a decision rather than ErrInvalidState against a row
-// claiming a rejection that never happened.
+// throw that away for nothing. The decision is not recorded either, so the
+// checkpoint stays pending rather than claiming a rejection that never
+// happened.
+//
+// The claim did move the run to running, as it does in every store, so
+// the same decision cannot take it again: deciding again is refused, and
+// the run is left running with no owner for the engine sweep to recover.
 func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *testing.T) {
 	base := scopespy.New()
 	spy := &wedgeSpy{Spy: base}
@@ -866,8 +870,15 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *te
 	if stored.State != "pending" {
 		t.Errorf("checkpoint state = %q, want %q; it dropped out of the pending queue over a decision that never took effect", stored.State, "pending")
 	}
-	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); errors.Is(again, cortex.ErrInvalidState) {
-		t.Errorf("deciding again = %v, want the retry the first error invites, not a refusal", again)
+	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); !errors.Is(again, cortex.ErrInvalidState) {
+		t.Errorf("deciding again = %v, want ErrInvalidState: the first claim already took the run", again)
+	}
+	held, getErr := base.GetRun(ctx, cps[0].RunID)
+	if getErr != nil {
+		t.Fatalf("reload the run: %v", getErr)
+	}
+	if held.State != run.StateRunning || held.Lease != nil {
+		t.Errorf("run = %s with lease %v, want running with no owner", held.State, held.Lease)
 	}
 }
 

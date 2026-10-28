@@ -359,6 +359,12 @@ func (s *Spy) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspen
 		return nil, err
 	}
 	s.claimed[runID] = true
+	// The paused-to-running transition the real stores make, so a lease
+	// taken after the claim finds a running run, as it does there.
+	if r, ok := s.runs[runID]; ok && r.State == run.StatePaused {
+		r.State = run.StateRunning
+		s.runs[runID] = r
+	}
 	return susp, nil
 }
 

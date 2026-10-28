@@ -120,10 +120,10 @@ func assertNoStoppingFailure(ctx context.Context, t *testing.T, st store.Store, 
 // The reviewer's probe: the worker's run is executing when Stop starts, and
 // its reply lands during the drain. The reply's resume follows a claim the
 // bus made under admission, so it runs through stopping instead of leaving
-// the planner paused behind a consumed ask. Without a lease the planner
-// completes, and Stop returns once it has. With one (the default) the
-// resumed planner records the reply and then hands itself off at its next
-// model call: it is reclaimable, and its progress carries the answer.
+// the planner paused behind a consumed ask: the planner completes, and Stop
+// returns once it has. That holds with a lease too, because the resume is
+// admitted under the delivery that carries it, and a run admitted that way
+// is not handed off by the drain.
 func TestA2AReplyDuringDrainResumesAsker(t *testing.T) {
 	t.Run("without a lease", func(t *testing.T) {
 		st, planner := replyDuringDrain(t, WithRunLease(0))
@@ -131,26 +131,9 @@ func TestA2AReplyDuringDrainResumesAsker(t *testing.T) {
 	})
 	t.Run("leased", func(t *testing.T) {
 		st, planner := replyDuringDrain(t)
-		ctx := a2aScope()
-		r, err := st.GetRun(ctx, planner)
-		if err != nil {
-			t.Fatalf("GetRun: %v", err)
-		}
-		if r.State != run.StateReclaimable {
-			t.Fatalf("planner state = %s (error %q), want reclaimable", r.State, r.Error)
-		}
-		saved, err := st.(suspension.ProgressStore).GetProgress(ctx, planner)
-		if err != nil {
-			t.Fatalf("GetProgress: %v", err)
-		}
-		answered := false
-		for _, m := range saved.Cont.Messages {
-			if m.Role == "tool" && strings.Contains(m.Content, "all clear") {
-				answered = true
-			}
-		}
-		if !answered {
-			t.Fatalf("the handed-off planner's progress lost the worker's answer: %+v", saved.Cont.Messages)
+		assertNoStoppingFailure(a2aScope(), t, st, planner)
+		if _, err := st.(suspension.ProgressStore).GetProgress(a2aScope(), planner); !errors.Is(err, cortex.ErrProgressNotFound) {
+			t.Fatalf("GetProgress of the completed planner = %v, want ErrProgressNotFound", err)
 		}
 	})
 }

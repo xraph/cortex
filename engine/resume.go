@@ -285,21 +285,30 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 
 	// The claim left the run running with no owner. A leased run takes its
 	// lease now, before anything of the resume runs.
-	ctx = e.leaseClaimedResume(ctx, snapshot, susp)
+	ctx, err = e.leaseClaimedResume(ctx, snapshot, susp)
+	if err != nil {
+		return nil, nil, err
+	}
 	return e.rehydrateResume(ctx, in, source, snapshot, susp)
 }
 
 // leaseClaimedResume leases a run just claimed from a pause, when this
 // engine leases it, and saves the state it paused with as its first
 // progress boundary.
-func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension) context.Context {
+//
+// When the lease cannot be taken the pass ends with that error and the
+// resume does nothing: see leaseClaimed.
+func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension) (context.Context, error) {
 	claimed := susp.ClaimedRun
 	if claimed == nil {
 		claimed = snapshot
 	}
-	ctx = e.leaseClaimed(ctx, claimed)
+	ctx, err := e.leaseClaimed(ctx, claimed)
+	if err != nil {
+		return ctx, err
+	}
 	e.saveBoundary(ctx, susp.RunID, pausedCont(susp.Cont))
-	return ctx
+	return ctx, nil
 }
 
 // pausedCont copies a suspension's continuation for a progress snapshot.
@@ -603,7 +612,12 @@ func (e *Engine) claimedRun(ctx context.Context, runID id.AgentRunID, snapshot, 
 	e.logError("read a claimed run, falling back to the pre-claim snapshot", err,
 		log.String("run_id", runID.String()),
 	)
-	return snapshot
+	// The claim moved the run to running; the snapshot predates it. A
+	// later write of the snapshot as it was would put the run back to
+	// paused under its own lease.
+	fallback := *snapshot
+	fallback.State = run.StateRunning
+	return &fallback
 }
 
 // failResume marks a claimed run failed and hands the reason back

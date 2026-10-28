@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
@@ -24,6 +25,24 @@ const defaultRunLease = 60 * time.Second
 // leaseWriteTimeout bounds the store writes a lease makes on a context
 // that no longer carries the run's cancellation.
 const leaseWriteTimeout = 5 * time.Second
+
+// leaseHoldAttempts is how many times a pass tries to take the lease of a
+// run it just claimed from a pause before it gives the run up.
+const leaseHoldAttempts = 3
+
+var (
+	// errProgressUnsaved stops a pass whose Started record could not be
+	// saved: the call is not dispatched and nothing more is written, so the
+	// lease lapses and another replica reclaims the run.
+	errProgressUnsaved = fmt.Errorf("cortex: a started call could not be recorded: %w", cortex.ErrRunInterrupted)
+	// errChildInterrupted stops a pass whose tool reported that a run it
+	// started was handed off or lost its lease.
+	errChildInterrupted = fmt.Errorf("cortex: a run started by a tool stopped before it finished: %w", cortex.ErrRunInterrupted)
+	// errParentStopped is what a nested run sees when the run it was
+	// started from was interrupted. Its own lease is still good, so it is
+	// handed off under its own name.
+	errParentStopped = fmt.Errorf("cortex: the run this one was started from stopped: %w", cortex.ErrRunInterrupted)
+)
 
 // WorkerID returns the name this engine holds run leases under. See
 // WithWorkerID.
@@ -76,13 +95,19 @@ type runLease struct {
 	// writes a lease makes after the run's context has ended.
 	base   context.Context
 	cancel context.CancelCauseFunc
+	// nested is true for a run started from inside another run's call (a
+	// tool calling RunAgent on its ctx). It does not hand off because the
+	// engine drains: it ends with the call that started it.
+	nested bool
+	// cause is why this lease's own context was cancelled, as opposed to a
+	// cause inherited from a parent run's context.
+	cause atomic.Pointer[error]
 
 	quit    chan struct{}
 	done    chan struct{}
 	quiesce sync.Once
 
 	mu       sync.Mutex
-	expires  time.Time
 	progress progressState
 }
 
@@ -119,11 +144,9 @@ func (e *Engine) holdLease(ctx context.Context, r *run.Run) context.Context {
 		e: e, runID: r.ID, agentID: r.AgentID, scope: r.Scope, owner: e.workerID, reclaims: r.Reclaims,
 		base:   cortex.WithScope(context.WithoutCancel(ctx), r.Scope),
 		cancel: cancel,
+		nested: startedInsideARun(ctx, r.ID),
 		quit:   make(chan struct{}),
 		done:   make(chan struct{}),
-	}
-	if r.Lease != nil {
-		l.expires = r.Lease.ExpiresAt
 	}
 	runCtx = context.WithValue(runCtx, runLeaseKey{}, l)
 	e.leases.add(l)
@@ -138,6 +161,32 @@ func (e *Engine) holdLease(ctx context.Context, r *run.Run) context.Context {
 	return runCtx
 }
 
+// startedInsideARun reports whether ctx belongs to another run's call:
+// it carries that run's lease, or an admission ticket that let this run in
+// under its parent's slot.
+func startedInsideARun(ctx context.Context, runID id.AgentRunID) bool {
+	if parent, ok := ctx.Value(runLeaseKey{}).(*runLease); ok && parent != nil && parent.runID != runID {
+		return true
+	}
+	ticket, ok := ctx.Value(admissionTicketKey{}).(*admissionTicket)
+	return ok && !ticket.holdSlot
+}
+
+// interrupt cancels this lease's run with cause, and remembers the cause
+// as the run's own. The first cause wins.
+func (l *runLease) interrupt(cause error) {
+	l.cause.CompareAndSwap(nil, &cause)
+	l.cancel(cause)
+}
+
+// ownCause is the cause this lease's run was interrupted with, or nil.
+func (l *runLease) ownCause() error {
+	if c := l.cause.Load(); c != nil {
+		return *c
+	}
+	return nil
+}
+
 // releaseLease stops renewing the lease ctx holds on runID, if any. The
 // loops defer it, so a pass that ends any way at all stops renewing. The
 // run's context is left alone, since some callers go on using it after the
@@ -150,19 +199,50 @@ func releaseLease(ctx context.Context, runID id.AgentRunID) {
 
 // leaseClaimed takes a lease on a run this call just claimed from a pause,
 // which the claim left running with no owner. A run this engine does not
-// lease, or a hold that fails, continues as before without one.
-func (e *Engine) leaseClaimed(ctx context.Context, r *run.Run) context.Context {
+// lease is returned as it is.
+//
+// A failed hold is retried a few times within a small part of the lease
+// ttl. When every attempt fails the pass ends there, with
+// cortex.ErrRunInterrupted and nothing written: a leasable run must not
+// execute without its lease. The run stays running with no owner, and
+// recovering such a run is the engine sweep's job, not this pass's. A hold
+// refused because another worker owns the run ends the pass with
+// cortex.ErrRunLeaseLost.
+func (e *Engine) leaseClaimed(ctx context.Context, r *run.Run) (context.Context, error) {
 	if r == nil || !e.leasesRun(r) {
-		return ctx
+		return ctx, nil
 	}
-	lease := e.newLease()
-	if err := e.continuation.HoldLease(cortex.WithScope(ctx, r.Scope), r.ID, lease); err != nil {
-		e.logWarn("hold the lease of a claimed run; continuing without one", err, log.String("run_id", r.ID.String()))
-		return ctx
+	pause := e.leaseTTL / 30
+	var err error
+	for attempt := 1; ; attempt++ {
+		lease := e.newLease()
+		err = e.continuation.HoldLease(cortex.WithScope(ctx, r.Scope), r.ID, lease)
+		if err == nil {
+			r.Lease = &lease
+			return e.holdLease(ctx, r), nil
+		}
+		if errors.Is(err, cortex.ErrRunLeaseLost) || attempt == leaseHoldAttempts || !waitFor(ctx, pause*time.Duration(attempt)) {
+			break
+		}
 	}
-	r.Lease = &lease
-	ctx = e.holdLease(ctx, r)
-	return ctx
+	e.logError("hold the lease of a claimed run; leaving it for the sweep", err, log.String("run_id", r.ID.String()))
+	if errors.Is(err, cortex.ErrRunLeaseLost) {
+		return ctx, fmt.Errorf("cortex: run %s: %w", r.ID, err)
+	}
+	return ctx, fmt.Errorf("cortex: take the lease of run %s: %w: %w", r.ID, cortex.ErrRunInterrupted, err)
+}
+
+// waitFor sleeps for d, or until ctx ends, and reports whether it slept
+// the whole time.
+func waitFor(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (l *runLease) heartbeat(every time.Duration) {
@@ -176,7 +256,7 @@ func (l *runLease) heartbeat(every time.Duration) {
 		case <-ticker.C:
 		}
 		if err := l.renew(); errors.Is(err, cortex.ErrRunLeaseLost) {
-			l.cancel(cortex.ErrRunLeaseLost)
+			l.interrupt(cortex.ErrRunLeaseLost)
 			return
 		}
 	}
@@ -184,20 +264,13 @@ func (l *runLease) heartbeat(every time.Duration) {
 
 // renew extends the lease by the engine's ttl from now.
 func (l *runLease) renew() error {
-	expires := time.Now().UTC().Add(l.e.leaseTTL)
 	ctx, cancel := context.WithTimeout(l.base, leaseWriteTimeout)
 	defer cancel()
-	err := l.e.continuation.HoldLease(ctx, l.runID, run.Lease{Owner: l.owner, ExpiresAt: expires})
-	if err != nil {
-		if !errors.Is(err, cortex.ErrRunLeaseLost) {
-			l.e.logWarn("renew a run lease", err, log.String("run_id", l.runID.String()))
-		}
-		return err
+	err := l.e.continuation.HoldLease(ctx, l.runID, run.Lease{Owner: l.owner, ExpiresAt: time.Now().UTC().Add(l.e.leaseTTL)})
+	if err != nil && !errors.Is(err, cortex.ErrRunLeaseLost) {
+		l.e.logWarn("renew a run lease", err, log.String("run_id", l.runID.String()))
 	}
-	l.mu.Lock()
-	l.expires = expires
-	l.mu.Unlock()
-	return nil
+	return err
 }
 
 // release stops the heartbeat and ends the run's context.
@@ -217,28 +290,56 @@ func (l *runLease) stop() {
 	})
 }
 
-// interruption says why a leased run must stop where it is:
-// cortex.ErrRunLeaseLost when its lease is gone, cortex.ErrEngineStopping
-// when Stop ran out of time. It is nil for any other run, and for a run
-// whose context ended for another reason (its deadline, its caller).
+// interruption says why a leased run must stop where it is. Its own
+// causes come first: cortex.ErrRunLeaseLost when its lease is gone,
+// cortex.ErrEngineStopping when Stop ran out of time, errProgressUnsaved
+// when a started call could not be recorded, errChildInterrupted when a
+// run its tool started stopped. A nested run whose parent was interrupted
+// sees errParentStopped, never the parent's own cause, so it is not taken
+// for a run that lost its own lease. It is nil for any other run, and for
+// a run whose context ended for another reason (its deadline, its caller).
 func interruption(ctx context.Context, runID id.AgentRunID) error {
-	if leaseFor(ctx, runID) == nil || ctx.Err() == nil {
+	l := leaseFor(ctx, runID)
+	if l == nil {
 		return nil
 	}
-	cause := context.Cause(ctx)
-	if errors.Is(cause, cortex.ErrRunLeaseLost) || errors.Is(cause, cortex.ErrEngineStopping) {
-		return cause
+	if own := l.ownCause(); own != nil {
+		return own
+	}
+	if ctx.Err() == nil {
+		return nil
+	}
+	inherited := context.Cause(ctx)
+	if errors.Is(inherited, cortex.ErrRunLeaseLost) || errors.Is(inherited, cortex.ErrEngineStopping) || errors.Is(inherited, cortex.ErrRunInterrupted) {
+		return errParentStopped
 	}
 	return nil
 }
 
 // handOffDue reports whether a leased run should stop at this boundary:
-// the engine is draining, or the run was interrupted.
+// the run was interrupted, or the engine is draining and the run is not
+// nested inside another run's call.
 func (e *Engine) handOffDue(ctx context.Context, runID id.AgentRunID) bool {
-	if leaseFor(ctx, runID) == nil {
+	l := leaseFor(ctx, runID)
+	if l == nil {
 		return false
 	}
-	return e.admission.draining() || interruption(ctx, runID) != nil
+	if interruption(ctx, runID) != nil {
+		return true
+	}
+	return !l.nested && e.admission.draining()
+}
+
+// interruptedByTool stops a leased run whose tool reported that a run it
+// started was handed off or lost its lease. Nothing about that call is
+// the run's outcome: it stays started, and the run hands off.
+func interruptedByTool(ctx context.Context, runID id.AgentRunID, err error) {
+	if !errors.Is(err, cortex.ErrRunInterrupted) && !errors.Is(err, cortex.ErrRunLeaseLost) {
+		return
+	}
+	if l := leaseFor(ctx, runID); l != nil {
+		l.interrupt(errChildInterrupted)
+	}
 }
 
 // leaveRun ends this pass over a leased run without ending the run.
@@ -257,8 +358,17 @@ func (e *Engine) leaveRun(ctx context.Context, r *run.Run, fresh *suspension.Con
 		return nil
 	}
 	l.stop()
-	if errors.Is(interruption(ctx, r.ID), cortex.ErrRunLeaseLost) {
+	cause := interruption(ctx, r.ID)
+	switch {
+	case errors.Is(cause, cortex.ErrRunLeaseLost):
 		return e.loseRun(l, r)
+	case errors.Is(cause, errProgressUnsaved):
+		// The store would not take the Started record, so it will not take
+		// a hand-off either. Nothing is written and the lease lapses.
+		e.logError("record a started call; leaving the run for reclaim", cause, log.String("run_id", r.ID.String()))
+		return fmt.Errorf("cortex: run %s: %w", r.ID, cause)
+	case errors.Is(cause, errParentStopped):
+		e.logWarn("hand off a nested run whose parent stopped", cause, log.String("run_id", r.ID.String()))
 	}
 	if fresh != nil {
 		if err := l.saveBoundary(*fresh); errors.Is(err, cortex.ErrRunLeaseLost) {
@@ -355,6 +465,6 @@ func (g *leaseRegistry) interruptAll(cause error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for l := range g.held {
-		l.cancel(cause)
+		l.interrupt(cause)
 	}
 }

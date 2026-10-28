@@ -207,6 +207,12 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 			return nil, execution.ErrBudgetExceeded
 		}
 		record, runErr := r.execute(execCtx, draft)
+		if record != nil && (errors.Is(runErr, cortex.ErrRunInterrupted) || errors.Is(runErr, cortex.ErrRunLeaseLost)) {
+			// The child was handed off, or another worker holds it now. It
+			// has not failed: it continues elsewhere, and the orchestration
+			// waits for it exactly as it waits for a paused child.
+			return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
+		}
 		if usageErr := r.checkUsage(record, allocation); usageErr != nil {
 			runErr = errors.Join(runErr, usageErr)
 		}

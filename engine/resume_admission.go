@@ -187,7 +187,10 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, e.failResume(ctx, paused.ClaimedRun, paused.ClaimedRun.AgentID, authErr)
 	}
-	ctx = e.leaseClaimedResume(ctx, current, paused)
+	ctx, err = e.leaseClaimedResume(ctx, current, paused)
+	if err != nil {
+		return nil, err
+	}
 	ctx, ready, err := e.rehydrateResume(ctx, in, resumeSourceAgentReply, paused.ClaimedRun, paused)
 	if err != nil {
 		return nil, err

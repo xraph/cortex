@@ -383,12 +383,19 @@ func (e *Engine) Start(ctx context.Context) error {
 // no new delivery or ask, leaving them queued for another worker, and a
 // delivery it was already carrying finishes, resume included.
 //
+// A run started from inside another run's call (a tool calling RunAgent
+// on its ctx) is not handed off because of the drain: it ends with the
+// call that started it.
+//
 // If ctx ends before the last run finishes, Stop cancels the leased runs
-// still executing with cause cortex.ErrEngineStopping, which hands each of
-// them off as above, still signals task services and returns ctx's error,
-// but leaves the sweeper and the message bus running and announces no
-// shutdown. A tool result that arrives after the cancellation is
-// discarded, so a call that is not retry-safe stays recorded as started.
+// still executing with cause cortex.ErrEngineStopping, still signals task
+// services and returns ctx's error, but leaves the sweeper and the message
+// bus running and announces no shutdown. Each cancelled run hands itself
+// off as above, on its own goroutine: Stop does not wait for those writes,
+// so a process that exits at once may leave some of those runs to lapse
+// and be reclaimed by the sweep instead. A tool result that arrives after
+// the cancellation is discarded, so a call that is not retry-safe stays
+// recorded as started.
 // Runs without a lease keep executing and write their own outcome when
 // they finish. Call Stop again to complete the shutdown before disposing
 // stores.

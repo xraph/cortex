@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -173,4 +174,29 @@ func TestPreparedTeamContinuationRejectsChangedParentInput(t *testing.T) {
 	require.Equal(t, orchestration.StatusWaiting, stored.Status)
 	require.Equal(t, "work", stored.Input)
 	require.Equal(t, 1, f.client.calls)
+}
+
+// A child that is handed off has not failed: the orchestration waits for
+// it, as it waits for a paused child, and the child is left reclaimable.
+func TestPreparedTeamWaitsForAHandedOffChild(t *testing.T) {
+	f := newPreparedTeamFixture(t, orchestration.StrategySequential)
+	refreshPreparedTeam(t, &f, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+		return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
+	}))
+	f.client.complete = func(context.Context, *llm.Request, int) (*llm.Response, error) {
+		return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "probe-call", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil
+	}
+	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	require.Equal(t, orchestration.StatusWaiting, team.Status)
+	handedOff := 0
+	for _, key := range team.AgentRunIDs {
+		child, readErr := f.s.GetRun(f.ctx, key)
+		require.NoError(t, readErr)
+		require.NotEqual(t, run.StateFailed, child.State)
+		if child.State == run.StateReclaimable {
+			handedOff++
+		}
+	}
+	require.Equal(t, 1, handedOff)
 }

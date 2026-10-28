@@ -1210,7 +1210,9 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 	}
 
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
-	if outcome == outcomeFailed || outcome == outcomeUncertain {
+	// An interrupted run reports nothing about the call: it stays started,
+	// and the worker that continues the run settles it.
+	if (outcome == outcomeFailed || outcome == outcomeUncertain) && interruption(ctx, s.RunID) == nil {
 		noteToolFailure(ctx, failErr)
 		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
@@ -1290,6 +1292,10 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 				return "", outcomeUncertain, cortex.ErrEffectUncertain
 			}
 			if err != nil {
+				// A run the handler started was handed off or lost its
+				// lease: that interrupts this run, it is not the call's
+				// result.
+				interruptedByTool(ctx, s.RunID, err)
 				return jsonResult("error", err.Error()), outcomeFailed, err
 			}
 			return out, outcomeCompleted, nil

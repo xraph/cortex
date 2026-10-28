@@ -20,6 +20,8 @@ import (
 	"github.com/xraph/cortex/planning"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/store/sqlite"
+	"github.com/xraph/cortex/suspension"
 	"github.com/xraph/cortex/verification"
 )
 
@@ -306,4 +308,37 @@ func TestTaskReviewRuntimeExecutionDeadlineBounds(t *testing.T) {
 		_, err := e.NewTaskReviewRuntime(cfg)
 		require.ErrorIs(t, err, coordination.ErrInvalidReview)
 	}
+}
+
+// A review run handed off while the engine drains is still in progress:
+// Observe reports it pending rather than as a conflict, and Execute's
+// error says it was handed off.
+func TestTaskReviewRuntimeHandedOffReviewIsPending(t *testing.T) {
+	ctx, _, s, client, cfg := reviewRuntimeFixture(t)
+	backend, ok := s.Store.(*sqlite.Store)
+	require.True(t, ok)
+	// The fixture's store hides the lease capabilities; this one keeps them,
+	// as a host's real store would.
+	leased := &leasedReviewStore{reviewRuntimeStore: s, ContinuationStore: backend, ProgressStore: backend}
+	e, err := engine.New(engine.WithStore(leased), engine.WithLLM(client))
+	require.NoError(t, err)
+	worker, err := e.NewTaskReviewRuntime(cfg)
+	require.NoError(t, err)
+	require.NoError(t, e.Stop(context.Background()))
+	require.ErrorIs(t, worker.Execute(ctx, s.receipt), cortex.ErrRunInterrupted)
+	require.Zero(t, client.calls)
+	row, err := s.GetRun(ctx, s.receipt.Request.RunID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateReclaimable, row.State)
+	historical := s.receipt
+	historical.Fresh = false
+	pending, err := worker.Observe(ctx, historical)
+	require.NoError(t, err)
+	require.Nil(t, pending)
+}
+
+type leasedReviewStore struct {
+	*reviewRuntimeStore
+	run.ContinuationStore
+	suspension.ProgressStore
 }

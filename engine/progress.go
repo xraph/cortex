@@ -55,8 +55,12 @@ func (e *Engine) saveBoundary(ctx context.Context, runID id.AgentRunID, cont sus
 	}
 }
 
-// noteStarted is progress point 3. It returns cortex.ErrRunLeaseLost when
-// the save found the lease gone, and the call must not be dispatched.
+// noteStarted is progress point 3, and it fails closed: a call that is not
+// retry-safe is dispatched only once its Started record is durable. A save
+// that fails is retried once. If the retry fails too, or the lease is gone,
+// it returns the error and the call must not be dispatched; the run is
+// interrupted (errProgressUnsaved, or cortex.ErrRunLeaseLost) and the pass
+// ends at the loop's next check without writing anything else.
 func (e *Engine) noteStarted(ctx context.Context, runID id.AgentRunID, tc llm.ToolCall) error {
 	l := leaseFor(ctx, runID)
 	if l == nil || e.retrySafe[tc.Name] {
@@ -65,10 +69,21 @@ func (e *Engine) noteStarted(ctx context.Context, runID id.AgentRunID, tc llm.To
 	l.mu.Lock()
 	l.progress.started = append(l.progress.started, pendingCall(tc))
 	l.mu.Unlock()
-	if err := l.save(); errors.Is(err, cortex.ErrRunLeaseLost) {
-		return err
+	err := l.save()
+	if err != nil && !errors.Is(err, cortex.ErrRunLeaseLost) {
+		err = l.save()
 	}
-	return nil
+	if err == nil {
+		return nil
+	}
+	// The call was never recorded, and it will not run.
+	l.mu.Lock()
+	l.progress.started = l.progress.started[:len(l.progress.started)-1]
+	l.mu.Unlock()
+	if !errors.Is(err, cortex.ErrRunLeaseLost) {
+		l.interrupt(errProgressUnsaved)
+	}
+	return err
 }
 
 // noteDone is progress point 4, for one call's checked result. A result
@@ -122,7 +137,7 @@ func (l *runLease) save() error {
 	defer cancel()
 	err := l.e.progress.SaveProgress(ctx, p)
 	if errors.Is(err, cortex.ErrRunLeaseLost) {
-		l.cancel(cortex.ErrRunLeaseLost)
+		l.interrupt(cortex.ErrRunLeaseLost)
 		return err
 	}
 	if err != nil {
@@ -134,8 +149,11 @@ func (l *runLease) save() error {
 // dropProgress deletes the snapshot of a run that has ended or paused.
 // Postgres and SQLite cascade a deleted run, but nothing deletes a run
 // that ends, and Mongo cascades nothing, so every such path calls this.
+//
+// With leases off no snapshot is ever written, so there is nothing to
+// delete. Every engine sharing a store uses the same lease setting.
 func (e *Engine) dropProgress(ctx context.Context, r *run.Run) {
-	if e.progress == nil || r.Provenance.VerificationRequired || r.Provenance.TaskClaimID != "" {
+	if e.progress == nil || e.leaseTTL == 0 || r.Provenance.VerificationRequired || r.Provenance.TaskClaimID != "" {
 		return
 	}
 	base := context.WithoutCancel(ctx)

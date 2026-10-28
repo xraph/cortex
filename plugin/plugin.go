@@ -61,7 +61,9 @@ type RunSuspended interface {
 // reviewer decided its checkpoint, or a caller supplied its external
 // results. It fires once the ready state is written, with ctx carrying the
 // run's own scope. A host usually answers it by queueing a job that calls
-// engine.ContinueRun, on any replica.
+// engine.ContinueRun, on any replica. The same decision made twice at once
+// can fire it twice; only one ContinueRun wins, and the other is refused
+// with cortex.ErrRunNotContinuable, so a duplicate costs one refused job.
 type RunReady interface {
 	OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error
 }

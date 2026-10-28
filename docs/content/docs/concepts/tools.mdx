@@ -75,7 +75,9 @@ crash does no harm. Either it only reads, or it is idempotent through the
 effect journal. The engine records the promise (`engine.WithToolRetrySafe`,
 which `tool.Register` calls for you) and exposes it through
 `Engine.ToolRetrySafe(name)`. Without it, an interrupted call is treated as
-uncertain.
+uncertain. The engine records such a call as started before its handler
+gets it, and if it can't save that record it doesn't run the call at all:
+the run stops there and another replica reclaims it.
 
 Do not mark a tool that creates or changes something unless the journal
 makes the repeat harmless.
