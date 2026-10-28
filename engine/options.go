@@ -172,24 +172,81 @@ func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 // other (executeTool). The only difference is what happens at dispatch:
 // there is no handler to run, so the call becomes pending and the loop
 // stops.
-func WithExternalTool(def llm.Tool) Option {
+//
+// Pass ExternalTTL to give a pause on this tool its own deadline.
+func WithExternalTool(def llm.Tool, opts ...ExternalToolOption) Option {
 	return func(e *Engine) error {
-		e.externalTools = append(e.externalTools, def)
+		t := registeredExternal{def: def}
+		for _, opt := range opts {
+			opt(&t)
+		}
+		if t.ttl < 0 {
+			return fmt.Errorf("cortex: external tool %q TTL %s is negative", def.Name, t.ttl)
+		}
+		e.externalTools = append(e.externalTools, t)
 		return nil
 	}
 }
 
-// WithSuspensionTTL sets how long a suspended run waits for the outside
-// world before the expiry sweeper fails it. It defaults to
-// defaultSuspensionTTL.
+// ExternalToolOption configures one WithExternalTool registration.
+type ExternalToolOption func(*registeredExternal)
+
+// registeredExternal is one WithExternalTool registration, named after
+// registeredTool, its WithTool counterpart.
+type registeredExternal struct {
+	def llm.Tool
+	// ttl is how long a pause on this tool waits, zero for the engine's
+	// suspension TTL.
+	ttl time.Duration
+}
+
+// ExternalTTL sets how long a run paused on this tool waits for its
+// result before the sweeper fails it, in place of the engine's suspension
+// TTL. Zero keeps the engine's. A negative duration is refused, for the
+// same reason WithSuspensionTTL refuses one.
+func ExternalTTL(d time.Duration) ExternalToolOption {
+	return func(t *registeredExternal) { t.ttl = d }
+}
+
+// WithAgentReplyGrace sets how long past an ask's reply-by a run waiting
+// on another agent's answer stays paused before the sweeper fails it. It
+// defaults to defaultAgentReplyGrace.
 //
-// A TTL of zero disables expiry outright: suspensions are written with
-// no deadline, and no sweeper runs. That is the right setting for a host
-// whose pauses are answered by a person on their own schedule and who
-// would rather have a run sit paused for a week than have it failed out
-// from under them. It is not the default, because the failure it
-// prevents is visible and recoverable while the one it allows (a run
-// paused forever on a browser tab somebody closed) is neither.
+// The grace exists because the ask has a deadline of its own, and the
+// message bus answers it first: at reply-by the ask sweep resumes the
+// asking run with a timeout the model can read and react to. The engine's
+// deadline comes later, so its sweep only fails a run the ask sweep never
+// reached, a bus that was down or a resume that failed. Zero puts the two
+// deadlines on one instant, and which sweep wins is then down to timing.
+// A negative duration is refused.
+func WithAgentReplyGrace(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d < 0 {
+			return fmt.Errorf("cortex: agent reply grace %s is negative", d)
+		}
+		e.agentReplyGrace = d
+		return nil
+	}
+}
+
+// WithSuspensionTTL sets the default deadline for a suspended run: how
+// long it waits for the outside world before the expiry sweeper fails it.
+// It defaults to defaultSuspensionTTL.
+//
+// It is a default, not the only deadline. An approval can carry its own
+// (cortex.ApprovalRequired.TTL), an external tool can (ExternalTTL), and
+// a run waiting on another agent follows that ask's reply-by. A
+// suspension expires at the earliest deadline among its pending calls.
+//
+// A TTL of zero means no default deadline: a pending call with no TTL of
+// its own is written with none and never expires. That is the right
+// setting for a host whose pauses are answered by a person on their own
+// schedule and who would rather have a run sit paused for a week than
+// have it failed out from under them. The sweeper still runs, because a
+// call that does carry its own deadline still has to be failed when it
+// passes. Zero is not the default, because the failure it prevents is
+// visible and recoverable while the one it allows (a run paused forever
+// on a browser tab somebody closed) is neither.
 //
 // A negative duration is refused rather than clamped. It reads as an
 // already-passed deadline, so accepting it would have every suspension
@@ -198,7 +255,7 @@ func WithExternalTool(def llm.Tool) Option {
 func WithSuspensionTTL(d time.Duration) Option {
 	return func(e *Engine) error {
 		if d < 0 {
-			return fmt.Errorf("cortex: suspension TTL %s is negative; use 0 to disable expiry", d)
+			return fmt.Errorf("cortex: suspension TTL %s is negative; use 0 for no default deadline", d)
 		}
 		e.suspensionTTL = d
 		return nil
@@ -217,7 +274,7 @@ func WithSuspensionTTL(d time.Duration) Option {
 func WithSuspensionSweepInterval(d time.Duration) Option {
 	return func(e *Engine) error {
 		if d <= 0 {
-			return fmt.Errorf("cortex: suspension sweep interval %s must be positive; use WithSuspensionTTL(0) to switch expiry off", d)
+			return fmt.Errorf("cortex: suspension sweep interval %s must be positive", d)
 		}
 		e.sweepInterval = d
 		return nil

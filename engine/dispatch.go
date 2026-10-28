@@ -27,7 +27,7 @@ func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 	// The outcome is what tells the ReAct loop whether a ToolCompleted event
 	// is still owed. Dispatch has no run to attribute one to, so it drops it.
 	call := llm.ToolCall{Name: name, Arguments: arguments}
-	result, outcome, reason := e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+	result, outcome, wait := e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, pendingWait) {
 		return e.executeTool(ctx, subject, call)
 	})
 	// A pending call can only be answered by suspending a run, and
@@ -40,7 +40,7 @@ func (e *Engine) Dispatch(ctx context.Context, name, arguments string) string {
 		return jsonResult("error", cortex.ErrEffectUncertain.Error())
 	}
 	if outcome == outcomePending {
-		if reason == suspension.ReasonApproval {
+		if wait.reason == suspension.ReasonApproval {
 			return jsonResult("error", "tool "+name+" requires approval: it is answered by resolving the checkpoint on a suspended run, not through Dispatch")
 		}
 		return jsonResult("error", "tool "+name+" is external: it is executed by the caller when a run suspends, not through Dispatch")

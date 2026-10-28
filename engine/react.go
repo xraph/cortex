@@ -323,7 +323,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				tcStart := time.Now().UTC()
 				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
-				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -337,7 +337,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					// either, and no tool result message: the model must
 					// not see an empty result standing in for a call
 					// that is still outstanding.
-					pending.add(tc, pendingReason)
+					pending.add(tc, wait.reason, wait.ttl, wait.note)
 					continue
 				}
 
@@ -750,7 +750,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					"tool_id":   publicGenerationText(r, tc.ID),
 				}})
 
-				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -762,7 +762,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					return
 				}
 				if outcome == outcomePending {
-					pending.add(tc, pendingReason)
+					pending.add(tc, wait.reason, wait.ttl, wait.note)
 					continue
 				}
 
@@ -1001,7 +1001,7 @@ func (e *Engine) toolDefinitions(names []string, restricted bool) []llm.Tool {
 	for _, rt := range e.tools {
 		registered = append(registered, rt.def)
 	}
-	registered = append(registered, e.externalTools...)
+	registered = append(registered, e.externalToolDefs()...)
 	if restricted || len(names) > 0 {
 		registered = filterByName(registered, names)
 	}
@@ -1019,8 +1019,8 @@ func (e *Engine) registeredToolNames() []string {
 	for _, rt := range e.tools {
 		out = append(out, rt.def.Name)
 	}
-	for _, t := range e.externalTools {
-		out = append(out, t.Name)
+	for _, ext := range e.externalTools {
+		out = append(out, ext.def.Name)
 	}
 
 	return out
@@ -1078,7 +1078,7 @@ const (
 // Only the plugin event differs. outcomePending is the exception: nothing ran,
 // so there is no result, and the empty string it returns must not be fed back
 // to the model as one.
-func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, suspension.SuspendReason) {
+func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, pendingWait) {
 	if e.authorizer != nil {
 		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
 			// ErrRequiresApproval is the authorizer's third answer and it
@@ -1090,10 +1090,10 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 			// either: a denial's error text would tell it the call was
 			// refused when it is only waiting.
 			if errors.Is(err, cortex.ErrRequiresApproval) {
-				return "", outcomePending, suspension.ReasonApproval
+				return e.approvalWait(ctx, s, tc, err)
 			}
 			e.emitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, err).Error())
-			return jsonResult("error", err.Error()), outcomeDenied, ""
+			return jsonResult("error", err.Error()), outcomeDenied, pendingWait{}
 		}
 	}
 
@@ -1103,9 +1103,32 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
 	if outcome == outcomePending {
-		return result, outcome, pendingReason(tc.Name)
+		wait := pendingWait{reason: pendingReason(tc.Name)}
+		if wait.reason == suspension.ReasonExternalTool {
+			wait.ttl = e.externalTTL(tc.Name)
+		}
+		return result, outcome, wait
 	}
-	return result, outcome, ""
+	return result, outcome, pendingWait{}
+}
+
+// approvalWait classifies a call the authorizer escalated. The sentinel
+// alone gives no TTL and no note; ApprovalRequired, found anywhere in the
+// chain, gives both.
+//
+// A negative TTL is a denial, not a pause. It reads as a deadline that
+// has already passed, and pausing on it would open a checkpoint nobody
+// can answer before the sweeper fails the run. Refusing the call instead
+// tells the model, on this step, and fires ToolDenied for the operator.
+func (e *Engine) approvalWait(ctx context.Context, s cortex.Subject, tc llm.ToolCall, err error) (string, toolOutcome, pendingWait) {
+	var approval cortex.ApprovalRequired
+	errors.As(err, &approval)
+	if approval.TTL < 0 {
+		denial := fmt.Errorf("approval TTL is negative (%s), so the call is denied rather than paused past its own deadline", approval.TTL)
+		e.emitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, denial).Error())
+		return jsonResult("error", denial.Error()), outcomeDenied, pendingWait{}
+	}
+	return "", outcomePending, pendingWait{reason: suspension.ReasonApproval, ttl: approval.TTL, note: approval.Reason}
 }
 
 // pendingReason says what a pending call is waiting on. External tools
@@ -1157,8 +1180,8 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 	// same as the first-match-wins rule WithTool already documents.
 	// Nothing runs here: the call has not completed, failed or been
 	// denied, it is waiting on the caller.
-	for _, def := range e.externalTools {
-		if def.Name == tc.Name {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == tc.Name {
 			return "", outcomePending, nil
 		}
 	}

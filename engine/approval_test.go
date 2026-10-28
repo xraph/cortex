@@ -111,12 +111,12 @@ func TestExecuteTool_ApprovalIsPendingNotDenied(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome, reason := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
+	result, outcome, wait := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
 	if outcome != outcomePending {
 		t.Fatalf("outcome = %d, want outcomePending (%d); an escalation reported as anything else is a call nobody is asked about", outcome, outcomePending)
 	}
-	if reason != suspension.ReasonApproval {
-		t.Errorf("pending reason = %q, want %q", reason, suspension.ReasonApproval)
+	if wait.reason != suspension.ReasonApproval {
+		t.Errorf("pending reason = %q, want %q", wait.reason, suspension.ReasonApproval)
 	}
 	if result != "" {
 		t.Errorf("executeTool returned %q; nothing ran, so nothing may go back to the model as a result", result)
@@ -151,12 +151,12 @@ func TestExecuteTool_AnOrdinaryDenialIsStillADenial(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome, reason := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
+	result, outcome, wait := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
 	if outcome != outcomeDenied {
 		t.Fatalf("outcome = %d, want outcomeDenied (%d)", outcome, outcomeDenied)
 	}
-	if reason != "" {
-		t.Errorf("a denial carried the suspend reason %q; nothing is pending", reason)
+	if wait.reason != "" {
+		t.Errorf("a denial carried the suspend reason %q; nothing is pending", wait.reason)
 	}
 	if !strings.Contains(result, "not permitted") {
 		t.Errorf("result = %q, want the denial reason fed back to the model", result)

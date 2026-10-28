@@ -26,6 +26,13 @@ const (
 	// paused list for a quarter.
 	defaultSuspensionTTL = 24 * time.Hour
 
+	// defaultAgentReplyGrace is how long past an ask's reply-by the
+	// engine waits before failing the asking run. The ask sweep resolves
+	// the ask at reply-by and resumes the run with a timeout, and five
+	// minutes is ten of its default ticks, so the engine only fails a
+	// run the bus could not resume.
+	defaultAgentReplyGrace = 5 * time.Minute
+
 	// defaultSweepInterval is how often the sweeper looks. Deadlines are
 	// measured in hours, so a minute of granularity costs one small
 	// indexed read per minute and buys expiry that lands close enough to
@@ -50,11 +57,13 @@ type sweeper struct {
 	done   chan struct{}
 }
 
-// startSweeper launches the expiry loop, unless expiry is off or there
-// is no store to sweep. Calling it twice is a no-op: a second Start on a
+// startSweeper launches the expiry loop, unless there is no store to
+// sweep. It runs even with a zero suspension TTL: that only drops the
+// default deadline, and an approval or an external tool can still carry
+// a deadline of its own. Calling it twice is a no-op: a second Start on a
 // running engine must not leave two loops failing the same runs.
 func (e *Engine) startSweeper() {
-	if e.suspensionTTL <= 0 || e.store == nil {
+	if e.store == nil {
 		return
 	}
 
@@ -115,7 +124,7 @@ func (e *Engine) stopSweeper() {
 // harmless here but would quietly diverge the two halves of a decision
 // that has to agree.
 func (e *Engine) sweepOnce(ctx context.Context) {
-	if e.store == nil || e.suspensionTTL <= 0 {
+	if e.store == nil {
 		return
 	}
 

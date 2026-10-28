@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +50,18 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 	return suspension.PendingCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
 }
 
+// pendingWait is what executeTool says about a call it left pending: why
+// it waits, and for how long.
+type pendingWait struct {
+	reason suspension.SuspendReason
+	// ttl is the call's own deadline, zero for the engine's suspension
+	// TTL. An agent reply leaves it zero: its deadline is the ask's
+	// reply-by, which suspend reads off the ask.
+	ttl time.Duration
+	// note is the authorizer's reason for asking for approval.
+	note string
+}
+
 // pendingCalls is everything one step could not finish: the calls, and
 // the reason each of them is waiting on.
 //
@@ -63,6 +76,8 @@ func pendingCall(tc llm.ToolCall) suspension.PendingCall {
 type pendingCalls struct {
 	calls   []suspension.PendingCall
 	reasons []suspension.SuspendReason
+	// ttls runs parallel to calls: each call's own TTL, zero for none.
+	ttls []time.Duration
 
 	// asks are the questions this step sent and has not routed yet. They
 	// go out from suspend, after the run is paused: a peer that answered
@@ -73,9 +88,12 @@ type pendingCalls struct {
 	run id.AgentRunID
 }
 
-func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason) {
-	p.calls = append(p.calls, pendingCall(tc))
+func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason, ttl time.Duration, note string) {
+	call := pendingCall(tc)
+	call.Note = note
+	p.calls = append(p.calls, call)
 	p.reasons = append(p.reasons, reason)
+	p.ttls = append(p.ttls, ttl)
 }
 
 func (p *pendingCalls) any() bool { return len(p.calls) > 0 }
@@ -206,7 +224,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 		Reason:    reason,
 		Pending:   pend.calls,
 		Cont:      cont,
-		ExpiresAt: e.suspensionDeadline(),
+		ExpiresAt: e.suspensionDeadline(pend, reason, time.Now().UTC()),
 	}
 	if err = e.store.CreateSuspension(ctx, s); err != nil {
 		return "", fmt.Errorf("create suspension: %w", err)
@@ -271,6 +289,27 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 		e.extensions.EmitCheckpointCreated(ctx, cp.ID, r.ID, cp.Reason)
 	}
 
+	// RunSuspended goes out for every reason, after the flip for the same
+	// reason as the checkpoint, and before the step's questions are
+	// released below: once they are out a peer can answer and resume the
+	// run, and a hook that read the run then would find it running again.
+	// Under the run's own scope, so a hook that reads the run or the
+	// suspension back lands where they were written.
+	notice := suspension.Notice{
+		SuspensionID: s.ID,
+		Reason:       reason,
+		Pending:      slices.Clone(s.Pending),
+		Scope:        r.Scope,
+	}
+	if s.ExpiresAt != nil {
+		expiresAt := *s.ExpiresAt
+		notice.ExpiresAt = &expiresAt
+	}
+	if cp != nil {
+		notice.CheckpointID = cp.ID
+	}
+	e.extensions.EmitRunSuspended(cortex.WithScope(ctx, r.Scope), r.AgentID, r.ID, notice)
+
 	// The step's questions go out after the flip for the same reason. A
 	// peer can answer as fast as it likes, and its reply resumes the run
 	// only if the run is already paused with a suspension to claim.
@@ -297,16 +336,64 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 }
 
 // suspensionDeadline is when the sweeper may fail this run, or nil when
-// expiry is switched off. It is stamped at suspend time rather than
-// derived at sweep time so a TTL change never moves the deadline of a
-// run that is already waiting: whoever was told to answer by Tuesday
-// still has until Tuesday.
-func (e *Engine) suspensionDeadline() *time.Time {
-	if e.suspensionTTL <= 0 {
+// none of its pending calls has a deadline. It is stamped at suspend time
+// rather than derived at sweep time so a TTL change never moves the
+// deadline of a run that is already waiting: whoever was told to answer
+// by Tuesday still has until Tuesday.
+//
+// Each call brings its own deadline and the earliest one wins, because a
+// run resumes only when every call under it is answered: the call with
+// the shortest wait is the one that decides when waiting stops being
+// worth it.
+//
+//   - An approval or an external call uses its own TTL when it has one,
+//     and the engine's suspension TTL otherwise. Zero for both means no
+//     deadline for that call.
+//   - An agent reply follows its ask: reply-by plus the grace. The ask
+//     sweep resolves the ask at reply-by and resumes the run with a
+//     timeout the model can read, so the engine's deadline has to come
+//     after it. An ask already past its reply-by gets the grace from now.
+//     An ask this step did not collect (none should be missing) falls
+//     back to the suspension TTL rather than leave the run with no
+//     deadline at all.
+func (e *Engine) suspensionDeadline(pend pendingCalls, reason suspension.SuspendReason, now time.Time) *time.Time {
+	replyBy := make(map[string]time.Time, len(pend.asks))
+	for _, ask := range pend.asks {
+		if ask != nil && !ask.ReplyBy.IsZero() {
+			replyBy[ask.ToolCallID] = ask.ReplyBy
+		}
+	}
+
+	var earliest *time.Time
+	for i, call := range pend.calls {
+		var due time.Time
+		var ttl time.Duration
+		if i < len(pend.ttls) {
+			ttl = pend.ttls[i]
+		}
+		by, asked := replyBy[call.ID]
+		switch {
+		case reason == suspension.ReasonAgentReply && asked:
+			if by.Before(now) {
+				by = now
+			}
+			due = by.Add(e.agentReplyGrace)
+		case ttl > 0:
+			due = now.Add(ttl)
+		case e.suspensionTTL > 0:
+			due = now.Add(e.suspensionTTL)
+		default:
+			continue
+		}
+		if earliest == nil || due.Before(*earliest) {
+			earliest = &due
+		}
+	}
+	if earliest == nil {
 		return nil
 	}
-	t := time.Now().UTC().Add(e.suspensionTTL)
-	return &t
+	deadline := earliest.UTC()
+	return &deadline
 }
 
 // createCheckpoint opens the human-facing half of an approval
@@ -324,8 +411,17 @@ func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension
 	}
 
 	names := make([]string, 0, len(s.Pending))
+	described := make([]string, 0, len(s.Pending))
 	for _, p := range s.Pending {
 		names = append(names, p.Name)
+		// The authorizer's reason, when it gave one, goes next to the
+		// call it explains: the decider reads the checkpoint, not the
+		// suspension behind it.
+		if p.Note != "" {
+			described = append(described, p.Name+" ("+p.Note+")")
+		} else {
+			described = append(described, p.Name)
+		}
 	}
 
 	// The step that asked for these calls, not the next one to run.
@@ -341,7 +437,7 @@ func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension
 		RunID:     r.ID,
 		AgentID:   r.AgentID,
 		Scope:     r.Scope,
-		Reason:    "tool call requires approval: " + strings.Join(names, ", "),
+		Reason:    "tool call requires approval: " + strings.Join(described, ", "),
 		StepIndex: stepIndex,
 		State:     checkpointStatePending,
 		Metadata: map[string]any{

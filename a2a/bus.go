@@ -538,6 +538,10 @@ type AskResult struct {
 	MessageID      id.MessageID      `json:"message_id"`
 	ConversationID id.ConversationID `json:"conversation_id"`
 	ReplyWith      string            `json:"reply_with"`
+	// ReplyBy is when the answer is due, the ask's own deadline. The ask
+	// sweep resolves the ask at this instant, and an engine suspending
+	// its run on the ask sets the run's deadline from it.
+	ReplyBy time.Time `json:"reply_by"`
 
 	// held is the envelope Release routes. It is nil for an ask that was
 	// routed when it was sent, and for one that has been released.
@@ -619,6 +623,9 @@ func (b *Bus) Ask(ctx context.Context, p AskParams) (*AskResult, error) {
 	}
 
 	res := &AskResult{MessageID: e.ID, ConversationID: e.ConversationID, ReplyWith: e.ReplyWith, ToolCallID: p.ToolCallID}
+	if e.ReplyBy != nil {
+		res.ReplyBy = *e.ReplyBy
+	}
 	if p.Hold {
 		res.held = e
 		return res, nil

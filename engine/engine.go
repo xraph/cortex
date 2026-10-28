@@ -96,20 +96,24 @@ type Engine struct {
 	modelRevisions        map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
-	externalTools []llm.Tool
+	externalTools []registeredExternal
 
 	// retrySafeNames is what WithToolRetrySafe collected; New checks each
 	// against tools and folds them into retrySafe.
 	retrySafeNames []string
 	retrySafe      map[string]bool
 
-	// suspensionTTL is how long a paused run waits before the sweeper
-	// fails it. Zero switches expiry off entirely: suspensions are
-	// written with no deadline and no sweeper runs.
+	// suspensionTTL is the default for how long a paused run waits
+	// before the sweeper fails it, used by any pending call with no TTL
+	// of its own. Zero means no default deadline; the sweeper still runs
+	// for calls that carry one.
 	suspensionTTL time.Duration
-	sweepInterval time.Duration
-	sweepLimit    int
-	sweep         sweeper
+	// agentReplyGrace is how long past an ask's reply-by a run waiting
+	// on that answer stays paused, so the ask sweep reaches it first.
+	agentReplyGrace time.Duration
+	sweepInterval   time.Duration
+	sweepLimit      int
+	sweep           sweeper
 
 	// a2a is the agent-to-agent message bus, nil unless a host asked for
 	// messaging with WithA2A. Its nil-ness is what gates the three
@@ -166,11 +170,12 @@ func New(opts ...Option) (*Engine, error) {
 		config: cortex.DefaultConfig(),
 		logger: log.NewNoopLogger(),
 		// Set before the options run, so WithSuspensionTTL(0) reads as
-		// the caller switching expiry off rather than as a field nobody
-		// filled in.
-		suspensionTTL: defaultSuspensionTTL,
-		sweepInterval: defaultSweepInterval,
-		sweepLimit:    defaultSweepLimit,
+		// the caller dropping the default deadline rather than as a field
+		// nobody filled in.
+		suspensionTTL:   defaultSuspensionTTL,
+		agentReplyGrace: defaultAgentReplyGrace,
+		sweepInterval:   defaultSweepInterval,
+		sweepLimit:      defaultSweepLimit,
 	}
 
 	for _, opt := range opts {

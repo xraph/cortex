@@ -56,6 +56,25 @@ type PendingCall struct {
 	// Arguments is the JSON-encoded argument object, verbatim from the
 	// model's tool call.
 	Arguments string `json:"arguments"`
+	// Note is the authorizer's reason for asking for approval, taken from
+	// cortex.ApprovalRequired. It is empty for every other pending call,
+	// and for an approval asked for with the bare sentinel.
+	Note string `json:"note,omitempty"`
+}
+
+// Notice is what a host hears when a run pauses, for every reason a run
+// can pause. It carries enough to tell somebody without a second read:
+// what the run is waiting on, until when, and under which scope.
+type Notice struct {
+	SuspensionID id.SuspensionID
+	Reason       SuspendReason
+	Pending      []PendingCall
+	// ExpiresAt is the suspension's deadline, nil when it has none.
+	ExpiresAt *time.Time
+	// CheckpointID is the checkpoint a person decides. It is zero unless
+	// Reason is ReasonApproval.
+	CheckpointID id.CheckpointID
+	Scope        cortex.Scope
 }
 
 // RunConfig is the resolved configuration a run was executing under: the

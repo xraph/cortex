@@ -622,8 +622,8 @@ func (e *Engine) toolKind(name string) string {
 			return toolKindRegistered
 		}
 	}
-	for _, def := range e.externalTools {
-		if def.Name == name {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == name {
 			return toolKindExternal
 		}
 	}
@@ -651,7 +651,7 @@ func noteToolFailure(ctx context.Context, err error) {
 // The span and the metrics are closed in a deferred call, so a tool, an
 // authorizer or a hook that panics still ends its span (as the class
 // "panic") and is still counted before the panic carries on.
-func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, suspension.SuspendReason)) (result string, outcome toolOutcome, reason suspension.SuspendReason) {
+func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, pendingWait)) (result string, outcome toolOutcome, wait pendingWait) {
 	kind := e.toolKind(tc.Name)
 	name := tc.Name
 	if kind == toolKindUnknown {
@@ -696,9 +696,9 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 		span.End()
 	}()
 
-	result, outcome, reason = call(ctx)
+	result, outcome, wait = call(ctx)
 	returned = true
-	return result, outcome, reason
+	return result, outcome, wait
 }
 
 // toolCallID returns the provider's call ID for a span, or false when it

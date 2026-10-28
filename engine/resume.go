@@ -652,9 +652,9 @@ func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p susp
 	}
 
 	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments}
-	content, outcome, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+	content, outcome, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, pendingWait) {
 		out, callOutcome := e.runResumedTool(ctx, s, call, approved, &errText)
-		return out, callOutcome, ""
+		return out, callOutcome, pendingWait{}
 	})
 	return content, errText, outcome
 }

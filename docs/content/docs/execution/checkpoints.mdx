@@ -38,8 +38,11 @@ type Decision struct {
 ## Lifecycle
 
 1. During a run, a `ToolAuthorizer` escalates a tool call by returning
-   `cortex.ErrRequiresApproval`
-2. The run suspends, and a checkpoint is created with state `pending`
+   `cortex.ErrRequiresApproval`, or `cortex.ApprovalRequired` when it has a
+   reason to give and a deadline of its own
+2. The run suspends, and a checkpoint is created with state `pending`. Its
+   `Reason` names the calls, each with the authorizer's reason when there is
+   one
 3. A human reviews the checkpoint through `Engine.ListPendingCheckpoints` or the
    REST endpoint
 4. The human resolves it with a Decision (approve or reject)
@@ -52,6 +55,20 @@ Run (running) -> Checkpoint created (pending) -> Run (paused)
                                 Decision made -> Run (running) [approved]
                                               -> Run (failed)  [rejected]
 ```
+
+A checkpoint left undecided expires with its run. The deadline is the
+approval's own TTL, or the engine's suspension TTL when it gave none, and once
+it passes the sweeper fails the run and resolves the checkpoint with
+`DecidedBy: "cortex"`. Set the TTL on the approval when one decision needs
+longer than the rest:
+
+```go
+return cortex.ApprovalRequired{Reason: "production deploy", TTL: 7 * 24 * time.Hour}
+```
+
+To tell people a checkpoint is waiting on them, implement
+`plugin.RunSuspended`. It fires once the run is paused, and its `Notice`
+carries the checkpoint ID and the deadline.
 
 The loop only started creating checkpoints in v1.11.0. Before that the entity,
 the store and these endpoints all existed and nothing ever wrote a row. See

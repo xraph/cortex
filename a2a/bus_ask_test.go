@@ -153,3 +153,33 @@ func TestAskKeepsAnExplicitDeadline(t *testing.T) {
 		t.Fatalf("Deadline = %s, want the explicit %s", ask.Deadline, deadline)
 	}
 }
+
+// The asker suspends on the result, and the engine sets the run's own
+// deadline from it, so the result has to say when the answer is due.
+func TestAskResultCarriesReplyBy(t *testing.T) {
+	b, _, _, _, _, _ := newTestBus(t)
+	ctx := testCtx()
+	params := AskParams{
+		SendParams: SendParams{Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w1"}}, Content: "?"},
+		AskerRunID: id.NewAgentRunID(), ToolCallID: "c1",
+	}
+
+	res, err := b.Ask(ctx, params)
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if want := testNow.Add(DefaultReplyBy); !res.ReplyBy.Equal(want) {
+		t.Fatalf("default ReplyBy = %s, want %s", res.ReplyBy, want)
+	}
+
+	by := testNow.Add(2 * time.Hour)
+	params.ReplyBy = &by
+	params.ToolCallID = "c2"
+	res, err = b.Ask(ctx, params)
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if !res.ReplyBy.Equal(by) {
+		t.Fatalf("explicit ReplyBy = %s, want %s", res.ReplyBy, by)
+	}
+}

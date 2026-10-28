@@ -14,6 +14,7 @@ import (
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/suspension"
 )
 
 // ──────────────────────────────────────────────────
@@ -42,6 +43,18 @@ type RunCompleted interface {
 // RunFailed is called when an agent run fails.
 type RunFailed interface {
 	OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, err error) error
+}
+
+// RunSuspended is called when a run pauses, for every reason it can:
+// an approval, an external tool, or a reply from another agent. It fires
+// once the run is really paused, so a read of the run from inside the
+// hook shows it paused, and it never fires for a pause that failed.
+//
+// It is the one hook that covers every pause. CheckpointCreated fires
+// only for approvals, and a host that tells people a run is waiting on
+// them needs to hear about the other two as well.
+type RunSuspended interface {
+	OnRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n suspension.Notice) error
 }
 
 // ──────────────────────────────────────────────────

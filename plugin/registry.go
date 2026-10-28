@@ -9,6 +9,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/suspension"
 )
 
 // Named entry types pair a hook implementation with the extension name
@@ -83,6 +84,11 @@ type cognitivePhaseChangedEntry struct {
 	hook CognitivePhaseChanged
 }
 
+type runSuspendedEntry struct {
+	name string
+	hook RunSuspended
+}
+
 type checkpointCreatedEntry struct {
 	name string
 	hook CheckpointCreated
@@ -141,6 +147,7 @@ type Registry struct {
 	runStarted             []runStartedEntry
 	runCompleted           []runCompletedEntry
 	runFailed              []runFailedEntry
+	runSuspended           []runSuspendedEntry
 	stepStarted            []stepStartedEntry
 	stepCompleted          []stepCompletedEntry
 	toolCalled             []toolCalledEntry
@@ -186,6 +193,9 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(RunFailed); ok {
 		r.runFailed = append(r.runFailed, runFailedEntry{name, h})
+	}
+	if h, ok := e.(RunSuspended); ok {
+		r.runSuspended = append(r.runSuspended, runSuspendedEntry{name, h})
 	}
 	if h, ok := e.(StepStarted); ok {
 		r.stepStarted = append(r.stepStarted, stepStartedEntry{name, h})
@@ -270,6 +280,15 @@ func (r *Registry) EmitRunFailed(ctx context.Context, agentID id.AgentID, runID 
 	for _, e := range r.runFailed {
 		if err := e.hook.OnRunFailed(ctx, agentID, runID, runErr); err != nil {
 			r.logHookError("OnRunFailed", e.name, err)
+		}
+	}
+}
+
+// EmitRunSuspended notifies every RunSuspended hook that a run paused.
+func (r *Registry) EmitRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n suspension.Notice) {
+	for _, e := range r.runSuspended {
+		if err := e.hook.OnRunSuspended(ctx, agentID, runID, n); err != nil {
+			r.logHookError("OnRunSuspended", e.name, err)
 		}
 	}
 }

@@ -414,13 +414,13 @@ func TestSweepOnce_SkipsARunAResumeAlreadyClaimed(t *testing.T) {
 	}
 }
 
-// TestWithSuspensionTTL_ZeroWritesNoDeadlineAndRunsNoSweeper covers the
-// disable switch on both the write side and the lifecycle side, because
-// either one alone leaves expiry half off: nil deadlines with a sweeper
-// running is merely wasteful, but a sweeper running against deadlines
-// somebody thought were switched off is a run failed by a feature its
-// host opted out of.
-func TestWithSuspensionTTL_ZeroWritesNoDeadlineAndRunsNoSweeper(t *testing.T) {
+// TestWithSuspensionTTL_ZeroExpiresNothingWithoutADeadlineOfItsOwn covers
+// the switch on both the write side and the sweep side. Zero drops the
+// default deadline, so a call with no TTL of its own is written with none
+// and never expires. It does not stop the sweeper: an approval or an
+// external tool can still carry its own deadline, and that one still has
+// to be honoured.
+func TestWithSuspensionTTL_ZeroExpiresNothingWithoutADeadlineOfItsOwn(t *testing.T) {
 	t.Run("suspensions are written with no deadline", func(t *testing.T) {
 		r, spy := suspendingRun(t, WithSuspensionTTL(0))
 		if r.State != run.StatePaused {
@@ -451,13 +451,15 @@ func TestWithSuspensionTTL_ZeroWritesNoDeadlineAndRunsNoSweeper(t *testing.T) {
 		}
 	})
 
-	t.Run("no sweeper goroutine starts", func(t *testing.T) {
+	t.Run("the sweeper expires only rows that carry a deadline", func(t *testing.T) {
 		s := newSweepStore()
 		scope := cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}}}
-		// A row that IS expired, so a sweeper that ran would visibly
-		// take it. Asserting on an unexpired row would pass against a
-		// sweeper that ran and found nothing.
-		r := sweepFixture(t, s, scope, past())
+		// One row with no deadline, which nothing may expire, and one
+		// whose own deadline has passed, which proves the sweeper ran.
+		// Asserting on the first alone would pass against a sweeper that
+		// never started.
+		waiting := sweepFixture(t, s, scope, nil)
+		overdue := sweepFixture(t, s, scope, past())
 
 		e, err := New(WithStore(s), WithSuspensionTTL(0), WithSuspensionSweepInterval(time.Millisecond))
 		if err != nil {
@@ -466,18 +468,22 @@ func TestWithSuspensionTTL_ZeroWritesNoDeadlineAndRunsNoSweeper(t *testing.T) {
 		if err := e.Start(context.Background()); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
-		// Long enough for a millisecond ticker to have fired many times
-		// if one had been started at all.
-		time.Sleep(50 * time.Millisecond)
+		deadline := time.Now().Add(2 * time.Second)
+		for stateOf(t, s, scope, overdue.ID) != run.StateFailed {
+			if time.Now().After(deadline) {
+				t.Fatal("the sweeper never failed a run past its own deadline; TTL zero must not stop it")
+			}
+			time.Sleep(time.Millisecond)
+		}
 		if err := e.Stop(context.Background()); err != nil {
 			t.Fatalf("Stop: %v", err)
 		}
 
-		if n := len(s.crossScopeCalls()); n != 0 {
-			t.Errorf("the sweeper listed expired suspensions %d times with expiry switched off", n)
+		if got := stateOf(t, s, scope, waiting.ID); got != run.StatePaused {
+			t.Errorf("run state = %q, want %q; it had no deadline and was failed anyway", got, run.StatePaused)
 		}
-		if got := stateOf(t, s, scope, r.ID); got != run.StatePaused {
-			t.Errorf("run state = %q, want %q; expiry is off and this run was failed anyway", got, run.StatePaused)
+		if !hasSuspension(s, waiting.ID) {
+			t.Error("the sweep dropped the suspension of a run with no deadline")
 		}
 	})
 }

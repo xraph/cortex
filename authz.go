@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
@@ -16,6 +17,39 @@ import (
 // returning it would have read as an ordinary denial and quietly turned
 // "ask someone" into "no".
 var ErrRequiresApproval = errors.New("cortex: tool call requires approval")
+
+// ApprovalRequired is ErrRequiresApproval with something to say: why the
+// call needs a person, and how long that person has. Return it from
+// Authorize, bare or wrapped, and the run pauses exactly as it does for
+// the sentinel, because errors.Is matches it against ErrRequiresApproval.
+//
+// The TTL is per call because one engine-wide deadline does not fit every
+// decision. A production deploy can reasonably wait days for the right
+// person, while a routine check that nobody answers within the hour is
+// better failed than left in the queue.
+//
+// The name breaks the XxxError convention on purpose: it reads as the
+// authorizer's answer, alongside ErrRequiresApproval, at the call site
+// that returns it.
+type ApprovalRequired struct { //nolint:errname // named for the authorizer's answer, see above
+	// Reason is shown to the decider and on the checkpoint.
+	Reason string
+	// TTL is how long the decision may take. Zero uses the engine's
+	// suspension TTL. A negative TTL is refused, and the call is denied
+	// rather than paused with a deadline that has already passed.
+	TTL time.Duration
+}
+
+// Error says the call needs approval, and why.
+func (a ApprovalRequired) Error() string {
+	return ErrRequiresApproval.Error() + ": " + a.Reason
+}
+
+// Is reports a match for ErrRequiresApproval, so code that only knows the
+// sentinel still recognizes an approval.
+func (a ApprovalRequired) Is(target error) bool {
+	return target == ErrRequiresApproval
+}
 
 // Subject is who is asking. Principal is host-defined and cortex never
 // interprets it: a host puts whatever its own authorization layer needs
@@ -60,6 +94,7 @@ type ToolAuthorizer interface {
 	// nothing goes back to the model, the run pauses, and a checkpoint
 	// carries the call to whoever decides. Wrap it if you want to say
 	// why (fmt.Errorf("...: %w", cortex.ErrRequiresApproval)); it is
-	// matched with errors.Is.
+	// matched with errors.Is. Return ApprovalRequired instead to put the
+	// reason on the checkpoint and give the decision its own deadline.
 	Authorize(ctx context.Context, s Subject, call llm.ToolCall) error
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/xraph/cortex/llm"
 )
@@ -66,7 +67,23 @@ func (e *Engine) ToolRetrySafe(name string) bool {
 // definitions, so the way they are stored can change without touching
 // Tools.
 func (e *Engine) externalToolDefs() []llm.Tool {
-	return e.externalTools
+	out := make([]llm.Tool, 0, len(e.externalTools))
+	for _, ext := range e.externalTools {
+		out = append(out, ext.def)
+	}
+	return out
+}
+
+// externalTTL is the TTL registered for an external tool, zero when the
+// tool has none or is not external. It reads the first registration under
+// the name, the same one dispatch reaches.
+func (e *Engine) externalTTL(name string) time.Duration {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == name {
+			return ext.ttl
+		}
+	}
+	return 0
 }
 
 // configureRetrySafe checks the WithToolRetrySafe names against the

@@ -12,8 +12,9 @@ step, with the same messages, under the same scope.
 Two things make a run suspend, and they share one mechanism because they're the
 same problem. A tool the engine advertises but doesn't execute, registered with
 `engine.WithExternalTool`. And a tool call an authorizer escalates by returning
-`cortex.ErrRequiresApproval`, which pauses the run and opens a checkpoint for a
-person to decide. Either way you get one `suspension.Suspension` row, the run
+`cortex.ErrRequiresApproval` (or `cortex.ApprovalRequired`, which says why and
+for how long), which pauses the run and opens a checkpoint for a person to
+decide. Either way you get one `suspension.Suspension` row, the run
 lands in `run.StatePaused`, and `Engine.Resume` picks it up.
 
 ## Registering an external tool
@@ -80,7 +81,8 @@ for _, p := range susp.Pending {
 
 `Pending` carries the model's arguments verbatim, so you can execute the call
 without cross-referencing the message history by id to find out what it asked
-for.
+for. On an approval, `Note` holds the authorizer's reason when it returned
+`cortex.ApprovalRequired`.
 
 A whole step suspends at once, not one call per suspension. If the model asks
 for three tools in one turn and two of them are external, the registered one
@@ -284,6 +286,37 @@ func (authorizer) Authorize(_ context.Context, s cortex.Subject, call llm.ToolCa
 Wrap it with `fmt.Errorf` when you want to say why. It's matched with
 `errors.Is`, so the wrapping text is yours to use.
 
+### Giving the decision a reason and a deadline
+
+Return `cortex.ApprovalRequired` when the person deciding needs to know why, or
+when this decision should wait longer (or shorter) than the engine's default:
+
+```go
+case "deploy":
+    if env == "prod" {
+        return cortex.ApprovalRequired{
+            Reason: "production deploy",
+            TTL:    7 * 24 * time.Hour,
+        }
+    }
+    return nil
+```
+
+It still matches `cortex.ErrRequiresApproval` with `errors.Is`, bare or
+wrapped, so code that only knows the sentinel keeps working. The engine digs it
+out with `errors.As` and uses both fields.
+
+`Reason` lands in two places: on the pending call as `Note`, and in the
+checkpoint's `Reason`, next to the tool it explains (`tool call requires
+approval: deploy (production deploy)`). The checkpoint is what the decider
+reads, so that's where it has to be.
+
+`TTL` is how long the decision may take. Zero means the engine's suspension TTL.
+A negative TTL is refused: the call is denied, `ToolDenied` fires with a reason
+saying the approval TTL is negative, and the model sees the denial on the same
+step. Pausing on a deadline that has already passed would open a checkpoint
+nobody could answer in time.
+
 ### How an approval differs from a denial
 
 They come out of the same method and they're nothing alike.
@@ -428,7 +461,40 @@ The deadline is stamped when the run pauses, not worked out at sweep time.
 Changing the TTL never moves the deadline of a run somebody has already been
 asked to answer by Tuesday.
 
-### Turning it off
+### Each pause gets its own deadline
+
+`WithSuspensionTTL` is a default. Each pending call can bring its own deadline,
+and the suspension expires at the earliest one among its calls:
+
+| Pending call | Deadline |
+|---|---|
+| Approval | `ApprovalRequired.TTL` when positive, else the suspension TTL |
+| External tool | its `engine.ExternalTTL` when set, else the suspension TTL |
+| Agent reply | the ask's reply-by plus `engine.WithAgentReplyGrace` (5 minutes by default) |
+
+So a production deploy can wait a week while a routine check on the same
+engine fails after an hour. If one step pauses on two approvals, one with a
+one-hour TTL and one with three hours, the run expires after one hour: it can
+only resume once every call is answered, and the first deadline is when that
+stops being possible.
+
+Give an external tool its own deadline when you register it:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExternalTool(askHuman, engine.ExternalTTL(72*time.Hour)),
+)
+```
+
+A run waiting on another agent follows the ask it sent. The message bus has
+its own sweep, and at the ask's reply-by it resumes the asking run with a
+timeout the model can read and react to. The grace keeps the engine's deadline
+behind that one, so the engine only fails a run the bus never got to (a bus
+that was down, say, or a resume that failed). Leave it at the default unless
+you've changed the bus's `SweepInterval` by a lot.
+
+### No default deadline
 
 ```go
 eng, err := engine.New(
@@ -437,14 +503,20 @@ eng, err := engine.New(
 )
 ```
 
-Zero disables expiry outright. Suspensions are written with no deadline and no
-sweeper goroutine starts at all. That's the right setting if your pauses are
-answered by a person on their own schedule and you'd rather have a run sit
-paused for a week than have it failed out from under them.
+Zero means no default deadline. A pending call with no TTL of its own is
+written with no deadline and never expires. That's the right setting if your
+pauses are answered by a person on their own schedule and you'd rather have a
+run sit paused for a week than have it failed out from under them.
+
+The sweeper still runs. An approval with a TTL, an external tool with an
+`ExternalTTL` and an agent reply all carry deadlines of their own, and those
+still have to be honoured when they pass. Earlier releases also stopped the
+sweeper goroutine at zero, so if you relied on that, check that none of your pauses
+carry a deadline you didn't expect.
 
 A negative TTL is refused by `engine.New` rather than clamped, because it reads
 as a deadline that has already passed and would sweep everything on the first
-tick.
+tick. The same goes for a negative `ExternalTTL` or `WithAgentReplyGrace`.
 
 A sweep and a resume can't collide. A resume claims only a suspension short of
 its deadline, a sweep claims only one past it, and both answer against the same
@@ -460,6 +532,48 @@ where it would otherwise ask an operator to decide a run that ended hours ago.
 That resolve is best effort. If the write fails the row stays and the failure
 is logged, because the run really did fail and that's the part worth telling
 you about.
+
+## Hearing about every pause
+
+`plugin.CheckpointCreated` fires only for approvals. If you notify people when
+a run is waiting on them, you need the other two reasons as well, and that's
+what `plugin.RunSuspended` is for:
+
+```go
+type pauseNotifier struct{ chat *Chat }
+
+func (pauseNotifier) Name() string { return "pause-notifier" }
+
+func (n pauseNotifier) OnRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, notice suspension.Notice) error {
+    switch notice.Reason {
+    case suspension.ReasonApproval:
+        return n.chat.AskForApproval(ctx, notice.CheckpointID, notice.Pending, notice.ExpiresAt)
+    case suspension.ReasonExternalTool:
+        return n.chat.TellOwner(ctx, runID, notice.Pending)
+    default:
+        return nil // another agent answers this one
+    }
+}
+
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExtension(pauseNotifier{chat: chat}),
+)
+```
+
+It fires once per pause, for every reason, after the run has flipped to
+`paused` and after `OnCheckpointCreated`. A read of the run from inside the
+hook shows it paused. The `ctx` carries the run's own scope, so you can read the
+run or its suspension back without setting one up. A pause that fails (the
+store refuses the flip to paused, say) fires neither hook.
+
+The `Notice` holds the suspension ID, the reason, the pending calls with their
+notes, the deadline (nil when there is none), the run's scope, and the
+checkpoint ID. That last one is zero unless the reason is an approval.
+
+For an agent reply the hook fires before the run's questions go out to its
+peers. A fast peer could otherwise answer and resume the run while your hook
+is still running, and the hook would read a run that's already moved on.
 
 ## Custom stores
 
