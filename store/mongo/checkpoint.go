@@ -68,7 +68,7 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 	}
 	t := now()
 
-	filter := bson.M{"_id": cpID.String()}
+	filter := bson.M{"_id": cpID.String(), "state": "pending"}
 	for k, v := range scopeFilter(scope, true) {
 		filter[k] = v
 	}
@@ -84,6 +84,16 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 	}
 
 	if res.MatchedCount() == 0 {
+		// Nothing pending matched. Tell a decided checkpoint apart from a
+		// missing one, at the same exact scope.
+		delete(filter, "state")
+		count, countErr := s.mdb.NewFind((*checkpointModel)(nil)).Filter(filter).Count(ctx)
+		if countErr != nil {
+			return fmt.Errorf("cortex/mongo: resolve checkpoint lookup: %w", countErr)
+		}
+		if count > 0 {
+			return fmt.Errorf("cortex/mongo: checkpoint %s is not pending: %w", cpID, cortex.ErrInvalidState)
+		}
 		return cortex.ErrCheckpointNotFound
 	}
 

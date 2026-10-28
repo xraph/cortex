@@ -12,10 +12,13 @@ import (
 // readyRecord is the stored form of run.Readiness. Results travel as a
 // base64 string, so a JSONB column cannot reformat the engine's bytes.
 type readyRecord struct {
-	Source       run.ReadySource `json:"source"`
-	Results      []byte          `json:"results,omitempty"`
-	CheckpointID id.CheckpointID `json:"checkpoint_id"`
-	At           time.Time       `json:"at"`
+	Source             run.ReadySource `json:"source"`
+	Results            []byte          `json:"results,omitempty"`
+	CheckpointID       id.CheckpointID `json:"checkpoint_id"`
+	At                 time.Time       `json:"at"`
+	SuspensionID       id.SuspensionID `json:"suspension_id,omitzero"`
+	DecidedBy          string          `json:"decided_by,omitempty"`
+	DecidedByPrincipal []byte          `json:"decided_by_principal,omitempty"`
 }
 
 // EncodeReady returns the SQL column value for a run's readiness. Nil is
@@ -24,7 +27,10 @@ func EncodeReady(ready *run.Readiness) (*string, error) {
 	if ready == nil {
 		return nil, nil
 	}
-	data, err := json.Marshal(readyRecord{Source: ready.Source, Results: ready.Results, CheckpointID: ready.CheckpointID, At: ready.At.UTC()})
+	data, err := json.Marshal(readyRecord{
+		Source: ready.Source, Results: ready.Results, CheckpointID: ready.CheckpointID, At: ready.At.UTC(),
+		SuspensionID: ready.SuspensionID, DecidedBy: ready.DecidedBy, DecidedByPrincipal: ready.DecidedByPrincipal,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("encode run readiness: %w", err)
 	}
@@ -41,7 +47,10 @@ func DecodeReady(stored *string) (*run.Readiness, error) {
 	if err := json.Unmarshal([]byte(*stored), &record); err != nil {
 		return nil, fmt.Errorf("decode run readiness: %w", err)
 	}
-	ready := &run.Readiness{Source: record.Source, CheckpointID: record.CheckpointID, At: record.At}
+	ready := &run.Readiness{
+		Source: record.Source, CheckpointID: record.CheckpointID, At: record.At,
+		SuspensionID: record.SuspensionID, DecidedBy: record.DecidedBy, DecidedByPrincipal: record.DecidedByPrincipal,
+	}
 	if record.Results != nil {
 		ready.Results = json.RawMessage(record.Results)
 	}

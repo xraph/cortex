@@ -23,10 +23,14 @@ func TestSpy_ContinuationFollowsStoreRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Hour)
-	if err := spy.CreateSuspension(ctx, &suspension.Suspension{ID: id.NewSuspensionID(), RunID: r.ID, ExpiresAt: &deadline}); err != nil {
+	suspID := id.NewSuspensionID()
+	if err := spy.CreateSuspension(ctx, &suspension.Suspension{ID: suspID, RunID: r.ID, ExpiresAt: &deadline}); err != nil {
 		t.Fatal(err)
 	}
-	ready, err := spy.MarkReady(ctx, r.ID, run.Readiness{Source: run.ReadyApproval})
+	if _, err := spy.MarkReady(ctx, r.ID, run.Readiness{Source: run.ReadyApproval, SuspensionID: id.NewSuspensionID()}); !errors.Is(err, cortex.ErrNotSuspended) {
+		t.Fatalf("MarkReady naming another pause = %v, want ErrNotSuspended", err)
+	}
+	ready, err := spy.MarkReady(ctx, r.ID, run.Readiness{Source: run.ReadyApproval, SuspensionID: suspID})
 	if err != nil || ready.State != run.StateReady || spy.Suspensions()[0].ExpiresAt != nil {
 		t.Fatalf("MarkReady = %+v, %v; want ready with the deadline cleared", ready, err)
 	}

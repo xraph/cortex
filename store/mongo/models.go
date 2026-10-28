@@ -181,17 +181,27 @@ type runModel struct {
 // readyDocument is the stored form of run.Readiness. Results are kept as
 // BSON binary, so the engine's bytes come back exactly as written.
 type readyDocument struct {
-	Source       string    `bson:"source"`
-	Results      []byte    `bson:"results,omitempty"`
-	CheckpointID string    `bson:"checkpoint_id,omitempty"`
-	At           time.Time `bson:"at"`
+	Source             string    `bson:"source"`
+	Results            []byte    `bson:"results,omitempty"`
+	CheckpointID       string    `bson:"checkpoint_id,omitempty"`
+	At                 time.Time `bson:"at"`
+	SuspensionID       string    `bson:"suspension_id,omitempty"`
+	DecidedBy          string    `bson:"decided_by,omitempty"`
+	DecidedByPrincipal []byte    `bson:"decided_by_principal,omitempty"`
 }
 
 func readyToDocument(ready *run.Readiness) *readyDocument {
 	if ready == nil {
 		return nil
 	}
-	return &readyDocument{Source: string(ready.Source), Results: ready.Results, CheckpointID: ready.CheckpointID.String(), At: ready.At.UTC()}
+	doc := &readyDocument{
+		Source: string(ready.Source), Results: ready.Results, CheckpointID: ready.CheckpointID.String(), At: ready.At.UTC(),
+		DecidedBy: ready.DecidedBy, DecidedByPrincipal: ready.DecidedByPrincipal,
+	}
+	if !ready.SuspensionID.IsNil() {
+		doc.SuspensionID = ready.SuspensionID.String()
+	}
+	return doc
 }
 
 func readyFromDocument(doc *readyDocument) (*run.Readiness, error) {
@@ -208,6 +218,17 @@ func readyFromDocument(doc *readyDocument) (*run.Readiness, error) {
 			return nil, fmt.Errorf("run readiness: %w", err)
 		}
 		ready.CheckpointID = checkpointID
+	}
+	if doc.SuspensionID != "" {
+		suspensionID, err := id.ParseSuspensionID(doc.SuspensionID)
+		if err != nil {
+			return nil, fmt.Errorf("run readiness: %w", err)
+		}
+		ready.SuspensionID = suspensionID
+	}
+	ready.DecidedBy = doc.DecidedBy
+	if doc.DecidedByPrincipal != nil {
+		ready.DecidedByPrincipal = append([]byte(nil), doc.DecidedByPrincipal...)
 	}
 	return ready, nil
 }

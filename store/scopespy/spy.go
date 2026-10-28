@@ -4,6 +4,7 @@ package scopespy
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/xraph/cortex"
@@ -321,12 +322,16 @@ func (s *Spy) Resolve(ctx context.Context, cpID id.CheckpointID, decision checkp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, cp := range s.checkpoints {
-		if cp.ID == cpID {
-			cp.State = "resolved"
-			d := decision
-			cp.Decision = &d
-			return nil
+		if cp.ID != cpID {
+			continue
 		}
+		if cp.State != "pending" {
+			return fmt.Errorf("scopespy: checkpoint %s is not pending: %w", cpID, cortex.ErrInvalidState)
+		}
+		cp.State = "resolved"
+		d := decision
+		cp.Decision = &d
+		return nil
 	}
 	return cortex.ErrCheckpointNotFound
 }

@@ -24,6 +24,7 @@ func RunContinuation(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("MarkReadyRefusesOtherStates", func(t *testing.T) { testMarkReadyRefusesOtherStates(t, newStore) })
 	t.Run("MarkReadyRefusesExpired", func(t *testing.T) { testMarkReadyRefusesExpired(t, newStore) })
 	t.Run("MarkReadyExactScope", func(t *testing.T) { testMarkReadyExactScope(t, newStore) })
+	t.Run("MarkReadyRefusesAnotherPause", func(t *testing.T) { testMarkReadyRefusesAnotherPause(t, newStore) })
 	t.Run("ClaimContinuationOnce", func(t *testing.T) { testClaimContinuationOnce(t, newStore) })
 	t.Run("ClaimContinuationReclaimable", func(t *testing.T) { testClaimContinuationReclaimable(t, newStore) })
 	t.Run("ClaimContinuationWithoutLease", func(t *testing.T) { testClaimContinuationWithoutLease(t, newStore) })
@@ -53,9 +54,14 @@ func leaseAt(owner string, at time.Time) run.Lease {
 	return run.Lease{Owner: owner, ExpiresAt: at.UTC().Truncate(time.Millisecond)}
 }
 
-func readiness() run.Readiness {
+// readiness answers the pause suspensionID, which MarkReady requires to be
+// the run's current suspension.
+func readiness(suspensionID id.SuspensionID) run.Readiness {
 	return run.Readiness{
-		Source: run.ReadyApproval,
+		SuspensionID:       suspensionID,
+		DecidedBy:          "reviewer",
+		DecidedByPrincipal: []byte(`{"user":"reviewer"}`),
+		Source:             run.ReadyApproval,
 		// Odd spacing and key order: a store that parsed and re-encoded the
 		// bytes would hand back something else.
 		Results:      json.RawMessage(`[{"z": 1,  "a":"ok"}]`),
@@ -83,8 +89,8 @@ func mustRunningRun(t *testing.T, s store.Store, ctx context.Context, lease *run
 // mustReadyRun suspends a run and marks it ready.
 func mustReadyRun(t *testing.T, s store.Store, ctx context.Context) *run.Run { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
-	r, _ := mustSuspendRun(t, s, ctx, futureDeadline())
-	ready, err := continuationStore(t, s).MarkReady(ctx, r.ID, readiness())
+	r, susp := mustSuspendRun(t, s, ctx, futureDeadline())
+	ready, err := continuationStore(t, s).MarkReady(ctx, r.ID, readiness(susp.ID))
 	if err != nil {
 		t.Fatalf("fixture: mark ready: %v", err)
 	}
@@ -114,7 +120,8 @@ func mustGetRun(t *testing.T, s store.Store, ctx context.Context, runID id.Agent
 }
 
 func sameReadiness(got *run.Readiness, want run.Readiness) bool {
-	return got != nil && got.Source == want.Source && bytes.Equal(got.Results, want.Results) && got.CheckpointID == want.CheckpointID && got.At.Equal(want.At)
+	return got != nil && got.Source == want.Source && bytes.Equal(got.Results, want.Results) && got.CheckpointID == want.CheckpointID && got.At.Equal(want.At) &&
+		got.SuspensionID == want.SuspensionID && got.DecidedBy == want.DecidedBy && bytes.Equal(got.DecidedByPrincipal, want.DecidedByPrincipal)
 }
 
 func sameLease(got *run.Lease, want run.Lease) bool {
@@ -163,7 +170,7 @@ func testMarkReadyFromPaused(t *testing.T, newStore func(t *testing.T) store.Sto
 				t.Fatalf("create suspension: %v", err)
 			}
 
-			want := readiness()
+			want := readiness(susp.ID)
 			got, err := cs.MarkReady(ctx, r.ID, want)
 			if err != nil {
 				t.Fatalf("MarkReady: %v", err)
@@ -195,9 +202,9 @@ func testMarkReadyRefusesOtherStates(t *testing.T, newStore func(t *testing.T) s
 			s := newStore(t)
 			cs := continuationStore(t, s)
 			ctx := ctxWithScope("ready-refuse", string(state))
-			r, _ := mustSuspendRun(t, s, ctx, futureDeadline())
+			r, susp := mustSuspendRun(t, s, ctx, futureDeadline())
 			if state == run.StateReady {
-				ready, err := cs.MarkReady(ctx, r.ID, readiness())
+				ready, err := cs.MarkReady(ctx, r.ID, readiness(susp.ID))
 				if err != nil {
 					t.Fatalf("first MarkReady: %v", err)
 				}
@@ -210,7 +217,7 @@ func testMarkReadyRefusesOtherStates(t *testing.T, newStore func(t *testing.T) s
 			}
 			before := mustGetRun(t, s, ctx, r.ID)
 
-			if _, err := cs.MarkReady(ctx, r.ID, readiness()); !errors.Is(err, cortex.ErrNotSuspended) {
+			if _, err := cs.MarkReady(ctx, r.ID, readiness(susp.ID)); !errors.Is(err, cortex.ErrNotSuspended) {
 				t.Fatalf("MarkReady on a %s run = %v, want ErrNotSuspended", state, err)
 			}
 			after := mustGetRun(t, s, ctx, r.ID)
@@ -228,9 +235,9 @@ func testMarkReadyRefusesExpired(t *testing.T, newStore func(t *testing.T) store
 	s := newStore(t)
 	cs := continuationStore(t, s)
 	ctx := ctxWithScope("ready-expired")
-	r, _ := mustSuspendRun(t, s, ctx, pastDeadline())
+	r, susp := mustSuspendRun(t, s, ctx, pastDeadline())
 
-	if _, err := cs.MarkReady(ctx, r.ID, readiness()); !errors.Is(err, cortex.ErrSuspensionExpired) {
+	if _, err := cs.MarkReady(ctx, r.ID, readiness(susp.ID)); !errors.Is(err, cortex.ErrSuspensionExpired) {
 		t.Fatalf("MarkReady past the deadline = %v, want ErrSuspensionExpired", err)
 	}
 	after := mustGetRun(t, s, ctx, r.ID)
@@ -251,13 +258,13 @@ func testMarkReadyExactScope(t *testing.T, newStore func(t *testing.T) store.Sto
 	cs := continuationStore(t, s)
 	ctx := ctxWithScope("ws_x", "p1")
 	covering := ctxWithScope("ws_x")
-	r, _ := mustSuspendRun(t, s, ctx, futureDeadline())
+	r, susp := mustSuspendRun(t, s, ctx, futureDeadline())
 
 	_, claimErr := s.ClaimSuspension(covering, r.ID)
 	if claimErr == nil {
 		t.Fatal("a covering scope claimed the suspension")
 	}
-	_, markErr := cs.MarkReady(covering, r.ID, readiness())
+	_, markErr := cs.MarkReady(covering, r.ID, readiness(susp.ID))
 	if markErr == nil {
 		t.Fatal("a covering scope marked the run ready")
 	}
@@ -277,8 +284,34 @@ func testMarkReadyExactScope(t *testing.T, newStore func(t *testing.T) store.Sto
 	if after.State != run.StatePaused || after.Revision != r.Revision {
 		t.Fatalf("covering-scope MarkReady changed the run to %s/%d", after.State, after.Revision)
 	}
-	if _, err := cs.MarkReady(ctx, r.ID, readiness()); err != nil {
+	if _, err := cs.MarkReady(ctx, r.ID, readiness(susp.ID)); err != nil {
 		t.Fatalf("MarkReady from the run's own scope after the refusal: %v", err)
+	}
+}
+
+// testMarkReadyRefusesAnotherPause proves an answer is bound to the pause
+// it answers: readiness naming a suspension the run no longer has, or none
+// at all, moves nothing.
+func testMarkReadyRefusesAnotherPause(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctx := ctxWithScope("ready-another-pause")
+	r, susp := mustSuspendRun(t, s, ctx, futureDeadline())
+	for name, other := range map[string]id.SuspensionID{"stale": id.NewSuspensionID(), "none": {}} {
+		if _, err := cs.MarkReady(ctx, r.ID, readiness(other)); !errors.Is(err, cortex.ErrNotSuspended) {
+			t.Fatalf("MarkReady naming %s suspension = %v, want ErrNotSuspended", name, err)
+		}
+	}
+	after := mustGetRun(t, s, ctx, r.ID)
+	if after.State != run.StatePaused || after.Revision != r.Revision || after.Ready != nil {
+		t.Fatalf("refused MarkReady left state %q revision %d ready %+v; want paused, revision %d, no readiness", after.State, after.Revision, after.Ready, r.Revision)
+	}
+	kept, err := s.GetSuspension(ctx, r.ID)
+	if err != nil || kept.ExpiresAt == nil {
+		t.Fatalf("refused MarkReady touched the suspension: %+v, %v", kept, err)
+	}
+	if _, err := cs.MarkReady(ctx, r.ID, readiness(susp.ID)); err != nil {
+		t.Fatalf("MarkReady naming the current suspension: %v", err)
 	}
 }
 

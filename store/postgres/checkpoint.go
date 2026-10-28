@@ -63,7 +63,8 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 		Set("state = ?", "resolved").
 		Set("decision = ?", string(decisionJSON)).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", cpID.String())
+		Where("id = ?", cpID.String()).
+		Where("state = ?", "pending")
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -76,6 +77,19 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 		return fmt.Errorf("cortex: resolve checkpoint rows affected: %w", err)
 	}
 	if n == 0 {
+		// Nothing pending matched. Tell a decided checkpoint apart from a
+		// missing one, at the same exact scope.
+		exists := s.pgdb.NewSelect((*checkpointModel)(nil)).Where("id = ?", cpID.String())
+		for _, p := range scopePredicates(scope, true) {
+			exists = exists.Where(p.Column+" = ?", p.Value)
+		}
+		count, countErr := exists.Count(ctx)
+		if countErr != nil {
+			return fmt.Errorf("cortex: resolve checkpoint lookup: %w", countErr)
+		}
+		if count > 0 {
+			return fmt.Errorf("cortex: checkpoint %s is not pending: %w", cpID, cortex.ErrInvalidState)
+		}
 		return cortex.ErrCheckpointNotFound
 	}
 	return nil

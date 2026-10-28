@@ -108,6 +108,11 @@ type Store interface {
 }
 ```
 
+`Resolve` writes a decision only on a pending checkpoint. Once one is recorded
+it stays: a second `Resolve` returns an error wrapping `cortex.ErrInvalidState`,
+which is what lets two people deciding at once end up with exactly one record.
+A custom store has to keep that rule.
+
 On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint`, `eng.ResolveCheckpoint(ctx, cpID, decision)` and `eng.DecideCheckpoint(ctx, cpID, decision)`. Decide through the engine, not the store: the engine is what continues or fails the run.
 
 ### List filter

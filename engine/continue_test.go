@@ -19,6 +19,7 @@ import (
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
+	"github.com/xraph/cortex/suspension"
 )
 
 // continueLLM asks for its scripted tool calls on the first request and
@@ -28,6 +29,7 @@ import (
 type continueLLM struct {
 	mu       sync.Mutex
 	first    []llm.ToolCall
+	then     [][]llm.ToolCall
 	requests [][]llm.Message
 }
 
@@ -37,6 +39,9 @@ func (c *continueLLM) next(req *llm.Request) *llm.Response {
 	c.requests = append(c.requests, slices.Clone(req.Messages))
 	if len(c.requests) == 1 && len(c.first) > 0 {
 		return &llm.Response{ToolCalls: c.first, FinishReason: "tool_calls"}
+	}
+	if i := len(c.requests) - 2; i >= 0 && i < len(c.then) {
+		return &llm.Response{ToolCalls: c.then[i], FinishReason: "tool_calls"}
 	}
 	return &llm.Response{Content: "done", FinishReason: "stop"}
 }
@@ -90,6 +95,30 @@ func (r *readyRecorder) snapshot() ([]id.AgentRunID, []run.ReadyNotice, []cortex
 	return slices.Clone(r.runs), slices.Clone(r.notices), slices.Clone(r.scopes)
 }
 
+// terminalRecorder counts RunTerminated per run.
+type terminalRecorder struct {
+	mu    sync.Mutex
+	count map[id.AgentRunID]int
+}
+
+func (r *terminalRecorder) Name() string { return "terminal-recorder" }
+
+func (r *terminalRecorder) OnRunTerminated(_ context.Context, _ id.AgentID, runID id.AgentRunID, _ run.TerminalSummary) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.count == nil {
+		r.count = make(map[id.AgentRunID]int)
+	}
+	r.count[runID]++
+	return nil
+}
+
+func (r *terminalRecorder) of(runID id.AgentRunID) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.count[runID]
+}
+
 // continueFixture is one engine over SQLite whose model asks for the gated
 // tool once, an authorizer that escalates it, and a JSON principal codec.
 type continueFixture struct {
@@ -99,6 +128,10 @@ type continueFixture struct {
 	model *continueLLM
 	ready *readyRecorder
 	tools *toolEventRecorder
+	cps   *checkpointEventRecorder
+	ended *terminalRecorder
+	// overrides is what pause starts the run with.
+	overrides *RunOverrides
 
 	mu         sync.Mutex
 	ran        atomic.Int32
@@ -113,7 +146,7 @@ func newContinueFixture(t *testing.T, opts ...Option) *continueFixture {
 
 func buildContinueFixture(ctx context.Context, t *testing.T, st store.Store, first []llm.ToolCall, opts ...Option) *continueFixture {
 	t.Helper()
-	f := &continueFixture{ctx: ctx, st: st, model: &continueLLM{first: first}, ready: &readyRecorder{}, tools: &toolEventRecorder{}}
+	f := &continueFixture{ctx: ctx, st: st, model: &continueLLM{first: first}, ready: &readyRecorder{}, tools: &toolEventRecorder{}, cps: &checkpointEventRecorder{}, ended: &terminalRecorder{}}
 	base := []Option{
 		WithStore(st),
 		WithLLM(f.model),
@@ -129,6 +162,8 @@ func buildContinueFixture(ctx context.Context, t *testing.T, st store.Store, fir
 		WithPrincipalCodec(cortex.JSONPrincipalCodec[testPrincipal]()),
 		WithExtension(f.ready),
 		WithExtension(f.tools),
+		WithExtension(f.cps),
+		WithExtension(f.ended),
 	}
 	e, err := New(append(base, opts...)...)
 	require.NoError(t, err)
@@ -140,7 +175,7 @@ func buildContinueFixture(ctx context.Context, t *testing.T, st store.Store, fir
 // it opened when it paused for approval.
 func (f *continueFixture) pause(t *testing.T) (*run.Run, *checkpoint.Checkpoint) {
 	t.Helper()
-	paused, err := f.e.RunAgent(as(f.ctx, alice), "assistant", "clean up", nil)
+	paused, err := f.e.RunAgent(as(f.ctx, alice), "assistant", "clean up", f.overrides)
 	require.NoError(t, err)
 	require.Equal(t, run.StatePaused, paused.State)
 	cps, err := f.e.ListPendingCheckpoints(f.ctx, &checkpoint.ListFilter{RunID: paused.ID.String()})
@@ -319,17 +354,34 @@ func TestResolveCheckpointRejectionContinuesWithOption(t *testing.T) {
 	})
 }
 
-// flakyResolveStore loses the next checkpoint Resolve when armed.
+// flakyResolveStore loses the next checkpoint Resolve when armed, or the
+// next failures of them, and can run a callback just before the next one.
 type flakyResolveStore struct {
 	*sqlitestore.Store
-	fail atomic.Bool
+	fail          atomic.Bool
+	failures      atomic.Int32
+	beforeResolve atomic.Pointer[func()]
 }
 
 func (s *flakyResolveStore) Resolve(ctx context.Context, cpID id.CheckpointID, d checkpoint.Decision) error {
+	if before := s.beforeResolve.Swap(nil); before != nil {
+		(*before)()
+	}
 	if s.fail.CompareAndSwap(true, false) {
 		return errors.New("resolve lost")
 	}
+	if s.failures.Add(-1) >= 0 {
+		return errors.New("resolve lost")
+	}
+	s.failures.Store(0)
 	return s.Store.Resolve(ctx, cpID, d)
+}
+
+func newFlakyFixture(t *testing.T) (*continueFixture, *flakyResolveStore) {
+	t.Helper()
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := &flakyResolveStore{Store: newApprovalStore(ctx, t)}
+	return buildContinueFixture(ctx, t, st, []llm.ToolCall{{ID: "call-1", Name: gatedTool().Name, Arguments: `{}`}}), st
 }
 
 func TestDecideCheckpointIsIdempotentAfterLostResolve(t *testing.T) {
@@ -643,4 +695,226 @@ func TestContinuationUnavailableWithoutCapability(t *testing.T) {
 	require.Equal(t, run.StateCompleted, f.runState(t, paused.ID).State)
 	require.EqualValues(t, 1, f.ran.Load())
 	require.Equal(t, []any{alice}, f.seenPrincipals())
+}
+
+// A checkpoint left pending by a lost record must not approve the run's
+// next pause. The run continued and paused again on s2; approving the old
+// checkpoint is refused, closes it, dispatches nothing, and leaves the
+// new checkpoint to be decided on its own.
+func TestStaleCheckpointCannotApproveTheNextPause(t *testing.T) {
+	f, st := newFlakyFixture(t)
+	f.model.then = [][]llm.ToolCall{{{ID: "call-2", Name: gatedTool().Name, Arguments: `{"again":true}`}}}
+	f.overrides = &RunOverrides{MaxSteps: 5}
+	paused, cp1 := f.pause(t)
+
+	// Both writes of cp1's decision are lost: DecideCheckpoint's, and the
+	// one ContinueRun makes when it finds the record missing.
+	st.failures.Store(2)
+	require.Error(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp1.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+	again, err := f.e.ContinueRun(f.ctx, paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, again.State)
+	require.EqualValues(t, 1, f.ran.Load())
+	require.Equal(t, checkpointStatePending, f.checkpointState(t, cp1.ID).State)
+	pending, err := f.e.ListPendingCheckpoints(f.ctx, &checkpoint.ListFilter{RunID: paused.ID.String()})
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	var cp2 *checkpoint.Checkpoint
+	for _, cp := range pending {
+		if cp.ID != cp1.ID {
+			cp2 = cp
+		}
+	}
+	require.NotNil(t, cp2)
+
+	err = f.e.DecideCheckpoint(as(f.ctx, carol), cp1.ID, checkpoint.Decision{Approved: true, DecidedBy: "carol"})
+	require.ErrorIs(t, err, cortex.ErrInvalidState)
+	closed := f.checkpointState(t, cp1.ID)
+	require.Equal(t, "resolved", closed.State)
+	require.False(t, closed.Decision.Approved)
+	require.Equal(t, checkpointDecidedByEngine, closed.Decision.DecidedBy)
+	require.Equal(t, run.StatePaused, f.runState(t, paused.ID).State)
+	require.EqualValues(t, 1, f.ran.Load(), "the stale approval dispatched the next pause's call")
+	require.Equal(t, checkpointStatePending, f.checkpointState(t, cp2.ID).State)
+
+	require.NoError(t, f.e.ResolveCheckpoint(as(f.ctx, carol), cp2.ID, checkpoint.Decision{Approved: true, DecidedBy: "carol"}))
+	require.EqualValues(t, 2, f.ran.Load())
+	require.Equal(t, run.StateCompleted, f.runState(t, paused.ID).State)
+}
+
+// ContinueRun records a decision whose checkpoint write was lost, with the
+// decider the readiness kept.
+func TestContinueRunRecordsALostDecision(t *testing.T) {
+	f, st := newFlakyFixture(t)
+	paused, cp := f.pause(t)
+	st.fail.Store(true)
+	require.Error(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+	require.Equal(t, checkpointStatePending, f.checkpointState(t, cp.ID).State)
+	require.Empty(t, f.cps.resolvedEvents())
+
+	_, err := f.e.ContinueRun(f.ctx, paused.ID)
+	require.NoError(t, err)
+	recorded := f.checkpointState(t, cp.ID)
+	require.Equal(t, "resolved", recorded.State)
+	require.True(t, recorded.Decision.Approved)
+	require.Equal(t, "bob", recorded.Decision.DecidedBy)
+	require.JSONEq(t, `{"user":"bob","org":"o1"}`, string(recorded.Decision.DecidedByPrincipal))
+	require.Len(t, f.cps.resolvedEvents(), 1)
+	require.EqualValues(t, 1, f.ran.Load())
+
+	require.ErrorIs(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true}), cortex.ErrInvalidState)
+}
+
+// The first record stands. Two concurrent approvals fire one
+// CheckpointResolved and one RunReady between them.
+func TestConcurrentApprovalsRecordOnce(t *testing.T) {
+	for range 5 {
+		f := newContinueFixture(t)
+		_, cp := f.pause(t)
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i := range errs {
+			wg.Go(func() {
+				errs[i] = f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: fmt.Sprintf("op-%d", i)})
+			})
+		}
+		wg.Wait()
+		succeeded := 0
+		for _, err := range errs {
+			if err == nil {
+				succeeded++
+			} else {
+				require.ErrorIs(t, err, cortex.ErrInvalidState)
+			}
+		}
+		require.Equal(t, 1, succeeded)
+		require.Len(t, f.cps.resolvedEvents(), 1)
+		_, notices, _ := f.ready.snapshot()
+		require.Len(t, notices, 1)
+	}
+}
+
+// An approval and a rejection racing: one stands, the other is told
+// ErrInvalidState.
+func TestOppositeDecisionsRaceForOneRecord(t *testing.T) {
+	for _, toModel := range []bool{false, true} {
+		var opts []Option
+		if toModel {
+			opts = append(opts, WithRejectionsReturnToModel())
+		}
+		f := newContinueFixture(t, opts...)
+		_, cp := f.pause(t)
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i := range errs {
+			wg.Go(func() {
+				errs[i] = f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: i == 0, DecidedBy: "op", Reason: "race"})
+			})
+		}
+		wg.Wait()
+		succeeded := 0
+		for _, err := range errs {
+			if err == nil {
+				succeeded++
+			} else {
+				require.ErrorIs(t, err, cortex.ErrInvalidState)
+			}
+		}
+		require.Equal(t, 1, succeeded)
+		require.Len(t, f.cps.resolvedEvents(), 1)
+	}
+}
+
+// A cancel that lands between an approval's MarkReady and its record wins:
+// the approval is refused, its decision is not written over the cancel's
+// closure, and nobody is told the cancelled run is ready.
+func TestLateApprovalCannotOverwriteCancel(t *testing.T) {
+	f, st := newFlakyFixture(t)
+	paused, cp := f.pause(t)
+	cancel := func() { require.NoError(t, f.e.CancelRun(f.ctx, paused.ID)) }
+	st.beforeResolve.Store(&cancel)
+
+	err := f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"})
+	require.ErrorIs(t, err, cortex.ErrInvalidState)
+	require.Equal(t, run.StateCancelled, f.runState(t, paused.ID).State)
+	closed := f.checkpointState(t, cp.ID)
+	require.Equal(t, checkpointDecidedByEngine, closed.Decision.DecidedBy)
+	require.False(t, closed.Decision.Approved)
+	_, notices, _ := f.ready.snapshot()
+	require.Empty(t, notices)
+	require.Empty(t, f.cps.resolvedEvents())
+	require.Zero(t, f.ran.Load())
+}
+
+// flakySuspensionStore fails the next GetSuspension when armed.
+type flakySuspensionStore struct {
+	*sqlitestore.Store
+	fail atomic.Bool
+}
+
+func (s *flakySuspensionStore) GetSuspension(ctx context.Context, runID id.AgentRunID) (*suspension.Suspension, error) {
+	if s.fail.CompareAndSwap(true, false) {
+		return nil, errors.New("suspension read failed")
+	}
+	return s.Store.GetSuspension(ctx, runID)
+}
+
+// A suspension read that fails before the claim leaves the run ready.
+func TestContinueRunSuspensionReadFailureLeavesRunReady(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := &flakySuspensionStore{Store: newApprovalStore(ctx, t)}
+	f := buildContinueFixture(ctx, t, st, []llm.ToolCall{{ID: "call-1", Name: gatedTool().Name, Arguments: `{}`}})
+	paused, cp := f.pause(t)
+	require.NoError(t, f.e.DecideCheckpoint(as(ctx, bob), cp.ID, checkpoint.Decision{Approved: true}))
+
+	st.fail.Store(true)
+	_, err := f.e.ContinueRun(ctx, paused.ID)
+	require.Error(t, err)
+	require.Equal(t, run.StateReady, f.runState(t, paused.ID).State)
+	require.Zero(t, f.ran.Load())
+
+	done, err := f.e.ContinueRun(ctx, paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, done.State)
+	require.EqualValues(t, 1, f.ran.Load())
+}
+
+func TestCancelRunCancelsContinuableRuns(t *testing.T) {
+	t.Run("ready", func(t *testing.T) {
+		f := newContinueFixture(t)
+		paused, cp := f.pause(t)
+		require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true}))
+		require.NoError(t, f.e.CancelRun(f.ctx, paused.ID))
+		require.Equal(t, 1, f.ended.of(paused.ID))
+	})
+	t.Run("reclaimable", func(t *testing.T) {
+		f := newContinueFixture(t)
+		paused, cp := f.pause(t)
+		require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true}))
+		continuation, ok := f.st.(run.ContinuationStore)
+		require.True(t, ok)
+		_, err := continuation.ClaimContinuation(f.ctx, paused.ID, run.Lease{Owner: "w1", ExpiresAt: time.Now().Add(time.Minute)})
+		require.NoError(t, err)
+		_, err = continuation.MarkReclaimable(f.ctx, paused.ID, time.Now().UTC(), "w1")
+		require.NoError(t, err)
+		require.Equal(t, run.StateReclaimable, f.runState(t, paused.ID).State)
+
+		require.NoError(t, f.e.CancelRun(f.ctx, paused.ID))
+		require.Equal(t, run.StateCancelled, f.runState(t, paused.ID).State)
+		require.Equal(t, 1, f.ended.of(paused.ID))
+		_, err = f.st.GetSuspension(f.ctx, paused.ID)
+		require.ErrorIs(t, err, cortex.ErrNotSuspended)
+		require.Zero(t, f.ran.Load())
+	})
+	t.Run("ready after a lost record", func(t *testing.T) {
+		f, st := newFlakyFixture(t)
+		paused, cp := f.pause(t)
+		st.fail.Store(true)
+		require.Error(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true}))
+		require.NoError(t, f.e.CancelRun(f.ctx, paused.ID))
+		closed := f.checkpointState(t, cp.ID)
+		require.Equal(t, "resolved", closed.State)
+		require.Equal(t, checkpointDecidedByEngine, closed.Decision.DecidedBy)
+		require.Equal(t, 1, f.ended.of(paused.ID))
+	})
 }

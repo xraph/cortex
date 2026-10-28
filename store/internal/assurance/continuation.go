@@ -78,6 +78,11 @@ func (s *Repository) MarkReady(ctx context.Context, runID id.AgentRunID, ready r
 		if paused == nil || paused.RunID != runID || paused.Scope.Canonical() != scope.Canonical() {
 			return cortex.ErrNotSuspended
 		}
+		// The answer names the pause it answers. A run that paused again
+		// since then is waiting on something else.
+		if paused.ID != ready.SuspensionID {
+			return cortex.ErrNotSuspended
+		}
 		at := s.clock.Now().UTC()
 		if paused.ExpiresAt != nil && !paused.ExpiresAt.After(at) {
 			return cortex.ErrSuspensionExpired
@@ -88,6 +93,7 @@ func (s *Repository) MarkReady(ctx context.Context, runID id.AgentRunID, ready r
 		}
 		saved := ready
 		saved.Results = append([]byte(nil), ready.Results...)
+		saved.DecidedByPrincipal = append([]byte(nil), ready.DecidedByPrincipal...)
 		saved.At = ready.At.UTC()
 		current.State, current.Ready = run.StateReady, &saved
 		if writeErr := tx.SetRunContinuation(tc, current, at); writeErr != nil {

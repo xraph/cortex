@@ -468,3 +468,44 @@ func TestPreparedTaskChildResumesWithoutStoredPrincipal(t *testing.T) {
 	require.Len(t, seen, 1)
 	require.Nil(t, seen[0])
 }
+
+// A task-run child under a task claim is decided and continued from a host
+// job too. It holds no lease, so it never becomes reclaimable: its
+// recovery belongs to coordination.
+func TestPreparedTaskChildContinuesFromHostJob(t *testing.T) {
+	client := &requiredToolClient{}
+	calls := 0
+	f, e, _, p, req, admitter := preparedTaskRuntimeFixture(t, func(runtime *engine.Engine, overrides *engine.RunOverrides) {
+		overrides.Tools = []string{"probe"}
+		require.NoError(t, engine.WithLLM(client)(runtime))
+		require.NoError(t, engine.WithToolRevision("probe", "1")(runtime))
+		require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{approval: true})(runtime))
+		require.NoError(t, engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]())(runtime))
+		require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+			calls++
+			return "private result", nil
+		})(runtime))
+	})
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+	r, err := e.RunPreparedTask(f.ctx, p, req)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, r.State)
+	require.NotEmpty(t, r.Provenance.TaskClaimID)
+	pending, err := e.ListPendingCheckpoints(f.ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, e.DecideCheckpoint(f.ctx, pending[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}))
+	ready, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateReady, ready.State)
+	require.Zero(t, calls)
+	done, err := e.ContinueRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, verification.StatusPassed, done.VerificationStatus)
+	require.Equal(t, 1, calls)
+	saved, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Nil(t, saved.Lease)
+	require.NotEmpty(t, saved.Provenance.TaskClaimID)
+}

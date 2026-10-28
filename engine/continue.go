@@ -9,6 +9,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/checkpoint"
 	"github.com/xraph/cortex/id"
@@ -64,39 +66,78 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 		return nil, err
 	}
 	if !openedASuspendedRun(cp) {
-		return nil, e.recordDecision(ctx, cp, d)
+		return nil, e.recordDecision(ctx, cp, cp.Scope, d)
+	}
+	susp, err := e.boundSuspension(ctx, cp)
+	if err != nil {
+		return nil, err
 	}
 	if !d.Approved && !e.rejectionsToModel {
 		if rejectErr := e.failRejected(ctx, cp, d); rejectErr != nil {
+			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.readyForCheckpoint(ctx, cp) {
+				return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
+			}
 			return nil, rejectErr
 		}
-		return nil, e.recordDecision(ctx, cp, d)
+		return nil, e.recordDecision(ctx, cp, cp.Scope, d)
 	}
 
 	source := run.ReadyApproval
 	if !d.Approved {
 		source = run.ReadyRejection
 	}
-	susp, err := e.store.GetSuspension(ctx, cp.RunID)
-	if err != nil {
-		return nil, fmt.Errorf("load suspension for checkpoint %s: %w", cpID, err)
-	}
 	in := decisionInput(susp.Pending, d)
 	if _, previewErr := e.previewResume(ctx, cp.RunID, in, resumeSourceApproval, susp, nil); previewErr != nil {
 		return nil, previewErr
 	}
-	ready, err := e.markReady(ctx, cp.RunID, source, in, cp.ID)
+	readiness := run.Readiness{Source: source, CheckpointID: cp.ID, SuspensionID: susp.ID, DecidedBy: d.DecidedBy, DecidedByPrincipal: d.DecidedByPrincipal}
+	ready, err := e.markReady(ctx, cp.RunID, readiness, in)
 	if errors.Is(err, cortex.ErrNotSuspended) {
 		ready, err = e.retriedDecision(ctx, cp, source, err)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := e.recordDecision(ctx, cp, d); err != nil {
+	// A decider that lost a race to another decision, or to a cancel that
+	// closed the checkpoint, is refused here with ErrInvalidState and
+	// fires no hook: the first record stands.
+	if err := e.recordDecision(ctx, cp, ready.Scope, d); err != nil {
 		return nil, err
 	}
 	e.emitRunReady(ctx, ready)
 	return ready, nil
+}
+
+// boundSuspension returns the suspension a loop checkpoint was opened for,
+// which is the only pause a decision on it may answer.
+//
+// A checkpoint can outlive its pause: its record was lost after the run
+// was made ready, and the run continued and maybe paused again. Approving
+// it then must not approve whatever the run is waiting on now, which
+// nobody has decided. Such a checkpoint is closed as superseded and the
+// decision is refused with cortex.ErrInvalidState.
+func (e *Engine) boundSuspension(ctx context.Context, cp *checkpoint.Checkpoint) (*suspension.Suspension, error) {
+	susp, err := e.store.GetSuspension(ctx, cp.RunID)
+	if err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+		return nil, fmt.Errorf("load suspension for checkpoint %s: %w", cp.ID, err)
+	}
+	if err == nil {
+		if opened, ok := cp.Metadata[checkpointSuspensionKey].(string); ok && opened == susp.ID.String() {
+			return susp, nil
+		}
+	}
+	e.closeCheckpoint(ctx, cp, "superseded: the run is no longer waiting on the pause this checkpoint was opened for")
+	return nil, fmt.Errorf("resolve checkpoint %s: the run is no longer waiting on it: %w", cp.ID, cortex.ErrInvalidState)
+}
+
+// closeCheckpoint resolves one checkpoint on the engine's behalf, the way
+// closePendingCheckpoints does for a run that ended. It is best effort: a
+// checkpoint somebody decided in the meantime keeps their decision.
+func (e *Engine) closeCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint, reason string) {
+	decision := checkpoint.Decision{DecidedBy: checkpointDecidedByEngine, Reason: reason, DecidedAt: time.Now().UTC()}
+	if err := e.store.Resolve(cortex.WithScope(ctx, cp.Scope), cp.ID, decision); err != nil && !errors.Is(err, cortex.ErrInvalidState) {
+		e.logError("close a checkpoint", err, log.String("checkpoint_id", cp.ID.String()), log.String("run_id", cp.RunID.String()))
+	}
 }
 
 // openDecision reads the checkpoint a decision is about and stamps the
@@ -133,12 +174,14 @@ func (e *Engine) openDecision(ctx context.Context, cpID id.CheckpointID, d check
 }
 
 // recordDecision writes the decision on the checkpoint and tells
-// CheckpointResolved subscribers.
-func (e *Engine) recordDecision(ctx context.Context, cp *checkpoint.Checkpoint, d checkpoint.Decision) error {
+// CheckpointResolved subscribers, with ctx on scope, the run's own. A
+// checkpoint that is no longer pending keeps its first decision, and this
+// one is refused with cortex.ErrInvalidState.
+func (e *Engine) recordDecision(ctx context.Context, cp *checkpoint.Checkpoint, scope cortex.Scope, d checkpoint.Decision) error {
 	if err := e.store.Resolve(ctx, cp.ID, d); err != nil {
 		return fmt.Errorf("record checkpoint %s as resolved: %w", cp.ID, err)
 	}
-	e.extensions.EmitCheckpointResolved(ctx, cp.ID, decisionLabel(d))
+	e.extensions.EmitCheckpointResolved(cortex.WithScope(ctx, scope), cp.ID, decisionLabel(d))
 	return nil
 }
 
@@ -162,10 +205,24 @@ func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint,
 	if err != nil {
 		return nil, fmt.Errorf("load run %s for a repeated decision: %w", cp.RunID, err)
 	}
-	if r.State != run.StateReady || r.Ready == nil || r.Ready.CheckpointID != cp.ID || r.Ready.Source != source {
+	if r.State != run.StateReady || r.Ready == nil || r.Ready.CheckpointID != cp.ID {
 		return nil, refused
 	}
+	if r.Ready.Source != source {
+		// The other decision moved the run and has not been recorded yet.
+		// It stands; this one is too late, exactly as if it had read the
+		// checkpoint after the record.
+		return nil, fmt.Errorf("resolve checkpoint %s: already decided %s: %w", cp.ID, r.Ready.Source, cortex.ErrInvalidState)
+	}
 	return r, nil
+}
+
+// readyForCheckpoint reports whether the run behind cp is ready on a
+// decision about cp, so a rejection whose claim lost to it can say the
+// checkpoint was already decided.
+func (e *Engine) readyForCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) bool {
+	r, err := e.store.GetRun(ctx, cp.RunID)
+	return err == nil && r.State == run.StateReady && r.Ready != nil && r.Ready.CheckpointID == cp.ID
 }
 
 // decisionInput is what a decision hands back for each pending call. An
@@ -223,7 +280,7 @@ func (e *Engine) ProvideResults(ctx context.Context, runID id.AgentRunID, in Res
 	if _, previewErr := e.previewResume(ctx, runID, in, resumeSourcePublic, susp, nil); previewErr != nil {
 		return previewErr
 	}
-	ready, err := e.markReady(ctx, runID, run.ReadyExternalResults, in, id.CheckpointID{})
+	ready, err := e.markReady(ctx, runID, run.Readiness{Source: run.ReadyExternalResults, SuspensionID: susp.ID}, in)
 	if err != nil {
 		return err
 	}
@@ -231,13 +288,15 @@ func (e *Engine) ProvideResults(ctx context.Context, runID id.AgentRunID, in Res
 	return nil
 }
 
-// markReady stores in with the run and moves it to ready.
-func (e *Engine) markReady(ctx context.Context, runID id.AgentRunID, source run.ReadySource, in ResumeInput, cpID id.CheckpointID) (*run.Run, error) {
+// markReady stores in with the run and moves it to ready. readiness names
+// the pause in answers, which MarkReady checks is still the run's.
+func (e *Engine) markReady(ctx context.Context, runID id.AgentRunID, readiness run.Readiness, in ResumeInput) (*run.Run, error) {
 	results, err := json.Marshal(in.ToolResults)
 	if err != nil {
 		return nil, fmt.Errorf("encode results for run %s: %w", runID, err)
 	}
-	ready, err := e.continuation.MarkReady(ctx, runID, run.Readiness{Source: source, Results: results, CheckpointID: cpID, At: time.Now().UTC()})
+	readiness.Results, readiness.At = results, time.Now().UTC()
+	ready, err := e.continuation.MarkReady(ctx, runID, readiness)
 	if err != nil {
 		return nil, fmt.Errorf("mark run %s ready: %w", runID, err)
 	}
@@ -382,8 +441,13 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	in, source, inputErr := readyInput(current.Ready)
 	snapshot := current
 	if revoked == nil && inputErr == nil {
+		// A suspension that cannot be read now is a refusal before the
+		// claim like any other: the run stays ready for the next attempt.
 		susp, suspErr := e.store.GetSuspension(ctx, runID)
-		snapshot, err = e.previewResume(ctx, runID, in, source, susp, suspErr)
+		if suspErr != nil {
+			return nil, nil, nil, fmt.Errorf("load suspension to continue run %s: %w", runID, suspErr)
+		}
+		snapshot, err = e.previewResume(ctx, runID, in, source, susp, nil)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -400,6 +464,7 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	// From here the run is running and belongs to this call, so every exit
 	// either hands the loop a runnable state or fails the run.
 	runCtx := cortex.WithScope(ctx, claimed.Scope)
+	e.recordLostDecision(runCtx, current.Ready)
 	susp, err := e.store.GetSuspension(runCtx, runID)
 	if err != nil {
 		return nil, nil, nil, e.failResume(runCtx, claimed, claimed.AgentID, fmt.Errorf("load suspension of a claimed run: %w", err))
@@ -413,6 +478,44 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	}
 	runCtx, rz, err := e.rehydrateResume(ctx, in, source, snapshot, susp)
 	return runCtx, rz, nil, err
+}
+
+// recordLostDecision records the decision a ready run carries on its
+// checkpoint, when the checkpoint is still pending because DecideCheckpoint
+// lost that write. The run is being carried out on the decision, so the
+// queue must not go on asking for it. The decider is the one the
+// readiness kept; a readiness without one is recorded as the engine's,
+// with a reason saying the original record was lost.
+func (e *Engine) recordLostDecision(ctx context.Context, ready *run.Readiness) {
+	if ready == nil || ready.CheckpointID.IsNil() {
+		return
+	}
+	cp, err := e.store.GetCheckpoint(ctx, ready.CheckpointID)
+	if err != nil {
+		e.logError("read the checkpoint of a continued run", err, log.String("checkpoint_id", ready.CheckpointID.String()))
+		return
+	}
+	if cp.State != checkpointStatePending {
+		return
+	}
+	d := checkpoint.Decision{
+		Approved:           ready.Source == run.ReadyApproval,
+		DecidedBy:          ready.DecidedBy,
+		DecidedByPrincipal: append([]byte(nil), ready.DecidedByPrincipal...),
+		Reason:             "recorded when the run continued, because the first record of this decision was lost",
+		DecidedAt:          ready.At,
+	}
+	if d.DecidedBy == "" && len(d.DecidedByPrincipal) == 0 {
+		d.DecidedBy = checkpointDecidedByEngine
+		d.Reason = "the run was continued on this decision, but who made it was not recorded"
+	}
+	if err := e.store.Resolve(ctx, cp.ID, d); err != nil {
+		if !errors.Is(err, cortex.ErrInvalidState) {
+			e.logError("record the lost decision of a continued run", err, log.String("checkpoint_id", cp.ID.String()))
+		}
+		return
+	}
+	e.extensions.EmitCheckpointResolved(ctx, cp.ID, decisionLabel(d))
 }
 
 // readyInput decodes what a ready run continues with, and the authority it

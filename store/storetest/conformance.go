@@ -2020,6 +2020,34 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
+	// A decided checkpoint keeps its first decision. A second Resolve is
+	// refused with ErrInvalidState, not applied over the first, so two
+	// deciders racing cannot both record, and a late decision cannot
+	// replace the closure a cancel wrote.
+	t.Run("CheckpointResolveOnce", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_resolve_once")
+		r := mustCreateRun(t, s, ctx)
+		cp := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		if err := s.Resolve(ctx, cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "first"}); err != nil {
+			t.Fatalf("first Resolve: %v", err)
+		}
+		err := s.Resolve(ctx, cp.ID, checkpoint.Decision{DecidedBy: "second", Reason: "late"})
+		if !errors.Is(err, cortex.ErrInvalidState) {
+			t.Fatalf("second Resolve = %v, want ErrInvalidState", err)
+		}
+		got, err := s.GetCheckpoint(ctx, cp.ID)
+		if err != nil {
+			t.Fatalf("reload checkpoint: %v", err)
+		}
+		if got.State != "resolved" || got.Decision == nil || !got.Decision.Approved || got.Decision.DecidedBy != "first" {
+			t.Fatalf("checkpoint after a refused second Resolve = %+v, want the first decision", got)
+		}
+		if err := s.Resolve(ctx, id.NewCheckpointID(), checkpoint.Decision{Approved: true}); !errors.Is(err, cortex.ErrCheckpointNotFound) {
+			t.Errorf("Resolve of a missing checkpoint = %v, want ErrCheckpointNotFound", err)
+		}
+	})
+
 	// Agent is the one entity below that IS scope-guarded: the same name
 	// reused across two scopes must resolve to two distinct rows, proving
 	// UNIQUE (scope_canon, name), not the retired UNIQUE (app_id, name),

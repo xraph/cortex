@@ -799,10 +799,12 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // openedASuspendedRun is what tells the two apart.
 //
 // Two operators deciding the same checkpoint at once both pass the
-// pending guard, and MarkReady lets exactly one of them move the run. The
-// other is told cortex.ErrInvalidState, or, when it read the checkpoint
-// before the first decision was recorded, records the same decision again
-// and continues nothing twice.
+// pending guard. MarkReady lets one of them move the run and the store
+// keeps the first record of a decision, so the other is told
+// cortex.ErrInvalidState, fires no hook and continues nothing. A
+// checkpoint whose pause the run has already left (its record was lost
+// and the run continued) is closed as superseded, and deciding it is
+// cortex.ErrInvalidState too: it never approves the run's next pause.
 //
 // RunReady fires between the two halves. A host that continues ready runs
 // from that hook should decide with DecideCheckpoint: with
@@ -852,8 +854,12 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 
 	var executionErr error
 	if openedASuspendedRun(cp) {
+		susp, bindErr := e.boundSuspension(ctx, cp)
+		if bindErr != nil {
+			return bindErr
+		}
 		if decision.Approved || e.rejectionsToModel {
-			if err := e.resumeDecided(ctx, cp, decision); err != nil {
+			if err := e.resumeDecided(ctx, cp, susp, decision); err != nil {
 				uncertain := errors.Is(err, cortex.ErrEffectUncertain)
 				exhausted := errors.Is(err, cortex.ErrMaxStepsReached)
 				if !uncertain && !exhausted {
@@ -928,12 +934,7 @@ func decisionLabel(d checkpoint.Decision) string {
 // error. Building the input here rather than making the caller do it is
 // the point of the method: a REST client resolving a checkpoint has no
 // idea what the run was waiting on.
-func (e *Engine) resumeDecided(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
-	susp, err := e.store.GetSuspension(ctx, cp.RunID)
-	if err != nil {
-		return fmt.Errorf("load suspension for decided checkpoint: %w", err)
-	}
-
+func (e *Engine) resumeDecided(ctx context.Context, cp *checkpoint.Checkpoint, susp *suspension.Suspension, decision checkpoint.Decision) error {
 	// resume rather than Resume: this is the one caller allowed to say a
 	// checkpoint decided these calls, and it says so having just read a
 	// pending checkpoint for this run.
@@ -1159,7 +1160,7 @@ func (e *Engine) closePendingCheckpoints(ctx context.Context, runID id.AgentRunI
 		DecidedAt: time.Now().UTC(),
 	}
 	for _, cp := range cps {
-		if err := e.store.Resolve(ctx, cp.ID, decision); err != nil {
+		if err := e.store.Resolve(ctx, cp.ID, decision); err != nil && !errors.Is(err, cortex.ErrInvalidState) {
 			e.logError("resolve the checkpoint of a run that ended", err,
 				log.String("checkpoint_id", cp.ID.String()),
 				log.String("run_id", runID.String()),

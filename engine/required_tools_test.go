@@ -399,3 +399,62 @@ func TestRequiredVerificationRevokedPrincipalKeepsItsReason(t *testing.T) {
 	require.Equal(t, run.StateFailed, saved.State)
 	require.Equal(t, cortex.ErrPrincipalRevoked.Error(), saved.Error)
 }
+
+// A run under required verification is continued from a host job like any
+// other: DecideCheckpoint or ProvideResults makes it ready, and ContinueRun
+// runs it through the required checks. It holds no lease, so it can never
+// become reclaimable: coordination owns its recovery.
+func TestRequiredVerificationContinuesFromHostJob(t *testing.T) {
+	t.Run("approval", func(t *testing.T) {
+		f := newWorkerFixture(t)
+		client := &requiredToolClient{}
+		calls := 0
+		e := requiredToolEngine(t, f, client, &requiredToolAuthority{approval: true}, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+			calls++
+			return "SECRET approved result", nil
+		}))
+		ag, overrides := requiredToolAgent(t, f)
+		r, err := e.RunAgent(f.ctx, ag.Name, "work", overrides)
+		require.NoError(t, err)
+		require.Equal(t, run.StatePaused, r.State)
+		require.True(t, r.Provenance.VerificationRequired)
+		pending, err := e.ListPendingCheckpoints(f.ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, pending, 1)
+		require.NoError(t, e.DecideCheckpoint(f.ctx, pending[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}))
+		ready, err := f.storage.GetRun(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Equal(t, run.StateReady, ready.State)
+		require.Zero(t, calls)
+		done, err := e.ContinueRun(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Equal(t, verification.StatusPassed, done.VerificationStatus)
+		require.Equal(t, 1, calls)
+		saved, err := f.storage.GetRun(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Nil(t, saved.Lease)
+		assertRequiredToolPrivacy(t, f, ag)
+	})
+	t.Run("external results", func(t *testing.T) {
+		f := newWorkerFixture(t)
+		client := &requiredToolClient{}
+		auth := &requiredToolAuthority{}
+		e := requiredToolEngine(t, f, client, auth, engine.WithExternalTool(llm.Tool{Name: "probe"}))
+		ag, overrides := requiredToolAgent(t, f)
+		r, err := e.RunAgent(f.ctx, ag.Name, "work", overrides)
+		require.NoError(t, err)
+		require.Equal(t, run.StatePaused, r.State)
+		require.ErrorIs(t, e.ProvideResults(f.ctx, r.ID, engine.ResumeInput{}), cortex.ErrResultsMismatch)
+		calls, err := e.PendingVerificationTools(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Len(t, calls, 1)
+		require.NoError(t, e.ProvideResults(f.ctx, r.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: calls[0].ID, Content: "SECRET result"}}}))
+		done, err := e.ContinueRun(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Equal(t, verification.StatusPassed, done.VerificationStatus)
+		saved, err := f.storage.GetRun(f.ctx, r.ID)
+		require.NoError(t, err)
+		require.Nil(t, saved.Lease)
+		assertRequiredToolPrivacy(t, f, ag)
+	})
+}

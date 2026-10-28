@@ -384,11 +384,18 @@ Whoever finds that run later reads your words in `run.Error` rather than a bare
 
 Two operators deciding the same checkpoint at once is safe. Both pass the
 pending guard, but only one of them can move the run out of `paused`, so the
-run continues once and the approved call is dispatched once. The other gets
-`cortex.ErrInvalidState`, or, when it read the checkpoint before the first
-decision was recorded, records the same decision again and moves nothing.
-There's no interleaving where a rejection stomps a run an approval already
-finished.
+run continues once and the approved call is dispatched once. The checkpoint
+keeps the first decision recorded on it, so the other operator gets
+`cortex.ErrInvalidState` back and no hook fires for them, whether they approved
+or rejected. There's no interleaving where a rejection stomps a run an approval
+already finished, and a decision that arrives after a cancel closed the
+checkpoint is refused the same way.
+
+A decision always answers the pause its checkpoint was opened for. If the
+record of a decision was lost and the run has since continued, the old
+checkpoint is closed as superseded the next time somebody decides it, and that
+decision is `cortex.ErrInvalidState`. It can't approve whatever the run is
+waiting on now: that pause has its own checkpoint.
 
 Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
 The decision is recorded before the run continues. If the continuation then
@@ -598,6 +605,11 @@ leaves the run `ready` for the next attempt. Two jobs continuing the same run is
 safe: one runs it, the other gets `cortex.ErrRunNotContinuable`.
 `ContinueRunStream` is the streaming version and opens with `run_started`
 carrying `"resumed": true`, like `ResumeStream`.
+
+If the write recording a decision on its checkpoint fails after the run was
+made ready, deciding again with the same decision finishes the job. If a job
+continues the run first, `ContinueRun` records the decision on the checkpoint
+itself, with the decider the run kept, so the queue stops asking for it.
 
 A store has to implement `run.ContinuationStore` for any of this. The built-in
 stores do. Without it the three calls return `cortex.ErrContinuationUnavailable`,

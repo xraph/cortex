@@ -27,11 +27,15 @@ func (s *Spy) MarkReady(ctx context.Context, runID id.AgentRunID, ready run.Read
 	if err != nil {
 		return nil, err
 	}
+	if susp.ID != ready.SuspensionID {
+		return nil, cortex.ErrNotSuspended
+	}
 	if susp.ExpiresAt != nil && !susp.ExpiresAt.After(time.Now()) {
 		return nil, cortex.ErrSuspensionExpired
 	}
 	saved := ready
 	saved.Results = append([]byte(nil), ready.Results...)
+	saved.DecidedByPrincipal = append([]byte(nil), ready.DecidedByPrincipal...)
 	r.State, r.Ready = run.StateReady, &saved
 	r.Revision++
 	susp.ExpiresAt = nil

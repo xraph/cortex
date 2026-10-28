@@ -54,7 +54,7 @@ func TestLegacyClaimPredicateSkipsNewStates(t *testing.T) {
 	}
 
 	ready, readySusp := paused()
-	if _, err := s.MarkReady(ctx, ready.ID, run.Readiness{Source: run.ReadyApproval, At: time.Now().UTC()}); err != nil {
+	if _, err := s.MarkReady(ctx, ready.ID, run.Readiness{Source: run.ReadyApproval, At: time.Now().UTC(), SuspensionID: readySusp.ID}); err != nil {
 		t.Fatalf("MarkReady: %v", err)
 	}
 	reclaimable := &run.Run{ID: id.NewAgentRunID(), AgentID: agentID, State: run.StateRunning, Input: "input", Lease: &run.Lease{Owner: "w1", ExpiresAt: time.Now().UTC().Add(-time.Minute)}}

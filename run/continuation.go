@@ -29,6 +29,16 @@ type Readiness struct {
 	Results      json.RawMessage `json:"results,omitempty"`
 	CheckpointID id.CheckpointID `json:"checkpoint_id,omitempty"`
 	At           time.Time       `json:"at"`
+	// SuspensionID is the pause the decision or the results answer.
+	// MarkReady refuses with cortex.ErrNotSuspended when the run's current
+	// suspension is a different one, so an answer to one pause can never
+	// be applied to the next.
+	SuspensionID id.SuspensionID `json:"suspension_id,omitempty"`
+	// DecidedBy and DecidedByPrincipal are the checkpoint decider, kept
+	// so the decision can still be recorded with its real decider if the
+	// write to the checkpoint is lost. Empty for external results.
+	DecidedBy          string `json:"decided_by,omitempty"`
+	DecidedByPrincipal []byte `json:"decided_by_principal,omitempty"`
 }
 
 // ReadyNotice is what a host hears when a run becomes ready to continue:
@@ -55,8 +65,9 @@ type Lease struct {
 // exact scope except the two AcrossScopes listings, which exist for the engine sweeper only.
 type ContinuationStore interface {
 	// MarkReady moves a paused run whose suspension has not expired to StateReady, saves r and
-	// advances Revision. ErrNotSuspended when the run is not paused; ErrSuspensionExpired when its
-	// suspension's deadline has passed. Then it clears the suspension's deadline.
+	// advances Revision. ErrNotSuspended when the run is not paused, or when its suspension is not
+	// r.SuspensionID; ErrSuspensionExpired when its suspension's deadline has passed. Then it
+	// clears the suspension's deadline.
 	MarkReady(ctx context.Context, runID id.AgentRunID, r Readiness) (*Run, error)
 	// HoldLease sets or extends the lease of a running run whose lease is unowned or owned by
 	// lease.Owner. ErrRunLeaseLost otherwise, and for a lease with no owner or no expiry. Never

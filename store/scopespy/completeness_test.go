@@ -303,8 +303,22 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 		t.Fatal("reachedMethods recorded no calls; this test proves nothing")
 	}
 
+	// The optional capabilities the engine asserts by type are probed by
+	// TestSpy_OverridesContinuationStore and TestSpy_OverridesProgressStore.
+	// A scenario may reach them (an approval continues through
+	// ClaimContinuation), but nothing here has to reach every one of them.
+	capabilities := make(map[string]bool)
+	for _, capability := range []reflect.Type{
+		reflect.TypeOf((*run.ContinuationStore)(nil)).Elem(),
+		reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem(),
+	} {
+		for i := 0; i < capability.NumMethod(); i++ {
+			capabilities[capability.Method(i).Name] = true
+		}
+	}
+
 	for name := range reached {
-		if !overridden[name] {
+		if !overridden[name] && !capabilities[name] {
 			t.Errorf("RunAgent or StreamAgent called %q, but Spy doesn't override it (overriddenMethods disagrees with reachedMethods — investigate before trusting either)", name)
 		}
 	}
