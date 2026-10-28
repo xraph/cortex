@@ -96,11 +96,20 @@ type Engine struct {
 	continuation run.ContinuationStore
 	// rejectionsToModel is WithRejectionsReturnToModel.
 	rejectionsToModel bool
-	extensions        *plugin.Registry
-	pendingExts       []plugin.Extension
-	tools             []registeredTool
-	toolRevisions     map[string]string
-	modelRevisions    map[string]string
+	// progress is the store's suspension.ProgressStore, nil when it has
+	// none. Leasing needs it and continuation both.
+	progress suspension.ProgressStore
+	// leaseTTL is WithRunLease, workerID WithWorkerID. leases tracks the
+	// leased runs this engine is executing, so a Stop that runs out of
+	// time can hand them off.
+	leaseTTL       time.Duration
+	workerID       string
+	leases         leaseRegistry
+	extensions     *plugin.Registry
+	pendingExts    []plugin.Extension
+	tools          []registeredTool
+	toolRevisions  map[string]string
+	modelRevisions map[string]string
 	// externalTools are advertised but never dispatched here: a call to
 	// one suspends the run so the host can execute it.
 	externalTools []registeredExternal
@@ -169,6 +178,11 @@ type RunOverrides struct {
 	ToolsRestricted bool
 	Budget          *execution.Budget
 	SessionID       id.SessionID
+	// RunID pre-assigns the new run's id, which must be an "arun" id, so
+	// a host that retries a start cannot run the same work twice: a run
+	// with this id that already exists returns cortex.ErrAlreadyExists and
+	// nothing runs. Zero lets the engine pick one.
+	RunID id.AgentRunID
 }
 
 // New creates a new Engine with the given options.
@@ -183,6 +197,7 @@ func New(opts ...Option) (*Engine, error) {
 		agentReplyGrace: defaultAgentReplyGrace,
 		sweepInterval:   defaultSweepInterval,
 		sweepLimit:      defaultSweepLimit,
+		leaseTTL:        defaultRunLease,
 	}
 
 	for _, opt := range opts {
@@ -195,6 +210,12 @@ func New(opts ...Option) (*Engine, error) {
 	// the caller's list.
 	if continuation, ok := e.store.(run.ContinuationStore); ok {
 		e.continuation = continuation
+	}
+	if progress, ok := e.store.(suspension.ProgressStore); ok {
+		e.progress = progress
+	}
+	if e.workerID == "" {
+		e.workerID = defaultWorkerID()
 	}
 
 	// After every option, so WithToolAuthorizer and WithPrincipalCodec can
@@ -350,15 +371,27 @@ func (e *Engine) Start(ctx context.Context) error {
 // executing to finish. A run started from inside one of those (a tool
 // calling RunAgent on the ctx it was given) is still let through, because
 // its parent is one of the runs being waited for. Start admits runs again.
+//
+// A leased run (WithRunLease) does not run to the end while Stop drains.
+// At its next boundary, before a model call or a tool dispatch, it saves
+// its progress, becomes reclaimable under this worker's lease, fires
+// RunReclaimable with HandOff set, and returns cortex.ErrRunInterrupted;
+// another replica continues it. A run that finishes before reaching a
+// boundary simply finishes.
+//
 // The message bus is under the same admission: while Stop drains it claims
 // no new delivery or ask, leaving them queued for another worker, and a
 // delivery it was already carrying finishes, resume included.
 //
-// If ctx ends before the last run finishes, Stop still signals task
-// services and returns ctx's error, but leaves the sweeper and the message
-// bus running and announces no shutdown. The runs it was waiting for keep
-// executing and write their own outcome when they finish. Call Stop again
-// to complete the shutdown before disposing stores.
+// If ctx ends before the last run finishes, Stop cancels the leased runs
+// still executing with cause cortex.ErrEngineStopping, which hands each of
+// them off as above, still signals task services and returns ctx's error,
+// but leaves the sweeper and the message bus running and announces no
+// shutdown. A tool result that arrives after the cancellation is
+// discarded, so a call that is not retry-safe stays recorded as started.
+// Runs without a lease keep executing and write their own outcome when
+// they finish. Call Stop again to complete the shutdown before disposing
+// stores.
 //
 // The sweeper is joined, not merely signalled, and it is joined before
 // the shutdown hook fires: a subscriber told the engine has stopped
@@ -374,6 +407,10 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	defer release()
 	if err := e.admission.drain(ctx); err != nil {
+		// Out of time: every leased run still executing is told to hand
+		// off now rather than at its next boundary, so a host that exits
+		// after this leaves those runs reclaimable instead of running.
+		e.leases.interruptAll(cortex.ErrEngineStopping)
 		return errors.Join(err, e.stopTaskServices(ctx))
 	}
 	if err := e.stopTaskServices(ctx); err != nil {
@@ -880,7 +917,7 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 				}
 				executionErr = err
 			}
-		} else if err := e.failRejected(ctx, cp, decision); err != nil {
+		} else if err := e.failRejected(ctx, cp, susp, decision); err != nil {
 			return err
 		}
 	}
@@ -960,13 +997,21 @@ func (e *Engine) resumeDecided(ctx context.Context, cp *checkpoint.Checkpoint, s
 // rather than worked around: ErrNotSuspended travels back to the caller
 // through this error, and nothing is written.
 //
+// The claim is pinned to bound, the pause the checkpoint was opened for,
+// on a store that implements suspension.VersionedStore (every built-in
+// one). A stale rejection whose run has since paused again on another
+// suspension is refused with cortex.ErrInvalidState and the run is left
+// paused: it would otherwise fail a run for a pause nobody rejected. A
+// store without the capability claims whatever pause the run has, after
+// the same check made just before the claim.
+//
 // Once the claim succeeds the run belongs to this call, exactly as it
 // does in Resume, so every exit below either fails the run or reports
 // why it could not. The suspension is deleted after the state write and
 // never before: the row is the only record of what the run was waiting
 // on, and a delete that landed while the state write failed would throw
 // that away for nothing.
-func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, decision checkpoint.Decision) error {
+func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, decision checkpoint.Decision) error {
 	// Read before the claim, for the reason claimedRun spells out: a
 	// read that fails here costs nothing, because the run is still
 	// paused and the decider can decide again, while the same failure
@@ -977,7 +1022,7 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 		return fmt.Errorf("load run for rejected checkpoint: %w", err)
 	}
 
-	susp, err := e.store.ClaimSuspension(ctx, cp.RunID)
+	susp, err := e.claimRejected(ctx, cp, bound, snapshot)
 	if err != nil {
 		return fmt.Errorf("claim suspension for rejected checkpoint %s: %w", cp.ID, err)
 	}
@@ -1007,6 +1052,29 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, de
 		e.logError("delete suspension of a rejected run", err, log.String("run_id", cp.RunID.String()))
 	}
 	return nil
+}
+
+// claimRejected claims the pause a rejection answers. With a versioned
+// store the claim takes bound and nothing else; a run waiting on another
+// pause is cortex.ErrInvalidState.
+func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, snapshot *run.Run) (*suspension.Suspension, error) {
+	versioned, ok := e.store.(suspension.VersionedStore)
+	if !ok || bound == nil {
+		return e.store.ClaimSuspension(ctx, cp.RunID)
+	}
+	susp, err := versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: cp.RunID, SuspensionID: bound.ID, RunRevision: snapshot.Revision})
+	if errors.Is(err, suspension.ErrVersionClaimUnavailable) {
+		// A store that implements the interface but cannot pin the pause
+		// right now is treated like one without it.
+		return e.store.ClaimSuspension(ctx, cp.RunID)
+	}
+	if err == nil || (!errors.Is(err, cortex.ErrNotSuspended) && !errors.Is(err, cortex.ErrRunConflict)) {
+		return susp, err
+	}
+	if current, readErr := e.store.GetSuspension(ctx, cp.RunID); readErr == nil && current.ID != bound.ID {
+		return nil, fmt.Errorf("the run is no longer waiting on the pause this checkpoint was opened for: %w", cortex.ErrInvalidState)
+	}
+	return nil, err
 }
 
 // CancelRun ends a run at an operator's request, and it is the only way
@@ -1121,13 +1189,9 @@ func (e *Engine) cancelClaimed(ctx context.Context, r *run.Run) error {
 
 	// The run is cancelled and no claim will ever take it again, so the
 	// row is dead weight, and dropping it is what makes the cancel final.
+	// Its progress snapshot went with the terminal hook above.
 	if err := e.store.DeleteSuspension(ctx, r.ID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
 		e.logError("delete suspension of a cancelled run", err, log.String("run_id", r.ID.String()))
-	}
-	if progress, ok := e.store.(suspension.ProgressStore); ok {
-		if err := progress.DeleteProgress(ctx, r.ID); err != nil {
-			e.logError("delete progress of a cancelled run", err, log.String("run_id", r.ID.String()))
-		}
 	}
 	e.closePendingCheckpoints(ctx, r.ID, "the run was cancelled, so there is nothing left to decide")
 	return nil
@@ -1243,7 +1307,7 @@ func (e *Engine) runAgent(ctx context.Context, agentName, input string, override
 	}
 
 	// Fallback: mock/echo execution.
-	return e.runMock(ctx, ag, input)
+	return e.runMock(ctx, ag, input, overrides)
 }
 
 // StreamAgent executes an agent and sends streaming events to the channel.
@@ -1304,19 +1368,53 @@ func (e *Engine) streamAgent(ctx context.Context, agentName, input string, overr
 	}
 
 	// Fallback: mock/echo execution.
-	return e.streamMock(ctx, ag, input, events, done)
+	return e.streamMock(ctx, ag, input, overrides, events, done)
+}
+
+// mockRunID is the id a mock run is created with: the override's, or a
+// new one.
+func mockRunID(overrides *RunOverrides) (id.AgentRunID, error) {
+	if overrides == nil || overrides.RunID.IsNil() {
+		return id.NewAgentRunID(), nil
+	}
+	if overrides.RunID.Prefix() != id.PrefixAgentRun {
+		return id.Nil, fmt.Errorf("cortex: run id %s is not a run id: %w", overrides.RunID, cortex.ErrInvalidPrepared)
+	}
+	return overrides.RunID, nil
+}
+
+// createMockRun writes a mock run, under this worker's lease when the
+// engine leases runs, and starts renewing it. A mock run saves no
+// progress: there is no model state to continue from.
+func (e *Engine) createMockRun(ctx context.Context, r *run.Run) (context.Context, error) {
+	leased := e.leasesRun(r)
+	if leased {
+		lease := e.newLease()
+		r.Lease = &lease
+	}
+	if err := e.store.CreateRun(ctx, r); err != nil {
+		return ctx, fmt.Errorf("create run: %w", err)
+	}
+	if leased {
+		ctx = e.holdLease(ctx, r)
+	}
+	return ctx, nil
 }
 
 // runMock is the mock/echo fallback for RunAgent.
-func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*run.Run, error) {
+func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
 	principal, principalErr := e.encodePrincipal(ctx)
 	if principalErr != nil {
 		return nil, principalErr
 	}
+	runID, idErr := mockRunID(overrides)
+	if idErr != nil {
+		return nil, idErr
+	}
 	now := time.Now().UTC()
 	r := &run.Run{
 		Entity:     cortex.NewEntity(),
-		ID:         id.NewAgentRunID(),
+		ID:         runID,
 		AgentID:    ag.ID,
 		State:      run.StateRunning,
 		Input:      input,
@@ -1330,9 +1428,11 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 	}
 	input = string(safeInput)
 	r.Input = input
-	if err := e.store.CreateRun(ctx, r); err != nil {
-		return nil, fmt.Errorf("create run: %w", err)
+	ctx, createErr := e.createMockRun(ctx, r)
+	if createErr != nil {
+		return nil, createErr
 	}
+	defer releaseLease(ctx, r.ID)
 	runTraceFrom(ctx).bind(r, "")
 
 	e.extensions.EmitRunStarted(ctx, ag.ID, r.ID, input)
@@ -1367,16 +1467,21 @@ func (e *Engine) runMock(ctx context.Context, ag *agent.Config, input string) (*
 }
 
 // streamMock is the mock/echo fallback for StreamAgent.
-func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string, events chan<- StreamEvent, done func()) error {
+func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent, done func()) error {
 	principal, principalErr := e.encodePrincipal(ctx)
 	if principalErr != nil {
 		close(events)
 		return principalErr
 	}
+	runID, idErr := mockRunID(overrides)
+	if idErr != nil {
+		close(events)
+		return idErr
+	}
 	now := time.Now().UTC()
 	r := &run.Run{
 		Entity:     cortex.NewEntity(),
-		ID:         id.NewAgentRunID(),
+		ID:         runID,
 		AgentID:    ag.ID,
 		State:      run.StateRunning,
 		Input:      input,
@@ -1391,9 +1496,10 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 	}
 	input = string(safeInput)
 	r.Input = input
-	if err := e.store.CreateRun(ctx, r); err != nil {
+	ctx, createErr := e.createMockRun(ctx, r)
+	if createErr != nil {
 		close(events)
-		return fmt.Errorf("create run: %w", err)
+		return createErr
 	}
 	rt := runTraceFrom(ctx)
 	rt.bind(r, "")
@@ -1403,6 +1509,7 @@ func (e *Engine) streamMock(ctx context.Context, ag *agent.Config, input string,
 	go func() {
 		defer close(events)
 		defer done()
+		defer releaseLease(ctx, r.ID)
 		defer func() {
 			if p := recover(); p != nil {
 				rt.end(r, telemetry.ErrPanic)

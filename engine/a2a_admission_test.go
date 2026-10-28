@@ -16,6 +16,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 )
 
 // drainingLLM answers as planner, worker or busy, keyed on the system
@@ -73,9 +74,9 @@ func (l *drainingLLM) CompleteStream(context.Context, *llm.Request) (llm.Stream,
 	return nil, errors.New("drainingLLM: CompleteStream not supported")
 }
 
-func newDrainingEngine(ctx context.Context, t *testing.T, st store.Store, model llm.Client, createAgents bool) *Engine {
+func newDrainingEngine(ctx context.Context, t *testing.T, st store.Store, model llm.Client, createAgents bool, opts ...Option) *Engine {
 	t.Helper()
-	e, err := New(WithStore(st), WithLLM(model), WithA2A(a2a.Options{HopCeiling: 6, Workers: 1}))
+	e, err := New(append([]Option{WithStore(st), WithLLM(model), WithA2A(a2a.Options{HopCeiling: 6, Workers: 1})}, opts...)...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -118,15 +119,49 @@ func assertNoStoppingFailure(ctx context.Context, t *testing.T, st store.Store, 
 
 // The reviewer's probe: the worker's run is executing when Stop starts, and
 // its reply lands during the drain. The reply's resume follows a claim the
-// bus made under admission, so it runs through stopping: the planner
-// completes, and Stop returns once it has, instead of leaving the planner
-// paused behind a consumed ask.
+// bus made under admission, so it runs through stopping instead of leaving
+// the planner paused behind a consumed ask. Without a lease the planner
+// completes, and Stop returns once it has. With one (the default) the
+// resumed planner records the reply and then hands itself off at its next
+// model call: it is reclaimable, and its progress carries the answer.
 func TestA2AReplyDuringDrainResumesAsker(t *testing.T) {
+	t.Run("without a lease", func(t *testing.T) {
+		st, planner := replyDuringDrain(t, WithRunLease(0))
+		assertNoStoppingFailure(a2aScope(), t, st, planner)
+	})
+	t.Run("leased", func(t *testing.T) {
+		st, planner := replyDuringDrain(t)
+		ctx := a2aScope()
+		r, err := st.GetRun(ctx, planner)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if r.State != run.StateReclaimable {
+			t.Fatalf("planner state = %s (error %q), want reclaimable", r.State, r.Error)
+		}
+		saved, err := st.(suspension.ProgressStore).GetProgress(ctx, planner)
+		if err != nil {
+			t.Fatalf("GetProgress: %v", err)
+		}
+		answered := false
+		for _, m := range saved.Cont.Messages {
+			if m.Role == "tool" && strings.Contains(m.Content, "all clear") {
+				answered = true
+			}
+		}
+		if !answered {
+			t.Fatalf("the handed-off planner's progress lost the worker's answer: %+v", saved.Cont.Messages)
+		}
+	})
+}
+
+func replyDuringDrain(t *testing.T, opts ...Option) (store.Store, id.AgentRunID) {
+	t.Helper()
 	ctx := a2aScope()
 	st := newApprovalStore(ctx, t)
 	model := newDrainingLLM(true)
 	t.Cleanup(model.letGo)
-	e := newDrainingEngine(ctx, t, st, model, true)
+	e := newDrainingEngine(ctx, t, st, model, true, opts...)
 
 	paused, err := e.RunAgent(ctx, "planner", "find out how the worker is doing", nil)
 	if err != nil || paused.State != run.StatePaused {
@@ -162,10 +197,10 @@ func TestA2AReplyDuringDrainResumesAsker(t *testing.T) {
 			t.Fatalf("%s did not return", wait.what)
 		}
 	}
-	assertNoStoppingFailure(ctx, t, st, paused.ID)
 	if got := model.workerCalls.Load(); got != 1 {
 		t.Fatalf("worker ran %d times, want 1", got)
 	}
+	return st, paused.ID
 }
 
 // A directive that arrives while one replica drains is not claimed there

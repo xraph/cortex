@@ -48,9 +48,13 @@ const resumeLabelContinue = "continue"
 // the run is marked ready to carry that back to the model.
 //
 // A checkpoint a host wrote itself is only recorded. A checkpoint that is
-// no longer pending is cortex.ErrInvalidState. A store without
-// run.ContinuationStore returns cortex.ErrContinuationUnavailable; use
-// ResolveCheckpoint there.
+// no longer pending is cortex.ErrInvalidState. ErrInvalidState also means
+// "already being acted on": a decider who repeats its own approval in the
+// moment between a job claiming the run and that job recording the
+// decision is refused with it too, though the approval stands and the run
+// is carrying it out. Read the checkpoint to see the record. A store
+// without run.ContinuationStore returns cortex.ErrContinuationUnavailable;
+// use ResolveCheckpoint there.
 func (e *Engine) DecideCheckpoint(ctx context.Context, checkpointID id.CheckpointID, d checkpoint.Decision) error {
 	_, err := e.decideCheckpoint(ctx, checkpointID, d)
 	return err
@@ -74,7 +78,7 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 		return nil, err
 	}
 	if !d.Approved && !e.rejectionsToModel {
-		if rejectErr := e.failRejected(ctx, cp, d); rejectErr != nil {
+		if rejectErr := e.failRejected(ctx, cp, susp, d); rejectErr != nil {
 			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.runMovedOn(ctx, cp) {
 				return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
 			}
@@ -93,6 +97,9 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	}
 	readiness := run.Readiness{Source: source, CheckpointID: cp.ID, SuspensionID: susp.ID, DecidedBy: d.DecidedBy, DecidedByPrincipal: d.DecidedByPrincipal}
 	ready, err := e.markReady(ctx, cp.RunID, readiness, in)
+	// marked is whether this call's own MarkReady moved the run. A retry
+	// that finds the run already ready on this decision did not.
+	marked := err == nil
 	if errors.Is(err, cortex.ErrNotSuspended) {
 		ready, err = e.retriedDecision(ctx, cp, source, err)
 	}
@@ -106,15 +113,19 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 		if !errors.Is(err, cortex.ErrInvalidState) || !e.recordedAs(ctx, cp, d) {
 			return nil, err
 		}
-		// A job claimed the run between MarkReady and this write and
-		// recorded this very decision for it. The decision stands, so it
-		// is a success. RunReady goes out only if nobody has claimed the
-		// run yet; a claimed run needs no job.
+		// Somebody recorded this very decision between MarkReady and this
+		// write: a job that claimed the run, or the same decider deciding
+		// twice at once. The decision stands, so it is a success. RunReady
+		// goes out only from the call whose MarkReady moved the run, and
+		// only if nobody has claimed the run yet; a claimed run needs no
+		// job, and a second notice would send a second job after it.
 		current, stillReady := e.readyForCheckpoint(ctx, cp)
 		if !stillReady {
 			return nil, nil
 		}
-		e.emitRunReady(ctx, current)
+		if marked {
+			e.emitRunReady(ctx, current)
+		}
 		return current, nil
 	}
 	e.emitRunReady(ctx, ready)
@@ -231,10 +242,11 @@ func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint,
 	}
 	if r.State != run.StateReady || r.Ready == nil || r.Ready.CheckpointID != cp.ID {
 		if r.State != run.StatePaused {
-			// Another decision moved the run first (a rejection that
-			// failed it, or an approval already carried out) and has not
-			// been recorded yet. It stands.
-			return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
+			// A decision moved the run first (a rejection that failed it,
+			// or an approval a job is already carrying out, which may be
+			// this decider's own) and has not been recorded yet. It
+			// stands, and the run is already acting on it.
+			return nil, fmt.Errorf("resolve checkpoint %s: already decided and being acted on: %w", cp.ID, cortex.ErrInvalidState)
 		}
 		return nil, refused
 	}
@@ -504,12 +516,21 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		}
 	}
 
-	// No lease yet: the run is held by this call alone until leasing
-	// lands. Runs under required verification or a task claim never get
-	// one, since coordination owns their recovery.
-	claimed, err := e.continuation.ClaimContinuation(ctx, runID, run.Lease{})
+	// A run this engine leases is claimed under this worker's lease, which
+	// the heartbeat then renews. Runs under required verification or a
+	// task claim, and every run when leases are off, are claimed with no
+	// lease and never heartbeated: coordination owns their recovery.
+	lease := run.Lease{}
+	leased := e.leasesRun(current)
+	if leased {
+		lease = e.newLease()
+	}
+	claimed, err := e.continuation.ClaimContinuation(ctx, runID, lease)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("claim run %s to continue: %w", runID, err)
+	}
+	if leased {
+		ctx = e.holdLease(ctx, claimed)
 	}
 
 	// From here the run is running and belongs to this call, so every exit
@@ -521,6 +542,7 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		return nil, nil, nil, e.failResume(runCtx, claimed, claimed.AgentID, fmt.Errorf("load suspension of a claimed run: %w", err))
 	}
 	susp.ClaimedRun = claimed
+	e.saveBoundary(runCtx, runID, pausedCont(susp.Cont))
 	if revoked != nil {
 		return nil, nil, nil, e.failRevokedResume(ctx, snapshot, susp, revoked)
 	}
@@ -534,10 +556,15 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 // recordLostDecision records the decision a ready run carries on its
 // checkpoint, when the checkpoint is still pending: DecideCheckpoint lost
 // that write, or has not made it yet. In the second case the decider's own
-// write then finds this record and treats it as its own. The run is being carried out on the decision, so the
-// queue must not go on asking for it. The decider is the one the
-// readiness kept; a readiness without one is recorded as the engine's,
-// with a reason saying the original record was lost.
+// write then finds this record and treats it as its own. The run is being
+// carried out on the decision, so the queue must not go on asking for it.
+// The decider is the one the readiness kept; a readiness without one is
+// recorded as the engine's, with a reason saying the original record was
+// lost.
+//
+// Between the claim and this record a decider repeating its decision is
+// told cortex.ErrInvalidState, which here means the decision is already
+// being acted on, not that it was refused.
 func (e *Engine) recordLostDecision(ctx context.Context, ready *run.Readiness) {
 	if ready == nil || ready.CheckpointID.IsNil() {
 		return

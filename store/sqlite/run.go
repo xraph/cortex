@@ -62,6 +62,9 @@ func (d assuranceDriver) insertRun(ctx context.Context, r *run.Run, at time.Time
 	m := runToModel(r)
 	m.Revision = 1
 	_, err := d.queries().NewInsert(m).Exec(ctx)
+	if isUniqueViolation(err) {
+		return fmt.Errorf("cortex/sqlite: create run %s: %w: %w", r.ID, cortex.ErrAlreadyExists, err)
+	}
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: create run: %w", err)
 	}

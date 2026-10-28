@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -193,6 +194,46 @@ func WithPrincipalCodec(c cortex.PrincipalCodec) Option {
 func WithRejectionsReturnToModel() Option {
 	return func(e *Engine) error {
 		e.rejectionsToModel = true
+		return nil
+	}
+}
+
+// WithRunLease sets how long a worker's lease on a running run lasts
+// before another replica may reclaim the run. The engine renews it every
+// ttl/3 while the run executes and saves the run's progress at each step
+// boundary, so a run whose worker dies or drains is left reclaimable
+// rather than stuck running. The default is 60 seconds. Zero turns off
+// leases, progress snapshots and reclaiming; a negative ttl fails New.
+//
+// Leasing needs a store that implements both run.ContinuationStore and
+// suspension.ProgressStore. Runs under required verification or a task
+// claim are never leased: coordination owns their recovery.
+//
+// Every engine that shares a store must use the same setting. A worker
+// renewing a lease takes over a running run that has no lease owner, so
+// an engine with leases off sharing runs with one that leases them would
+// have its runs taken from under it.
+func WithRunLease(ttl time.Duration) Option {
+	return func(e *Engine) error {
+		if ttl < 0 {
+			return fmt.Errorf("cortex: run lease %s is negative", ttl)
+		}
+		e.leaseTTL = ttl
+		return nil
+	}
+}
+
+// WithWorkerID names this engine as a lease owner. Leases, progress
+// snapshots and hand-offs carry it, so it must be unique among the
+// replicas sharing a store and stable for the life of the process. The
+// default is "<hostname>-<pid>-<6 random hex digits>". An empty id fails
+// New.
+func WithWorkerID(id string) Option {
+	return func(e *Engine) error {
+		if id == "" {
+			return errors.New("cortex: worker id is empty")
+		}
+		e.workerID = id
 		return nil
 	}
 }

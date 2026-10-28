@@ -141,6 +141,10 @@ var (
 	// ErrProgressNotFound is returned when a run has no saved progress
 	// snapshot at the caller's scope.
 	ErrProgressNotFound = errors.New("cortex: run progress not found")
+	// ErrRunInterrupted is returned by a run that its worker handed off
+	// while shutting down. The run is reclaimable, not ended: another
+	// replica continues it from its last saved progress.
+	ErrRunInterrupted = errors.New("cortex: run handed off before it finished")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.

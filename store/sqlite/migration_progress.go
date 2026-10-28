@@ -14,6 +14,9 @@ func init() {
 			// foreign_keys on, and the driver turns it on for one pooled
 			// connection. The trigger removes a run's progress with the run on
 			// every connection, so a deleted run never leaves a snapshot behind.
+			// The trigger belongs to cortex_runs, not to this table: a
+			// migration that rebuilds cortex_runs (create, copy, drop, rename)
+			// drops it with the old table and must create it again.
 			_, err := exec.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS cortex_run_progress (
     run_id       TEXT PRIMARY KEY REFERENCES cortex_runs(id) ON DELETE CASCADE,

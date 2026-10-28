@@ -28,6 +28,10 @@ type PreparedRunOptions struct {
 	Purpose             run.ExecutionPurpose
 	Provenance          run.ExecutionProvenance
 	AcceptanceRef       string
+	// RunID pre-assigns the run's id. A run with this id that already
+	// exists returns cortex.ErrAlreadyExists and nothing runs. Zero lets
+	// the engine pick one.
+	RunID id.AgentRunID
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
@@ -220,7 +224,11 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 }
 
 func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (context.Context, *resumption, error) {
-	ctx, draft, err := e.prepareRun(ctx, p, input, opts, id.NewAgentRunID())
+	runID := opts.RunID
+	if runID.IsNil() {
+		runID = id.NewAgentRunID()
+	}
+	ctx, draft, err := e.prepareRun(ctx, p, input, opts, runID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -241,8 +249,16 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 		return ctx, nil, bindingErr
 	}
 	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, cfg.Budget)
+	leased := e.leasesRun(r)
+	if leased {
+		lease := e.newLease()
+		r.Lease = &lease
+	}
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return ctx, nil, &PreparedStartError{runID: r.ID, cause: err}
+	}
+	if leased {
+		ctx = e.holdLease(ctx, r)
 	}
 	rz := &resumption{ag: &snap.Agent, cfg: cfg, run: r, startedAt: now}
 	runTraceFrom(ctx).bind(r, cfg.Model)
@@ -271,6 +287,7 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: r.SessionID, newMessagesFrom: len(messages), prepared: draft.prepared, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 	rz.state = st
+	e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 	return ctx, rz, nil
 }
 
@@ -298,6 +315,7 @@ func preparedOptions(overrides *RunOverrides) PreparedRunOptions {
 	var opts PreparedRunOptions
 	if overrides != nil {
 		opts.SessionID = overrides.SessionID
+		opts.RunID = overrides.RunID
 	}
 	return opts
 }

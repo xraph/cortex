@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -282,7 +283,30 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		}
 	}
 
+	// The claim left the run running with no owner. A leased run takes its
+	// lease now, before anything of the resume runs.
+	ctx = e.leaseClaimedResume(ctx, snapshot, susp)
 	return e.rehydrateResume(ctx, in, source, snapshot, susp)
+}
+
+// leaseClaimedResume leases a run just claimed from a pause, when this
+// engine leases it, and saves the state it paused with as its first
+// progress boundary.
+func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension) context.Context {
+	claimed := susp.ClaimedRun
+	if claimed == nil {
+		claimed = snapshot
+	}
+	ctx = e.leaseClaimed(ctx, claimed)
+	e.saveBoundary(ctx, susp.RunID, pausedCont(susp.Cont))
+	return ctx
+}
+
+// pausedCont copies a suspension's continuation for a progress snapshot.
+func pausedCont(cont suspension.Continuation) suspension.Continuation {
+	cont.Messages = cloneExecutionMessages(cont.Messages)
+	cont.ToolResults = slices.Clone(cont.ToolResults)
+	return cont
 }
 
 // previewResume runs every check that can refuse a resume before anything
@@ -478,6 +502,13 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	}
 	toolCtx, cancelTools := runDeadline(ctx, resumeConfig)
 	resultErr := e.recordResumedCalls(toolCtx, ag, r, susp, in, st, resumeConfig)
+	if interruption(ctx, r.ID) != nil {
+		// Interrupted while it carried out the decision or the answers: a
+		// result that came back afterwards is not recorded, and the run is
+		// left or handed off from its last boundary.
+		cancelTools()
+		return nil, nil, leftResume(r, e.leaveRun(ctx, r, nil))
+	}
 	if errors.Is(resultErr, cortex.ErrEffectUncertain) {
 		// Preserve an elapsed run deadline before releasing this context.
 		// Cancelling it first would mislabel every uncertain action cancelled.
@@ -546,6 +577,16 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	}
 
 	return ctx, &resumption{ag: ag, cfg: cfg, run: r, state: st, startedAt: startedAt}, nil
+}
+
+// leftResume is the error a resume returns when its pass left the run:
+// the hand-off or the lost lease, or, when the run turned out to have
+// ended already, cortex.ErrRunLeaseLost, since this pass no longer owns it.
+func leftResume(r *run.Run, err error) error {
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("cortex: run %s ended while it was resumed: %w", r.ID, cortex.ErrRunLeaseLost)
 }
 
 // claimedRun uses the exact snapshot returned by a revision-aware atomic claim.
@@ -622,6 +663,9 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 		// per pending id, so this lookup cannot miss.
 		res := byID[p.ID]
 		content, errText, outcome := e.resumedCallResult(ctx, subject, p, res, susp.Reason == suspension.ReasonApproval)
+		if cause := interruption(ctx, r.ID); cause != nil {
+			return cause
+		}
 		if outcome == outcomeUncertain {
 			e.emitToolFailed(ctx, r.ID, p.Name, cortex.ErrEffectUncertain)
 			return cortex.ErrEffectUncertain
@@ -683,6 +727,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			Content:    content,
 			ToolCallID: p.ID,
 		})
+		e.noteDone(ctx, r.ID, p.ID, content, errText, outcome)
 	}
 	return nil
 }

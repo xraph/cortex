@@ -40,6 +40,27 @@ func (e *Engine) builtinTools() []llm.Tool {
 	return tools
 }
 
+// isBuiltinTool reports whether executeBuiltinTool handles name.
+func isBuiltinTool(name string) bool {
+	switch name {
+	case "knowledge_search", toolAgentSend, toolAgentAsk, toolAgentInbox:
+		return true
+	default:
+		return false
+	}
+}
+
+// hasRegisteredTool reports whether name is a tool registered with
+// WithTool, which this engine runs itself.
+func (e *Engine) hasRegisteredTool(name string) bool {
+	for _, rt := range e.tools {
+		if rt.def.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // executeBuiltinTool attempts to execute a built-in tool. The last return
 // says whether this call was handled here at all; the outcome says how it
 // ended.

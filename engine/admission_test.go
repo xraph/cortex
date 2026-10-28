@@ -325,7 +325,8 @@ func TestRunConcurrencyNestedRunDoesNotDeadlock(t *testing.T) {
 }
 
 // A run that is executing when Stop starts finishes before Stop returns,
-// and its row says completed. Stop does not hand it off: it waits.
+// and its row says completed: its model call ends the run, so it reaches
+// no boundary where a leased run would hand off.
 func TestStopRefusesNewRunsAndWaitsForInflight(t *testing.T) {
 	model := newAdmissionLLM()
 	var runs sync.WaitGroup
@@ -377,16 +378,17 @@ func TestStopRefusesNewRunsAndWaitsForInflight(t *testing.T) {
 	}
 }
 
-// When Stop gives up at its deadline, the run it was waiting for is still
-// executing in this process. Its row stays running, nothing is lost, and
-// the run writes its own completion when it finishes. A second Stop then
-// completes the shutdown. Handing a run off as reclaimable belongs to the
-// lease and sweeper work, not to this drain.
+// When Stop gives up at its deadline, a run with no lease is still
+// executing in this process: there is no lease to hand it off under. Its
+// row stays running, nothing is lost, and the run writes its own
+// completion when it finishes. A second Stop then completes the shutdown.
+// A leased run is handed off instead; TestStopDeadlineCancelsBlockedRun
+// covers that.
 func TestStopReturnsWhenDeadlinePasses(t *testing.T) {
 	model := newAdmissionLLM()
 	var runs sync.WaitGroup
 	hook := &shutdownCounter{}
-	eng := newAdmissionEngine(t, model, &runs, engine.WithExtension(hook))
+	eng := newAdmissionEngine(t, model, &runs, engine.WithExtension(hook), engine.WithRunLease(0))
 	if err := eng.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

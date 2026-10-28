@@ -409,8 +409,14 @@ func TestRequiredVerificationContinuesFromHostJob(t *testing.T) {
 		f := newWorkerFixture(t)
 		client := &requiredToolClient{}
 		calls := 0
-		e := requiredToolEngine(t, f, client, &requiredToolAuthority{approval: true}, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+		var whileRunning *run.Run
+		e := requiredToolEngine(t, f, client, &requiredToolAuthority{approval: true}, engine.WithTool(llm.Tool{Name: "probe"}, func(_ context.Context, inv cortex.Invocation) (string, error) {
 			calls++
+			current, err := f.storage.GetRun(f.ctx, inv.RunID)
+			if err != nil {
+				return "", err
+			}
+			whileRunning = current
 			return "SECRET approved result", nil
 		}))
 		ag, overrides := requiredToolAgent(t, f)
@@ -430,6 +436,11 @@ func TestRequiredVerificationContinuesFromHostJob(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, verification.StatusPassed, done.VerificationStatus)
 		require.Equal(t, 1, calls)
+		require.NotNil(t, whileRunning)
+		require.Equal(t, run.StateRunning, whileRunning.State)
+		require.Nil(t, whileRunning.Lease, "a run under required verification was continued under a lease")
+		_, err = f.storage.GetProgress(f.ctx, r.ID)
+		require.ErrorIs(t, err, cortex.ErrProgressNotFound)
 		saved, err := f.storage.GetRun(f.ctx, r.ID)
 		require.NoError(t, err)
 		require.Nil(t, saved.Lease)

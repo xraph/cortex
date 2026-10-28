@@ -200,6 +200,15 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 	if err != nil {
 		return "", err
 	}
+	// A pause takes a leased run out of running like a terminal write
+	// does, so it settles the lease first. A pause ends the lease: a
+	// paused run is claimed again, under a new one, when it continues.
+	if leave, leaveErr := e.settleLease(ctx, r); leave {
+		if leaveErr == nil {
+			leaveErr = cortex.ErrRunLeaseLost
+		}
+		return "", leaveErr
+	}
 
 	if reason == suspension.ReasonAgentReply {
 		if _, supported := e.store.(a2a.AskResolutionStore); supported {
@@ -281,6 +290,10 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 		}
 		return "", fmt.Errorf("update run to paused: %w", err)
 	}
+
+	// The pause is the run's durable state now, so the snapshot of the
+	// running pass is dropped with the lease the flip cleared.
+	e.dropProgress(ctx, r)
 
 	// Emitted after the flip, not where the row is written: subscribers
 	// hear about a checkpoint only once the run it belongs to is really

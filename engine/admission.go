@@ -44,6 +44,10 @@ type admissionTicket struct {
 	// released is guarded by adm.mu, so a child cannot join a parent in
 	// the moment between the parent leaving and drain seeing idle.
 	released bool
+	// hooks run when the ticket is released, before its slot is given
+	// back: the run's lease ends with the call that ran it. Guarded by
+	// adm.mu.
+	hooks []func()
 }
 
 type admissionTicketKey struct{}
@@ -110,6 +114,13 @@ func (a *admission) issue(ctx context.Context, holdSlot bool) (context.Context, 
 
 func (t *admissionTicket) release() {
 	t.once.Do(func() {
+		t.adm.mu.Lock()
+		hooks := t.hooks
+		t.hooks = nil
+		t.adm.mu.Unlock()
+		for _, hook := range hooks {
+			hook()
+		}
 		if t.holdSlot && t.adm.slots != nil {
 			<-t.adm.slots
 		}
@@ -118,6 +129,19 @@ func (t *admissionTicket) release() {
 		t.adm.leaveLocked()
 		t.adm.mu.Unlock()
 	})
+}
+
+// onRelease runs hook when the ticket is released, or now if it already
+// was.
+func (t *admissionTicket) onRelease(hook func()) {
+	t.adm.mu.Lock()
+	if !t.released {
+		t.hooks = append(t.hooks, hook)
+		t.adm.mu.Unlock()
+		return
+	}
+	t.adm.mu.Unlock()
+	hook()
 }
 
 func (a *admission) enterLocked() {
@@ -162,6 +186,13 @@ func (a *admission) drain(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("cortex: wait for in-flight runs: %w", ctx.Err())
 	}
+}
+
+// draining reports whether Stop has started refusing runs.
+func (a *admission) draining() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stopping
 }
 
 // reopen admits runs again after a Stop.

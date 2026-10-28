@@ -94,6 +94,11 @@ type runReadyEntry struct {
 	hook RunReady
 }
 
+type runReclaimableEntry struct {
+	name string
+	hook RunReclaimable
+}
+
 type checkpointCreatedEntry struct {
 	name string
 	hook CheckpointCreated
@@ -154,6 +159,7 @@ type Registry struct {
 	runFailed              []runFailedEntry
 	runSuspended           []runSuspendedEntry
 	runReady               []runReadyEntry
+	runReclaimable         []runReclaimableEntry
 	stepStarted            []stepStartedEntry
 	stepCompleted          []stepCompletedEntry
 	toolCalled             []toolCalledEntry
@@ -205,6 +211,9 @@ func (r *Registry) Register(e Extension) {
 	}
 	if h, ok := e.(RunReady); ok {
 		r.runReady = append(r.runReady, runReadyEntry{name, h})
+	}
+	if h, ok := e.(RunReclaimable); ok {
+		r.runReclaimable = append(r.runReclaimable, runReclaimableEntry{name, h})
 	}
 	if h, ok := e.(StepStarted); ok {
 		r.stepStarted = append(r.stepStarted, stepStartedEntry{name, h})
@@ -308,6 +317,16 @@ func (r *Registry) EmitRunReady(ctx context.Context, agentID id.AgentID, runID i
 	for _, e := range r.runReady {
 		if err := e.hook.OnRunReady(ctx, agentID, runID, n); err != nil {
 			r.logHookError("OnRunReady", e.name, err)
+		}
+	}
+}
+
+// EmitRunReclaimable notifies every RunReclaimable hook that a run can be
+// taken over by another worker.
+func (r *Registry) EmitRunReclaimable(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReclaimNotice) {
+	for _, e := range r.runReclaimable {
+		if err := e.hook.OnRunReclaimable(ctx, agentID, runID, n); err != nil {
+			r.logHookError("OnRunReclaimable", e.name, err)
 		}
 	}
 }

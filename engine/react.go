@@ -144,6 +144,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	defer releaseLease(ctx, r.ID)
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
@@ -171,6 +172,12 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
 		ctx = runCtx
+		// A leased run stops here, before its next model call, when the
+		// engine drains or the run is interrupted.
+		if e.handOffDue(ctx, r.ID) {
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -207,6 +214,11 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
+		if interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			stepSpan.finish(stepStopped, nil)
@@ -218,6 +230,14 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			return r, terminalErr
 		}
 		resp, err := e.completeTaskCall(ctx, r, req)
+		if err != nil && interruption(ctx, r.ID) != nil {
+			// The model call ended because the run was interrupted, not
+			// because the provider failed: nothing about it is the run's
+			// outcome.
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			reported := 0
@@ -307,6 +327,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				Content:   resp.Content,
 				ToolCalls: resp.ToolCalls,
 			})
+			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
 			// Execute each tool call. A call that turns out to be
 			// pending is collected rather than recorded: the whole step
@@ -320,10 +341,24 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			var pending pendingCalls
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range resp.ToolCalls {
+				// A leased run hands off before each dispatch too: the
+				// calls already done are in its progress, the rest are not
+				// started.
+				if e.handOffDue(ctx, r.ID) {
+					stepSpan.finish(stepStopped, nil)
+					return r, e.leaveRun(ctx, r, nil)
+				}
 				tcStart := time.Now().UTC()
 				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
 				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
+				if interruption(ctx, r.ID) != nil {
+					// A result that arrives after the interruption is
+					// discarded, so a call that is not retry-safe stays in
+					// Started and is treated as uncertain.
+					stepSpan.finish(stepStopped, nil)
+					return r, e.leaveRun(ctx, r, nil)
+				}
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -379,6 +414,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					Content:    result,
 					ToolCallID: tc.ID,
 				})
+				e.noteDone(ctx, r.ID, tc.ID, result, "", outcome)
 			}
 
 			if pending.any() {
@@ -405,6 +441,12 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		break
 	}
 	ctx = runCtx
+	if interruption(ctx, r.ID) != nil {
+		// Interrupted between the last boundary and the end: nothing of
+		// this pass is the run's outcome, and the conversation is not
+		// saved, because the worker that continues the run saves it.
+		return r, e.leaveRun(ctx, r, nil)
+	}
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -442,6 +484,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	defer releaseLease(ctx, r.ID)
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
@@ -464,6 +507,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
 		ctx = runCtx
+		// Same boundary as the synchronous loop.
+		if e.handOffDue(ctx, r.ID) {
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -509,6 +558,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			Tools:       e.executionTools(ctx, subject, cfg, st),
 		}
 
+		if interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
 		if ctx.Err() != nil {
 			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
 			stepSpan.finish(stepStopped, nil)
@@ -521,6 +576,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			return
 		}
 		stream, err := e.streamTaskCall(ctx, r, req)
+		if err != nil && interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			st.failedAttempt(0, cfg, r)
@@ -563,6 +624,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			select {
 			case <-ctx.Done():
 				_ = stream.Close()
+				if interruption(ctx, r.ID) != nil {
+					stepSpan.finish(stepStopped, nil)
+					fresh := progressCont(r, st, cfg)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+					return
+				}
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
 				failure := ctx.Err()
@@ -579,6 +646,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			chunk, err := stream.Next(ctx)
 			if errors.Is(err, io.EOF) {
 				break
+			}
+			if err != nil && interruption(ctx, r.ID) != nil {
+				_ = stream.Close()
+				stepSpan.finish(stepStopped, nil)
+				fresh := progressCont(r, st, cfg)
+				sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+				return
 			}
 			if err != nil {
 				err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
@@ -730,6 +804,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				Content:   contentBuf,
 				ToolCalls: toolCalls,
 			})
+			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
 			// Same collect-then-suspend shape as the synchronous
 			// loop: see its comments for why a pending call gets no
@@ -741,6 +816,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			var pending pendingCalls
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range toolCalls {
+				// Same hand-off boundary as the synchronous loop.
+				if e.handOffDue(ctx, r.ID) {
+					stepSpan.finish(stepStopped, nil)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+					return
+				}
 				tcStart := time.Now().UTC()
 				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
 
@@ -751,6 +832,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				}})
 
 				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
+				if interruption(ctx, r.ID) != nil {
+					// Discarded, as in the synchronous loop.
+					stepSpan.finish(stepStopped, nil)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+					return
+				}
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -804,6 +891,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					Content:    result,
 					ToolCallID: tc.ID,
 				})
+				e.noteDone(ctx, r.ID, tc.ID, result, "", outcome)
 			}
 
 			if pending.any() {
@@ -842,6 +930,10 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		break
 	}
 	ctx = runCtx
+	if interruption(ctx, r.ID) != nil {
+		sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+		return
+	}
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -854,6 +946,21 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	}
 
 	sendEvent(ctx, events, outcomeEvent(r, completedAt.Sub(startedAt)))
+}
+
+// sendLeftEvent tells a stream's consumer how a pass that left its run
+// ended: the run's own outcome when it turned out to have ended already
+// (err is nil), otherwise the hand-off or the lost lease.
+func sendLeftEvent(ctx context.Context, events chan<- StreamEvent, r *run.Run, err error) {
+	if err == nil {
+		var duration time.Duration
+		if r.StartedAt != nil && r.CompletedAt != nil {
+			duration = r.CompletedAt.Sub(*r.StartedAt)
+		}
+		sendEvent(ctx, events, outcomeEvent(r, duration))
+		return
+	}
+	sendEvent(ctx, events, runErrorEvent(r, err))
 }
 
 // ──────────────────────────────────────────────────
@@ -911,6 +1018,11 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
 	if r.Provenance.VerificationRequired {
 		runErr = closedRequiredError(runErr)
+	}
+	// Same lease check as finalizeRun: a run this worker no longer owns,
+	// or one it was told to hand off, is not failed here.
+	if leave, err := e.settleLease(ctx, r); leave {
+		return err
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -1155,6 +1267,15 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 		return jsonResult("error", err.Error()), outcomeFailed, err
 	}
 	inv := cortex.Invocation{Subject: s, Call: tc}
+
+	// Progress point 3: a call this engine runs, and that is not
+	// retry-safe, is recorded as started before its handler gets it. A
+	// lost lease stops it here, undispatched.
+	if isBuiltinTool(tc.Name) || e.hasRegisteredTool(tc.Name) {
+		if err := e.noteStarted(ctx, s.RunID, tc); err != nil {
+			return jsonResult("error", err.Error()), outcomeFailed, err
+		}
+	}
 
 	if result, outcome, handled := e.executeBuiltinTool(ctx, inv); handled {
 		if outcome == outcomeFailed {

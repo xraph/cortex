@@ -66,6 +66,16 @@ type RunReady interface {
 	OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error
 }
 
+// RunReclaimable is called when a running run is left for another worker
+// to take over: its worker released it while shutting down (n.HandOff),
+// or its lease lapsed and the sweeper moved it. It fires once the
+// reclaimable state is written, with ctx carrying the run's own scope. A
+// host usually answers it by queueing a job that calls
+// engine.ContinueRun, on any replica.
+type RunReclaimable interface {
+	OnRunReclaimable(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReclaimNotice) error
+}
+
 // ──────────────────────────────────────────────────
 // Reasoning lifecycle hooks
 // ──────────────────────────────────────────────────

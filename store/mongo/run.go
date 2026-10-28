@@ -43,6 +43,9 @@ func (d assuranceDriver) insertRun(ctx context.Context, r *run.Run, at time.Time
 	} else {
 		_, err = query.Exec(ctx)
 	}
+	if isUniqueViolation(err) {
+		return fmt.Errorf("cortex/mongo: create run %s: %w: %w", r.ID, cortex.ErrAlreadyExists, err)
+	}
 	if err != nil {
 		return fmt.Errorf("cortex/mongo: create run: %w", err)
 	}

@@ -54,6 +54,26 @@ type ReadyNotice struct {
 	Renotified bool
 }
 
+// ReclaimNotice is what a host hears when a run becomes reclaimable: whose
+// lease it was, when that lease ended, and how often the run has been
+// reclaimed. The run's scope travels on the hook's ctx.
+type ReclaimNotice struct {
+	// PreviousOwner is the worker whose lease the run was under.
+	PreviousOwner string
+	// LeaseExpiredAt is when the lease lapsed, or, for a hand-off, when
+	// the worker released it.
+	LeaseExpiredAt time.Time
+	// Reclaims counts how often the sweeper has reclaimed the run after a
+	// lapsed lease. A hand-off does not add to it.
+	Reclaims int
+	// HandOff is true when the worker released the run at shutdown rather
+	// than its lease lapsing.
+	HandOff bool
+	// Renotified is true when the sweeper repeats the notice for a run
+	// that has waited longer than it should, false the first time.
+	Renotified bool
+}
+
 // Lease is one worker's hold on a running run. A lease whose ExpiresAt has
 // passed has lapsed, and the sweeper may hand the run to another replica.
 type Lease struct {

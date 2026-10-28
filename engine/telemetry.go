@@ -495,17 +495,21 @@ func (rt *runTrace) end(r *run.Run, err error) {
 	rt.span.End()
 }
 
-// benignRunError says whether a call that failed before it had a run to
-// speak for did so for an ordinary reason: the agent or run it named does
-// not exist, or somebody else claimed the paused run first. Those are
-// answers, not faults, so the span carries cortex.run.result instead of an
-// error status.
+// benignRunError says whether a call ended for an ordinary reason: the
+// agent or run it named does not exist, somebody else claimed the paused
+// run first, the worker handed the run off while shutting down, or another
+// worker took its lease. Those are answers, not faults, so the span
+// carries cortex.run.result instead of an error status.
 func benignRunError(err error) (string, bool) {
 	switch {
 	case errors.Is(err, cortex.ErrAgentNotFound), errors.Is(err, cortex.ErrRunNotFound):
 		return "not_found", true
 	case errors.Is(err, cortex.ErrNotSuspended), errors.Is(err, cortex.ErrRunNotContinuable):
 		return "claim_lost", true
+	case errors.Is(err, cortex.ErrRunInterrupted):
+		return "handed_off", true
+	case errors.Is(err, cortex.ErrRunLeaseLost):
+		return "lease_lost", true
 	default:
 		return "", false
 	}

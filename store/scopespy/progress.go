@@ -2,6 +2,7 @@ package scopespy
 
 import (
 	"context"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/id"
@@ -12,7 +13,8 @@ import (
 var _ suspension.ProgressStore = (*Spy)(nil)
 
 // SaveProgress applies the real stores' fence: only the owner of a running
-// run's lease may save its snapshot, and an empty owner never matches.
+// run's lease may save its snapshot, and an empty owner never matches. Like
+// the real stores it sets p.Scope and p.UpdatedAt to what it kept.
 func (s *Spy) SaveProgress(ctx context.Context, p *suspension.Progress) error {
 	s.record(ctx, "SaveProgress")
 	s.mu.Lock()
@@ -29,8 +31,11 @@ func (s *Spy) SaveProgress(ctx context.Context, p *suspension.Progress) error {
 	}
 	saved := cloneProgress(*p)
 	saved.Scope = cortex.ScopeFromContext(ctx)
+	// Millisecond precision, the same truncation the real stores apply.
+	saved.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	s.progress[p.RunID] = saved
 	p.Scope = saved.Scope
+	p.UpdatedAt = saved.UpdatedAt
 	return nil
 }
 
