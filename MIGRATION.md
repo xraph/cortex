@@ -191,7 +191,7 @@ Shield now screens publication even when you pass `engine.WithSafety`. When the 
 
 The Shield tenant is now the scope's first level, not the canonical scope string. v1.9.0 told Shield the tenant was `org=o1` for a run scoped `org=o1`; v1.10.0 tells it `o1`. Profiles you seeded under the old string no longer match. Seed them again under the new tenant, or pass `shieldsafety.WithTenant` (`extension.WithShieldOptions` under Forge) with a function that returns `s.Canonical()` to keep the old keys. The app is unchanged unless you set `shieldsafety.WithApp`.
 
-An agent's `shield_profile` guardrail is honoured now. v1.9.0 refused any scan that named a profile, so an agent with one never got a decision. Now Shield evaluates that profile, and an agent without one gets Shield's default profile. Check that every profile your agents name exists for their tenant and app, since a missing one fails closed with `shield.ErrNoProfile`.
+An agent's `shield_profile` guardrail is honoured now. v1.9.0 refused any scan that named a profile, so an agent with one never got a decision. Now Shield evaluates that profile, and an agent without one gets Shield's default profile. Check that every profile your agents name exists for their tenant and app, since a missing one fails closed with `shield.ErrNoProfile`. The same goes for an agent that names no profile when Shield has no default profile configured: every scan for it fails closed with `shield.ErrNoProfile` until you set one.
 
 `Migrate` on PostgreSQL waits for the migration lock instead of failing when another replica holds it. Give it a context with a deadline.
 
