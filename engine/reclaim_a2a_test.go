@@ -29,7 +29,7 @@ type stallingAdmitStore struct {
 	// stallAdmission stalls after the leased admission instead of after
 	// the leased start.
 	stallAdmission bool
-	// failEnds fails that many writes of a cancelled run.
+	// failEnds fails that many writes of a cancelled or failed run.
 	failEnds atomic.Int32
 }
 
@@ -59,7 +59,7 @@ func (s *stallingAdmitStore) AdmitResume(ctx context.Context, req suspension.Res
 }
 
 func (s *stallingAdmitStore) UpdateRun(ctx context.Context, r *run.Run) error {
-	if r.State == run.StateCancelled && s.failEnds.Add(-1) >= 0 {
+	if (r.State == run.StateCancelled || r.State == run.StateFailed) && s.failEnds.Add(-1) >= 0 {
 		return errors.New("store unavailable")
 	}
 	return s.Store.UpdateRun(ctx, r)
@@ -264,6 +264,61 @@ func TestLostCancelOfAPeerQuestionDoesNotAskAgain(t *testing.T) {
 	ended, err := replica.ContinueRun(ctx, paused.ID)
 	if !errors.Is(err, cortex.ErrRunAlreadyDone) || ended == nil || ended.State != run.StateCancelled {
 		t.Fatalf("ContinueRun = %+v, %v; want the cancel finished", ended, err)
+	}
+	asks, err := st.ListMessages(ctx, &a2a.MessageListFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	questions := 0
+	for _, m := range asks {
+		if m.Sender.Agent == "planner" {
+			questions++
+		}
+	}
+	if questions != 1 {
+		t.Fatalf("the planner sent %d questions, want the original one only", questions)
+	}
+}
+
+// The same for an expiry of a peer question: the sweep claims a run whose
+// question nobody answered in time and its failure write is lost. The
+// reclaim fails the run with the expiry and does not ask the peer again.
+func TestLostExpiryOfAPeerQuestionDoesNotAskAgain(t *testing.T) {
+	ctx := a2aScope()
+	st := &stallingAdmitStore{Store: newApprovalStore(ctx, t), admitted: make(chan struct{}, 1), release: make(chan struct{})}
+	t.Cleanup(st.letGo)
+	model := newDrainingLLM(false)
+	t.Cleanup(model.letGo)
+	first := newDrainingEngine(ctx, t, st, model, true, WithRunLease(200*time.Millisecond))
+
+	paused, err := first.RunAgent(ctx, "planner", "find out how the worker is doing", nil)
+	if err != nil || paused.State != run.StatePaused {
+		t.Fatalf("RunAgent = %v, %v; want a paused planner", paused, err)
+	}
+	pause, err := st.GetSuspension(ctx, paused.ID)
+	if err != nil || pause.Reason != suspension.ReasonAgentReply || pause.ExpiresAt == nil {
+		t.Fatalf("GetSuspension = %+v, %v; want an agent_reply pause with a deadline", pause, err)
+	}
+	st.failEnds.Store(1)
+	first.sweepExpired(context.Background(), pause.ExpiresAt.Add(time.Second))
+	claimed, err := st.GetRun(ctx, paused.ID)
+	if err != nil || claimed.State != run.StateRunning {
+		t.Fatalf("after the sweep GetRun = %+v, %v; want running, the expiry's failure write dropped", claimed, err)
+	}
+	waitLeaseLapsed(t, st, paused)
+
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica.sweepLapsed(context.Background(), time.Now().UTC())
+	ended, err := replica.ContinueRun(ctx, paused.ID)
+	if !errors.Is(err, cortex.ErrSuspensionExpired) || ended == nil || ended.State != run.StateFailed {
+		t.Fatalf("ContinueRun = %+v, %v; want the expiry finished", ended, err)
+	}
+	got, err := st.GetRun(ctx, paused.ID)
+	if err != nil || got.State != run.StateFailed || !strings.Contains(got.Error, "nothing answered") {
+		t.Fatalf("GetRun = %+v, %v; want failed with the expiry", got, err)
+	}
+	if _, gone := st.GetSuspension(ctx, paused.ID); !errors.Is(gone, cortex.ErrNotSuspended) {
+		t.Fatalf("GetSuspension after the reclaim = %v; want the pause gone", gone)
 	}
 	asks, err := st.ListMessages(ctx, &a2a.MessageListFilter{Limit: 20})
 	if err != nil {

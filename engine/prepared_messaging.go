@@ -328,7 +328,11 @@ func (r *preparedTeamRunner) recoverMessageAskers(ctx context.Context) (int, err
 			continue
 		}
 		result, recoverErr := r.eng.RecoverAgentReply(ctx, key, pauseID, authorize)
-		if errors.Is(recoverErr, suspension.ErrResumeAdmissionNotFound) || errors.Is(recoverErr, suspension.ErrResumeAlreadyStarted) {
+		// ErrRunConflict is a start that lost to the sweep marking the same
+		// admitted run reclaimable. ContinueRun owns the run from there, so
+		// it is skipped like one already started, and the pass goes on to
+		// the parent's other children.
+		if errors.Is(recoverErr, suspension.ErrResumeAdmissionNotFound) || errors.Is(recoverErr, suspension.ErrResumeAlreadyStarted) || errors.Is(recoverErr, cortex.ErrRunConflict) {
 			continue
 		}
 		if recoverErr != nil {
