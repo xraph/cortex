@@ -1094,7 +1094,7 @@ func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, b
 	// failure below is never written, and the run is reclaimed from the
 	// state it paused with: the person is asked again.
 	if bound != nil {
-		if susp, leased, err := e.claimPauseLeased(ctx, snapshot, bound, time.Time{}, claimSnapshot(cp.RunID, bound.Cont, nil)); leased {
+		if susp, leased, err := e.claimPauseLeased(ctx, snapshot, bound, time.Time{}, claimSnapshot(bound, nil)); leased {
 			return e.rejectedClaimResult(ctx, cp, bound, susp, err)
 		}
 	}
@@ -1212,7 +1212,11 @@ func (e *Engine) claimToEnd(ctx context.Context, r *run.Run) (*suspension.Suspen
 		if err != nil {
 			return nil, err
 		}
-		susp, _, err := e.claimPauseLeased(ctx, r, paused, time.Time{}, claimSnapshot(r.ID, paused.Cont, nil))
+		// The snapshot says what this claim is for, so a worker that
+		// reclaims the run after a lost write finishes the cancel.
+		first := claimSnapshot(paused, nil)
+		first.Ending = &suspension.Ending{Kind: suspension.EndingCancel}
+		susp, _, err := e.claimPauseLeased(ctx, r, paused, time.Time{}, first)
 		if errors.Is(err, cortex.ErrRunConflict) {
 			// The run moved since it was read: somebody else claimed it.
 			return nil, fmt.Errorf("%w: %w", cortex.ErrNotSuspended, err)
@@ -1225,11 +1229,37 @@ func (e *Engine) claimToEnd(ctx context.Context, r *run.Run) (*suspension.Suspen
 // claimContinuableToEnd claims a ready or reclaimable run that this call is
 // about to end, under this worker's lease when it leases the run, for the
 // same reason as claimToEnd.
-func (e *Engine) claimContinuableToEnd(ctx context.Context, r *run.Run) (*run.Run, error) {
+func (e *Engine) claimContinuableToEnd(ctx context.Context, r *run.Run, first *suspension.Progress) (*run.Run, error) {
 	if claims, leased := e.leasedClaimsFor(r); leased {
-		return claims.ClaimContinuationLeased(ctx, r.ID, e.newLease(), nil)
+		lease := e.newLease()
+		if first != nil {
+			first.Owner = lease.Owner
+		}
+		return claims.ClaimContinuationLeased(ctx, r.ID, lease, first)
 	}
 	return e.continuation.ClaimContinuation(ctx, r.ID, run.Lease{})
+}
+
+// cancelSnapshot is the snapshot a cancel of a ready or reclaimable run
+// claims it with: what the run continues from, marked to be cancelled, so
+// a worker that reclaims it after a lost write finishes the cancel.
+func (e *Engine) cancelSnapshot(ctx context.Context, r *run.Run) *suspension.Progress {
+	if _, leased := e.leasedClaimsFor(r); !leased {
+		return nil
+	}
+	first := &suspension.Progress{RunID: r.ID}
+	if e.progress != nil {
+		if saved, err := e.progress.GetProgress(ctx, r.ID); err == nil {
+			first.Cont, first.Started, first.Done = saved.Cont, saved.Started, saved.Done
+		}
+	}
+	if len(first.Cont.Messages) == 0 {
+		if paused, err := e.store.GetSuspension(ctx, r.ID); err == nil {
+			first = claimSnapshot(paused, nil)
+		}
+	}
+	first.Ending = &suspension.Ending{Kind: suspension.EndingCancel}
+	return first
 }
 
 // cancelContinuable is the claimed half of CancelRun for a ready or
@@ -1241,9 +1271,14 @@ func (e *Engine) cancelContinuable(ctx context.Context, r *run.Run) error {
 	if e.continuation == nil {
 		return fmt.Errorf("cancel run %s: %w", r.ID, cortex.ErrContinuationUnavailable)
 	}
-	claimed, err := e.claimContinuableToEnd(ctx, r)
+	claimed, err := e.claimContinuableToEnd(ctx, r, e.cancelSnapshot(ctx, r))
 	if err != nil {
 		return fmt.Errorf("claim run %s to cancel: %w", r.ID, err)
+	}
+	if r.State == run.StateReclaimable {
+		// A handed-off directive's run owes the asker an answer, and a
+		// cancel is one.
+		owesReply(claimed)
 	}
 	return e.cancelClaimed(cortex.WithScope(ctx, claimed.Scope), claimed)
 }

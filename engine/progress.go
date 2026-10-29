@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -56,15 +57,25 @@ func (e *Engine) saveBoundary(ctx context.Context, runID id.AgentRunID, cont sus
 	}
 }
 
-// saveProgress is progress point 1 for a run claimed from a pause the old
-// way: the snapshot it continues from, with what the claim answered.
-func (e *Engine) saveProgress(ctx context.Context, runID id.AgentRunID, p *suspension.Progress) {
-	if l := leaseFor(ctx, runID); l != nil {
-		l.mu.Lock()
-		l.progress = progressState{cont: p.Cont, started: slices.Clone(p.Started), done: slices.Clone(p.Done)}
-		l.mu.Unlock()
-		_ = l.save() //nolint:errcheck // a lost lease cancels the run; anything else is logged
+// saveProgress is progress point 1 for a run claimed the old way: the
+// snapshot it continues from, with what the claim answered. It gates what
+// follows: a snapshot that cannot be saved ends the pass with
+// cortex.ErrRunInterrupted before the pause is deleted or anything runs,
+// and the lease lapses for the sweep to reclaim the run from the pause.
+func (e *Engine) saveProgress(ctx context.Context, runID id.AgentRunID, p *suspension.Progress) error {
+	l := leaseFor(ctx, runID)
+	if l == nil {
+		return nil
 	}
+	l.mu.Lock()
+	l.progress = progressState{cont: p.Cont, started: slices.Clone(p.Started), done: slices.Clone(p.Done)}
+	l.mu.Unlock()
+	if err := l.save(); err != nil {
+		l.stop()
+		e.logError("save the snapshot of a claimed run; leaving it for the sweep", err, log.String("run_id", runID.String()))
+		return fmt.Errorf("cortex: run %s: %w: %w", runID, cortex.ErrRunInterrupted, err)
+	}
+	return nil
 }
 
 // noteStarted is progress point 3, and it fails closed: a call that is not

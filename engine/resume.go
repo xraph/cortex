@@ -277,7 +277,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		// paused with and every call this resume answers. A leased claim
 		// writes it with the claim, so a claimer that dies right after
 		// leaves the answers for the worker that reclaims the run.
-		first = claimSnapshot(runID, preview.Cont, answeredCalls(preview.Pending, in))
+		first = claimSnapshot(preview, answeredCalls(preview.Pending, in))
 	}
 	leased := false
 	if in.agentReplyVersion == nil {
@@ -343,9 +343,11 @@ func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp
 		return ctx, err
 	}
 	if first == nil {
-		first = claimSnapshot(susp.RunID, susp.Cont, nil)
+		first = claimSnapshot(susp, nil)
 	}
-	e.saveProgress(ctx, susp.RunID, first)
+	if err := e.saveProgress(ctx, susp.RunID, first); err != nil {
+		return ctx, err
+	}
 	return ctx, nil
 }
 

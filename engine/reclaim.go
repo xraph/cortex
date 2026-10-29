@@ -83,10 +83,11 @@ func (e *Engine) reclaimInline(ctx context.Context, current *run.Run) (*run.Run,
 // claimReclaimed takes a reclaimable run for this call and rebuilds what
 // the loop needs to continue it from its last durable step.
 //
-// In order: a run reclaimed more often than the limit is failed with
-// cortex.ErrReclaimLimit before anything else is read; the run's
-// principal is restored as for any continuation; what the run continues
-// from is read; then the run is claimed. Everything before the claim
+// In order: what the run continues from is read; a run whose snapshot
+// carries the end a cancel or an expiry claimed it for is ended that way;
+// a run reclaimed more often than the limit is failed with
+// cortex.ErrReclaimLimit; the run's principal is restored as for any
+// continuation; then the run is claimed. Everything before the claim
 // leaves the run reclaimable when it fails for now. The progress is read
 // before the claim because nothing can write it while the run is
 // reclaimable: a stale worker's saves need a running run under its own
@@ -104,25 +105,27 @@ func (e *Engine) reclaimInline(ctx context.Context, current *run.Run) (*run.Run,
 // resumption carries the pause and no loop is to run.
 func (e *Engine) claimReclaimed(ctx context.Context, current *run.Run) (context.Context, *resumption, *run.Run, error) {
 	runID := current.ID
+	saved, stale, err := e.reclaimSource(ctx, runID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// A run claimed to be cancelled or expired, whose worker never wrote
+	// that end, is ended now the way it was meant to end.
+	if saved != nil && saved.Ending != nil {
+		ended, endErr := e.finishEnding(ctx, current, saved, stale)
+		return nil, nil, ended, endErr
+	}
 	if current.Reclaims > e.reclaimLimit {
 		limitErr := fmt.Errorf("cortex: run %s was reclaimed %d times, more than the limit of %d: %w", runID, current.Reclaims, e.reclaimLimit, cortex.ErrReclaimLimit)
 		e.logWarn("fail a run reclaimed too many times", limitErr, log.String("run_id", runID.String()), log.Int("reclaims", current.Reclaims))
 		// The pause it was last claimed from, if its row is still there, goes
 		// with the run.
-		stale, staleErr := e.store.GetSuspension(ctx, runID)
-		if staleErr != nil {
-			stale = nil
-		}
-		ended, err := e.failReclaimed(ctx, current, stale, limitErr)
+		ended, failErr := e.failReclaimed(ctx, current, stale, limitErr)
 		e.instr.reclaim(reclaimLimit)
-		return nil, nil, ended, err
+		return nil, nil, ended, failErr
 	}
 
 	ctx, revoked, err := e.restorePrincipal(ctx, current)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	saved, stale, err := e.reclaimSource(ctx, runID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -149,7 +152,9 @@ func (e *Engine) claimReclaimed(ctx context.Context, current *run.Run) (context.
 	}
 	ctx, held := e.adoptLease(ctx, claimed, first)
 	if held && !written {
-		e.saveProgress(ctx, runID, first)
+		if saveErr := e.saveProgress(ctx, runID, first); saveErr != nil {
+			return nil, nil, nil, saveErr
+		}
 	}
 
 	// From here the run is running and belongs to this call, so every exit
@@ -212,13 +217,48 @@ func sentCalls(paused *suspension.Suspension) []suspension.PendingCall {
 	return slices.Clone(paused.Pending)
 }
 
+// finishEnding writes the end a cancel or an expiry claimed the run for
+// and did not get to write, the way that path would have: a cancel ends
+// the run cancelled, an expiry fails it with the same error. The pause
+// goes and its checkpoints are closed with the original reason. It
+// returns the ended run with cortex.ErrRunAlreadyDone for a cancel, or the
+// expiry's error.
+func (e *Engine) finishEnding(ctx context.Context, current *run.Run, saved *suspension.Progress, stale *suspension.Suspension) (*run.Run, error) {
+	first := &suspension.Progress{RunID: current.ID, Cont: saved.Cont, Started: slices.Clone(saved.Started), Done: slices.Clone(saved.Done), Ending: saved.Ending}
+	claimed, err := e.claimContinuableToEnd(ctx, current, first)
+	if err != nil {
+		return nil, fmt.Errorf("claim run %s to end it: %w", current.ID, err)
+	}
+	runCtx := cortex.WithScope(ctx, claimed.Scope)
+	owesReply(claimed)
+	switch saved.Ending.Kind {
+	case suspension.EndingCancel:
+		if cancelErr := e.cancelClaimed(runCtx, claimed); cancelErr != nil {
+			return nil, cancelErr
+		}
+		return claimed, fmt.Errorf("cortex: continue run %s: the run was cancelled: %w: %w", claimed.ID, cortex.ErrRunNotContinuable, cortex.ErrRunAlreadyDone)
+	default:
+		expired := fmt.Errorf("%w: %s", cortex.ErrSuspensionExpired, saved.Ending.Reason)
+		if failErr := e.persistFailure(runCtx, claimed, claimed.AgentID, expired); failErr != nil {
+			return nil, errors.Join(expired, failErr)
+		}
+		if stale != nil {
+			if delErr := e.store.DeleteSuspension(runCtx, claimed.ID); delErr != nil && !errors.Is(delErr, cortex.ErrNotSuspended) {
+				e.logError("delete suspension of an expired run", delErr, log.String("run_id", claimed.ID.String()))
+			}
+		}
+		e.closePendingCheckpoints(runCtx, claimed.ID, "nobody answered in time, so the run was failed and there is nothing left to decide")
+		return claimed, expired
+	}
+}
+
 // failReclaimed claims a reclaimable run and fails it with cause. The
 // pause it was claimed from, if any, is dropped and its checkpoints closed,
 // since nothing will ever decide them now. The claim takes this worker's
 // lease when it can, so a run whose failure cannot be written lapses and
 // is reclaimed again, counting towards the limit.
 func (e *Engine) failReclaimed(ctx context.Context, current *run.Run, stale *suspension.Suspension, cause error) (*run.Run, error) {
-	claimed, err := e.claimContinuableToEnd(ctx, current)
+	claimed, err := e.claimContinuableToEnd(ctx, current, nil)
 	if err != nil {
 		return nil, errors.Join(cause, fmt.Errorf("claim run %s to fail it: %w", current.ID, err))
 	}

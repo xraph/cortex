@@ -424,7 +424,9 @@ func (e *Engine) requireContinuation() error {
 // often than WithReclaimLimit, with cortex.ErrRunNotRecoverable when it
 // left nothing to continue from, and stops with an error matching
 // cortex.ErrEffectUncertain when a call it had handed to a tool that is
-// not retry-safe has no recorded outcome.
+// not retry-safe has no recorded outcome. A run claimed for a cancel or
+// an expiry whose write was lost is ended that way instead, and comes back
+// with cortex.ErrRunAlreadyDone or the expiry's error.
 //
 // A run in any other state is not continued. ErrRunNotContinuable covers
 // every such refusal, and the error also matches the specific case:
@@ -551,7 +553,7 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		}
 		// The first snapshot carries every answer the run is ready with,
 		// so a worker that dies after the claim leaves them for the next.
-		first = claimSnapshot(runID, susp.Cont, answeredCalls(susp.Pending, in))
+		first = claimSnapshot(susp, answeredCalls(susp.Pending, in))
 		snapshot, err = e.previewResume(ctx, runID, in, source, susp, nil)
 		if err != nil && !permanentRefusal(err) {
 			return nil, nil, nil, err
@@ -578,7 +580,9 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	}
 	ctx, held := e.adoptLease(ctx, claimed, first)
 	if held && !written && first != nil {
-		e.saveProgress(ctx, runID, first)
+		if saveErr := e.saveProgress(ctx, runID, first); saveErr != nil {
+			return nil, nil, nil, saveErr
+		}
 	}
 
 	// From here the run is running and belongs to this call, so every exit

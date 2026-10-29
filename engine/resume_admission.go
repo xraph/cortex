@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
@@ -30,7 +31,18 @@ func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *su
 		return nil, err
 	}
 	request := suspension.ResumeAdmissionRequest{Scope: paused.Scope, Version: *in.agentReplyVersion, Input: data}
-	admitted, err := durable.AdmitResume(ctx, request)
+	var admitted suspension.ResumeAdmission
+	if claims, leased := e.leasedClaimsFor(snapshot); leased && first != nil {
+		// The admission takes this worker's lease and records the reply as
+		// done with it: an admitter that dies before it starts the resume
+		// leaves a lease that lapses, and the sweep reclaims the run with
+		// the reply, whether or not the host runs reply recovery.
+		lease := e.newLease()
+		first.Owner = lease.Owner
+		admitted, err = claims.AdmitResumeLeased(ctx, request, lease, first)
+	} else {
+		admitted, err = durable.AdmitResume(ctx, request)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -44,12 +56,11 @@ func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *su
 }
 
 // startAdmittedResume grants the admitted resume its one execution. When
-// this engine leases the run, the start takes this worker's lease and
-// writes first (the reply recorded as done) in the same transaction, so
-// the worker that executes the reply is the one holding the run, and a
-// worker that dies right after leaves a lease that lapses and the answer.
-// Between an admission and its start the run belongs to the admission,
-// which the messaging bus's recovery starts if the admitter dies.
+// this engine leases the run, the start takes the lease for this worker,
+// from whoever held it since the admission, and writes first (the reply
+// recorded as done) in the same transaction: the one worker allowed to
+// execute the reply is the one holding the run, and a worker that dies
+// right after leaves a lease that lapses and the answer.
 func (e *Engine) startAdmittedResume(ctx context.Context, durable suspension.ResumeAdmissionStore, admitted suspension.ResumeAdmission, snapshot *run.Run, first *suspension.Progress) (*suspension.Suspension, error) {
 	var started suspension.ResumeStart
 	var err error
@@ -191,10 +202,18 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	}
 	// The reply the admission recorded goes into the first snapshot, so the
 	// worker that starts the resume holds the run and its answer at once.
-	var first *suspension.Progress
-	if pending, pendingErr := e.store.GetSuspension(ctx, runID); pendingErr == nil {
-		first = claimSnapshot(runID, pending.Cont, answeredCalls(pending.Pending, in))
+	// A pause that cannot be read now is a refusal before the start, so
+	// the run is never started without its answer in the snapshot.
+	pending, pendingErr := e.store.GetSuspension(ctx, runID)
+	if pendingErr != nil {
+		// A pause that is gone was most likely deleted by the resume that
+		// already ran, and that is what the caller is told.
+		if _, startErr := durable.GetResumeStart(ctx, runID, key); startErr == nil {
+			return nil, suspension.ErrResumeAlreadyStarted
+		}
+		return nil, fmt.Errorf("load the pause of an admitted reply: %w", pendingErr)
 	}
+	first := claimSnapshot(pending, answeredCalls(pending.Pending, in))
 	paused, err := e.startAdmittedResume(ctx, durable, admitted, current, first)
 	if errors.Is(err, cortex.ErrSuspensionExpired) {
 		return e.expireAdmittedReply(ctx, admitted)

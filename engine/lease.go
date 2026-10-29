@@ -268,11 +268,25 @@ func (e *Engine) claimPauseLeased(ctx context.Context, snapshot *run.Run, susp *
 	return claimed, true, err
 }
 
-// claimSnapshot is the progress a run claimed from a pause starts with:
-// the state it paused with, and every pending call the claim answers
-// recorded as done with its answer.
-func claimSnapshot(runID id.AgentRunID, cont suspension.Continuation, done []suspension.ProgressResult) *suspension.Progress {
-	return &suspension.Progress{RunID: runID, Cont: pausedCont(cont), Done: done}
+// claimSnapshot is the progress a run claimed from paused starts with:
+// the state it paused with, every pending call the claim answers recorded
+// as done with its answer, and every other call that already left the
+// engine (a question to a peer, an external call handed to the host)
+// recorded as started. A worker that reclaims the run then never sends a
+// call twice: an answered one gets its answer, and one with no answer is
+// uncertain unless its tool is retry-safe.
+func claimSnapshot(paused *suspension.Suspension, done []suspension.ProgressResult) *suspension.Progress {
+	answered := make(map[string]bool, len(done))
+	for _, d := range done {
+		answered[d.CallID] = true
+	}
+	var started []suspension.PendingCall
+	for _, call := range sentCalls(paused) {
+		if !answered[call.ID] {
+			started = append(started, call)
+		}
+	}
+	return &suspension.Progress{RunID: paused.RunID, Cont: pausedCont(paused.Cont), Done: done, Started: started}
 }
 
 // answeredCalls records each pending call that results answer as done,

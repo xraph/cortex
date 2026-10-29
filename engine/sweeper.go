@@ -402,7 +402,11 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 	// Under the lease when this engine can take it with the claim: a sweep
 	// that dies before its failure write leaves a lease that lapses, not a
 	// running run nobody owns.
-	claimed, leased, err := e.claimPauseLeased(ctx, snapshot, susp, now, claimSnapshot(susp.RunID, susp.Cont, nil))
+	// The snapshot carries the expiry, so a worker that reclaims the run
+	// after a lost failure write fails it the same way.
+	first := claimSnapshot(susp, nil)
+	first.Ending = &suspension.Ending{Kind: suspension.EndingExpire, Reason: expiredDetail(susp)}
+	claimed, leased, err := e.claimPauseLeased(ctx, snapshot, susp, now, first)
 	if !leased {
 		claimed, err = e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
 	}
@@ -435,7 +439,9 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 
 	if err := e.persistFailure(ctx, r, r.AgentID, expiredRunError(susp)); err != nil {
 		// The suspension stays. It is the only record of what the run
-		// was waiting on, and the next sweep will find it again.
+		// was waiting on. A leased claim's lease lapses and the run is
+		// reclaimed, and the expiry its snapshot carries is finished then;
+		// a claim made without one leaves the run for the next sweep.
 		return expiryError, fmt.Errorf("fail expired run %s: %w", susp.RunID, err)
 	}
 
@@ -534,10 +540,14 @@ func isTerminalRunState(s run.State) bool {
 // the deadline, because "expired" without a time sends whoever reads it
 // looking for a log line to find out when.
 func expiredRunError(susp *suspension.Suspension) error {
+	return fmt.Errorf("%w: %s", cortex.ErrSuspensionExpired, expiredDetail(susp))
+}
+
+// expiredDetail is what expiredRunError says after the sentinel.
+func expiredDetail(susp *suspension.Suspension) string {
 	deadline := "its deadline"
 	if susp.ExpiresAt != nil {
 		deadline = susp.ExpiresAt.Format(time.RFC3339)
 	}
-	return fmt.Errorf("%w: nothing answered the %s pending call(s) by %s",
-		cortex.ErrSuspensionExpired, susp.Reason, deadline)
+	return fmt.Sprintf("nothing answered the %s pending call(s) by %s", susp.Reason, deadline)
 }

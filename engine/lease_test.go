@@ -108,6 +108,9 @@ type progressSpy struct {
 	failStarted atomic.Int32
 	// failHolds fails that many HoldLease calls the same way.
 	failHolds atomic.Int32
+	// failEnds fails that many writes of a cancelled or failed run, as a
+	// store that drops a terminal write would.
+	failEnds atomic.Int32
 	// afterClaim, when set, runs after a leased claim commits and before it
 	// returns, as a worker that stalls or dies right after its claim would.
 	afterClaim func()
@@ -146,6 +149,13 @@ func (s *progressSpy) SaveProgress(ctx context.Context, p *suspension.Progress) 
 	s.saved = append(s.saved, copied)
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *progressSpy) UpdateRun(ctx context.Context, r *run.Run) error {
+	if (r.State == run.StateCancelled || r.State == run.StateFailed) && s.failEnds.Add(-1) >= 0 {
+		return errStoreDown
+	}
+	return s.Store.UpdateRun(ctx, r)
 }
 
 func (s *progressSpy) HoldLease(ctx context.Context, runID id.AgentRunID, lease run.Lease) error {

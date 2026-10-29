@@ -2,12 +2,15 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	sqlitestore "github.com/xraph/cortex/store/sqlite"
@@ -23,13 +26,49 @@ type stallingAdmitStore struct {
 	admitted chan struct{}
 	release  chan struct{}
 	once     sync.Once
+	// stallAdmission stalls after the leased admission instead of after
+	// the leased start.
+	stallAdmission bool
+	// failEnds fails that many writes of a cancelled run.
+	failEnds atomic.Int32
+}
+
+func (s *stallingAdmitStore) stall() {
+	if s.stalled.CompareAndSwap(false, true) {
+		s.admitted <- struct{}{}
+		<-s.release
+	}
+}
+
+func (s *stallingAdmitStore) AdmitResumeLeased(ctx context.Context, req suspension.ResumeAdmissionRequest, lease run.Lease, first *suspension.Progress) (suspension.ResumeAdmission, error) {
+	admitted, err := s.Store.AdmitResumeLeased(ctx, req, lease, first)
+	if err == nil && s.stallAdmission {
+		s.stall()
+	}
+	return admitted, err
+}
+
+// AdmitResume stalls the same way, so a test can tell an admission that
+// took no lease from one that did.
+func (s *stallingAdmitStore) AdmitResume(ctx context.Context, req suspension.ResumeAdmissionRequest) (suspension.ResumeAdmission, error) {
+	admitted, err := s.Store.AdmitResume(ctx, req)
+	if err == nil && s.stallAdmission {
+		s.stall()
+	}
+	return admitted, err
+}
+
+func (s *stallingAdmitStore) UpdateRun(ctx context.Context, r *run.Run) error {
+	if r.State == run.StateCancelled && s.failEnds.Add(-1) >= 0 {
+		return errors.New("store unavailable")
+	}
+	return s.Store.UpdateRun(ctx, r)
 }
 
 func (s *stallingAdmitStore) StartResumeLeased(ctx context.Context, runID id.AgentRunID, key id.SuspensionID, digest string, lease run.Lease, first *suspension.Progress) (suspension.ResumeStart, error) {
 	started, err := s.Store.StartResumeLeased(ctx, runID, key, digest, lease, first)
-	if err == nil && s.stalled.CompareAndSwap(false, true) {
-		s.admitted <- struct{}{}
-		<-s.release
+	if err == nil && !s.stallAdmission {
+		s.stall()
 	}
 	return started, err
 }
@@ -152,4 +191,113 @@ func TestHandedOffDirectiveAnswersFromTheReplicaThatFinishesIt(t *testing.T) {
 		t.Fatalf("replica Drain: %v", drainErr)
 	}
 	assertNoStoppingFailure(ctx, t, st, paused.ID)
+}
+
+// The worker that records a peer's reply dies after its admission and
+// before it starts the resume. The admission took its lease and wrote the
+// reply into the run's snapshot, so on an engine with no reply recovery
+// configured the lease lapses, the sweep reclaims the run, and it
+// completes on the reply without asking the peer again.
+func TestAdmitterThatDiesBeforeItsStartIsReclaimed(t *testing.T) {
+	ctx := a2aScope()
+	st := &stallingAdmitStore{Store: newApprovalStore(ctx, t), admitted: make(chan struct{}, 1), release: make(chan struct{}), stallAdmission: true}
+	t.Cleanup(st.letGo)
+	model := newDrainingLLM(false)
+	t.Cleanup(model.letGo)
+	first := newDrainingEngine(ctx, t, st, model, true, WithRunLease(200*time.Millisecond))
+
+	paused, err := first.RunAgent(ctx, "planner", "find out how the worker is doing", nil)
+	if err != nil || paused.State != run.StatePaused {
+		t.Fatalf("RunAgent = %v, %v; want a paused planner", paused, err)
+	}
+	drained := make(chan error, 1)
+	go func() {
+		_, drainErr := first.A2A().Drain(ctx)
+		drained <- drainErr
+	}()
+	waitSignal(t, st.admitted, "the admission of the planner's reply")
+	waitLeaseLapsed(t, st, paused)
+
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica.sweepLapsed(context.Background(), time.Now().UTC())
+	continued, err := replica.ContinueRun(ctx, paused.ID)
+	if err != nil || continued.State != run.StateCompleted || !strings.Contains(continued.Output, "all clear") {
+		t.Fatalf("ContinueRun = %+v, %v; want the planner completed on the worker's answer", continued, err)
+	}
+	if _, drainErr := replica.A2A().Drain(ctx); drainErr != nil {
+		t.Fatalf("replica Drain: %v", drainErr)
+	}
+	st.letGo()
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stalled admitter's Drain did not return")
+	}
+	if got := model.workerCalls.Load(); got != 1 {
+		t.Fatalf("the worker was asked %d times, want once", got)
+	}
+}
+
+// A cancel claims a run waiting on a peer's answer and its write is lost.
+// The reclaim finishes the cancel: the run ends cancelled and the peer is
+// not asked a second time.
+func TestLostCancelOfAPeerQuestionDoesNotAskAgain(t *testing.T) {
+	ctx := a2aScope()
+	st := &stallingAdmitStore{Store: newApprovalStore(ctx, t), admitted: make(chan struct{}, 1), release: make(chan struct{})}
+	t.Cleanup(st.letGo)
+	model := newDrainingLLM(false)
+	t.Cleanup(model.letGo)
+	first := newDrainingEngine(ctx, t, st, model, true, WithRunLease(200*time.Millisecond))
+
+	paused, err := first.RunAgent(ctx, "planner", "find out how the worker is doing", nil)
+	if err != nil || paused.State != run.StatePaused {
+		t.Fatalf("RunAgent = %v, %v; want a paused planner", paused, err)
+	}
+	st.failEnds.Store(1)
+	if cancelErr := first.CancelRun(ctx, paused.ID); cancelErr == nil {
+		t.Fatal("CancelRun succeeded though its write was dropped")
+	}
+	waitLeaseLapsed(t, st, paused)
+
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica.sweepLapsed(context.Background(), time.Now().UTC())
+	ended, err := replica.ContinueRun(ctx, paused.ID)
+	if !errors.Is(err, cortex.ErrRunAlreadyDone) || ended == nil || ended.State != run.StateCancelled {
+		t.Fatalf("ContinueRun = %+v, %v; want the cancel finished", ended, err)
+	}
+	asks, err := st.ListMessages(ctx, &a2a.MessageListFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	questions := 0
+	for _, m := range asks {
+		if m.Sender.Agent == "planner" {
+			questions++
+		}
+	}
+	if questions != 1 {
+		t.Fatalf("the planner sent %d questions, want the original one only", questions)
+	}
+}
+
+// The snapshot a claim from a pause writes records every call that left
+// the engine and is not answered as started, so a reclaim never sends it
+// again, and records nothing as started for an approval nobody sent.
+func TestClaimSnapshotRecordsSentCallsAsStarted(t *testing.T) {
+	asked := &suspension.Suspension{ID: id.NewSuspensionID(), RunID: id.NewAgentRunID(), Reason: suspension.ReasonAgentReply,
+		Pending: []suspension.PendingCall{{ID: "ask-1", Name: toolAgentAsk}, {ID: "ask-2", Name: toolAgentAsk}}}
+	snap := claimSnapshot(asked, []suspension.ProgressResult{{CallID: "ask-1", Content: "answer", Outcome: "completed"}})
+	if len(snap.Started) != 1 || snap.Started[0].ID != "ask-2" || len(snap.Done) != 1 {
+		t.Fatalf("claim snapshot of a peer question = started %+v done %+v; want ask-2 started, ask-1 done", snap.Started, snap.Done)
+	}
+	external := &suspension.Suspension{ID: id.NewSuspensionID(), RunID: id.NewAgentRunID(), Reason: suspension.ReasonExternalTool,
+		Pending: []suspension.PendingCall{{ID: "call-x", Name: "lookup"}}}
+	if snap = claimSnapshot(external, nil); len(snap.Started) != 1 || snap.Started[0].ID != "call-x" {
+		t.Fatalf("claim snapshot of an external call = started %+v; want it started", snap.Started)
+	}
+	approval := &suspension.Suspension{ID: id.NewSuspensionID(), RunID: id.NewAgentRunID(), Reason: suspension.ReasonApproval,
+		Pending: []suspension.PendingCall{{ID: "call-c", Name: "c"}}}
+	if snap = claimSnapshot(approval, nil); len(snap.Started) != 0 {
+		t.Fatalf("claim snapshot of an approval = started %+v; want nothing started", snap.Started)
+	}
 }

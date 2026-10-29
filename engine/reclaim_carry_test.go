@@ -380,3 +380,96 @@ func TestToolCalledWaitsForTheStartedRecord(t *testing.T) {
 		})
 	}
 }
+
+// A cancel claims a run paused on an external call and its terminal write
+// is lost. The claim took the canceller's lease and recorded the cancel,
+// so once the lease lapses the run is reclaimed and the cancel finished:
+// the host is not handed the call again and the model is not called.
+func TestLostCancelIsFinishedOnReclaim(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-x", Name: "lookup", Arguments: `{"q":1}`}))
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, paused.State)
+
+	f.store.failEnds.Store(1)
+	require.Error(t, f.eng.CancelRun(leaseScope(), paused.ID), "the cancel's write was dropped")
+	waitLapsed(t, f, paused.ID)
+
+	hooks := newReclaimHooks()
+	bModel := &reclaimLLM{}
+	b := reclaimer(t, f, bModel, hooks, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	engine.SweepOnce(b, context.Background())
+	ended, err := b.ContinueRun(leaseScope(), paused.ID)
+	require.ErrorIs(t, err, cortex.ErrRunAlreadyDone)
+	require.Equal(t, run.StateCancelled, ended.State)
+	require.Empty(t, hooks.snapshot().suspended, "the external call was handed to the host again")
+	require.Zero(t, bModel.calls())
+	_, err = f.store.GetSuspension(leaseScope(), paused.ID)
+	require.ErrorIs(t, err, cortex.ErrNotSuspended)
+	got, err := f.store.GetRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCancelled, got.State)
+}
+
+// The same for an expiry: the sweep claims a run whose external call
+// nobody answered in time and its failure write is lost. The reclaim fails
+// the run with the expiry, and does not hand the call out again.
+func TestLostExpiryIsFinishedOnReclaim(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-x", Name: "lookup", Arguments: `{"q":1}`}))
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithExternalTool(llm.Tool{Name: "lookup"}, engine.ExternalTTL(20*time.Millisecond)))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, paused.State)
+	time.Sleep(40 * time.Millisecond)
+
+	f.store.failEnds.Store(1)
+	engine.SweepOnce(f.eng, context.Background())
+	claimed, err := f.store.GetRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateRunning, claimed.State, "the expiry's failure write was dropped")
+	waitLapsed(t, f, paused.ID)
+
+	hooks := newReclaimHooks()
+	bModel := &reclaimLLM{}
+	b := reclaimer(t, f, bModel, hooks, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	engine.SweepOnce(b, context.Background())
+	ended, err := b.ContinueRun(leaseScope(), paused.ID)
+	require.ErrorIs(t, err, cortex.ErrSuspensionExpired)
+	require.Equal(t, run.StateFailed, ended.State)
+	require.Empty(t, hooks.snapshot().suspended, "the external call was handed to the host again")
+	require.Zero(t, bModel.calls())
+	got, err := f.store.GetRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateFailed, got.State)
+	require.Contains(t, got.Error, "nothing answered")
+}
+
+// A cancel of a run paused for an approval closes its checkpoint with the
+// cancel's reason when the reclaim finishes it.
+func TestLostCancelClosesTheCheckpointOnReclaim(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-c", Name: "c", Arguments: `{}`}))
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL),
+		engine.WithTool(llm.Tool{Name: "c"}, (&countingTool{}).handler),
+		engine.WithToolAuthorizer(approveC{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[leasePrincipal]()))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, paused.State)
+	cps, err := f.store.ListPending(leaseScope(), &checkpoint.ListFilter{RunID: paused.ID.String()})
+	require.NoError(t, err)
+	require.Len(t, cps, 1)
+
+	f.store.failEnds.Store(1)
+	require.Error(t, f.eng.CancelRun(leaseScope(), paused.ID))
+	waitLapsed(t, f, paused.ID)
+	b := reclaimer(t, f, &reclaimLLM{}, newReclaimHooks(),
+		engine.WithTool(llm.Tool{Name: "c"}, (&countingTool{}).handler),
+		engine.WithToolAuthorizer(approveC{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[leasePrincipal]()))
+	engine.SweepOnce(b, context.Background())
+	_, err = b.ContinueRun(leaseScope(), paused.ID)
+	require.ErrorIs(t, err, cortex.ErrRunAlreadyDone)
+	closed, err := f.store.GetCheckpoint(leaseScope(), cps[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, "resolved", closed.State)
+	require.Contains(t, closed.Decision.Reason, "cancelled")
+}
