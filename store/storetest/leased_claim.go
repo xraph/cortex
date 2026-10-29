@@ -190,7 +190,9 @@ func testStartResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store
 	_, err = leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, run.Lease{}, nil)
 	require.ErrorIs(t, err, cortex.ErrRunLeaseLost, "a leased start took a run with no lease")
 	_, err = leased.StartResumeLeased(ctxWithScope("leased-start-elsewhere"), req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, lease, firstSnapshot(req.Version.RunID, "w1"))
-	require.Error(t, err, "a leased start reached a run from another scope")
+	// The same refusal plain StartResume gives another scope: the
+	// admission is not found there.
+	require.ErrorIs(t, err, suspension.ErrResumeAdmissionNotFound, "a leased start reached a run from another scope")
 	started, err := leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, lease, firstSnapshot(req.Version.RunID, "w1"))
 	require.NoError(t, err)
 	require.True(t, started.Fresh)
@@ -220,7 +222,9 @@ func testAdmitResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store
 	_, err := leased.AdmitResumeLeased(ctx, req, run.Lease{}, nil)
 	require.ErrorIs(t, err, cortex.ErrRunLeaseLost, "a leased admission took a run with no lease")
 	_, err = leased.AdmitResumeLeased(ctxWithScope("leased-admit-elsewhere"), req, lease, firstSnapshot(req.Version.RunID, "w1"))
-	require.Error(t, err, "a leased admission reached a run from another scope")
+	// The same refusal plain AdmitResume gives a request for another
+	// scope.
+	require.ErrorIs(t, err, cortex.ErrInvalidScope, "a leased admission reached a run from another scope")
 	unmoved, err := backend.GetRun(ctx, req.Version.RunID)
 	require.NoError(t, err)
 	require.Equal(t, run.StatePaused, unmoved.State)
