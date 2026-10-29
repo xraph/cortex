@@ -60,6 +60,8 @@ type Extension struct {
 	nexusOpts []nexusllm.Option
 	// weaveOpts configure the weave adapter the auto discovery wires in.
 	weaveOpts []weaveknowledge.Option
+	// shieldOpts configure the shield adapter the auto discovery wires in.
+	shieldOpts []shieldsafety.Option
 	// hostStore is set by WithStore, which makes discovering a default
 	// grove database pointless.
 	hostStore     bool
@@ -184,13 +186,13 @@ func (e *Extension) init(fapp forge.App) error {
 	}
 
 	// Optional: discover installed LLM, safety, knowledge and evaluation
-	// services from DI. The shield adapter sets the safety scanner, and the
-	// engine screens publication through it unless a publication gate is
-	// set, so a host replacing shield sets engine.WithPublicationGate too.
+	// services from DI. The shield adapter sets both the safety scanner and
+	// the publication gate, so a host replacing shield sets
+	// engine.WithSafety and engine.WithPublicationGate.
 	if !e.noAutoAdapters {
 		opts = append(opts,
 			nexusllm.EngineOption(fapp.Container(), e.nexusOpts...),
-			shieldsafety.EngineOption(fapp.Container()),
+			shieldsafety.EngineOption(fapp.Container(), e.shieldOpts...),
 			weaveknowledge.EngineOption(fapp.Container(), e.weaveOpts...),
 			sentineladapter.EngineOption(fapp.Container()),
 		)

@@ -299,3 +299,39 @@ finishes in the same call. An escalation stops the run until a person resolves
 the checkpoint, and only then does the tool run. See
 [Suspension](/docs/concepts/suspension) for how to list pending checkpoints,
 resolve them, and what happens to a run nobody answers.
+
+## Layering Shield under your authorizer
+
+Your authorizer knows who may do what. [Shield](https://github.com/xraph/shield) knows what a call looks like: a call with no risk class, a secret in the arguments, a destructive action that a person should sign off on. `shieldsafety.NewToolAuthorizer` puts the two together, with yours on top.
+
+```go
+auth := shieldsafety.NewToolAuthorizer(shieldEngine, myAuthorizer, shieldsafety.ToolCallOptions{
+    // Your own risk table. An empty class is Shield's "unknown", which the
+    // InfraAgent tools profile blocks.
+    RiskClass: func(ctx context.Context, s cortex.Subject, call llm.ToolCall) string {
+        return riskTable[call.Name]
+    },
+    Profile:     presets.InfraAgentTools,
+    ApprovalTTL: 4 * time.Hour,
+    App:         "loomplane",
+})
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithToolAuthorizer(auth),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[myPrincipal]()),
+)
+```
+
+Your authorizer answers first. If it denies the call, its error goes back to the model as it is and Shield isn't asked. Otherwise Shield scans the call (the tool name, your risk class and the JSON arguments) and the two answers are combined with `scan.Stricter`, which takes the stricter of allow, require approval and block. So Shield can turn your allow into a denial or an approval, and it can turn your approval into a denial. It can never turn your denial or your approval into an allow.
+
+| Your authorizer | Shield | What the model and the run see |
+|-----------------|--------|--------------------------------|
+| denies | not asked | your error |
+| allows | allows | the call runs |
+| allows | requires approval | the run pauses; `cortex.ApprovalRequired` with reason `shield: ...` and `ApprovalTTL` |
+| requires approval | allows or requires approval | the run pauses with your own error, so your reason and TTL hold |
+| allows or requires approval | blocks | a denial matching `shieldsafety.ErrToolCallBlocked` |
+
+A scan that can't run (no tenant, no profile for the tenant, arguments that aren't JSON) denies the call with `shieldsafety.ErrToolScanUnavailable`. Denials carry Shield's reason, which is the message of the finding that decided, never the arguments. A checkpoint opened for Shield reads `tool call requires approval: delete_environment (shield: reflex fired)`, with the tool name first.
+
+`Visible` is your authorizer's. Shield only gates calls, so with no host authorizer every tool stays visible and Shield decides each call alone.

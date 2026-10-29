@@ -107,7 +107,7 @@ You can override anything the extension sets up. Engine options are setters, so 
 
 So `WithEngineOption(engine.WithLLM(client))` beats a Nexus gateway in the container, `WithStore(s)` beats a discovered Grove database, and `WithEngineOption(engine.WithConfig(...))` replaces the whole engine config the extension built from YAML. Options that add rather than set, like `engine.WithTool` and `WithExtension`, add to each other wherever they sit.
 
-Shield needs one extra step. The Shield adapter installs the safety scanner, and the engine screens publication through that scanner unless a publication gate is set. If you replace Shield with `engine.WithSafety`, the new scanner takes over both jobs. If you only pass `engine.WithPublicationGate(gate)`, your gate screens publication, but `engine.Safety()` still returns the Shield adapter. When you want Shield gone completely, use `WithoutAutoAdapters()` and wire what you need yourself.
+Shield needs one extra step. The Shield adapter installs itself as both the safety scanner and the publication gate. If you only pass `engine.WithSafety`, `engine.Safety()` returns your scanner but Shield still screens publication. If you only pass `engine.WithPublicationGate(gate)`, your gate screens publication but `engine.Safety()` still returns the Shield adapter. Replace both, or use `WithoutAutoAdapters()` and wire what you need yourself. `WithShieldOptions` passes [adapter options](/docs/concepts/configuration#shield-adapter) such as the tenant and app.
 
 ## Extension options
 
@@ -122,6 +122,7 @@ Shield needs one extra step. The Shield adapter installs the safety scanner, and
 | `WithExtension(x)` | `plugin.Extension` | Register a Cortex plugin (lifecycle hooks) |
 | `WithEngineOption(o)` | `engine.Option` | Pass any engine option through, such as `engine.WithLLM`, `engine.WithTool` or `engine.WithConfig`. It overrides the config and the automatic adapters |
 | `WithoutAutoAdapters()` | | Don't look for Nexus, Shield, Weave or Sentinel in the container |
+| `WithShieldOptions(opts...)` | `...shieldsafety.Option` | Options for the Shield adapter the extension wires in, such as its tenant and app |
 | `WithConfig(c)` | `extension.Config` | Set the whole extension config |
 | `WithRequireConfig(b)` | `bool` | Fail `Register` when no `extensions.cortex` or `cortex` config is found |
 | `WithDashboard(deps)` | `contract.Deps` | Supply the scope mapping and audit sink for the dashboard contract |

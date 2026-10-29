@@ -456,7 +456,7 @@ The in-process agent-to-agent bus: FIPA-ACL envelopes, conversations, deliveries
 | `llm` | `Client` interface (`Complete`, `CompleteStream`), with `Request`, `Response`, `Tool`, `ToolCall`, `ToolChoice`, `Message` and `NativeContent`; `ErrContentBlocked` |
 | `llm/nexus` | `New(*nexus.Gateway, opts...)` and `NewFunc(func() *nexus.Gateway, opts...)` adapt a Nexus gateway; `EngineOption(container, opts...)` finds one in a vessel container. Options: `WithTenant`, `WithProvider`, `WithMetadata`, `WithSamplingUnsupported` |
 | `safety` | `Scanner` interface (`ScanInput`, `ScanOutput`) |
-| `safety/shield` | `New(*shield engine)` adapts Shield; `EngineOption(container)` |
+| `safety/shield` | `New(*shield engine, opts...)` adapts Shield as scanner and publication gate; `EngineOption(container, opts...)`; `NewToolAuthorizer(engine, host, ToolCallOptions)` layers tool-call scans under a host authorizer |
 | `knowledge` | `Provider` interface (`Retrieve`, `ListCollections`) |
 | `knowledge/weave` | `New(*weave engine)` adapts Weave; `EngineOption(container)` |
 

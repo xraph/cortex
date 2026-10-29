@@ -16,7 +16,7 @@ require (
 	github.com/xraph/grove v1.10.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
 	github.com/xraph/nexus v1.9.1
-	github.com/xraph/shield v1.8.1
+	github.com/xraph/shield v1.9.1
 	github.com/xraph/vessel v1.0.4
 	github.com/xraph/weave v1.9.2
 	go.opentelemetry.io/otel v1.45.0
@@ -37,7 +37,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect

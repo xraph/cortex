@@ -163,6 +163,7 @@ All of these are applied now. The `Default*` fields and `ShutdownTimeout` become
 | `extension.WithoutAutoAdapters()` | Skips looking for Nexus, Shield, Weave and Sentinel in the container |
 | `extension.WithNexusOptions(opts...)` | Passes [Nexus adapter options](#nexus-adapter) to the adapter the extension wires in |
 | `extension.WithWeaveOptions(opts...)` | Passes [Weave adapter options](#weave-adapter) to the adapter the extension wires in |
+| `extension.WithShieldOptions(opts...)` | Passes [Shield adapter options](#shield-adapter) to the adapter the extension wires in |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
 | `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
@@ -238,6 +239,37 @@ eng, err := engine.New(engine.WithStore(st), engine.WithKnowledge(adapter))
 A search that names no collection runs once under the run's tenant and once for each shared collection, then merges the hits by score and keeps the top `TopK` (5 when you set none). A search that names a collection resolves it in the run's tenant, unless it names a shared one, which it reads under that collection's tenant. `ListCollections` returns the run tenant's collections plus the shared ones. A run never sees another tenant's collections, because Weave checks the tenant on every call.
 
 Under the Forge extension, pass the same options with `extension.WithWeaveOptions`.
+
+## Shield adapter
+
+`safety/shield` screens content with a [Shield](https://github.com/xraph/shield) engine. It's a `safety.Scanner` and a `safety.PublicationGate`, and `shieldsafety.EngineOption` installs it as both. Every scan runs under a Shield tenant and app, and evaluates the profile named in the agent's `shield_profile` guardrail (Shield's default profile when the agent names none).
+
+```go
+adapter := shieldsafety.New(eng,
+    // The default is cortex.RootTenant, the first scope level's value.
+    shieldsafety.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return ws, nil
+    }),
+    // Seed your profiles under this app.
+    shieldsafety.WithApp("loomplane"),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithSafety(adapter), engine.WithPublicationGate(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Shield tenant from the run's scope. An error or an empty result fails the scan closed |
+| `WithApp(app)` | the scope's `app` level, or the canonical scope | Names the Shield app, which with the tenant picks the profiles |
+| `WithUntrustedSources(sources...)` | `tool_result`, `tool_error`, `retrieval` | Replaces the publication sources whose inbound text Shield treats as untrusted |
+
+The tenant comes from the scope through your `TenantFunc`. It's never the engine's canonical scope string, so a Shield tenant you seeded as `o1` matches a run scoped `org=o1`.
+
+Inbound text from an untrusted source is quoted. Unless Shield blocks it, the model gets the text wrapped in an `<untrusted_content source="tool_result">` element, with any secrets and instruction-shaped lines already taken out, and the publication status is `redacted`. The outbound pass over the same text isn't marked again, so nothing is quoted twice.
+
+A scan that can't run fails closed. The error matches `safety.ErrUnavailable` and, when Shield said why, one of `shield.ErrTenantRequired`, `shield.ErrNoProfile`, `shield.ErrProfileInvalid`, `shield.ErrInputTooLarge` or `shield.ErrInvalidInput`. Nothing else of Shield's error comes through, so the scanned text, the profile name and the tenant never reach a log or an API error. A result that names no profile is refused as well.
+
+`shieldsafety.NewToolAuthorizer` scans tool calls; [Authorization](/docs/concepts/authorization#layering-shield-under-your-authorizer) covers it. Under the Forge extension, pass the adapter options with `extension.WithShieldOptions`.
 
 ## YAML configuration
 

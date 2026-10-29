@@ -144,6 +144,12 @@ Thinking models keep their signed thinking between turns, through approvals and 
 
 Every knowledge search runs under a Weave tenant, taken from the run's scope with `weaveknowledge.WithTenant` (the default is the scope's first level). A run only reads its own tenant's collections, plus any read-only ones you list with `weaveknowledge.WithShared`, such as your product docs. A call with no tenant fails before Weave is asked. Under the Forge extension, pass these with `extension.WithWeaveOptions`. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#weave-adapter) has the details.
 
+### The Shield adapter
+
+`safety/shield` screens what a run reads and writes with a [Shield](https://github.com/xraph/shield) engine, and it can gate tool calls too. It's your safety scanner and your publication gate. Each scan runs under a Shield tenant taken from the run's scope (`shieldsafety.WithTenant`, first scope level by default) and the app you name with `shieldsafety.WithApp`, using the profile in the agent's `shield_profile` guardrail. Tool results, tool errors and retrieved knowledge go in as untrusted, so Shield quotes them before the model reads them. A scan that can't run (no tenant, no profile, input too large) blocks the content. It never lets it through.
+
+`shieldsafety.NewToolAuthorizer` puts Shield's tool-call scan under your own `cortex.ToolAuthorizer`. Your authorizer answers first, and Shield can then deny the call or ask a person to approve it, but it can't allow a call you refused. Under the Forge extension, pass adapter options with `extension.WithShieldOptions`. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#shield-adapter) and [Authorization](https://www.xraph.com/docs/cortex/concepts/authorization#layering-shield-under-your-authorizer) have the details.
+
 ## Why Cortex?
 
 Calling a chat API in a loop gets you an agent for a demo. Then you need the run history in a database, a person to approve a risky tool call, a run that can wait a day for an external result without holding a goroutine, and a guarantee that one customer's agents never read another's memory. Cortex handles those parts so your code only describes the agents and their tools.

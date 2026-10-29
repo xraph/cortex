@@ -222,7 +222,7 @@ func TestHostEngineOptionsOverrideAutoWiring(t *testing.T) {
 	if eng.Knowledge() != knowledge.Provider(kn) {
 		t.Fatalf("Knowledge = %T, want the host's fake", eng.Knowledge())
 	}
-	// The pinned shield refuses every scan with safety.ErrUnavailable, so a
+	// The shield engine here has no store, so it refuses every scan and a
 	// run that reached it would fail. A completed run screened by the host's
 	// gate proves the gate replaced shield's.
 	r, err := eng.RunAgent(scopeCtx(), "assistant", "hello", nil)

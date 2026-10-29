@@ -15,7 +15,7 @@ require (
 	github.com/xraph/grove/drivers/pgdriver v1.10.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
 	github.com/xraph/nexus v1.9.1
-	github.com/xraph/shield v1.8.1
+	github.com/xraph/shield v1.9.1
 	github.com/xraph/vessel v1.0.4
 	github.com/xraph/weave v1.9.2
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3

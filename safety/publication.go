@@ -76,6 +76,20 @@ func (g ScannerGate) Check(ctx context.Context, req PublicationRequest) (Publica
 	if err != nil || result == nil {
 		return PublicationDecision{}, ErrUnavailable
 	}
+	return DecisionFromScan(req, result)
+}
+
+// DecisionFromScan turns a scan result into the decision a gate returns
+// for req. A blocked result is ErrBlocked. An allow or a flag publishes the
+// scanner's Redacted text, with StatusRedacted, when it set one (a scanner
+// that quotes untrusted text returns the quoted text this way), and the
+// request's own content otherwise. A redact publishes Redacted, even an
+// empty one. A nil result or an unknown decision is ErrUnavailable, so a
+// gate that cannot read the result fails closed.
+func DecisionFromScan(req PublicationRequest, result *ScanResult) (PublicationDecision, error) {
+	if result == nil {
+		return PublicationDecision{}, ErrUnavailable
+	}
 	if result.Blocked || result.Decision == DecisionBlock {
 		return PublicationDecision{}, ErrBlocked
 	}

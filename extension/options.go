@@ -7,6 +7,7 @@ import (
 	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
 	"github.com/xraph/cortex/plugin"
+	shieldsafety "github.com/xraph/cortex/safety/shield"
 	"github.com/xraph/cortex/store"
 )
 
@@ -39,7 +40,7 @@ func WithEngineOption(opt engine.Option) ExtOption {
 // WithoutAutoAdapters stops the extension from discovering nexus, shield,
 // weave and sentinel in the DI container. Without it, each one found is
 // wired into the engine: nexus as the model client, shield as the safety
-// scanner (and so the publication gate), weave as the knowledge provider
+// scanner and the publication gate, weave as the knowledge provider
 // and sentinel as an extension. Use it when the host wires those itself,
 // or wants none of them.
 func WithoutAutoAdapters() ExtOption {
@@ -64,6 +65,17 @@ func WithNexusOptions(opts ...nexusllm.Option) ExtOption {
 // still replaces it, and WithoutAutoAdapters still leaves it out.
 func WithWeaveOptions(opts ...weaveknowledge.Option) ExtOption {
 	return func(e *Extension) { e.weaveOpts = append(e.weaveOpts, opts...) }
+}
+
+// WithShieldOptions configures the shield adapter the extension wires in
+// when it finds a shield engine in the container: shieldsafety.WithTenant
+// to map a scope to its shield tenant, shieldsafety.WithApp to name the
+// shield app, and shieldsafety.WithUntrustedSources. The adapter keeps its
+// place in the option order, so an engine.WithSafety or
+// engine.WithPublicationGate passed with WithEngineOption still replaces
+// the matching half of it, and WithoutAutoAdapters still leaves it out.
+func WithShieldOptions(opts ...shieldsafety.Option) ExtOption {
+	return func(e *Extension) { e.shieldOpts = append(e.shieldOpts, opts...) }
 }
 
 // WithConfig sets the extension configuration.

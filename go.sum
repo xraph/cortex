@@ -164,8 +164,8 @@ github.com/xraph/grove/drivers/sqlitedriver v1.10.0 h1:dRoQ0/Fe0Vs+In+txIsI12Qu/
 github.com/xraph/grove/drivers/sqlitedriver v1.10.0/go.mod h1:iveP+Gc9rtT+3YErYdOHvoFpgIkrvENwxiTnpjckihI=
 github.com/xraph/nexus v1.9.1 h1:NcuZvnNETFUA4TahMxfObFPExkzMVHzIpjaVIYyF0DA=
 github.com/xraph/nexus v1.9.1/go.mod h1:EaifpIxomEFT5Rm5nzdQtben+hAIvZKb2dDIuU1dLno=
-github.com/xraph/shield v1.8.1 h1:yiKsTVckTjI8+CbywSI1Ap/kBRFGTlKGkLOYJtvlMg4=
-github.com/xraph/shield v1.8.1/go.mod h1:z41xJupE0RZ3aYo4SQ2KCue6PBzb9qItCXGyW76UE7w=
+github.com/xraph/shield v1.9.1 h1:ggXmywtBgLE129MBSLyDzrP2R7w+JmMzf4HF8qwzXf0=
+github.com/xraph/shield v1.9.1/go.mod h1:/SPTWW9z41QvgLYOMJ+++rhjsynWfYHoPc4oWE1krbM=
 github.com/xraph/vessel v1.0.4 h1:YVG80hm7bAKTwogwLXZMlp46tMHHJThUcvCUOWao9Yk=
 github.com/xraph/vessel v1.0.4/go.mod h1:5hgrMbuczxu2kRIM3iVJ3wPSb6HOvbMhV4nkRFaPNqs=
 github.com/xraph/weave v1.9.2 h1:ui8yo3NWEE6DFJzhuGyblBBtGVk2eu7dqJjwv98292Q=
