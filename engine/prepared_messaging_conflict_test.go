@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -189,7 +190,8 @@ func TestPreparedTeamRecoverySkipsAnAskerThatLostTheSweepRace(t *testing.T) {
 		}},
 		Authorize: func(context.Context, id.OrchestrationID) error { return nil },
 	})
-	fresh, err := engine.New(append([]engine.Option{engine.WithStore(wrapped), engine.WithLLM(client), recovery}, deadAdmitterOptions()...)...)
+	logger := newCapturingLogger()
+	fresh, err := engine.New(append([]engine.Option{engine.WithStore(wrapped), engine.WithLLM(client), engine.WithLogger(logger), recovery}, deadAdmitterOptions()...)...)
 	require.NoError(t, err)
 	require.NoError(t, fresh.Start(ctx))
 	t.Cleanup(func() { require.NoError(t, fresh.Stop(context.Background())) })
@@ -217,4 +219,18 @@ func TestPreparedTeamRecoverySkipsAnAskerThatLostTheSweepRace(t *testing.T) {
 	conflicts, starts := wrapped.counts()
 	require.Equal(t, 1, conflicts, "the asker's recovery start was never refused")
 	require.Equal(t, 1, starts, "the asker was started more than once after the refusal")
+
+	// The skip is logged with the run id only: no content, no scope.
+	skipped := 0
+	for _, warn := range logger.Warns() {
+		if !strings.Contains(warn.msg, "lost to the sweep") {
+			continue
+		}
+		skipped++
+		require.Equal(t, manifest.Asker.String(), warn.fields["run_id"])
+		for key := range warn.fields {
+			require.Contains(t, []string{"run_id", "error_type", "suppressed"}, key, "the skip logged %q", key)
+		}
+	}
+	require.Equal(t, 1, skipped, "the skipped asker was not logged")
 }
