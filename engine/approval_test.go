@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/checkpoint"
@@ -837,11 +838,16 @@ func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
 //
 // The claim did move the run to running, as it does in every store, so
 // the same decision cannot take it again: deciding again is refused, and
-// the run is left running with no owner for the engine sweep to recover.
+// the run is left running with no owner. The engine sweep recovers it:
+// once it has sat ownerless past the grace it is reclaimed, and continuing
+// it goes back to the pause it was claimed from. The call still needs a
+// decision, so the person is asked again, and the checkpoint whose
+// decision never took effect is closed as superseded.
 func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *testing.T) {
 	base := scopespy.New()
 	spy := &wedgeSpy{Spy: base}
-	e := approvalEngine(t, WithStore(spy))
+	const ttl = 40 * time.Millisecond
+	e := approvalEngine(t, WithStore(spy), WithRunLease(ttl))
 	ctx := cortex.WithScope(context.Background(), approvalScope())
 
 	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
@@ -879,6 +885,29 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *te
 	}
 	if held.State != run.StateRunning || held.Lease != nil {
 		t.Errorf("run = %s with lease %v, want running with no owner", held.State, held.Lease)
+	}
+
+	time.Sleep(3 * ttl)
+	// The spy keeps no expiry index, so this runs the ownerless pass of the
+	// sweep on its own.
+	e.sweepOwnerless(context.Background(), time.Now().UTC())
+	reclaimed, getErr := base.GetRun(ctx, cps[0].RunID)
+	if getErr != nil || reclaimed.State != run.StateReclaimable || reclaimed.Reclaims != 1 {
+		t.Fatalf("after the sweep the run = %+v, %v; want reclaimable, reclaimed once", reclaimed, getErr)
+	}
+	again, err := e.ContinueRun(ctx, cps[0].RunID)
+	if err != nil || again.State != run.StatePaused {
+		t.Fatalf("ContinueRun = %+v, %v; want the run paused for a decision again", again, err)
+	}
+	all := base.Checkpoints()
+	if len(all) != 2 {
+		t.Fatalf("%d checkpoints, want the first closed and a second one asking again", len(all))
+	}
+	if first, _ := base.GetCheckpoint(ctx, all[0].ID); first.State != "resolved" || first.Decision == nil || first.Decision.Approved || !strings.Contains(first.Decision.Reason, "superseded") {
+		t.Errorf("first checkpoint = %+v, want closed as superseded", first)
+	}
+	if all[1].State != "pending" {
+		t.Errorf("second checkpoint = %s, want pending", all[1].State)
 	}
 }
 

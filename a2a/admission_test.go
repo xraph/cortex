@@ -3,6 +3,7 @@ package a2a
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +152,39 @@ func TestRefusedDirectiveIsRequeuedWithoutReply(t *testing.T) {
 	}
 	if replies := repliesFrom(st, "w1"); len(replies) != 1 || replies[0].Performative != Inform {
 		t.Fatalf("replies from w1 = %+v, want exactly one inform", replies)
+	}
+}
+
+// A directive whose run is handed off before it answers is no failure:
+// the run is reclaimed and continued elsewhere. No Failure reply goes to
+// the asker, and the delivery is not run a second time.
+func TestHandedOffDirectiveSendsNoFailure(t *testing.T) {
+	st := newMemStore()
+	ctx := testCtx()
+	interrupted := newFakeRunner()
+	interrupted.err = fmt.Errorf("worker draining: %w", cortex.ErrRunInterrupted)
+	here := newAdmittedBus(t, st, interrupted, newFakeResumer(), nil)
+
+	if _, err := here.Send(ctx, SendParams{
+		Sender: Address{Agent: "planner"}, Receivers: []Address{{Agent: "w2"}},
+		Performative: Request, Content: "report status", ReplyWith: "rw-1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := here.Drain(ctx); err != nil {
+		t.Fatalf("Drain = %v, want nil", err)
+	}
+	if replies := repliesFrom(st, "w2"); len(replies) != 0 {
+		t.Fatalf("a handed-off run produced replies %+v, want none", replies)
+	}
+	if d := onlyDelivery(t, st); d.State != DeliveryDelivered || d.RunID.IsNil() {
+		t.Fatalf("delivery = %+v, want delivered to the handed-off run", d)
+	}
+	if _, err := here.Drain(ctx); err != nil {
+		t.Fatalf("second Drain: %v", err)
+	}
+	if got := interrupted.callCount(); got != 1 {
+		t.Fatalf("the directive ran %d times, want 1", got)
 	}
 }
 

@@ -124,6 +124,15 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 		// answer nor proof of failure, and its binding prevents redispatch.
 		return nil
 	}
+	if b.reserved == nil && out != nil && (errors.Is(runErr, cortex.ErrRunInterrupted) || errors.Is(runErr, cortex.ErrRunLeaseLost)) {
+		// The recipient's run was handed off, or another worker holds it
+		// now. It has not failed and it has not answered: it is reclaimed
+		// and continued elsewhere. No Failure goes to the asker, and the
+		// delivery is not run again, which would start a second run for
+		// the same directive. The asker's reply-by covers a run that never
+		// answers.
+		return b.finishDelivery(ctx, d, e, out.RunID)
+	}
 
 	reply := SendParams{
 		Sender:         d.Receiver,

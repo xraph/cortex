@@ -160,7 +160,7 @@ func (e *Engine) boundSuspension(ctx context.Context, cp *checkpoint.Checkpoint,
 		return susp, nil
 	}
 	if closeStale {
-		e.closeCheckpoint(ctx, cp, "superseded: the run is no longer waiting on the pause this checkpoint was opened for")
+		e.closeCheckpoint(ctx, cp, supersededReason)
 	}
 	return nil, fmt.Errorf("resolve checkpoint %s: the run is no longer waiting on it: %w", cp.ID, cortex.ErrInvalidState)
 }
@@ -372,7 +372,22 @@ func (e *Engine) emitRunReady(ctx context.Context, r *run.Run) {
 		return
 	}
 	notice := run.ReadyNotice{Source: r.Ready.Source, CheckpointID: r.Ready.CheckpointID, At: r.Ready.At}
-	e.extensions.EmitRunReady(cortex.WithScope(ctx, r.Scope), r.AgentID, r.ID, notice)
+	runCtx := cortex.WithScope(ctx, r.Scope)
+	e.extensions.EmitRunReady(runCtx, r.AgentID, r.ID, notice)
+	e.markNotified(runCtx, r.ID, time.Now().UTC())
+}
+
+// markNotified records that the host was just told about a waiting run,
+// so the sweeper repeats the notice only once the run has waited a whole
+// WithReadyRenotify period since. A run claimed in the meantime is no
+// longer waiting, and that refusal is not an error.
+func (e *Engine) markNotified(ctx context.Context, runID id.AgentRunID, at time.Time) {
+	if e.continuation == nil {
+		return
+	}
+	if err := e.continuation.MarkNotified(ctx, runID, at); err != nil && !errors.Is(err, cortex.ErrRunNotContinuable) {
+		e.logWarn("record a run notice", err, log.String("run_id", runID.String()))
+	}
 }
 
 // requireContinuation is the capability check every host-driven call
@@ -397,15 +412,25 @@ func (e *Engine) requireContinuation() error {
 // carry the run's own scope, which is the scope on the RunReady hook's
 // ctx.
 //
-// Anything refused before the claim leaves the run ready for the next
-// attempt, including a principal that cannot be decoded right now. A
-// principal that is revoked fails the run.
+// Anything refused before the claim for now leaves the run ready for the
+// next attempt, including a principal that cannot be decoded right now. A
+// principal that is revoked fails the run, and so does a check no later
+// attempt can pass (its stored answer does not fit the pause, say), which
+// also closes its checkpoint.
+//
+// A reclaimable run, or a running run whose lease has lapsed (which this
+// call marks reclaimable itself), continues from its last saved step: see
+// claimReclaimed. It fails with cortex.ErrReclaimLimit once reclaimed more
+// often than WithReclaimLimit, with cortex.ErrRunNotRecoverable when it
+// left nothing to continue from, and stops with an error matching
+// cortex.ErrEffectUncertain when a call it had handed to a tool that is
+// not retry-safe has no recorded outcome.
 //
 // A run in any other state is not continued. ErrRunNotContinuable covers
 // every such refusal, and the error also matches the specific case:
-// cortex.ErrRunLeased for a running run, and cortex.ErrRunAlreadyDone,
-// returned with the run, for one that has ended. Two callers continuing
-// the same run: one runs it, the other is refused.
+// cortex.ErrRunLeased for a running run under a live lease, and
+// cortex.ErrRunAlreadyDone, returned with the run, for one that has ended.
+// Two callers continuing the same run: one runs it, the other is refused.
 //
 // A store without run.ContinuationStore returns
 // cortex.ErrContinuationUnavailable.
@@ -419,6 +444,9 @@ func (e *Engine) ContinueRun(ctx context.Context, runID id.AgentRunID) (*run.Run
 		if claimErr != nil {
 			ended = done
 			return nil, claimErr
+		}
+		if rz.paused != nil {
+			return rz.run, nil
 		}
 		return e.continueReAct(runCtx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt)
 	})
@@ -477,12 +505,22 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	}
 	switch {
 	case current.State == run.StateReady:
+	case current.State == run.StateReclaimable:
+		return e.claimReclaimed(ctx, current)
+	case current.State == run.StateRunning && leaseLapsed(current, time.Now().UTC()):
+		// The worker's lease lapsed and no sweep has taken the run yet: take
+		// it here, so a host retrying the job does not wait for the sweeper.
+		reclaimed, reclaimErr := e.reclaimInline(ctx, current)
+		if reclaimErr != nil {
+			return nil, nil, nil, reclaimErr
+		}
+		return e.claimReclaimed(ctx, reclaimed)
 	case current.State == run.StateRunning:
 		return nil, nil, nil, fmt.Errorf("cortex: continue run %s: run is running: %w: %w", runID, cortex.ErrRunNotContinuable, cortex.ErrRunLeased)
 	case isTerminalRunState(current.State):
 		return nil, nil, current, fmt.Errorf("cortex: continue run %s: run is %s: %w: %w", runID, current.State, cortex.ErrRunNotContinuable, cortex.ErrRunAlreadyDone)
 	default:
-		// Paused, created, and reclaimable until reclaiming lands.
+		// Paused or created.
 		return nil, nil, nil, fmt.Errorf("cortex: continue run %s: run is %s: %w", runID, current.State, cortex.ErrRunNotContinuable)
 	}
 
@@ -511,8 +549,15 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 			return nil, nil, nil, fmt.Errorf("load suspension to continue run %s: %w", runID, suspErr)
 		}
 		snapshot, err = e.previewResume(ctx, runID, in, source, susp, nil)
-		if err != nil {
+		if err != nil && !permanentRefusal(err) {
 			return nil, nil, nil, err
+		}
+		if err != nil {
+			// No later attempt can pass this check, so leaving the run
+			// ready would leave it ready for good, re-announced forever.
+			// It is claimed below and failed with the refusal instead.
+			inputErr = fmt.Errorf("cortex: continue run %s: %w", runID, err)
+			snapshot = current
 		}
 	}
 
@@ -547,10 +592,29 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		return nil, nil, nil, e.failRevokedResume(ctx, snapshot, susp, revoked)
 	}
 	if inputErr != nil {
-		return nil, nil, nil, e.failResume(runCtx, claimed, claimed.AgentID, inputErr)
+		failErr := e.failResume(runCtx, claimed, claimed.AgentID, inputErr)
+		if delErr := e.store.DeleteSuspension(runCtx, runID); delErr != nil && !errors.Is(delErr, cortex.ErrNotSuspended) {
+			e.logError("delete the pause of a run that could not continue", delErr, log.String("run_id", runID.String()))
+		}
+		e.closePendingCheckpoints(runCtx, runID, "the run could not be continued on this decision, so it was failed and there is nothing left to decide")
+		return nil, nil, nil, failErr
 	}
 	runCtx, rz, err := e.rehydrateResume(ctx, in, source, snapshot, susp)
 	return runCtx, rz, nil, err
+}
+
+// permanentRefusal reports whether a check a ready run failed before its
+// claim will fail the same way on every later attempt: the stored answer
+// or the stored continuation is wrong, not the moment. Anything else (a
+// store that could not be read, a policy this engine cannot apply right
+// now) leaves the run ready for the next attempt.
+func permanentRefusal(err error) bool {
+	for _, sentinel := range []error{cortex.ErrResultsMismatch, cortex.ErrInvalidContinuation, cortex.ErrInvalidPrepared, cortex.ErrRequiresApproval, ErrNotAgentReplyResumable} {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordLostDecision records the decision a ready run carries on its

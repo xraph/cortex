@@ -223,6 +223,39 @@ func WithRunLease(ttl time.Duration) Option {
 	}
 }
 
+// WithReclaimLimit sets how often a run may be reclaimed after its
+// worker's lease lapsed. A run reclaimed more than n times is failed with
+// cortex.ErrReclaimLimit when it is next continued, without another model
+// call: a run that takes its worker down every time it runs stops there
+// instead of taking the next replica down too. A hand-off at shutdown is
+// not a reclaim and does not count. The default is 3; a negative n fails
+// New.
+func WithReclaimLimit(n int) Option {
+	return func(e *Engine) error {
+		if n < 0 {
+			return fmt.Errorf("cortex: reclaim limit %d is negative", n)
+		}
+		e.reclaimLimit = n
+		return nil
+	}
+}
+
+// WithReadyRenotify sets how long a ready or reclaimable run may wait
+// before the sweeper tells the host again. A host that missed RunReady or
+// RunReclaimable (its process died between the state change and its
+// enqueue, say) hears it again with Renotified set, at most once per d for
+// each run. The default is 5 minutes. Zero turns re-notification off; a
+// negative d fails New.
+func WithReadyRenotify(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d < 0 {
+			return fmt.Errorf("cortex: ready renotify interval %s is negative", d)
+		}
+		e.readyRenotify = d
+		return nil
+	}
+}
+
 // WithWorkerID names this engine as a lease owner. Leases, progress
 // snapshots and hand-offs carry it, so it must be unique among the
 // replicas sharing a store and stable for the life of the process. The

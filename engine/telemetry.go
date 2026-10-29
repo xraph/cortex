@@ -98,6 +98,7 @@ const (
 	metricRunsSuspended          = "cortex_runs_suspended_total"
 	metricSuspensionsExpired     = "cortex_suspensions_expired_total"
 	metricOrchestrationsFinished = "cortex_orchestrations_finished_total"
+	metricRunsReclaimed          = "cortex_runs_reclaimed_total"
 )
 
 var (
@@ -144,6 +145,7 @@ type engineMetrics struct {
 	suspended      *telemetry.CounterVec
 	expired        *telemetry.CounterVec
 	orchestrations *telemetry.CounterVec
+	reclaimed      *telemetry.CounterVec
 
 	// inFlight is the real count behind runsInProgress, one per mode. The
 	// gauge is set from it under the lock, so two passes that start and
@@ -177,6 +179,8 @@ func newEngineMetrics(m gometrics.Metrics) *engineMetrics {
 			"Paused runs the expiry sweep failed because nobody answered in time, by reason and result.", "reason", "result"),
 		orchestrations: telemetry.NewCounterVec(m, metricOrchestrationsFinished,
 			"Orchestration runs that finished, by strategy and result.", "strategy", "result"),
+		reclaimed: telemetry.NewCounterVec(m, metricRunsReclaimed,
+			"Runs taken from a worker that stopped, and how continuing them went: reclaimed, continued, uncertain, limit or unrecoverable.", "result"),
 		inFlight: map[string]int64{},
 	}
 }
@@ -186,6 +190,14 @@ func (m *engineMetrics) runFinished(r *run.Run) {
 		return
 	}
 	m.runsFinished.Inc(runStateLabel(r.State), stopReasonLabel(r.StopReason), purposeLabel(r.Provenance.Purpose))
+}
+
+// reclaim counts one step of a reclaim by how it went.
+func (m *engineMetrics) reclaim(result string) {
+	if m == nil {
+		return
+	}
+	m.reclaimed.Inc(result)
 }
 
 func (m *engineMetrics) trackInFlight(mode string, delta int64) {

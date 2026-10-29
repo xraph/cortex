@@ -77,7 +77,11 @@ which `tool.Register` calls for you) and exposes it through
 `Engine.ToolRetrySafe(name)`. Without it, an interrupted call is treated as
 uncertain. The engine records such a call as started before its handler
 gets it, and if it can't save that record it doesn't run the call at all:
-the run stops there and another replica reclaims it.
+the run stops there and another replica reclaims it. When a replica
+continues a reclaimed run and finds a call recorded as started with no
+result, it stops the run with `cortex.ErrEffectUncertain` and doesn't run
+the call again. A retry-safe call is never recorded as started, so the
+replica just runs it again.
 
 Do not mark a tool that creates or changes something unless the journal
 makes the repeat harmless.

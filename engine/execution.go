@@ -67,6 +67,7 @@ func (e *Engine) executePreparedTool(ctx context.Context, subject cortex.Subject
 
 func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, pendingWait) {
 	if err := ctx.Err(); err != nil {
+		announced(ctx)
 		e.emitToolDenied(ctx, subject.RunID, tc.Name, err.Error())
 		return jsonResult("error", err.Error()), outcomeDenied, pendingWait{}
 	}
@@ -80,6 +81,7 @@ func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject,
 		}
 		if !allowed {
 			message := "tool is outside the prepared allowlist: " + tc.Name
+			announced(ctx)
 			e.emitToolDenied(ctx, subject.RunID, tc.Name, message)
 			return jsonResult("error", message), outcomeDenied, pendingWait{}
 		}

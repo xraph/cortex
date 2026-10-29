@@ -79,6 +79,9 @@ type resumption struct {
 	run       *run.Run
 	state     *reactState
 	startedAt time.Time
+	// paused is set when the run paused again before it reached the loop,
+	// which only a reclaim does: there is no loop to run then.
+	paused *pausedAgain
 }
 
 // Resume continues a suspended run synchronously once every pending call
@@ -218,6 +221,16 @@ func (e *Engine) streamResumed(ctx context.Context, rz *resumption, rt *runTrace
 		"agent_id": rz.ag.ID.String(),
 		"resumed":  true,
 	}})
+	if rz.paused != nil {
+		// A reclaimed run that paused again before the loop: its consumer
+		// hears the pause, as from the loop itself.
+		sendEvent(ctx, events, StreamEvent{Type: EventSuspended, Data: map[string]any{
+			"run_id":  rz.run.ID.String(),
+			"reason":  string(rz.paused.reason),
+			"pending": publicPendingCalls(rz.run, rz.paused.calls),
+		}})
+		return
+	}
 
 	e.continueStreamReAct(ctx, rz.ag, rz.cfg, rz.run, rz.state, rz.startedAt, events)
 }
@@ -431,57 +444,10 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	if policyErr := e.checkRequiredResume(ctx, r, susp); policyErr != nil {
 		return nil, nil, e.failResume(ctx, r, ag.ID, policyErr)
 	}
-	prepared, snap, decodeErr := decodeContinuation(susp.Cont)
-	if decodeErr != nil {
-		return nil, nil, e.failResume(ctx, r, ag.ID, decodeErr)
+	ctx, ag, st, resumeConfig, restoreErr := e.restoreLoopState(ctx, r, ag, susp.Cont)
+	if restoreErr != nil {
+		return nil, nil, restoreErr
 	}
-	if err := validateFrozenContinuation(susp.Cont, snap, r); err != nil {
-		return nil, nil, e.failResume(ctx, r, ag.ID, err)
-	}
-	if bindingErr := e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, r.Budget); bindingErr != nil {
-		return nil, nil, e.failResume(ctx, r, ag.ID, bindingErr)
-	}
-	if snap != nil {
-		if err := e.checkPreparedRevisions(snap); err != nil {
-			return nil, nil, e.failResume(ctx, r, ag.ID, err)
-		}
-		ag = &snap.Agent
-	}
-	st := stateFromContinuation(susp.Cont)
-	st.prepared = prepared
-	st.preparedSnapshot = snap
-	if snap == nil {
-		st.usage.Steps = st.stepIndex
-		st.usage.Tokens = st.tokensUsed
-		st.usage.ReportedTokens = st.tokensUsed
-	}
-	ctx = withExecutionProvenance(ctx, st.provenance)
-	ctx = withTaskCallIndex(ctx, st.stepIndex-1)
-	r.Provenance = st.provenance
-	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, r.Budget)
-	if snapshotUsesMessaging(snap) {
-		boundCtx, bindingErr := e.bindPreparedMessageRun(ctx, r)
-		if bindingErr != nil {
-			return nil, nil, e.failResume(ctx, r, ag.ID, bindingErr)
-		}
-		ctx = boundCtx
-	}
-	r.Usage = st.usage
-	if snap != nil {
-		sourceStatus, checkErr := e.validatePreparedPublication(ctx, snap)
-		if checkErr != nil {
-			return nil, nil, e.stopPublication(ctx, r, st, checkErr)
-		}
-		r.Provenance.PublicationStatus = mergePublicationStatus(r.Provenance.PublicationStatus, sourceStatus)
-	}
-	resumeConfig := configFromContinuation(susp.Cont.Config)
-	if snap != nil {
-		resumeConfig.Verification = snap.Config.Verification
-	}
-	if resumeConfig.Publication.Mode == "" {
-		resumeConfig.Publication = e.frozenPublication()
-	}
-	ctx = withPublicationContext(ctx, ag, r, resumeConfig.Publication)
 	if err := e.authorizeResumedCalls(ctx, r, susp, in.ToolResults, st); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			err = context.DeadlineExceeded
@@ -545,12 +511,87 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	// the agent's. A rebuild would drop the run's own overrides: cfg.Tools
 	// feeds resolveTools, so a run deliberately started with a narrowed
 	// tool list would resume with the agent's full set, which is exactly
-	// the authority widening this whole path exists to refuse. A rebuilt
-	// MaxSteps misfires the guard just below it, too.
+	// the authority widening this whole path exists to refuse.
 	cfg := configFromContinuation(susp.Cont.Config)
-	if snap != nil {
-		cfg.Verification = snap.Config.Verification
+	if st.preparedSnapshot != nil {
+		cfg.Verification = st.preparedSnapshot.Config.Verification
 	}
+	rz, entryErr := e.loopEntry(ctx, r, ag, st, cfg)
+	if entryErr != nil {
+		return nil, nil, entryErr
+	}
+	return ctx, rz, nil
+}
+
+// restoreLoopState rebuilds the loop state cont describes, and the context
+// the loop runs under, for a run this call has claimed: the frozen
+// snapshot and its revisions, the provenance, the team and messaging
+// bindings, and the publication context. A resume rebuilds from the
+// suspension it claimed, a reclaim from the run's saved progress. The
+// returned config is the one the run's publication checks use.
+//
+// A refusal ends the run: it is failed, or stopped for publication, and
+// the error says why.
+func (e *Engine) restoreLoopState(ctx context.Context, r *run.Run, ag *agent.Config, cont suspension.Continuation) (context.Context, *agent.Config, *reactState, resolvedConfig, error) {
+	prepared, snap, decodeErr := decodeContinuation(cont)
+	if decodeErr != nil {
+		return nil, nil, nil, resolvedConfig{}, e.failResume(ctx, r, ag.ID, decodeErr)
+	}
+	if err := validateFrozenContinuation(cont, snap, r); err != nil {
+		return nil, nil, nil, resolvedConfig{}, e.failResume(ctx, r, ag.ID, err)
+	}
+	if bindingErr := e.checkOrchestrationBinding(ctx, r.ID, snap, r.Provenance, r.Budget); bindingErr != nil {
+		return nil, nil, nil, resolvedConfig{}, e.failResume(ctx, r, ag.ID, bindingErr)
+	}
+	if snap != nil {
+		if err := e.checkPreparedRevisions(snap); err != nil {
+			return nil, nil, nil, resolvedConfig{}, e.failResume(ctx, r, ag.ID, err)
+		}
+		ag = &snap.Agent
+	}
+	st := stateFromContinuation(cont)
+	st.prepared = prepared
+	st.preparedSnapshot = snap
+	if snap == nil {
+		st.usage.Steps = st.stepIndex
+		st.usage.Tokens = st.tokensUsed
+		st.usage.ReportedTokens = st.tokensUsed
+	}
+	ctx = withExecutionProvenance(ctx, st.provenance)
+	ctx = withTaskCallIndex(ctx, st.stepIndex-1)
+	r.Provenance = st.provenance
+	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, r.Budget)
+	if snapshotUsesMessaging(snap) {
+		boundCtx, bindingErr := e.bindPreparedMessageRun(ctx, r)
+		if bindingErr != nil {
+			return nil, nil, nil, resolvedConfig{}, e.failResume(ctx, r, ag.ID, bindingErr)
+		}
+		ctx = boundCtx
+	}
+	r.Usage = st.usage
+	if snap != nil {
+		sourceStatus, checkErr := e.validatePreparedPublication(ctx, snap)
+		if checkErr != nil {
+			return nil, nil, nil, resolvedConfig{}, e.stopPublication(ctx, r, st, checkErr)
+		}
+		r.Provenance.PublicationStatus = mergePublicationStatus(r.Provenance.PublicationStatus, sourceStatus)
+	}
+	resumeConfig := configFromContinuation(cont.Config)
+	if snap != nil {
+		resumeConfig.Verification = snap.Config.Verification
+	}
+	if resumeConfig.Publication.Mode == "" {
+		resumeConfig.Publication = e.frozenPublication()
+	}
+	ctx = withPublicationContext(ctx, ag, r, resumeConfig.Publication)
+	return ctx, ag, st, resumeConfig, nil
+}
+
+// loopEntry is the last check before a claimed run re-enters the loop at
+// st's step: the config must carry a step budget, and the budget must have
+// room for that step. cfg is the continuation's own, never a fresh merge of
+// the agent's: a rebuilt MaxSteps misfires the guard below.
+func (e *Engine) loopEntry(ctx context.Context, r *run.Run, ag *agent.Config, st *reactState, cfg resolvedConfig) (*resumption, error) {
 	// A continuation with no config at all is unusable, and it has to say
 	// so in its own words. MaxSteps reads as 0, the guard just below
 	// fires, and the run fails with ErrMaxStepsReached: an error that
@@ -558,8 +599,8 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	// raise the budget, when nothing was ever going to run. Failing loud
 	// is right; failing under somebody else's contract is not.
 	if cfg.MaxSteps <= 0 {
-		return nil, nil, e.failResume(ctx, r, ag.ID,
-			fmt.Errorf("resume run %s: continuation carries no step budget: %w", runID, cortex.ErrInvalidContinuation))
+		return nil, e.failResume(ctx, r, ag.ID,
+			fmt.Errorf("resume run %s: continuation carries no step budget: %w", r.ID, cortex.ErrInvalidContinuation))
 	}
 	if st.stepIndex >= cfg.MaxSteps {
 		// Suspending on the last step stores a step index the budget has
@@ -567,14 +608,14 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 		// through it and complete the run with empty output, which reads
 		// as a model that had nothing to say rather than a run that ran
 		// out of steps. The results the caller worked to produce are
-		// already recorded above and their terminal events have already
-		// fired, so nothing is thrown away; what is refused is the
-		// pretence that the run finished.
-		limitErr := fmt.Errorf("resume run %s at step %d of %d: %w", runID, st.stepIndex, cfg.MaxSteps, cortex.ErrMaxStepsReached)
+		// already recorded and their terminal events have already fired,
+		// so nothing is thrown away; what is refused is the pretence that
+		// the run finished.
+		limitErr := fmt.Errorf("resume run %s at step %d of %d: %w", r.ID, st.stepIndex, cfg.MaxSteps, cortex.ErrMaxStepsReached)
 		if err := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopStepLimit, StepCount: st.stepIndex, TokensUsed: st.tokensUsed}); err != nil {
-			return nil, nil, errors.Join(limitErr, err)
+			return nil, errors.Join(limitErr, err)
 		}
-		return nil, nil, limitErr
+		return nil, limitErr
 	}
 
 	// The run's own start, not this call's, so a resumed run reports the
@@ -584,8 +625,7 @@ func (e *Engine) rehydrateResume(ctx context.Context, in ResumeInput, source res
 	if r.StartedAt != nil {
 		startedAt = *r.StartedAt
 	}
-
-	return ctx, &resumption{ag: ag, cfg: cfg, run: r, state: st, startedAt: startedAt}, nil
+	return &resumption{ag: ag, cfg: cfg, run: r, state: st, startedAt: startedAt}, nil
 }
 
 // leftResume is the error a resume returns when its pass left the run:

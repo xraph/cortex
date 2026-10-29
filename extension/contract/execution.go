@@ -295,7 +295,9 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err != nil {
 					return out, err
 				}
-				if out.Run.State == run.StatePaused {
+				// A ready run still has the pause it is about to continue
+				// from, and its pending calls are what the decision covered.
+				if out.Run.State == run.StatePaused || out.Run.State == run.StateReady {
 					sus, susErr := s.deps.Engine.Store().GetSuspension(ctx, v)
 					if susErr != nil && !errors.Is(susErr, cortex.ErrNotSuspended) {
 						return out, susErr

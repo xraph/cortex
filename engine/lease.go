@@ -255,6 +255,9 @@ func (l *runLease) heartbeat(every time.Duration) {
 			return
 		case <-ticker.C:
 		}
+		if l.e.renewalsPaused.Load() {
+			continue
+		}
 		if err := l.renew(); errors.Is(err, cortex.ErrRunLeaseLost) {
 			l.interrupt(cortex.ErrRunLeaseLost)
 			return
@@ -389,7 +392,7 @@ func (e *Engine) leaveRun(ctx context.Context, r *run.Run, fresh *suspension.Con
 		return fmt.Errorf("cortex: hand off run %s: %w: %w", r.ID, cortex.ErrRunInterrupted, err)
 	}
 	*r = *moved
-	e.extensions.EmitRunReclaimable(l.base, r.AgentID, r.ID, run.ReclaimNotice{
+	e.announceReclaimable(l.base, r, run.ReclaimNotice{
 		PreviousOwner:  l.owner,
 		LeaseExpiredAt: at,
 		Reclaims:       r.Reclaims,
@@ -398,14 +401,26 @@ func (e *Engine) leaveRun(ctx context.Context, r *run.Run, fresh *suspension.Con
 	return cortex.ErrRunInterrupted
 }
 
+// announceReclaimable tells RunReclaimable subscribers, under the run's own
+// scope, and records the notice so the sweeper repeats it only once the
+// run has waited a whole WithReadyRenotify period since.
+func (e *Engine) announceReclaimable(ctx context.Context, r *run.Run, notice run.ReclaimNotice) {
+	runCtx := cortex.WithScope(ctx, r.Scope)
+	e.extensions.EmitRunReclaimable(runCtx, r.AgentID, r.ID, notice)
+	e.markNotified(runCtx, r.ID, time.Now().UTC())
+}
+
 // loseRun is the end of a pass whose lease went to someone else. Nothing
-// is written. A run that has ended in the meantime (an operator cancelled
-// it, say) is handed back as it ended, the way finalizeRun adopts a
-// terminal state it finds.
+// is written. A run that has ended in the meantime while still this
+// worker's (an operator cancelled it, say) is handed back as it ended, the
+// way finalizeRun adopts a terminal state it finds. A run another worker
+// reclaimed and finished is not this pass's outcome: its reclaim count
+// has moved past the one this lease was taken at, and the pass reports
+// cortex.ErrRunLeaseLost.
 func (e *Engine) loseRun(l *runLease, r *run.Run) error {
 	readCtx, cancel := context.WithTimeout(l.base, leaseWriteTimeout)
 	defer cancel()
-	if saved, err := e.store.GetRun(readCtx, r.ID); err == nil && isTerminalRunState(saved.State) {
+	if saved, err := e.store.GetRun(readCtx, r.ID); err == nil && isTerminalRunState(saved.State) && saved.Reclaims == l.reclaims {
 		*r = *saved
 		return nil
 	}

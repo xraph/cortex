@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -84,6 +85,46 @@ func (e *Engine) noteStarted(ctx context.Context, runID id.AgentRunID, tc llm.To
 		l.interrupt(errProgressUnsaved)
 	}
 	return err
+}
+
+// recordsStart reports whether a call is recorded as started before its
+// handler gets it (progress point 3): on a leased run, for a builtin or
+// registered tool that is not retry-safe.
+func (e *Engine) recordsStart(ctx context.Context, runID id.AgentRunID, name string) bool {
+	return leaseFor(ctx, runID) != nil && !e.retrySafe[name] && (isBuiltinTool(name) || e.hasRegisteredTool(name))
+}
+
+// toolAnnouncement is a ToolCalled held back until the call's Started
+// record is durable. A call that is never dispatched because that record
+// could not be saved announces nothing, so no subscriber sees a call
+// start that nothing ever ends.
+type toolAnnouncement struct {
+	once sync.Once
+	fire func()
+}
+
+type toolAnnouncementKey struct{}
+
+// announceCall fires ToolCalled for tc, or, for a call recorded as started
+// before dispatch, arranges for it to fire once the call gets that far.
+// The returned context is the one to execute the call on.
+func (e *Engine) announceCall(ctx context.Context, runID id.AgentRunID, tc llm.ToolCall) context.Context {
+	fire := func() { e.emitToolCalled(ctx, runID, tc.Name, tc.Arguments) }
+	if !e.recordsStart(ctx, runID, tc.Name) {
+		fire()
+		return ctx
+	}
+	return context.WithValue(ctx, toolAnnouncementKey{}, &toolAnnouncement{fire: fire})
+}
+
+// announced fires the ToolCalled announceCall held back, once. A call
+// reaches it when it is recorded as started, or when it ends without
+// being dispatched for any other reason (a denial, a pause, a failure),
+// each of which still owes the call its start before its end.
+func announced(ctx context.Context) {
+	if a, ok := ctx.Value(toolAnnouncementKey{}).(*toolAnnouncement); ok {
+		a.once.Do(a.fire)
+	}
 }
 
 // noteDone is progress point 4, for one call's checked result. A result

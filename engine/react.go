@@ -48,6 +48,11 @@ type reactState struct {
 	// resolveSession lazily creates a default session under a create
 	// race and could land on a different one after the pause.
 	sessionID id.SessionID
+
+	// stepRows are step rows a reclaimed run's previous worker already
+	// wrote, by index. The loop reuses one rather than writing a second
+	// row for the same step.
+	stepRows map[int]id.StepID
 }
 
 // continuation snapshots the state for a suspension row. cfg travels
@@ -300,7 +305,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			StartedAt:   &stepStart,
 			CompletedAt: &stepEnd,
 		}
-		if err := e.store.CreateStep(ctx, step); err != nil {
+		if existing, reused := st.stepRows[step.Index]; reused {
+			step.ID = existing
+		} else if err := e.store.CreateStep(ctx, step); err != nil {
 			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
@@ -349,9 +356,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					return r, e.leaveRun(ctx, r, nil)
 				}
 				tcStart := time.Now().UTC()
-				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
-
-				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(e.announceCall(stepCtx, r.ID, tc), subject, tc, st)
 				if interruption(ctx, r.ID) != nil {
 					// A result that arrives after the interruption is
 					// discarded, so a call that is not retry-safe stays in
@@ -536,6 +541,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		stepID := id.NewStepID()
+		if existing, reused := st.stepRows[st.stepIndex]; reused {
+			stepID = existing
+		}
 		if !sendEvent(ctx, events, StreamEvent{Type: EventStep, Data: map[string]any{
 			"step_id": stepID.String(), "index": st.stepIndex, "type": "generation",
 		}}) {
@@ -778,7 +786,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		if u := stream.Usage(); u != nil {
 			step.TokensUsed = u.TotalTokens
 		}
-		if err := e.store.CreateStep(ctx, step); err != nil {
+		if existing, reused := st.stepRows[step.Index]; reused {
+			step.ID = existing
+		} else if err := e.store.CreateStep(ctx, step); err != nil {
 			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
@@ -823,7 +833,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					return
 				}
 				tcStart := time.Now().UTC()
-				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
+				callCtx := e.announceCall(stepCtx, r.ID, tc)
 
 				sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
 					"tool_name": publicToolName(ctx, tc.Name),
@@ -831,7 +841,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					"tool_id":   publicGenerationText(r, tc.ID),
 				}})
 
-				result, outcome, wait := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(callCtx, subject, tc, st)
 				if interruption(ctx, r.ID) != nil {
 					// Discarded, as in the synchronous loop.
 					stepSpan.finish(stepStopped, nil)
@@ -1201,6 +1211,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 			// approval as the reason. Nothing goes back to the model
 			// either: a denial's error text would tell it the call was
 			// refused when it is only waiting.
+			announced(ctx)
 			if errors.Is(err, cortex.ErrRequiresApproval) {
 				return e.approvalWait(ctx, s, tc, err)
 			}
@@ -1213,6 +1224,7 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 	// An interrupted run reports nothing about the call: it stays started,
 	// and the worker that continues the run settles it.
 	if (outcome == outcomeFailed || outcome == outcomeUncertain) && interruption(ctx, s.RunID) == nil {
+		announced(ctx)
 		noteToolFailure(ctx, failErr)
 		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
@@ -1277,6 +1289,7 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 		if err := e.noteStarted(ctx, s.RunID, tc); err != nil {
 			return jsonResult("error", err.Error()), outcomeFailed, err
 		}
+		announced(ctx)
 	}
 
 	if result, outcome, handled := e.executeBuiltinTool(ctx, inv); handled {

@@ -1,0 +1,482 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"time"
+
+	log "github.com/xraph/go-utils/log"
+
+	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/agent"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/id"
+	"github.com/xraph/cortex/llm"
+	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/suspension"
+	"github.com/xraph/cortex/verification"
+)
+
+const (
+	// defaultReclaimLimit is how often a run may be reclaimed after a
+	// lapsed lease before it is failed.
+	defaultReclaimLimit = 3
+	// defaultReadyRenotify is how long a ready or reclaimable run waits
+	// before the sweeper tells the host about it again.
+	defaultReadyRenotify = 5 * time.Minute
+)
+
+// How a reclaim ended, for cortex_runs_reclaimed_total.
+const (
+	// reclaimReclaimed: a lapsed or ownerless run was marked reclaimable.
+	reclaimReclaimed = "reclaimed"
+	// reclaimContinued: a reclaimed run was claimed and handed back to the
+	// loop, or paused again on a call that needs an answer.
+	reclaimContinued = "continued"
+	// reclaimUncertain: a call the previous worker handed to its handler
+	// has no recorded outcome, so the run stopped.
+	reclaimUncertain = "uncertain"
+	// reclaimLimit: the run was reclaimed more often than WithReclaimLimit.
+	reclaimLimit = "limit"
+	// reclaimUnrecoverable: the run left nothing to continue from.
+	reclaimUnrecoverable = "unrecoverable"
+)
+
+// supersededReason is what a checkpoint closed for a pause its run left
+// behind says, on the decide path and in the sweep.
+const supersededReason = "superseded: the run is no longer waiting on the pause this checkpoint was opened for"
+
+// leasing reports whether this engine leases runs at all: leases are on
+// and the store can hold them and their progress.
+func (e *Engine) leasing() bool {
+	return e.leaseTTL > 0 && e.continuation != nil && e.progress != nil
+}
+
+// idleGrace is how long a run may sit running with no lease owner, or a
+// checkpoint may sit pending on a run that has moved past it, before the
+// sweep takes it for abandoned: one lease ttl, the longest a worker that
+// claimed the run can take to lease it, plus as much again for margin.
+func (e *Engine) idleGrace() time.Duration {
+	if e.leaseTTL > 0 {
+		return 2 * e.leaseTTL
+	}
+	return 2 * defaultRunLease
+}
+
+// leaseLapsed reports whether r is running under a lease that expired at
+// or before now.
+func leaseLapsed(r *run.Run, now time.Time) bool {
+	return r.State == run.StateRunning && r.Lease != nil && !r.Lease.ExpiresAt.IsZero() && !r.Lease.ExpiresAt.After(now)
+}
+
+// reclaimInline takes a running run whose lease lapsed, so that a host
+// retrying a job does not have to wait for the sweeper. A lease renewed in
+// the meantime, or a run that left running, is cortex.ErrRunLeased.
+func (e *Engine) reclaimInline(ctx context.Context, current *run.Run) (*run.Run, error) {
+	moved, err := e.continuation.MarkReclaimable(ctx, current.ID, time.Now().UTC(), "")
+	if errors.Is(err, cortex.ErrRunLeased) || errors.Is(err, cortex.ErrRunConflict) {
+		return nil, fmt.Errorf("cortex: continue run %s: run is running: %w: %w", current.ID, cortex.ErrRunNotContinuable, cortex.ErrRunLeased)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mark run %s reclaimable: %w", current.ID, err)
+	}
+	e.instr.reclaim(reclaimReclaimed)
+	return moved, nil
+}
+
+// claimReclaimed takes a reclaimable run for this call and rebuilds what
+// the loop needs to continue it from its last durable step.
+//
+// In order: a run reclaimed more often than the limit is failed with
+// cortex.ErrReclaimLimit before anything else is read; the run's
+// principal is restored as for any continuation; what the run continues
+// from is read; then the run is claimed. Everything before the claim
+// leaves the run reclaimable when it fails for now. The progress is read
+// before the claim because nothing can write it while the run is
+// reclaimable: a stale worker's saves need a running run under its own
+// lease.
+//
+// A run with no progress continues from the pause it was last claimed
+// from, when that suspension is still there: a worker that claimed the
+// run from its pause and died before it took the lease leaves exactly
+// that. A run with neither is failed with cortex.ErrRunNotRecoverable.
+//
+// After the claim, the calls of the step the previous worker was in are
+// settled (see replayStep), and the run either goes back to the loop at
+// its saved step, pauses again on a call that needs an answer, or stops
+// because a call's outcome is unknown. When the run paused again, the
+// resumption carries the pause and no loop is to run.
+func (e *Engine) claimReclaimed(ctx context.Context, current *run.Run) (context.Context, *resumption, *run.Run, error) {
+	runID := current.ID
+	if current.Reclaims > e.reclaimLimit {
+		limitErr := fmt.Errorf("cortex: run %s was reclaimed %d times, more than the limit of %d: %w", runID, current.Reclaims, e.reclaimLimit, cortex.ErrReclaimLimit)
+		e.logWarn("fail a run reclaimed too many times", limitErr, log.String("run_id", runID.String()), log.Int("reclaims", current.Reclaims))
+		ended, err := e.failReclaimed(ctx, current, nil, limitErr)
+		e.instr.reclaim(reclaimLimit)
+		return nil, nil, ended, err
+	}
+
+	ctx, revoked, err := e.restorePrincipal(ctx, current)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	saved, stale, err := e.reclaimSource(ctx, runID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if revoked != nil {
+		e.logWarn("fail a reclaimed run whose principal was revoked", revoked, log.String("run_id", runID.String()))
+		ended, failErr := e.failReclaimed(ctx, current, stale, revoked)
+		return nil, nil, ended, failErr
+	}
+	if saved == nil {
+		notRecoverable := fmt.Errorf("cortex: reclaim run %s: %w", runID, cortex.ErrRunNotRecoverable)
+		e.logWarn("fail a reclaimed run with nothing to continue from", notRecoverable, log.String("run_id", runID.String()))
+		ended, failErr := e.failReclaimed(ctx, current, stale, notRecoverable)
+		e.instr.reclaim(reclaimUnrecoverable)
+		return nil, nil, ended, failErr
+	}
+
+	lease := run.Lease{}
+	leased := e.leasesRun(current)
+	if leased {
+		lease = e.newLease()
+	}
+	claimed, err := e.continuation.ClaimContinuation(ctx, runID, lease)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("claim run %s to continue: %w", runID, err)
+	}
+	if leased {
+		ctx = e.holdLease(ctx, claimed)
+	}
+
+	// From here the run is running and belongs to this call, so every exit
+	// either hands the loop a runnable state, pauses the run, or ends it.
+	runCtx := cortex.WithScope(ctx, claimed.Scope)
+	runTraceFrom(runCtx).bind(claimed, saved.Cont.Config.Model)
+	e.restoreProgress(runCtx, runID, saved)
+	if stale != nil {
+		e.dropStalePause(runCtx, stale)
+	}
+	loopCtx, rz, ended, err := e.rebuildReclaimed(runCtx, claimed, saved)
+	if err != nil {
+		if errors.Is(err, cortex.ErrEffectUncertain) {
+			e.instr.reclaim(reclaimUncertain)
+		}
+		return nil, nil, ended, err
+	}
+	e.instr.reclaim(reclaimContinued)
+	return loopCtx, rz, nil, nil
+}
+
+// reclaimSource reads what a reclaimable run continues from: its progress
+// snapshot, or else the suspension it was last claimed from, as a snapshot
+// with nothing started and nothing done. It also returns that suspension
+// when the row is still there, since a run that continues must not leave
+// it behind. Neither is (nil, nil, nil).
+func (e *Engine) reclaimSource(ctx context.Context, runID id.AgentRunID) (*suspension.Progress, *suspension.Suspension, error) {
+	stale, err := e.store.GetSuspension(ctx, runID)
+	if errors.Is(err, cortex.ErrNotSuspended) {
+		stale = nil
+	} else if err != nil {
+		return nil, nil, fmt.Errorf("load the pause of reclaimed run %s: %w", runID, err)
+	}
+	if e.progress != nil {
+		saved, readErr := e.progress.GetProgress(ctx, runID)
+		if readErr == nil {
+			return saved, stale, nil
+		}
+		if !errors.Is(readErr, cortex.ErrProgressNotFound) {
+			return nil, nil, fmt.Errorf("load the progress of reclaimed run %s: %w", runID, readErr)
+		}
+	}
+	if stale == nil {
+		return nil, nil, nil
+	}
+	return &suspension.Progress{RunID: runID, Cont: pausedCont(stale.Cont)}, stale, nil
+}
+
+// failReclaimed claims a reclaimable run with no lease and fails it with
+// cause. The pause it was claimed from, if any, is dropped and its
+// checkpoints closed, since nothing will ever decide them now. A run
+// whose failure cannot be written is left running with no owner, for the
+// ownerless sweep to reclaim again.
+func (e *Engine) failReclaimed(ctx context.Context, current *run.Run, stale *suspension.Suspension, cause error) (*run.Run, error) {
+	claimed, err := e.continuation.ClaimContinuation(ctx, current.ID, run.Lease{})
+	if err != nil {
+		return nil, errors.Join(cause, fmt.Errorf("claim run %s to fail it: %w", current.ID, err))
+	}
+	runCtx := cortex.WithScope(ctx, claimed.Scope)
+	failErr := e.failResume(runCtx, claimed, claimed.AgentID, cause)
+	if stale != nil {
+		e.dropStalePause(runCtx, stale)
+	}
+	e.closePendingCheckpoints(runCtx, claimed.ID, "the run could not be continued after its worker stopped, so it was failed and there is nothing left to decide")
+	return claimed, failErr
+}
+
+// dropStalePause deletes the pause a reclaimed run was claimed from and
+// closes the checkpoints opened for it. The run has moved past that pause,
+// and one suspension per run is what lets it pause again.
+func (e *Engine) dropStalePause(ctx context.Context, stale *suspension.Suspension) {
+	if err := e.store.DeleteSuspension(ctx, stale.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+		e.logError("delete the pause of a reclaimed run", err, log.String("run_id", stale.RunID.String()))
+	}
+	cps, err := e.store.ListPending(ctx, &checkpoint.ListFilter{RunID: stale.RunID.String()})
+	if err != nil {
+		e.logError("list the checkpoints of a reclaimed run", err, log.String("run_id", stale.RunID.String()))
+		return
+	}
+	for _, cp := range cps {
+		if opened, ok := cp.Metadata[checkpointSuspensionKey].(string); ok && opened == stale.ID.String() {
+			e.closeCheckpoint(ctx, cp, supersededReason)
+		}
+	}
+}
+
+// rebuildReclaimed rebuilds the loop state from saved, settles the step
+// the previous worker was in, and checks the run may re-enter the loop. It
+// returns the context the loop runs on. A run that paused again on its
+// replayed calls comes back as the resumption's paused run with no loop
+// to run. Any failure has already ended the run, which comes back as
+// ended when there is one to report.
+func (e *Engine) rebuildReclaimed(ctx context.Context, r *run.Run, saved *suspension.Progress) (context.Context, *resumption, *run.Run, error) {
+	ag, err := e.store.Get(ctx, r.AgentID)
+	if err != nil {
+		return nil, nil, nil, e.failResume(ctx, r, r.AgentID, fmt.Errorf("resolve agent: %w", err))
+	}
+	// A running run's row keeps the accounting it was created or last
+	// paused with. What it used since lives in its progress, which only
+	// the lease holder writes, so that is the run's accounting now.
+	r.Usage, r.StepCount, r.TokensUsed = saved.Cont.Usage, saved.Cont.StepIndex, saved.Cont.TokensUsed
+	ctx, ag, st, cfg, err := e.restoreLoopState(ctx, r, ag, saved.Cont)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if checkErr := e.checkMessages(ctx, ag, r, cfg.Publication, st.messages); checkErr != nil {
+		return nil, nil, nil, e.stopPublication(ctx, r, st, checkErr)
+	}
+	st.stepRows = e.savedStepRows(ctx, r.ID, st.stepIndex)
+
+	pending, err := e.replayStep(ctx, ag, r, st, cfg, saved)
+	if err != nil {
+		return nil, nil, r, err
+	}
+	if pending.any() {
+		st.provenance = r.Provenance
+		reason, suspendErr := e.suspend(ctx, r, pending, st.continuation(cfg))
+		if suspendErr != nil {
+			e.failRun(ctx, r, ag.ID, suspendErr, time.Time{})
+			return nil, nil, r, fmt.Errorf("suspend run: %w", suspendErr)
+		}
+		return ctx, &resumption{ag: ag, cfg: cfg, run: r, state: st, paused: &pausedAgain{reason: reason, calls: pending.calls}}, nil, nil
+	}
+	st.provenance = r.Provenance
+	rz, err := e.loopEntry(ctx, r, ag, st, cfg)
+	if err != nil {
+		return nil, nil, r, err
+	}
+	return ctx, rz, nil, nil
+}
+
+// pausedAgain is a reclaimed run that paused before it reached the loop:
+// a replayed call needs an approval or an answer again.
+type pausedAgain struct {
+	reason suspension.SuspendReason
+	calls  []suspension.PendingCall
+}
+
+// savedStepRows maps each step index at or past from to the step row a
+// previous worker already wrote for it. A worker that stalled after the
+// model answered wrote the row before it lost the run; the loop reuses
+// that row rather than writing a second one for the same index.
+func (e *Engine) savedStepRows(ctx context.Context, runID id.AgentRunID, from int) map[int]id.StepID {
+	steps, err := e.store.ListSteps(ctx, runID)
+	if err != nil {
+		e.logError("list the steps of a reclaimed run", err, log.String("run_id", runID.String()))
+		return nil
+	}
+	var rows map[int]id.StepID
+	for _, s := range steps {
+		if s.Index < from {
+			continue
+		}
+		if rows == nil {
+			rows = make(map[int]id.StepID)
+		}
+		rows[s.Index] = s.ID
+	}
+	return rows
+}
+
+// outstandingCalls returns the calls of the history's last assistant
+// message that have no tool result after it, in the order the model made
+// them. A history that does not end in that assistant message and its
+// results has none.
+func outstandingCalls(msgs []llm.Message) []llm.ToolCall {
+	last := -1
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" {
+			last = i
+			break
+		}
+		if msgs[i].Role != "tool" {
+			return nil
+		}
+	}
+	if last < 0 || len(msgs[last].ToolCalls) == 0 {
+		return nil
+	}
+	answered := make(map[string]bool, len(msgs)-last-1)
+	for _, m := range msgs[last+1:] {
+		answered[m.ToolCallID] = true
+	}
+	var out []llm.ToolCall
+	for _, call := range msgs[last].ToolCalls {
+		if !answered[call.ID] {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
+// replayStep settles the calls of the step a reclaimed run was in when its
+// worker stopped, walking them in the order the model made them:
+//
+//   - a call in Done is answered with the result the previous worker
+//     recorded, and does not run again;
+//   - a call in Started and not in Done, whose tool is not retry-safe, was
+//     handed to its handler and nobody knows what it did. The run stops
+//     with cortex.ErrEffectUncertain before any call of the step runs
+//     again;
+//   - any other call runs again through executePreparedTool: it is
+//     authorized again, and it may be left pending, which pauses the run.
+//
+// It returns the calls left pending. Results are recorded in the run's
+// progress as they come in, as the loop records them.
+func (e *Engine) replayStep(ctx context.Context, ag *agent.Config, r *run.Run, st *reactState, cfg resolvedConfig, saved *suspension.Progress) (pendingCalls, error) {
+	var pending pendingCalls
+	calls := outstandingCalls(st.messages)
+	if len(calls) == 0 {
+		return pending, nil
+	}
+	done := make(map[string]suspension.ProgressResult, len(saved.Done))
+	for _, d := range saved.Done {
+		done[d.CallID] = d
+	}
+	started := make(map[string]bool, len(saved.Started))
+	for _, s := range saved.Started {
+		started[s.ID] = true
+	}
+	for _, call := range calls {
+		if _, ok := done[call.ID]; ok || !started[call.ID] || e.retrySafe[call.Name] {
+			continue
+		}
+		return pending, e.stopUncertainReplay(ctx, r, st, call, saved.Owner)
+	}
+
+	ctx, cancelTools := runDeadline(ctx, cfg)
+	defer cancelTools()
+	ctx = withOperationalRuntime(ctx, r, cfg, st)
+	stepID := e.stepForPendingCalls(ctx, r.ID, st.stepIndex)
+	subject := cortex.Subject{Scope: cortex.ScopeFromContext(ctx), Principal: cortex.PrincipalFromContext(ctx), AgentID: ag.ID, RunID: r.ID}
+	stepCtx := pending.collecting(ctx, r.ID)
+	for _, call := range calls {
+		if d, ok := done[call.ID]; ok {
+			st.usage.ToolCalls++
+			st.recordToolResult(call.ID, progressToolOutcome(d.Outcome), verification.ToolLocal)
+			st.messages = append(st.messages, llm.Message{Role: "tool", Content: d.Content, ToolCallID: call.ID})
+			continue
+		}
+		if checkErr := e.checkToolCalls(ctx, ag, r, cfg.Publication, []llm.ToolCall{call}); checkErr != nil {
+			return pending, e.stopPublication(ctx, r, st, checkErr)
+		}
+		startedAt := time.Now().UTC()
+		result, outcome, wait := e.executePreparedTool(e.announceCall(stepCtx, r.ID, call), subject, call, st)
+		if interruption(ctx, r.ID) != nil {
+			return pending, leftResume(r, e.leaveRun(ctx, r, nil))
+		}
+		if outcome == outcomeUncertain {
+			return pending, errors.Join(cortex.ErrEffectUncertain, e.finalizeUncertainEffect(ctx, r, st))
+		}
+		if outcome == outcomePending {
+			pending.add(call, wait.reason, wait.ttl, wait.note)
+			continue
+		}
+		approved, resultErr := e.checkToolResult(ctx, ag, r, cfg.Publication, result, "tool_result")
+		if resultErr != nil {
+			return pending, e.stopPublication(ctx, r, st, resultErr)
+		}
+		result = string(approved)
+		completedAt := time.Now().UTC()
+		if !stepID.IsNil() {
+			row := &run.ToolCall{
+				Entity: cortex.NewEntity(), ID: id.NewToolCallID(), StepID: stepID, RunID: r.ID,
+				ToolName:    publicToolName(ctx, call.Name),
+				Arguments:   publicGenerationText(r, call.Arguments),
+				Result:      publicGenerationText(r, result),
+				Error:       publicToolFailure(ctx, outcome),
+				StartedAt:   &startedAt,
+				CompletedAt: &completedAt,
+			}
+			if err := e.store.CreateToolCall(ctx, row); err != nil {
+				e.logError("create replayed tool call", err, log.String("run_id", r.ID.String()))
+			}
+		}
+		if outcome == outcomeCompleted {
+			e.emitToolCompleted(ctx, r.ID, call.Name, result, completedAt.Sub(startedAt))
+		}
+		st.recordToolResult(call.ID, outcome, verification.ToolLocal)
+		st.messages = append(st.messages, llm.Message{Role: "tool", Content: result, ToolCallID: call.ID})
+		e.noteDone(ctx, r.ID, call.ID, result, "", outcome)
+	}
+	return pending, nil
+}
+
+// stopUncertainReplay ends a reclaimed run whose call was handed to its
+// handler by owner and has no recorded outcome. The call is reported
+// failed, the run records which call it was, and it stops incomplete with
+// cortex.ErrEffectUncertain, exactly as a handler that reports an
+// uncertain effect stops it.
+func (e *Engine) stopUncertainReplay(ctx context.Context, r *run.Run, st *reactState, call llm.ToolCall, owner string) error {
+	e.emitToolFailed(ctx, r.ID, call.Name, cortex.ErrEffectUncertain)
+	meta := maps.Clone(r.Metadata)
+	if meta == nil {
+		meta = make(map[string]any, 2)
+	}
+	meta["uncertain_tool"] = call.Name
+	meta["uncertain_call_id"] = call.ID
+	r.Metadata = meta
+	uncertain := fmt.Errorf("%w: tool %q was handed to its handler by worker %s and its outcome is unknown", cortex.ErrEffectUncertain, call.Name, owner)
+	e.logWarn("stop a reclaimed run on a call with no recorded outcome", uncertain, log.String("run_id", r.ID.String()))
+	return errors.Join(uncertain, e.finalizeUncertainEffect(ctx, r, st))
+}
+
+// progressToolOutcome reverses progressOutcome.
+func progressToolOutcome(outcome string) toolOutcome {
+	switch outcome {
+	case "completed":
+		return outcomeCompleted
+	case "denied":
+		return outcomeDenied
+	default:
+		return outcomeFailed
+	}
+}
+
+// restoreProgress takes over a reclaimed run's snapshot under this
+// worker's lease, with what the previous worker recorded as started and
+// done, so a second stop part way through the replay loses none of it.
+func (e *Engine) restoreProgress(ctx context.Context, runID id.AgentRunID, saved *suspension.Progress) {
+	l := leaseFor(ctx, runID)
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.progress = progressState{cont: saved.Cont, started: slices.Clone(saved.Started), done: slices.Clone(saved.Done)}
+	l.mu.Unlock()
+	_ = l.save() //nolint:errcheck // a lost lease cancels the run; anything else is logged
+}

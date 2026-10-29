@@ -99,7 +99,7 @@ func (r *preparedTeamRunner) ObserveOrchestrationChild(ctx context.Context, in o
 	if err != nil {
 		return nil, err
 	}
-	if child.State == run.StatePaused || child.State == run.StateRunning {
+	if child.State == run.StateRunning || childWaiting(child, false) {
 		return &orchestration.AgentResult{AgentName: in.Intent.AgentName, RunID: child.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
 	}
 	return orchestrationAgentResult(in.Intent.AgentName, child, nil)

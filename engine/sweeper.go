@@ -13,6 +13,8 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -55,6 +57,11 @@ type sweeper struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// checkpointCursor is where the stale checkpoint pass picks up: the
+	// last checkpoint id it looked at, or nil to start from the first.
+	cursorMu         sync.Mutex
+	checkpointCursor id.CheckpointID
 }
 
 // startSweeper launches the expiry loop, unless there is no store to
@@ -116,23 +123,39 @@ func (e *Engine) stopSweeper() {
 	<-done
 }
 
-// sweepOnce is one pass: find the suspensions nobody answered in time
-// and fail their runs.
+// sweepOnce is one pass of the sweeper, each part under the run's own
+// scope as it acts on it:
 //
-// One instant is read and then used for both the list and every claim
-// below it. Taking a fresh time.Now per claim would let a row that the
-// list found expired be claimed against a later instant, which is
-// harmless here but would quietly diverge the two halves of a decision
-// that has to agree.
+//   - fail the runs whose suspension nobody answered in time;
+//   - mark reclaimable the running runs whose worker's lease lapsed;
+//   - mark reclaimable the running runs nobody holds a lease on, once they
+//     have been idle past the grace (only on an engine that leases runs);
+//   - tell the host again about runs left ready or reclaimable longer than
+//     WithReadyRenotify;
+//   - close pending checkpoints whose run has moved past them.
+//
+// One instant is read and then used for every list and every write below
+// it. Taking a fresh time.Now per write would let a row a list found due
+// be acted on against a later instant, which is harmless here but would
+// quietly diverge the two halves of a decision that has to agree.
 func (e *Engine) sweepOnce(ctx context.Context) {
 	if e.store == nil {
 		return
 	}
-
 	now := time.Now().UTC()
-	// The one read in this codebase that deliberately crosses scopes.
+	e.sweepExpired(ctx, now)
+	e.sweepLapsed(ctx, now)
+	e.sweepOwnerless(ctx, now)
+	e.renotify(ctx, now)
+	e.sweepStaleCheckpoints(ctx, now)
+}
+
+// sweepExpired finds the suspensions nobody answered in time and fails
+// their runs.
+func (e *Engine) sweepExpired(ctx context.Context, now time.Time) {
 	// The sweeper has no request scope and no way to enumerate the ones
-	// that exist, so a scoped list would find nothing at all.
+	// that exist, so a scoped list would find nothing at all: this read,
+	// like the sweeper's other listings, deliberately crosses scopes.
 	expired, err := e.store.ListExpiredAcrossScopes(ctx, now, e.sweepLimit)
 	if err != nil {
 		e.logError("list expired suspensions", err)
@@ -154,6 +177,190 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 	if failed > 0 {
 		e.logError("expire suspensions", firstErr, log.Int("failed", failed), log.Int("batch", len(expired)))
 	}
+}
+
+// sweepLapsed takes every running run whose worker's lease lapsed and
+// marks it reclaimable, then fires RunReclaimable for it. A lease renewed
+// since the list, or a run that left running, is skipped, not an error.
+func (e *Engine) sweepLapsed(ctx context.Context, now time.Time) {
+	if e.continuation == nil {
+		return
+	}
+	lapsed, err := e.continuation.ListLapsedAcrossScopes(ctx, now, e.sweepLimit)
+	if err != nil {
+		e.logError("list runs whose lease lapsed", err)
+		return
+	}
+	failed := 0
+	var firstErr error
+	for _, r := range lapsed {
+		if r.Lease == nil {
+			continue
+		}
+		previous := *r.Lease
+		runCtx := cortex.WithScope(ctx, r.Scope)
+		moved, markErr := e.continuation.MarkReclaimable(runCtx, r.ID, now, "")
+		if errors.Is(markErr, cortex.ErrRunLeased) || errors.Is(markErr, cortex.ErrRunConflict) {
+			continue
+		}
+		if markErr != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = markErr
+			}
+			continue
+		}
+		e.instr.reclaim(reclaimReclaimed)
+		e.announceReclaimable(runCtx, moved, run.ReclaimNotice{PreviousOwner: previous.Owner, LeaseExpiredAt: previous.ExpiresAt, Reclaims: moved.Reclaims})
+	}
+	if failed > 0 {
+		e.logError("mark lapsed runs reclaimable", firstErr, log.Int("failed", failed), log.Int("batch", len(lapsed)))
+	}
+}
+
+// sweepOwnerless takes every running run that nobody holds a lease on and
+// that has been idle longer than the grace, and marks it reclaimable. A
+// worker leaves a run like that when it claims it from a pause and dies,
+// or gives up, before it takes the lease, and when a rejection claims a
+// run and cannot write its failure. Runs under required verification or a
+// task claim never hold a lease and are left to coordination.
+//
+// Only an engine that leases runs does this. Every engine sharing a store
+// uses the same lease setting, so an engine with leases off has no run
+// that should hold one.
+func (e *Engine) sweepOwnerless(ctx context.Context, now time.Time) {
+	if !e.leasing() {
+		return
+	}
+	idleBefore := now.Add(-e.idleGrace())
+	ownerless, err := e.continuation.ListOwnerlessAcrossScopes(ctx, idleBefore, e.sweepLimit)
+	if err != nil {
+		e.logError("list running runs with no lease owner", err)
+		return
+	}
+	failed := 0
+	var firstErr error
+	for _, r := range ownerless {
+		if r.Provenance.VerificationRequired || r.Provenance.TaskClaimID != "" {
+			continue
+		}
+		idleSince := r.UpdatedAt
+		runCtx := cortex.WithScope(ctx, r.Scope)
+		moved, markErr := e.continuation.MarkOwnerlessReclaimable(runCtx, r.ID, idleBefore)
+		if errors.Is(markErr, cortex.ErrRunLeased) || errors.Is(markErr, cortex.ErrRunConflict) {
+			continue
+		}
+		if markErr != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = markErr
+			}
+			continue
+		}
+		e.instr.reclaim(reclaimReclaimed)
+		e.announceReclaimable(runCtx, moved, run.ReclaimNotice{LeaseExpiredAt: idleSince, Reclaims: moved.Reclaims})
+	}
+	if failed > 0 {
+		e.logError("mark ownerless runs reclaimable", firstErr, log.Int("failed", failed), log.Int("batch", len(ownerless)))
+	}
+}
+
+// renotify tells the host again about every run left ready or reclaimable
+// since before the WithReadyRenotify period, with Renotified set. Each run
+// is stamped first, so it is repeated at most once per period whatever
+// the hooks do. A run claimed since the list is skipped.
+func (e *Engine) renotify(ctx context.Context, now time.Time) {
+	if e.continuation == nil || e.readyRenotify <= 0 {
+		return
+	}
+	waiting, err := e.continuation.ListContinuableAcrossScopes(ctx, now.Add(-e.readyRenotify), e.sweepLimit)
+	if err != nil {
+		e.logError("list runs waiting to continue", err)
+		return
+	}
+	for _, r := range waiting {
+		runCtx := cortex.WithScope(ctx, r.Scope)
+		if markErr := e.continuation.MarkNotified(runCtx, r.ID, now); markErr != nil {
+			if !errors.Is(markErr, cortex.ErrRunNotContinuable) {
+				e.logWarn("record a repeated run notice", markErr, log.String("run_id", r.ID.String()))
+			}
+			continue
+		}
+		switch r.State {
+		case run.StateReady:
+			notice := run.ReadyNotice{Renotified: true}
+			if r.Ready != nil {
+				notice.Source, notice.CheckpointID, notice.At = r.Ready.Source, r.Ready.CheckpointID, r.Ready.At
+			}
+			e.extensions.EmitRunReady(runCtx, r.AgentID, r.ID, notice)
+		case run.StateReclaimable:
+			e.extensions.EmitRunReclaimable(runCtx, r.AgentID, r.ID, run.ReclaimNotice{LeaseExpiredAt: r.UpdatedAt, Reclaims: r.Reclaims, Renotified: true})
+		}
+	}
+}
+
+// sweepStaleCheckpoints closes pending checkpoints that no decision can
+// act on any more, with the same superseded reason the decide path
+// writes: a checkpoint whose run is waiting on a different pause, and one
+// whose run has no pause at all and has not been written for longer than
+// the grace (a run that ended, or carried on, without its decision being
+// recorded). A run that is merely between a decider's action and its
+// record is written moments before, so the grace leaves it alone.
+//
+// It walks the pending checkpoints a batch per sweep, picking up where the
+// last batch ended, so checkpoints still legitimately waiting on a person
+// cannot keep the rest out of reach. Only the engine's own checkpoints are
+// touched: one a host wrote itself is the host's to close.
+func (e *Engine) sweepStaleCheckpoints(ctx context.Context, now time.Time) {
+	sweep, ok := e.store.(checkpoint.SweepStore)
+	if !ok || e.continuation == nil {
+		return
+	}
+	e.sweep.cursorMu.Lock()
+	defer e.sweep.cursorMu.Unlock()
+	pending, err := sweep.ListPendingAcrossScopes(ctx, e.sweep.checkpointCursor, e.sweepLimit)
+	if err != nil {
+		e.logError("list pending checkpoints", err)
+		return
+	}
+	if len(pending) < e.sweepLimit {
+		e.sweep.checkpointCursor = id.CheckpointID{}
+	} else {
+		e.sweep.checkpointCursor = pending[len(pending)-1].ID
+	}
+	for _, cp := range pending {
+		if !openedASuspendedRun(cp) {
+			continue
+		}
+		cpCtx := cortex.WithScope(ctx, cp.Scope)
+		if e.checkpointStale(cpCtx, cp, now) {
+			e.closeCheckpoint(cpCtx, cp, supersededReason)
+		}
+	}
+}
+
+// checkpointStale reports whether a decision on cp can no longer act on
+// anything. A read that fails says no: the next sweep looks again.
+func (e *Engine) checkpointStale(ctx context.Context, cp *checkpoint.Checkpoint, now time.Time) bool {
+	r, err := e.store.GetRun(ctx, cp.RunID)
+	if errors.Is(err, cortex.ErrRunNotFound) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	susp, err := e.store.GetSuspension(ctx, cp.RunID)
+	if err == nil {
+		opened, ok := cp.Metadata[checkpointSuspensionKey].(string)
+		return !ok || opened != susp.ID.String()
+	}
+	if !errors.Is(err, cortex.ErrNotSuspended) {
+		return false
+	}
+	if r.State == run.StateReady && r.Ready != nil && r.Ready.CheckpointID == cp.ID {
+		return false
+	}
+	return r.UpdatedAt.Before(now.Add(-e.idleGrace()))
 }
 
 // expireSuspension fails one run whose resumer never came back.

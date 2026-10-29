@@ -145,6 +145,13 @@ var (
 	// while shutting down. The run is reclaimable, not ended: another
 	// replica continues it from its last saved progress.
 	ErrRunInterrupted = errors.New("cortex: run handed off before it finished")
+	// ErrReclaimLimit fails a run that was reclaimed more often than
+	// engine.WithReclaimLimit allows. A run that takes its worker down every
+	// time it runs is stopped here instead of being handed to the next one.
+	ErrReclaimLimit = errors.New("cortex: run reclaimed too many times")
+	// ErrRunNotRecoverable fails a reclaimed run that left nothing to
+	// continue from: no progress snapshot and no pause it was claimed from.
+	ErrRunNotRecoverable = errors.New("cortex: run has no saved progress to continue from")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.

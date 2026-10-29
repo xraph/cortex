@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
@@ -102,9 +103,16 @@ type Engine struct {
 	// leaseTTL is WithRunLease, workerID WithWorkerID. leases tracks the
 	// leased runs this engine is executing, so a Stop that runs out of
 	// time can hand them off.
-	leaseTTL       time.Duration
-	workerID       string
-	leases         leaseRegistry
+	leaseTTL time.Duration
+	workerID string
+	leases   leaseRegistry
+	// reclaimLimit is WithReclaimLimit, readyRenotify WithReadyRenotify.
+	reclaimLimit  int
+	readyRenotify time.Duration
+	// renewalsPaused stops every heartbeat without releasing its lease. It
+	// is a test seam: a stalled worker, in a test, is one whose renewals
+	// stopped while it kept running.
+	renewalsPaused atomic.Bool
 	extensions     *plugin.Registry
 	pendingExts    []plugin.Extension
 	tools          []registeredTool
@@ -198,6 +206,8 @@ func New(opts ...Option) (*Engine, error) {
 		sweepInterval:   defaultSweepInterval,
 		sweepLimit:      defaultSweepLimit,
 		leaseTTL:        defaultRunLease,
+		reclaimLimit:    defaultReclaimLimit,
+		readyRenotify:   defaultReadyRenotify,
 	}
 
 	for _, opt := range opts {

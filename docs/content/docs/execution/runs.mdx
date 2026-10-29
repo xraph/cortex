@@ -57,6 +57,9 @@ running → completed
                          → cancelled
                  → failed (rejected checkpoint or expired suspension)
                  → cancelled
+        → reclaimable (lease lapsed, worker handed off) → running (ContinueRun)
+                                                        → failed (reclaim limit, nothing to continue from)
+                                                        → cancelled
 ```
 
 The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` accepts a running, paused, ready or reclaimable run, and answers `cortex.ErrInvalidState` for anything else.
@@ -75,7 +78,49 @@ r, err := eng.ContinueRun(ctx, runID)
 
 `plugin.RunReady` fires when a run becomes ready, with the run's scope on its `ctx`, so it's the natural place to queue that job. `ContinueRun` runs the tool under the principal that started the run, not the job's. It needs a store that implements `run.ContinuationStore`; the built-in SQLite, PostgreSQL and MongoDB stores all do. A store without it gets `cortex.ErrContinuationUnavailable`. See [Suspension](/docs/concepts/suspension#continuing-from-a-job) for the full rules.
 
-`ContinueRun` refuses a run that isn't ready with `cortex.ErrRunNotContinuable`. The error also matches `cortex.ErrRunLeased` when the run is running, and `cortex.ErrRunAlreadyDone` when it has ended, in which case you get the run back too.
+`ContinueRun` refuses a run that isn't ready or reclaimable with `cortex.ErrRunNotContinuable`. The error also matches `cortex.ErrRunLeased` when the run is running under a live lease, and `cortex.ErrRunAlreadyDone` when it has ended, in which case you get the run back too.
+
+A ready run that can never pass the checks `ContinueRun` makes before it claims the run (its stored answer doesn't match the pause, or its continuation is unusable) is failed with that error and its checkpoint closed. A check that fails for now, such as a store that can't be read, leaves the run ready for the next try.
+
+### Durability: leases, hand-off and reclaim
+
+You don't have to do anything to get this. With a store that implements `run.ContinuationStore` and `suspension.ProgressStore` (all three built-in stores do), every run executes under its worker's lease and saves its progress at each step boundary. When the worker goes away, the run becomes `reclaimable` and any replica continues it with the same `ContinueRun` call:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithRunLease(60*time.Second),       // the default; 0 turns leases off
+    engine.WithReclaimLimit(3),                // the default
+    engine.WithReadyRenotify(5*time.Minute),   // the default; 0 turns it off
+    engine.WithSuspensionSweepInterval(time.Minute),
+)
+
+// In the job you queue from plugin.RunReclaimable (or plugin.RunReady):
+r, err := eng.ContinueRun(ctx, runID)
+```
+
+The sweeper does the finding. On each pass, after it fails expired suspensions, it:
+
+- marks reclaimable every running run whose lease expired, adds one to its `Reclaims` and fires `RunReclaimable` with the previous owner and when the lease expired. A lease renewed in the meantime is left alone;
+- marks reclaimable every running run that holds no lease at all once it has sat like that for twice the lease ttl. That's a worker that claimed the run from a pause and died before it took the lease, or a rejection that claimed the run and couldn't write its failure. Only an engine that leases runs does this, and every engine sharing a store must use the same lease setting;
+- tells you again about runs left `ready` or `reclaimable` for longer than `WithReadyRenotify`, with `Renotified` set on the notice. Each run gets at most one repeat per period, a run nobody was ever told about included, so a host that missed the first hook still hears about it;
+- closes pending checkpoints that no decision can act on any more: one whose run is waiting on a different pause, and one whose run has no pause and hasn't been written for twice the lease ttl. They're resolved as superseded by `cortex`, the same way the decide path closes them.
+
+`ContinueRun` on a running run whose lease has already lapsed doesn't wait for the sweep: it marks the run reclaimable itself and carries on. A live lease is still `cortex.ErrRunLeased`.
+
+Continuing a reclaimed run picks up from its last saved step. A run reclaimed more than `WithReclaimLimit` times is failed with `cortex.ErrReclaimLimit` before any model call, so a run that kills its worker every time can't take the next replica down too. Otherwise the run's principal is restored and the run is claimed, then the calls of the step it was in are settled in the order the model made them:
+
+- a call with a saved result gets that result and doesn't run again;
+- a call that was handed to a tool that isn't retry-safe, and has no result, stops the run. It ends `incomplete` with stop reason `tool_error`, `Metadata["uncertain_tool"]` and `Metadata["uncertain_call_id"]` name the call, and `ContinueRun` returns an error matching `cortex.ErrEffectUncertain`. The engine can't tell whether that call changed anything, so it doesn't run it twice;
+- any other call runs again, authorized again. A call that needs an approval or an external answer pauses the run, exactly as it would have the first time, and the person is asked again.
+
+Then the loop carries on from the saved step. The model call the old worker was in the middle of runs once more, and a step row the old worker already wrote is reused, not duplicated.
+
+A run with no saved progress continues from the pause it was last claimed from, if that suspension is still there (the worker that died between a claim and its lease leaves exactly that). A run with neither, a mock run for example, is failed with `cortex.ErrRunNotRecoverable`.
+
+A worker that was only slow, not dead, finds out at its next write. Its progress saves and its terminal write are refused, its pass returns `cortex.ErrRunLeaseLost`, and only the worker that finished the run fires the terminal hooks.
+
+Runs under required verification or a task claim (`Provenance.VerificationRequired`, `Provenance.TaskClaimID`) never hold a lease, save no progress and are never reclaimed or swept as ownerless. Their recovery belongs to the `coordination` package.
 
 See [Execution outcomes and safety](/docs/execution/assurance) for verification, publication and compatibility semantics.
 

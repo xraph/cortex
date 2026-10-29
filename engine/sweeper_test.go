@@ -335,6 +335,15 @@ func TestSweepOnce_WorksUnderTheSuspensionsOwnScope(t *testing.T) {
 	}
 	byScope := map[string]map[string]bool{}
 	for _, c := range swept {
+		if strings.HasSuffix(c.Method, "AcrossScopes") {
+			// The sweeper's other listings (lapsed, ownerless and waiting
+			// runs, pending checkpoints) cross scopes on purpose, like the
+			// expiry list above. Only the work on each row needs a scope.
+			if !c.Scope.IsZero() {
+				t.Errorf("cross-scope list %s carried scope %v", c.Method, c.Scope)
+			}
+			continue
+		}
 		if c.Scope.IsZero() {
 			t.Errorf("%s ran with no scope at all; the per-run work must carry the suspension's own", c.Method)
 			continue
