@@ -25,9 +25,10 @@ import (
 // answers each with deny. DecidedBy answers with name.
 type recordingAuthorizer struct {
 	mu   sync.Mutex
-	ops  []Operation
-	deny error
-	name string
+	ops       []Operation
+	deny      error
+	name      string
+	decideErr error
 }
 
 func (r *recordingAuthorizer) Authorize(_ context.Context, op Operation) error {
@@ -38,7 +39,7 @@ func (r *recordingAuthorizer) Authorize(_ context.Context, op Operation) error {
 }
 
 func (r *recordingAuthorizer) DecidedBy(context.Context) (string, error) {
-	return r.name, nil
+	return r.name, r.decideErr
 }
 
 func (r *recordingAuthorizer) seen() []Operation {
@@ -119,12 +120,14 @@ func TestAuthorizerRefusalStatus(t *testing.T) {
 		name string
 		deny error
 		want int
+		body string
 	}{
 		{name: "allowed", deny: nil, want: http.StatusOK},
-		{name: "refused", deny: errors.New("SECRET role"), want: http.StatusForbidden},
+		{name: "refused", deny: errors.New("SECRET role"), want: http.StatusForbidden, body: errNotAuthorized},
 		{name: "not found", deny: fmtWrap(cortex.ErrAgentNotFound), want: http.StatusNotFound},
 		{name: "no scope", deny: fmtWrap(cortex.ErrNoScope), want: http.StatusPreconditionFailed},
-		{name: "invalid scope", deny: fmtWrap(cortex.ErrInvalidScope), want: http.StatusForbidden},
+		{name: "invalid scope", deny: fmtWrap(cortex.ErrInvalidScope), want: http.StatusForbidden, body: "scope is invalid or unsupported"},
+		{name: "scope too deep", deny: fmtWrap(cortex.ErrUnsupportedScopeDepth), want: http.StatusForbidden, body: "scope is invalid or unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			eng, err := engine.New(engine.WithStore(scopespy.New()))
@@ -134,6 +137,7 @@ func TestAuthorizerRefusalStatus(t *testing.T) {
 			handler.ServeHTTP(res, httptest.NewRequestWithContext(testScopeContext(), http.MethodGet, "/v1/tools", nil))
 			require.Equal(t, tc.want, res.Code, res.Body.String())
 			require.NotContains(t, res.Body.String(), "SECRET")
+			require.Contains(t, res.Body.String(), tc.body)
 		})
 	}
 }
@@ -211,4 +215,37 @@ func TestCheckpointOpenAPIOmitsDecidedByPrincipal(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "decided_at", "no schema describes a checkpoint decision")
 	require.NotContains(t, string(raw), "decided_by_principal")
+}
+
+// TestResolveCheckpointDecidedByFailureRefuses: a DecidedBy error maps
+// like a refusal, never repeats its text, and records no decision.
+func TestResolveCheckpointDecidedByFailureRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "refused", err: errors.New("SECRET directory down"), want: http.StatusForbidden},
+		{name: "no scope", err: fmtWrap(cortex.ErrNoScope), want: http.StatusPreconditionFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := scopespy.New()
+			eng, err := engine.New(engine.WithStore(st))
+			require.NoError(t, err)
+			cp := hostCheckpoint(t, st)
+			handler := New(eng, nil, WithAuthorizer(&recordingAuthorizer{decideErr: tc.err})).Handler()
+
+			res := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(testScopeContext(), http.MethodPost, "/v1/checkpoints/"+cp.ID.String()+"/resolve", strings.NewReader(`{"decision":"approved","decided_by":"mallory"}`))
+			req.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(res, req)
+			require.Equal(t, tc.want, res.Code, res.Body.String())
+			require.NotContains(t, res.Body.String(), "SECRET")
+
+			stored, err := st.GetCheckpoint(testScopeContext(), cp.ID)
+			require.NoError(t, err)
+			require.Equal(t, "pending", stored.State)
+			require.Nil(t, stored.Decision)
+		})
+	}
 }
