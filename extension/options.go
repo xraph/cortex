@@ -4,6 +4,7 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex/engine"
+	nexusllm "github.com/xraph/cortex/llm/nexus"
 	"github.com/xraph/cortex/plugin"
 	"github.com/xraph/cortex/store"
 )
@@ -42,6 +43,16 @@ func WithEngineOption(opt engine.Option) ExtOption {
 // or wants none of them.
 func WithoutAutoAdapters() ExtOption {
 	return func(e *Extension) { e.noAutoAdapters = true }
+}
+
+// WithNexusOptions configures the nexus adapter the extension wires in when
+// it finds a nexus gateway in the container: nexusllm.WithTenant to map a
+// scope to its nexus tenant, nexusllm.WithProvider, WithMetadata and
+// WithSamplingUnsupported. The adapter keeps its place in the option order,
+// so an engine.WithLLM passed with WithEngineOption still replaces it, and
+// WithoutAutoAdapters still leaves it out.
+func WithNexusOptions(opts ...nexusllm.Option) ExtOption {
+	return func(e *Extension) { e.nexusOpts = append(e.nexusOpts, opts...) }
 }
 
 // WithConfig sets the extension configuration.

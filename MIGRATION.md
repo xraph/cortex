@@ -185,6 +185,8 @@ The Forge extension now applies `default_model`, `default_max_steps`, `default_m
 
 Runs are leased by default now, for 60 seconds at a time, on any store that supports it. When the worker running one dies, another replica reclaims the run and continues it from its last saved step. If the worker died while a tool call was in flight, the call runs again only when the tool is retry-safe. Any other tool makes the run end `incomplete` with an error matching `cortex.ErrEffectUncertain`, because nobody can tell whether the call did anything. Tools aren't retry-safe unless you say so, so mark the ones that are safe to run twice with `engine.WithToolRetrySafe`, or `tool.RetrySafe()` on a typed tool. `WithRunLease(0)` turns leasing off.
 
+The Nexus adapter (`llm/nexus`) now sends every call under a Nexus tenant and refuses one it can't name, with an error matching `cortex.ErrNoScope`. It takes the tenant from `pipeline.WithTenantID` on the context, or from `nexusllm.WithTenant`, whose default is the first scope level's value. Nexus only accepts a tenant ID it has (`tenant_...`), so unless your first scope level holds one, pass a `WithTenant` that maps your scope to it (`extension.WithNexusOptions` under Forge). Calls also drop `temperature` for the Claude 5.5 models, which reject it, and a blocked Nexus guard now ends the run with `safety_block`.
+
 `Migrate` on PostgreSQL waits for the migration lock instead of failing when another replica holds it. Give it a context with a deadline.
 
 The REST module takes an optional `api.Authorizer`. With one installed, `resolveCheckpoint` takes the decider from its `DecidedBy` method and ignores the `decided_by` in the body. `sendAgentMessage` keeps its `from` as whatever the caller says it is.

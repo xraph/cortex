@@ -161,11 +161,54 @@ All of these are applied now. The `Default*` fields and `ShutdownTimeout` become
 | `extension.WithExtension(x)` | Registers a Cortex plugin extension |
 | `extension.WithEngineOption(opt)` | Passes an engine option directly. It overrides the config and the automatic adapters |
 | `extension.WithoutAutoAdapters()` | Skips looking for Nexus, Shield, Weave and Sentinel in the container |
+| `extension.WithNexusOptions(opts...)` | Passes [Nexus adapter options](#nexus-adapter) to the adapter the extension wires in |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
 | `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
 
 The extension mounts no routes unless you pass `WithRoutes`. See [Forge Extension](/docs/guides/forge-extension).
+
+## Nexus adapter
+
+`llm/nexus` sends every model call through a [Nexus](https://github.com/xraph/nexus) gateway, and every call goes out under a Nexus tenant. A call that names no tenant fails with an error matching `cortex.ErrNoScope`, and nothing reaches the gateway.
+
+```go
+adapter := nexusllm.New(gw,
+    // Your scope's workspace is not a Nexus tenant ID, so map it.
+    nexusllm.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return lookupNexusTenant(ctx, ws)
+    }),
+    // Send every call to the provider the workspace picked.
+    nexusllm.WithProvider(func(ctx context.Context, s cortex.Scope) string {
+        return "anthropic"
+    }),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithLLM(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Nexus tenant from the context's scope, when the context carries none |
+| `WithProvider(f)` | unset | Names the Nexus provider for the call; `""` leaves the choice to Nexus |
+| `WithMetadata(f)` | one pair per scope level, plus `run` and `agent` | Builds the usage metadata the call is recorded with |
+| `WithSamplingUnsupported(f)` | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` | Says which models get no `temperature` |
+
+The tenant on the context wins. If your middleware already calls `pipeline.WithTenantID` next to `cortex.WithScope`, you don't need `WithTenant` at all. Otherwise the adapter asks your `TenantFunc`. The default, `cortex.RootTenant`, returns the first scope level's value, and that only works when the value is itself a Nexus tenant ID (`tenant_...`), because Nexus refuses any other tenant and any tenant it doesn't have.
+
+Metadata ends up in Nexus's usage records, so you can break spend down by run or agent. The engine puts `run` and `agent` on every request (`llm.MetadataRun`, `llm.MetadataAgent`), and the default adds your scope levels. Whatever `WithMetadata` returns is cut to what Nexus accepts: pairs with a key outside `^[A-Za-z0-9_-]{1,64}$` or a value over 256 bytes are dropped, and only 16 are kept, `run` and `agent` first.
+
+Without `WithProvider`, Nexus routes by alias and then by the providers that list the model. Two providers that both list a model can each get the call, which is how an OpenAI-compatible model id ends up at Anthropic. Set it whenever your host knows which provider a workspace uses.
+
+Claude 5.5 models reject `temperature`, so the adapter drops it for them (it never sends `top_p`). If you call models through Nexus aliases, the adapter only sees the alias, so pass a predicate that knows what each alias points at, or pin concrete model ids for agent runs.
+
+These need no setup:
+
+- Thinking models get their own turns back. The adapter copies the provider's native reply (`llm.NativeContent`, signed thinking blocks included) onto the response, and the engine keeps it on the assistant message it appends. It survives a pause, a hand-off and a reclaim, and goes back to the model on the next call. It never goes into conversation memory, so a later run's history has no thinking blocks, and it's never published.
+- `llm.Request.ToolChoice` is sent in OpenAI's shape (`auto`, `none`, `required`, or one named function). The engine never sets it. Nexus refuses a forced choice on an Anthropic thinking model with `anthropic.ErrForcedToolChoice`, and the adapter hands that error back unchanged.
+- A Nexus guard that blocks a request or a response surfaces as `llm.ErrContentBlocked`, with the guard's `*guard.BlockedError` still reachable through `errors.As`. The engine stops the run with stop reason `safety_block`, and no tool call from that step runs, even one the stream had already started to send.
+
+`nexusllm.New(gw)` works before the gateway starts; calls just fail with `nexus.ErrNotInitialized` until `Initialize` returns. When you only get the gateway later, as with the one Nexus's Forge extension builds, use `nexusllm.NewFunc(func() *nexus.Gateway { return ext.Gateway() })`. Under the Forge extension, pass the same options with `extension.WithNexusOptions`.
 
 ## YAML configuration
 

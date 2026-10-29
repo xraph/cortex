@@ -173,6 +173,43 @@ func TestTaskCallStreamRetainsLeaseThroughConsumption(t *testing.T) {
 	require.EqualValues(t, 1, source.closes.Load())
 }
 
+// A task-bound call binds its payload without Metadata, and the client
+// still gets the request's Metadata.
+func TestTaskCallKeepsRequestMetadata(t *testing.T) {
+	md := map[string]string{llm.MetadataRun: "arun_x", llm.MetadataAgent: "agt_x"}
+	for _, kind := range []TaskCallKind{TaskCallComplete, TaskCallStream} {
+		t.Run(string(kind), func(t *testing.T) {
+			ctx, r := taskCallFixture(t)
+			var seen map[string]string
+			e := &Engine{store: newTaskCallJournalStub(), taskCallGuard: taskGuardFunc(func(_ context.Context, req TaskCallRequest) (TaskCallLease, error) {
+				require.NotContains(t, string(req.Payload), "arun_x", "metadata reached the bound payload")
+				_, digest, err := req.Freeze()
+				require.NoError(t, err)
+				return TaskCallLease{RequestDigest: digest, ExpiresAt: r.Budget.Deadline, Revoked: make(chan struct{}), Release: func() error { return nil }}, nil
+			}), llm: taskCallClient{
+				complete: func(_ context.Context, req *llm.Request) (*llm.Response, error) {
+					seen = req.Metadata
+					return &llm.Response{Content: "done"}, nil
+				},
+				stream: func(_ context.Context, req *llm.Request) (llm.Stream, error) {
+					seen = req.Metadata
+					return &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { return nil, io.EOF }}, nil
+				},
+			}}
+			req := &llm.Request{Model: "model", Metadata: md}
+			if kind == TaskCallComplete {
+				_, err := e.completeTaskCall(ctx, r, req)
+				require.NoError(t, err)
+			} else {
+				stream, err := e.streamTaskCall(ctx, r, req)
+				require.NoError(t, err)
+				require.NoError(t, stream.Close())
+			}
+			require.Equal(t, md, seen)
+		})
+	}
+}
+
 func TestTaskCallStreamReleaseFailureIsNotEOF(t *testing.T) {
 	ctx, r := taskCallFixture(t)
 	source := &taskCallStream{next: func(context.Context) (*llm.Chunk, error) { return nil, io.EOF }}

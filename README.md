@@ -37,6 +37,7 @@ import (
 	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate" // registers the SQLite migration executor
 	"github.com/xraph/nexus"
 	"github.com/xraph/nexus/providers/openai"
+	"github.com/xraph/nexus/tenant"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
@@ -75,6 +76,14 @@ func main() {
 	}
 	defer gw.Shutdown(ctx)
 
+	// Every model call goes out under a Nexus tenant. This one lives in
+	// the gateway's in-memory store, so it's made fresh on each start.
+	acme, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	toAcme := func(context.Context, cortex.Scope) (string, error) { return acme.ID.String(), nil }
+
 	// A tool the agent can call.
 	clock := llm.Tool{
 		Name:        "current_time",
@@ -87,7 +96,7 @@ func main() {
 
 	eng, err := engine.New(
 		engine.WithStore(st),
-		engine.WithLLM(nexusllm.New(gw)),
+		engine.WithLLM(nexusllm.New(gw, nexusllm.WithTenant(toAcme))),
 		engine.WithTool(clock, tellTime),
 	)
 	if err != nil {
@@ -124,6 +133,12 @@ OPENAI_API_KEY=sk-... go run .
 The model sees `current_time`, calls it, gets the timestamp back from your handler and answers with it. You'll see the run's final state, how many steps it took and the tokens used, then the answer. The run, every step and the tool call are now rows in `cortex.db`, so `eng.ListSteps` and `eng.ListToolCalls` can show you exactly what happened. Run it a second time and `CreateAgent` fails, because an agent named `assistant` already exists in that scope. Delete `cortex.db` or use `GetAgentByName` first.
 
 If you leave out `WithLLM`, `RunAgent` still works, in an echo mode that's handy for wiring tests.
+
+### The Nexus adapter
+
+The adapter refuses to send a call without a Nexus tenant, which is why the quick start makes one. In a real host you map your scope to its tenant with `nexusllm.WithTenant`, or set `pipeline.WithTenantID` on the context next to the scope. Each call is recorded in Nexus's usage with your scope levels and the run and agent behind it, so you can see what a run cost. `nexusllm.WithProvider` pins the provider a workspace picked, and `nexusllm.WithSamplingUnsupported` tells the adapter which models reject `temperature` (Claude 5.5 does, and the adapter already knows those ids).
+
+Thinking models keep their signed thinking between turns, through approvals and reclaims, but it never reaches conversation memory. A Nexus guard that blocks a response stops the run with `safety_block` and no tool from that step runs. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#nexus-adapter) has the details.
 
 ## Why Cortex?
 

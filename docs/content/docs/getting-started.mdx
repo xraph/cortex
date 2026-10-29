@@ -239,6 +239,7 @@ import (
 
     "github.com/xraph/nexus"
     "github.com/xraph/nexus/providers/openai"
+    "github.com/xraph/nexus/tenant"
 
     nexusllm "github.com/xraph/cortex/llm/nexus"
 )
@@ -249,11 +250,20 @@ if err := gw.Initialize(ctx); err != nil {
 }
 defer gw.Shutdown(ctx)
 
+// Every model call goes out under a Nexus tenant.
+acme, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+if err != nil {
+    log.Fatal(err)
+}
+toAcme := func(context.Context, cortex.Scope) (string, error) { return acme.ID.String(), nil }
+
 eng, err := engine.New(
     engine.WithStore(st),
-    engine.WithLLM(nexusllm.New(gw)),
+    engine.WithLLM(nexusllm.New(gw, nexusllm.WithTenant(toAcme))),
 )
 ```
+
+The adapter won't send a call without a Nexus tenant. [Configuration](/docs/concepts/configuration#nexus-adapter) covers mapping your scope to one, and the adapter's other options.
 
 Tools the model can call are registered with `engine.WithTool(def, handler)`. The [README quick start](https://github.com/xraph/cortex#quick-start) shows one end to end.
 

@@ -14,7 +14,7 @@ require (
 	github.com/xraph/grove/drivers/mongodriver v1.10.0
 	github.com/xraph/grove/drivers/pgdriver v1.10.0
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
-	github.com/xraph/nexus v1.9.0
+	github.com/xraph/nexus v1.9.1
 	github.com/xraph/shield v1.8.1
 	github.com/xraph/vessel v1.0.4
 	github.com/xraph/weave v1.8.1
@@ -85,12 +85,12 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

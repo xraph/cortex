@@ -381,6 +381,7 @@ func cloneExecutionMessages(messages []llm.Message) []llm.Message {
 	out := append([]llm.Message(nil), messages...)
 	for i := range out {
 		out[i].ToolCalls = append([]llm.ToolCall(nil), messages[i].ToolCalls...)
+		out[i].Native = messages[i].Native.Clone()
 	}
 	return out
 }

@@ -217,6 +217,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
+			Metadata:    requestMetadata(r, ag),
 		}
 
 		if interruption(ctx, r.ID) != nil {
@@ -242,6 +243,15 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			stepSpan.finish(stepStopped, nil)
 			fresh := progressCont(r, st, cfg)
 			return r, e.leaveRun(ctx, r, &fresh)
+		}
+		if errors.Is(err, llm.ErrContentBlocked) {
+			reported := 0
+			if resp != nil {
+				reported = resp.Usage.TotalTokens
+			}
+			stopErr := e.stopContentBlocked(ctx, r, st, cfg, reported)
+			stepSpan.finish(stepStopped, nil)
+			return r, stopErr
 		}
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
@@ -289,6 +299,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		responseCopy := *resp
 		responseCopy.Content = string(checked)
 		responseCopy.ToolCalls = append([]llm.ToolCall(nil), resp.ToolCalls...)
+		responseCopy.Native = resp.Native.Clone()
 		resp = &responseCopy
 
 		// Record the step.
@@ -328,11 +339,14 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				stepSpan.finish(stepStopped, nil)
 				break
 			}
-			// Append assistant message with tool calls.
+			// Append assistant message with tool calls. Native goes with it
+			// as the provider returned it, even when publication redacted
+			// Content: it is only ever sent back to the model.
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   resp.Content,
 				ToolCalls: resp.ToolCalls,
+				Native:    resp.Native,
 			})
 			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
@@ -441,7 +455,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		finalOutput = resp.Content
 		stopReason = responseReason
 
-		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput, Native: resp.Native})
 		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
@@ -564,6 +578,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
+			Metadata:    requestMetadata(r, ag),
 		}
 
 		if interruption(ctx, r.ID) != nil {
@@ -588,6 +603,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			stepSpan.finish(stepStopped, nil)
 			fresh := progressCont(r, st, cfg)
 			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
+		if errors.Is(err, llm.ErrContentBlocked) {
+			terminalErr := e.stopContentBlocked(ctx, r, st, cfg, 0)
+			stepSpan.finish(stepStopped, nil)
+			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
 			return
 		}
 		if err != nil {
@@ -626,6 +647,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		var contentBuf string
 		var finishReason string
 		var toolCalls []llm.ToolCall
+		var native *llm.NativeContent
 		totalBytes := 0
 
 		for {
@@ -662,6 +684,15 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
 				return
 			}
+			if errors.Is(err, llm.ErrContentBlocked) {
+				// Nothing from a blocked stream runs: the tool-call deltas
+				// already read are dropped with it.
+				_ = stream.Close()
+				terminalErr := e.stopContentBlocked(ctx, r, st, cfg, streamReportedTokens(stream))
+				stepSpan.finish(stepStopped, nil)
+				sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+				return
+			}
 			if err != nil {
 				err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 				_ = stream.Close()
@@ -678,6 +709,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 			if chunk.FinishReason != "" {
 				finishReason = chunk.FinishReason
+			}
+			if chunk.Native != nil {
+				native = chunk.Native.Clone()
 			}
 
 			chunkBytes := len(chunk.Content) + len(chunk.FinishReason) + 1
@@ -813,6 +847,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				Role:      "assistant",
 				Content:   contentBuf,
 				ToolCalls: toolCalls,
+				Native:    native,
 			})
 			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
@@ -935,7 +970,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		finalOutput = contentBuf
 		stopReason = responseReason
 
-		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput, Native: native})
 		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
@@ -1005,6 +1040,21 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 	if err := e.store.SaveConversation(ctx, agentID, st.sessionID, convMsgs); err != nil {
 		e.logError("save conversation", err, log.String("agent_id", agentID.String()))
 	}
+}
+
+// requestMetadata labels a model request with the run and agent behind it,
+// for the client's usage records.
+func requestMetadata(r *run.Run, ag *agent.Config) map[string]string {
+	return map[string]string{llm.MetadataRun: r.ID.String(), llm.MetadataAgent: ag.ID.String()}
+}
+
+// stopContentBlocked ends a run whose model call a provider-side guard
+// blocked (llm.ErrContentBlocked): the attempt counts as a step, the run
+// stops with safety_block, and no tool call from the response runs. The
+// guard's reason stays out of the run's error.
+func (e *Engine) stopContentBlocked(ctx context.Context, r *run.Run, st *reactState, cfg resolvedConfig, reported int) error {
+	st.failedAttempt(reported, cfg, r)
+	return e.stopPublication(ctx, r, st, safety.ErrBlocked)
 }
 
 // failRun marks a run as failed and emits the RunFailed hook. The store
@@ -1347,6 +1397,8 @@ func memoryToLLM(msgs []memory.Message) []llm.Message {
 }
 
 // llmToMemory converts llm messages to memory messages for persistence.
+// It never copies Native: a provider's thinking blocks belong to the run
+// that produced them, and a later run's history goes without them.
 func llmToMemory(msgs []llm.Message) []memory.Message {
 	out := make([]memory.Message, 0, len(msgs))
 	for _, m := range msgs {

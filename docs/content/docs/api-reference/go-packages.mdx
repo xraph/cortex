@@ -453,8 +453,8 @@ The in-process agent-to-agent bus: FIPA-ACL envelopes, conversations, deliveries
 
 | Package | What it is |
 |---------|------------|
-| `llm` | `Client` interface (`Complete`, `CompleteStream`), with `Request`, `Response`, `Tool`, `ToolCall` and `Message` |
-| `llm/nexus` | `New(*nexus.Gateway)` adapts a Nexus gateway; `EngineOption(container)` finds one in a vessel container |
+| `llm` | `Client` interface (`Complete`, `CompleteStream`), with `Request`, `Response`, `Tool`, `ToolCall`, `ToolChoice`, `Message` and `NativeContent`; `ErrContentBlocked` |
+| `llm/nexus` | `New(*nexus.Gateway, opts...)` and `NewFunc(func() *nexus.Gateway, opts...)` adapt a Nexus gateway; `EngineOption(container, opts...)` finds one in a vessel container. Options: `WithTenant`, `WithProvider`, `WithMetadata`, `WithSamplingUnsupported` |
 | `safety` | `Scanner` interface (`ScanInput`, `ScanOutput`) |
 | `safety/shield` | `New(*shield engine)` adapts Shield; `EngineOption(container)` |
 | `knowledge` | `Provider` interface (`Retrieve`, `ListCollections`) |

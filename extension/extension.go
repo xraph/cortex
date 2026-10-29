@@ -56,6 +56,8 @@ type Extension struct {
 	useGrove    bool
 	// noAutoAdapters skips the nexus, shield, weave and sentinel discovery.
 	noAutoAdapters bool
+	// nexusOpts configure the nexus adapter the auto discovery wires in.
+	nexusOpts []nexusllm.Option
 	// hostStore is set by WithStore, which makes discovering a default
 	// grove database pointless.
 	hostStore     bool
@@ -185,7 +187,7 @@ func (e *Extension) init(fapp forge.App) error {
 	// set, so a host replacing shield sets engine.WithPublicationGate too.
 	if !e.noAutoAdapters {
 		opts = append(opts,
-			nexusllm.EngineOption(fapp.Container()),
+			nexusllm.EngineOption(fapp.Container(), e.nexusOpts...),
 			shieldsafety.EngineOption(fapp.Container()),
 			weaveknowledge.EngineOption(fapp.Container()),
 			sentineladapter.EngineOption(fapp.Container()),
