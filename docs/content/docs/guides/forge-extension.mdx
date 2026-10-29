@@ -72,6 +72,16 @@ The blank `pgmigrate` import registers Grove's migration executor for PostgreSQL
 
 The extension mounts no HTTP routes by itself. `WithRoutes` takes a function that builds a `RouteSet` from the engine and the app's router, and `api.New` is the one Cortex provides. The extension mounts it under `base_path` (default `/cortex`), and every handler in the `api` module sits in a `/v1` group, so you get 59 routes such as `POST /cortex/v1/agents` and `POST /cortex/v1/agents/:name/run`. The [HTTP API reference](/docs/api-reference/http-api) lists them all.
 
+The routes are open to anyone who can reach the router unless you pass an `api.Authorizer`. It sees each operation before the route runs and names the person who resolves a checkpoint, so a body can't claim to be someone else:
+
+```go
+cortexext.WithRoutes(func(eng *engine.Engine, r forge.Router) cortexext.RouteSet {
+    return api.New(eng, r, api.WithAuthorizer(myAuthorizer{}))
+}),
+```
+
+[HTTP API reference](/docs/api-reference/http-api) describes what the authorizer is asked and how its errors map to statuses.
+
 Leave `WithRoutes` out and you still get the engine in the container, migrations, health checks and the dashboard contract. `Routes()` then returns nil and `Handler()` answers 404.
 
 ## What the extension does
@@ -195,7 +205,7 @@ extensions:
 
 With a cap of 8, the ninth run waits for a slot. It waits only as long as its `ctx` allows, so a run started with a 30-second deadline gives up after 30 seconds with an error that matches `context.DeadlineExceeded`, and it leaves no run row behind. The cap is per process: four replicas with `run_concurrency: 8` run up to 32 agents between them.
 
-The cap covers `RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream`, `ResolveCheckpoint`, and the resumes the message bus and agent-reply recovery start. A stream holds its slot until its channel closes. A run started from inside another run, such as a tool that calls `RunAgent` on the `ctx` it was handed, shares its parent's slot, so a cap of 1 can't deadlock on it. Runs started by the experimental task workers, prepared orchestrations and plan replanning aren't counted against `run_concurrency`; the task scheduler has its own limits.
+The cap covers `RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream`, `ResolveCheckpoint`, `ContinueRun`, `ContinueRunStream`, and the resumes the message bus and agent-reply recovery start. A stream holds its slot until its channel closes. A run started from inside another run, such as a tool that calls `RunAgent` on the `ctx` it was handed, shares its parent's slot, so a cap of 1 can't deadlock on it. Runs started by the experimental task workers, prepared orchestrations and plan replanning aren't counted against `run_concurrency`; the task scheduler has its own limits.
 
 `Stop` drains before it shuts anything down. From the moment it starts, new runs get `cortex.ErrEngineStopping`, and the runs already executing get up to `shutdown_timeout` (30s by default) to finish. A host that queues work can treat `ErrEngineStopping` as "try another worker". A leased run (the default, see `engine.WithRunLease`) doesn't wait to finish: at its next model call or tool dispatch it saves its progress, becomes `reclaimable`, fires `RunReclaimable` with `HandOff` set and returns `cortex.ErrRunInterrupted`, so another replica can pick it up. If the timeout runs out, `Stop` returns an error matching `context.DeadlineExceeded` and `OnShutdown` isn't sent. Leased runs still executing are told to hand off then. `Stop` doesn't wait for those writes, so if the process exits straight away some of them lapse and the sweep reclaims them instead. A run without a lease keeps executing and records its own result when it finishes. Call `Stop` again to finish the shutdown before you close the store. `Start` admits runs again.
 

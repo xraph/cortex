@@ -264,6 +264,12 @@ run started with a raised `MaxSteps` keeps the raised budget. An agent-config
 edit that lands during the pause doesn't shift a conversation already in
 flight.
 
+The caller's identity follows the same rule. A resume, a continuation and a
+reclaim all run under the principal stored when the run started, decoded by your
+`PrincipalCodec`, never under the person or service that resumed it. A host with
+a `ToolAuthorizer` has to install a codec; see
+[Keeping the principal across a pause](/docs/concepts/authorization#keeping-the-principal-across-a-pause).
+
 ## Approval
 
 An authorizer's third answer is `cortex.ErrRequiresApproval`. Return it, or

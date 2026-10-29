@@ -3,7 +3,7 @@ title: Go Packages
 description: Quick reference for the Cortex Go packages and their public APIs.
 ---
 
-Most packages live in the root module, `github.com/xraph/cortex`. The REST handlers (`api`), the Forge extension (`extension`), the Sentinel adapter (`sentinel`), the Fabriq integration (`integrations/fabriq`) and the remote A2A support (`a2aremote`) are separate modules you add on their own. This page lists the main exports; [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex) has everything.
+Most packages live in the root module, `github.com/xraph/cortex`. The REST handlers (`api`), the Forge extension (`extension`), the Sentinel adapter (`sentinel`), the Fabriq integration (`integrations/fabriq`), the MCP bridge (`mcpbridge`) and the remote A2A support (`a2aremote`) are separate modules you add on their own. This page lists the main exports; [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex) has everything.
 
 ## Core packages
 
@@ -18,6 +18,8 @@ Root package. Context helpers, sentinel errors, configuration and shared types.
 | `Scope`, `Level` | Host-defined scope hierarchy, with `IsZero`, `Covers`, `Get` and `Canonical`; `ParseCanonical` reverses `Canonical` |
 | `WithPrincipal(ctx, p)`, `PrincipalFromContext(ctx)` | Carry your caller identity through to the `ToolAuthorizer` |
 | `ToolAuthorizer`, `Subject`, `Invocation`, `ErrRequiresApproval` | Tool visibility and dispatch decisions; see [Tool Authorization](/docs/concepts/authorization) |
+| `PrincipalCodec`, `JSONPrincipalCodec[T]()`, `ErrPrincipalRevoked`, `ErrPrincipalUnavailable`, `ErrPrincipalCodecRequired` | Keeping a run's principal across a pause; see [Tool Authorization](/docs/concepts/authorization#keeping-the-principal-across-a-pause) |
+| `ApprovalRequired` | An authorizer answer that wraps `ErrRequiresApproval` and says why and for how long |
 | `Config`, `DefaultConfig()` | Engine defaults |
 | `Entity`, `NewEntity()` | Base entity with `CreatedAt` and `UpdatedAt` |
 | `ErrNoStore`, `ErrNoScope`, `ErrAgentNotFound`, `ErrAlreadyExists`, `ErrNotSuspended`, ... | Sentinel errors; see [Error Handling](/docs/concepts/errors) |
@@ -35,7 +37,9 @@ The central coordinator.
 | `Engine.Store()`, `Extensions()`, `Config()`, `UpdateConfig(cfg)`, `LLM()`, `Safety()`, `Knowledge()`, `A2A()` | Accessors |
 | `Engine.RunAgent(ctx, name, input, overrides)` | Run an agent and wait for the `*run.Run` |
 | `Engine.StreamAgent(ctx, name, input, overrides, events)` | Run an agent and send `StreamEvent`s on a channel, which it closes |
-| `Engine.Resume`, `ResumeStream`, `CancelRun` | Continue or cancel a suspended run |
+| `Engine.Resume`, `ResumeStream`, `CancelRun` | Continue or cancel a suspended run. `CancelRun` also accepts a ready or reclaimable run |
+| `Engine.DecideCheckpoint`, `ProvideResults`, `ContinueRun`, `ContinueRunStream` | Record a decision or results and return, then continue the run from a job; see [Runs](/docs/execution/runs#continuing-a-run-from-a-job) |
+| `Engine.Tools()`, `ToolRetrySafe(name)`, `WorkerID()`, `RunConcurrency()` | The tool catalog, a tool's retry-safety, this engine's lease owner name and its run cap |
 | `WithVerificationWorker`, `Engine.VerifyRun(ctx, request)` | Explicit verification of a saved candidate through durable jobs and guarded commit; see [Assurance](/docs/execution/assurance) |
 | `Engine.BuildSystemPrompt(ctx, ag, overrides)` | The assembled system prompt for an agent |
 | `Engine.CreateAgent`, `GetAgent`, `GetAgentByName`, `UpdateAgent`, `DeleteAgent`, `ListAgents`, `CountAgents`, `CloneAgent` | Agents |
@@ -47,8 +51,19 @@ The central coordinator.
 | `Engine.SendMessage`, `AgentInbox`, `ListConversations`, `GetConversation`, `ListMessages` | Agent messaging |
 | `Engine.VisibleTools(ctx, agentID)` | The tools an agent would see |
 | `RunOverrides`, `ResumeInput`, `ToolResult`, `StreamEvent`, `ToolHandler` | Run inputs and outputs |
-| `WithStore`, `WithLLM`, `WithConfig`, `WithTool`, `WithExternalTool`, `WithToolAuthorizer`, `WithSafety`, `WithKnowledge`, `WithA2A`, `WithExtension`, `WithLogger`, `WithMetrics`, `WithSuspensionTTL`, `WithSuspensionSweepInterval`, `WithSuspensionSweepLimit` | Engine options; see [Configuration](/docs/concepts/configuration) |
+| `WithStore`, `WithLLM`, `WithConfig`, `WithTool`, `WithExternalTool`, `WithToolRetrySafe`, `WithToolAuthorizer`, `WithPrincipalCodec`, `WithRejectionsReturnToModel`, `WithSafety`, `WithKnowledge`, `WithA2A`, `WithExtension`, `WithLogger`, `WithMetrics`, `WithSuspensionTTL`, `WithSuspensionSweepInterval`, `WithSuspensionSweepLimit`, `WithAgentReplyGrace`, `WithRunConcurrency`, `WithRunLease`, `WithWorkerID`, `WithReclaimLimit`, `WithReadyRenotify` | Engine options; see [Configuration](/docs/concepts/configuration) |
 | `DetachTrace(ctx)` | A context whose run is traced as a new root linked to ctx's span; see [Observability](/docs/infrastructure/observability) |
+
+### `github.com/xraph/cortex/tool`
+
+Typed tools. The input and output types give you the JSON schema and the encoding. See [Tools](/docs/concepts/tools).
+
+```go
+func New[In, Out any](name, description string, fn func(ctx context.Context, inv cortex.Invocation, in In) (Out, error), opts ...Option) (llm.Tool, engine.ToolHandler)
+func Register[In, Out any](name, description string, fn ..., opts ...Option) engine.Option
+func RetrySafe() Option
+func Schema[In any]() (map[string]any, error)
+```
 
 ## Domain packages
 
@@ -275,12 +290,14 @@ type Run struct {
     AgentID                id.AgentID
     SessionID              id.SessionID
     Scope                  cortex.Scope
-    State                  State // created, running, completed, failed, cancelled, paused
+    State                  State // created, running, completed, incomplete, failed, cancelled, paused, ready, reclaimable
     Input, Output, Error   string
     StepCount, TokensUsed  int
     StartedAt, CompletedAt *time.Time
     PersonaRef             string
     Metadata               map[string]any
+    Lease                  *Lease // worker and expiry while running; nil otherwise
+    Reclaims               int    // times a lapsed lease made the run reclaimable
 }
 
 type Step struct { ID, RunID, Scope, Index, Type, Input, Output, TokensUsed, ... }
@@ -292,6 +309,20 @@ type Store interface { // 9 methods
     CreateToolCall, ListToolCalls
 }
 ```
+
+Run states and the continuation capability:
+
+```go
+// StateReady: a decision or results are recorded, waiting for ContinueRun.
+// StateReclaimable: the worker handed off or its lease lapsed.
+type ContinuationStore interface { // optional; the three built-in stores implement it
+    MarkReady, HoldLease, MarkReclaimable, ClaimContinuation,
+    ListLapsedAcrossScopes, ListContinuableAcrossScopes, MarkNotified
+}
+// Also: Readiness, ReadyNotice, ReclaimNotice, Lease, ReadySource
+```
+
+See [Runs](/docs/execution/runs#durability-leases-hand-off-and-reclaim).
 
 ### `github.com/xraph/cortex/session`
 
@@ -383,6 +414,8 @@ type Store interface { // 7 methods
     ListExpired, ListExpiredAcrossScopes, ClaimExpiredSuspension
 }
 ```
+
+`suspension.ProgressStore` is an optional capability (`SaveProgress`, `GetProgress`, `DeleteProgress`) that holds a running run's progress snapshot, so another replica can continue it after a hand-off or a lapsed lease. The built-in stores implement it.
 
 See [Suspension](/docs/concepts/suspension).
 
@@ -498,12 +531,13 @@ PostgreSQL and SQLite register their migrations in Go and need Grove's `pgmigrat
 
 ### `github.com/xraph/cortex/plugin`
 
-The plugin system: the base interface, 21 lifecycle hook interfaces, and the Registry.
+The plugin system: the base interface, 26 lifecycle hook interfaces, and the Registry.
 
 ```go
 type Extension interface { Name() string }
 
-// 21 hook interfaces: RunStarted, RunCompleted, RunFailed,
+// 26 hook interfaces: RunStarted, RunCompleted, RunFailed,
+// RunSuspended, RunReady, RunReclaimable, RunTerminated, PublicationRejected,
 // StepStarted, StepCompleted, ToolCalled, ToolCompleted, ToolFailed, ToolDenied,
 // PersonaResolved, BehaviorTriggered, CognitivePhaseChanged (never emitted yet),
 // CheckpointCreated, CheckpointResolved,
@@ -546,7 +580,8 @@ type RecorderFunc func(ctx context.Context, event *AuditEvent) error // adapter
 The REST handlers, 59 routes. See the [HTTP API reference](/docs/api-reference/http-api).
 
 ```go
-func New(eng *engine.Engine, router forge.Router) *API
+func New(eng *engine.Engine, router forge.Router, options ...Option) *API
+func WithAuthorizer(a Authorizer) Option // Authorizer: Authorize(ctx, Operation) error, DecidedBy(ctx) (string, error)
 func (a *API) Handler() http.Handler
 func (a *API) RegisterRoutes(router forge.Router) error
 ```
@@ -582,6 +617,16 @@ Evaluation through [Sentinel](https://github.com/xraph/sentinel): `EngineOption(
 
 Package `fabriqbrain`: Fabriq as a knowledge provider, extra tools and a learning-loop plugin. See [Fabriq Brain](/docs/integrations/fabriq).
 
+### `github.com/xraph/cortex/mcpbridge`
+
+Registers the tools of an MCP server as cortex tools, taking retry safety from the server's annotations. See [MCP Tools](/docs/integrations/mcp).
+
+```go
+func Tools(ctx context.Context, cs *mcp.ClientSession, opts Options) ([]Tool, error)
+func EngineOptions(ctx context.Context, cs *mcp.ClientSession, opts Options) ([]engine.Option, error)
+// Options: Prefix, Include, MaxResultBytes
+```
+
 ### `github.com/xraph/cortex/a2aremote`
 
 Agent2Agent over JSON-RPC, REST and SSE, with gRPC in `a2aremote/grpcbind`. Not tagged yet. See [Remote Agents](/docs/execution/remote-messaging).
@@ -592,6 +637,7 @@ Agent2Agent over JSON-RPC, REST and SSE, with gRPC in `a2aremote/grpcbind`. Not 
 |---------|------|-------------|
 | `cortex` | Core | Root: context helpers, errors, config, authorization |
 | `engine` | Core | Central coordinator |
+| `tool` | Core | Typed tools |
 | `agent` | Domain | Agent configuration |
 | `skill` | Domain | Skills and tool bindings |
 | `trait` | Domain | Personality traits |
@@ -623,4 +669,5 @@ Agent2Agent over JSON-RPC, REST and SSE, with gRPC in `a2aremote/grpcbind`. Not 
 | `extension` | Module | Forge extension |
 | `sentinel` | Module | Sentinel evaluation |
 | `integrations/fabriq` | Module | Fabriq brain |
+| `mcpbridge` | Module | MCP server tools as cortex tools |
 | `a2aremote` | Module | Remote Agent2Agent (untagged) |

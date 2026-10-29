@@ -75,9 +75,16 @@ A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel`
 | `engine.WithSafety(scanner)` | Scans input and output through a `safety.Scanner` |
 | `engine.WithKnowledge(provider)` | Sets the `knowledge.Provider` for skill knowledge and the `knowledge_search` tool |
 | `engine.WithA2A(opts)` | Turns on agent-to-agent messaging |
-| `engine.WithSuspensionTTL(d)` | How long a suspended run waits before it's failed. Zero turns expiry off |
+| `engine.WithToolRetrySafe(names...)` | Marks registered tools as safe to run again after a crash. Every name must already be registered, or `New` fails. A tool that isn't retry-safe and has an unknown outcome stops a reclaimed run with `cortex.ErrEffectUncertain` |
+| `engine.WithRejectionsReturnToModel()` | Sends a rejected approval back to the model as an error result instead of failing the run |
+| `engine.WithSuspensionTTL(d)` | The default deadline for a suspended run, 24 hours unless you change it. Zero means no default deadline; the sweeper still runs for pauses that carry their own |
+| `engine.WithAgentReplyGrace(d)` | How long past an ask's reply-by the engine waits before it fails a run waiting on an agent. Five minutes by default |
 | `engine.WithSuspensionSweepInterval(d)` | How often the expiry sweeper runs |
 | `engine.WithSuspensionSweepLimit(n)` | How many expired suspensions one sweep handles |
+| `engine.WithRunLease(ttl)` | How long a worker's lease on a running run lasts. 60 seconds by default, renewed every `ttl/3`. Zero turns leases, progress snapshots and hand-offs off. Every engine sharing a store needs the same setting |
+| `engine.WithWorkerID(id)` | Names this engine as a lease owner. Unique per replica and stable for the process. Defaults to the hostname, pid and a random suffix |
+| `engine.WithReclaimLimit(n)` | How often a run may be reclaimed after a lapsed lease before it's failed with `cortex.ErrReclaimLimit`. Three by default |
+| `engine.WithReadyRenotify(d)` | How long a `ready` or `reclaimable` run waits before the sweeper fires its hook again. Five minutes by default; zero turns it off |
 | `engine.WithRunConcurrency(n)` | Caps how many runs execute at once. Zero, the default, is no limit; a negative `n` fails `New`. See [Run concurrency](#run-concurrency) |
 | `engine.WithExtension(ext)` | Registers a plugin extension |
 | `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger; the Forge extension passes the app's logger |
@@ -95,7 +102,7 @@ eng, err := engine.New(
 
 With a cap of 8 the ninth run waits for a slot, and only for as long as its `ctx` allows. When the `ctx` ends first you get an error matching `ctx.Err()` (usually `context.DeadlineExceeded`) and no run row is written, so a job runner can put the work back on its queue. `eng.RunConcurrency()` reports the cap.
 
-`RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream` and `ResolveCheckpoint` are all counted, as are the resumes the message bus and agent-reply recovery start. A stream keeps its slot until its channel closes. A run started on the `ctx` of a run that already has a slot (a tool calling `RunAgent`, say) shares that slot, which is why a cap of 1 can't deadlock on nested runs. Runs started by the experimental task workers, prepared orchestrations and plan replanning aren't counted against the cap.
+`RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream`, `ResolveCheckpoint`, `ContinueRun` and `ContinueRunStream` are all counted, as are the resumes the message bus and agent-reply recovery start. A stream keeps its slot until its channel closes. A run started on the `ctx` of a run that already has a slot (a tool calling `RunAgent`, say) shares that slot, which is why a cap of 1 can't deadlock on nested runs. Runs started by the experimental task workers, prepared orchestrations and plan replanning aren't counted against the cap.
 
 `eng.Stop(ctx)` stops admitting first. New runs get `cortex.ErrEngineStopping` and `Stop` waits for the runs already executing. A leased run hands itself off at its next model call or tool dispatch: it saves its progress, becomes `reclaimable` for another replica and returns `cortex.ErrRunInterrupted`. If `ctx` ends before the runs are done, `Stop` returns its error and no shutdown hook fires. Leased runs still going are told to hand off then, but `Stop` doesn't wait for them, so a process that exits straight away may leave a few to lapse and be reclaimed by the sweep instead. A run without a lease is left running, so it still records its own result. A run started from inside another run's tool isn't handed off by the drain; it finishes with the call that started it. Call `Stop` again to complete the shutdown. `eng.Start(ctx)` admits runs again.
 

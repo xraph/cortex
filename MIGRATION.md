@@ -159,6 +159,102 @@ The Sentinel UI hook implementation was disconnected in `06ea111`. Its remaining
 
 Earlier ledger rows describe the original migration review and retain their original limits. External production credentials/grants and Sentinel automatic evaluation remain outside the verified local cutover.
 
+# Upgrading from v1.9.0
+
+This is the section to read if you run v1.9.0 today. It covers what changes when you move to v1.10.0, how to run both versions side by side while you roll out, and what to clean up afterwards.
+
+## Behaviour changes
+
+A resumed run now continues under the principal that started it, not the one that resumed it. The engine stores the principal on the run through a `cortex.PrincipalCodec` and decodes it before every resume, continuation and reclaim. The Tool Authorization page in the docs has the details.
+
+`engine.New` fails with `cortex.ErrPrincipalCodecRequired` when you install a `ToolAuthorizer` without `engine.WithPrincipalCodec`. For most hosts the fix is one line:
+
+```go
+engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*Caller]())
+```
+
+Without an authorizer a codec is optional, and resumed runs carry a nil principal.
+
+`ResolveCheckpoint` records the approval before the run continues. If the continuation then fails, the decision stays recorded and the run is failed, or left `ready` when the failure came before the claim. Deciding again is refused, so an approved call never runs twice.
+
+`WithSuspensionTTL(0)` no longer stops the sweeper. Zero now means no default deadline, and the sweeper keeps running for approvals, external tools and agent replies that carry a deadline of their own.
+
+The Forge extension now applies `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature`, `default_reasoning_loop`, `run_concurrency` and `shutdown_timeout`. v1.9.0 read them and ignored them. `run_concurrency` defaults to 0, which is unlimited, so nothing changes until you set it. An engine option you pass with `extension.WithEngineOption` still wins.
+
+`Stop` waits for runs in flight and hands off the leased ones to another replica. New runs started during the drain get `cortex.ErrEngineStopping`, which a host that queues work can treat as "try another worker".
+
+`Migrate` on PostgreSQL waits for the migration lock instead of failing when another replica holds it. Give it a context with a deadline.
+
+The REST module takes an optional `api.Authorizer`. With one installed, `resolveCheckpoint` takes the decider from its `DecidedBy` method and ignores the `decided_by` in the body. `sendAgentMessage` keeps its `from` as whatever the caller says it is.
+
+REST responses now carry one JSON object per body. On most routes v1.9.0 wrote two concatenated objects, so a client that worked around the second one needs to stop.
+
+## New migrations
+
+Migrations `20261101000001` to `20261101000003` are additive and run in the `cortex` group. They add the stored principal, the lease and ready columns on runs, and the progress table. Hosts that migrate centrally need nothing else.
+
+## Rolling out next to v1.9.0
+
+v1.9.0 advances run revisions but holds no leases, and it can't continue, cancel or expire a `ready` or `reclaimable` run. Keep both versions on one database only for the length of a rolling restart.
+
+A run that a v1.9.0 replica is executing never had a lease. v1.10.0 only reclaims runs whose lease lapsed, so it never takes one of those. They finish, or stay where v1.9.0 left them.
+
+Keep at least one upgraded replica running at all times. It owns the sweeper that reclaims lapsed leases and tells your host again about runs left `ready` or `reclaimable`.
+
+Every engine that shares a store has to use the same lease setting. An engine with `WithRunLease(0)` next to one that leases runs would have its runs taken from under it.
+
+A replica that may continue a run the messaging bus started for an a2a directive needs messaging configured. Without it the replica can't send the answer, and only logs a warning.
+
+Rolling back to v1.9.0 strands `ready` and `reclaimable` runs. Drain them, and any `paused_prepared` ones, first:
+
+```sql
+SELECT id, state FROM cortex_runs WHERE state IN ('ready','reclaimable','paused_prepared');
+```
+
+The same query works on SQLite. On MongoDB use `db.cortex_runs.find({state: {$in: ["ready", "reclaimable", "paused_prepared"]}})`.
+
+## Runs left in running with no lease
+
+A run that was `running` before the upgrade has no lease, so nothing reclaims it. If its worker died, it stays `running` for good. List the candidates:
+
+```sql
+SELECT id FROM cortex_runs
+WHERE state = 'running' AND lease_expires_at IS NULL AND updated_at < now() - interval '1 hour';
+```
+
+On SQLite:
+
+```sql
+SELECT id FROM cortex_runs
+WHERE state = 'running' AND lease_expires_at IS NULL AND updated_at < datetime('now', '-1 hour');
+```
+
+On MongoDB:
+
+```js
+db.cortex_runs.find({
+  state: "running",
+  lease_expires_at: null,
+  updated_at: { $lt: new Date(Date.now() - 60 * 60 * 1000) }
+})
+```
+
+Cancel what you find with `engine.CancelRun`, but only once no v1.9.0 replica is still running. A live v1.9.0 run looks exactly the same: running, no lease, quiet for a while.
+
+# Upgrading from v1.8.0
+
+If you skip v1.9.0, read the section above as well. Two more things apply.
+
+Pauses written by v1.8.0 can't be resumed after the upgrade. v1.8.0 writes prepared continuations at schema 1, and this release doesn't accept schema 1. Before you upgrade, let those paused runs finish or cancel them on v1.8.0. Find them with:
+
+```sql
+SELECT run_id FROM cortex_suspensions WHERE COALESCE((continuation->>'schema_version')::int, 0) = 1;
+```
+
+On SQLite use `json_extract(continuation, '$.schema_version') = 1` as the condition. On MongoDB the continuation is a native document whose field names are lowercased with no underscore, so the filter is `{"continuation.schemaversion": 1}`. Don't edit the schema number or the paused row to get past the check.
+
+New pauses are stored as `paused_prepared` at schema 2. v1.8.0 can still claim that state, because both versions match `paused` and `paused_prepared`, but it rejects the continuation, so only upgraded workers resume them. Its sweeper can still expire them at their deadline, which is the intended outcome.
+
 # Run revisions and conditional updates
 
 Built-in stores now assign `run.Run.Revision = 1` when you create a run.
