@@ -77,9 +77,12 @@ type ToolChoice struct {
 // NativeContent is an assistant reply in the provider's own format, such
 // as Anthropic content blocks with their signed thinking. A client sets it
 // on a response, and the engine keeps it on the assistant message it
-// appends and sends it back unchanged, so a thinking model sees its own
-// earlier turns. It never goes into conversation memory and is never
-// published.
+// appends and sends it back with the next request, so a thinking model sees
+// its own earlier turns. A client may re-encode the JSON on the way out, so
+// the model gets equivalent content, not necessarily the same bytes. It
+// never goes into conversation memory and is never published. It does hold
+// the model's own, unredacted content in progress snapshots and
+// continuations.
 type NativeContent struct {
 	// Provider names the provider whose format Content is in.
 	Provider string `json:"provider"`

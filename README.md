@@ -138,7 +138,7 @@ If you leave out `WithLLM`, `RunAgent` still works, in an echo mode that's handy
 
 The adapter refuses to send a call without a Nexus tenant, which is why the quick start makes one. In a real host you map your scope to its tenant with `nexusllm.WithTenant`, or set `pipeline.WithTenantID` on the context next to the scope. Each call is recorded in Nexus's usage with your scope levels and the run and agent behind it, so you can see what a run cost. `nexusllm.WithProvider` pins the provider a workspace picked, and `nexusllm.WithSamplingUnsupported` tells the adapter which models reject `temperature` (Claude 5.5 does, and the adapter already knows those ids).
 
-Thinking models keep their signed thinking between turns, through approvals and reclaims, but it never reaches conversation memory. A Nexus guard that blocks a response stops the run with `safety_block` and no tool from that step runs. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#nexus-adapter) has the details.
+Thinking models keep their signed thinking between turns, through approvals and reclaims, but it never reaches conversation memory. A turn whose text your publication gate redacted loses its thinking blocks when it is replayed to the model (set the Nexus Anthropic provider's `anthropic.WithThinkingBlockBinding("drop_block")` if you want that explicit). The thinking blocks are the model's unredacted output, and they sit that way in progress snapshots and continuations. A Nexus guard that blocks a response stops the run with `safety_block` and no tool from that step runs. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#nexus-adapter) has the details.
 
 ## Why Cortex?
 

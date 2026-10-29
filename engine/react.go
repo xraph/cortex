@@ -341,7 +341,8 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			}
 			// Append assistant message with tool calls. Native goes with it
 			// as the provider returned it, even when publication redacted
-			// Content: it is only ever sent back to the model.
+			// Content: it is only ever sent back to the model, which gets
+			// equivalent JSON (the client may re-encode it).
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   resp.Content,

@@ -23,6 +23,7 @@ import (
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/safety"
 )
 
 // nativeContent is what a thinking model returns next to a tool call: its
@@ -143,10 +144,10 @@ func nativeEngine(t *testing.T, model llm.Client, gated bool) (*engine.Engine, *
 }
 
 // streamRun runs the assistant through StreamAgent and returns its events.
-func streamRun(t *testing.T, e *engine.Engine, input string) []engine.StreamEvent {
+func streamRun(t *testing.T, e *engine.Engine) []engine.StreamEvent {
 	t.Helper()
 	events := make(chan engine.StreamEvent, 64)
-	require.NoError(t, e.StreamAgent(leaseScope(), "assistant", input, nil, events))
+	require.NoError(t, e.StreamAgent(leaseScope(), "assistant", "work", nil, events))
 	var out []engine.StreamEvent
 	for ev := range events {
 		out = append(out, ev)
@@ -163,7 +164,9 @@ func onlyNativeRun(t *testing.T, e *engine.Engine) *run.Run {
 }
 
 // requireNative checks that the request's assistant message with tool
-// calls carries want, byte for byte, and returns its index.
+// calls carries want as cortex holds it, and returns its index. A client
+// may re-encode the JSON on the way to the provider, so the model sees
+// equivalent content, not necessarily the same bytes.
 func requireNative(t *testing.T, req *llm.Request, want *llm.NativeContent) int {
 	t.Helper()
 	for i, m := range req.Messages {
@@ -191,7 +194,7 @@ func TestNativeContentSurvivesSuspension(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, run.StatePaused, paused.State)
 			} else {
-				streamRun(t, e, "work")
+				streamRun(t, e)
 			}
 			r := onlyNativeRun(t, e)
 			require.Equal(t, run.StatePaused, r.State)
@@ -319,7 +322,7 @@ func TestBlockedStreamDispatchesNoTool(t *testing.T) {
 			e, ran := nativeEngine(t, model, false)
 
 			if mode == "stream" {
-				events := streamRun(t, e, "work")
+				events := streamRun(t, e)
 				types := make([]engine.StreamEventType, 0, len(events))
 				for _, ev := range events {
 					types = append(types, ev.Type)
@@ -350,7 +353,7 @@ func TestEngineSetsRequestMetadata(t *testing.T) {
 				_, err := e.RunAgent(leaseScope(), "assistant", "work", nil)
 				require.NoError(t, err)
 			} else {
-				streamRun(t, e, "work")
+				streamRun(t, e)
 			}
 			r := onlyNativeRun(t, e)
 			require.Equal(t, run.StateCompleted, r.State)
@@ -364,4 +367,63 @@ func TestEngineSetsRequestMetadata(t *testing.T) {
 			}
 		})
 	}
+}
+
+// redactingGate rewrites any text that contains "secret" and approves the rest.
+type redactingGate struct{}
+
+func (redactingGate) Check(_ context.Context, r safety.PublicationRequest) (safety.PublicationDecision, error) {
+	if strings.Contains(r.Content, "secret") {
+		return safety.PublicationDecision{Text: "[redacted]", Status: safety.StatusRedacted}, nil
+	}
+	return safety.PublicationDecision{Text: r.Content, Status: safety.StatusApproved}, nil
+}
+
+// TestRedactedTurnKeepsNativeForReplay pins what the engine sends after a
+// publication gate redacts an assistant turn's text: the redacted text with
+// the model's native content still attached. Whether the model sees the
+// native thinking is the client's call (nexus drops it for a turn whose text
+// no longer matches), so the test stops at the request and checks the run
+// goes on without error.
+func TestRedactedTurnKeepsNativeForReplay(t *testing.T) {
+	for _, mode := range []string{"sync", "stream"} {
+		t.Run(mode, func(t *testing.T) {
+			first := nativeToolCall()
+			first.Content = "the secret is 1234"
+			model := &nativeLLM{responses: []*llm.Response{first}}
+			e := gatedNativeEngine(t, model)
+
+			var done *run.Run
+			if mode == "sync" {
+				var err error
+				done, err = e.RunAgent(leaseScope(), "assistant", "work", nil)
+				require.NoError(t, err)
+			} else {
+				streamRun(t, e)
+				done = onlyNativeRun(t, e)
+			}
+			require.Equal(t, run.StateCompleted, done.State)
+
+			reqs := model.seen()
+			require.Len(t, reqs, 2)
+			at := requireNative(t, reqs[1], nativeContent())
+			assistant := reqs[1].Messages[at]
+			require.Equal(t, "[redacted]", assistant.Content, "the replayed turn carried unredacted text")
+			require.NotContains(t, assistant.Content, "secret")
+		})
+	}
+}
+
+func gatedNativeEngine(t *testing.T, model llm.Client) *engine.Engine {
+	t.Helper()
+	st := openSQLiteStoreForTest(t, filepath.Join(t.TempDir(), "gated.db")+"?_pragma=busy_timeout(10000)")
+	e, err := engine.New(
+		engine.WithStore(st),
+		engine.WithLLM(model),
+		engine.WithPublicationGate(redactingGate{}),
+		engine.WithTool(llm.Tool{Name: "c"}, func(context.Context, cortex.Invocation) (string, error) { return "c-result", nil }),
+	)
+	require.NoError(t, err)
+	require.NoError(t, e.CreateAgent(leaseScope(), &agent.Config{ID: id.NewAgentID(), Name: "assistant", MaxSteps: 5}))
+	return e
 }
