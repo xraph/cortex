@@ -47,7 +47,7 @@ func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) (*
 		return nil, fmt.Errorf("list checkpoints: %w", err)
 	}
 	resp := newListCheckpointsResponse(cps)
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 // newListCheckpointsResponse serves checkpoints without the decider's

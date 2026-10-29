@@ -128,7 +128,7 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 	if err := a.eng.CreateOrchestration(ctx.Context(), c); err != nil {
 		return nil, fmt.Errorf("create orchestration: %w", err)
 	}
-	return c, ctx.JSON(http.StatusCreated, c)
+	return nil, ctx.JSON(http.StatusCreated, c)
 }
 
 func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*orchestration.Config, error) {
@@ -136,7 +136,7 @@ func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return c, ctx.JSON(http.StatusOK, c)
+	return c, nil
 }
 
 func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsRequest) (*ListOrchestrationsResponse, error) {
@@ -148,7 +148,7 @@ func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsReque
 		return nil, fmt.Errorf("list orchestrations: %w", err)
 	}
 	resp := &ListOrchestrationsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationRequest) (*orchestration.Config, error) {
@@ -179,7 +179,7 @@ func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationReq
 	if err := a.eng.UpdateOrchestration(ctx.Context(), c); err != nil {
 		return nil, fmt.Errorf("update orchestration: %w", err)
 	}
-	return c, ctx.JSON(http.StatusOK, c)
+	return c, nil
 }
 
 func (a *API) deleteOrchestration(ctx forge.Context, _ *DeleteOrchestrationRequest) (*struct{}, error) {
@@ -213,7 +213,7 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 		Output:     r.Output,
 		DurationMs: durationMs,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRunsRequest) (*ListOrchestrationRunsResponse, error) {
@@ -226,7 +226,7 @@ func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRun
 		return nil, fmt.Errorf("list orchestration runs: %w", err)
 	}
 	resp := &ListOrchestrationRunsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunRequest) (*orchestration.Run, error) {
@@ -238,5 +238,5 @@ func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunReque
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return r, ctx.JSON(http.StatusOK, r)
+	return r, nil
 }

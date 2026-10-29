@@ -115,7 +115,7 @@ func (a *API) createPersona(ctx forge.Context, req *CreatePersonaRequest) (*pers
 		return nil, fmt.Errorf("create persona: %w", err)
 	}
 
-	return p, ctx.JSON(http.StatusCreated, p)
+	return nil, ctx.JSON(http.StatusCreated, p)
 }
 
 func (a *API) getPersona(ctx forge.Context, _ *GetPersonaRequest) (*persona.Persona, error) {
@@ -123,7 +123,7 @@ func (a *API) getPersona(ctx forge.Context, _ *GetPersonaRequest) (*persona.Pers
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return p, ctx.JSON(http.StatusOK, p)
+	return p, nil
 }
 
 func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) (*ListPersonasResponse, error) {
@@ -135,7 +135,7 @@ func (a *API) listPersonas(ctx forge.Context, req *ListPersonasRequest) (*ListPe
 		return nil, fmt.Errorf("list personas: %w", err)
 	}
 	resp := &ListPersonasResponse{Items: personas}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updatePersona(ctx forge.Context, req *UpdatePersonaRequest) (*persona.Persona, error) {
@@ -180,7 +180,7 @@ func (a *API) updatePersona(ctx forge.Context, req *UpdatePersonaRequest) (*pers
 	if err := a.eng.UpdatePersona(ctx.Context(), p); err != nil {
 		return nil, fmt.Errorf("update persona: %w", err)
 	}
-	return p, ctx.JSON(http.StatusOK, p)
+	return p, nil
 }
 
 func (a *API) deletePersona(ctx forge.Context, _ *DeletePersonaRequest) (*struct{}, error) {
@@ -199,5 +199,5 @@ func (a *API) clonePersona(ctx forge.Context, req *ClonePersonaRequest) (*person
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return clone, ctx.JSON(http.StatusCreated, clone)
+	return nil, ctx.JSON(http.StatusCreated, clone)
 }

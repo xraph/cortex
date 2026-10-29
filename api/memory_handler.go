@@ -54,7 +54,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 		// No session has ever been created for this agent in this scope
 		// (the agent has never run), so there is nothing to load yet.
 		resp := &GetConversationResponse{Messages: []memory.Message{}}
-		return resp, ctx.JSON(http.StatusOK, resp)
+		return resp, nil
 	}
 
 	limit := defaultLimit(req.Limit)
@@ -64,7 +64,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 		return nil, fmt.Errorf("load conversation: %w", err)
 	}
 	resp := &GetConversationResponse{Messages: messages}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) clearConversation(ctx forge.Context, req *ClearConversationRequest) (*struct{}, error) {

@@ -51,7 +51,16 @@ func TestRunResponsePreservesAssuranceAndLegacyUnchecked(t *testing.T) {
 			t.Fatal(err)
 		}
 		response := &runResponseContext{ctx: ctx, id: r.ID.String()}
-		if _, err = (&API{eng: eng}).getRun(response, &GetRunRequest{}); err != nil {
+		// A 200 is returned for forge to serialize, so the wire body is
+		// the result marshalled, not anything the handler wrote.
+		result, getErr := (&API{eng: eng}).getRun(response, &GetRunRequest{})
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if response.body != nil {
+			t.Fatalf("getRun wrote a body as well as returning one: %s", response.body)
+		}
+		if response.body, err = json.Marshal(result); err != nil {
 			t.Fatal(err)
 		}
 		if response.headers["Cache-Control"] != "no-store" {
@@ -77,7 +86,14 @@ func TestSynchronousRunResponseIncludesAssurance(t *testing.T) {
 	}
 	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "tenant", Value: "a"}}})
 	response := &runResponseContext{ctx: ctx}
-	if _, err = (&API{eng: eng}).runAgent(response, &RunAgentRequest{Name: "assistant", Input: "work"}); err != nil {
+	result, err := (&API{eng: eng}).runAgent(response, &RunAgentRequest{Name: "assistant", Input: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.body != nil {
+		t.Fatalf("runAgent wrote a body as well as returning one: %s", response.body)
+	}
+	if response.body, err = json.Marshal(result); err != nil {
 		t.Fatal(err)
 	}
 	var wire map[string]any

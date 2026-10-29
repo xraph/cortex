@@ -147,7 +147,7 @@ func (a *API) createAgent(ctx forge.Context, req *CreateAgentRequest) (*agent.Co
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	return cfg, ctx.JSON(http.StatusCreated, cfg)
+	return nil, ctx.JSON(http.StatusCreated, cfg)
 }
 
 func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, error) {
@@ -155,7 +155,7 @@ func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, er
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return cfg, ctx.JSON(http.StatusOK, cfg)
+	return cfg, nil
 }
 
 func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
@@ -167,7 +167,7 @@ func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgents
 		return nil, fmt.Errorf("list agents: %w", err)
 	}
 	resp := &ListAgentsResponse{Items: agents}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Config, error) {
@@ -222,7 +222,7 @@ func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Co
 	if err := a.eng.UpdateAgent(ctx.Context(), cfg); err != nil {
 		return nil, fmt.Errorf("update agent: %w", err)
 	}
-	return cfg, ctx.JSON(http.StatusOK, cfg)
+	return cfg, nil
 }
 
 func (a *API) deleteAgent(ctx forge.Context, _ *DeleteAgentRequest) (*struct{}, error) {
@@ -263,7 +263,7 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 		TokensUsed:         r.TokensUsed,
 		DurationMs:         durationMs,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}, error) {
@@ -306,7 +306,7 @@ func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*Previe
 	resp := &PreviewPromptResponse{
 		Prompt: prompt,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Config, error) {
@@ -314,7 +314,7 @@ func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Conf
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return clone, ctx.JSON(http.StatusCreated, clone)
+	return nil, ctx.JSON(http.StatusCreated, clone)
 }
 
 // mapOverrides converts API-layer overrides to engine-layer overrides.

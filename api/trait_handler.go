@@ -106,7 +106,7 @@ func (a *API) createTrait(ctx forge.Context, req *CreateTraitRequest) (*trait.Tr
 		return nil, fmt.Errorf("create trait: %w", err)
 	}
 
-	return t, ctx.JSON(http.StatusCreated, t)
+	return nil, ctx.JSON(http.StatusCreated, t)
 }
 
 func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, error) {
@@ -114,7 +114,7 @@ func (a *API) getTrait(ctx forge.Context, _ *GetTraitRequest) (*trait.Trait, err
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return t, ctx.JSON(http.StatusOK, t)
+	return t, nil
 }
 
 func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) (*ListTraitsResponse, error) {
@@ -127,7 +127,7 @@ func (a *API) listTraits(ctx forge.Context, req *ListTraitsRequest) (*ListTraits
 		return nil, fmt.Errorf("list traits: %w", err)
 	}
 	resp := &ListTraitsResponse{Items: traits}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Trait, error) {
@@ -173,7 +173,7 @@ func (a *API) updateTrait(ctx forge.Context, req *UpdateTraitRequest) (*trait.Tr
 	if err := a.eng.UpdateTrait(ctx.Context(), t); err != nil {
 		return nil, fmt.Errorf("update trait: %w", err)
 	}
-	return t, ctx.JSON(http.StatusOK, t)
+	return t, nil
 }
 
 func (a *API) deleteTrait(ctx forge.Context, _ *DeleteTraitRequest) (*struct{}, error) {

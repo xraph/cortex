@@ -26,11 +26,13 @@ func (a *API) replayRun(ctx forge.Context, req *ReplayRunRequest) (*event.Replay
 	if err != nil {
 		return nil, replyReplayFailure(ctx, event.DescribeReplayFailure(err))
 	}
-	status := http.StatusOK
 	if page.Gap {
-		status = http.StatusGone
+		// A gap is still a page, served with 410. Forge writes only a 200
+		// from the result, so this one is written here and nothing is
+		// returned for forge to write again.
+		return nil, ctx.JSON(http.StatusGone, page)
 	}
-	return &page, ctx.JSON(status, page)
+	return &page, nil
 }
 
 // replyReplayFailure writes only the static replay failure vocabulary. Forge's

@@ -77,7 +77,7 @@ func (a *API) listA2AConversations(ctx forge.Context, req *ListA2AConversationsR
 		return nil, mapStoreError(err)
 	}
 	resp := &ListA2AConversationsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getA2AConversation(ctx forge.Context, _ *GetA2AConversationRequest) (*A2AConversationResponse, error) {
@@ -96,7 +96,7 @@ func (a *API) getA2AConversation(ctx forge.Context, _ *GetA2AConversationRequest
 	}
 
 	resp := &A2AConversationResponse{Conversation: conv, Messages: msgs}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getAgentInbox(ctx forge.Context, req *AgentInboxRequest) (*AgentInboxResponse, error) {
@@ -114,7 +114,7 @@ func (a *API) getAgentInbox(ctx forge.Context, req *AgentInboxRequest) (*AgentIn
 		return nil, mapStoreError(err)
 	}
 	resp := &AgentInboxResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) sendAgentMessage(ctx forge.Context, req *SendMessageRequest) (*a2a.SendResult, error) {
@@ -148,5 +148,5 @@ func (a *API) sendAgentMessage(ctx forge.Context, req *SendMessageRequest) (*a2a
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return res, ctx.JSON(http.StatusCreated, res)
+	return nil, ctx.JSON(http.StatusCreated, res)
 }

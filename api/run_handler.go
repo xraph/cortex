@@ -98,7 +98,7 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 		return nil, mapStoreError(err)
 	}
 	r = run.PublicView(r, a.eng.ResultContentAvailable())
-	return r, ctx.JSON(http.StatusOK, r)
+	return r, nil
 }
 
 func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
@@ -115,7 +115,7 @@ func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsRespon
 		publicRuns[i] = run.PublicView(current, a.eng.ResultContentAvailable())
 	}
 	resp := &ListRunsResponse{Items: publicRuns}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, error) {

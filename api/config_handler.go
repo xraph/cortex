@@ -45,12 +45,12 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	return nil
 }
 
-func (a *API) getConfig(ctx forge.Context, _ *struct{}) (*cortex.Config, error) {
+func (a *API) getConfig(_ forge.Context, _ *struct{}) (*cortex.Config, error) {
 	cfg := a.eng.Config()
-	return &cfg, ctx.JSON(http.StatusOK, cfg)
+	return &cfg, nil
 }
 
-func (a *API) updateConfig(ctx forge.Context, req *UpdateConfigRequest) (*cortex.Config, error) {
+func (a *API) updateConfig(_ forge.Context, req *UpdateConfigRequest) (*cortex.Config, error) {
 	update := cortex.Config{
 		DefaultModel:         req.DefaultModel,
 		DefaultMaxSteps:      req.DefaultMaxSteps,
@@ -60,5 +60,5 @@ func (a *API) updateConfig(ctx forge.Context, req *UpdateConfigRequest) (*cortex
 	}
 
 	cfg := a.eng.UpdateConfig(update)
-	return &cfg, ctx.JSON(http.StatusOK, cfg)
+	return &cfg, nil
 }

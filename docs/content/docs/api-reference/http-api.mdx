@@ -40,7 +40,7 @@ Without an authorizer every route is open to whoever reaches the router, and `re
 A few things to know before you call them:
 
 - List routes currently need `limit` and `offset` in the query string. They're meant to be optional (50 by default, capped at 1000), but the request binding rejects a request without them. The same goes for `limit` and `session_id` on the memory routes.
-- Successful responses can carry the JSON body twice, because the handlers write the response and also return it to Forge. A strict JSON client may choke on that.
+- Every response carries one JSON body. A `200` is serialized by Forge from the handler's result; a `201` (or a `410` replay gap) is written by the handler, which then returns nothing for Forge to write.
 - Create, update and list handlers don't translate store errors, so a duplicate name on create comes back as `500` rather than `409`. See [Error format](#error-format).
 
 

@@ -101,7 +101,7 @@ func (a *API) createSession(ctx forge.Context, req *CreateSessionRequest) (*sess
 		return nil, mapStoreError(err)
 	}
 
-	return s, ctx.JSON(http.StatusCreated, s)
+	return nil, ctx.JSON(http.StatusCreated, s)
 }
 
 func (a *API) getSession(ctx forge.Context, req *GetSessionRequest) (*session.Session, error) {
@@ -120,7 +120,7 @@ func (a *API) getSession(ctx forge.Context, req *GetSessionRequest) (*session.Se
 		return nil, mapStoreError(err)
 	}
 
-	return sess, ctx.JSON(http.StatusOK, sess)
+	return sess, nil
 }
 
 func (a *API) listSessions(ctx forge.Context, req *ListSessionsRequest) (*ListSessionsResponse, error) {
@@ -139,7 +139,7 @@ func (a *API) listSessions(ctx forge.Context, req *ListSessionsRequest) (*ListSe
 	}
 
 	resp := &ListSessionsResponse{Items: sessions}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) countSessions(ctx forge.Context, req *CountSessionsRequest) (*CountSessionsResponse, error) {
@@ -156,7 +156,7 @@ func (a *API) countSessions(ctx forge.Context, req *CountSessionsRequest) (*Coun
 	}
 
 	resp := &CountSessionsResponse{Count: count}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateSession(ctx forge.Context, req *UpdateSessionRequest) (*session.Session, error) {
@@ -186,7 +186,7 @@ func (a *API) updateSession(ctx forge.Context, req *UpdateSessionRequest) (*sess
 		return nil, mapStoreError(err)
 	}
 
-	return sess, ctx.JSON(http.StatusOK, sess)
+	return sess, nil
 }
 
 func (a *API) deleteSession(ctx forge.Context, req *DeleteSessionRequest) (*struct{}, error) {

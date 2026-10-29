@@ -107,7 +107,7 @@ func (a *API) createSkill(ctx forge.Context, req *CreateSkillRequest) (*skill.Sk
 		return nil, fmt.Errorf("create skill: %w", err)
 	}
 
-	return s, ctx.JSON(http.StatusCreated, s)
+	return nil, ctx.JSON(http.StatusCreated, s)
 }
 
 func (a *API) getSkill(ctx forge.Context, _ *GetSkillRequest) (*skill.Skill, error) {
@@ -115,7 +115,7 @@ func (a *API) getSkill(ctx forge.Context, _ *GetSkillRequest) (*skill.Skill, err
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return s, ctx.JSON(http.StatusOK, s)
+	return s, nil
 }
 
 func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) (*ListSkillsResponse, error) {
@@ -127,7 +127,7 @@ func (a *API) listSkills(ctx forge.Context, req *ListSkillsRequest) (*ListSkills
 		return nil, fmt.Errorf("list skills: %w", err)
 	}
 	resp := &ListSkillsResponse{Items: skills}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateSkill(ctx forge.Context, req *UpdateSkillRequest) (*skill.Skill, error) {
@@ -178,7 +178,7 @@ func (a *API) updateSkill(ctx forge.Context, req *UpdateSkillRequest) (*skill.Sk
 	if err := a.eng.UpdateSkill(ctx.Context(), s); err != nil {
 		return nil, fmt.Errorf("update skill: %w", err)
 	}
-	return s, ctx.JSON(http.StatusOK, s)
+	return s, nil
 }
 
 func (a *API) deleteSkill(ctx forge.Context, _ *DeleteSkillRequest) (*struct{}, error) {
