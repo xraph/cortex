@@ -2,11 +2,13 @@ package assurance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store/internal/runstate"
@@ -253,6 +255,60 @@ func (s *Repository) StartResumeLeased(ctx context.Context, runID id.AgentRunID,
 	})
 	if err != nil {
 		return suspension.ResumeStart{}, err
+	}
+	return result, nil
+}
+
+// AdmitResumeLeased is AdmitResume, taking the run's lease and writing its
+// first progress snapshot in the transaction that claims the pause. An
+// admission recorded before is returned as it was, and takes nothing.
+func (s *Repository) AdmitResumeLeased(ctx context.Context, input suspension.ResumeAdmissionRequest, lease run.Lease, first *suspension.Progress) (suspension.ResumeAdmission, error) {
+	req, digest, err := freezeResumeRequest(ctx, input)
+	if err != nil {
+		return suspension.ResumeAdmission{}, err
+	}
+	if leaseErr := checkLeasedClaim(req.Version.RunID, lease, first); leaseErr != nil {
+		return suspension.ResumeAdmission{}, leaseErr
+	}
+	driver, ok := s.driver.(RunDriver)
+	if !ok {
+		return suspension.ResumeAdmission{}, suspension.ErrResumeAdmissionUnavailable
+	}
+	var result suspension.ResumeAdmission
+	err = driver.TransactRun(ctx, req.Version.RunID, func(tc context.Context, tx RunTransaction) error {
+		result = suspension.ResumeAdmission{}
+		repo := s.inTransaction(tx)
+		prior, priorErr := repo.GetResumeAdmission(tc, req.Version.RunID, req.Version.SuspensionID)
+		if priorErr == nil {
+			if prior.RequestDigest != digest {
+				return suspension.ErrResumeAdmissionConflict
+			}
+			result = prior
+			return tc.Err()
+		}
+		if !errors.Is(priorErr, suspension.ErrResumeAdmissionNotFound) {
+			return priorErr
+		}
+		paused, claimErr := s.claimLeasedInTransaction(tc, tx, req.Scope, suspension.LeasedClaim{Version: req.Version, Lease: lease, First: first})
+		if claimErr != nil {
+			return claimErr
+		}
+		if paused.Reason != suspension.ReasonAgentReply {
+			return suspension.ErrResumeAdmissionConflict
+		}
+		data, encodeErr := json.Marshal(paused)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		result = suspension.ResumeAdmission{SchemaVersion: 1, Request: req, RequestDigest: digest, SuspensionDigest: evidence.Digest(data), ClaimedRevision: paused.ClaimedRun.Revision, AdmittedAt: s.clock.Now().UTC()}
+		if insertErr := insertResumeRecord(tc, repo, kindResumeAdmission, req.Version, req.Scope, result); insertErr != nil {
+			return insertErr
+		}
+		result.Fresh = true
+		return tc.Err()
+	})
+	if err != nil {
+		return suspension.ResumeAdmission{}, err
 	}
 	return result, nil
 }

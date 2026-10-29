@@ -74,6 +74,12 @@ func (s *Spy) ClaimContinuationLeased(ctx context.Context, runID id.AgentRunID, 
 	return &r, nil
 }
 
+// AdmitResumeLeased records its call. The spy keeps no resume admissions.
+func (s *Spy) AdmitResumeLeased(ctx context.Context, _ suspension.ResumeAdmissionRequest, _ run.Lease, _ *suspension.Progress) (suspension.ResumeAdmission, error) {
+	s.record(ctx, "AdmitResumeLeased")
+	return suspension.ResumeAdmission{}, suspension.ErrResumeAdmissionUnavailable
+}
+
 // StartResumeLeased records its call. The spy keeps no resume admissions.
 func (s *Spy) StartResumeLeased(ctx context.Context, _ id.AgentRunID, _ id.SuspensionID, _ string, _ run.Lease, _ *suspension.Progress) (suspension.ResumeStart, error) {
 	s.record(ctx, "StartResumeLeased")

@@ -24,6 +24,7 @@ func LeasedClaims(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("ClaimSuspensionLeasedExpired", func(t *testing.T) { testClaimSuspensionLeasedExpired(t, newStore) })
 	t.Run("ClaimContinuationLeased", func(t *testing.T) { testClaimContinuationLeased(t, newStore) })
 	t.Run("StartResumeLeased", func(t *testing.T) { testStartResumeLeased(t, newStore) })
+	t.Run("AdmitResumeLeased", func(t *testing.T) { testAdmitResumeLeased(t, newStore) })
 }
 
 func leasedClaims(t *testing.T, s store.Store) suspension.LeasedClaimStore {
@@ -39,21 +40,26 @@ func firstSnapshot(runID id.AgentRunID, owner string) *suspension.Progress {
 		Cont:    newSuspension(runID).Cont,
 		Done:    []suspension.ProgressResult{{CallID: "call_conformance", Content: "answer", Outcome: "completed"}},
 		Started: []suspension.PendingCall{{ID: "call_sent", Name: "sent-tool", Arguments: `{}`}},
+		Ending:  &suspension.Ending{Kind: suspension.EndingExpire, Reason: "nobody answered"},
 	}
 }
 
-func requireFirstSnapshot(t *testing.T, s store.Store, ctx context.Context, runID id.AgentRunID, owner string) { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+// requireFirstSnapshot asserts the snapshot firstSnapshot(runID, "w1") wrote.
+func requireFirstSnapshot(t *testing.T, s store.Store, ctx context.Context, runID id.AgentRunID) { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
 	t.Helper()
 	progress, ok := s.(suspension.ProgressStore)
 	require.True(t, ok)
 	saved, err := progress.GetProgress(ctx, runID)
 	require.NoError(t, err)
-	require.Equal(t, owner, saved.Owner)
+	require.Equal(t, "w1", saved.Owner)
 	require.Equal(t, newSuspension(runID).Cont.StepIndex, saved.Cont.StepIndex)
 	require.Len(t, saved.Done, 1)
 	require.Equal(t, "answer", saved.Done[0].Content)
 	require.Len(t, saved.Started, 1)
 	require.Equal(t, "call_sent", saved.Started[0].ID)
+	require.NotNil(t, saved.Ending, "the snapshot lost the end it was claimed for")
+	require.Equal(t, suspension.EndingExpire, saved.Ending.Kind)
+	require.Equal(t, "nobody answered", saved.Ending.Reason)
 }
 
 func testClaimSuspensionLeased(t *testing.T, newStore func(t *testing.T) store.Store) {
@@ -77,7 +83,7 @@ func testClaimSuspensionLeased(t *testing.T, newStore func(t *testing.T) store.S
 	require.NoError(t, err)
 	require.Equal(t, run.StateRunning, stored.State)
 	require.True(t, sameLease(stored.Lease, lease), "stored lease %+v, want %+v", stored.Lease, lease)
-	requireFirstSnapshot(t, s, ctx, r.ID, "w1")
+	requireFirstSnapshot(t, s, ctx, r.ID)
 	// The pause stays until the claimer deletes it.
 	_, err = s.GetSuspension(ctx, r.ID)
 	require.NoError(t, err)
@@ -105,15 +111,17 @@ func testClaimSuspensionLeasedRefusals(t *testing.T, newStore func(t *testing.T)
 		_, err := leased.ClaimSuspensionLeased(ctx, claim)
 		require.ErrorIs(t, err, cortex.ErrRunLeaseLost, name)
 	}
+	// Refusals inside the transaction carry a first snapshot, which must
+	// not be written either.
 	stale := version
 	stale.RunRevision++
-	_, err := leased.ClaimSuspensionLeased(ctx, suspension.LeasedClaim{Version: stale, Lease: lease})
+	_, err := leased.ClaimSuspensionLeased(ctx, suspension.LeasedClaim{Version: stale, Lease: lease, First: firstSnapshot(r.ID, "w1")})
 	require.ErrorIs(t, err, cortex.ErrRunConflict)
 	other := version
 	other.SuspensionID = id.NewSuspensionID()
-	_, err = leased.ClaimSuspensionLeased(ctx, suspension.LeasedClaim{Version: other, Lease: lease})
+	_, err = leased.ClaimSuspensionLeased(ctx, suspension.LeasedClaim{Version: other, Lease: lease, First: firstSnapshot(r.ID, "w1")})
 	require.ErrorIs(t, err, cortex.ErrNotSuspended)
-	_, err = leased.ClaimSuspensionLeased(ctxWithScope("leased-elsewhere"), suspension.LeasedClaim{Version: version, Lease: lease})
+	_, err = leased.ClaimSuspensionLeased(ctxWithScope("leased-elsewhere"), suspension.LeasedClaim{Version: version, Lease: lease, First: firstSnapshot(r.ID, "w1")})
 	require.ErrorIs(t, err, cortex.ErrNotSuspended)
 
 	stored, err := s.GetRun(ctx, r.ID)
@@ -158,13 +166,15 @@ func testClaimContinuationLeased(t *testing.T, newStore func(t *testing.T) store
 
 	_, err := leased.ClaimContinuationLeased(ctx, r.ID, run.Lease{}, nil)
 	require.ErrorIs(t, err, cortex.ErrRunLeaseLost, "a leased claim took a run with no lease")
+	_, err = leased.ClaimContinuationLeased(ctxWithScope("leased-continue-elsewhere"), r.ID, lease, firstSnapshot(r.ID, "w1"))
+	require.ErrorIs(t, err, cortex.ErrRunNotContinuable, "a leased claim took a run from another scope")
 	claimed, err := leased.ClaimContinuationLeased(ctx, r.ID, lease, firstSnapshot(r.ID, "w1"))
 	require.NoError(t, err)
 	require.Equal(t, run.StateRunning, claimed.State)
 	require.Nil(t, claimed.Ready)
 	require.Equal(t, r.Revision+1, claimed.Revision)
 	require.True(t, sameLease(claimed.Lease, lease))
-	requireFirstSnapshot(t, s, ctx, r.ID, "w1")
+	requireFirstSnapshot(t, s, ctx, r.ID)
 	_, err = leased.ClaimContinuationLeased(ctx, r.ID, leaseAt("w2", time.Now().Add(time.Minute)), nil)
 	require.ErrorIs(t, err, cortex.ErrRunNotContinuable)
 }
@@ -179,6 +189,8 @@ func testStartResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store
 
 	_, err = leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, run.Lease{}, nil)
 	require.ErrorIs(t, err, cortex.ErrRunLeaseLost, "a leased start took a run with no lease")
+	_, err = leased.StartResumeLeased(ctxWithScope("leased-start-elsewhere"), req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, lease, firstSnapshot(req.Version.RunID, "w1"))
+	require.Error(t, err, "a leased start reached a run from another scope")
 	started, err := leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, lease, firstSnapshot(req.Version.RunID, "w1"))
 	require.NoError(t, err)
 	require.True(t, started.Fresh)
@@ -189,7 +201,7 @@ func testStartResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store
 	require.Equal(t, run.StateRunning, current.State)
 	require.Equal(t, admitted.ClaimedRevision, current.Revision)
 	require.True(t, sameLease(current.Lease, lease))
-	requireFirstSnapshot(t, backend, ctx, req.Version.RunID, "w1")
+	requireFirstSnapshot(t, backend, ctx, req.Version.RunID)
 
 	again, err := leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, leaseAt("w2", time.Now().Add(time.Minute)), nil)
 	require.NoError(t, err)
@@ -197,4 +209,48 @@ func testStartResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store
 	unchanged, err := backend.GetRun(ctx, req.Version.RunID)
 	require.NoError(t, err)
 	require.True(t, sameLease(unchanged.Lease, lease), "a repeated start took the lease")
+}
+
+func testAdmitResumeLeased(t *testing.T, newStore func(t *testing.T) store.Store) {
+	backend := newStore(t)
+	leased := leasedClaims(t, backend)
+	ctx, durable, req := admissionFixture(t, backend)
+	lease := leaseAt("w1", time.Now().Add(time.Minute))
+
+	_, err := leased.AdmitResumeLeased(ctx, req, run.Lease{}, nil)
+	require.ErrorIs(t, err, cortex.ErrRunLeaseLost, "a leased admission took a run with no lease")
+	_, err = leased.AdmitResumeLeased(ctxWithScope("leased-admit-elsewhere"), req, lease, firstSnapshot(req.Version.RunID, "w1"))
+	require.Error(t, err, "a leased admission reached a run from another scope")
+	unmoved, err := backend.GetRun(ctx, req.Version.RunID)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, unmoved.State)
+
+	admitted, err := leased.AdmitResumeLeased(ctx, req, lease, firstSnapshot(req.Version.RunID, "w1"))
+	require.NoError(t, err)
+	require.True(t, admitted.Fresh)
+	current, err := backend.GetRun(ctx, req.Version.RunID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateRunning, current.State)
+	require.Equal(t, admitted.ClaimedRevision, current.Revision)
+	require.True(t, sameLease(current.Lease, lease))
+	requireFirstSnapshot(t, backend, ctx, req.Version.RunID)
+
+	again, err := leased.AdmitResumeLeased(ctx, req, leaseAt("w2", time.Now().Add(time.Minute)), nil)
+	require.NoError(t, err)
+	require.False(t, again.Fresh)
+	unchanged, err := backend.GetRun(ctx, req.Version.RunID)
+	require.NoError(t, err)
+	require.True(t, sameLease(unchanged.Lease, lease), "a repeated admission took the lease")
+	// The start that follows takes the lease for whoever starts it, at the
+	// revision the admission recorded.
+	takeover := leaseAt("w3", time.Now().Add(time.Minute))
+	started, err := leased.StartResumeLeased(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest, takeover, nil)
+	require.NoError(t, err)
+	require.True(t, started.Fresh)
+	moved, err := backend.GetRun(ctx, req.Version.RunID)
+	require.NoError(t, err)
+	require.Equal(t, admitted.ClaimedRevision, moved.Revision)
+	require.True(t, sameLease(moved.Lease, takeover))
+	_, err = durable.StartResume(ctx, req.Version.RunID, req.Version.SuspensionID, admitted.RequestDigest)
+	require.NoError(t, err, "a later start observes the first")
 }

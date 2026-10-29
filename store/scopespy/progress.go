@@ -68,5 +68,9 @@ func cloneProgress(p suspension.Progress) suspension.Progress {
 	p.Cont.Prepared = append([]byte(nil), p.Cont.Prepared...)
 	p.Started = append([]suspension.PendingCall(nil), p.Started...)
 	p.Done = append([]suspension.ProgressResult(nil), p.Done...)
+	if p.Ending != nil {
+		ending := *p.Ending
+		p.Ending = &ending
+	}
 	return p
 }

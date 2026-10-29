@@ -29,6 +29,7 @@ type progressModel struct {
 	Continuation suspension.Continuation     `bson:"continuation"`
 	Started      []suspension.PendingCall    `bson:"started,omitempty"`
 	Done         []suspension.ProgressResult `bson:"done,omitempty"`
+	Ending       *suspension.Ending          `bson:"ending,omitempty"`
 	ScopeL0      string                      `bson:"scope_l0"`
 	ScopeL1      string                      `bson:"scope_l1"`
 	ScopeL2      string                      `bson:"scope_l2"`
@@ -58,6 +59,7 @@ func (d assuranceDriver) UpsertProgress(ctx context.Context, p *suspension.Progr
 		"continuation":          p.Cont,
 		"started":               p.Started,
 		"done":                  p.Done,
+		"ending":                p.Ending,
 		"scope_l0":              l0,
 		"scope_l1":              l1,
 		"scope_l2":              l2,
@@ -139,6 +141,7 @@ func progressFromModel(m *progressModel) (*suspension.Progress, error) {
 		Cont:      cont,
 		Started:   m.Started,
 		Done:      m.Done,
+		Ending:    m.Ending,
 		UpdatedAt: m.UpdatedAt.UTC(),
 	}, nil
 }

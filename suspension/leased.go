@@ -42,10 +42,17 @@ type LeasedClaimStore interface {
 	// ClaimContinuationLeased is run.ContinuationStore's ClaimContinuation
 	// under a lease that must be set, writing first in the same transaction.
 	ClaimContinuationLeased(ctx context.Context, runID id.AgentRunID, lease run.Lease, first *Progress) (*run.Run, error)
+	// AdmitResumeLeased is ResumeAdmissionStore's AdmitResume, taking the
+	// run's lease and writing first in the transaction that claims the
+	// pause. An admitter that dies before it starts the resume leaves a
+	// lease that lapses and the reply in the snapshot. An admission recorded
+	// before is returned as it is, and takes nothing.
+	AdmitResumeLeased(ctx context.Context, req ResumeAdmissionRequest, lease run.Lease, first *Progress) (ResumeAdmission, error)
 	// StartResumeLeased is ResumeAdmissionStore's StartResume, taking the
-	// lease of the run the admission claimed, and writing first, in the
-	// transaction that grants execution. It never advances the run's
-	// revision, which the admission recorded. A start recorded before is
-	// returned as it is, and takes nothing.
+	// lease of the run the admission claimed, whoever held it, and writing
+	// first, in the transaction that grants execution: the one worker
+	// allowed to execute the resume holds the run from then on. It never
+	// advances the run's revision, which the admission recorded. A start
+	// recorded before is returned as it is, and takes nothing.
 	StartResumeLeased(ctx context.Context, runID id.AgentRunID, key id.SuspensionID, digest string, lease run.Lease, first *Progress) (ResumeStart, error)
 }

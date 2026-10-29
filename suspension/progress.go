@@ -18,6 +18,26 @@ type ProgressResult struct {
 	Outcome string `json:"outcome"`
 }
 
+// EndingKind names the end a claim was made to write.
+type EndingKind string
+
+const (
+	// EndingCancel is a cancel: the run ends cancelled.
+	EndingCancel EndingKind = "cancel"
+	// EndingExpire is an expiry: the run fails because nobody answered its
+	// pause in time.
+	EndingExpire EndingKind = "expire"
+)
+
+// Ending is the end a claim was made to write, recorded with the claim so
+// that a worker that dies before writing it does not leave the run to
+// continue as if it had never been asked to end.
+type Ending struct {
+	Kind EndingKind `json:"kind"`
+	// Reason is what the run's error says, for an expiry.
+	Reason string `json:"reason,omitempty"`
+}
+
 // Progress is a running run's state at its last durable boundary, saved by
 // the worker that holds the run's lease. A replica that reclaims the run
 // after that worker dies continues from Cont, treats every call in Started
@@ -39,6 +59,10 @@ type Progress struct {
 	Started []PendingCall `json:"started,omitempty"`
 	// Done lists the calls of the current step that finished.
 	Done []ProgressResult `json:"done,omitempty"`
+	// Ending, when set, is the end a claim was made to write (a cancel or
+	// an expiry) and did not get to. A worker that reclaims the run
+	// finishes that end instead of continuing the run.
+	Ending *Ending `json:"ending,omitempty"`
 	// UpdatedAt is when the snapshot was saved. SaveProgress sets it.
 	UpdatedAt time.Time `json:"updated_at"`
 }
