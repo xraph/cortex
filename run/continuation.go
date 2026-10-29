@@ -58,19 +58,24 @@ type ReadyNotice struct {
 // lease it was, when that lease ended, and how often the run has been
 // reclaimed. The run's scope travels on the hook's ctx.
 type ReclaimNotice struct {
-	// PreviousOwner is the worker whose lease the run was under.
+	// PreviousOwner is the worker whose lease the run was under. It is
+	// empty for a run the sweeper took because it held no lease at all.
 	PreviousOwner string
 	// LeaseExpiredAt is when the lease lapsed, or, for a hand-off, when
-	// the worker released it.
+	// the worker released it. For a run that held no lease it is when the
+	// run was last written.
 	LeaseExpiredAt time.Time
-	// Reclaims counts how often the sweeper has reclaimed the run after a
-	// lapsed lease. A hand-off does not add to it.
+	// Reclaims counts how often the run has been reclaimed after a lapsed
+	// lease or with no lease owner. A hand-off does not add to it.
 	Reclaims int
 	// HandOff is true when the worker released the run at shutdown rather
 	// than its lease lapsing.
 	HandOff bool
 	// Renotified is true when the sweeper repeats the notice for a run
-	// that has waited longer than it should, false the first time.
+	// that has waited longer than it should, false the first time. A
+	// repeated notice carries what the run still records: PreviousOwner is
+	// empty, HandOff is false and LeaseExpiredAt is when the run became
+	// reclaimable.
 	Renotified bool
 }
 
@@ -113,4 +118,15 @@ type ContinuationStore interface {
 	// MarkNotified sets NotifiedAt on a ready or reclaimable run and never advances Revision.
 	// ErrRunNotContinuable when the run is in any other state.
 	MarkNotified(ctx context.Context, runID id.AgentRunID, at time.Time) error
+	// ListOwnerlessAcrossScopes lists running runs that hold no lease, are not under required
+	// verification or a task claim, and were last updated at or before idleBefore, oldest
+	// UpdatedAt first. A worker that claimed such a run from a pause and died before it took the
+	// lease left it there. It deliberately bypasses scope, for the sweeper only.
+	ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*Run, error)
+	// MarkOwnerlessReclaimable moves a running run that holds no lease, is not under required
+	// verification or a task claim, and was last updated at or before idleBefore to
+	// StateReclaimable, adding one to Reclaims and advancing Revision. ErrRunLeased when the run
+	// holds a lease, was updated after idleBefore, or is one of those runs; ErrRunConflict when it
+	// is no longer running.
+	MarkOwnerlessReclaimable(ctx context.Context, runID id.AgentRunID, idleBefore time.Time) (*Run, error)
 }

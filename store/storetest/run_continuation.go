@@ -37,6 +37,8 @@ func RunContinuation(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("MarkReclaimableExactScope", func(t *testing.T) { testMarkReclaimableExactScope(t, newStore) })
 	t.Run("UpdateRunLeaseColumns", func(t *testing.T) { testUpdateRunLeaseColumns(t, newStore) })
 	t.Run("Notified", func(t *testing.T) { testContinuableNotified(t, newStore) })
+	t.Run("ListOwnerlessAcrossScopes", func(t *testing.T) { testListOwnerlessAcrossScopes(t, newStore) })
+	t.Run("MarkOwnerlessReclaimable", func(t *testing.T) { testMarkOwnerlessReclaimable(t, newStore) })
 }
 
 func continuationStore(t *testing.T, s store.Store) run.ContinuationStore {
@@ -750,5 +752,114 @@ func testMarkReclaimableExactScope(t *testing.T, newStore func(t *testing.T) sto
 	}
 	if _, err := cs.MarkReclaimable(ctx, r.ID, time.Now().UTC(), ""); err != nil {
 		t.Fatalf("MarkReclaimable from the run's own scope after the refusals: %v", err)
+	}
+}
+
+// mustCoordinatedRun creates a running run with no lease that coordination
+// owns: one under required verification, or one under a task claim.
+func mustCoordinatedRun(t *testing.T, s store.Store, ctx context.Context, verification bool) *run.Run { //nolint:revive // t leads every test helper in this file; ctx after s matches that convention
+	t.Helper()
+	r := newRun(mustCreateAgent(t, s, ctx, ""))
+	r.State = run.StateRunning
+	if verification {
+		r.Provenance.VerificationRequired = true
+	} else {
+		r.Provenance.TaskClaimID = "claim-" + r.ID.String()
+	}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatalf("fixture: create coordinated run: %v", err)
+	}
+	return r
+}
+
+func testListOwnerlessAcrossScopes(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctxA := ctxWithScope("ownerless-a")
+	ctxB := ctxWithScope("ownerless-b", "p1")
+	before := time.Now().UTC().Add(-time.Second)
+	a := mustRunningRun(t, s, ctxA, nil)
+	// Apart by more than the coarsest timestamp any backend keeps, so the
+	// order below is the order they were written in.
+	time.Sleep(20 * time.Millisecond)
+	b := mustRunningRun(t, s, ctxB, nil)
+	live := leaseAt("wl", time.Now().Add(time.Hour))
+	held := mustRunningRun(t, s, ctxA, &live)
+	lapsedLease := leaseAt("wd", time.Now().Add(-time.Minute))
+	lapsed := mustRunningRun(t, s, ctxB, &lapsedLease)
+	verifying := mustCoordinatedRun(t, s, ctxA, true)
+	claimed := mustCoordinatedRun(t, s, ctxB, false)
+	ready := mustReadyRun(t, s, ctxA)
+	after := time.Now().UTC().Add(time.Second)
+
+	listed, err := cs.ListOwnerlessAcrossScopes(context.Background(), after, 0)
+	if err != nil {
+		t.Fatalf("ListOwnerlessAcrossScopes: %v", err)
+	}
+	ia, ib := runIndex(listed, a.ID), runIndex(listed, b.ID)
+	if ia < 0 || ib < 0 {
+		t.Fatalf("ownerless runs in two scopes were not both listed: %d runs, a at %d, b at %d", len(listed), ia, ib)
+	}
+	if ia > ib {
+		t.Errorf("ownerless runs out of order: the older is at %d, the newer at %d", ia, ib)
+	}
+	for _, other := range []*run.Run{held, lapsed, verifying, claimed, ready} {
+		if containsRun(listed, other.ID) {
+			t.Errorf("run %s (state %s, lease %+v, provenance %+v) was listed as ownerless", other.ID, other.State, other.Lease, other.Provenance)
+		}
+	}
+	for _, r := range listed {
+		if r.ID == b.ID && r.Scope.Canonical() != scopeOf("ownerless-b", "p1").Canonical() {
+			t.Errorf("listed run b has scope %q", r.Scope.Canonical())
+		}
+	}
+
+	early, err := cs.ListOwnerlessAcrossScopes(context.Background(), before, 0)
+	if err != nil || containsRun(early, a.ID) || containsRun(early, b.ID) {
+		t.Fatalf("ListOwnerlessAcrossScopes before the runs were idle = %d runs, %v; want neither", len(early), err)
+	}
+	limited, err := cs.ListOwnerlessAcrossScopes(context.Background(), after, 1)
+	if err != nil || len(limited) != 1 || limited[0].ID != a.ID {
+		t.Fatalf("ListOwnerlessAcrossScopes with limit 1 = %d runs, %v; want the oldest only", len(limited), err)
+	}
+}
+
+func testMarkOwnerlessReclaimable(t *testing.T, newStore func(t *testing.T) store.Store) {
+	s := newStore(t)
+	cs := continuationStore(t, s)
+	ctx := ctxWithScope("ownerless-mark")
+	before := time.Now().UTC().Add(-time.Second)
+	r := mustRunningRun(t, s, ctx, nil)
+	live := leaseAt("wl", time.Now().Add(time.Hour))
+	held := mustRunningRun(t, s, ctx, &live)
+	verifying := mustCoordinatedRun(t, s, ctx, true)
+	claimed := mustCoordinatedRun(t, s, ctx, false)
+	after := time.Now().UTC().Add(time.Second)
+
+	if _, err := cs.MarkOwnerlessReclaimable(ctx, r.ID, before); !errors.Is(err, cortex.ErrRunLeased) {
+		t.Fatalf("MarkOwnerlessReclaimable on a run updated after idleBefore = %v, want ErrRunLeased", err)
+	}
+	for _, other := range []*run.Run{held, verifying, claimed} {
+		if _, err := cs.MarkOwnerlessReclaimable(ctx, other.ID, after); !errors.Is(err, cortex.ErrRunLeased) {
+			t.Errorf("MarkOwnerlessReclaimable(%s) = %v, want ErrRunLeased", other.ID, err)
+		}
+	}
+	if _, err := cs.MarkOwnerlessReclaimable(ctxWithScope("ownerless-other"), r.ID, after); !errors.Is(err, cortex.ErrRunNotFound) {
+		t.Errorf("MarkOwnerlessReclaimable from another scope = %v, want ErrRunNotFound", err)
+	}
+
+	got, err := cs.MarkOwnerlessReclaimable(ctx, r.ID, after)
+	if err != nil {
+		t.Fatalf("MarkOwnerlessReclaimable: %v", err)
+	}
+	if got.State != run.StateReclaimable || got.Reclaims != 1 || got.Lease != nil || got.Revision != r.Revision+1 {
+		t.Errorf("after MarkOwnerlessReclaimable: state %s, reclaims %d, lease %+v, revision %d (was %d)", got.State, got.Reclaims, got.Lease, got.Revision, r.Revision)
+	}
+	stored, err := s.GetRun(ctx, r.ID)
+	if err != nil || stored.State != run.StateReclaimable || stored.Reclaims != 1 {
+		t.Fatalf("stored run = %+v, %v", stored, err)
+	}
+	if _, err = cs.MarkOwnerlessReclaimable(ctx, r.ID, after); !errors.Is(err, cortex.ErrRunConflict) {
+		t.Errorf("second MarkOwnerlessReclaimable = %v, want ErrRunConflict", err)
 	}
 }

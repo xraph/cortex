@@ -311,6 +311,7 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 	for _, capability := range []reflect.Type{
 		reflect.TypeOf((*run.ContinuationStore)(nil)).Elem(),
 		reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem(),
+		reflect.TypeOf((*checkpoint.SweepStore)(nil)).Elem(),
 	} {
 		for i := 0; i < capability.NumMethod(); i++ {
 			capabilities[capability.Method(i).Name] = true
@@ -338,6 +339,12 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 // run without a scope, so they are probed with none.
 func TestSpy_OverridesContinuationStore(t *testing.T) {
 	probeCapability(t, reflect.TypeOf((*run.ContinuationStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesCheckpointSweep does the same for checkpoint.SweepStore,
+// the sweeper's listing of pending checkpoints.
+func TestSpy_OverridesCheckpointSweep(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*checkpoint.SweepStore)(nil)).Elem())
 }
 
 // TestSpy_OverridesProgressStore does the same for suspension.ProgressStore,

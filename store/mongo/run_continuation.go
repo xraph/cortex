@@ -135,6 +135,27 @@ func (s *Store) ListLapsedAcrossScopes(ctx context.Context, now time.Time, limit
 	return s.findRuns(ctx, filter, sort, limit, "list lapsed runs")
 }
 
+// ListOwnerlessAcrossScopes reads running runs that hold no lease and
+// have been idle since idleBefore, from every scope, with no scope guard
+// and no scope predicates. Like ListLapsedAcrossScopes it deliberately
+// bypasses scope, for the sweeper only. Runs under required verification
+// or a task claim never hold a lease, so they are left out here: their
+// recovery belongs to coordination.
+func (s *Store) ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*run.Run, error) {
+	// A run written before leases existed has no lease fields; nil matches
+	// it as unowned, as HoldLease reads it.
+	filter := bson.M{
+		"state":                           string(run.StateRunning),
+		"lease_owner":                     bson.M{"$in": bson.A{"", nil}},
+		"lease_expires_at":                nil,
+		"updated_at":                      bson.M{"$lte": idleBefore.UTC()},
+		"provenance.verificationrequired": bson.M{"$ne": true},
+		"provenance.taskclaimid":          bson.M{"$in": bson.A{"", nil}},
+	}
+	sort := bson.D{{Key: "updated_at", Value: 1}, {Key: "_id", Value: 1}}
+	return s.findRuns(ctx, filter, sort, limit, "list ownerless runs")
+}
+
 // ListContinuableAcrossScopes reads ready and reclaimable runs nobody was
 // told about since notifiedBefore, from every scope, with no scope guard
 // and no scope filter. Like ListLapsedAcrossScopes it deliberately bypasses

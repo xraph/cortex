@@ -161,6 +161,31 @@ func (s *Store) ListLapsedAcrossScopes(ctx context.Context, now time.Time, limit
 	return runsFromModels(models)
 }
 
+// ListOwnerlessAcrossScopes reads running runs that hold no lease and
+// have been idle since idleBefore, from every scope, with no scope guard
+// and no scope predicates. Like ListLapsedAcrossScopes it deliberately
+// bypasses scope, for the sweeper only. Runs under required verification
+// or a task claim never hold a lease, so they are left out here: their
+// recovery belongs to coordination.
+func (s *Store) ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*run.Run, error) {
+	var models []runModel
+	q := s.pgdb.NewSelect(&models).
+		Where("state = ?", string(run.StateRunning)).
+		Where("lease_owner = ?", "").
+		Where("lease_expires_at IS NULL").
+		Where("updated_at <= ?", idleBefore.UTC()).
+		Where("COALESCE((provenance->>'verification_required')::boolean, false) = false").
+		Where("COALESCE(provenance->>'task_claim_id', '') = ''").
+		OrderExpr("updated_at ASC, id ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("cortex: list ownerless runs: %w", err)
+	}
+	return runsFromModels(models)
+}
+
 // ListContinuableAcrossScopes reads ready and reclaimable runs nobody was
 // told about since notifiedBefore, from every scope, with no scope guard
 // and no scope predicates. Like ListLapsedAcrossScopes it deliberately

@@ -5,7 +5,9 @@ package scopespy
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
@@ -92,6 +94,28 @@ func (s *Spy) CreateCheckpoint(ctx context.Context, cp *checkpoint.Checkpoint) e
 	s.checkpoints = append(s.checkpoints, &stored)
 	return nil
 }
+
+// ListPendingAcrossScopes deliberately reads every scope, as the sweeper
+// does, in id order.
+func (s *Spy) ListPendingAcrossScopes(ctx context.Context, after id.CheckpointID, limit int) ([]*checkpoint.Checkpoint, error) {
+	s.record(ctx, "ListPendingAcrossScopes")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*checkpoint.Checkpoint
+	for _, cp := range s.checkpoints {
+		if cp.State == "pending" && (after.IsNil() || cp.ID.String() > after.String()) {
+			copied := *cp
+			out = append(out, &copied)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID.String() < out[j].ID.String() })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+var _ checkpoint.SweepStore = (*Spy)(nil)
 
 // FailSuspensionWrites makes every later CreateSuspension return err, so
 // a test can drive the engine's "the suspension could not be written"
@@ -363,6 +387,7 @@ func (s *Spy) ClaimSuspension(ctx context.Context, runID id.AgentRunID) (*suspen
 	// taken after the claim finds a running run, as it does there.
 	if r, ok := s.runs[runID]; ok && r.State == run.StatePaused {
 		r.State = run.StateRunning
+		r.UpdatedAt = time.Now().UTC()
 		s.runs[runID] = r
 	}
 	return susp, nil

@@ -213,6 +213,56 @@ func (s *Repository) MarkReclaimable(ctx context.Context, runID id.AgentRunID, n
 	return result, nil
 }
 
+// MarkOwnerlessReclaimable takes a running run that nobody holds a lease
+// on. Such a run was claimed from a pause by a worker that died, or gave
+// up, before it took the lease. idleBefore is the sweeper's grace: a run
+// updated after it may still be in the moment between its claim and its
+// lease, and is left alone. Runs under required verification or a task
+// claim never hold a lease and are never taken: coordination owns them.
+func (s *Repository) MarkOwnerlessReclaimable(ctx context.Context, runID id.AgentRunID, idleBefore time.Time) (*run.Run, error) {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if runID.Prefix() != id.PrefixAgentRun {
+		return nil, cortex.ErrRunNotFound
+	}
+	var result *run.Run
+	err = s.transactContinuation(ctx, runID, func(tc context.Context, tx ContinuationTransaction) error {
+		result = nil
+		current, readErr := tx.GetRun(tc, runID)
+		if readErr != nil {
+			return readErr
+		}
+		if current == nil || current.ID != runID || current.Scope.Canonical() != scope.Canonical() {
+			return cortex.ErrRunNotFound
+		}
+		if current.State != run.StateRunning {
+			return cortex.ErrRunConflict
+		}
+		if current.Lease != nil || current.Provenance.VerificationRequired || current.Provenance.TaskClaimID != "" || current.UpdatedAt.After(idleBefore) {
+			return cortex.ErrRunLeased
+		}
+		next, revisionErr := runstate.NextRevision(current.Revision)
+		if revisionErr != nil {
+			return revisionErr
+		}
+		at := s.clock.Now().UTC()
+		current.State = run.StateReclaimable
+		current.Reclaims++
+		if writeErr := tx.SetRunContinuation(tc, current, at); writeErr != nil {
+			return writeErr
+		}
+		current.Revision, current.UpdatedAt = next, at
+		result = current
+		return tc.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // heldLease is the lease a claim stores. A zero lease stores none.
 func heldLease(lease run.Lease) *run.Lease {
 	if lease.Owner == "" && lease.ExpiresAt.IsZero() {

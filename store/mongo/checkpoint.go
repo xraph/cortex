@@ -175,3 +175,33 @@ func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter)
 
 	return count, nil
 }
+
+// ListPendingAcrossScopes reads pending checkpoints from every scope, in
+// id order, with no scope guard and no scope predicates. That is
+// deliberate: the sweeper has no request scope, and it acts on each
+// checkpoint under that checkpoint's own scope.
+func (s *Store) ListPendingAcrossScopes(ctx context.Context, after id.CheckpointID, limit int) ([]*checkpoint.Checkpoint, error) {
+	var models []checkpointModel
+	f := bson.M{"state": "pending"}
+	if !after.IsNil() {
+		f["_id"] = bson.M{"$gt": after.String()}
+	}
+	q := s.mdb.NewFind(&models).Filter(f).Sort(bson.D{{Key: "_id", Value: 1}})
+	if limit > 0 {
+		q = q.Limit(int64(limit))
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("cortex/mongo: list pending checkpoints across scopes: %w", err)
+	}
+	result := make([]*checkpoint.Checkpoint, len(models))
+	for i := range models {
+		cp, convErr := checkpointFromModel(&models[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		result[i] = cp
+	}
+	return result, nil
+}
+
+var _ checkpoint.SweepStore = (*Store)(nil)

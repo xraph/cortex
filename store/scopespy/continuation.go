@@ -142,6 +142,44 @@ func (s *Spy) MarkNotified(ctx context.Context, runID id.AgentRunID, at time.Tim
 	return nil
 }
 
+// ListOwnerlessAcrossScopes deliberately reads every scope, as the sweeper does.
+func (s *Spy) ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*run.Run, error) {
+	s.record(ctx, "ListOwnerlessAcrossScopes")
+	return s.listRuns(func(r *run.Run) bool {
+		return r.State == run.StateRunning && ownerlessIdle(r, idleBefore)
+	}, func(a, b *run.Run) bool { return a.UpdatedAt.Before(b.UpdatedAt) }, limit), nil
+}
+
+// MarkOwnerlessReclaimable takes a running run nobody holds, once it has
+// been idle since idleBefore, as the stores do.
+func (s *Spy) MarkOwnerlessReclaimable(ctx context.Context, runID id.AgentRunID, idleBefore time.Time) (*run.Run, error) {
+	s.record(ctx, "MarkOwnerlessReclaimable")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.runs[runID]
+	if !ok {
+		return nil, cortex.ErrRunNotFound
+	}
+	if r.State != run.StateRunning {
+		return nil, cortex.ErrRunConflict
+	}
+	if !ownerlessIdle(&r, idleBefore) {
+		return nil, cortex.ErrRunLeased
+	}
+	r.State = run.StateReclaimable
+	r.Reclaims++
+	r.Revision++
+	r.UpdatedAt = time.Now().UTC()
+	s.runs[runID] = r
+	return &r, nil
+}
+
+// ownerlessIdle is the stores' ownerless rule: no lease, not a run
+// coordination owns, and idle since idleBefore.
+func ownerlessIdle(r *run.Run, idleBefore time.Time) bool {
+	return r.Lease == nil && !r.Provenance.VerificationRequired && r.Provenance.TaskClaimID == "" && !r.UpdatedAt.After(idleBefore)
+}
+
 func (s *Spy) listRuns(keep func(*run.Run) bool, less func(a, b *run.Run) bool, limit int) []*run.Run {
 	s.mu.Lock()
 	defer s.mu.Unlock()
