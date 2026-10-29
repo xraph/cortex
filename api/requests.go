@@ -529,7 +529,7 @@ type AgentInboxRequest struct {
 // is how a person answers an agent that asked a question.
 type SendMessageRequest struct {
 	Name           string `path:"name" description:"Recipient agent name"`
-	From           string `json:"from" description:"Sender name, as it should appear to the recipient"`
+	From           string `json:"from" description:"Sender name, as it should appear to the recipient; caller-asserted, for attribution only, even with an authorizer"`
 	Content        string `json:"content" description:"The message body"`
 	Performative   string `json:"performative,omitempty" description:"FIPA-ACL speech act (default: inform)"`
 	ConversationID string `json:"conversation_id,omitempty" description:"Continue an existing conversation"`

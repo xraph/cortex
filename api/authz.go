@@ -27,14 +27,19 @@ type Operation struct {
 // caller is trusted equally.
 type Authorizer interface {
 	// Authorize is asked before every route runs, with the request's
-	// context. A nil error lets the request through. Any other error
+	// context. It sees the operation and the context only, not the path
+	// parameters or the body, which are bound after it; a rule about one
+	// resource belongs in the host's own lookups. A nil error lets the
+	// request through. Any other error
 	// refuses it with 403, unless it wraps a cortex not-found or scope
 	// error, which keeps the status that error has everywhere else in
 	// the module. The error's text never reaches the response.
 	Authorize(ctx context.Context, op Operation) error
 	// DecidedBy is the name resolveCheckpoint records as the deciding
 	// person, derived from the request's principal. It replaces any
-	// decided_by the request body names.
+	// decided_by the request body names. sendAgentMessage's from is not
+	// derived: it stays the caller's own name for the sender, used for
+	// attribution, while the reply token gates what a reply can resume.
 	DecidedBy(ctx context.Context) (string, error)
 }
 

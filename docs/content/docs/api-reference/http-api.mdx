@@ -21,7 +21,7 @@ cortexExt := cortexext.New(
 )
 ```
 
-That gives you the 59 routes on this page. They live under `<basePath>/v1` and return JSON. `basePath` is the extension's mount prefix (`extension.WithBasePath` or `base_path`, default `/cortex`) and `/v1` is the version group every handler registers in, so the default full path is `/cortex/v1/...`. If you serve `api.New(eng, router)` on a router of your own instead, the paths start at `/v1`.
+That mounts every route the module registers, the ones on this page among them. They live under `<basePath>/v1` and return JSON. `basePath` is the extension's mount prefix (`extension.WithBasePath` or `base_path`, default `/cortex`) and `/v1` is the version group every handler registers in, so the default full path is `/cortex/v1/...`. If you serve `api.New(eng, router)` on a router of your own instead, the paths start at `/v1`.
 
 Cortex doesn't authenticate requests or work out who's calling. Your middleware has to put a `cortex.Scope` on each request's context with `cortex.WithScope` (and optionally a principal with `cortex.WithPrincipal`) before it reaches these handlers. Without a scope every route fails. The `X-Tenant-ID` headers in the examples on other pages are whatever your own middleware reads; Cortex doesn't look at any header. See [Forge Extension](/docs/guides/forge-extension#scope-middleware).
 
@@ -34,6 +34,8 @@ return api.New(eng, r, api.WithAuthorizer(myAuthorizer))
 ```
 
 An `api.Authorizer` has two methods. `Authorize(ctx, op)` runs before each route with the request's context and an `api.Operation`: `ID` is the route's OpenAPI operation id (`resolveCheckpoint`, `listTools` and so on) and `Write` is true for anything other than `GET` or `HEAD`. Return nil to let the request through. Any other error refuses it with `403`, and the response never repeats your error's text. The one exception is an error that wraps a Cortex not-found or scope error: that keeps the status it has everywhere else, so `cortex.ErrAgentNotFound` is still a `404` and `cortex.ErrNoScope` a `412`. `DecidedBy(ctx)` names the person resolving a checkpoint, worked out from the request's principal.
+
+`Authorize` sees only the operation id and the request's context, never the path parameters or the body, because it runs before the request is bound. A per-resource rule ("alice may resolve checkpoints for this agent and no other") belongs in your own lookups: put what you need on the context in your middleware, or check it in the store calls your host already makes.
 
 Without an authorizer every route is open to whoever reaches the router, and `resolveCheckpoint` records whatever `decided_by` the caller sends. That's fine when every caller is trusted equally. It isn't anywhere else, so treat the module without an authorizer as single-trust only.
 
@@ -859,6 +861,8 @@ Send an agent a message. This is how a person answers an agent that asked someth
 ```
 
 `from` and `content` are required, and `performative` defaults to `inform`.
+
+`from` is caller-asserted, even with an authorizer installed. It's the sender's name as the caller wrote it, kept for attribution only. What a reply can resume is gated by the `in_reply_to` token, not by `from`.
 
 **Response** `201 Created` with the send result.
 
