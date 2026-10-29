@@ -331,7 +331,27 @@ Your authorizer answers first. If it denies the call, its error goes back to the
 | allows | requires approval | the run pauses; `cortex.ApprovalRequired` with reason `shield: ...` and `ApprovalTTL` |
 | requires approval | allows or requires approval | the run pauses with your own error, so your reason and TTL hold |
 | allows or requires approval | blocks | a denial matching `shieldsafety.ErrToolCallBlocked` |
+| allows or requires approval | can't scan | a denial matching `shieldsafety.ErrToolScanUnavailable` |
 
 A scan that can't run (no tenant, no profile for the tenant, arguments that aren't JSON) denies the call with `shieldsafety.ErrToolScanUnavailable`. Denials carry Shield's reason, which is the message of the finding that decided, never the arguments. A checkpoint opened for Shield reads `tool call requires approval: delete_environment (shield: reflex fired)`, with the tool name first.
+
+With the InfraAgent tools profile, a secret in the arguments asks a person to approve the call. To refuse those calls outright, use a tools profile whose secrets check blocks, and name it in `ToolCallOptions.Profile`:
+
+```go
+strict := presets.Bundle{
+    Name: "strict-tools",
+    Awareness: []*awareness.Awareness{{
+        Name: "secrets-block", Focus: awareness.FocusSecrets,
+        Action: string(awareness.PIIActionBlock), Enabled: true,
+    }},
+    Profiles: []*profile.SafetyProfile{{
+        Name: "strict-tools", Enabled: true,
+        Awareness: []profile.AwarenessAssignment{{AwarenessName: "secrets-block"}},
+    }},
+}
+_, err := strict.Seed(ctx, shieldStore, tenant, "loomplane")
+```
+
+That profile only checks for secrets. Add the InfraAgent tools profile's other assignments to it if you want its risk classes as well.
 
 `Visible` is your authorizer's. Shield only gates calls, so with no host authorizer every tool stays visible and Shield decides each call alone.
