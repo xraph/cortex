@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
@@ -32,6 +33,10 @@ type PreparedRunOptions struct {
 	// exists returns cortex.ErrAlreadyExists and nothing runs. Zero lets
 	// the engine pick one.
 	RunID id.AgentRunID
+
+	// replyRoute is where the answer goes when the messaging bus started
+	// the run for a directive. The run keeps it in its metadata.
+	replyRoute *a2a.ReplyRoute
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
@@ -197,6 +202,7 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	}
 	now := time.Now().UTC()
 	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget, Principal: principal}
+	keepReplyRoute(r, opts.replyRoute)
 	safeInput, scanErr := e.checkPublication(ctx, &snap.Agent, r, cfg.Publication, input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
 		return nil, nil, scanErr
@@ -316,6 +322,7 @@ func preparedOptions(overrides *RunOverrides) PreparedRunOptions {
 	if overrides != nil {
 		opts.SessionID = overrides.SessionID
 		opts.RunID = overrides.RunID
+		opts.replyRoute = overrides.replyRoute
 	}
 	return opts
 }

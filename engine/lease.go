@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -197,17 +198,18 @@ func releaseLease(ctx context.Context, runID id.AgentRunID) {
 	}
 }
 
-// leaseClaimed takes a lease on a run this call just claimed from a pause,
-// which the claim left running with no owner. A run this engine does not
-// lease is returned as it is.
+// leaseClaimed takes a lease on a run this call just claimed from a pause
+// the old way, which left it running with no owner: a store without
+// suspension.LeasedClaimStore, or an agent-reply resume started on another
+// worker than the one that admitted it. A run this engine does not lease
+// is returned as it is.
 //
 // A failed hold is retried a few times within a small part of the lease
 // ttl. When every attempt fails the pass ends there, with
 // cortex.ErrRunInterrupted and nothing written: a leasable run must not
-// execute without its lease. The run stays running with no owner, and
-// recovering such a run is the engine sweep's job, not this pass's. A hold
-// refused because another worker owns the run ends the pass with
-// cortex.ErrRunLeaseLost.
+// execute without its lease. A hold refused because another worker owns
+// the run ends the pass with cortex.ErrRunLeaseLost; that worker's lease
+// lapses if it is gone, and the sweep reclaims the run.
 func (e *Engine) leaseClaimed(ctx context.Context, r *run.Run) (context.Context, error) {
 	if r == nil || !e.leasesRun(r) {
 		return ctx, nil
@@ -230,6 +232,95 @@ func (e *Engine) leaseClaimed(ctx context.Context, r *run.Run) (context.Context,
 		return ctx, fmt.Errorf("cortex: run %s: %w", r.ID, err)
 	}
 	return ctx, fmt.Errorf("cortex: take the lease of run %s: %w: %w", r.ID, cortex.ErrRunInterrupted, err)
+}
+
+// leasedClaims returns the store's leased claims when this engine leases r:
+// the claim then takes r's lease in the same transaction that moves it to
+// running, so a claimer that dies leaves a lease that lapses. ok is false
+// when the caller must claim the old way: leases off, a run this engine
+// never leases, or a store without suspension.LeasedClaimStore.
+func (e *Engine) leasedClaimsFor(r *run.Run) (suspension.LeasedClaimStore, bool) {
+	if e.leasedClaims == nil || r == nil || !e.leasesRun(r) {
+		return nil, false
+	}
+	return e.leasedClaims, true
+}
+
+// claimPauseLeased claims susp, the pause snapshot was read with, under a
+// new lease of this worker and with first as the run's first progress
+// snapshot. expiredBy set claims only a pause past its deadline. ok is
+// false when this engine cannot take the lease with the claim.
+func (e *Engine) claimPauseLeased(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension, expiredBy time.Time, first *suspension.Progress) (claimed *suspension.Suspension, ok bool, err error) {
+	store, leased := e.leasedClaimsFor(snapshot)
+	if !leased || susp == nil {
+		return nil, false, nil
+	}
+	lease := e.newLease()
+	if first != nil {
+		first.Owner = lease.Owner
+	}
+	claimed, err = store.ClaimSuspensionLeased(ctx, suspension.LeasedClaim{
+		Version:   suspension.ClaimVersion{RunID: susp.RunID, SuspensionID: susp.ID, RunRevision: snapshot.Revision},
+		ExpiredBy: expiredBy,
+		Lease:     lease,
+		First:     first,
+	})
+	return claimed, true, err
+}
+
+// claimSnapshot is the progress a run claimed from a pause starts with:
+// the state it paused with, and every pending call the claim answers
+// recorded as done with its answer.
+func claimSnapshot(runID id.AgentRunID, cont suspension.Continuation, done []suspension.ProgressResult) *suspension.Progress {
+	return &suspension.Progress{RunID: runID, Cont: pausedCont(cont), Done: done}
+}
+
+// answeredCalls records each pending call that results answer as done,
+// with the result the model will see: what a resume records for it before
+// its publication checks, which the run's next pass repeats. A call the
+// answer asks the engine to execute is not answered yet.
+func answeredCalls(pending []suspension.PendingCall, in ResumeInput) []suspension.ProgressResult {
+	byID := make(map[string]ToolResult, len(in.ToolResults))
+	for _, res := range in.ToolResults {
+		byID[res.ToolCallID] = res
+	}
+	var done []suspension.ProgressResult
+	for _, p := range pending {
+		res, ok := byID[p.ID]
+		if !ok || res.Execute {
+			continue
+		}
+		switch {
+		case res.Error != "" && in.rejected:
+			done = append(done, suspension.ProgressResult{CallID: p.ID, Content: jsonResult("error", res.Error), Error: res.Error, Outcome: progressOutcome(outcomeDenied)})
+		case res.Error != "":
+			done = append(done, suspension.ProgressResult{CallID: p.ID, Content: jsonResult("error", res.Error), Error: res.Error, Outcome: progressOutcome(outcomeFailed)})
+		default:
+			done = append(done, suspension.ProgressResult{CallID: p.ID, Content: res.Content, Outcome: progressOutcome(outcomeCompleted)})
+		}
+	}
+	return done
+}
+
+// adoptLease starts holding the lease a leased claim took for this worker,
+// with the snapshot the claim wrote as the pass's progress. ok is false
+// when the claimed run is not under this worker's lease.
+func (e *Engine) adoptLease(ctx context.Context, claimed *run.Run, first *suspension.Progress) (context.Context, bool) {
+	if claimed == nil || claimed.Lease == nil || claimed.Lease.Owner != e.workerID || !e.leasesRun(claimed) {
+		return ctx, false
+	}
+	ctx = e.holdLease(ctx, claimed)
+	if first == nil && e.progress != nil {
+		if saved, err := e.progress.GetProgress(cortex.WithScope(ctx, claimed.Scope), claimed.ID); err == nil {
+			first = saved
+		}
+	}
+	if l := leaseFor(ctx, claimed.ID); l != nil && first != nil {
+		l.mu.Lock()
+		l.progress = progressState{cont: first.Cont, started: slices.Clone(first.Started), done: slices.Clone(first.Done)}
+		l.mu.Unlock()
+	}
+	return ctx, true
 }
 
 // waitFor sleeps for d, or until ctx ends, and reports whether it slept

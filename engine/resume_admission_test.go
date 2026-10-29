@@ -217,6 +217,9 @@ func admittedReplyFixtureAs(t *testing.T, boundary string, principal any, option
 	require.True(t, ok)
 	fault := errors.New("injected resume acknowledgment failure")
 	e.store = &resumeAdmissionFaultStore{Store: st, AskResolutionStore: resolutions, VersionedStore: versioned, ResumeAdmissionStore: durable, boundary: boundary, fault: fault}
+	// The engine asserts its optional capabilities from the store it is
+	// given; the faulty store has no leased claims, so its faults are hit.
+	e.leasedClaims, _ = e.store.(suspension.LeasedClaimStore)
 	if boundary == "seal_lost" {
 		e.a2a, err = a2a.NewBus(a2a.BusConfig{Store: e.store, Runner: agentRunnerAdapter{eng: e}, Resumer: a2aResumer{eng: e}, Options: a2a.Options{HopCeiling: 4, Workers: 1}})
 		require.NoError(t, err)

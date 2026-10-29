@@ -127,8 +127,12 @@ func reachedMethods(t *testing.T) map[string]bool {
 
 	const externalToolName = "spy-completeness-external-tool"
 	suspendSpy := New()
+	// Leases off, so the resume makes the plain claim. An engine that
+	// leases runs claims with the lease instead (ClaimSuspensionLeased),
+	// which TestSpy_OverridesLeasedClaims probes.
 	suspendEngine, err := engine.New(
 		engine.WithStore(suspendSpy),
+		engine.WithRunLease(0),
 		engine.WithLLM(ToolCallingLLM(externalToolName)),
 		engine.WithExternalTool(llm.Tool{
 			Name:        externalToolName,
@@ -312,6 +316,7 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 		reflect.TypeOf((*run.ContinuationStore)(nil)).Elem(),
 		reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem(),
 		reflect.TypeOf((*checkpoint.SweepStore)(nil)).Elem(),
+		reflect.TypeOf((*suspension.LeasedClaimStore)(nil)).Elem(),
 	} {
 		for i := 0; i < capability.NumMethod(); i++ {
 			capabilities[capability.Method(i).Name] = true
@@ -339,6 +344,12 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 // run without a scope, so they are probed with none.
 func TestSpy_OverridesContinuationStore(t *testing.T) {
 	probeCapability(t, reflect.TypeOf((*run.ContinuationStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesLeasedClaims does the same for suspension.LeasedClaimStore,
+// the claims that take the run's lease with the pause.
+func TestSpy_OverridesLeasedClaims(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*suspension.LeasedClaimStore)(nil)).Elem())
 }
 
 // TestSpy_OverridesCheckpointSweep does the same for checkpoint.SweepStore,

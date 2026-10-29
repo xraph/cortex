@@ -14,7 +14,7 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
-func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *suspension.Suspension) (*suspension.Suspension, error) {
+func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *suspension.Suspension, snapshot *run.Run, first *suspension.Progress) (*suspension.Suspension, error) {
 	durable, ok := e.store.(suspension.ResumeAdmissionStore)
 	if !ok {
 		return nil, suspension.ErrResumeAdmissionUnavailable
@@ -40,11 +40,26 @@ func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *su
 	if err := checkResumeRecoveryAuthority(ctx, paused.RunID); err != nil {
 		return nil, err
 	}
-	return startAdmittedResume(ctx, durable, admitted)
+	return e.startAdmittedResume(ctx, durable, admitted, snapshot, first)
 }
 
-func startAdmittedResume(ctx context.Context, durable suspension.ResumeAdmissionStore, admitted suspension.ResumeAdmission) (*suspension.Suspension, error) {
-	started, err := durable.StartResume(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest)
+// startAdmittedResume grants the admitted resume its one execution. When
+// this engine leases the run, the start takes this worker's lease and
+// writes first (the reply recorded as done) in the same transaction, so
+// the worker that executes the reply is the one holding the run, and a
+// worker that dies right after leaves a lease that lapses and the answer.
+// Between an admission and its start the run belongs to the admission,
+// which the messaging bus's recovery starts if the admitter dies.
+func (e *Engine) startAdmittedResume(ctx context.Context, durable suspension.ResumeAdmissionStore, admitted suspension.ResumeAdmission, snapshot *run.Run, first *suspension.Progress) (*suspension.Suspension, error) {
+	var started suspension.ResumeStart
+	var err error
+	if claims, leased := e.leasedClaimsFor(snapshot); leased && first != nil {
+		lease := e.newLease()
+		first.Owner = lease.Owner
+		started, err = claims.StartResumeLeased(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest, lease, first)
+	} else {
+		started, err = durable.StartResume(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +189,13 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if err != nil {
 		return nil, err
 	}
-	paused, err := startAdmittedResume(ctx, durable, admitted)
+	// The reply the admission recorded goes into the first snapshot, so the
+	// worker that starts the resume holds the run and its answer at once.
+	var first *suspension.Progress
+	if pending, pendingErr := e.store.GetSuspension(ctx, runID); pendingErr == nil {
+		first = claimSnapshot(runID, pending.Cont, answeredCalls(pending.Pending, in))
+	}
+	paused, err := e.startAdmittedResume(ctx, durable, admitted, current, first)
 	if errors.Is(err, cortex.ErrSuspensionExpired) {
 		return e.expireAdmittedReply(ctx, admitted)
 	}
@@ -187,7 +208,7 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, e.failResume(ctx, paused.ClaimedRun, paused.ClaimedRun.AgentID, authErr)
 	}
-	ctx, err = e.leaseClaimedResume(ctx, current, paused)
+	ctx, err = e.leaseClaimedResume(ctx, current, paused, first)
 	if err != nil {
 		return nil, err
 	}

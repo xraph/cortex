@@ -54,12 +54,13 @@ func (m *reclaimLLM) calls() int {
 	return len(m.requests)
 }
 
-func (m *reclaimLLM) request(t *testing.T, n int) *llm.Request {
+// firstRequest is the first request the model got.
+func (m *reclaimLLM) firstRequest(t *testing.T) *llm.Request {
 	t.Helper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	require.Greater(t, len(m.requests), n)
-	return m.requests[n]
+	require.NotEmpty(t, m.requests)
+	return m.requests[0]
 }
 
 // reclaimHooks records what a reclaiming engine announces.
@@ -72,6 +73,7 @@ type reclaimHooks struct {
 	ready       []run.ReadyNotice
 	readyAt     []time.Time
 	reclaimable []run.ReclaimNotice
+	reclaimAt   []time.Time
 	scopes      []cortex.Scope
 	reclaimedCh chan run.ReclaimNotice
 }
@@ -121,6 +123,7 @@ func (h *reclaimHooks) OnRunReady(_ context.Context, _ id.AgentID, _ id.AgentRun
 func (h *reclaimHooks) OnRunReclaimable(ctx context.Context, _ id.AgentID, _ id.AgentRunID, n run.ReclaimNotice) error {
 	h.mu.Lock()
 	h.reclaimable = append(h.reclaimable, n)
+	h.reclaimAt = append(h.reclaimAt, time.Now())
 	h.scopes = append(h.scopes, cortex.ScopeFromContext(ctx))
 	h.mu.Unlock()
 	select {
@@ -141,6 +144,7 @@ func (h *reclaimHooks) snapshot() reclaimHooks {
 		ready:       slices.Clone(h.ready),
 		readyAt:     slices.Clone(h.readyAt),
 		reclaimable: slices.Clone(h.reclaimable),
+		reclaimAt:   slices.Clone(h.reclaimAt),
 		scopes:      slices.Clone(h.scopes),
 	}
 }
@@ -326,7 +330,7 @@ func TestContinueReclaimedRunReplaysOnlyMissingCalls(t *testing.T) {
 	require.Equal(t, run.StateCompleted, continued.State)
 	require.Zero(t, bA.calls.Load(), "a's result was saved, so a must not run again")
 	require.Equal(t, int32(1), bB.calls.Load())
-	msgs := bModel.request(t, 0).Messages
+	msgs := bModel.firstRequest(t).Messages
 	var tools []llm.Message
 	for _, m := range msgs {
 		if m.Role == "tool" {
@@ -590,7 +594,10 @@ func TestSweeperRenotifiesStaleContinuableRuns(t *testing.T) {
 	// At most once per window: consecutive re-notices of the same run are
 	// at least the window apart (less a little for the hook's own delay).
 	for i := 1; i < len(seen.readyAt); i++ {
-		require.GreaterOrEqual(t, seen.readyAt[i].Sub(seen.readyAt[i-1]), 40*time.Millisecond, "re-notified twice inside one window")
+		require.GreaterOrEqual(t, seen.readyAt[i].Sub(seen.readyAt[i-1]), 40*time.Millisecond, "re-notified a ready run twice inside one window")
+	}
+	for i := 1; i < len(seen.reclaimAt); i++ {
+		require.GreaterOrEqual(t, seen.reclaimAt[i].Sub(seen.reclaimAt[i-1]), 40*time.Millisecond, "re-notified a reclaimable run twice inside one window")
 	}
 }
 
@@ -621,4 +628,29 @@ func TestReclaimMetrics(t *testing.T) {
 	_, err = b.ContinueRun(leaseScope(), lost.ID)
 	require.True(t, errors.Is(err, cortex.ErrRunNotRecoverable))
 	require.Equal(t, 1.0, sink.Value("cortex_runs_reclaimed_total", map[string]string{"result": "unrecoverable"}))
+
+	// One reclaimed too often counts as limit.
+	poison := storedRunningRun(t, f, run.Lease{Owner: "dead", ExpiresAt: time.Now().UTC().Add(-time.Second)})
+	reclaimNTimes(t, f, poison.ID, 4)
+	_, err = b.ContinueRun(leaseScope(), poison.ID)
+	require.ErrorIs(t, err, cortex.ErrReclaimLimit)
+	require.Equal(t, 1.0, sink.Value("cortex_runs_reclaimed_total", map[string]string{"result": "limit"}))
+}
+
+func TestReclaimMetricsCountUncertain(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-b", Name: "b", Arguments: `{}`}))
+	stuck := newBlockingTool()
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithTool(llm.Tool{Name: "b"}, stuck.handler))
+	t.Cleanup(stuck.letGo)
+	f.start()
+	stuck.waitEntered(t)
+	r := f.onlyRun(t)
+	stall(t, f, r.ID)
+
+	sink := telemetrytest.NewSink()
+	b := reclaimer(t, f, &reclaimLLM{}, newReclaimHooks(), engine.WithMetrics(sink), engine.WithTool(llm.Tool{Name: "b"}, (&countingTool{}).handler))
+	engine.SweepOnce(b, context.Background())
+	_, err := b.ContinueRun(leaseScope(), r.ID)
+	require.ErrorIs(t, err, cortex.ErrEffectUncertain)
+	require.Equal(t, 1.0, sink.Value("cortex_runs_reclaimed_total", map[string]string{"result": "uncertain"}))
 }

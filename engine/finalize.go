@@ -143,6 +143,7 @@ func (e *Engine) emitTerminalOutcome(ctx context.Context, r *run.Run) {
 	e.dropProgress(ctx, r)
 	e.instr.runFinished(r)
 	e.extensions.EmitRunTerminated(ctx, r.AgentID, r.ID, r.TerminalSummary())
+	e.answerDirective(ctx, r)
 }
 
 // runErrorEvent shares safe verification failure metadata with HTTP and dashboard

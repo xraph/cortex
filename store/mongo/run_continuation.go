@@ -20,7 +20,10 @@ import (
 // assurance repository, which runs them in a TransactRun transaction, so
 // Mongo gives them the same guarantee as the SQL stores. The methods below
 // touch one run document each and need no transaction.
-var _ run.ContinuationStore = (*Store)(nil)
+var (
+	_ run.ContinuationStore       = (*Store)(nil)
+	_ suspension.LeasedClaimStore = (*Store)(nil)
+)
 
 // SetRunContinuation writes the continuation fields inside TransactRun.
 func (d assuranceDriver) SetRunContinuation(ctx context.Context, r *run.Run, at time.Time) error {
@@ -46,6 +49,27 @@ func (d assuranceDriver) SetRunContinuation(ctx context.Context, r *run.Run, at 
 		"updated_at":       at,
 	}
 	result, err := d.store.mdb.Collection(colRuns).UpdateOne(ctx, filter, bson.M{"$set": set})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount != 1 {
+		return cortex.ErrRunConflict
+	}
+	return nil
+}
+
+// SetRunLease writes the lease of a running run inside TransactRun, without
+// advancing its revision: a resume start takes the lease of the run its
+// admission claimed, which later checks still know by that revision.
+func (d assuranceDriver) SetRunLease(ctx context.Context, r *run.Run) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	owner, expiresAt := runstate.LeaseColumns(r.Lease)
+	filter := scopeFilter(scope, true)
+	filter["_id"], filter["scope_canon"], filter["revision"], filter["state"] = r.ID.String(), scope.Canonical(), r.Revision, string(run.StateRunning)
+	result, err := d.store.mdb.Collection(colRuns).UpdateOne(ctx, filter, bson.M{"$set": bson.M{"lease_owner": owner, "lease_expires_at": expiresAt}})
 	if err != nil {
 		return err
 	}
@@ -133,27 +157,6 @@ func (s *Store) ListLapsedAcrossScopes(ctx context.Context, now time.Time, limit
 	filter := bson.M{"state": string(run.StateRunning), "lease_expires_at": bson.M{"$ne": nil, "$lte": now.UTC()}}
 	sort := bson.D{{Key: "lease_expires_at", Value: 1}, {Key: "_id", Value: 1}}
 	return s.findRuns(ctx, filter, sort, limit, "list lapsed runs")
-}
-
-// ListOwnerlessAcrossScopes reads running runs that hold no lease and
-// have been idle since idleBefore, from every scope, with no scope guard
-// and no scope predicates. Like ListLapsedAcrossScopes it deliberately
-// bypasses scope, for the sweeper only. Runs under required verification
-// or a task claim never hold a lease, so they are left out here: their
-// recovery belongs to coordination.
-func (s *Store) ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*run.Run, error) {
-	// A run written before leases existed has no lease fields; nil matches
-	// it as unowned, as HoldLease reads it.
-	filter := bson.M{
-		"state":                           string(run.StateRunning),
-		"lease_owner":                     bson.M{"$in": bson.A{"", nil}},
-		"lease_expires_at":                nil,
-		"updated_at":                      bson.M{"$lte": idleBefore.UTC()},
-		"provenance.verificationrequired": bson.M{"$ne": true},
-		"provenance.taskclaimid":          bson.M{"$in": bson.A{"", nil}},
-	}
-	sort := bson.D{{Key: "updated_at", Value: 1}, {Key: "_id", Value: 1}}
-	return s.findRuns(ctx, filter, sort, limit, "list ownerless runs")
 }
 
 // ListContinuableAcrossScopes reads ready and reclaimable runs nobody was

@@ -108,6 +108,25 @@ type progressSpy struct {
 	failStarted atomic.Int32
 	// failHolds fails that many HoldLease calls the same way.
 	failHolds atomic.Int32
+	// afterClaim, when set, runs after a leased claim commits and before it
+	// returns, as a worker that stalls or dies right after its claim would.
+	afterClaim func()
+}
+
+func (s *progressSpy) ClaimSuspensionLeased(ctx context.Context, claim suspension.LeasedClaim) (*suspension.Suspension, error) {
+	susp, err := s.Store.ClaimSuspensionLeased(ctx, claim)
+	if err == nil && s.afterClaim != nil {
+		s.afterClaim()
+	}
+	return susp, err
+}
+
+func (s *progressSpy) ClaimContinuationLeased(ctx context.Context, runID id.AgentRunID, lease run.Lease, first *suspension.Progress) (*run.Run, error) {
+	r, err := s.Store.ClaimContinuationLeased(ctx, runID, lease, first)
+	if err == nil && s.afterClaim != nil {
+		s.afterClaim()
+	}
+	return r, err
 }
 
 var errStoreDown = errors.New("store unavailable")
@@ -688,37 +707,70 @@ func TestToolReportingAHandOffInterruptsTheRun(t *testing.T) {
 // A resume whose lease cannot be taken after the claim retries briefly;
 // when every attempt fails the pass ends with no terminal write, and
 // nothing of the resume runs.
-func TestResumeWithoutALeaseEndsThePass(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		failures int32
-		resumed  bool
-	}{
-		{"a retry takes the lease", 1, true},
-		{"no attempt takes it", 10, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "ask_human", Arguments: `{}`}))
-			f := newLeaseFixture(t, model, engine.WithExternalTool(llm.Tool{Name: "ask_human", Description: "answered by the host"}))
-			paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
-			require.NoError(t, err)
-			require.Equal(t, run.StatePaused, paused.State)
+// A resume's claim takes the lease, so a store that refuses every renewal
+// cannot leave the run running with nobody's lease on it: the lease the
+// claim took lapses, the sweep reclaims the run, and another replica
+// continues it with the answer the resume carried. The worker whose
+// renewals failed finds out at its next write.
+func TestResumeWhoseRenewalsFailRecoversThroughTheSweep(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "ask_human", Arguments: `{}`}))
+	model.hold[1] = true
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithExternalTool(llm.Tool{Name: "ask_human", Description: "answered by the host"}))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, paused.State)
 
-			f.store.failHolds.Store(tc.failures)
-			resumed, err := f.eng.Resume(leaseScope(), paused.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "call-1", Content: "yes"}}})
-			if tc.resumed {
-				require.NoError(t, err)
-				require.Equal(t, run.StateCompleted, resumed.State)
-				return
-			}
-			require.ErrorIs(t, err, cortex.ErrRunInterrupted)
-			require.Equal(t, 1, model.callCount(), "the resume called the model without a lease")
-			stored := f.onlyRun(t)
-			require.Equal(t, run.StateRunning, stored.State)
-			require.Nil(t, stored.Lease)
-			_, failed, terminated, _ := f.hooks.counts()
-			require.Zero(t, failed)
-			require.Zero(t, terminated)
-		})
+	f.store.failHolds.Store(1 << 20)
+	holds := f.store.holds.Load()
+	done := make(chan runOutcome, 1)
+	f.runs.Add(1)
+	go func() {
+		defer f.runs.Done()
+		r, resumeErr := f.eng.Resume(leaseScope(), paused.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "call-1", Content: "yes"}}})
+		done <- runOutcome{run: r, err: resumeErr}
+	}()
+	model.waitEntered(t)
+	claimed := f.onlyRun(t)
+	require.NotNil(t, claimed.Lease, "the claim took no lease")
+	require.Equal(t, f.eng.WorkerID(), claimed.Lease.Owner)
+	require.Equal(t, holds, f.store.holds.Load(), "the claim asked for the lease separately")
+	require.Eventually(t, func() bool {
+		r, readErr := f.store.GetRun(leaseScope(), paused.ID)
+		return readErr == nil && r.Lease != nil && time.Now().After(r.Lease.ExpiresAt)
+	}, 5*time.Second, 5*time.Millisecond, "the lease nobody could renew never lapsed")
+
+	bModel := &reclaimLLM{}
+	b := reclaimer(t, f, bModel, newReclaimHooks(), engine.WithExternalTool(llm.Tool{Name: "ask_human", Description: "answered by the host"}))
+	engine.SweepOnce(b, context.Background())
+	continued, err := b.ContinueRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, continued.State)
+	require.Equal(t, "yes", lastToolMessage(t, bModel.firstRequest(t)).Content, "the answer the resume carried was lost")
+
+	// The worker whose renewals failed wakes up. It cannot tell its lease is
+	// gone (its store refuses every renewal), but the run has ended under
+	// the replica that reclaimed it, and it adopts that ending instead of
+	// writing or announcing one of its own.
+	model.letGo()
+	if out := waitOutcome(t, done); out.err == nil {
+		require.Equal(t, continued.Output, out.run.Output)
+	} else {
+		require.ErrorIs(t, out.err, cortex.ErrRunLeaseLost)
 	}
+	completed, _, _, _ := f.hooks.counts()
+	require.Zero(t, completed, "the stale worker announced a completion")
+	final := f.onlyRun(t)
+	require.Equal(t, run.StateCompleted, final.State)
+	require.Equal(t, continued.Output, final.Output)
+}
+
+func lastToolMessage(t *testing.T, req *llm.Request) llm.Message {
+	t.Helper()
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "tool" {
+			return req.Messages[i]
+		}
+	}
+	t.Fatal("the request carries no tool message")
+	return llm.Message{}
 }

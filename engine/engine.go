@@ -100,6 +100,11 @@ type Engine struct {
 	// progress is the store's suspension.ProgressStore, nil when it has
 	// none. Leasing needs it and continuation both.
 	progress suspension.ProgressStore
+	// leasedClaims is the store's suspension.LeasedClaimStore, nil when it
+	// has none: claims that take the lease with the pause. checkpointSweep
+	// is its checkpoint.SweepStore, nil when it has none.
+	leasedClaims    suspension.LeasedClaimStore
+	checkpointSweep checkpoint.SweepStore
 	// leaseTTL is WithRunLease, workerID WithWorkerID. leases tracks the
 	// leased runs this engine is executing, so a Stop that runs out of
 	// time can hand them off.
@@ -191,6 +196,10 @@ type RunOverrides struct {
 	// with this id that already exists returns cortex.ErrAlreadyExists and
 	// nothing runs. Zero lets the engine pick one.
 	RunID id.AgentRunID
+
+	// replyRoute is where the answer goes when the messaging bus started
+	// the run for a directive.
+	replyRoute *a2a.ReplyRoute
 }
 
 // New creates a new Engine with the given options.
@@ -223,6 +232,12 @@ func New(opts ...Option) (*Engine, error) {
 	}
 	if progress, ok := e.store.(suspension.ProgressStore); ok {
 		e.progress = progress
+	}
+	if leased, ok := e.store.(suspension.LeasedClaimStore); ok {
+		e.leasedClaims = leased
+	}
+	if sweep, ok := e.store.(checkpoint.SweepStore); ok {
+		e.checkpointSweep = sweep
 	}
 	if e.workerID == "" {
 		e.workerID = defaultWorkerID()
@@ -1075,6 +1090,14 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, bo
 // store the claim takes bound and nothing else; a run waiting on another
 // pause is cortex.ErrInvalidState.
 func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, snapshot *run.Run) (*suspension.Suspension, error) {
+	// A claim that takes the lease leaves a lease that lapses if the
+	// failure below is never written, and the run is reclaimed from the
+	// state it paused with: the person is asked again.
+	if bound != nil {
+		if susp, leased, err := e.claimPauseLeased(ctx, snapshot, bound, time.Time{}, claimSnapshot(cp.RunID, bound.Cont, nil)); leased {
+			return e.rejectedClaimResult(ctx, cp, bound, susp, err)
+		}
+	}
 	versioned, ok := e.store.(suspension.VersionedStore)
 	if !ok || bound == nil {
 		return e.store.ClaimSuspension(ctx, cp.RunID)
@@ -1085,6 +1108,12 @@ func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, b
 		// right now is treated like one without it.
 		return e.store.ClaimSuspension(ctx, cp.RunID)
 	}
+	return e.rejectedClaimResult(ctx, cp, bound, susp, err)
+}
+
+// rejectedClaimResult maps a pinned rejection claim's refusal: a run
+// waiting on another pause is cortex.ErrInvalidState.
+func (e *Engine) rejectedClaimResult(ctx context.Context, cp *checkpoint.Checkpoint, bound, susp *suspension.Suspension, err error) (*suspension.Suspension, error) {
 	if err == nil || (!errors.Is(err, cortex.ErrNotSuspended) && !errors.Is(err, cortex.ErrRunConflict)) {
 		return susp, err
 	}
@@ -1156,7 +1185,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID id.AgentRunID) error {
 // every exit below either ends it or says why it could not, exactly as
 // the resume and rejection paths do.
 func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
-	susp, err := e.store.ClaimSuspension(ctx, r.ID)
+	susp, err := e.claimToEnd(ctx, r)
 	if err != nil {
 		return fmt.Errorf("claim suspension to cancel run %s: %w", r.ID, err)
 	}
@@ -1173,6 +1202,36 @@ func (e *Engine) cancelPaused(ctx context.Context, r *run.Run) error {
 	return e.cancelClaimed(ctx, e.claimedRun(ctx, r.ID, r, susp.ClaimedRun))
 }
 
+// claimToEnd claims a paused run that this call is about to end. Under
+// the lease when this engine can take it with the claim, so a canceller
+// that dies before its write leaves a lease that lapses, not a running run
+// nobody owns; the run is then reclaimed from the state it paused with.
+func (e *Engine) claimToEnd(ctx context.Context, r *run.Run) (*suspension.Suspension, error) {
+	if _, leased := e.leasedClaimsFor(r); leased {
+		paused, err := e.store.GetSuspension(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		susp, _, err := e.claimPauseLeased(ctx, r, paused, time.Time{}, claimSnapshot(r.ID, paused.Cont, nil))
+		if errors.Is(err, cortex.ErrRunConflict) {
+			// The run moved since it was read: somebody else claimed it.
+			return nil, fmt.Errorf("%w: %w", cortex.ErrNotSuspended, err)
+		}
+		return susp, err
+	}
+	return e.store.ClaimSuspension(ctx, r.ID)
+}
+
+// claimContinuableToEnd claims a ready or reclaimable run that this call is
+// about to end, under this worker's lease when it leases the run, for the
+// same reason as claimToEnd.
+func (e *Engine) claimContinuableToEnd(ctx context.Context, r *run.Run) (*run.Run, error) {
+	if claims, leased := e.leasedClaimsFor(r); leased {
+		return claims.ClaimContinuationLeased(ctx, r.ID, e.newLease(), nil)
+	}
+	return e.continuation.ClaimContinuation(ctx, r.ID, run.Lease{})
+}
+
 // cancelContinuable is the claimed half of CancelRun for a ready or
 // reclaimable run. ClaimContinuation takes it exactly as a ContinueRun
 // would, so a cancel and a continuation racing for the same run cannot
@@ -1182,7 +1241,7 @@ func (e *Engine) cancelContinuable(ctx context.Context, r *run.Run) error {
 	if e.continuation == nil {
 		return fmt.Errorf("cancel run %s: %w", r.ID, cortex.ErrContinuationUnavailable)
 	}
-	claimed, err := e.continuation.ClaimContinuation(ctx, r.ID, run.Lease{})
+	claimed, err := e.claimContinuableToEnd(ctx, r)
 	if err != nil {
 		return fmt.Errorf("claim run %s to cancel: %w", r.ID, err)
 	}

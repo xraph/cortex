@@ -78,6 +78,21 @@ func (s *sweepStore) ListExpiredAcrossScopes(ctx context.Context, now time.Time,
 // ClaimExpiredSuspension is the real contract in miniature: the run must
 // still be paused and the deadline must have passed, or the claim is
 // refused and nothing moves.
+// ClaimSuspensionLeased is the expiry claim of an engine that leases its
+// runs, recorded the same way as ClaimExpiredSuspension.
+func (s *sweepStore) ClaimSuspensionLeased(ctx context.Context, claim suspension.LeasedClaim) (*suspension.Suspension, error) {
+	if claim.ExpiredBy.IsZero() {
+		return s.Spy.ClaimSuspensionLeased(ctx, claim)
+	}
+	s.mu.Lock()
+	s.claimScopes = append(s.claimScopes, cortex.ScopeFromContext(ctx))
+	s.mu.Unlock()
+	if cortex.ScopeFromContext(ctx).IsZero() {
+		return nil, cortex.ErrNoScope
+	}
+	return s.Spy.ClaimSuspensionLeased(ctx, claim)
+}
+
 func (s *sweepStore) ClaimExpiredSuspension(ctx context.Context, runID id.AgentRunID, now time.Time) (*suspension.Suspension, error) {
 	s.mu.Lock()
 	s.claimScopes = append(s.claimScopes, cortex.ScopeFromContext(ctx))

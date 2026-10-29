@@ -35,6 +35,20 @@ func (s *expiredReplyStore) StartResume(ctx context.Context, key id.AgentRunID, 
 	}
 	return result, err
 }
+
+// StartResumeLeased is the leased start, through the same clock.
+func (s *expiredReplyStore) StartResumeLeased(ctx context.Context, key id.AgentRunID, pause id.SuspensionID, digest string, lease run.Lease, first *suspension.Progress) (suspension.ResumeStart, error) {
+	leased, ok := s.admissions.(suspension.LeasedClaimStore)
+	if !ok {
+		return suspension.ResumeStart{}, suspension.ErrResumeAdmissionUnavailable
+	}
+	result, err := leased.StartResumeLeased(ctx, key, pause, digest, lease, first)
+	if s.afterStart != nil {
+		s.afterStart()
+	}
+	return result, err
+}
+
 func (s *expiredReplyStore) ExpireResumeAdmission(ctx context.Context, key id.AgentRunID, pause id.SuspensionID, digest string) (suspension.ResumeExpiry, error) {
 	return s.recovery.ExpireResumeAdmission(ctx, key, pause, digest)
 }

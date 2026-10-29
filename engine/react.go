@@ -833,13 +833,13 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					return
 				}
 				tcStart := time.Now().UTC()
-				callCtx := e.announceCall(stepCtx, r.ID, tc)
-
-				sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
-					"tool_name": publicToolName(ctx, tc.Name),
-					"arguments": publicGenerationText(r, tc.Arguments),
-					"tool_id":   publicGenerationText(r, tc.ID),
-				}})
+				callCtx := e.announceCall(stepCtx, r.ID, tc, func() {
+					sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
+						"tool_name": publicToolName(ctx, tc.Name),
+						"arguments": publicGenerationText(r, tc.Arguments),
+						"tool_id":   publicGenerationText(r, tc.ID),
+					}})
+				})
 
 				result, outcome, wait := e.executePreparedTool(callCtx, subject, tc, st)
 				if interruption(ctx, r.ID) != nil {

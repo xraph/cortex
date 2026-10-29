@@ -15,7 +15,10 @@ import (
 // MarkReady, ClaimContinuation and MarkReclaimable come from the shared
 // assurance repository, which runs them under TransactRun. The methods
 // below touch one run row each and need no transaction.
-var _ run.ContinuationStore = (*Store)(nil)
+var (
+	_ run.ContinuationStore       = (*Store)(nil)
+	_ suspension.LeasedClaimStore = (*Store)(nil)
+)
 
 // SetRunContinuation writes the continuation columns inside TransactRun.
 func (d assuranceDriver) SetRunContinuation(ctx context.Context, r *run.Run, at time.Time) error {
@@ -34,6 +37,33 @@ func (d assuranceDriver) SetRunContinuation(ctx context.Context, r *run.Run, at 
 	m := runToModel(r)
 	m.Revision, m.UpdatedAt, m.Ready = revision, at, ready
 	q := d.queries().NewUpdate(m).Column("revision", "state", "lease_owner", "lease_expires_at", "ready", "reclaim_count", "notified_at", "updated_at").WherePK().Where("revision = ?", r.Revision)
+	for _, p := range scopePredicates(scope, true) {
+		q = q.Where(p.Column+" = ?", p.Value)
+	}
+	result, err := q.Exec(ctx)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return cortex.ErrRunConflict
+	}
+	return nil
+}
+
+// SetRunLease writes the lease of a running run inside TransactRun, without
+// advancing its revision: a resume start takes the lease of the run its
+// admission claimed, which later checks still know by that revision.
+func (d assuranceDriver) SetRunLease(ctx context.Context, r *run.Run) error {
+	scope, err := cortex.RequireScope(ctx)
+	if err != nil {
+		return err
+	}
+	m := runToModel(r)
+	q := d.queries().NewUpdate(m).Column("lease_owner", "lease_expires_at").WherePK().Where("revision = ?", r.Revision).Where("state = ?", string(run.StateRunning))
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -157,31 +187,6 @@ func (s *Store) ListLapsedAcrossScopes(ctx context.Context, now time.Time, limit
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("cortex: list lapsed runs: %w", err)
-	}
-	return runsFromModels(models)
-}
-
-// ListOwnerlessAcrossScopes reads running runs that hold no lease and
-// have been idle since idleBefore, from every scope, with no scope guard
-// and no scope predicates. Like ListLapsedAcrossScopes it deliberately
-// bypasses scope, for the sweeper only. Runs under required verification
-// or a task claim never hold a lease, so they are left out here: their
-// recovery belongs to coordination.
-func (s *Store) ListOwnerlessAcrossScopes(ctx context.Context, idleBefore time.Time, limit int) ([]*run.Run, error) {
-	var models []runModel
-	q := s.pgdb.NewSelect(&models).
-		Where("state = ?", string(run.StateRunning)).
-		Where("lease_owner = ?", "").
-		Where("lease_expires_at IS NULL").
-		Where("updated_at <= ?", idleBefore.UTC()).
-		Where("COALESCE((provenance->>'verification_required')::boolean, false) = false").
-		Where("COALESCE(provenance->>'task_claim_id', '') = ''").
-		OrderExpr("updated_at ASC, id ASC")
-	if limit > 0 {
-		q = q.Limit(limit)
-	}
-	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("cortex: list ownerless runs: %w", err)
 	}
 	return runsFromModels(models)
 }

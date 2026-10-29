@@ -56,6 +56,17 @@ func (e *Engine) saveBoundary(ctx context.Context, runID id.AgentRunID, cont sus
 	}
 }
 
+// saveProgress is progress point 1 for a run claimed from a pause the old
+// way: the snapshot it continues from, with what the claim answered.
+func (e *Engine) saveProgress(ctx context.Context, runID id.AgentRunID, p *suspension.Progress) {
+	if l := leaseFor(ctx, runID); l != nil {
+		l.mu.Lock()
+		l.progress = progressState{cont: p.Cont, started: slices.Clone(p.Started), done: slices.Clone(p.Done)}
+		l.mu.Unlock()
+		_ = l.save() //nolint:errcheck // a lost lease cancels the run; anything else is logged
+	}
+}
+
 // noteStarted is progress point 3, and it fails closed: a call that is not
 // retry-safe is dispatched only once its Started record is durable. A save
 // that fails is retried once. If the retry fails too, or the lease is gone,
@@ -108,8 +119,17 @@ type toolAnnouncementKey struct{}
 // announceCall fires ToolCalled for tc, or, for a call recorded as started
 // before dispatch, arranges for it to fire once the call gets that far.
 // The returned context is the one to execute the call on.
-func (e *Engine) announceCall(ctx context.Context, runID id.AgentRunID, tc llm.ToolCall) context.Context {
-	fire := func() { e.emitToolCalled(ctx, runID, tc.Name, tc.Arguments) }
+//
+// also, when given, goes out with the ToolCalled: the stream loop's
+// tool_call event, so a stream consumer never hears of a call that is not
+// dispatched either.
+func (e *Engine) announceCall(ctx context.Context, runID id.AgentRunID, tc llm.ToolCall, also ...func()) context.Context {
+	fire := func() {
+		e.emitToolCalled(ctx, runID, tc.Name, tc.Arguments)
+		for _, f := range also {
+			f()
+		}
+	}
 	if !e.recordsStart(ctx, runID, tc.Name) {
 		fire()
 		return ctx
@@ -135,8 +155,15 @@ func (e *Engine) noteDone(ctx context.Context, runID id.AgentRunID, callID, cont
 	if l == nil {
 		return
 	}
+	result := suspension.ProgressResult{CallID: callID, Content: content, Error: errText, Outcome: progressOutcome(outcome)}
 	l.mu.Lock()
-	l.progress.done = append(l.progress.done, suspension.ProgressResult{CallID: callID, Content: content, Error: errText, Outcome: progressOutcome(outcome)})
+	// A call the claim recorded with its answer is replaced by the checked
+	// result, never listed twice.
+	if i := slices.IndexFunc(l.progress.done, func(d suspension.ProgressResult) bool { return d.CallID == callID }); i >= 0 {
+		l.progress.done[i] = result
+	} else {
+		l.progress.done = append(l.progress.done, result)
+	}
 	l.mu.Unlock()
 	_ = l.save() //nolint:errcheck // a lost lease cancels the run; anything else is logged
 }

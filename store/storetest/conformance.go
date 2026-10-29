@@ -98,6 +98,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunContinuation", func(t *testing.T) { RunContinuation(t, newStore) })
 	t.Run("RunProgress", func(t *testing.T) { RunProgress(t, newStore) })
 	t.Run("CheckpointSweep", func(t *testing.T) { CheckpointSweep(t, newStore) })
+	t.Run("LeasedClaims", func(t *testing.T) { LeasedClaims(t, newStore) })
 	t.Run("Effects", func(t *testing.T) { testEffects(t, newStore) })
 	t.Run("BoundEffects", func(t *testing.T) { testBoundEffects(t, newStore) })
 	t.Run("BoundEffectCompletionRace", func(t *testing.T) { testBoundEffectCompletionRace(t, newStore) })

@@ -541,6 +541,7 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	// now, and a refusal leaves it ready.
 	in, source, inputErr := readyInput(current.Ready)
 	snapshot := current
+	var first *suspension.Progress
 	if revoked == nil && inputErr == nil {
 		// A suspension that cannot be read now is a refusal before the
 		// claim like any other: the run stays ready for the next attempt.
@@ -548,6 +549,9 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		if suspErr != nil {
 			return nil, nil, nil, fmt.Errorf("load suspension to continue run %s: %w", runID, suspErr)
 		}
+		// The first snapshot carries every answer the run is ready with,
+		// so a worker that dies after the claim leaves them for the next.
+		first = claimSnapshot(runID, susp.Cont, answeredCalls(susp.Pending, in))
 		snapshot, err = e.previewResume(ctx, runID, in, source, susp, nil)
 		if err != nil && !permanentRefusal(err) {
 			return nil, nil, nil, err
@@ -565,17 +569,16 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	// the heartbeat then renews. Runs under required verification or a
 	// task claim, and every run when leases are off, are claimed with no
 	// lease and never heartbeated: coordination owns their recovery.
-	lease := run.Lease{}
-	leased := e.leasesRun(current)
-	if leased {
-		lease = e.newLease()
+	if inputErr != nil || revoked != nil {
+		first = nil
 	}
-	claimed, err := e.continuation.ClaimContinuation(ctx, runID, lease)
+	claimed, written, err := e.claimContinuable(ctx, current, first)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("claim run %s to continue: %w", runID, err)
 	}
-	if leased {
-		ctx = e.holdLease(ctx, claimed)
+	ctx, held := e.adoptLease(ctx, claimed, first)
+	if held && !written && first != nil {
+		e.saveProgress(ctx, runID, first)
 	}
 
 	// From here the run is running and belongs to this call, so every exit
@@ -587,7 +590,9 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 		return nil, nil, nil, e.failResume(runCtx, claimed, claimed.AgentID, fmt.Errorf("load suspension of a claimed run: %w", err))
 	}
 	susp.ClaimedRun = claimed
-	e.saveBoundary(runCtx, runID, pausedCont(susp.Cont))
+	if held && first == nil {
+		e.saveBoundary(runCtx, runID, pausedCont(susp.Cont))
+	}
 	if revoked != nil {
 		return nil, nil, nil, e.failRevokedResume(ctx, snapshot, susp, revoked)
 	}
@@ -601,6 +606,29 @@ func (e *Engine) claimContinuation(ctx context.Context, runID id.AgentRunID) (co
 	}
 	runCtx, rz, err := e.rehydrateResume(ctx, in, source, snapshot, susp)
 	return runCtx, rz, nil, err
+}
+
+// claimContinuable claims a ready or reclaimable run for this call. A run
+// this engine leases is claimed under this worker's lease, which the
+// heartbeat then renews, and first is written in the same transaction when
+// the store can (written reports it). Runs under required verification or
+// a task claim, and every run when leases are off, are claimed with no
+// lease and never heartbeated: coordination owns their recovery.
+func (e *Engine) claimContinuable(ctx context.Context, current *run.Run, first *suspension.Progress) (claimed *run.Run, written bool, err error) {
+	if !e.leasesRun(current) {
+		claimed, err = e.continuation.ClaimContinuation(ctx, current.ID, run.Lease{})
+		return claimed, false, err
+	}
+	lease := e.newLease()
+	if store, ok := e.leasedClaimsFor(current); ok {
+		if first != nil {
+			first.Owner = lease.Owner
+		}
+		claimed, err = store.ClaimContinuationLeased(ctx, current.ID, lease, first)
+		return claimed, first != nil, err
+	}
+	claimed, err = e.continuation.ClaimContinuation(ctx, current.ID, lease)
+	return claimed, false, err
 }
 
 // permanentRefusal reports whether a check a ready run failed before its

@@ -128,8 +128,6 @@ func (e *Engine) stopSweeper() {
 //
 //   - fail the runs whose suspension nobody answered in time;
 //   - mark reclaimable the running runs whose worker's lease lapsed;
-//   - mark reclaimable the running runs nobody holds a lease on, once they
-//     have been idle past the grace (only on an engine that leases runs);
 //   - tell the host again about runs left ready or reclaimable longer than
 //     WithReadyRenotify;
 //   - close pending checkpoints whose run has moved past them.
@@ -145,7 +143,6 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 	now := time.Now().UTC()
 	e.sweepExpired(ctx, now)
 	e.sweepLapsed(ctx, now)
-	e.sweepOwnerless(ctx, now)
 	e.renotify(ctx, now)
 	e.sweepStaleCheckpoints(ctx, now)
 }
@@ -218,53 +215,6 @@ func (e *Engine) sweepLapsed(ctx context.Context, now time.Time) {
 	}
 }
 
-// sweepOwnerless takes every running run that nobody holds a lease on and
-// that has been idle longer than the grace, and marks it reclaimable. A
-// worker leaves a run like that when it claims it from a pause and dies,
-// or gives up, before it takes the lease, and when a rejection claims a
-// run and cannot write its failure. Runs under required verification or a
-// task claim never hold a lease and are left to coordination.
-//
-// Only an engine that leases runs does this. Every engine sharing a store
-// uses the same lease setting, so an engine with leases off has no run
-// that should hold one.
-func (e *Engine) sweepOwnerless(ctx context.Context, now time.Time) {
-	if !e.leasing() {
-		return
-	}
-	idleBefore := now.Add(-e.idleGrace())
-	ownerless, err := e.continuation.ListOwnerlessAcrossScopes(ctx, idleBefore, e.sweepLimit)
-	if err != nil {
-		e.logError("list running runs with no lease owner", err)
-		return
-	}
-	failed := 0
-	var firstErr error
-	for _, r := range ownerless {
-		if r.Provenance.VerificationRequired || r.Provenance.TaskClaimID != "" {
-			continue
-		}
-		idleSince := r.UpdatedAt
-		runCtx := cortex.WithScope(ctx, r.Scope)
-		moved, markErr := e.continuation.MarkOwnerlessReclaimable(runCtx, r.ID, idleBefore)
-		if errors.Is(markErr, cortex.ErrRunLeased) || errors.Is(markErr, cortex.ErrRunConflict) {
-			continue
-		}
-		if markErr != nil {
-			failed++
-			if firstErr == nil {
-				firstErr = markErr
-			}
-			continue
-		}
-		e.instr.reclaim(reclaimReclaimed)
-		e.announceReclaimable(runCtx, moved, run.ReclaimNotice{LeaseExpiredAt: idleSince, Reclaims: moved.Reclaims})
-	}
-	if failed > 0 {
-		e.logError("mark ownerless runs reclaimable", firstErr, log.Int("failed", failed), log.Int("batch", len(ownerless)))
-	}
-}
-
 // renotify tells the host again about every run left ready or reclaimable
 // since before the WithReadyRenotify period, with Renotified set. Each run
 // is stamped first, so it is repeated at most once per period whatever
@@ -312,8 +262,8 @@ func (e *Engine) renotify(ctx context.Context, now time.Time) {
 // cannot keep the rest out of reach. Only the engine's own checkpoints are
 // touched: one a host wrote itself is the host's to close.
 func (e *Engine) sweepStaleCheckpoints(ctx context.Context, now time.Time) {
-	sweep, ok := e.store.(checkpoint.SweepStore)
-	if !ok || e.continuation == nil {
+	sweep := e.checkpointSweep
+	if sweep == nil || e.continuation == nil {
 		return
 	}
 	e.sweep.cursorMu.Lock()
@@ -449,9 +399,15 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 		return expiryError, fmt.Errorf("load the run behind an expired suspension: %w", err)
 	}
 
-	claimed, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
+	// Under the lease when this engine can take it with the claim: a sweep
+	// that dies before its failure write leaves a lease that lapses, not a
+	// running run nobody owns.
+	claimed, leased, err := e.claimPauseLeased(ctx, snapshot, susp, now, claimSnapshot(susp.RunID, susp.Cont, nil))
+	if !leased {
+		claimed, err = e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
+	}
 	if err != nil {
-		if errors.Is(err, cortex.ErrNotSuspended) {
+		if errors.Is(err, cortex.ErrNotSuspended) || errors.Is(err, cortex.ErrRunConflict) {
 			// Somebody else owns this run: it was resumed, decided, or
 			// already swept. Not an error, and nothing to log.
 			dropped, dropErr := e.dropOrphanedSuspension(ctx, susp)

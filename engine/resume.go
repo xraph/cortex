@@ -271,9 +271,24 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 	}
 
 	var susp *suspension.Suspension
-	if in.agentReplyVersion != nil {
-		susp, err = e.admitAgentReply(ctx, in, preview)
-	} else if versioned, supported := e.store.(suspension.VersionedStore); supported {
+	var first *suspension.Progress
+	if preview != nil && previewErr == nil {
+		// What the run will have done once this claim lands: the state it
+		// paused with and every call this resume answers. A leased claim
+		// writes it with the claim, so a claimer that dies right after
+		// leaves the answers for the worker that reclaims the run.
+		first = claimSnapshot(runID, preview.Cont, answeredCalls(preview.Pending, in))
+	}
+	leased := false
+	if in.agentReplyVersion == nil {
+		// Under this worker's lease, with the first snapshot, when it can.
+		susp, leased, err = e.claimPauseLeased(ctx, snapshot, preview, time.Time{}, first)
+	}
+	switch versioned, supported := e.store.(suspension.VersionedStore); {
+	case in.agentReplyVersion != nil:
+		susp, err = e.admitAgentReply(ctx, in, preview, snapshot, first)
+	case leased:
+	case supported:
 		if previewErr != nil {
 			return nil, nil, fmt.Errorf("read suspension version: %w", previewErr)
 		}
@@ -281,7 +296,7 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 			return nil, nil, cortex.ErrNotSuspended
 		}
 		susp, err = versioned.ClaimSuspensionVersion(ctx, suspension.ClaimVersion{RunID: runID, SuspensionID: preview.ID, RunRevision: snapshot.Revision})
-	} else {
+	default:
 		susp, err = e.store.ClaimSuspension(ctx, runID)
 	}
 	if err != nil {
@@ -296,31 +311,41 @@ func (e *Engine) claimForResume(ctx context.Context, runID id.AgentRunID, in Res
 		}
 	}
 
-	// The claim left the run running with no owner. A leased run takes its
-	// lease now, before anything of the resume runs.
-	ctx, err = e.leaseClaimedResume(ctx, snapshot, susp)
+	// A leased claim already holds the lease and the first snapshot. A
+	// claim made the old way left the run running with no owner, and a
+	// leased run takes its lease now, before anything of the resume runs.
+	ctx, err = e.leaseClaimedResume(ctx, snapshot, susp, first)
 	if err != nil {
 		return nil, nil, err
 	}
 	return e.rehydrateResume(ctx, in, source, snapshot, susp)
 }
 
-// leaseClaimedResume leases a run just claimed from a pause, when this
-// engine leases it, and saves the state it paused with as its first
-// progress boundary.
+// leaseClaimedResume holds the lease of a run just claimed from a pause,
+// when this engine leases it. A claim that took this worker's lease wrote
+// first with it, and the pass carries on from that snapshot (first nil
+// reads it back). Otherwise the lease is taken now and the state the run
+// paused with is saved as its first progress boundary, with first's
+// answers.
 //
 // When the lease cannot be taken the pass ends with that error and the
 // resume does nothing: see leaseClaimed.
-func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension) (context.Context, error) {
+func (e *Engine) leaseClaimedResume(ctx context.Context, snapshot *run.Run, susp *suspension.Suspension, first *suspension.Progress) (context.Context, error) {
 	claimed := susp.ClaimedRun
 	if claimed == nil {
 		claimed = snapshot
+	}
+	if adopted, ok := e.adoptLease(ctx, claimed, first); ok {
+		return adopted, nil
 	}
 	ctx, err := e.leaseClaimed(ctx, claimed)
 	if err != nil {
 		return ctx, err
 	}
-	e.saveBoundary(ctx, susp.RunID, pausedCont(susp.Cont))
+	if first == nil {
+		first = claimSnapshot(susp.RunID, susp.Cont, nil)
+	}
+	e.saveProgress(ctx, susp.RunID, first)
 	return ctx, nil
 }
 

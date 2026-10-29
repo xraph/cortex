@@ -108,7 +108,10 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 			return admissionErr
 		}
 	} else {
-		out, runErr = b.runner.RunAgent(ctx, d.Receiver.Agent, RenderInput(e), nil)
+		// The run keeps where its answer goes, so that if it is handed off,
+		// whichever worker finishes it can still send the reply.
+		route := ReplyRoute{Sender: d.Receiver, Receiver: e.Sender, ConversationID: e.ConversationID, InReplyTo: e.ReplyWith, Protocol: e.Protocol, Ontology: e.Ontology}
+		out, runErr = b.runner.RunAgent(WithReplyRoute(ctx, route), d.Receiver.Agent, RenderInput(e), nil)
 		if out == nil && isStopping(runErr) {
 			// The host refused to start the run. That is no answer from
 			// the recipient, so no Failure goes to the asker; deliverOne
@@ -127,10 +130,10 @@ func (b *Bus) runDirective(ctx context.Context, d *Delivery, e *Envelope) error 
 	if b.reserved == nil && out != nil && (errors.Is(runErr, cortex.ErrRunInterrupted) || errors.Is(runErr, cortex.ErrRunLeaseLost)) {
 		// The recipient's run was handed off, or another worker holds it
 		// now. It has not failed and it has not answered: it is reclaimed
-		// and continued elsewhere. No Failure goes to the asker, and the
-		// delivery is not run again, which would start a second run for
-		// the same directive. The asker's reply-by covers a run that never
-		// answers.
+		// and continued elsewhere, and the worker that finishes it sends
+		// the reply (ReplyForRun). No Failure goes to the asker now, and
+		// the delivery is not run again, which would start a second run
+		// for the same directive.
 		return b.finishDelivery(ctx, d, e, out.RunID)
 	}
 

@@ -164,7 +164,17 @@ func TestRunReclaimAfterWorkerKilled(t *testing.T) {
 					return "looked up", nil
 				}), engine.WithToolRetrySafe("lookup"),
 				engine.WithTool(llm.Tool{Name: "write"}, func(context.Context, cortex.Invocation) (string, error) {
+					// The same external effect the child's handler makes, so
+					// the file says whether the call ran a second time.
 					writes.Add(1)
+					f, openErr := os.OpenFile(m.EffectLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+					if openErr != nil {
+						return "", openErr
+					}
+					defer func() { _ = f.Close() }()
+					if _, writeErr := f.WriteString("written\n"); writeErr != nil {
+						return "", writeErr
+					}
 					return "written", nil
 				}))
 			require.NoError(t, err)
@@ -192,11 +202,11 @@ func TestRunReclaimAfterWorkerKilled(t *testing.T) {
 				require.Equal(t, run.StateCompleted, continued.State)
 				require.Equal(t, int32(1), lookups.Load(), "the retry-safe tool did not run again")
 			case "effect_tool":
-				require.ErrorIs(t, err, cortex.ErrEffectUncertain)
-				require.Zero(t, writes.Load(), "a call that may have changed something ran again")
 				data, readErr := os.ReadFile(m.EffectLog)
 				require.NoError(t, readErr)
 				require.Equal(t, 1, strings.Count(string(data), "\n"), "the external effect happened more than once")
+				require.ErrorIs(t, err, cortex.ErrEffectUncertain)
+				require.Zero(t, writes.Load(), "a call that may have changed something ran again")
 				stored, readErr := st.GetRun(leaseScope(), runID)
 				require.NoError(t, readErr)
 				require.Equal(t, run.StateIncomplete, stored.State)

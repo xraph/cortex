@@ -837,12 +837,12 @@ func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
 // happened.
 //
 // The claim did move the run to running, as it does in every store, so
-// the same decision cannot take it again: deciding again is refused, and
-// the run is left running with no owner. The engine sweep recovers it:
-// once it has sat ownerless past the grace it is reclaimed, and continuing
-// it goes back to the pause it was claimed from. The call still needs a
-// decision, so the person is asked again, and the checkpoint whose
-// decision never took effect is closed as superseded.
+// the same decision cannot take it again: deciding again is refused. The
+// claim took the rejecting worker's lease with it, and nobody renews that
+// lease, so it lapses and the engine sweep reclaims the run. Continuing it
+// goes back to the state it paused with. The call still needs a decision,
+// so the person is asked again, and the checkpoint whose decision never
+// took effect is closed as superseded.
 func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *testing.T) {
 	base := scopespy.New()
 	spy := &wedgeSpy{Spy: base}
@@ -883,14 +883,14 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *te
 	if getErr != nil {
 		t.Fatalf("reload the run: %v", getErr)
 	}
-	if held.State != run.StateRunning || held.Lease != nil {
-		t.Errorf("run = %s with lease %v, want running with no owner", held.State, held.Lease)
+	if held.State != run.StateRunning || held.Lease == nil || held.Lease.Owner != e.WorkerID() {
+		t.Errorf("run = %s with lease %v, want running under the rejecting worker's lease", held.State, held.Lease)
 	}
 
 	time.Sleep(3 * ttl)
-	// The spy keeps no expiry index, so this runs the ownerless pass of the
-	// sweep on its own.
-	e.sweepOwnerless(context.Background(), time.Now().UTC())
+	// The spy keeps no expiry index, so this runs the lapsed-lease pass of
+	// the sweep on its own.
+	e.sweepLapsed(context.Background(), time.Now().UTC())
 	reclaimed, getErr := base.GetRun(ctx, cps[0].RunID)
 	if getErr != nil || reclaimed.State != run.StateReclaimable || reclaimed.Reclaims != 1 {
 		t.Fatalf("after the sweep the run = %+v, %v; want reclaimable, reclaimed once", reclaimed, getErr)

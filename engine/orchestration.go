@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/orchestration"
@@ -16,7 +17,17 @@ import (
 type agentRunnerAdapter struct{ eng *Engine }
 
 func (a agentRunnerAdapter) RunAgent(ctx context.Context, agentName, input string, opts *orchestration.RunOpts) (*orchestration.AgentResult, error) {
-	r, err := a.eng.RunAgent(ctx, agentName, input, mapRunOpts(opts))
+	overrides := mapRunOpts(opts)
+	if route, rest, ok := a2a.ReplyRouteFrom(ctx); ok {
+		// The bus is starting this run for a directive. The route belongs
+		// to this run alone, not to runs its tools start.
+		ctx = rest
+		if overrides == nil {
+			overrides = &RunOverrides{}
+		}
+		overrides.replyRoute = &route
+	}
+	r, err := a.eng.RunAgent(ctx, agentName, input, overrides)
 	return orchestrationAgentResult(agentName, r, err)
 }
 

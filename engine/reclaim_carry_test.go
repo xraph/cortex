@@ -29,89 +29,171 @@ const ownerlessGraceTTL = 40 * time.Millisecond
 // sweep: each test sweeps when it wants to.
 func pastGrace() { time.Sleep(3 * ownerlessGraceTTL) }
 
-func TestSweeperReclaimsOwnerlessRunningRuns(t *testing.T) {
+// A running run that holds no lease is what a v1.9 replica's run looks
+// like in a mixed fleet: that replica takes no leases and never rewrites
+// the run row while it works. No sweep ever touches one, however long it
+// has been idle, and ContinueRun refuses it as still running.
+func TestSweeperLeavesUnleasedRunningRunsAlone(t *testing.T) {
 	f := newLeaseFixture(t, newLeaseLLM())
 	ag, err := f.store.GetByName(leaseScope(), "assistant")
 	require.NoError(t, err)
-	create := func(provenance run.ExecutionProvenance, lease *run.Lease) *run.Run {
-		r := &run.Run{Entity: cortex.NewEntity(), ID: id.NewAgentRunID(), AgentID: ag.ID, State: run.StateRunning, Input: "work", Provenance: provenance, Lease: lease}
-		require.NoError(t, f.store.CreateRun(leaseScope(), r))
-		return r
-	}
-	ownerless := create(run.ExecutionProvenance{}, nil)
-	claimed := create(run.ExecutionProvenance{TaskClaimID: "claim-1"}, nil)
-	verifying := create(run.ExecutionProvenance{VerificationRequired: true}, nil)
-	live := create(run.ExecutionProvenance{}, &run.Lease{Owner: "alive", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	legacy := &run.Run{Entity: cortex.NewEntity(), ID: id.NewAgentRunID(), AgentID: ag.ID, State: run.StateRunning, Input: "work"}
+	require.NoError(t, f.store.CreateRun(leaseScope(), legacy))
 
-	// Inside the grace (an hour-long lease here) the run may be between its
-	// claim and its lease, and it is left alone.
-	patient := reclaimer(t, f, &reclaimLLM{}, newReclaimHooks(), engine.WithRunLease(time.Hour), engine.WithWorkerID("patient"))
-	engine.SweepOnce(patient, context.Background())
-	got, err := f.store.GetRun(leaseScope(), ownerless.ID)
-	require.NoError(t, err)
-	require.Equal(t, run.StateRunning, got.State, "a run inside the grace may be between its claim and its lease")
-
-	hooks := newReclaimHooks()
-	b := reclaimer(t, f, &reclaimLLM{}, hooks, engine.WithRunLease(ownerlessGraceTTL))
+	b := reclaimer(t, f, &reclaimLLM{}, newReclaimHooks(), engine.WithRunLease(ownerlessGraceTTL))
 	pastGrace()
-	// An engine with leases off never takes a run for having no owner.
-	unleased := reclaimer(t, f, &reclaimLLM{}, newReclaimHooks(), engine.WithRunLease(0), engine.WithWorkerID("unleased"))
-	engine.SweepOnce(unleased, context.Background())
-	got, err = f.store.GetRun(leaseScope(), ownerless.ID)
+	for range 3 {
+		engine.SweepOnce(b, context.Background())
+	}
+	got, err := f.store.GetRun(leaseScope(), legacy.ID)
 	require.NoError(t, err)
 	require.Equal(t, run.StateRunning, got.State)
-
-	engine.SweepOnce(b, context.Background())
-	got, err = f.store.GetRun(leaseScope(), ownerless.ID)
+	require.Zero(t, got.Reclaims)
+	_, err = b.ContinueRun(leaseScope(), legacy.ID)
+	require.ErrorIs(t, err, cortex.ErrRunLeased)
+	got, err = f.store.GetRun(leaseScope(), legacy.ID)
 	require.NoError(t, err)
-	require.Equal(t, run.StateReclaimable, got.State)
-	require.Equal(t, 1, got.Reclaims)
-	seen := hooks.snapshot()
-	require.Len(t, seen.reclaimable, 1)
-	require.Empty(t, seen.reclaimable[0].PreviousOwner)
-	require.Equal(t, 1, seen.reclaimable[0].Reclaims)
-	for _, untouched := range []*run.Run{claimed, verifying, live} {
-		stored, readErr := f.store.GetRun(leaseScope(), untouched.ID)
-		require.NoError(t, readErr)
-		require.Equal(t, run.StateRunning, stored.State, "run %s was taken", untouched.ID)
+	require.Equal(t, run.StateRunning, got.State)
+}
+
+// stallAfterClaim makes the fixture's next leased claim commit and then
+// block, as a worker that dies right after its claim would, until the test
+// lets it go.
+func stallAfterClaim(t *testing.T, f *leaseFixture) (claimed <-chan struct{}, letGo func()) {
+	t.Helper()
+	in, out := make(chan struct{}, 1), make(chan struct{})
+	var once sync.Once
+	var stalled atomic.Bool
+	f.store.afterClaim = func() {
+		// Only the first claim stalls: the replica that reclaims the run
+		// claims through the same store.
+		if !stalled.CompareAndSwap(false, true) {
+			return
+		}
+		in <- struct{}{}
+		<-out
+	}
+	release := func() { once.Do(func() { close(out) }) }
+	t.Cleanup(release)
+	return in, release
+}
+
+// A worker that claims a pause and dies before it does anything else
+// leaves a lease that lapses, and the snapshot the claim wrote. The sweep
+// reclaims the run and another replica continues it with the answer the
+// resume carried: the model sees it, and nothing asks for it again.
+func TestResumeClaimThenCrashRecoversThroughTheSweep(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-x", Name: "lookup", Arguments: `{"q":1}`}))
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, paused.State)
+
+	claimed, letGo := stallAfterClaim(t, f)
+	done := make(chan runOutcome, 1)
+	f.runs.Add(1)
+	go func() {
+		defer f.runs.Done()
+		r, resumeErr := f.eng.Resume(leaseScope(), paused.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "call-x", Content: "forty-two"}}})
+		done <- runOutcome{run: r, err: resumeErr}
+	}()
+	waitSignal(t, claimed, "the resume's claim")
+	waitLapsed(t, f, paused.ID)
+
+	hooks := newReclaimHooks()
+	bModel := &reclaimLLM{}
+	b := reclaimer(t, f, bModel, hooks, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	engine.SweepOnce(b, context.Background())
+	require.Len(t, hooks.snapshot().reclaimable, 1)
+	continued, err := b.ContinueRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, continued.State)
+	require.Equal(t, "forty-two", lastToolMessage(t, bModel.firstRequest(t)).Content)
+	require.Empty(t, hooks.snapshot().suspended, "the answered call was asked for again")
+
+	letGo()
+	require.Error(t, waitOutcome(t, done).err, "the stalled worker went on to finish a run it no longer holds")
+}
+
+// The same for a run continued from a job: ProvideResults made it ready,
+// the job's claim commits and the job dies. The answer survives.
+func TestProvidedResultsSurviveAJobThatDiesAfterItsClaim(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-x", Name: "lookup", Arguments: `{"q":1}`}))
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL), engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
+	require.NoError(t, err)
+	require.NoError(t, f.eng.ProvideResults(leaseScope(), paused.ID, engine.ResumeInput{ToolResults: []engine.ToolResult{{ToolCallID: "call-x", Content: "forty-two"}}}))
+
+	claimed, letGo := stallAfterClaim(t, f)
+	done := make(chan runOutcome, 1)
+	f.runs.Add(1)
+	go func() {
+		defer f.runs.Done()
+		r, continueErr := f.eng.ContinueRun(leaseScope(), paused.ID)
+		done <- runOutcome{run: r, err: continueErr}
+	}()
+	waitSignal(t, claimed, "the job's claim")
+	waitLapsed(t, f, paused.ID)
+
+	hooks := newReclaimHooks()
+	bModel := &reclaimLLM{}
+	b := reclaimer(t, f, bModel, hooks, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
+	engine.SweepOnce(b, context.Background())
+	continued, err := b.ContinueRun(leaseScope(), paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, continued.State)
+	require.Equal(t, "forty-two", lastToolMessage(t, bModel.firstRequest(t)).Content)
+	require.Empty(t, hooks.snapshot().suspended, "the answered call was asked for again")
+
+	letGo()
+	require.Error(t, waitOutcome(t, done).err)
+}
+
+// waitLapsed waits until the run's lease has expired in the store.
+func waitLapsed(t *testing.T, f *leaseFixture, runID id.AgentRunID) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		r, err := f.store.GetRun(leaseScope(), runID)
+		return err == nil && r.Lease != nil && time.Now().After(r.Lease.ExpiresAt)
+	}, 5*time.Second, 5*time.Millisecond, "the claimed run's lease never lapsed")
+}
+
+func waitSignal(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
 	}
 }
 
-// A worker that claimed a run from its pause and died before it took the
-// lease leaves the run running with no owner and no progress. The sweep
-// reclaims it, and ContinueRun continues from the pause it was claimed
-// from: the external call is pending again, so the run pauses again.
-func TestReclaimContinuesFromTheClaimedPause(t *testing.T) {
+// A pause whose calls already left the engine (here a question to an
+// external tool's host), reclaimed with no snapshot to say what came of
+// them, is not sent again: the call is treated as started with an unknown
+// outcome, and the run stops as uncertain.
+func TestReclaimWithoutProgressDoesNotResendAPause(t *testing.T) {
 	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-x", Name: "lookup", Arguments: `{"q":1}`}))
 	f := newLeaseFixture(t, model, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
 	paused, err := f.eng.RunAgent(leaseScope(), "assistant", "work", nil)
 	require.NoError(t, err)
-	require.Equal(t, run.StatePaused, paused.State)
-	before, err := f.store.GetSuspension(leaseScope(), paused.ID)
-	require.NoError(t, err)
-	// The resumer's claim, and nothing after it.
+	// A claim with no snapshot behind it, under a lease that has lapsed.
 	_, err = f.store.ClaimSuspension(leaseScope(), paused.ID)
 	require.NoError(t, err)
+	require.NoError(t, f.store.HoldLease(leaseScope(), paused.ID, run.Lease{Owner: "dead", ExpiresAt: time.Now().UTC().Add(-time.Second)}))
 
 	hooks := newReclaimHooks()
 	bModel := &reclaimLLM{}
-	b := reclaimer(t, f, bModel, hooks, engine.WithRunLease(ownerlessGraceTTL), engine.WithExternalTool(llm.Tool{Name: "lookup"}))
-	pastGrace()
+	b := reclaimer(t, f, bModel, hooks, engine.WithExternalTool(llm.Tool{Name: "lookup"}))
 	engine.SweepOnce(b, context.Background())
-	require.Len(t, hooks.snapshot().reclaimable, 1)
-
-	again, err := b.ContinueRun(leaseScope(), paused.ID)
+	_, err = b.ContinueRun(leaseScope(), paused.ID)
+	require.ErrorIs(t, err, cortex.ErrEffectUncertain)
+	require.Contains(t, err.Error(), `"lookup"`)
+	require.Empty(t, hooks.snapshot().suspended, "the call was handed to the host a second time")
+	require.Zero(t, bModel.calls())
+	got, err := f.store.GetRun(leaseScope(), paused.ID)
 	require.NoError(t, err)
-	require.Equal(t, run.StatePaused, again.State)
-	require.Zero(t, bModel.calls(), "the model was called before the pending call was answered")
-	after, err := f.store.GetSuspension(leaseScope(), paused.ID)
-	require.NoError(t, err)
-	require.NotEqual(t, before.ID, after.ID, "the run must pause on a new suspension")
-	require.Equal(t, suspension.ReasonExternalTool, after.Reason)
-	require.Equal(t, []string{"call-x"}, startedIDs(after.Pending))
-	seen := hooks.snapshot()
-	require.Len(t, seen.suspended, 1)
-	require.Equal(t, after.ID, seen.suspended[0].SuspensionID)
+	require.Equal(t, run.StateIncomplete, got.State)
+	require.Equal(t, "lookup", got.Metadata["uncertain_tool"])
 }
 
 // mustStoredPause writes a paused run with an external-tool suspension
