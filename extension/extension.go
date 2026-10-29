@@ -58,6 +58,8 @@ type Extension struct {
 	noAutoAdapters bool
 	// nexusOpts configure the nexus adapter the auto discovery wires in.
 	nexusOpts []nexusllm.Option
+	// weaveOpts configure the weave adapter the auto discovery wires in.
+	weaveOpts []weaveknowledge.Option
 	// hostStore is set by WithStore, which makes discovering a default
 	// grove database pointless.
 	hostStore     bool
@@ -189,7 +191,7 @@ func (e *Extension) init(fapp forge.App) error {
 		opts = append(opts,
 			nexusllm.EngineOption(fapp.Container(), e.nexusOpts...),
 			shieldsafety.EngineOption(fapp.Container()),
-			weaveknowledge.EngineOption(fapp.Container()),
+			weaveknowledge.EngineOption(fapp.Container(), e.weaveOpts...),
 			sentineladapter.EngineOption(fapp.Container()),
 		)
 	}

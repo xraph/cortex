@@ -140,6 +140,10 @@ The adapter refuses to send a call without a Nexus tenant, which is why the quic
 
 Thinking models keep their signed thinking between turns, through approvals and reclaims, but it never reaches conversation memory. A turn whose text your publication gate redacted loses its thinking blocks when it is replayed to the model (set the Nexus Anthropic provider's `anthropic.WithThinkingBlockBinding("drop_block")` if you want that explicit). The thinking blocks are the model's unredacted output, and they sit that way in progress snapshots and continuations. A Nexus guard that blocks a response stops the run with `safety_block` and no tool from that step runs. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#nexus-adapter) has the details.
 
+### The Weave adapter
+
+Every knowledge search runs under a Weave tenant, taken from the run's scope with `weaveknowledge.WithTenant` (the default is the scope's first level). A run only reads its own tenant's collections, plus any read-only ones you list with `weaveknowledge.WithShared`, such as your product docs. A call with no tenant fails before Weave is asked. Under the Forge extension, pass these with `extension.WithWeaveOptions`. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#weave-adapter) has the details.
+
 ## Why Cortex?
 
 Calling a chat API in a loop gets you an agent for a demo. Then you need the run history in a database, a person to approve a risky tool call, a run that can wait a day for an external result without holding a goroutine, and a guarantee that one customer's agents never read another's memory. Cortex handles those parts so your code only describes the agents and their tools.

@@ -4,6 +4,7 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex/engine"
+	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
 	"github.com/xraph/cortex/plugin"
 	"github.com/xraph/cortex/store"
@@ -53,6 +54,16 @@ func WithoutAutoAdapters() ExtOption {
 // WithoutAutoAdapters still leaves it out.
 func WithNexusOptions(opts ...nexusllm.Option) ExtOption {
 	return func(e *Extension) { e.nexusOpts = append(e.nexusOpts, opts...) }
+}
+
+// WithWeaveOptions configures the weave adapter the extension wires in when
+// it finds a weave engine in the container: weaveknowledge.WithTenant to map
+// a scope to its weave tenant, and weaveknowledge.WithShared to add
+// read-only collections every run may search. The adapter keeps its place in
+// the option order, so an engine.WithKnowledge passed with WithEngineOption
+// still replaces it, and WithoutAutoAdapters still leaves it out.
+func WithWeaveOptions(opts ...weaveknowledge.Option) ExtOption {
+	return func(e *Extension) { e.weaveOpts = append(e.weaveOpts, opts...) }
 }
 
 // WithConfig sets the extension configuration.

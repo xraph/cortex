@@ -162,6 +162,7 @@ All of these are applied now. The `Default*` fields and `ShutdownTimeout` become
 | `extension.WithEngineOption(opt)` | Passes an engine option directly. It overrides the config and the automatic adapters |
 | `extension.WithoutAutoAdapters()` | Skips looking for Nexus, Shield, Weave and Sentinel in the container |
 | `extension.WithNexusOptions(opts...)` | Passes [Nexus adapter options](#nexus-adapter) to the adapter the extension wires in |
+| `extension.WithWeaveOptions(opts...)` | Passes [Weave adapter options](#weave-adapter) to the adapter the extension wires in |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
 | `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
@@ -211,6 +212,32 @@ These need no setup:
 - A Nexus guard that blocks a request or a response surfaces as `llm.ErrContentBlocked`, with the guard's `*guard.BlockedError` still reachable through `errors.As`. The engine stops the run with stop reason `safety_block`, and no tool call from that step runs, even one the stream had already started to send.
 
 `nexusllm.New(gw)` works before the gateway starts; calls just fail with `nexus.ErrNotInitialized` until `Initialize` returns. When you only get the gateway later, as with the one Nexus's Forge extension builds, use `nexusllm.NewFunc(func() *nexus.Gateway { return ext.Gateway() })`. Under the Forge extension, pass the same options with `extension.WithNexusOptions`.
+
+## Weave adapter
+
+`knowledge/weave` searches a [Weave](https://github.com/xraph/weave) engine, and every call runs under a Weave tenant taken from the run's scope. A call whose scope names no tenant fails with an error matching both `cortex.ErrNoScope` and `weave.ErrTenantRequired`, and Weave is never asked. The adapter only reads.
+
+```go
+adapter := weaveknowledge.New(eng,
+    // The default is cortex.RootTenant, the first scope level's value.
+    weaveknowledge.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return ws, nil
+    }),
+    // Every run may also search your product docs.
+    weaveknowledge.WithShared(weaveknowledge.SharedCollection{Tenant: "docs", Collection: "product-docs"}),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithKnowledge(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Weave tenant from the run's scope. An empty result is refused like a missing scope |
+| `WithShared(collections...)` | none | Adds read-only collections, each under its own tenant, that every run may also search |
+
+A search that names no collection runs once under the run's tenant and once for each shared collection, then merges the hits by score and keeps the top `TopK` (5 when you set none). A search that names a collection resolves it in the run's tenant, unless it names a shared one, which it reads under that collection's tenant. `ListCollections` returns the run tenant's collections plus the shared ones. A run never sees another tenant's collections, because Weave checks the tenant on every call.
+
+Under the Forge extension, pass the same options with `extension.WithWeaveOptions`.
 
 ## YAML configuration
 

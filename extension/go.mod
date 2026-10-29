@@ -18,7 +18,7 @@ require (
 	github.com/xraph/nexus v1.9.1
 	github.com/xraph/shield v1.8.1
 	github.com/xraph/vessel v1.0.4
-	github.com/xraph/weave v1.8.1
+	github.com/xraph/weave v1.9.2
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 )

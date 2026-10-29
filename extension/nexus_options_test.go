@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -10,9 +11,13 @@ import (
 	"github.com/xraph/nexus/provider"
 	"github.com/xraph/nexus/tenant"
 	"github.com/xraph/vessel"
+	"github.com/xraph/weave"
+	weaveengine "github.com/xraph/weave/engine"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/knowledge"
+	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
 	"github.com/xraph/cortex/llm"
 	nexusllm "github.com/xraph/cortex/llm/nexus"
 	"github.com/xraph/cortex/store/scopespy"
@@ -105,5 +110,53 @@ func TestNexusOptionsReachTheAutoAdapter(t *testing.T) {
 	}
 	if host.Engine().LLM() != llm.Client(fakeLLM{}) {
 		t.Fatalf("LLM = %T, want the host's fake", host.Engine().LLM())
+	}
+}
+
+func TestWeaveOptionsReachTheAutoAdapter(t *testing.T) {
+	eng, err := weaveengine.New()
+	if err != nil {
+		t.Fatalf("weave engine: %v", err)
+	}
+	provide := func(app interface{ Container() vessel.Vessel }) {
+		if err := vessel.Provide(app.Container(), func() (*weaveengine.Engine, error) { return eng, nil }); err != nil {
+			t.Fatalf("provide: %v", err)
+		}
+	}
+	// A tenant func that names no tenant makes the adapter's refusal
+	// visible without any weave store behind it.
+	refuse := weaveknowledge.WithTenant(func(context.Context, cortex.Scope) (string, error) { return "", nil })
+
+	app := newTestApp(t, "cortex-weave-options-test")
+	provide(app)
+	e := New(WithStore(scopespy.New()), WithWeaveOptions(refuse))
+	if err := e.Register(app); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if e.Engine().Knowledge() == nil {
+		t.Fatal("Knowledge = nil, want the weave adapter")
+	}
+	if _, err := e.Engine().Knowledge().ListCollections(scopeCtx()); !errors.Is(err, weave.ErrTenantRequired) {
+		t.Fatalf("ListCollections err = %v, want the adapter's tenant refusal", err)
+	}
+
+	app = newTestApp(t, "cortex-weave-options-off-test")
+	provide(app)
+	off := New(WithStore(scopespy.New()), WithWeaveOptions(refuse), WithoutAutoAdapters())
+	if err := off.Register(app); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if off.Engine().Knowledge() != nil {
+		t.Fatalf("Knowledge = %T, want nil without automatic adapters", off.Engine().Knowledge())
+	}
+
+	app = newTestApp(t, "cortex-weave-options-host-test")
+	provide(app)
+	host := New(WithStore(scopespy.New()), WithWeaveOptions(refuse), WithEngineOption(engine.WithKnowledge(fakeKnowledge{})))
+	if err := host.Register(app); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if host.Engine().Knowledge() != knowledge.Provider(fakeKnowledge{}) {
+		t.Fatalf("Knowledge = %T, want the host's fake", host.Engine().Knowledge())
 	}
 }
