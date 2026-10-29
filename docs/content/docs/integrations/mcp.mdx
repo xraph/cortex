@@ -1,0 +1,78 @@
+---
+title: MCP Tools
+description: Register the tools of an MCP server as cortex tools, with retry safety taken from the server's annotations.
+---
+
+## Overview
+
+`mcpbridge` (`github.com/xraph/cortex/mcpbridge`) turns the tools an MCP server
+exposes into cortex tools. It's a separate module, so the root engine never
+depends on the MCP SDK:
+
+```bash
+go get github.com/xraph/cortex/mcpbridge@latest
+```
+
+## Wiring a session
+
+You own the `*mcp.ClientSession`. Connect it however your server needs, hand it
+to the bridge, and close it when the engine is done.
+
+```go
+import (
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/xraph/cortex/engine"
+	"github.com/xraph/cortex/mcpbridge"
+)
+
+cs, err := mcp.NewClient(&mcp.Implementation{Name: "app", Version: "1"}, nil).
+	Connect(ctx, transport, nil)
+if err != nil {
+	return err
+}
+defer cs.Close()
+
+opts, err := mcpbridge.EngineOptions(ctx, cs, mcpbridge.Options{Prefix: "github_"})
+if err != nil {
+	return err
+}
+eng, err := engine.New(opts...)
+```
+
+`mcpbridge.Tools` returns the same tools as plain values (`Def`, `Handler`,
+`ReadOnly`, `Destructive`) if you want to register or filter them yourself.
+
+## Names and filtering
+
+`Prefix` is prepended to every tool name, which keeps two servers from
+colliding. A prefixed name must match `^[a-zA-Z0-9_-]{1,64}$`. If any included
+tool doesn't, `Tools` fails and names each offender. Use `Include` to leave a
+tool out before the check runs:
+
+```go
+mcpbridge.Options{
+	Prefix:  "gh_",
+	Include: func(t *mcp.Tool) bool { return t.Annotations != nil && t.Annotations.ReadOnlyHint },
+}
+```
+
+## Results
+
+Text content is joined with a newline. When the server returns structured
+content, you get its JSON instead. Images, audio and other content types become
+`[<type> content omitted]`. A result the server marks as an error becomes a Go
+error carrying its text. A result over `MaxResultBytes` (1 MiB by default) is
+also an error.
+
+## Retry safety and uncertainty
+
+Only tools the server annotates as read-only are registered with
+`WithToolRetrySafe`, so a reclaimed run may call them again. Every other tool
+is treated as one that writes. `Destructive` follows the `destructiveHint`
+annotation and is true when the hint is unset and the tool isn't read-only.
+
+A transport or protocol failure during a call is different, because the request
+may already have reached the server. For a read-only tool it's an ordinary
+error. For any other tool the error wraps `cortex.ErrEffectUncertain`, so the
+run stops for reconciliation instead of sending the call a second time.
