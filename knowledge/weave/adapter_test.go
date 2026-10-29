@@ -191,3 +191,22 @@ func TestListCollectionsPerTenant(t *testing.T) {
 	require.EqualValues(t, 1, ids[f.cols["o1/runbooks"]].DocumentCount)
 	require.EqualValues(t, 1, ids[f.cols["docs/loomplane-docs"]].DocumentCount)
 }
+
+func TestOtherTenantsCollectionIDIsRefused(t *testing.T) {
+	f := newFixture(t)
+	a := weaveknowledge.New(f.eng)
+	foreign := f.cols["o2/runbooks"]
+	require.NotEmpty(t, foreign)
+
+	// A run in o1 that names o2's collection by its parsed ID gets nothing
+	// of o2's: weave answers as if the collection did not exist.
+	got, err := a.Retrieve(scoped("o1"), "restart the secret worker", &knowledge.RetrieveParams{Collection: foreign, TopK: 10})
+	require.ErrorIs(t, err, weave.ErrCollectionNotFound)
+	require.Empty(t, got)
+	require.NotContains(t, err.Error(), "secret worker")
+
+	// o2 itself still reads it.
+	got, err = a.Retrieve(scoped("o2"), "restart the secret worker", &knowledge.RetrieveParams{Collection: foreign, TopK: 10})
+	require.NoError(t, err)
+	require.Contains(t, joined(got), "secret")
+}
