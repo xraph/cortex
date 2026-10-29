@@ -24,7 +24,7 @@ import (
 // recordingAuthorizer records every Operation it is asked about and
 // answers each with deny. DecidedBy answers with name.
 type recordingAuthorizer struct {
-	mu   sync.Mutex
+	mu        sync.Mutex
 	ops       []Operation
 	deny      error
 	name      string
