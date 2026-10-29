@@ -182,7 +182,8 @@ func (t *toolAuthorizer) scan(ctx context.Context, s cortex.Subject, call llm.To
 }
 
 // scopeApp is the app the engine gives a content scan: the scope's "app"
-// level, or the canonical scope without one.
+// level, or the canonical scope without one. It mirrors scanAppID in
+// engine/react.go, which is unexported; change both together.
 func scopeApp(s cortex.Scope) string {
 	if v, ok := s.Get("app"); ok {
 		return v
