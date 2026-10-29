@@ -183,6 +183,8 @@ The Forge extension now applies `default_model`, `default_max_steps`, `default_m
 
 `Stop` waits for runs in flight and hands off the leased ones to another replica. New runs started during the drain get `cortex.ErrEngineStopping`, which a host that queues work can treat as "try another worker".
 
+Runs are leased by default now, for 60 seconds at a time, on any store that supports it. When the worker running one dies, another replica reclaims the run and continues it from its last saved step. If the worker died while a tool call was in flight, the call runs again only when the tool is retry-safe. Any other tool makes the run end `incomplete` with an error matching `cortex.ErrEffectUncertain`, because nobody can tell whether the call did anything. Tools aren't retry-safe unless you say so, so mark the ones that are safe to run twice with `engine.WithToolRetrySafe`, or `tool.RetrySafe()` on a typed tool. `WithRunLease(0)` turns leasing off.
+
 `Migrate` on PostgreSQL waits for the migration lock instead of failing when another replica holds it. Give it a context with a deadline.
 
 The REST module takes an optional `api.Authorizer`. With one installed, `resolveCheckpoint` takes the decider from its `DecidedBy` method and ignores the `decided_by` in the body. `sendAgentMessage` keeps its `from` as whatever the caller says it is.
