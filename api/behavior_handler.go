@@ -17,7 +17,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 	if err := g.POST("/behaviors", a.createBehavior,
 		forge.WithSummary("Create behavior"),
 		forge.WithDescription("Creates a new condition-triggered behavior pattern."),
-		forge.WithOperationID("createBehavior"),
+		a.op("createBehavior", true),
 		forge.WithRequestSchema(CreateBehaviorRequest{}),
 		forge.WithCreatedResponse(&behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.GET("/behaviors", a.listBehaviors,
 		forge.WithSummary("List behaviors"),
-		forge.WithOperationID("listBehaviors"),
+		a.op("listBehaviors", false),
 		forge.WithRequestSchema(ListBehaviorsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Behavior list", []*behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.GET("/behaviors/:name", a.getBehavior,
 		forge.WithSummary("Get behavior"),
-		forge.WithOperationID("getBehavior"),
+		a.op("getBehavior", false),
 		forge.WithResponseSchema(http.StatusOK, "Behavior details", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.PUT("/behaviors/:name", a.updateBehavior,
 		forge.WithSummary("Update behavior"),
-		forge.WithOperationID("updateBehavior"),
+		a.op("updateBehavior", true),
 		forge.WithRequestSchema(UpdateBehaviorRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated behavior", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/behaviors/:name", a.deleteBehavior,
 		forge.WithSummary("Delete behavior"),
-		forge.WithOperationID("deleteBehavior"),
+		a.op("deleteBehavior", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {

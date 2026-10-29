@@ -25,6 +25,18 @@ That gives you the 59 routes on this page. They live under `<basePath>/v1` and r
 
 Cortex doesn't authenticate requests or work out who's calling. Your middleware has to put a `cortex.Scope` on each request's context with `cortex.WithScope` (and optionally a principal with `cortex.WithPrincipal`) before it reaches these handlers. Without a scope every route fails. The `X-Tenant-ID` headers in the examples on other pages are whatever your own middleware reads; Cortex doesn't look at any header. See [Forge Extension](/docs/guides/forge-extension#scope-middleware).
 
+### Authorizing requests
+
+Pass `api.WithAuthorizer` to put every route behind a check of your own:
+
+```go
+return api.New(eng, r, api.WithAuthorizer(myAuthorizer))
+```
+
+An `api.Authorizer` has two methods. `Authorize(ctx, op)` runs before each route with the request's context and an `api.Operation`: `ID` is the route's OpenAPI operation id (`resolveCheckpoint`, `listTools` and so on) and `Write` is true for anything other than `GET` or `HEAD`. Return nil to let the request through. Any other error refuses it with `403`, and the response never repeats your error's text. The one exception is an error that wraps a Cortex not-found or scope error: that keeps the status it has everywhere else, so `cortex.ErrAgentNotFound` is still a `404` and `cortex.ErrNoScope` a `412`. `DecidedBy(ctx)` names the person resolving a checkpoint, worked out from the request's principal.
+
+Without an authorizer every route is open to whoever reaches the router, and `resolveCheckpoint` records whatever `decided_by` the caller sends. That's fine when every caller is trusted equally. It isn't anywhere else, so treat the module without an authorizer as single-trust only.
+
 A few things to know before you call them:
 
 - List routes currently need `limit` and `offset` in the query string. They're meant to be optional (50 by default, capped at 1000), but the request binding rejects a request without them. The same goes for `limit` and `session_id` on the memory routes.
@@ -569,6 +581,8 @@ rest of the run takes.
 
 `decision` is `approved` or `rejected`; anything else is a `400`.
 
+`decided_by` is caller-asserted. With an authorizer installed it's ignored, and the checkpoint records the name `DecidedBy` returns for the request's principal. Without one, the body's value is what gets recorded. The decider's principal is stored on the checkpoint either way but never comes back in a response.
+
 **Response** `204 No Content`
 
 ---
@@ -653,19 +667,32 @@ Change the engine's defaults at runtime. The body takes `default_model`, `defaul
 
 **Response** `200 OK` with the updated configuration, in the same shape as `GET`.
 
-## Tools (2 routes, not implemented)
-
-Both routes are placeholders today.
+## Tools (2 routes)
 
 ### `GET /cortex/v1/tools`
 
-Meant to list the registered tools. It always answers `200 OK` with `{"items": []}`, whatever you registered with `engine.WithTool`. Use `eng.VisibleTools(ctx, agentID)` in Go instead.
+The engine's tool catalog, in dispatch order: builtins, then tools registered with `engine.WithTool` (or `tool.Register`), then external tools from `engine.WithExternalTool`. A name is listed once.
+
+**Response** `200 OK`
+
+```json
+{
+  "items": [
+    {"name": "lookup_order", "description": "Looks up an order by id.", "kind": "registered", "retry_safe": true},
+    {"name": "deploy", "description": "Deploys a service.", "kind": "external", "retry_safe": false}
+  ]
+}
+```
+
+`kind` is `builtin`, `registered` or `external`. `retry_safe` says whether the tool may run again after a crash. This is the whole catalog, not what one agent sees; for that, call `eng.VisibleTools(ctx, agentID)` in Go.
 
 ---
 
 ### `GET /cortex/v1/tools/:name/schema`
 
-Meant to return a tool's JSON Schema. It always answers `404 Not Found` ("tool schema not yet implemented").
+The JSON Schema of the named tool's parameters, exactly as the engine hands it to a model.
+
+**Response** `200 OK` with the schema object, or `404 Not Found` for a name the engine doesn't know.
 
 ---
 

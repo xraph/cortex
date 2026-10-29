@@ -17,7 +17,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.POST("/orchestrations", a.createOrchestration,
 		forge.WithSummary("Create orchestration"),
 		forge.WithDescription("Creates a multi-agent orchestration config (strategy + participants + settings)."),
-		forge.WithOperationID("createOrchestration"),
+		a.op("createOrchestration", true),
 		forge.WithRequestSchema(CreateOrchestrationRequest{}),
 		forge.WithCreatedResponse(&orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestrations", a.listOrchestrations,
 		forge.WithSummary("List orchestrations"),
-		forge.WithOperationID("listOrchestrations"),
+		a.op("listOrchestrations", false),
 		forge.WithRequestSchema(ListOrchestrationsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Orchestration list", []*orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestrations/:name", a.getOrchestration,
 		forge.WithSummary("Get orchestration"),
-		forge.WithOperationID("getOrchestration"),
+		a.op("getOrchestration", false),
 		forge.WithResponseSchema(http.StatusOK, "Orchestration details", &orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.PUT("/orchestrations/:name", a.updateOrchestration,
 		forge.WithSummary("Update orchestration"),
-		forge.WithOperationID("updateOrchestration"),
+		a.op("updateOrchestration", true),
 		forge.WithRequestSchema(UpdateOrchestrationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated orchestration", &orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/orchestrations/:name", a.deleteOrchestration,
 		forge.WithSummary("Delete orchestration"),
-		forge.WithOperationID("deleteOrchestration"),
+		a.op("deleteOrchestration", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -66,7 +66,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.POST("/orchestrations/:name/run", a.runOrchestration,
 		forge.WithSummary("Run orchestration"),
 		forge.WithDescription("Executes a stored orchestration and returns the run summary."),
-		forge.WithOperationID("runOrchestration"),
+		a.op("runOrchestration", true),
 		forge.WithRequestSchema(RunOrchestrationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run summary", &RunOrchestrationResponse{}),
 		forge.WithErrorResponses(),
@@ -76,7 +76,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestration-runs", a.listOrchestrationRuns,
 		forge.WithSummary("List orchestration runs"),
-		forge.WithOperationID("listOrchestrationRuns"),
+		a.op("listOrchestrationRuns", false),
 		forge.WithRequestSchema(ListOrchestrationRunsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run list", []*orchestration.Run{}),
 		forge.WithErrorResponses(),
@@ -86,7 +86,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestration-runs/:id", a.getOrchestrationRun,
 		forge.WithSummary("Get orchestration run"),
-		forge.WithOperationID("getOrchestrationRun"),
+		a.op("getOrchestrationRun", false),
 		forge.WithResponseSchema(http.StatusOK, "Run details", &orchestration.Run{}),
 		forge.WithErrorResponses(),
 	); err != nil {

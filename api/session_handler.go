@@ -18,7 +18,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/sessions", a.createSession,
 		forge.WithSummary("Create session"),
 		forge.WithDescription("Creates a new conversation session for an agent."),
-		forge.WithOperationID("createSession"),
+		a.op("createSession", true),
 		forge.WithRequestSchema(CreateSessionRequest{}),
 		forge.WithCreatedResponse(&session.Session{}),
 		forge.WithErrorResponses(),
@@ -29,7 +29,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/sessions", a.listSessions,
 		forge.WithSummary("List sessions"),
 		forge.WithDescription("Returns an agent's sessions with optional pagination."),
-		forge.WithOperationID("listSessions"),
+		a.op("listSessions", false),
 		forge.WithRequestSchema(ListSessionsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Session list", []*session.Session{}),
 		forge.WithErrorResponses(),
@@ -44,7 +44,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/sessions/count", a.countSessions,
 		forge.WithSummary("Count sessions"),
 		forge.WithDescription("Returns the number of sessions an agent has."),
-		forge.WithOperationID("countSessions"),
+		a.op("countSessions", false),
 		forge.WithRequestSchema(CountSessionsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Session count", &CountSessionsResponse{}),
 		forge.WithErrorResponses(),
@@ -54,7 +54,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.GET("/agents/:name/sessions/:id", a.getSession,
 		forge.WithSummary("Get session"),
-		forge.WithOperationID("getSession"),
+		a.op("getSession", false),
 		forge.WithResponseSchema(http.StatusOK, "Session details", &session.Session{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -63,7 +63,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.PUT("/agents/:name/sessions/:id", a.updateSession,
 		forge.WithSummary("Update session"),
-		forge.WithOperationID("updateSession"),
+		a.op("updateSession", true),
 		forge.WithRequestSchema(UpdateSessionRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated session", &session.Session{}),
 		forge.WithErrorResponses(),
@@ -73,7 +73,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/agents/:name/sessions/:id", a.deleteSession,
 		forge.WithSummary("Delete session"),
-		forge.WithOperationID("deleteSession"),
+		a.op("deleteSession", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {

@@ -18,7 +18,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 	if err := g.POST("/personas", a.createPersona,
 		forge.WithSummary("Create persona"),
 		forge.WithDescription("Creates a new persona composing skills, traits, behaviors, and styles."),
-		forge.WithOperationID("createPersona"),
+		a.op("createPersona", true),
 		forge.WithRequestSchema(CreatePersonaRequest{}),
 		forge.WithCreatedResponse(&persona.Persona{}),
 		forge.WithErrorResponses(),
@@ -28,7 +28,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 
 	if err := g.GET("/personas", a.listPersonas,
 		forge.WithSummary("List personas"),
-		forge.WithOperationID("listPersonas"),
+		a.op("listPersonas", false),
 		forge.WithRequestSchema(ListPersonasRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Persona list", []*persona.Persona{}),
 		forge.WithErrorResponses(),
@@ -38,7 +38,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 
 	if err := g.GET("/personas/:name", a.getPersona,
 		forge.WithSummary("Get persona"),
-		forge.WithOperationID("getPersona"),
+		a.op("getPersona", false),
 		forge.WithResponseSchema(http.StatusOK, "Persona details", &persona.Persona{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -47,7 +47,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 
 	if err := g.PUT("/personas/:name", a.updatePersona,
 		forge.WithSummary("Update persona"),
-		forge.WithOperationID("updatePersona"),
+		a.op("updatePersona", true),
 		forge.WithRequestSchema(UpdatePersonaRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated persona", &persona.Persona{}),
 		forge.WithErrorResponses(),
@@ -57,7 +57,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/personas/:name", a.deletePersona,
 		forge.WithSummary("Delete persona"),
-		forge.WithOperationID("deletePersona"),
+		a.op("deletePersona", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -67,7 +67,7 @@ func (a *API) registerPersonaRoutes(router forge.Router) error {
 	if err := g.POST("/personas/:name/clone", a.clonePersona,
 		forge.WithSummary("Clone persona"),
 		forge.WithDescription("Creates an independent copy of a persona with a fresh ID and name."),
-		forge.WithOperationID("clonePersona"),
+		a.op("clonePersona", true),
 		forge.WithRequestSchema(ClonePersonaRequest{}),
 		forge.WithCreatedResponse(&persona.Persona{}),
 		forge.WithErrorResponses(),

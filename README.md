@@ -249,6 +249,8 @@ app := forge.NewApp(forge.AppConfig{
 
 The extension mounts no HTTP routes by itself. The REST handlers live in the separate `api` module so you only compile them when you want them, and `WithRoutes` mounts them under `/cortex` by default. Leave it out and you still get the engine in the container and the dashboard contract.
 
+The REST module doesn't check who's calling unless you give it an `api.Authorizer` with `api.WithAuthorizer`. That interface is asked about every route before it runs, and it names the person behind a checkpoint decision. Without one, any caller that reaches the router can use every route and `decided_by` on a checkpoint is whatever the caller wrote, so run it that way only when every caller is trusted equally.
+
 ```yaml
 extensions:
   cortex:

@@ -21,7 +21,7 @@ func (a *API) registerOptimizationActivationCommands(router forge.Router) error 
 		{"rollback", "rollbackOptimizationActivation", optimizationMutation(commands.Rollback), operator.RollbackInput{}},
 		{"deactivate", "deactivateOptimizationRoute", optimizationMutation(commands.Deactivate), operator.ActivationRouteInput{}},
 	} {
-		if err := group.POST("/"+route.action, route.handler, forge.WithOperationID(route.name), forge.WithRequestSchema(route.input), forge.WithResponseSchema(http.StatusOK, "Immutable activation command receipt", opt.Activation{}), forge.WithErrorResponses()); err != nil {
+		if err := group.POST("/"+route.action, route.handler, a.op(route.name, true), forge.WithRequestSchema(route.input), forge.WithResponseSchema(http.StatusOK, "Immutable activation command receipt", opt.Activation{}), forge.WithErrorResponses()); err != nil {
 			return fmt.Errorf("register optimization activation command %s: %w", route.name, err)
 		}
 	}

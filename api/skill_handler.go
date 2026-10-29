@@ -17,7 +17,7 @@ func (a *API) registerSkillRoutes(router forge.Router) error {
 	if err := g.POST("/skills", a.createSkill,
 		forge.WithSummary("Create skill"),
 		forge.WithDescription("Creates a new skill with tool bindings, knowledge refs, and proficiency config."),
-		forge.WithOperationID("createSkill"),
+		a.op("createSkill", true),
 		forge.WithRequestSchema(CreateSkillRequest{}),
 		forge.WithCreatedResponse(&skill.Skill{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerSkillRoutes(router forge.Router) error {
 
 	if err := g.GET("/skills", a.listSkills,
 		forge.WithSummary("List skills"),
-		forge.WithOperationID("listSkills"),
+		a.op("listSkills", false),
 		forge.WithRequestSchema(ListSkillsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Skill list", []*skill.Skill{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerSkillRoutes(router forge.Router) error {
 
 	if err := g.GET("/skills/:name", a.getSkill,
 		forge.WithSummary("Get skill"),
-		forge.WithOperationID("getSkill"),
+		a.op("getSkill", false),
 		forge.WithResponseSchema(http.StatusOK, "Skill details", &skill.Skill{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerSkillRoutes(router forge.Router) error {
 
 	if err := g.PUT("/skills/:name", a.updateSkill,
 		forge.WithSummary("Update skill"),
-		forge.WithOperationID("updateSkill"),
+		a.op("updateSkill", true),
 		forge.WithRequestSchema(UpdateSkillRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated skill", &skill.Skill{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerSkillRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/skills/:name", a.deleteSkill,
 		forge.WithSummary("Delete skill"),
-		forge.WithOperationID("deleteSkill"),
+		a.op("deleteSkill", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {

@@ -19,7 +19,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/memory", a.getConversation,
 		forge.WithSummary("Get conversation"),
 		forge.WithDescription("Returns conversation history for an agent."),
-		forge.WithOperationID("getConversation"),
+		a.op("getConversation", false),
 		forge.WithRequestSchema(GetConversationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Conversation messages", []memory.Message{}),
 		forge.WithErrorResponses(),
@@ -30,7 +30,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 	if err := g.DELETE("/agents/:name/memory", a.clearConversation,
 		forge.WithSummary("Clear conversation"),
 		forge.WithDescription("Clears conversation history for an agent."),
-		forge.WithOperationID("clearConversation"),
+		a.op("clearConversation", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {

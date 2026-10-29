@@ -24,7 +24,7 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	if err := g.GET("/config", a.getConfig,
 		forge.WithSummary("Get config"),
 		forge.WithDescription("Returns the current engine configuration."),
-		forge.WithOperationID("getConfig"),
+		a.op("getConfig", false),
 		forge.WithResponseSchema(http.StatusOK, "Engine configuration", &cortex.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -34,7 +34,7 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	if err := g.PUT("/config", a.updateConfig,
 		forge.WithSummary("Update config"),
 		forge.WithDescription("Updates engine configuration at runtime. Changes are in-memory only."),
-		forge.WithOperationID("updateConfig"),
+		a.op("updateConfig", true),
 		forge.WithRequestSchema(UpdateConfigRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated configuration", &cortex.Config{}),
 		forge.WithErrorResponses(),

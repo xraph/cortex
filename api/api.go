@@ -1,4 +1,9 @@
 // Package api provides Forge-style HTTP handlers for the Cortex agent system.
+//
+// Every route asks the Authorizer passed with WithAuthorizer before it
+// runs. Without one the module checks nobody, and resolveCheckpoint
+// records the decided_by the caller asserts, so it is then fit only for a
+// single-trust deployment, where every caller is trusted equally.
 package api
 
 import (
@@ -21,6 +26,7 @@ type API struct {
 	optimization  *optimization.Optimizer
 	planning      *coordination.PlanningOperator
 	router        forge.Router
+	authorizer    Authorizer
 }
 
 // New creates an API from a Cortex Engine.

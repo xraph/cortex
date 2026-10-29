@@ -17,7 +17,7 @@ func (a *API) registerTraitRoutes(router forge.Router) error {
 	if err := g.POST("/traits", a.createTrait,
 		forge.WithSummary("Create trait"),
 		forge.WithDescription("Creates a new personality trait with dimensions and influences."),
-		forge.WithOperationID("createTrait"),
+		a.op("createTrait", true),
 		forge.WithRequestSchema(CreateTraitRequest{}),
 		forge.WithCreatedResponse(&trait.Trait{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerTraitRoutes(router forge.Router) error {
 
 	if err := g.GET("/traits", a.listTraits,
 		forge.WithSummary("List traits"),
-		forge.WithOperationID("listTraits"),
+		a.op("listTraits", false),
 		forge.WithRequestSchema(ListTraitsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Trait list", []*trait.Trait{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerTraitRoutes(router forge.Router) error {
 
 	if err := g.GET("/traits/:name", a.getTrait,
 		forge.WithSummary("Get trait"),
-		forge.WithOperationID("getTrait"),
+		a.op("getTrait", false),
 		forge.WithResponseSchema(http.StatusOK, "Trait details", &trait.Trait{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerTraitRoutes(router forge.Router) error {
 
 	if err := g.PUT("/traits/:name", a.updateTrait,
 		forge.WithSummary("Update trait"),
-		forge.WithOperationID("updateTrait"),
+		a.op("updateTrait", true),
 		forge.WithRequestSchema(UpdateTraitRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated trait", &trait.Trait{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerTraitRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/traits/:name", a.deleteTrait,
 		forge.WithSummary("Delete trait"),
-		forge.WithOperationID("deleteTrait"),
+		a.op("deleteTrait", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {

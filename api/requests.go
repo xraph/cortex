@@ -349,7 +349,10 @@ type ListCheckpointsRequest struct {
 type ResolveCheckpointRequest struct {
 	CheckpointID string `path:"id" description:"Checkpoint ID"`
 	Decision     string `json:"decision" description:"approved or rejected"`
-	DecidedBy    string `json:"decided_by,omitempty"`
+	// DecidedBy is the deciding person as the caller asserts it. With an
+	// Authorizer installed it is ignored and the decider comes from
+	// Authorizer.DecidedBy; without one it is recorded as sent.
+	DecidedBy string `json:"decided_by,omitempty" description:"Deciding person; ignored when the host installs an authorizer"`
 	// Reason is what a rejection puts on the failed run, so whoever finds
 	// the run later reads why a person stopped it rather than a bare
 	// "rejected".
