@@ -43,7 +43,7 @@ help:
 	@echo "  make test-race      - Run tests with race detector"
 	@echo "  make test-integration - Run integration tests (inttest/ module; needs Docker)"
 	@echo "  make coverage       - Generate test coverage report"
-	@echo "  make test-coverage  - Run CI race coverage with a 30-minute package timeout"
+	@echo "  make test-coverage  - Run CI race coverage with a 60-minute package timeout"
 	@echo "  make coverage-html  - Generate HTML coverage report"
 	@echo ""
 	@echo "$(GREEN)Dependencies:$(NC)"
@@ -173,7 +173,7 @@ test-integration:
 ## test-coverage: Run race coverage with enough time for SQLite conformance migrations.
 ## The shared CI workflow selects this target when present.
 test-coverage:
-	$(GO) test -race -covermode=atomic -coverprofile=coverage.out -timeout=30m ./...
+	$(GO) test -race -covermode=atomic -coverprofile=coverage.out -timeout=60m ./...
 
 ## coverage: Generate test coverage
 coverage:
