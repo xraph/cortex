@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -653,4 +654,127 @@ func TestReclaimMetricsCountUncertain(t *testing.T) {
 	_, err := b.ContinueRun(leaseScope(), r.ID)
 	require.ErrorIs(t, err, cortex.ErrEffectUncertain)
 	require.Equal(t, 1.0, sink.Value("cortex_runs_reclaimed_total", map[string]string{"result": "uncertain"}))
+}
+
+// principalLog is an authorizer that allows everything and records the
+// principal each check was asked about.
+type principalLog struct {
+	mu   sync.Mutex
+	seen []any
+}
+
+func (p *principalLog) record(s cortex.Subject) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.seen = append(p.seen, s.Principal)
+}
+
+func (p *principalLog) Visible(_ context.Context, s cortex.Subject, tools []llm.Tool) []llm.Tool {
+	p.record(s)
+	return tools
+}
+
+func (p *principalLog) Authorize(_ context.Context, s cortex.Subject, _ llm.ToolCall) error {
+	p.record(s)
+	return nil
+}
+
+func (p *principalLog) principals() []any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.seen)
+}
+
+// revokingCodec is the JSON codec, except that it reports one user's
+// identity as revoked, as a host does once that member is removed.
+type revokingCodec struct {
+	cortex.PrincipalCodec
+	revoked string
+}
+
+func (c revokingCodec) DecodePrincipal(ctx context.Context, data []byte) (any, error) {
+	p, err := c.PrincipalCodec.DecodePrincipal(ctx, data)
+	if err == nil && p.(leasePrincipal).User == c.revoked {
+		return nil, fmt.Errorf("member %s was removed: %w", c.revoked, cortex.ErrPrincipalRevoked)
+	}
+	return p, err
+}
+
+// stallUnderPrincipal starts a run as alice whose worker stalls inside the
+// retry-safe tool "b", and waits until its lease has lapsed.
+func stallUnderPrincipal(t *testing.T) (*leaseFixture, *run.Run) {
+	t.Helper()
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-b", Name: "b", Arguments: `{}`}))
+	stuck := newBlockingTool()
+	f := newLeaseFixture(t, model, engine.WithRunLease(reclaimTTL),
+		engine.WithTool(llm.Tool{Name: "b"}, stuck.handler), engine.WithToolRetrySafe("b"),
+		engine.WithToolAuthorizer(&principalLog{}),
+		engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[leasePrincipal]()))
+	t.Cleanup(stuck.letGo)
+	f.runs.Add(1)
+	go func() {
+		defer f.runs.Done()
+		_, _ = f.eng.RunAgent(cortex.WithPrincipal(leaseScope(), leasePrincipal{User: "alice"}), "assistant", "work", nil)
+	}()
+	stuck.waitEntered(t)
+	r := f.onlyRun(t)
+	stall(t, f, r.ID)
+	return f, r
+}
+
+// A reclaimed run is authorized as the caller who started it, never as the
+// job that continues it on another replica: the replayed call and every
+// call after it are asked about alice.
+func TestReclaimedRunKeepsItsOriginalPrincipal(t *testing.T) {
+	f, r := stallUnderPrincipal(t)
+
+	authB := &principalLog{}
+	bModel := &reclaimLLM{responses: []*llm.Response{toolCalls(llm.ToolCall{ID: "call-b2", Name: "b", Arguments: `{}`})}}
+	bB := &countingTool{result: "b-again"}
+	b := reclaimer(t, f, bModel, newReclaimHooks(),
+		engine.WithTool(llm.Tool{Name: "b"}, bB.handler), engine.WithToolRetrySafe("b"),
+		engine.WithToolAuthorizer(authB),
+		engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[leasePrincipal]()))
+	engine.SweepOnce(b, context.Background())
+
+	job := cortex.WithPrincipal(leaseScope(), leasePrincipal{User: "job"})
+	continued, err := b.ContinueRun(job, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, continued.State)
+	require.Equal(t, int32(2), bB.calls.Load(), "the reclaimer did not run both the replayed call and the next one")
+
+	seen := authB.principals()
+	require.NotEmpty(t, seen, "the reclaimer never consulted its authorizer")
+	for _, p := range seen {
+		require.Equal(t, leasePrincipal{User: "alice"}, p, "a reclaimed run was authorized as someone else")
+	}
+}
+
+// A reclaimed run whose caller has been revoked since is failed with
+// cortex.ErrPrincipalRevoked before the reclaimer makes a model call or
+// runs a tool for it.
+func TestReclaimRefusesARevokedPrincipal(t *testing.T) {
+	f, r := stallUnderPrincipal(t)
+
+	authB := &principalLog{}
+	bModel := &reclaimLLM{}
+	bB := &countingTool{result: "b-again"}
+	hooks := newReclaimHooks()
+	b := reclaimer(t, f, bModel, hooks,
+		engine.WithTool(llm.Tool{Name: "b"}, bB.handler), engine.WithToolRetrySafe("b"),
+		engine.WithToolAuthorizer(authB),
+		engine.WithPrincipalCodec(revokingCodec{PrincipalCodec: cortex.JSONPrincipalCodec[leasePrincipal](), revoked: "alice"}))
+	engine.SweepOnce(b, context.Background())
+
+	ended, err := b.ContinueRun(cortex.WithPrincipal(leaseScope(), leasePrincipal{User: "job"}), r.ID)
+	require.ErrorIs(t, err, cortex.ErrPrincipalRevoked)
+	require.NotNil(t, ended)
+	require.Equal(t, run.StateFailed, ended.State)
+	stored, err := f.store.GetRun(leaseScope(), r.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateFailed, stored.State)
+	require.Zero(t, bModel.calls(), "the reclaimer called the model for a revoked caller")
+	require.Zero(t, bB.calls.Load(), "the reclaimer ran a tool for a revoked caller")
+	require.Empty(t, authB.principals(), "the reclaimer asked its authorizer about a revoked run")
+	require.Equal(t, 1, hooks.snapshot().failed)
 }

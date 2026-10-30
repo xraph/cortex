@@ -511,6 +511,131 @@ func TestStopHandsOffAtNextBoundary(t *testing.T) {
 	require.Empty(t, p.Done)
 }
 
+// With leasing off, the default, Stop lets a run that is executing finish,
+// as v1.9.0 did. Nothing is handed off, no run is left reclaimable, and the
+// run never holds a lease the lapsed sweep could find.
+func TestDefaultStopDrainsWithoutHandOff(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "write", Arguments: `{}`}))
+	model.hold[0] = true
+	var dispatched atomic.Int32
+	f := newDefaultFixture(t, model, engine.WithTool(llm.Tool{Name: "write", Description: "writes"}, func(context.Context, cortex.Invocation) (string, error) {
+		dispatched.Add(1)
+		return "written", nil
+	}))
+	require.NoError(t, f.eng.Start(context.Background()))
+	done := f.start()
+	model.waitEntered(t)
+	require.Nil(t, f.onlyRun(t).Lease, "a run on a default engine holds a lease")
+
+	stopped := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		stopped <- f.eng.Stop(ctx)
+	}()
+	probe, cancelProbe := context.WithCancel(leaseScope())
+	cancelProbe()
+	require.Eventually(t, func() bool {
+		_, err := f.eng.RunAgent(probe, "assistant", "late", nil)
+		return errors.Is(err, cortex.ErrEngineStopping)
+	}, 2*time.Second, 10*time.Millisecond)
+	model.letGo()
+
+	out := waitOutcome(t, done)
+	require.NoError(t, out.err)
+	require.Equal(t, run.StateCompleted, out.run.State)
+	select {
+	case err := <-stopped:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return after the run finished")
+	}
+	require.EqualValues(t, 1, dispatched.Load(), "the run did not finish its tool call while Stop drained")
+	r := f.onlyRun(t)
+	require.Equal(t, run.StateCompleted, r.State)
+	require.Nil(t, r.Lease)
+	completed, failed, _, notices := f.hooks.counts()
+	require.Equal(t, 1, completed)
+	require.Zero(t, failed)
+	require.Empty(t, notices, "a default engine announced a reclaimable run")
+	reclaimable, err := f.eng.ListRuns(leaseScope(), &run.ListFilter{State: run.StateReclaimable})
+	require.NoError(t, err)
+	require.Empty(t, reclaimable)
+	require.Empty(t, f.store.snapshots(), "a default engine saved progress")
+	require.Zero(t, f.store.holds.Load(), "a default engine renewed a lease")
+}
+
+// runContinuer is the plugin a host that turns leasing on registers: every
+// ready or reclaimable run becomes a job, and the job calls ContinueRun on
+// whichever replica takes it, under the run's scope from the hook's ctx.
+type runContinuer struct{ jobs chan continueJob }
+
+type continueJob struct {
+	scope cortex.Scope
+	runID id.AgentRunID
+}
+
+func (*runContinuer) Name() string { return "run-continuer" }
+
+func (c *runContinuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
+	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	return nil
+}
+
+func (c *runContinuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
+	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	return nil
+}
+
+// With WithRunLease set, Stop hands the run off and another replica's job
+// finishes it with ContinueRun, as the docs show a host wiring it.
+func TestLeasedHandOffIsFinishedByTheHostsContinuer(t *testing.T) {
+	model := newLeaseLLM(toolCalls(llm.ToolCall{ID: "call-1", Name: "write", Arguments: `{}`}))
+	model.hold[0] = true
+	var dispatched atomic.Int32
+	write := engine.WithTool(llm.Tool{Name: "write", Description: "writes"}, func(context.Context, cortex.Invocation) (string, error) {
+		dispatched.Add(1)
+		return "written", nil
+	})
+	continuer := &runContinuer{jobs: make(chan continueJob, 4)}
+	f := newLeaseFixture(t, model, write, engine.WithExtension(continuer))
+	require.NoError(t, f.eng.Start(context.Background()))
+	done := f.start()
+	model.waitEntered(t)
+
+	stopped := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		stopped <- f.eng.Stop(ctx)
+	}()
+	probe, cancelProbe := context.WithCancel(leaseScope())
+	cancelProbe()
+	require.Eventually(t, func() bool {
+		_, err := f.eng.RunAgent(probe, "assistant", "late", nil)
+		return errors.Is(err, cortex.ErrEngineStopping)
+	}, 2*time.Second, 10*time.Millisecond)
+	model.letGo()
+	require.ErrorIs(t, waitOutcome(t, done).err, cortex.ErrRunInterrupted)
+	require.NoError(t, <-stopped)
+	require.Equal(t, run.StateReclaimable, f.onlyRun(t).State)
+
+	var job continueJob
+	select {
+	case job = <-continuer.jobs:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hand-off queued no job")
+	}
+	replica, err := engine.New(engine.WithStore(f.store), engine.WithLLM(model), engine.WithWorkerID("replica"), engine.WithRunLease(testLease), write)
+	require.NoError(t, err)
+	finished, err := replica.ContinueRun(cortex.WithScope(context.Background(), job.scope), job.runID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, finished.State)
+	require.EqualValues(t, 1, dispatched.Load(), "the tool ran other than once across the hand-off")
+	_, err = f.store.GetProgress(leaseScope(), job.runID)
+	require.ErrorIs(t, err, cortex.ErrProgressNotFound)
+}
+
 func TestStopDeadlineCancelsBlockedRun(t *testing.T) {
 	model := newLeaseLLM()
 	model.hold[0] = true

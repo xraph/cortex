@@ -637,6 +637,32 @@ func TestRevokedPrincipalClosesPendingCheckpoint(t *testing.T) {
 	})
 }
 
+// A ResolveCheckpoint whose continuation is refused before the claim keeps
+// the decision and leaves the run ready, and its error says so: ContinueRun
+// finishes the run, and deciding again is refused.
+func TestResolveCheckpointSaysTheDecisionIsRecordedWhenContinuationFails(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	codec := newSwitchCodec()
+	f := buildContinueFixture(ctx, t, newApprovalStore(ctx, t), []llm.ToolCall{{ID: "call-1", Name: gatedTool().Name, Arguments: `{}`}}, WithPrincipalCodec(codec))
+	paused, cp := f.pause(t)
+	codec.failDecode(errors.New("identity service unreachable"))
+
+	err := f.e.ResolveCheckpoint(as(ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"})
+	require.ErrorIs(t, err, cortex.ErrPrincipalUnavailable)
+	require.ErrorContains(t, err, "the decision is recorded")
+	require.ErrorContains(t, err, "ContinueRun finishes it")
+	require.Equal(t, run.StateReady, f.runState(t, paused.ID).State)
+	require.Equal(t, "resolved", f.checkpointState(t, cp.ID).State)
+	require.Zero(t, f.ran.Load())
+	require.ErrorIs(t, f.e.ResolveCheckpoint(as(ctx, bob), cp.ID, checkpoint.Decision{Approved: true}), cortex.ErrInvalidState)
+
+	codec.failDecode(nil)
+	done, err := f.e.ContinueRun(ctx, paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, done.State)
+	require.EqualValues(t, 1, f.ran.Load())
+}
+
 func TestResolveCheckpointStillBlocksUntilRunEnds(t *testing.T) {
 	f := newContinueFixture(t)
 	paused, cp := f.pause(t)

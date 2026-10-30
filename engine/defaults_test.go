@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -67,6 +68,7 @@ func TestDefaultEngineEnablesNoExperimentalServices(t *testing.T) {
 		"reflection":                  e.reflection != nil,
 		"operational awareness":       e.operationalAwareness != nil,
 		"a2a messaging":               e.a2a != nil,
+		"run leasing":                 e.leaseTTL != 0,
 		"background lifecycle helper": len(e.taskServices()) > 0,
 	}
 	for name, on := range gates {
@@ -86,10 +88,30 @@ func TestDefaultEngineEnablesNoExperimentalServices(t *testing.T) {
 	require.Equal(t, run.StateCompleted, r.State)
 	require.False(t, r.Provenance.VerificationRequired, "a default run required verification")
 
+	require.Nil(t, r.Lease, "a default run held a lease")
+	_, progressErr := st.GetProgress(ctx, r.ID)
+	require.ErrorIs(t, progressErr, cortex.ErrProgressNotFound, "a default run saved progress")
+
 	require.NoError(t, e.Stop(ctx))
 	e.sweep.mu.Lock()
 	sweeping = e.sweep.cancel != nil
 	e.sweep.mu.Unlock()
 	require.False(t, sweeping, "Stop left the sweeper running")
 	require.Empty(t, e.taskServices(), "Stop left a background service configured")
+}
+
+// TestRunLeaseIsOffByDefault pins the lease default: zero, so no run is
+// leased, handed off or reclaimed unless the host calls WithRunLease.
+func TestRunLeaseIsOffByDefault(t *testing.T) {
+	ctx := cortex.WithScope(context.Background(), approvalScope())
+	st := newApprovalStore(ctx, t)
+	e, err := New(WithStore(st), WithLLM(defaultsLLM{}))
+	require.NoError(t, err)
+	require.Zero(t, e.leaseTTL, "the default lease ttl is not zero")
+	require.False(t, e.leasesRun(&run.Run{}), "a default engine leases runs")
+
+	leased, err := New(WithStore(st), WithLLM(defaultsLLM{}), WithRunLease(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, time.Minute, leased.leaseTTL)
+	require.True(t, leased.leasesRun(&run.Run{}), "WithRunLease did not turn leasing on")
 }
