@@ -35,7 +35,9 @@ eng, err := engine.New(
 
 `tool.Register` returns an `engine.Option`. If you want the definition and
 handler separately, call `tool.New`, which returns an `llm.Tool` and an
-`engine.ToolHandler` to pass to `engine.WithTool` yourself.
+`engine.ToolHandler` to pass to `engine.WithTool` yourself. `tool.New` can't
+carry `tool.RetrySafe()` to the engine, so it panics if you pass it; mark
+that tool with `engine.WithToolRetrySafe("name")` instead.
 
 The input type must be a struct. `New` panics at registration if it is not,
 or if the schema cannot be built, because that is a mistake in the program
@@ -74,8 +76,9 @@ keeps working.
 crash does no harm. Either it only reads, or it is idempotent through the
 effect journal. The engine records the promise (`engine.WithToolRetrySafe`,
 which `tool.Register` calls for you) and exposes it through
-`Engine.ToolRetrySafe(name)`. Without it, an interrupted call is treated as
-uncertain. The engine records such a call as started before its handler
+`Engine.ToolRetrySafe(name)`. It only matters once you turn leasing on with
+`engine.WithRunLease`, since without leases no run is ever reclaimed.
+Without it, an interrupted call is treated as uncertain. The engine records such a call as started before its handler
 gets it, and if it can't save that record it doesn't run the call at all:
 the run stops there and another replica reclaims it. When a replica
 continues a reclaimed run and finds a call recorded as started with no

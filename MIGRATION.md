@@ -175,21 +175,60 @@ engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*Caller]())
 
 Without an authorizer a codec is optional, and resumed runs carry a nil principal.
 
-`ResolveCheckpoint` records the approval before the run continues. If the continuation then fails, the decision stays recorded and the run is failed, or left `ready` when the failure came before the claim. Deciding again is refused, so an approved call never runs twice.
+`ResolveCheckpoint` records the approval before the run continues. If the continuation fails after it claimed the run, the run is failed. If it fails before the claim (the engine started stopping during a deploy, or your codec couldn't decode the principal for a moment), the run is left `ready` and the error says the decision is recorded and `ContinueRun` finishes the run. That's true with leasing off as well. Deciding again is refused, so an approved call never runs twice. Either call `ContinueRun` for that run when you see the error, or continue `RunReady` runs from a job, as in the plugin further down.
 
 `WithSuspensionTTL(0)` no longer stops the sweeper. Zero now means no default deadline, and the sweeper keeps running for approvals, external tools and agent replies that carry a deadline of their own.
 
 The Forge extension now applies `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature`, `default_reasoning_loop`, `run_concurrency` and `shutdown_timeout`. v1.9.0 read them and ignored them. `run_concurrency` defaults to 0, which is unlimited, so nothing changes until you set it. An engine option you pass with `extension.WithEngineOption` still wins.
 
-`Stop` waits for runs in flight and hands off the leased ones to another replica. New runs started during the drain get `cortex.ErrEngineStopping`, which a host that queues work can treat as "try another worker".
+`Stop` drains the way v1.9.0 did. From the moment it starts, new runs get `cortex.ErrEngineStopping`, which a host that queues work can treat as "try another worker", and every run already executing runs to its end.
 
-Runs are leased by default now, for 60 seconds at a time, on any store that supports it. When the worker running one dies, another replica reclaims the run and continues it from its last saved step. If the worker died while a tool call was in flight, the call runs again only when the tool is retry-safe. Any other tool makes the run end `incomplete` with an error matching `cortex.ErrEffectUncertain`, because nobody can tell whether the call did anything. Tools aren't retry-safe unless you say so, so mark the ones that are safe to run twice with `engine.WithToolRetrySafe`, or `tool.RetrySafe()` on a typed tool. `WithRunLease(0)` turns leasing off.
+Run leases are new in this release, and they're off unless you turn them on. With the default engine nothing is handed off at `Stop`, no run ever becomes `reclaimable`, and the sweep for lapsed leases has nothing to do. A run whose worker dies stays `running`, as it did in v1.9.0.
+
+Turn leasing on with `engine.WithRunLease(ttl)` only once your host continues runs itself, because nothing in cortex calls `ContinueRun` for you: the engine, the Forge extension and the REST module all leave that to your host. With leasing on, `Stop` hands every leased run off at its next model call or tool dispatch, and its `RunAgent` or `StreamAgent` caller gets `cortex.ErrRunInterrupted`. A run whose worker dies becomes `reclaimable` once its lease lapses. Both wait in `reclaimable` until something calls `ContinueRun`, so you subscribe to `plugin.RunReady` and `plugin.RunReclaimable` and queue a job that calls it:
+
+```go
+type continueJob struct {
+	scope cortex.Scope
+	runID id.AgentRunID
+}
+
+// continuer queues every ready or reclaimable run. Use your own durable
+// queue here; a channel only reaches workers in this process.
+type continuer struct{ jobs chan<- continueJob }
+
+func (continuer) Name() string { return "continue-runs" }
+
+func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
+	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	return nil
+}
+
+func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
+	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	return nil
+}
+
+// On any replica. ContinueRun runs under the run's own principal.
+for job := range jobs {
+	ctx := cortex.WithScope(context.Background(), job.scope)
+	if _, err := eng.ContinueRun(ctx, job.runID); err != nil {
+		// Log the run ID. The sweeper tells you about the run again.
+	}
+}
+```
+
+Register it with `engine.WithExtension(continuer{jobs: jobs})` next to `engine.WithRunLease(60*time.Second)`, or through `extension.WithEngineOption` under Forge. Sixty seconds suits most hosts.
+
+Once leasing is on, a reclaimed run whose worker died during a tool call runs that call again only when the tool is retry-safe. Any other tool makes the run end `incomplete` with an error matching `cortex.ErrEffectUncertain`, because nobody can tell whether the call did anything. Tools aren't retry-safe unless you say so, so mark the ones that are safe to run twice with `engine.WithToolRetrySafe`, or `tool.RetrySafe()` with `tool.Register`. `tool.New` panics when you hand it `tool.RetrySafe()`, since it has no way to pass the mark to the engine.
 
 The Nexus adapter (`llm/nexus`) now sends every call under a Nexus tenant and refuses one it can't name, with an error matching `cortex.ErrNoScope`. It takes the tenant from `pipeline.WithTenantID` on the context, or from `nexusllm.WithTenant`, whose default is the first scope level's value. Nexus only accepts a tenant ID it has (`tenant_...`), so unless your first scope level holds one, pass a `WithTenant` that maps your scope to it (`extension.WithNexusOptions` under Forge). Calls also drop `temperature` for the Claude 5.5 models, which reject it, and a blocked Nexus guard now ends the run with `safety_block`.
 
 Shield now screens publication even when you pass `engine.WithSafety`. When the Forge extension finds a Shield engine, the adapter goes in as both the safety scanner and the publication gate, so your own scanner only backs `engine.Safety()`. Shield evaluates real profiles now, and a scan with no profile for the run's tenant and app fails closed, so seed your profiles (for example with `presets.InfraAgent().Seed`) before you upgrade or every run stops with `policy_unavailable`. If you don't want Shield at all, pass `extension.WithoutAutoAdapters()`. If you want your own gate, pass `engine.WithPublicationGate(gate)` as well as `engine.WithSafety`.
 
 The Shield tenant is now the scope's first level, not the canonical scope string. v1.9.0 told Shield the tenant was `org=o1` for a run scoped `org=o1`; v1.10.0 tells it `o1`. Profiles you seeded under the old string no longer match. Seed them again under the new tenant, or pass `shieldsafety.WithTenant` (`extension.WithShieldOptions` under Forge) with a function that returns `s.Canonical()` to keep the old keys. The app is unchanged unless you set `shieldsafety.WithApp`.
+
+The Weave adapter (`knowledge/weave`) now reads under the first scope level's value as the Weave tenant, and it overrides any tenant you put on the context with `weave.WithTenant`. Nexus is different: it honours `pipeline.WithTenantID` when you set it. If your Weave collections live under a tenant ID that isn't your first scope value, pass `weaveknowledge.WithTenant` with a function that maps your scope to it, through `extension.WithWeaveOptions` under Forge. A mismatch doesn't fail the run. Retrieval finds nothing under the wrong tenant, and the agent carries on without its knowledge, so check a run's answer against a document you know is there after you upgrade.
 
 An agent's `shield_profile` guardrail is honoured now. v1.9.0 refused any scan that named a profile, so an agent with one never got a decision. Now Shield evaluates that profile, and an agent without one gets Shield's default profile. Check that every profile your agents name exists for their tenant and app, since a missing one fails closed with `shield.ErrNoProfile`. The same goes for an agent that names no profile when Shield has no default profile configured: every scan for it fails closed with `shield.ErrNoProfile` until you set one.
 
@@ -201,7 +240,7 @@ REST responses now carry one JSON object per body. On most routes v1.9.0 wrote t
 
 ## New migrations
 
-Migrations `20261101000001` to `20261101000003` are additive and run in the `cortex` group. They add the stored principal, the lease and ready columns on runs, and the progress table. Hosts that migrate centrally need nothing else.
+Migrations `20261101000001` to `20261101000004` are additive and run in the `cortex` group. They add the stored principal, the lease and ready columns on runs, the progress table, and the column that keeps a directive run's reply route out of its metadata. Hosts that migrate centrally need nothing else.
 
 ## Rolling out next to v1.9.0
 
@@ -209,9 +248,11 @@ v1.9.0 advances run revisions but holds no leases, and it can't continue, cancel
 
 A run that a v1.9.0 replica is executing never had a lease. v1.10.0 only reclaims runs whose lease lapsed, so it never takes one of those. They finish, or stay where v1.9.0 left them.
 
-Keep at least one upgraded replica running at all times. It owns the sweeper that reclaims lapsed leases and tells your host again about runs left `ready` or `reclaimable`.
+Keep at least one upgraded replica running at all times. It owns the sweeper that tells your host again about runs left `ready`, and, with leasing on, reclaims lapsed leases.
 
-Every engine that shares a store has to use the same lease setting. An engine with `WithRunLease(0)` next to one that leases runs would have its runs taken from under it.
+If you turn leasing on, turn it on for every engine that shares the store. An engine with leasing off next to one that leases runs would have its runs taken from under it. Lease expiry compares the clock of the worker that wrote the lease with the clock of the replica that sweeps, so keep your replicas' clocks in sync (NTP is enough).
+
+With leasing on, keep v1.9.0's experimental agent-reply and prepared-team recovery off while both versions share the store. A v1.10.0 replica that admits a peer's reply and dies before it starts the run leaves a leased run behind. A v1.9.0 replica running that recovery could start the same run without a lease while the v1.10.0 sweep marks it `reclaimable`, and then both would execute it.
 
 A replica that may continue a run the messaging bus started for an a2a directive needs messaging configured. Without it the replica can't send the answer, and only logs a warning.
 
@@ -225,7 +266,7 @@ The same query works on SQLite. On MongoDB use `db.cortex_runs.find({state: {$in
 
 ## Runs left in running with no lease
 
-A run that was `running` before the upgrade has no lease, so nothing reclaims it. If its worker died, it stays `running` for good. List the candidates:
+A run that was `running` before the upgrade has no lease, so nothing reclaims it. If its worker died, it stays `running` for good. With leasing off, the default, the same goes for every run, exactly as in v1.9.0. List the candidates:
 
 ```sql
 SELECT id FROM cortex_runs

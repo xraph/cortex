@@ -296,7 +296,7 @@ type Run struct {
     StartedAt, CompletedAt *time.Time
     PersonaRef             string
     Metadata               map[string]any
-    Lease                  *Lease // worker and expiry while running; nil otherwise
+    Lease                  *Lease // worker and expiry while running, nil otherwise; JSON carries only the expiry
     Reclaims               int    // times a lapsed lease made the run reclaimable
 }
 

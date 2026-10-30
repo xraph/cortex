@@ -69,7 +69,9 @@ also an error.
 
 Only tools the server annotates as read-only are registered with
 `WithToolRetrySafe`, so a reclaimed run may call them again. Every other tool
-is treated as one that writes. `Destructive` follows the `destructiveHint`
+is treated as one that writes. The `readOnlyHint` is the server's word, and
+MCP treats annotations as untrusted, so use `Include` to leave out any tool
+whose hint you don't trust. `Destructive` follows the `destructiveHint`
 annotation and is true when the hint is unset and the tool isn't read-only.
 
 A transport or protocol failure during a call is different, because the request

@@ -84,20 +84,50 @@ A ready run that can never pass the checks `ContinueRun` makes before it claims 
 
 ### Durability: leases, hand-off and reclaim
 
-You don't have to do anything to get this. With a store that implements `run.ContinuationStore` and `suspension.ProgressStore` (all three built-in stores do), every run executes under its worker's lease and saves its progress at each step boundary. When the worker goes away, the run becomes `reclaimable` and any replica continues it with the same `ContinueRun` call:
+Leasing is opt-in. With the default engine, `Stop` lets every admitted run finish, nothing is handed off and no run becomes `reclaimable`. A run whose worker dies stays `running`, as it did in v1.9.0.
+
+Turn it on with `engine.WithRunLease` once your host continues runs itself, because nothing in cortex calls `ContinueRun` for you. With a store that implements `run.ContinuationStore` and `suspension.ProgressStore` (all three built-in stores do), every run then executes under its worker's lease and saves its progress at each step boundary. When the worker goes away, the run becomes `reclaimable`, and your job continues it on any replica with the same `ContinueRun` call:
 
 ```go
 eng, err := engine.New(
     engine.WithStore(store),
-    engine.WithRunLease(60*time.Second),       // the default; 0 turns leases off
+    engine.WithRunLease(60*time.Second),       // off by default
     engine.WithReclaimLimit(3),                // the default
     engine.WithReadyRenotify(5*time.Minute),   // the default; 0 turns it off
     engine.WithSuspensionSweepInterval(time.Minute),
+    engine.WithExtension(continuer{jobs: jobs}),
 )
-
-// In the job you queue from plugin.RunReclaimable (or plugin.RunReady):
-r, err := eng.ContinueRun(ctx, runID)
 ```
+
+`continuer` is a plugin of your own that turns `plugin.RunReady` and `plugin.RunReclaimable` into jobs, carrying the run's scope from the hook's `ctx`:
+
+```go
+type continueJob struct {
+    scope cortex.Scope
+    runID id.AgentRunID
+}
+
+type continuer struct{ jobs chan<- continueJob } // your durable queue in production
+
+func (continuer) Name() string { return "continue-runs" }
+
+func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
+    c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+    return nil
+}
+
+func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
+    c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+    return nil
+}
+
+// The job, on whichever replica takes it:
+r, err := eng.ContinueRun(cortex.WithScope(context.Background(), job.scope), job.runID)
+```
+
+With leasing on, `Stop` hands each leased run off at its next model call or tool dispatch: the run saves its progress, becomes `reclaimable`, fires `RunReclaimable` with `HandOff` set, and its `RunAgent` or `StreamAgent` caller gets `cortex.ErrRunInterrupted`.
+
+Lease expiry compares the clock of the worker that wrote the lease with the clock of the replica that sweeps, so keep your replicas' clocks in sync. Skew close to the lease ttl causes needless reclaims, and calls that weren't retry-safe then stop as uncertain.
 
 Every claim takes the lease in the same write that moves the run to `running`: a resume, a decision, `ContinueRun`, a rejection, a cancel, the expiry sweep, and the messaging bus recording a peer agent's reply alike. A claim also writes the run's first progress snapshot in the same write. It carries every answer the claim was made with (the results you provided, the peer's reply, a rejection going back to the model), marks every call that already left the engine and has no answer (a question to a peer, an external call handed to you) as started, and, for a cancel or an expiry, the end the claim is for. So a worker that dies right after its claim leaves a lease that lapses and all of that, never a running run nobody owns. The worker that starts a peer's reply takes the lease over in the same way.
 
@@ -125,7 +155,7 @@ A run the messaging bus started for a directive keeps where its answer goes. If 
 
 A worker that was only slow, not dead, finds out at its next write. Its progress saves and its terminal write are refused, its pass returns `cortex.ErrRunLeaseLost`, and only the worker that finished the run fires the terminal hooks. Its step and tool call rows aren't fenced the same way, so a few of them can still land after the run was taken.
 
-Runs under required verification or a task claim (`Provenance.VerificationRequired`, `Provenance.TaskClaimID`) never hold a lease, save no progress and are never reclaimed. Their recovery belongs to the `coordination` package. A run a v1.9 replica is executing holds no lease either, and no sweep ever reclaims it, so you can roll v1.10 out next to v1.9 replicas.
+Runs under required verification or a task claim (`Provenance.VerificationRequired`, `Provenance.TaskClaimID`) never hold a lease, save no progress and are never reclaimed. Their recovery belongs to the `coordination` package, and so does an experimental task-claim run that reaches `ready` through `DecideCheckpoint` or `ProvideResults`: coordination treats a `ready` task run as a usage conflict, so leave those to its recovery, not to your `RunReady` job. A run a v1.9 replica is executing holds no lease either, and no sweep ever reclaims it, so you can roll v1.10 out next to v1.9 replicas.
 
 See [Execution outcomes and safety](/docs/execution/assurance) for verification, publication and compatibility semantics.
 
