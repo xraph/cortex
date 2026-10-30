@@ -26,7 +26,7 @@ All modules declare Go 1.26.0. Build with `GOWORK=off`, which is what CI sees.
 GOWORK=off go build ./...
 make test              # go test -v ./...  (root module only)
 make test-race         # go test -race -v ./...
-make test-coverage     # race + atomic coverage, 30-minute package timeout
+make test-coverage     # race + atomic coverage, 60-minute package timeout
 make vet               # go vet ./...      (root module only)
 make lint              # golangci-lint in every module, inttest with -tags integration
 make lint-fix
@@ -50,7 +50,7 @@ cd extension && GOWORK=off go test -race -count=1 ./...
 
 | Job | Scope | What it runs |
 |---|---|---|
-| `ci` (shared `xraph/workflows` `go-ci.yml@v1`, Go 1.26) | root | `make test`, `make test-coverage` (race + atomic coverage, 30-minute package timeout), golangci-lint at the version pinned there, `gofmt -l .`, `make vet`, a `go mod tidy` diff, gosec and govulncheck (both gating), and a check that nested modules require cortex at versions the proxy can serve |
+| `ci` (shared `xraph/workflows` `go-ci.yml@v1`, Go 1.26) | root | `make test`, `make test-coverage` (race + atomic coverage, 60-minute package timeout), golangci-lint at the version pinned there, `gofmt -l .`, `make vet`, a `go mod tidy` diff, gosec and govulncheck (both gating), and a check that nested modules require cortex at versions the proxy can serve |
 | `format` | whole tree | `goimports -l -local github.com/xraph/cortex .` must print nothing |
 | `submodules` | `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization`, `mcpbridge`, `a2aremote`, `a2aremote/grpcbind` | `go mod tidy` diff, `go build ./...`, `go test -race -count=1 ./...` |
 | `docs` | `docs/` | `pnpm install --frozen-lockfile`, `pnpm types:check`, `pnpm lint`, `pnpm build` |
