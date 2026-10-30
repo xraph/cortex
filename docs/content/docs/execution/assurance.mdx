@@ -21,6 +21,27 @@ Configure the boundary with `engine.WithPublicationPolicy` and install a checker
 
 Checked-segment streaming requires an explicit `safety.IncrementalGate`. An accepted prefix cannot be retracted, so use buffered mode when a rule needs the complete response. Explicitly disabled scanning reports `unscanned`; it does not remove byte limits.
 
+### Streaming Shield-checked segments
+
+The Shield adapter is an incremental gate, so you can stream approved text as the model writes it:
+
+```go
+gate := shieldsafety.New(shieldEngine, shieldsafety.WithApp("loomplane"))
+eng, err := engine.New(
+    engine.WithPublicationGate(gate),
+    engine.WithPublicationPolicy(safety.Policy{
+        Required: true,
+        Mode: safety.ModeCheckedSegments,
+    }),
+)
+```
+
+Here `shieldsafety` is `github.com/xraph/cortex/safety/shield`. Each stream gets its own segment checker, and the checker scans one segment at a time with the agent's Shield profile, the same way the adapter scans a whole answer. A segment ends after a line break, or after a sentence end: `.`, `!`, `?` or `:` followed by a space or a line break. Text without either is held. Once the held text reaches the segment limit (2048 bytes by default, set with `shieldsafety.WithSegmentLimit`), it's cut after its last whitespace. The cut never lands inside a word, so a token or key is always scanned whole. When the stream ends, whatever is left is scanned as the last segment.
+
+A redacted segment goes out redacted. If Shield blocks a segment, or can't scan it (no tenant on the scope, no profile, input over Shield's size limit, a cancelled context), the run stops there. Text already approved stays published, but the blocked segment and anything held behind it never go out. Errors carry Shield's sentinel only, never the text.
+
+Segments are checked on their own, so a rule that needs more than one sentence at a time won't see it. A private key spread over several lines is the obvious case. If you need that, keep a check over the full message too, for example a guard at your model provider, or use buffered mode.
+
 Content screening covers input, output, retrieved content, tool results and public error text. If screening would rewrite tool arguments, execution stops instead of issuing a changed command. A scanner decision describes content screening only. It cannot certify the answer's factual accuracy.
 
 ### Host rule scanner

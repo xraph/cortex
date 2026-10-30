@@ -1,5 +1,6 @@
 // Package shield bridges the Shield safety engine to Cortex: content scans
-// through safety.Scanner and safety.PublicationGate, and tool-call scans
+// through safety.Scanner and safety.PublicationGate, streamed model output a
+// segment at a time through safety.IncrementalGate, and tool-call scans
 // layered under the host's cortex.ToolAuthorizer (see NewToolAuthorizer).
 //
 // Every scan runs under a shield tenant taken from the run's scope by a
@@ -29,6 +30,7 @@ import (
 var (
 	_ safety.Scanner         = (*Adapter)(nil)
 	_ safety.PublicationGate = (*Adapter)(nil)
+	_ safety.IncrementalGate = (*Adapter)(nil)
 )
 
 // defaultUntrustedSources are the publication sources whose inbound text
@@ -103,18 +105,31 @@ func WithUntrustedSources(sources ...string) Option {
 	}
 }
 
-// Adapter implements safety.Scanner and safety.PublicationGate by
-// delegating to a shield engine.
+// WithSegmentLimit sets how many bytes of streamed model output a segment
+// checker holds before it cuts a run of text with no sentence or line end
+// at its last whitespace. The default is 2048. A value of zero or less
+// keeps the default. See NewSegmentChecker.
+func WithSegmentLimit(maxBytes int) Option {
+	return func(a *Adapter) {
+		if maxBytes > 0 {
+			a.segmentLimit = maxBytes
+		}
+	}
+}
+
+// Adapter implements safety.Scanner, safety.PublicationGate and
+// safety.IncrementalGate by delegating to a shield engine.
 type Adapter struct {
-	eng       *shieldengine.Engine
-	tenant    cortex.TenantFunc
-	app       string
-	untrusted map[string]bool
+	eng          *shieldengine.Engine
+	tenant       cortex.TenantFunc
+	app          string
+	untrusted    map[string]bool
+	segmentLimit int
 }
 
 // New creates a Shield adapter over eng.
 func New(eng *shieldengine.Engine, opts ...Option) *Adapter {
-	a := &Adapter{eng: eng, tenant: cortex.RootTenant}
+	a := &Adapter{eng: eng, tenant: cortex.RootTenant, segmentLimit: defaultSegmentLimit}
 	WithUntrustedSources(defaultUntrustedSources...)(a)
 	for _, opt := range opts {
 		opt(a)
