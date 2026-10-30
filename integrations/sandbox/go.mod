@@ -10,8 +10,8 @@ require (
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.0
-	github.com/xraph/grove v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
+	github.com/xraph/grove v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.58.0
 )

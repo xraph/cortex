@@ -91,7 +91,7 @@ To tell people a checkpoint is waiting on them, implement
 `plugin.RunSuspended`. It fires once the run is paused, and its `Notice`
 carries the checkpoint ID and the deadline.
 
-The loop only started creating checkpoints in v1.11.0. Before that the entity,
+The loop only started creating checkpoints in v1.7.0. Before that the entity,
 the store and these endpoints all existed and nothing ever wrote a row. See
 [Suspension](/docs/concepts/suspension) for the mechanism underneath, including
 what an approval hands back to the engine and what happens when nobody answers.

@@ -13,8 +13,8 @@ require (
 	github.com/xraph/cortex/sentinel v0.0.0-20261026122752-0b00c24b30ca
 	github.com/xraph/forge v1.13.2
 	github.com/xraph/go-utils v1.5.0
-	github.com/xraph/grove v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
+	github.com/xraph/grove v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
 	github.com/xraph/nexus v1.9.1
 	github.com/xraph/shield v1.9.1
 	github.com/xraph/vessel v1.0.4
@@ -109,8 +109,8 @@ require (
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/grove/drivers/mongodriver v1.10.0 // indirect
-	github.com/xraph/grove/drivers/pgdriver v1.10.0 // indirect
+	github.com/xraph/grove/drivers/mongodriver v1.10.1 // indirect
+	github.com/xraph/grove/drivers/pgdriver v1.10.1 // indirect
 	github.com/xraph/sentinel v1.10.0 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect

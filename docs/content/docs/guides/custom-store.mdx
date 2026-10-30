@@ -37,8 +37,8 @@ type Store interface {
 That's 109 methods across the fourteen sub-interfaces, plus the three lifecycle
 methods.
 
-That number grows. `session.Store` arrived in v1.9.0, `suspension.Store` in
-v1.11.0 and `a2a.Store` with agent messaging, and each time a backend that satisfied the interface last release stopped
+That number grows. `session.Store`, `suspension.Store` and `a2a.Store` all
+arrived in v1.7.0, and each time a backend that satisfied the interface last release stopped
 satisfying it until it implemented the new methods. Check this page against the
 version you are on, and run `store/storetest`'s conformance suite against your
 backend rather than trusting a compile.

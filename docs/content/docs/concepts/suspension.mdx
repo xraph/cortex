@@ -166,7 +166,7 @@ return eng.Resume(ctx, runID, engine.ResumeInput{
 `Error` feeds the model the same payload shape an engine-side tool failure
 produces, so the model can't tell where the tool ran from how its failure is
 phrased. It also fires `ToolFailed` where a `Content` result fires
-`ToolCompleted`. That matters more than it looks: v1.10.0 established that
+`ToolCompleted`. That matters more than it looks: since v1.7.0
 every tool call ends in exactly one of completed, failed or denied, and a
 pending call fires none of them while it's pending. The resume is what supplies
 the missing one. Without it a call that suspends and then completes would
@@ -690,7 +690,7 @@ is still running, and the hook would read a run that's already moved on.
 
 ## Custom stores
 
-`store.Store` embeds `suspension.Store` as of v1.11.0, seven methods your
+`store.Store` embeds `suspension.Store` as of v1.7.0, seven methods your
 backend has to implement. Five are ordinary scoped CRUD. The two claims are
 not, and they're where the correctness lives.
 

@@ -274,7 +274,7 @@ reason about.
 
 ## The third outcome: ask a human
 
-`Authorize` has a third answer as of v1.11.0. Return `cortex.ErrRequiresApproval`,
+`Authorize` has a third answer as of v1.7.0. Return `cortex.ErrRequiresApproval`,
 or an error wrapping it, and the call is neither allowed nor denied: nothing
 goes back to the model, the run pauses mid-step, and a checkpoint carries the
 call to whoever decides.
@@ -288,10 +288,9 @@ func (a *myAuthorizer) Authorize(ctx context.Context, s cortex.Subject, call llm
 }
 ```
 
-It was held back from v1.10.0 on purpose. With nowhere to suspend into, an
-authorizer returning it would have read as an ordinary denial, and "ask
-somebody" would have quietly become "no". v1.11.0 added the suspension
-mechanism, so both halves shipped together.
+It shipped in the same release as the suspension mechanism, on purpose. With
+nowhere to suspend into, an authorizer returning it would have read as an
+ordinary denial, and "ask somebody" would have quietly become "no".
 
 A denial and an escalation come out of the same method and behave nothing
 alike. A denial is an answer the model reads and reacts to, and the run

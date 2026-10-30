@@ -6,10 +6,10 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
-	github.com/xraph/grove v1.10.0
-	github.com/xraph/grove/drivers/mongodriver v1.10.0
-	github.com/xraph/grove/drivers/pgdriver v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
+	github.com/xraph/grove v1.10.1
+	github.com/xraph/grove/drivers/mongodriver v1.10.1
+	github.com/xraph/grove/drivers/pgdriver v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.8.2
 )

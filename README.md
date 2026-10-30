@@ -198,11 +198,40 @@ You can run an agent on a plain system prompt. When you want reusable structure,
 
 Point an agent at a persona with `PersonaRef`, or list skills, traits and behaviors inline with `InlineSkills`, `InlineTraits` and `InlineBehaviors`. `RunOverrides` lets one run swap the model, persona, tools or session without changing the stored agent, and `CloneAgent` and `ClonePersona` copy one under a new name.
 
+## Tools
+
+`engine.WithTool` takes a definition and a handler, and you write the JSON Schema yourself. You don't have to. The `tool` package builds a tool from a Go function over a struct, generates the schema from the struct's tags and checks every call against it before your function runs:
+
+```go
+type ListInput struct {
+	Project string `json:"project" jsonschema:"the project id"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+eng, err := engine.New(
+	engine.WithStore(st),
+	tool.Register("list_services", "List the services in a project.",
+		func(ctx context.Context, inv cortex.Invocation, in ListInput) ([]string, error) {
+			return lookup(ctx, inv.Scope, in.Project, in.Limit)
+		},
+		tool.RetrySafe(),
+	),
+)
+```
+
+A call with a wrong type, a missing field or an argument the struct doesn't declare fails before your code sees it, and the model reads the error and can try again. `tool.RetrySafe()` says the tool can run twice without harm, which matters when a run is reclaimed after its worker died (see below). For a tool you registered with `engine.WithTool`, use `engine.WithToolRetrySafe("name")`.
+
+Already have an MCP server? The `mcpbridge` module turns its tools into cortex tools. You connect the `*mcp.ClientSession`, and `mcpbridge.EngineOptions(ctx, cs, mcpbridge.Options{Prefix: "github_"})` gives you the engine options. Tools the server marks read-only come in as retry-safe, the rest don't. It's a separate module, so the engine itself never depends on the MCP SDK. [Typed tools](docs/content/docs/concepts/tools.mdx) and [MCP tools](docs/content/docs/integrations/mcp.mdx) have the details.
+
 ## Runs, checkpoints and suspension
 
 `RunAgent` returns the finished `*run.Run`. `StreamAgent` sends `StreamEvent`s on a channel as the run goes: `run_started`, `step`, `tool_call`, `token`, `checkpoint`, `safety_block`, `suspended`, `done` and `error`.
 
-A run pauses in two cases. Your `ToolAuthorizer` returns `ErrRequiresApproval` for a call, which creates a checkpoint that someone resolves with `eng.ResolveCheckpoint`. Or the model calls a tool you registered with `WithExternalTool`, and the run suspends until you call `eng.Resume(ctx, runID, engine.ResumeInput{ToolResults: ...})`. A suspended run is a stored row, not a blocked goroutine, so it survives a restart. Suspensions expire after a TTL you set with `WithSuspensionTTL` (zero turns expiry off).
+A run pauses in two cases. Your `ToolAuthorizer` returns `ErrRequiresApproval` for a call, which creates a checkpoint that someone resolves with `eng.ResolveCheckpoint`. Or the model calls a tool you registered with `WithExternalTool`, and the run suspends until you call `eng.Resume(ctx, runID, engine.ResumeInput{ToolResults: ...})`. A suspended run is a stored row, not a blocked goroutine, so it survives a restart. `WithSuspensionTTL` sets the default deadline for a pause, and an approval or an external tool can bring a shorter one of its own. Zero only drops the default; the sweeper keeps running for calls with their own deadline. `plugin.RunSuspended` fires on every pause, which is where you tell somebody a decision is waiting.
+
+You don't have to continue a run inside the request that answered it. `eng.DecideCheckpoint` records a decision and `eng.ProvideResults` records external results, and both return straight away with the run `ready`. Queue a job from the `plugin.RunReady` hook and call `eng.ContinueRun(ctx, runID)` in it, on any replica. The run makes its tool calls as the principal that started it, which you give the engine a way to store with `engine.WithPrincipalCodec`.
+
+Runs also survive the worker that was running them. On the built-in stores every run holds a 60-second lease and saves its progress at each step. If the worker dies, the sweeper marks the run `reclaimable`, `plugin.RunReclaimable` fires, and the same `ContinueRun` call carries on from the last saved step. A tool call that was in flight runs again only if the tool is retry-safe. Otherwise the run ends `incomplete` with `cortex.ErrEffectUncertain`, because nobody can say whether the call did anything. `WithRunLease(0)` turns leasing off. [Runs](https://www.xraph.com/docs/cortex/execution/runs) covers the states and the reclaim rules.
 
 ## Multi-agent orchestration
 
@@ -313,6 +342,7 @@ In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as
 | `github.com/xraph/cortex/extension` | The Forge extension and dashboard contract | yes |
 | `github.com/xraph/cortex/sentinel` | Evaluation through [Sentinel](https://github.com/xraph/sentinel) | yes |
 | `github.com/xraph/cortex/integrations/fabriq` | [Fabriq](https://github.com/xraph/fabriq) as a knowledge provider, with extra tools and a learning-loop plugin | yes |
+| `github.com/xraph/cortex/mcpbridge` | An MCP server's tools as cortex tools | yes |
 | `github.com/xraph/cortex/integrations/sandbox` | Authenticated evaluation broker and OCI policy builder; Linux runtime qualification pending | not yet |
 | `github.com/xraph/cortex/a2aremote`, `.../grpcbind` | Agent2Agent over the network, and its gRPC binding | not yet |
 
@@ -327,7 +357,7 @@ In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as
 | Storage | [PostgreSQL](https://www.xraph.com/docs/cortex/stores/postgres), [SQLite](https://www.xraph.com/docs/cortex/stores/sqlite), [MongoDB](https://www.xraph.com/docs/cortex/stores/mongo) |
 | Forge, HTTP and plugins | [Forge extension](https://www.xraph.com/docs/cortex/guides/forge-extension), [HTTP API](https://www.xraph.com/docs/cortex/api-reference/http-api), [plugin system](https://www.xraph.com/docs/cortex/infrastructure/plugins), [observability](https://www.xraph.com/docs/cortex/infrastructure/observability), [Fabriq brain](https://www.xraph.com/docs/cortex/integrations/fabriq) |
 
-A few newer pages are in the repo but not on the site yet: [tool authorization](docs/content/docs/concepts/authorization.mdx), [suspension](docs/content/docs/concepts/suspension.mdx), [sessions](docs/content/docs/concepts/sessions.mdx), [agent messaging](docs/content/docs/execution/messaging.mdx) and [remote agents](docs/content/docs/execution/remote-messaging.mdx). The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex).
+A few newer pages are in the repo but not on the site yet: [tool authorization](docs/content/docs/concepts/authorization.mdx), [suspension](docs/content/docs/concepts/suspension.mdx), [sessions](docs/content/docs/concepts/sessions.mdx), [agent messaging](docs/content/docs/execution/messaging.mdx), [remote agents](docs/content/docs/execution/remote-messaging.mdx), [typed tools](docs/content/docs/concepts/tools.mdx) and [MCP tools](docs/content/docs/integrations/mcp.mdx). The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex).
 
 ## FAQ
 

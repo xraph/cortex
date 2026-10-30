@@ -121,6 +121,15 @@ Sentinels live in `errors.go` with a `cortex: ` prefix. Wrap with `%w` and the s
 
 `store.Store` embeds every subsystem's store interface plus `Migrate(ctx, ...cortex.MigrateOption)`, `Ping` and `Close`. Backends build on a `*grove.DB`. Migrations are registered in Go in each backend's `migrations.go`. The `.sql` files under `store/postgres/migrations/` aren't loaded by anything.
 
+Four capabilities sit outside `store.Store`. The engine type-asserts each one in `New` and leaves the feature off when a backend lacks it, so a custom store keeps compiling:
+
+- `run.ContinuationStore` (`run/continuation.go`): ready and reclaimable runs, leases and the stored principal. `DecideCheckpoint`, `ProvideResults` and `ContinueRun` need it, and without it they return `cortex.ErrContinuationUnavailable`.
+- `suspension.ProgressStore` (`suspension/progress.go`): the progress snapshot a run saves at each step boundary, fenced by the lease owner. Leasing needs it alongside `run.ContinuationStore`.
+- `suspension.LeasedClaimStore` (`suspension/leased.go`): claims that take the lease and write the first snapshot in the same write that moves the run to `running`.
+- `checkpoint.SweepStore` (`checkpoint/store.go`): lets the sweeper find pending checkpoints no decision can reach any more and close them.
+
+The SQLite, PostgreSQL and MongoDB stores implement all four, through `store/internal/assurance` where the logic is shared. When you change one, change the other two and run `store/storetest`'s conformance suite (`RunContinuation`, `RunProgress`, `LeasedClaims`, `CheckpointSweep`) on all three. Postgres and Mongo need Docker, and they skip without it, so check the output for SKIP.
+
 ### Engine, plugins and the Forge extension
 
 `engine.New(opts ...engine.Option)` takes `func(*Engine) error` options such as `WithStore`, `WithLLM`, `WithSafety`, `WithKnowledge`, `WithTool`, `WithToolAuthorizer` and `WithLogger`. The engine logs through `github.com/xraph/go-utils/log` and defaults to `log.NewNoopLogger()`; the Forge extension passes the app's logger. Log a failure with `e.logError` or `e.logWarn` (engine/logging.go): they log the error's type, never its text, and throttle each message to a line a minute. Fields are IDs and counts, never run content or scope values.
