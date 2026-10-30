@@ -624,6 +624,7 @@ type runModel struct {
 	Budget             string     `grove:"budget"`
 	Usage              string     `grove:"usage"`
 	Principal          []byte     `grove:"principal"`
+	ReplyRoute         []byte     `grove:"reply_route"`
 	LeaseOwner         string     `grove:"lease_owner"`
 	LeaseExpiresAt     *time.Time `grove:"lease_expires_at"`
 	Ready              *string    `grove:"ready"`
@@ -659,6 +660,7 @@ func runToModel(r *run.Run) *runModel {
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
 		Principal:          r.Principal,
+		ReplyRoute:         r.ReplyRoute,
 		ReclaimCount:       r.Reclaims,
 		NotifiedAt:         r.NotifiedAt,
 		CreatedAt:          r.CreatedAt,
@@ -706,6 +708,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		CompletedAt:        m.CompletedAt,
 		PersonaRef:         m.PersonaRef,
 		Principal:          m.Principal,
+		ReplyRoute:         m.ReplyRoute,
 		Lease:              runstate.LeaseFromColumns(m.LeaseOwner, m.LeaseExpiresAt),
 		Reclaims:           m.ReclaimCount,
 		NotifiedAt:         runstate.UTCTime(m.NotifiedAt),

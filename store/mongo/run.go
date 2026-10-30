@@ -91,8 +91,9 @@ func (s *Store) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, erro
 // builds an explicit $set instead of passing the model through — leaving
 // out scope_l0/l1/l2/extra/canon rather than relying on them happening to
 // already match. principal is left out too: it is written once, when the
-// run is created, and a resume decodes it to find the run's caller. The
-// lease, readiness, reclaim count and notification time belong to
+// run is created, and a resume decodes it to find the run's caller.
+// reply_route is left out for the same reason: the engine writes a
+// directive's reply route when it creates the run. The lease, readiness, reclaim count and notification time belong to
 // run.ContinuationStore; UpdateRun only clears the lease when the run
 // leaves running.
 func (s *Store) UpdateRun(ctx context.Context, r *run.Run) error {

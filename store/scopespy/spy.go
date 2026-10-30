@@ -203,8 +203,8 @@ func (s *Spy) CreateRun(ctx context.Context, r *run.Run) error {
 }
 
 // UpdateRun keeps what the real stores keep: it never writes the lease,
-// the readiness, the reclaim count or the notification time, and it
-// clears the lease when the run leaves running.
+// the readiness, the reclaim count, the notification time or the reply
+// route, and it clears the lease when the run leaves running.
 func (s *Spy) UpdateRun(ctx context.Context, r *run.Run) error {
 	s.record(ctx, "UpdateRun")
 	s.mu.Lock()
@@ -212,6 +212,9 @@ func (s *Spy) UpdateRun(ctx context.Context, r *run.Run) error {
 	stored := *r
 	if prior, ok := s.runs[r.ID]; ok {
 		stored.Lease, stored.Ready, stored.Reclaims, stored.NotifiedAt = prior.Lease, prior.Ready, prior.Reclaims, prior.NotifiedAt
+		// The reply route is written once, at creation, as the real
+		// stores keep it.
+		stored.ReplyRoute = prior.ReplyRoute
 	}
 	if stored.State != run.StateRunning {
 		stored.Lease, r.Lease = nil, nil

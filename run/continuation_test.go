@@ -9,10 +9,12 @@ import (
 	"github.com/xraph/cortex/run"
 )
 
-// A run's JSON is what API clients read. The lease and the reclaim count
-// say who holds a run and how often it was taken back, which an operator
-// needs. The readiness carries tool results and the notification time is
-// sweeper bookkeeping, so neither is ever serialized.
+// A run's JSON is what API clients read. The lease expiry and the reclaim
+// count say when a run's hold lapses and how often it was taken back, which
+// an operator needs. The lease owner names the worker's host, the readiness
+// carries tool results, the reply route carries a reply token and the
+// notification time is sweeper bookkeeping, so none of those is ever
+// serialized.
 func TestRunJSONCarriesLeaseNotReadiness(t *testing.T) {
 	at := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	r := run.Run{
@@ -21,6 +23,7 @@ func TestRunJSONCarriesLeaseNotReadiness(t *testing.T) {
 		Ready:      &run.Readiness{Source: run.ReadyApproval, Results: json.RawMessage(`{"secret":"tool output"}`), CheckpointID: id.NewCheckpointID(), At: at},
 		Reclaims:   2,
 		NotifiedAt: &at,
+		ReplyRoute: []byte(`{"in_reply_to":"token"}`),
 	}
 	encoded, err := json.Marshal(r)
 	if err != nil {
@@ -30,7 +33,7 @@ func TestRunJSONCarriesLeaseNotReadiness(t *testing.T) {
 	if err = json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"ready", "notified_at", "results"} {
+	for _, key := range []string{"ready", "notified_at", "results", "reply_route", "owner"} {
 		if _, present := fields[key]; present {
 			t.Errorf("run JSON carries %q: %s", key, encoded)
 		}
@@ -39,7 +42,10 @@ func TestRunJSONCarriesLeaseNotReadiness(t *testing.T) {
 	if err = json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.State != run.StateReady || decoded.Lease == nil || decoded.Lease.Owner != "w1" || !decoded.Lease.ExpiresAt.Equal(at) || decoded.Reclaims != 2 {
+	if string(fields["lease"]) == "" || json.Unmarshal(fields["lease"], &map[string]any{}) != nil {
+		t.Errorf("run JSON lost its lease expiry: %s", encoded)
+	}
+	if decoded.State != run.StateReady || decoded.Lease == nil || decoded.Lease.Owner != "" || !decoded.Lease.ExpiresAt.Equal(at) || decoded.Reclaims != 2 {
 		t.Fatalf("decoded run lost its lease or reclaims: %+v", decoded)
 	}
 

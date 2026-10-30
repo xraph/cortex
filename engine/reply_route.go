@@ -14,18 +14,15 @@ import (
 	"github.com/xraph/cortex/run"
 )
 
-const (
-	// metadataReplyRoute is the run metadata key holding where the answer
-	// to the directive that started the run goes.
-	metadataReplyRoute = "a2a_reply_route"
-	// metadataReplyOwed marks a directive's run that was reclaimed: the
-	// worker that started it handed it off without answering, so the
-	// worker that finishes it sends the reply.
-	metadataReplyOwed = "a2a_reply_owed"
-)
+// metadataReplyOwed marks a directive's run that was reclaimed: the worker
+// that started it handed it off without answering, so the worker that
+// finishes it sends the reply.
+const metadataReplyOwed = "a2a_reply_owed"
 
-// keepReplyRoute records route in r's metadata, which every later write of
-// the run carries.
+// keepReplyRoute records route on r. The route carries the asker's reply
+// token, so it goes in r.ReplyRoute, which stores keep and never
+// serialize, and never in the run's metadata: run JSON, events and API
+// responses must not carry the token.
 func keepReplyRoute(r *run.Run, route *a2a.ReplyRoute) {
 	if route == nil {
 		return
@@ -34,30 +31,16 @@ func keepReplyRoute(r *run.Run, route *a2a.ReplyRoute) {
 	if err != nil {
 		return
 	}
-	var kept map[string]any
-	if json.Unmarshal(data, &kept) != nil {
-		return
-	}
-	meta := maps.Clone(r.Metadata)
-	if meta == nil {
-		meta = make(map[string]any, 1)
-	}
-	meta[metadataReplyRoute] = kept
-	r.Metadata = meta
+	r.ReplyRoute = data
 }
 
 // replyRouteOf reads the route keepReplyRoute recorded, if any.
 func replyRouteOf(r *run.Run) (a2a.ReplyRoute, bool) {
-	raw, ok := r.Metadata[metadataReplyRoute]
-	if !ok || raw == nil {
-		return a2a.ReplyRoute{}, false
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
+	if len(r.ReplyRoute) == 0 {
 		return a2a.ReplyRoute{}, false
 	}
 	var route a2a.ReplyRoute
-	if json.Unmarshal(data, &route) != nil || route.Sender.Agent == "" {
+	if json.Unmarshal(r.ReplyRoute, &route) != nil || route.Sender.Agent == "" {
 		return a2a.ReplyRoute{}, false
 	}
 	return route, true
@@ -70,6 +53,9 @@ func owesReply(r *run.Run) {
 		return
 	}
 	meta := maps.Clone(r.Metadata)
+	if meta == nil {
+		meta = make(map[string]any, 1)
+	}
 	meta[metadataReplyOwed] = true
 	r.Metadata = meta
 }

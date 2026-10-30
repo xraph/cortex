@@ -19,7 +19,9 @@ import (
 // scope-matching) context would silently overwrite a row's narrower
 // stored scope. principal is absent for the same reason: the codec bytes
 // are written when the run is created, and a resume decodes them to find
-// the run's caller, so no later writer may replace them. The lease,
+// the run's caller, so no later writer may replace them. reply_route is
+// absent too: the engine writes a directive's reply route when it creates
+// the run, and nothing rewrites it. The lease,
 // readiness, reclaim count and notification time are absent too: they
 // belong to run.ContinuationStore.
 var mutableRunColumns = []string{

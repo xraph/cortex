@@ -170,6 +170,7 @@ type runModel struct {
 
 	BudgetDeadlineExact string `grove:"budget_deadline_exact" bson:"budget_deadline_exact,omitempty"`
 	Principal           []byte `grove:"principal" bson:"principal,omitempty"`
+	ReplyRoute          []byte `grove:"reply_route" bson:"reply_route,omitempty"`
 
 	LeaseOwner     string         `grove:"lease_owner" bson:"lease_owner"`
 	LeaseExpiresAt *time.Time     `grove:"lease_expires_at" bson:"lease_expires_at,omitempty"`
@@ -263,6 +264,7 @@ func runToModel(r *run.Run) *runModel {
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
 		Principal:          r.Principal,
+		ReplyRoute:         r.ReplyRoute,
 		ReclaimCount:       r.Reclaims,
 		NotifiedAt:         r.NotifiedAt,
 		CreatedAt:          r.CreatedAt,
@@ -323,6 +325,7 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		CompletedAt:        m.CompletedAt,
 		PersonaRef:         m.PersonaRef,
 		Principal:          m.Principal,
+		ReplyRoute:         m.ReplyRoute,
 		Metadata:           m.Metadata,
 	}, nil
 }

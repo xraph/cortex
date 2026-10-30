@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -179,6 +180,18 @@ func TestHandedOffDirectiveAnswersFromTheReplicaThatFinishesIt(t *testing.T) {
 	}
 	if planner, readErr := st.GetRun(ctx, paused.ID); readErr != nil || planner.State != run.StatePaused {
 		t.Fatalf("planner = %+v, %v; want it still waiting on the worker", planner, readErr)
+	}
+	// The route the replica answers by, reply token included, is kept where
+	// only the engine reads it: not in the metadata, not in the run's JSON.
+	route, ok := replyRouteOf(workers[0])
+	if !ok || route.InReplyTo == "" {
+		t.Fatalf("the handed-off run kept no reply route: %+v", workers[0])
+	}
+	if _, inMeta := workers[0].Metadata["a2a_reply_route"]; inMeta {
+		t.Fatalf("the reply route is in the run's metadata: %v", workers[0].Metadata)
+	}
+	if encoded, marshalErr := json.Marshal(workers[0]); marshalErr != nil || strings.Contains(string(encoded), route.InReplyTo) {
+		t.Fatalf("the run's JSON carries the reply token (%v): %s", marshalErr, encoded)
 	}
 
 	model.letGo()

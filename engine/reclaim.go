@@ -433,7 +433,7 @@ func (e *Engine) replayStep(ctx context.Context, ag *agent.Config, r *run.Run, s
 		if _, ok := done[call.ID]; ok || !started[call.ID] || e.retrySafe[call.Name] {
 			continue
 		}
-		return pending, e.stopUncertainReplay(ctx, r, st, call, saved.Owner)
+		return pending, e.stopUncertainReplay(ctx, r, st, call)
 	}
 
 	ctx, cancelTools := runDeadline(ctx, cfg)
@@ -502,11 +502,13 @@ func (e *Engine) replayStep(ctx context.Context, ag *agent.Config, r *run.Run, s
 }
 
 // stopUncertainReplay ends a reclaimed run whose call was handed to its
-// handler by owner and has no recorded outcome. The call is reported
-// failed, the run records which call it was, and it stops incomplete with
-// cortex.ErrEffectUncertain, exactly as a handler that reports an
-// uncertain effect stops it.
-func (e *Engine) stopUncertainReplay(ctx context.Context, r *run.Run, st *reactState, call llm.ToolCall, owner string) error {
+// handler by another worker and has no recorded outcome. The call is
+// reported failed, the run records which call it was, and it stops
+// incomplete with cortex.ErrEffectUncertain, exactly as a handler that
+// reports an uncertain effect stops it. The error lands in the run's public
+// record, so it says "another worker" rather than the worker's id, which
+// names its host; the id stays in the progress snapshot.
+func (e *Engine) stopUncertainReplay(ctx context.Context, r *run.Run, st *reactState, call llm.ToolCall) error {
 	e.emitToolFailed(ctx, r.ID, call.Name, cortex.ErrEffectUncertain)
 	meta := maps.Clone(r.Metadata)
 	if meta == nil {
@@ -515,10 +517,7 @@ func (e *Engine) stopUncertainReplay(ctx context.Context, r *run.Run, st *reactS
 	meta["uncertain_tool"] = call.Name
 	meta["uncertain_call_id"] = call.ID
 	r.Metadata = meta
-	if owner == "" {
-		owner = "unknown"
-	}
-	uncertain := fmt.Errorf("%w: tool %q was handed to its handler by worker %s and its outcome is unknown", cortex.ErrEffectUncertain, call.Name, owner)
+	uncertain := fmt.Errorf("%w: tool %q was handed to its handler by another worker and its outcome is unknown", cortex.ErrEffectUncertain, call.Name)
 	e.logWarn("stop a reclaimed run on a call with no recorded outcome", uncertain, log.String("run_id", r.ID.String()))
 	return errors.Join(uncertain, e.finalizeUncertainEffect(ctx, r, st))
 }

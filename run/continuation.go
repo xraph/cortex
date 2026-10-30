@@ -80,7 +80,9 @@ type ReclaimNotice struct {
 // Lease is one worker's hold on a running run. A lease whose ExpiresAt has
 // passed has lapsed, and the sweeper may hand the run to another replica.
 type Lease struct {
-	Owner     string    `json:"owner"`
+	// Owner is the worker's id, which names its host. Stores keep it; it is
+	// never serialized, so run JSON and API responses do not carry it.
+	Owner     string    `json:"-"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 

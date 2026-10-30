@@ -62,6 +62,12 @@ type Run struct {
 	// under it, never under whoever resumed. Stores persist it and never
 	// rewrite it; it is never serialized, so an API reader cannot see it.
 	Principal []byte `json:"-"`
+	// ReplyRoute is where the answer goes for a run the messaging bus
+	// started for a directive, encoded by the engine, reply token
+	// included. Only the engine reads it. Stores persist it once, when the
+	// run is created, and never rewrite it; it is never serialized, so the
+	// token stays out of run JSON, events and API responses.
+	ReplyRoute []byte `json:"-"`
 	// Lease names the worker that holds a running run and when its hold
 	// lapses. Nil means no worker holds a lease on the run.
 	Lease *Lease `json:"lease,omitempty"`

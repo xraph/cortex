@@ -94,6 +94,7 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevisionDenied", func(t *testing.T) { testRunRevisionDenied(t, newStore) })
 	t.Run("RunRevision", func(t *testing.T) { testRunRevision(t, newStore) })
 	t.Run("RunPrincipal", func(t *testing.T) { RunPrincipal(t, newStore) })
+	t.Run("RunReplyRoute", func(t *testing.T) { RunReplyRoute(t, newStore) })
 	t.Run("CreateRunDuplicateID", func(t *testing.T) { CreateRunDuplicateID(t, newStore) })
 	t.Run("RunContinuation", func(t *testing.T) { RunContinuation(t, newStore) })
 	t.Run("RunProgress", func(t *testing.T) { RunProgress(t, newStore) })
