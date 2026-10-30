@@ -20,6 +20,13 @@ func mapStoreError(err error) error {
 		return verificationHTTPError{failure: failure}
 	}
 	switch {
+	case errors.Is(err, cortex.ErrEngineStopping):
+		// This replica is shutting down; another one can take the request.
+		return forge.NewHTTPError(http.StatusServiceUnavailable, cortex.ErrEngineStopping.Error())
+	case errors.Is(err, cortex.ErrRunInterrupted):
+		// The run was handed off or stopped where it was and waits for
+		// ContinueRun; it did not fail.
+		return forge.NewHTTPError(http.StatusConflict, cortex.ErrRunInterrupted.Error())
 	case errors.Is(err, cortex.ErrRunConflict):
 		return forge.NewHTTPError(http.StatusConflict, cortex.ErrRunConflict.Error())
 	case errors.Is(err, cortex.ErrPreparationUnavailable):
