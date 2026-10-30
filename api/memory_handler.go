@@ -19,7 +19,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/memory", a.getConversation,
 		forge.WithSummary("Get conversation"),
 		forge.WithDescription("Returns conversation history for an agent."),
-		forge.WithOperationID("getConversation"),
+		a.op("getConversation", false),
 		forge.WithRequestSchema(GetConversationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Conversation messages", []memory.Message{}),
 		forge.WithErrorResponses(),
@@ -30,7 +30,7 @@ func (a *API) registerMemoryRoutes(router forge.Router) error {
 	if err := g.DELETE("/agents/:name/memory", a.clearConversation,
 		forge.WithSummary("Clear conversation"),
 		forge.WithDescription("Clears conversation history for an agent."),
-		forge.WithOperationID("clearConversation"),
+		a.op("clearConversation", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -54,7 +54,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 		// No session has ever been created for this agent in this scope
 		// (the agent has never run), so there is nothing to load yet.
 		resp := &GetConversationResponse{Messages: []memory.Message{}}
-		return resp, ctx.JSON(http.StatusOK, resp)
+		return resp, nil
 	}
 
 	limit := defaultLimit(req.Limit)
@@ -64,7 +64,7 @@ func (a *API) getConversation(ctx forge.Context, req *GetConversationRequest) (*
 		return nil, fmt.Errorf("load conversation: %w", err)
 	}
 	resp := &GetConversationResponse{Messages: messages}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) clearConversation(ctx forge.Context, req *ClearConversationRequest) (*struct{}, error) {

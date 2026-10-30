@@ -122,7 +122,7 @@ func TestResumeRechecksRevokedGrant(t *testing.T) {
 	s := scopespy.New()
 	auth := &revocableApproval{}
 	dispatched := 0
-	e, err := New(WithStore(s), WithLLM(answeringLLM("probe")), WithToolAuthorizer(auth), WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) { dispatched++; return "ok", nil }))
+	e, err := New(WithStore(s), WithLLM(answeringLLM("probe")), WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) { dispatched++; return "ok", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestApprovedBatchRechecksEachDispatch(t *testing.T) {
 	s := scopespy.New()
 	auth := &revocableApproval{}
 	dispatched := 0
-	e, err := New(WithStore(s), WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "first", Name: "first", Arguments: `{}`}, {ID: "second", Name: "second", Arguments: `{}`}}}), WithToolAuthorizer(auth),
+	e, err := New(WithStore(s), WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "first", Name: "first", Arguments: `{}`}, {ID: "second", Name: "second", Arguments: `{}`}}}), WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithTool(llm.Tool{Name: "first"}, func(context.Context, cortex.Invocation) (string, error) { auth.revoked = true; return "revoked", nil }),
 		WithTool(llm.Tool{Name: "second"}, func(context.Context, cortex.Invocation) (string, error) { dispatched++; return "unsafe", nil }))
 	if err != nil {
@@ -255,7 +255,7 @@ func TestApprovedToolReceivesSavedDeadline(t *testing.T) {
 	s := scopespy.New()
 	deadline := time.Now().Add(300 * time.Millisecond)
 	var received time.Time
-	e, err := New(WithStore(s), WithLLM(answeringLLM("probe")), WithToolAuthorizer(&revocableApproval{}), WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
+	e, err := New(WithStore(s), WithLLM(answeringLLM("probe")), WithToolAuthorizer(&revocableApproval{}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
 		received, _ = ctx.Deadline()
 		if received.IsZero() {
 			return "missing deadline", nil

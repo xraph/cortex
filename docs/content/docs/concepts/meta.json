@@ -8,6 +8,7 @@
     "errors",
     "multi-tenancy",
     "authorization",
+    "tools",
     "suspension",
     "prompt-composition"
   ]

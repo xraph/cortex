@@ -31,7 +31,7 @@ type Run struct {
 
 ### Run states
 
-Runs follow a state machine with 7 states:
+Runs follow a state machine with 9 states:
 
 | State | Description |
 |-------|-------------|
@@ -42,6 +42,8 @@ Runs follow a state machine with 7 states:
 | `failed` | Run terminated with an error |
 | `cancelled` | Run was cancelled through `CancelRun` |
 | `paused` | Run is suspended, waiting for an approval or an external tool result |
+| `ready` | A decision or the external results are recorded, and the run waits for `ContinueRun` |
+| `reclaimable` | The worker holding the run let go of it or stopped renewing its lease, and the run waits for `ContinueRun` |
 
 ### State transitions
 
@@ -50,12 +52,122 @@ running → completed
         → incomplete
         → failed
         → cancelled
-        → paused → running (after Resume or an approved checkpoint)
+        → paused → running (after Resume, or ResolveCheckpoint on a store without ready runs)
+                 → ready → running (ContinueRun)
+                         → cancelled
                  → failed (rejected checkpoint or expired suspension)
                  → cancelled
+        → reclaimable (lease lapsed, worker handed off) → running (ContinueRun)
+                                                        → failed (reclaim limit, nothing to continue from)
+                                                        → cancelled
 ```
 
-The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` only accepts a running or paused run, and answers `cortex.ErrInvalidState` for anything else.
+The engine creates runs directly in `running`. `created` exists for runs you create yourself with `eng.CreateRun`. `eng.CancelRun` accepts a running, paused, ready or reclaimable run, and answers `cortex.ErrInvalidState` for anything else.
+
+### Continuing a run from a job
+
+A run doesn't have to continue in the request that answered it. `eng.DecideCheckpoint` and `eng.ProvideResults` write the decision or the results, move the run to `ready` and return without calling the model. `eng.ContinueRun` picks it up later, from a background job on any replica:
+
+```go
+// In the HTTP handler: quick, no model call.
+err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{Approved: true, DecidedBy: "ops@example.com"})
+
+// In the job, under the run's scope: runs the approved call and the rest of the loop.
+r, err := eng.ContinueRun(ctx, runID)
+```
+
+`plugin.RunReady` fires when a run becomes ready, with the run's scope on its `ctx`, so it's the natural place to queue that job. `ContinueRun` runs the tool under the principal that started the run, not the job's. It needs a store that implements `run.ContinuationStore`; the built-in SQLite, PostgreSQL and MongoDB stores all do. A store without it gets `cortex.ErrContinuationUnavailable`. See [Suspension](/docs/concepts/suspension#continuing-from-a-job) for the full rules.
+
+`ContinueRun` refuses a run that isn't ready or reclaimable with `cortex.ErrRunNotContinuable`. The error also matches `cortex.ErrRunLeased` when the run is running under a live lease, and `cortex.ErrRunAlreadyDone` when it has ended, in which case you get the run back too.
+
+A ready run that can never pass the checks `ContinueRun` makes before it claims the run (its stored answer doesn't match the pause, or its continuation is unusable) is failed with that error and its checkpoint closed. A check that fails for now, such as a store that can't be read, leaves the run ready for the next try.
+
+### Durability: leases, hand-off and reclaim
+
+Leasing is opt-in. With the default engine, `Stop` lets every admitted run finish, nothing is handed off and no run becomes `reclaimable`. A run whose worker dies stays `running`, as it did in v1.9.0.
+
+Turn it on with `engine.WithRunLease` once your host continues runs itself, because nothing in cortex calls `ContinueRun` for you. With a store that implements `run.ContinuationStore` and `suspension.ProgressStore` (all three built-in stores do), every run then executes under its worker's lease and saves its progress at each step boundary. When the worker goes away, the run becomes `reclaimable`, and your job continues it on any replica with the same `ContinueRun` call:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithRunLease(60*time.Second),       // off by default
+    engine.WithReclaimLimit(3),                // the default
+    engine.WithReadyRenotify(5*time.Minute),   // the default; 0 turns it off
+    engine.WithSuspensionSweepInterval(time.Minute),
+    engine.WithExtension(continuer{jobs: jobs}),
+)
+```
+
+`continuer` is a plugin of your own that turns `plugin.RunReady` and `plugin.RunReclaimable` into jobs, carrying the run's scope from the hook's `ctx`:
+
+```go
+type continueJob struct {
+    scope cortex.Scope
+    runID id.AgentRunID
+}
+
+type continuer struct{ jobs chan<- continueJob } // your durable queue in production
+
+func (continuer) Name() string { return "continue-runs" }
+
+func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
+    c.enqueue(ctx, runID)
+    return nil
+}
+
+func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
+    c.enqueue(ctx, runID)
+    return nil
+}
+
+// enqueue never blocks. A dropped notice comes back with the sweeper's
+// next WithReadyRenotify pass.
+func (c continuer) enqueue(ctx context.Context, runID id.AgentRunID) {
+    select {
+    case c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}:
+    default:
+    }
+}
+
+// The job, in a worker goroutine or your queue's consumer, on whichever
+// replica takes it:
+r, err := eng.ContinueRun(cortex.WithScope(context.Background(), job.scope), job.runID)
+```
+
+Hooks run on the engine's own goroutines: the sweeper, `Stop` handing a run off, and the request that decided a checkpoint. A hook must never block, so hand the job off and return, and call `ContinueRun` from a goroutine or a job queue. A hook stuck on a full channel can hold `Stop` up until its deadline.
+
+With leasing on, `Stop` hands each leased run off at its next model call or tool dispatch: the run saves its progress, becomes `reclaimable`, fires `RunReclaimable` with `HandOff` set, and its `RunAgent` or `StreamAgent` caller gets `cortex.ErrRunInterrupted`.
+
+Lease expiry compares the clock of the worker that wrote the lease with the clock of the replica that sweeps, so keep your replicas' clocks in sync. Skew close to the lease ttl causes needless reclaims, and calls that weren't retry-safe then stop as uncertain.
+
+Every claim takes the lease in the same write that moves the run to `running`: a resume, a decision, `ContinueRun`, a rejection, a cancel, the expiry sweep, and the messaging bus recording a peer agent's reply alike. A claim also writes the run's first progress snapshot in the same write. It carries every answer the claim was made with (the results you provided, the peer's reply, a rejection going back to the model), marks every call that already left the engine and has no answer (a question to a peer, an external call handed to you) as started, and, for a cancel or an expiry, the end the claim is for. So a worker that dies right after its claim leaves a lease that lapses and all of that, never a running run nobody owns. The worker that starts a peer's reply takes the lease over in the same way.
+
+The sweeper does the finding. On each pass, after it fails expired suspensions, it:
+
+- marks reclaimable every running run whose lease expired, adds one to its `Reclaims` and fires `RunReclaimable` with the previous owner and when the lease expired. A lease renewed in the meantime is left alone;
+- tells you again about runs left `ready` or `reclaimable` for longer than `WithReadyRenotify`, with `Renotified` set on the notice. Each run gets at most one repeat per period, a run nobody was ever told about included, so a host that missed the first hook still hears about it;
+- closes pending checkpoints that no decision can act on any more: one whose run is waiting on a different pause, and one whose run has no pause and hasn't been written for twice the lease ttl. They're resolved as superseded by `cortex`, the same way the decide path closes them.
+
+`ContinueRun` on a running run whose lease has already lapsed doesn't wait for the sweep: it marks the run reclaimable itself and carries on. A live lease is still `cortex.ErrRunLeased`.
+
+Continuing a reclaimed run picks up from its last saved step. A run reclaimed more than `WithReclaimLimit` times is failed with `cortex.ErrReclaimLimit` before any model call, so a run that kills its worker every time can't take the next replica down too. Otherwise the run's principal is restored and the run is claimed, then the calls of the step it was in are settled in the order the model made them:
+
+- a call with a saved result gets that result and doesn't run again. The result goes through the publication checks again before the model sees it;
+- a call that was handed to a tool that isn't retry-safe, and has no result, stops the run. It ends `incomplete` with stop reason `tool_error`, `Metadata["uncertain_tool"]` and `Metadata["uncertain_call_id"]` name the call, and `ContinueRun` returns an error matching `cortex.ErrEffectUncertain`. The engine can't tell whether that call changed anything, so it doesn't run it twice;
+- any other call runs again, authorized again. A call that needs an approval pauses the run, exactly as it would have the first time, and the person is asked again.
+
+Then the loop carries on from the saved step. The model call the old worker was in the middle of runs once more, and a step row the old worker already wrote is reused, not duplicated.
+
+A run claimed for a cancel or an expiry whose write was lost is ended that way when it is reclaimed: cancelled, or failed with the expiry's error, with its pause dropped and its checkpoint closed, exactly as the original call would have. `ContinueRun` returns it with `cortex.ErrRunAlreadyDone` for a cancel and the expiry's error for an expiry.
+
+A run with no saved progress continues from the pause it was last claimed from, if that suspension is still there. Its pending calls that already left the engine (a question to a peer agent, an external call handed to you) count as started, so the run stops as uncertain rather than sending them again; a call waiting on an approval is asked about again. A run with neither, a mock run for example, is failed with `cortex.ErrRunNotRecoverable`.
+
+A run the messaging bus started for a directive keeps where its answer goes. If its worker hands it off, that worker sends no reply, and the replica that finishes the run sends the answer, or a `Failure` if the run ended without one. Configure messaging on every replica that may continue such runs: a replica without it can't send the answer, and only logs a warning.
+
+A worker that was only slow, not dead, finds out at its next write. Its progress saves and its terminal write are refused, its pass returns `cortex.ErrRunLeaseLost`, and only the worker that finished the run fires the terminal hooks. Its step and tool call rows aren't fenced the same way, so a few of them can still land after the run was taken.
+
+Runs under required verification or a task claim (`Provenance.VerificationRequired`, `Provenance.TaskClaimID`) never hold a lease, save no progress and are never reclaimed. Their recovery belongs to the `coordination` package, and so does an experimental task-claim run that reaches `ready` through `DecideCheckpoint` or `ProvideResults`: coordination treats a `ready` task run as a usage conflict, so leave those to its recovery, not to your `RunReady` job. A run a v1.9 replica is executing holds no lease either, and no sweep ever reclaims it, so you can roll v1.10 out next to v1.9 replicas.
 
 See [Execution outcomes and safety](/docs/execution/assurance) for verification, publication and compatibility semantics.
 
@@ -160,6 +272,6 @@ These exist when you mount the `api` module through `extension.WithRoutes` (path
 | `POST` | `/cortex/v1/agents/:name/stream` | Run an agent and stream events over SSE |
 | `GET` | `/cortex/v1/runs` | List runs in the caller's scope (`limit`, `offset`) |
 | `GET` | `/cortex/v1/runs/:id` | Get a specific run |
-| `POST` | `/cortex/v1/runs/:id/cancel` | Cancel a running or paused run |
+| `POST` | `/cortex/v1/runs/:id/cancel` | Cancel a running, paused, ready or reclaimable run |
 
 The list route doesn't filter by agent. Use `eng.ListRuns` with `AgentID` for that. Steps and tool calls have no routes; read them with `eng.ListSteps` and `eng.ListToolCalls`.

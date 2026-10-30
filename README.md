@@ -37,6 +37,7 @@ import (
 	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate" // registers the SQLite migration executor
 	"github.com/xraph/nexus"
 	"github.com/xraph/nexus/providers/openai"
+	"github.com/xraph/nexus/tenant"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
@@ -75,6 +76,14 @@ func main() {
 	}
 	defer gw.Shutdown(ctx)
 
+	// Every model call goes out under a Nexus tenant. This one lives in
+	// the gateway's in-memory store, so it's made fresh on each start.
+	acme, err := gw.Tenants().Create(ctx, &tenant.CreateInput{Name: "Acme", Slug: "acme"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	toAcme := func(context.Context, cortex.Scope) (string, error) { return acme.ID.String(), nil }
+
 	// A tool the agent can call.
 	clock := llm.Tool{
 		Name:        "current_time",
@@ -87,7 +96,7 @@ func main() {
 
 	eng, err := engine.New(
 		engine.WithStore(st),
-		engine.WithLLM(nexusllm.New(gw)),
+		engine.WithLLM(nexusllm.New(gw, nexusllm.WithTenant(toAcme))),
 		engine.WithTool(clock, tellTime),
 	)
 	if err != nil {
@@ -124,6 +133,22 @@ OPENAI_API_KEY=sk-... go run .
 The model sees `current_time`, calls it, gets the timestamp back from your handler and answers with it. You'll see the run's final state, how many steps it took and the tokens used, then the answer. The run, every step and the tool call are now rows in `cortex.db`, so `eng.ListSteps` and `eng.ListToolCalls` can show you exactly what happened. Run it a second time and `CreateAgent` fails, because an agent named `assistant` already exists in that scope. Delete `cortex.db` or use `GetAgentByName` first.
 
 If you leave out `WithLLM`, `RunAgent` still works, in an echo mode that's handy for wiring tests.
+
+### The Nexus adapter
+
+The adapter refuses to send a call without a Nexus tenant, which is why the quick start makes one. In a real host you map your scope to its tenant with `nexusllm.WithTenant`, or set `pipeline.WithTenantID` on the context next to the scope. Each call is recorded in Nexus's usage with your scope levels and the run and agent behind it, so you can see what a run cost. `nexusllm.WithProvider` pins the provider a workspace picked, and `nexusllm.WithSamplingUnsupported` tells the adapter which models reject `temperature` (Claude 5.5 does, and the adapter already knows those ids).
+
+Thinking models keep their signed thinking between turns, through approvals and reclaims, but it never reaches conversation memory. A turn whose text your publication gate redacted loses its thinking blocks when it is replayed to the model (set the Nexus Anthropic provider's `anthropic.WithThinkingBlockBinding("drop_block")` if you want that explicit). The thinking blocks are the model's unredacted output, and they sit that way in progress snapshots and continuations. A Nexus guard that blocks a response stops the run with `safety_block` and no tool from that step runs. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#nexus-adapter) has the details.
+
+### The Weave adapter
+
+Every knowledge search runs under a Weave tenant, taken from the run's scope with `weaveknowledge.WithTenant` (the default is the scope's first level). A run only reads its own tenant's collections, plus any read-only ones you list with `weaveknowledge.WithShared`, such as your product docs. A call with no tenant fails before Weave is asked. Under the Forge extension, pass these with `extension.WithWeaveOptions`. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#weave-adapter) has the details.
+
+### The Shield adapter
+
+`safety/shield` screens what a run reads and writes with a [Shield](https://github.com/xraph/shield) engine, and it can gate tool calls too. It's your safety scanner and your publication gate. Each scan runs under a Shield tenant taken from the run's scope (`shieldsafety.WithTenant`, first scope level by default) and the app you name with `shieldsafety.WithApp`, using the profile in the agent's `shield_profile` guardrail. When the adapter is your publication gate (`shieldsafety.EngineOption` and the Forge extension install it as both), tool results, tool errors and retrieved knowledge go in as untrusted, so Shield quotes them before the model reads them. A scan that can't run (no tenant, no profile, input too large) blocks the content. It never lets it through.
+
+`shieldsafety.NewToolAuthorizer` puts Shield's tool-call scan under your own `cortex.ToolAuthorizer`. Your authorizer answers first, and Shield can then deny the call or ask a person to approve it, but it can't allow a call you refused. Under the Forge extension, pass adapter options with `extension.WithShieldOptions`. [Configuration](https://www.xraph.com/docs/cortex/concepts/configuration#shield-adapter) and [Authorization](https://www.xraph.com/docs/cortex/concepts/authorization#layering-shield-under-your-authorizer) have the details.
 
 ## Why Cortex?
 
@@ -173,11 +198,40 @@ You can run an agent on a plain system prompt. When you want reusable structure,
 
 Point an agent at a persona with `PersonaRef`, or list skills, traits and behaviors inline with `InlineSkills`, `InlineTraits` and `InlineBehaviors`. `RunOverrides` lets one run swap the model, persona, tools or session without changing the stored agent, and `CloneAgent` and `ClonePersona` copy one under a new name.
 
+## Tools
+
+`engine.WithTool` takes a definition and a handler, and you write the JSON Schema yourself. You don't have to. The `tool` package builds a tool from a Go function over a struct, generates the schema from the struct's tags and checks every call against it before your function runs:
+
+```go
+type ListInput struct {
+	Project string `json:"project" jsonschema:"the project id"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+eng, err := engine.New(
+	engine.WithStore(st),
+	tool.Register("list_services", "List the services in a project.",
+		func(ctx context.Context, inv cortex.Invocation, in ListInput) ([]string, error) {
+			return lookup(ctx, inv.Scope, in.Project, in.Limit)
+		},
+		tool.RetrySafe(),
+	),
+)
+```
+
+A call with a wrong type, a missing field or an argument the struct doesn't declare fails before your code sees it, and the model reads the error and can try again. `tool.RetrySafe()` says the tool can run twice without harm, which matters when a run is reclaimed after its worker died (see below). For a tool you registered with `engine.WithTool`, use `engine.WithToolRetrySafe("name")`.
+
+Already have an MCP server? The `mcpbridge` module turns its tools into cortex tools. You connect the `*mcp.ClientSession`, and `mcpbridge.EngineOptions(ctx, cs, mcpbridge.Options{Prefix: "github_"})` gives you the engine options. Tools the server marks read-only come in as retry-safe, the rest don't. It's a separate module, so the engine itself never depends on the MCP SDK. [Typed tools](docs/content/docs/concepts/tools.mdx) and [MCP tools](docs/content/docs/integrations/mcp.mdx) have the details.
+
 ## Runs, checkpoints and suspension
 
 `RunAgent` returns the finished `*run.Run`. `StreamAgent` sends `StreamEvent`s on a channel as the run goes: `run_started`, `step`, `tool_call`, `token`, `checkpoint`, `safety_block`, `suspended`, `done` and `error`.
 
-A run pauses in two cases. Your `ToolAuthorizer` returns `ErrRequiresApproval` for a call, which creates a checkpoint that someone resolves with `eng.ResolveCheckpoint`. Or the model calls a tool you registered with `WithExternalTool`, and the run suspends until you call `eng.Resume(ctx, runID, engine.ResumeInput{ToolResults: ...})`. A suspended run is a stored row, not a blocked goroutine, so it survives a restart. Suspensions expire after a TTL you set with `WithSuspensionTTL` (zero turns expiry off).
+A run pauses in two cases. Your `ToolAuthorizer` returns `ErrRequiresApproval` for a call, which creates a checkpoint that someone resolves with `eng.ResolveCheckpoint`. Or the model calls a tool you registered with `WithExternalTool`, and the run suspends until you call `eng.Resume(ctx, runID, engine.ResumeInput{ToolResults: ...})`. A suspended run is a stored row, not a blocked goroutine, so it survives a restart. `WithSuspensionTTL` sets the default deadline for a pause, and an approval or an external tool can bring a shorter one of its own. Zero only drops the default; the sweeper keeps running for calls with their own deadline. `plugin.RunSuspended` fires on every pause, which is where you tell somebody a decision is waiting.
+
+You don't have to continue a run inside the request that answered it. `eng.DecideCheckpoint` records a decision and `eng.ProvideResults` records external results, and both return straight away with the run `ready`. Queue a job from the `plugin.RunReady` hook and call `eng.ContinueRun(ctx, runID)` in it, on any replica. The run makes its tool calls as the principal that started it, which you give the engine a way to store with `engine.WithPrincipalCodec`.
+
+Runs can also survive the worker that was running them, once you turn leasing on with `engine.WithRunLease(60*time.Second)`. It's off by default, and then `Stop` lets every run finish, as v1.9.0 did. With it on, every run on the built-in stores holds a lease and saves its progress at each step. If the worker dies, or `Stop` hands the run off, the run becomes `reclaimable` and `plugin.RunReclaimable` fires. Nothing in cortex continues it for you: your job calls the same `ContinueRun`, which carries on from the last saved step, so only turn leasing on once `RunReady` and `RunReclaimable` both queue that job. A tool call that was in flight runs again only if the tool is retry-safe. Otherwise the run ends `incomplete` with `cortex.ErrEffectUncertain`, because nobody can say whether the call did anything. [Runs](https://www.xraph.com/docs/cortex/execution/runs) covers the states and the reclaim rules.
 
 ## Multi-agent orchestration
 
@@ -249,6 +303,8 @@ app := forge.NewApp(forge.AppConfig{
 
 The extension mounts no HTTP routes by itself. The REST handlers live in the separate `api` module so you only compile them when you want them, and `WithRoutes` mounts them under `/cortex` by default. Leave it out and you still get the engine in the container and the dashboard contract.
 
+The REST module doesn't check who's calling unless you give it an `api.Authorizer` with `api.WithAuthorizer`. That interface is asked about every route before it runs, and it names the person behind a checkpoint decision. Without one, any caller that reaches the router can use every route and `decided_by` on a checkpoint is whatever the caller wrote, so run it that way only when every caller is trusted equally.
+
 ```yaml
 extensions:
   cortex:
@@ -258,14 +314,14 @@ extensions:
     default_max_tokens: 4096
     default_temperature: 0.7
     default_reasoning_loop: react
-    run_concurrency: 4
+    run_concurrency: 0      # runs at once in this process; 0 is no limit
     shutdown_timeout: 30s
     grove_database: ""      # a named grove.DB; empty uses the default one
     disable_routes: false
     disable_migrate: false
 ```
 
-Those are the defaults. `default_model` is `smart`, which only means something if your gateway has an alias with that name. In code you have `WithStore`, `WithGroveDatabase`, `WithEngineOption`, `WithExtension`, `WithConfig`, `WithBasePath`, `WithDisableMigrate`, `WithRequireConfig` and `WithDashboard`.
+Those are the defaults. `default_model` is `smart`, which only means something if your gateway has an alias with that name. In code you have `WithStore`, `WithGroveDatabase`, `WithEngineOption`, `WithExtension`, `WithConfig`, `WithBasePath`, `WithDisableMigrate`, `WithRequireConfig`, `WithDashboard` and `WithoutAutoAdapters`. Anything you pass with `WithEngineOption` or `WithStore` wins over the config and over the services the extension finds in the container.
 
 ## Lifecycle hooks
 
@@ -286,6 +342,7 @@ In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as
 | `github.com/xraph/cortex/extension` | The Forge extension and dashboard contract | yes |
 | `github.com/xraph/cortex/sentinel` | Evaluation through [Sentinel](https://github.com/xraph/sentinel) | yes |
 | `github.com/xraph/cortex/integrations/fabriq` | [Fabriq](https://github.com/xraph/fabriq) as a knowledge provider, with extra tools and a learning-loop plugin | yes |
+| `github.com/xraph/cortex/mcpbridge` | An MCP server's tools as cortex tools | yes |
 | `github.com/xraph/cortex/integrations/sandbox` | Authenticated evaluation broker and OCI policy builder; Linux runtime qualification pending | not yet |
 | `github.com/xraph/cortex/a2aremote`, `.../grpcbind` | Agent2Agent over the network, and its gRPC binding | not yet |
 
@@ -300,7 +357,7 @@ In a Forge app that's all on already; you'll find the metrics on `/_/metrics` as
 | Storage | [PostgreSQL](https://www.xraph.com/docs/cortex/stores/postgres), [SQLite](https://www.xraph.com/docs/cortex/stores/sqlite), [MongoDB](https://www.xraph.com/docs/cortex/stores/mongo) |
 | Forge, HTTP and plugins | [Forge extension](https://www.xraph.com/docs/cortex/guides/forge-extension), [HTTP API](https://www.xraph.com/docs/cortex/api-reference/http-api), [plugin system](https://www.xraph.com/docs/cortex/infrastructure/plugins), [observability](https://www.xraph.com/docs/cortex/infrastructure/observability), [Fabriq brain](https://www.xraph.com/docs/cortex/integrations/fabriq) |
 
-A few newer pages are in the repo but not on the site yet: [tool authorization](docs/content/docs/concepts/authorization.mdx), [suspension](docs/content/docs/concepts/suspension.mdx), [sessions](docs/content/docs/concepts/sessions.mdx), [agent messaging](docs/content/docs/execution/messaging.mdx) and [remote agents](docs/content/docs/execution/remote-messaging.mdx). The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex).
+A few newer pages are in the repo but not on the site yet: [tool authorization](docs/content/docs/concepts/authorization.mdx), [suspension](docs/content/docs/concepts/suspension.mdx), [sessions](docs/content/docs/concepts/sessions.mdx), [agent messaging](docs/content/docs/execution/messaging.mdx), [remote agents](docs/content/docs/execution/remote-messaging.mdx), [typed tools](docs/content/docs/concepts/tools.mdx) and [MCP tools](docs/content/docs/integrations/mcp.mdx). The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/cortex).
 
 ## FAQ
 

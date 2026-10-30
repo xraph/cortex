@@ -14,7 +14,7 @@ import (
 func (a *API) registerOptimizationCommands(router forge.Router) error {
 	commands := operator.Commands{Optimizer: a.optimization}
 	group := router.Group("/v1/optimization", forge.WithGroupTags("optimization"))
-	if err := group.POST("/experiments", optimizationValueMutation(commands.Create), forge.WithOperationID("createOptimizationExperiment"), forge.WithRequestSchema(operator.CreateInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment state", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+	if err := group.POST("/experiments", optimizationValueMutation(commands.Create), a.op("createOptimizationExperiment", true), forge.WithRequestSchema(operator.CreateInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment state", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
 		return fmt.Errorf("register optimization creation command: %w", err)
 	}
 	for _, route := range []struct {
@@ -25,11 +25,11 @@ func (a *API) registerOptimizationCommands(router forge.Router) error {
 		{"cancel", "cancelOptimizationExperiment", commands.Cancel},
 		{"resume", "resumeOptimizationExperiment", commands.Resume},
 	} {
-		if err := group.POST("/experiments/:id/"+route.action, optimizationCommand(route.invoke), forge.WithOperationID(route.name), forge.WithRequestSchema(operator.LifecycleInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment state", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+		if err := group.POST("/experiments/:id/"+route.action, optimizationCommand(route.invoke), a.op(route.name, true), forge.WithRequestSchema(operator.LifecycleInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment state", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
 			return fmt.Errorf("register optimization command %s: %w", route.name, err)
 		}
 	}
-	if err := group.POST("/decisions/retain", optimizationValueMutation(commands.Retain), forge.WithOperationID("retainOptimizationBaseline"), forge.WithRequestSchema(operator.RetainInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment and retained baseline review", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
+	if err := group.POST("/decisions/retain", optimizationValueMutation(commands.Retain), a.op("retainOptimizationBaseline", true), forge.WithRequestSchema(operator.RetainInput{}), forge.WithResponseSchema(http.StatusOK, "Current experiment and retained baseline review", opt.Experiment{}), forge.WithErrorResponses()); err != nil {
 		return fmt.Errorf("register optimization retain command: %w", err)
 	}
 	if err := a.registerOptimizationLessonCommands(router); err != nil {

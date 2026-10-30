@@ -93,6 +93,13 @@ func Conformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("RunRevisionConcurrent", func(t *testing.T) { testRunRevisionConcurrent(t, newStore) })
 	t.Run("RunRevisionDenied", func(t *testing.T) { testRunRevisionDenied(t, newStore) })
 	t.Run("RunRevision", func(t *testing.T) { testRunRevision(t, newStore) })
+	t.Run("RunPrincipal", func(t *testing.T) { RunPrincipal(t, newStore) })
+	t.Run("RunReplyRoute", func(t *testing.T) { RunReplyRoute(t, newStore) })
+	t.Run("CreateRunDuplicateID", func(t *testing.T) { CreateRunDuplicateID(t, newStore) })
+	t.Run("RunContinuation", func(t *testing.T) { RunContinuation(t, newStore) })
+	t.Run("RunProgress", func(t *testing.T) { RunProgress(t, newStore) })
+	t.Run("CheckpointSweep", func(t *testing.T) { CheckpointSweep(t, newStore) })
+	t.Run("LeasedClaims", func(t *testing.T) { LeasedClaims(t, newStore) })
 	t.Run("Effects", func(t *testing.T) { testEffects(t, newStore) })
 	t.Run("BoundEffects", func(t *testing.T) { testBoundEffects(t, newStore) })
 	t.Run("BoundEffectCompletionRace", func(t *testing.T) { testBoundEffectCompletionRace(t, newStore) })
@@ -2014,6 +2021,34 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 		if err := s.Resolve(ctxB, cpB.ID, checkpoint.Decision{Approved: true}); err != nil {
 			t.Fatalf("Resolve(ctxB, cpB.ID): %v", err)
+		}
+	})
+
+	// A decided checkpoint keeps its first decision. A second Resolve is
+	// refused with ErrInvalidState, not applied over the first, so two
+	// deciders racing cannot both record, and a late decision cannot
+	// replace the closure a cancel wrote.
+	t.Run("CheckpointResolveOnce", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_resolve_once")
+		r := mustCreateRun(t, s, ctx)
+		cp := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		if err := s.Resolve(ctx, cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "first"}); err != nil {
+			t.Fatalf("first Resolve: %v", err)
+		}
+		err := s.Resolve(ctx, cp.ID, checkpoint.Decision{DecidedBy: "second", Reason: "late"})
+		if !errors.Is(err, cortex.ErrInvalidState) {
+			t.Fatalf("second Resolve = %v, want ErrInvalidState", err)
+		}
+		got, err := s.GetCheckpoint(ctx, cp.ID)
+		if err != nil {
+			t.Fatalf("reload checkpoint: %v", err)
+		}
+		if got.State != "resolved" || got.Decision == nil || !got.Decision.Approved || got.Decision.DecidedBy != "first" {
+			t.Fatalf("checkpoint after a refused second Resolve = %+v, want the first decision", got)
+		}
+		if err := s.Resolve(ctx, id.NewCheckpointID(), checkpoint.Decision{Approved: true}); !errors.Is(err, cortex.ErrCheckpointNotFound) {
+			t.Errorf("Resolve of a missing checkpoint = %v, want ErrCheckpointNotFound", err)
 		}
 	})
 

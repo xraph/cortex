@@ -229,6 +229,10 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 			{Keys: bson.D{{Key: "state", Value: 1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			// The sweeper's two run reads: running runs by lease expiry,
+			// and ready or reclaimable runs by when they last changed.
+			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "lease_expires_at", Value: 1}}},
+			{Keys: bson.D{{Key: "state", Value: 1}, {Key: "updated_at", Value: 1}}},
 			scopeIndex,
 		},
 		colSteps: {
@@ -373,6 +377,11 @@ func migrationIndexes() map[string][]mongo.IndexModel {
 				Options: options.Index().SetName(suspensionExpiryIndexName).
 					SetPartialFilterExpression(bson.M{"expires_at": bson.M{"$exists": true}}),
 			},
+			scopeIndex,
+		},
+		// One progress snapshot per run, keyed by the run id in _id, so
+		// the scope index is the only one it needs.
+		colRunProgress: {
 			scopeIndex,
 		},
 		colOverlays: {

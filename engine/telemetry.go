@@ -98,6 +98,7 @@ const (
 	metricRunsSuspended          = "cortex_runs_suspended_total"
 	metricSuspensionsExpired     = "cortex_suspensions_expired_total"
 	metricOrchestrationsFinished = "cortex_orchestrations_finished_total"
+	metricRunsReclaimed          = "cortex_runs_reclaimed_total"
 )
 
 var (
@@ -144,6 +145,7 @@ type engineMetrics struct {
 	suspended      *telemetry.CounterVec
 	expired        *telemetry.CounterVec
 	orchestrations *telemetry.CounterVec
+	reclaimed      *telemetry.CounterVec
 
 	// inFlight is the real count behind runsInProgress, one per mode. The
 	// gauge is set from it under the lock, so two passes that start and
@@ -177,6 +179,8 @@ func newEngineMetrics(m gometrics.Metrics) *engineMetrics {
 			"Paused runs the expiry sweep failed because nobody answered in time, by reason and result.", "reason", "result"),
 		orchestrations: telemetry.NewCounterVec(m, metricOrchestrationsFinished,
 			"Orchestration runs that finished, by strategy and result.", "strategy", "result"),
+		reclaimed: telemetry.NewCounterVec(m, metricRunsReclaimed,
+			"Runs taken from a worker that stopped, and how continuing them went: reclaimed, continued, uncertain, limit or unrecoverable.", "result"),
 		inFlight: map[string]int64{},
 	}
 }
@@ -186,6 +190,14 @@ func (m *engineMetrics) runFinished(r *run.Run) {
 		return
 	}
 	m.runsFinished.Inc(runStateLabel(r.State), stopReasonLabel(r.StopReason), purposeLabel(r.Provenance.Purpose))
+}
+
+// reclaim counts one step of a reclaim by how it went.
+func (m *engineMetrics) reclaim(result string) {
+	if m == nil {
+		return
+	}
+	m.reclaimed.Inc(result)
 }
 
 func (m *engineMetrics) trackInFlight(mode string, delta int64) {
@@ -230,7 +242,8 @@ func (m *engineMetrics) publicationChecked(source string, direction safety.Direc
 
 func runStateLabel(s run.State) string {
 	switch s {
-	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled, run.StatePaused:
+	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled, run.StatePaused,
+		run.StateReady, run.StateReclaimable:
 		return string(s)
 	default:
 		return labelOther
@@ -494,17 +507,21 @@ func (rt *runTrace) end(r *run.Run, err error) {
 	rt.span.End()
 }
 
-// benignRunError says whether a call that failed before it had a run to
-// speak for did so for an ordinary reason: the agent or run it named does
-// not exist, or somebody else claimed the paused run first. Those are
-// answers, not faults, so the span carries cortex.run.result instead of an
-// error status.
+// benignRunError says whether a call ended for an ordinary reason: the
+// agent or run it named does not exist, somebody else claimed the paused
+// run first, the worker handed the run off while shutting down, or another
+// worker took its lease. Those are answers, not faults, so the span
+// carries cortex.run.result instead of an error status.
 func benignRunError(err error) (string, bool) {
 	switch {
 	case errors.Is(err, cortex.ErrAgentNotFound), errors.Is(err, cortex.ErrRunNotFound):
 		return "not_found", true
-	case errors.Is(err, cortex.ErrNotSuspended):
+	case errors.Is(err, cortex.ErrNotSuspended), errors.Is(err, cortex.ErrRunNotContinuable):
 		return "claim_lost", true
+	case errors.Is(err, cortex.ErrRunInterrupted):
+		return "handed_off", true
+	case errors.Is(err, cortex.ErrRunLeaseLost):
+		return "lease_lost", true
 	default:
 		return "", false
 	}
@@ -622,8 +639,8 @@ func (e *Engine) toolKind(name string) string {
 			return toolKindRegistered
 		}
 	}
-	for _, def := range e.externalTools {
-		if def.Name == name {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == name {
 			return toolKindExternal
 		}
 	}
@@ -651,7 +668,7 @@ func noteToolFailure(ctx context.Context, err error) {
 // The span and the metrics are closed in a deferred call, so a tool, an
 // authorizer or a hook that panics still ends its span (as the class
 // "panic") and is still counted before the panic carries on.
-func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, suspension.SuspendReason)) (result string, outcome toolOutcome, reason suspension.SuspendReason) {
+func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(context.Context) (string, toolOutcome, pendingWait)) (result string, outcome toolOutcome, wait pendingWait) {
 	kind := e.toolKind(tc.Name)
 	name := tc.Name
 	if kind == toolKindUnknown {
@@ -696,9 +713,9 @@ func (e *Engine) traceTool(ctx context.Context, tc llm.ToolCall, call func(conte
 		span.End()
 	}()
 
-	result, outcome, reason = call(ctx)
+	result, outcome, wait = call(ctx)
 	returned = true
-	return result, outcome, reason
+	return result, outcome, wait
 }
 
 // toolCallID returns the provider's call ID for a span, or false when it

@@ -116,12 +116,15 @@ func (permissionAuthorizer) Authorize(_ context.Context, s cortex.Subject, call 
 }
 ```
 
-Install it with `engine.WithToolAuthorizer`:
+Install it with `engine.WithToolAuthorizer`, next to the principal codec
+every authorizer needs (see [Keeping the principal across a
+pause](#keeping-the-principal-across-a-pause)):
 
 ```go
 eng, err := engine.New(
     engine.WithStore(pgStore),
     engine.WithToolAuthorizer(permissionAuthorizer{}),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]()),
 )
 ```
 
@@ -132,6 +135,7 @@ and `extension.WithEngineOption` is how an engine option reaches it:
 ```go
 ext := extension.New(
     extension.WithEngineOption(engine.WithToolAuthorizer(permissionAuthorizer{})),
+    extension.WithEngineOption(engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]())),
 )
 ```
 
@@ -174,6 +178,78 @@ enforces: writing `Visible`/`Authorize` to fail open on a missing principal
 instead of closed is a choice available to you, just not the one the example
 above makes.
 
+## Keeping the principal across a pause
+
+If you install a tool authorizer, you also have to install a principal codec.
+`engine.New` returns `cortex.ErrPrincipalCodecRequired` when it sees one
+without the other, whichever order you pass the options in.
+
+```go
+eng, err := engine.New(
+    engine.WithStore(pgStore),
+    engine.WithToolAuthorizer(permissionAuthorizer{}),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*caller]()),
+)
+```
+
+You need it because the principal lives on the context, and a context doesn't
+survive a pause. A run that waits on an approval or an external tool is stored, and
+whoever picks it up again brings a context of their own: the approver who
+resolved the checkpoint, the service that posted the tool's result, the
+messaging bus delivering a peer's reply. None of them is the person who started
+the run. Without a codec, your authorizer would be asked about the approver,
+which is exactly the wrong question after an approval.
+
+So the engine encodes `cortex.PrincipalFromContext(ctx)` when it creates a run
+and stores the bytes on `run.Run.Principal`. Every resume decodes them before
+it claims the run, and the rest of the run, every `Visible`, every `Authorize`
+and every `Invocation.Principal` a handler sees, gets the original caller back.
+The resumer's principal is dropped. A run that has no stored principal, or an
+engine with no codec, resumes with a `nil` principal and never borrows the
+resumer's.
+
+`cortex.JSONPrincipalCodec[T]()` covers the common case: `json.Marshal` on the
+way in, `json.Unmarshal` into a `T` on the way out, so your type assertion holds
+on a resumed run too. It refuses a principal that isn't a `T`. Stored bytes
+that no longer decode into a `T` (corrupt, or written before `T` changed shape)
+count as revoked, since no retry will fix them. You can write
+your own `cortex.PrincipalCodec` instead, and you'll want to if the identity can
+go away. A codec that stores only a user ID and looks the user up again in
+`DecodePrincipal` is how a removed member or a revoked key gets noticed when the
+run comes back.
+
+What a decode error does depends on what it wraps:
+
+- An error wrapping `cortex.ErrPrincipalRevoked` means the identity is gone for
+  good. The engine claims the run, fails it with your error as the reason and
+  logs a warning with the run ID. It never carries on under `nil`, and never
+  under whoever resumed it. A run under required verification records
+  `cortex.ErrPrincipalRevoked` itself as its error, since that path keeps only
+  the sentinel.
+- Any other error is treated as transient (your identity service is down, say).
+  The resume returns an error wrapping `cortex.ErrPrincipalUnavailable` before
+  it claims anything, so the run stays paused and the next resume can try again.
+
+Encoding can fail too. If `EncodePrincipal` errors, the run is refused with
+`cortex.ErrPrincipalUnavailable` and nothing is created for it. A nil principal
+skips the codec and stores nothing.
+
+`ResolveCheckpoint` also encodes the decider's principal into
+`checkpoint.Decision.DecidedByPrincipal`, taken from the context and never from
+the decision you pass in. That's the record of who approved. The run itself
+still continues as its own caller. The decider's principal goes through the
+same codec, so it has to be encodable too: with `JSONPrincipalCodec[T]`, a
+decider whose principal isn't a `T` can't approve or reject, because the encode
+fails and `ResolveCheckpoint` returns `cortex.ErrPrincipalUnavailable` before
+anything moves. The store keeps these bytes, and the REST API and the dashboard
+contract leave them out of every checkpoint they serve.
+
+Task-run children from the experimental task scheduling are the one exception.
+They're created through `coordination`, which doesn't carry the principal
+bytes, so after a pause they resume with a `nil` principal. If your authorizer
+covers them, key it on `Subject.RunID` and the task claim's worker principal
+ref, not on `Subject.Principal`.
+
 ## What a denial looks like to the model
 
 `Authorize` returning an error doesn't fail the run. The engine catches it,
@@ -198,7 +274,7 @@ reason about.
 
 ## The third outcome: ask a human
 
-`Authorize` has a third answer as of v1.11.0. Return `cortex.ErrRequiresApproval`,
+`Authorize` has a third answer as of v1.7.0. Return `cortex.ErrRequiresApproval`,
 or an error wrapping it, and the call is neither allowed nor denied: nothing
 goes back to the model, the run pauses mid-step, and a checkpoint carries the
 call to whoever decides.
@@ -212,10 +288,9 @@ func (a *myAuthorizer) Authorize(ctx context.Context, s cortex.Subject, call llm
 }
 ```
 
-It was held back from v1.10.0 on purpose. With nowhere to suspend into, an
-authorizer returning it would have read as an ordinary denial, and "ask
-somebody" would have quietly become "no". v1.11.0 added the suspension
-mechanism, so both halves shipped together.
+It shipped in the same release as the suspension mechanism, on purpose. With
+nowhere to suspend into, an authorizer returning it would have read as an
+ordinary denial, and "ask somebody" would have quietly become "no".
 
 A denial and an escalation come out of the same method and behave nothing
 alike. A denial is an answer the model reads and reacts to, and the run
@@ -223,3 +298,59 @@ finishes in the same call. An escalation stops the run until a person resolves
 the checkpoint, and only then does the tool run. See
 [Suspension](/docs/concepts/suspension) for how to list pending checkpoints,
 resolve them, and what happens to a run nobody answers.
+
+## Layering Shield under your authorizer
+
+Your authorizer knows who may do what. [Shield](https://github.com/xraph/shield) knows what a call looks like: a call with no risk class, a secret in the arguments, a destructive action that a person should sign off on. `shieldsafety.NewToolAuthorizer` puts the two together, with yours on top.
+
+```go
+auth := shieldsafety.NewToolAuthorizer(shieldEngine, myAuthorizer, shieldsafety.ToolCallOptions{
+    // Your own risk table. An empty class is Shield's "unknown", which the
+    // InfraAgent tools profile blocks.
+    RiskClass: func(ctx context.Context, s cortex.Subject, call llm.ToolCall) string {
+        return riskTable[call.Name]
+    },
+    Profile:     presets.InfraAgentTools,
+    ApprovalTTL: 4 * time.Hour,
+    App:         "loomplane",
+})
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithToolAuthorizer(auth),
+    engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[myPrincipal]()),
+)
+```
+
+Your authorizer answers first. If it denies the call, its error goes back to the model as it is and Shield isn't asked. Otherwise Shield scans the call (the tool name, your risk class and the JSON arguments) and the two answers are combined with `scan.Stricter`, which takes the stricter of allow, require approval and block. So Shield can turn your allow into a denial or an approval, and it can turn your approval into a denial. It can never turn your denial or your approval into an allow.
+
+| Your authorizer | Shield | What the model and the run see |
+|-----------------|--------|--------------------------------|
+| denies | not asked | your error |
+| allows | allows | the call runs |
+| allows | requires approval | the run pauses; `cortex.ApprovalRequired` with reason `shield: ...` and `ApprovalTTL` |
+| requires approval | allows or requires approval | the run pauses with your own error, so your reason and TTL hold |
+| allows or requires approval | blocks | a denial matching `shieldsafety.ErrToolCallBlocked` |
+| allows or requires approval | can't scan | a denial matching `shieldsafety.ErrToolScanUnavailable` |
+
+A scan that can't run (no tenant, no profile for the tenant, arguments that aren't JSON) denies the call with `shieldsafety.ErrToolScanUnavailable`. Denials carry Shield's reason, which is the message of the finding that decided, never the arguments. A checkpoint opened for Shield reads `tool call requires approval: delete_environment (shield: reflex fired)`, with the tool name first.
+
+With the InfraAgent tools profile, a secret in the arguments asks a person to approve the call. To refuse those calls outright, use a tools profile whose secrets check blocks, and name it in `ToolCallOptions.Profile`:
+
+```go
+strict := presets.Bundle{
+    Name: "strict-tools",
+    Awareness: []*awareness.Awareness{{
+        Name: "secrets-block", Focus: awareness.FocusSecrets,
+        Action: string(awareness.PIIActionBlock), Enabled: true,
+    }},
+    Profiles: []*profile.SafetyProfile{{
+        Name: "strict-tools", Enabled: true,
+        Awareness: []profile.AwarenessAssignment{{AwarenessName: "secrets-block"}},
+    }},
+}
+_, err := strict.Seed(ctx, shieldStore, tenant, "loomplane")
+```
+
+That profile only checks for secrets. Add the InfraAgent tools profile's other assignments to it if you want its risk classes as well.
+
+`Visible` is your authorizer's. Shield only gates calls, so with no host authorizer every tool stays visible and Shield decides each call alone.

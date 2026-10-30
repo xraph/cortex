@@ -61,7 +61,8 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 		Set("state = ?", "resolved").
 		Set("decision = ?", string(decisionJSON)).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", cpID.String())
+		Where("id = ?", cpID.String()).
+		Where("state = ?", "pending")
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -74,6 +75,19 @@ func (s *Store) Resolve(ctx context.Context, cpID id.CheckpointID, decision chec
 		return fmt.Errorf("cortex/sqlite: resolve checkpoint rows affected: %w", rowsErr)
 	}
 	if n == 0 {
+		// Nothing pending matched. Tell a decided checkpoint apart from a
+		// missing one, at the same exact scope.
+		exists := s.sdb.NewSelect((*checkpointModel)(nil)).Where("id = ?", cpID.String())
+		for _, p := range scopePredicates(scope, true) {
+			exists = exists.Where(p.Column+" = ?", p.Value)
+		}
+		count, countErr := exists.Count(ctx)
+		if countErr != nil {
+			return fmt.Errorf("cortex/sqlite: resolve checkpoint lookup: %w", countErr)
+		}
+		if count > 0 {
+			return fmt.Errorf("cortex/sqlite: checkpoint %s is not pending: %w", cpID, cortex.ErrInvalidState)
+		}
 		return cortex.ErrCheckpointNotFound
 	}
 	return nil
@@ -137,3 +151,34 @@ func (s *Store) CountPending(ctx context.Context, filter *checkpoint.ListFilter)
 	}
 	return count, nil
 }
+
+// ListPendingAcrossScopes reads pending checkpoints from every scope, in
+// id order, with no scope guard and no scope predicates. That is
+// deliberate: the sweeper has no request scope, and it acts on each
+// checkpoint under that checkpoint's own scope.
+func (s *Store) ListPendingAcrossScopes(ctx context.Context, after id.CheckpointID, limit int) ([]*checkpoint.Checkpoint, error) {
+	var models []checkpointModel
+	q := s.sdb.NewSelect(&models).
+		Where("state = ?", "pending").
+		OrderExpr("id ASC")
+	if !after.IsNil() {
+		q = q.Where("id > ?", after.String())
+	}
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Scan(ctx); err != nil {
+		return nil, fmt.Errorf("cortex/sqlite: list pending checkpoints across scopes: %w", err)
+	}
+	result := make([]*checkpoint.Checkpoint, len(models))
+	for i := range models {
+		cp, err := checkpointFromModel(&models[i])
+		if err != nil {
+			return nil, fmt.Errorf("cortex/sqlite: list pending checkpoints across scopes: %w", err)
+		}
+		result[i] = cp
+	}
+	return result, nil
+}
+
+var _ checkpoint.SweepStore = (*Store)(nil)

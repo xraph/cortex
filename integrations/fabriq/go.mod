@@ -8,8 +8,8 @@ require (
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/fabriq/core v1.10.0
 	github.com/xraph/go-utils v1.5.0
-	github.com/xraph/grove v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
+	github.com/xraph/grove v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
 	github.com/xraph/vessel v1.0.4
 )
 
@@ -31,8 +31,8 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect

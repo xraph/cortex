@@ -85,6 +85,7 @@ Every name below is how a Forge app scrapes it. The engine declares `cortex_runs
 | `forge_cortex_runs_suspended_total` | counter | `reason`, `result` |
 | `forge_cortex_suspensions_expired_total` | counter | `reason`, `result` |
 | `forge_cortex_orchestrations_finished_total` | counter | `strategy`, `result` |
+| `forge_cortex_runs_reclaimed_total` | counter | `result` |
 | `forge_cortex_a2a_deliveries_attempted_total` | counter | `class`, `route`, `result` |
 
 Every label is a closed set. Anything the engine doesn't recognise lands in `other` or `unknown`, so a stored row from a newer version can't mint a new series:
@@ -106,6 +107,7 @@ Every label is a closed set. Anything the engine doesn't recognise lands in `oth
 | `class` | `directive`, `informative`, `control`, `unknown` |
 | `route` | `local`, `remote` |
 | `result` (deliveries) | `delivered`, `failed`, `error` |
+| `result` (reclaims) | `reclaimed`, `continued`, `uncertain`, `limit`, `unrecoverable` |
 | `result` (everything else) | `ok`, `error` |
 
 A few of these need a sentence each.
@@ -119,6 +121,8 @@ A few of these need a sentence each.
 `forge_cortex_tool_call_duration_seconds` only observes calls that ran, so a `pending` call is counted but never timed. A call that waits on approval and then runs is counted twice: once as `pending`, once with how it ended. Its buckets run from 1ms to 30s.
 
 An orchestration that never starts (an unknown name, an invalid strategy) isn't counted, though its span is marked failed.
+
+`forge_cortex_runs_reclaimed_total` follows a run whose worker went away. `reclaimed` counts each run the sweeper (or `ContinueRun`, on a lapsed lease) took from its worker. The other four count how continuing one went: `continued` when it went back to the loop or paused again, `uncertain` when a call's outcome was unknown, `limit` when it hit `WithReclaimLimit`, and `unrecoverable` when it had nothing to continue from. If `limit` keeps climbing, look for a run whose input takes its worker down every time.
 
 ```text
 # Runs ending in something other than a final answer, by reason

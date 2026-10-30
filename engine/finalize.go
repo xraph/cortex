@@ -18,6 +18,11 @@ func (e *Engine) finalizeRun(ctx context.Context, r *run.Run, outcome run.Outcom
 	if isTerminalRunState(r.State) {
 		return requiredCompletionError(r)
 	}
+	// A leased run writes its outcome only while the lease is still its
+	// own; an interrupted one is handed off instead.
+	if leave, err := e.settleLease(ctx, r); leave {
+		return err
+	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	saved, err := e.store.GetRun(writeCtx, r.ID)
@@ -132,9 +137,13 @@ func outcomeEvent(r *run.Run, duration time.Duration) StreamEvent {
 // emitTerminalOutcome is called once per run, after its terminal state is
 // written, from every path that ends one. That makes it the place to count
 // finished runs: the RunTerminated hook has the same once-only contract.
+// It is also where a finished run's progress snapshot goes, since every
+// path that ends a run passes through here once its write has landed.
 func (e *Engine) emitTerminalOutcome(ctx context.Context, r *run.Run) {
+	e.dropProgress(ctx, r)
 	e.instr.runFinished(r)
 	e.extensions.EmitRunTerminated(ctx, r.AgentID, r.ID, r.TerminalSummary())
+	e.answerDirective(ctx, r)
 }
 
 // runErrorEvent shares safe verification failure metadata with HTTP and dashboard

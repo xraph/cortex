@@ -240,7 +240,9 @@ func taskState(s run.State) TaskState {
 	switch s {
 	case run.StateCreated:
 		return TaskStateSubmitted
-	case run.StateRunning:
+	case run.StateRunning, run.StateReady, run.StateReclaimable:
+		// Ready and reclaimable runs are between workers, with nothing
+		// more to ask of anyone: the decision or the answers are in.
 		return TaskStateWorking
 	case run.StateCompleted:
 		return TaskStateCompleted

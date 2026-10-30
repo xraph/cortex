@@ -388,6 +388,7 @@ func TestPreparedTaskJournalToolApprovalKeepsOriginSlot(t *testing.T) {
 				require.NoError(t, engine.WithLLM(client)(runtime))
 				require.NoError(t, engine.WithToolRevision("probe", "1")(runtime))
 				require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{approval: approval})(runtime))
+				require.NoError(t, engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]())(runtime))
 				require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(ctx context.Context, _ cortex.Invocation) (string, error) {
 					calls++
 					var ok bool
@@ -430,4 +431,81 @@ func TestPreparedTaskJournalToolApprovalKeepsOriginSlot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A task-run child is created through coordination, whose request is
+// frozen as JSON, and run.Run.Principal never reaches JSON. So the child
+// carries no principal bytes, and after a pause it resumes with a nil
+// principal: never the decider's, and not the worker's either. This pins
+// that documented exception until coordination carries the bytes.
+func TestPreparedTaskChildResumesWithoutStoredPrincipal(t *testing.T) {
+	client := &requiredToolClient{}
+	var seen []any
+	f, e, _, p, req, admitter := preparedTaskRuntimeFixture(t, func(runtime *engine.Engine, overrides *engine.RunOverrides) {
+		overrides.Tools = []string{"probe"}
+		require.NoError(t, engine.WithLLM(client)(runtime))
+		require.NoError(t, engine.WithToolRevision("probe", "1")(runtime))
+		require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{approval: true})(runtime))
+		require.NoError(t, engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]())(runtime))
+		require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(_ context.Context, inv cortex.Invocation) (string, error) {
+			seen = append(seen, inv.Principal)
+			return "private result", nil
+		})(runtime))
+	})
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+	r, err := e.RunPreparedTask(cortex.WithPrincipal(f.ctx, "worker"), p, req)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, r.State)
+	stored, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Empty(t, stored.Principal)
+
+	pending, err := e.ListPendingCheckpoints(f.ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, e.ResolveCheckpoint(cortex.WithPrincipal(f.ctx, "operator"), pending[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}))
+	require.Len(t, seen, 1)
+	require.Nil(t, seen[0])
+}
+
+// A task-run child under a task claim is decided and continued from a host
+// job too. It holds no lease, so it never becomes reclaimable: its
+// recovery belongs to coordination.
+func TestPreparedTaskChildContinuesFromHostJob(t *testing.T) {
+	client := &requiredToolClient{}
+	calls := 0
+	f, e, _, p, req, admitter := preparedTaskRuntimeFixture(t, func(runtime *engine.Engine, overrides *engine.RunOverrides) {
+		overrides.Tools = []string{"probe"}
+		require.NoError(t, engine.WithLLM(client)(runtime))
+		require.NoError(t, engine.WithToolRevision("probe", "1")(runtime))
+		require.NoError(t, engine.WithToolAuthorizer(&requiredToolAuthority{approval: true})(runtime))
+		require.NoError(t, engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]())(runtime))
+		require.NoError(t, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+			calls++
+			return "private result", nil
+		})(runtime))
+	})
+	require.NoError(t, engine.WithTaskRunAdmitter(admitter)(e))
+	require.NoError(t, engine.WithTaskCallGuard(runtimeTaskGuard(allowRuntimeTaskCall))(e))
+	r, err := e.RunPreparedTask(f.ctx, p, req)
+	require.NoError(t, err)
+	require.Equal(t, run.StatePaused, r.State)
+	require.NotEmpty(t, r.Provenance.TaskClaimID)
+	pending, err := e.ListPendingCheckpoints(f.ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, e.DecideCheckpoint(f.ctx, pending[0].ID, checkpoint.Decision{Approved: true, DecidedBy: "operator"}))
+	ready, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateReady, ready.State)
+	require.Zero(t, calls)
+	done, err := e.ContinueRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Equal(t, verification.StatusPassed, done.VerificationStatus)
+	require.Equal(t, 1, calls)
+	saved, err := f.storage.GetRun(f.ctx, r.ID)
+	require.NoError(t, err)
+	require.Nil(t, saved.Lease)
+	require.NotEmpty(t, saved.Provenance.TaskClaimID)
 }

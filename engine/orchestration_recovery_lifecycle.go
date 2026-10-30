@@ -199,7 +199,7 @@ func (r *preparedTeamRecovery) waitingReady(ctx context.Context, parent *orchest
 			return false, cortex.ErrInvalidPrepared
 		}
 		switch child.State {
-		case run.StatePaused, run.StateRunning:
+		case run.StatePaused, run.StateRunning, run.StateReady, run.StateReclaimable:
 			waiting = true
 		case run.StateCompleted:
 			if verificationErr := requiredChildResultError(child); errors.Is(verificationErr, cortex.ErrOrchestrationWaiting) {

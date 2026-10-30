@@ -95,6 +95,12 @@ func TestConformance(t *testing.T) {
 	t.Run("TerminalEventRollback", func(t *testing.T) { storetest.TerminalEventRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("ResultSnapshotBoundaries", func(t *testing.T) { storetest.ResultSnapshotBoundaries(t, s, assuranceDriver{store: s}) })
 	t.Run("VerifiedResultRollback", func(t *testing.T) { storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s}) })
+	t.Run("RunCandidateLease", func(t *testing.T) {
+		if err := clearConformanceCollections(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		storetest.RunCandidateLease(t, s, assuranceDriver{store: s})
+	})
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := clearConformanceCollections(ctx, s); err != nil {
 			t.Fatal(err)
@@ -122,7 +128,7 @@ func clearConformanceCollections(ctx context.Context, s *Store) error {
 	collections := []string{
 		colAssurance,
 		colAgents, colRuns, colSteps, colToolCalls, colMemories, colCheckpoints,
-		colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colOverlays,
+		colSkills, colTraits, colBehaviors, colPersonas, colSessions, colSuspensions, colRunProgress, colOverlays,
 		colOrchestrationConfigs, colOrchestrationRuns,
 		colA2AMessages, colA2AConversations, colA2ADeliveries, colA2APendingAsks,
 	}

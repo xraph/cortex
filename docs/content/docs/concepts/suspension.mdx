@@ -12,8 +12,9 @@ step, with the same messages, under the same scope.
 Two things make a run suspend, and they share one mechanism because they're the
 same problem. A tool the engine advertises but doesn't execute, registered with
 `engine.WithExternalTool`. And a tool call an authorizer escalates by returning
-`cortex.ErrRequiresApproval`, which pauses the run and opens a checkpoint for a
-person to decide. Either way you get one `suspension.Suspension` row, the run
+`cortex.ErrRequiresApproval` (or `cortex.ApprovalRequired`, which says why and
+for how long), which pauses the run and opens a checkpoint for a person to
+decide. Either way you get one `suspension.Suspension` row, the run
 lands in `run.StatePaused`, and `Engine.Resume` picks it up.
 
 ## Registering an external tool
@@ -80,7 +81,8 @@ for _, p := range susp.Pending {
 
 `Pending` carries the model's arguments verbatim, so you can execute the call
 without cross-referencing the message history by id to find out what it asked
-for.
+for. On an approval, `Note` holds the authorizer's reason when it returned
+`cortex.ApprovalRequired`.
 
 A whole step suspends at once, not one call per suspension. If the model asks
 for three tools in one turn and two of them are external, the registered one
@@ -164,7 +166,7 @@ return eng.Resume(ctx, runID, engine.ResumeInput{
 `Error` feeds the model the same payload shape an engine-side tool failure
 produces, so the model can't tell where the tool ran from how its failure is
 phrased. It also fires `ToolFailed` where a `Content` result fires
-`ToolCompleted`. That matters more than it looks: v1.10.0 established that
+`ToolCompleted`. That matters more than it looks: since v1.7.0
 every tool call ends in exactly one of completed, failed or denied, and a
 pending call fires none of them while it's pending. The resume is what supplies
 the missing one. Without it a call that suspends and then completes would
@@ -262,6 +264,12 @@ run started with a raised `MaxSteps` keeps the raised budget. An agent-config
 edit that lands during the pause doesn't shift a conversation already in
 flight.
 
+The caller's identity follows the same rule. A resume, a continuation and a
+reclaim all run under the principal stored when the run started, decoded by your
+`PrincipalCodec`, never under the person or service that resumed it. A host with
+a `ToolAuthorizer` has to install a codec; see
+[Keeping the principal across a pause](/docs/concepts/authorization#keeping-the-principal-across-a-pause).
+
 ## Approval
 
 An authorizer's third answer is `cortex.ErrRequiresApproval`. Return it, or
@@ -283,6 +291,37 @@ func (authorizer) Authorize(_ context.Context, s cortex.Subject, call llm.ToolCa
 
 Wrap it with `fmt.Errorf` when you want to say why. It's matched with
 `errors.Is`, so the wrapping text is yours to use.
+
+### Giving the decision a reason and a deadline
+
+Return `cortex.ApprovalRequired` when the person deciding needs to know why, or
+when this decision should wait longer (or shorter) than the engine's default:
+
+```go
+case "deploy":
+    if env == "prod" {
+        return cortex.ApprovalRequired{
+            Reason: "production deploy",
+            TTL:    7 * 24 * time.Hour,
+        }
+    }
+    return nil
+```
+
+It still matches `cortex.ErrRequiresApproval` with `errors.Is`, bare or
+wrapped, so code that only knows the sentinel keeps working. The engine digs it
+out with `errors.As` and uses both fields.
+
+`Reason` lands in two places: on the pending call as `Note`, and in the
+checkpoint's `Reason`, next to the tool it explains (`tool call requires
+approval: deploy (production deploy)`). The checkpoint is what the decider
+reads, so that's where it has to be.
+
+`TTL` is how long the decision may take. Zero means the engine's suspension TTL.
+A negative TTL is refused: the call is denied, `ToolDenied` fires with a reason
+saying the approval TTL is negative, and the model sees the denial on the same
+step. Pausing on a deadline that has already passed would open a checkpoint
+nobody could answer in time.
 
 ### How an approval differs from a denial
 
@@ -326,8 +365,10 @@ return eng.ResolveCheckpoint(ctx, pending[0].ID, checkpoint.Decision{
 })
 ```
 
-An approval resumes the run synchronously, the same way `RunAgent` runs
-synchronously, so the call returns when the run does. You don't build the
+An approval continues the run synchronously, the same way `RunAgent` runs
+synchronously, so the call returns when the run does. If you'd rather not hold
+a request open for the rest of the run, decide with `DecideCheckpoint` and
+continue from a job; see [Continuing from a job](#continuing-from-a-job). You don't build the
 `ResumeInput` yourself: a person granting permission hands back permission, not
 a result, so cortex turns each pending call into a result asking the engine to
 execute it now. The authorizer isn't consulted a second time. It already
@@ -348,16 +389,38 @@ Whoever finds that run later reads your words in `run.Error` rather than a bare
 "rejected". Over HTTP the same field is `reason` on the resolve body.
 
 Two operators deciding the same checkpoint at once is safe. Both pass the
-pending guard, but both then go through the same atomic claim, so exactly one
-of them moves the run and the other gets `cortex: run not suspended` back.
-There's no interleaving where a rejection stomps a run an approval already
-finished.
+pending guard, but only one of them can move the run out of `paused`, so the
+run continues once and the approved call is dispatched once. The checkpoint
+keeps the first decision recorded on it, so the other operator gets
+`cortex.ErrInvalidState` back and no hook fires for them, whether they approved
+or rejected. There's no interleaving where a rejection stomps a run an approval
+already finished, and a decision that arrives after a cancel closed the
+checkpoint is refused the same way.
+
+A decision always answers the pause its checkpoint was opened for. Deciding a
+checkpoint whose run isn't waiting on that pause any more is
+`cortex.ErrInvalidState`, so it can't approve whatever the run is waiting on
+now: that pause has its own checkpoint. When the run is waiting on a different
+pause, the old checkpoint is also closed as superseded, because its decision's
+record was lost. When the run isn't waiting on anything, the checkpoint is left
+alone: another decider is probably carrying out their decision and is about to
+record it.
 
 Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
-The decision is recorded only after it has taken effect, so a decision that
-couldn't be carried out leaves the checkpoint pending and you can decide again.
+An approval is admitted like any run before anything is written: while `Stop`
+drains, `ResolveCheckpoint` returns `cortex.ErrEngineStopping`, and under a
+full `WithRunConcurrency` cap it waits for a slot until your `ctx` ends. Either
+refusal records nothing, so the checkpoint stays pending for you to decide
+again. Once admitted, the decision is recorded before the run continues. If
+the continuation then fails, the decision stays recorded and the run is failed
+(when it failed after claiming the run) or still `ready` (when a check failed
+for now before it), and the error says `ContinueRun` finishes it. Deciding again is refused, so an
+approval can never run its action twice. On a store without
+`run.ContinuationStore` the older order applies: the decision is recorded only
+after it has taken effect, and one that couldn't be carried out leaves the
+checkpoint pending for you to decide again.
 
-`ResolveCheckpoint` is the only way to answer an approval. `Resume` against a
+`ResolveCheckpoint` and `DecideCheckpoint` are the only ways to answer an approval. `Resume` against a
 run waiting on one is refused, whatever you put in the results: an escalated
 call answered with `Execute` would dispatch a tool nobody granted, and one
 answered with `Content` would feed the model output no tool produced and finish
@@ -428,7 +491,40 @@ The deadline is stamped when the run pauses, not worked out at sweep time.
 Changing the TTL never moves the deadline of a run somebody has already been
 asked to answer by Tuesday.
 
-### Turning it off
+### Each pause gets its own deadline
+
+`WithSuspensionTTL` is a default. Each pending call can bring its own deadline,
+and the suspension expires at the earliest one among its calls:
+
+| Pending call | Deadline |
+|---|---|
+| Approval | `ApprovalRequired.TTL` when positive, else the suspension TTL |
+| External tool | its `engine.ExternalTTL` when set, else the suspension TTL |
+| Agent reply | the ask's reply-by plus `engine.WithAgentReplyGrace` (5 minutes by default) |
+
+So a production deploy can wait a week while a routine check on the same
+engine fails after an hour. If one step pauses on two approvals, one with a
+one-hour TTL and one with three hours, the run expires after one hour: it can
+only resume once every call is answered, and the first deadline is when that
+stops being possible.
+
+Give an external tool its own deadline when you register it:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExternalTool(askHuman, engine.ExternalTTL(72*time.Hour)),
+)
+```
+
+A run waiting on another agent follows the ask it sent. The message bus has
+its own sweep, and at the ask's reply-by it resumes the asking run with a
+timeout the model can read and react to. The grace keeps the engine's deadline
+behind that one, so the engine only fails a run the bus never got to (a bus
+that was down, say, or a resume that failed). Leave it at the default unless
+you've changed the bus's `SweepInterval` by a lot.
+
+### No default deadline
 
 ```go
 eng, err := engine.New(
@@ -437,14 +533,20 @@ eng, err := engine.New(
 )
 ```
 
-Zero disables expiry outright. Suspensions are written with no deadline and no
-sweeper goroutine starts at all. That's the right setting if your pauses are
-answered by a person on their own schedule and you'd rather have a run sit
-paused for a week than have it failed out from under them.
+Zero means no default deadline. A pending call with no TTL of its own is
+written with no deadline and never expires. That's the right setting if your
+pauses are answered by a person on their own schedule and you'd rather have a
+run sit paused for a week than have it failed out from under them.
+
+The sweeper still runs. An approval with a TTL, an external tool with an
+`ExternalTTL` and an agent reply all carry deadlines of their own, and those
+still have to be honoured when they pass. Earlier releases also stopped the
+sweeper goroutine at zero, so if you relied on that, check that none of your pauses
+carry a deadline you didn't expect.
 
 A negative TTL is refused by `engine.New` rather than clamped, because it reads
 as a deadline that has already passed and would sweep everything on the first
-tick.
+tick. The same goes for a negative `ExternalTTL` or `WithAgentReplyGrace`.
 
 A sweep and a resume can't collide. A resume claims only a suspension short of
 its deadline, a sweep claims only one past it, and both answer against the same
@@ -461,9 +563,138 @@ That resolve is best effort. If the write fails the row stays and the failure
 is logged, because the run really did fail and that's the part worth telling
 you about.
 
+## Continuing from a job
+
+`ResolveCheckpoint` and `Resume` hold your caller until the run finishes, which
+might be many model calls away. When the answer arrives in an HTTP handler you
+usually want to write it down, return, and let a background job run the rest.
+Three calls split it that way:
+
+```go
+// The approval handler. Records the decision and returns; no model call.
+err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{
+    Approved:  true,
+    DecidedBy: "ops@example.com",
+})
+
+// The external-tool handler. Same idea for a pause your host answers.
+err := eng.ProvideResults(ctx, runID, engine.ResumeInput{
+    ToolResults: []engine.ToolResult{{ToolCallID: callID, Content: answer}},
+})
+
+// The job, on any replica, under the run's scope.
+r, err := eng.ContinueRun(ctx, runID)
+```
+
+`DecideCheckpoint` and `ProvideResults` run every check `Resume` would run
+before anything moves: one result per pending call, who may answer this kind of
+pause, the frozen context and publication policies, a prepared team's binding,
+and required verification. A refusal leaves the run paused. Past that, the run
+moves to `ready` with the decision or the results stored on it, and
+`plugin.RunReady` fires:
+
+```go
+func (q jobQueue) OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error {
+    return q.Enqueue(ctx, cortex.ScopeFromContext(ctx), runID)
+}
+```
+
+The hook's `ctx` carries the run's scope. Keep it with the job, because
+`ContinueRun` claims the run at exactly that scope. `n.Source` says what made the
+run ready (`approval`, `rejection` or `external_results`) and `n.CheckpointID`
+names the decided checkpoint.
+
+A decision on a suspension past its deadline is `cortex.ErrSuspensionExpired`.
+The run stays paused, the checkpoint stays pending, and the sweeper fails them
+both on its next pass. A ready run has no deadline: the decision is in, so the
+sweeper leaves it alone.
+
+`ContinueRun` is the same work a synchronous resume does, from the claim on. It
+restores the principal the run started under, runs the checks again as that
+principal, claims the run, executes the approved calls (or hands the model your results) and carries
+on to the end. A principal the codec says is revoked fails the run, and closes
+its checkpoint if one is still pending. One that can't be decoded right now
+leaves the run `ready` for the next attempt. Two jobs continuing the same run is
+safe: one runs it, the other gets `cortex.ErrRunNotContinuable`.
+`ContinueRunStream` is the streaming version and opens with `run_started`
+carrying `"resumed": true`, like `ResumeStream`.
+
+If the write recording a decision on its checkpoint fails after the run was
+made ready, deciding again with the same decision finishes the job. If a job
+continues the run first, `ContinueRun` records the decision on the checkpoint
+itself, with the decider the run kept, so the queue stops asking for it. A
+`DecideCheckpoint` that then finds its own decision already recorded that way
+returns nil.
+
+A store has to implement `run.ContinuationStore` for any of this. The built-in
+stores do. Without it the three calls return `cortex.ErrContinuationUnavailable`,
+and `ResolveCheckpoint` and `Resume` work as they always have.
+
+### Sending a rejection back to the model
+
+By default a rejection fails the run. With `engine.WithRejectionsReturnToModel()`
+it goes back to the model instead, and the run carries on:
+
+```go
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithRejectionsReturnToModel(),
+)
+```
+
+Each pending call gets an error result reading
+`rejected by <DecidedBy>: <Reason>`, with "a reviewer" and "no reason given"
+standing in for whatever you left empty. Nothing is dispatched. Each call fires
+`ToolDenied`, the same event an authorizer's refusal fires, and the model reads
+the rejection as its tool message and decides what to do next. The run goes
+through `ready` exactly as an approval does, and `ResolveCheckpoint` with a
+rejection continues it before returning.
+
+## Hearing about every pause
+
+`plugin.CheckpointCreated` fires only for approvals. If you notify people when
+a run is waiting on them, you need the other two reasons as well, and that's
+what `plugin.RunSuspended` is for:
+
+```go
+type pauseNotifier struct{ chat *Chat }
+
+func (pauseNotifier) Name() string { return "pause-notifier" }
+
+func (n pauseNotifier) OnRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, notice suspension.Notice) error {
+    switch notice.Reason {
+    case suspension.ReasonApproval:
+        return n.chat.AskForApproval(ctx, notice.CheckpointID, notice.Pending, notice.ExpiresAt)
+    case suspension.ReasonExternalTool:
+        return n.chat.TellOwner(ctx, runID, notice.Pending)
+    default:
+        return nil // another agent answers this one
+    }
+}
+
+eng, err := engine.New(
+    engine.WithStore(store),
+    engine.WithExtension(pauseNotifier{chat: chat}),
+)
+```
+
+It fires once per pause, for every reason, after the run has flipped to
+`paused` and after `OnCheckpointCreated`. A read of the run from inside the
+hook shows it paused. The `ctx` carries the run's own scope, so you can read the
+run or its suspension back without setting one up. A pause that fails (the
+store refuses the flip to paused, say) fires neither hook.
+
+The `Notice` holds the suspension ID, the reason, the pending calls with their
+notes, the deadline (nil when there is none), the run's scope, and the
+checkpoint ID. That last one is zero unless the reason is an approval.
+
+For an agent reply the hook fires before the run's questions go out to its
+peers. A fast peer could otherwise answer and resume the run while your hook
+is still running, and the hook would read a run that's already moved on.
+
 ## Custom stores
 
-`store.Store` embeds `suspension.Store` as of v1.11.0, seven methods your
+`store.Store` embeds `suspension.Store` as of v1.7.0, seven methods your
 backend has to implement. Five are ordinary scoped CRUD. The two claims are
 not, and they're where the correctness lives.
 

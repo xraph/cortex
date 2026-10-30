@@ -32,13 +32,13 @@ type PlanningDetailRequest struct {
 
 func (a *API) registerPlanningRoutes(router forge.Router) error {
 	group := router.Group("/v1/planning", forge.WithGroupTags("planning"))
-	if err := group.GET("/plans", a.listPlanning, forge.WithOperationID("listPlanningPlans"), forge.WithRequestSchema(PlanningListRequest{}), forge.WithResponseSchema(http.StatusOK, "Current plan headers", []coordination.PlanningPlanView{}), forge.WithErrorResponses()); err != nil {
+	if err := group.GET("/plans", a.listPlanning, a.op("listPlanningPlans", false), forge.WithRequestSchema(PlanningListRequest{}), forge.WithResponseSchema(http.StatusOK, "Current plan headers", []coordination.PlanningPlanView{}), forge.WithErrorResponses()); err != nil {
 		return err
 	}
-	if err := group.GET("/plans/:id", a.detailPlanning, forge.WithOperationID("readPlanningPlan"), forge.WithRequestSchema(PlanningDetailRequest{}), forge.WithResponseSchema(http.StatusOK, "Current team graph", coordination.PlanningDetail{}), forge.WithErrorResponses()); err != nil {
+	if err := group.GET("/plans/:id", a.detailPlanning, a.op("readPlanningPlan", false), forge.WithRequestSchema(PlanningDetailRequest{}), forge.WithResponseSchema(http.StatusOK, "Current team graph", coordination.PlanningDetail{}), forge.WithErrorResponses()); err != nil {
 		return err
 	}
-	return group.POST("/commands", a.commandPlanning, forge.WithOperationID("commandPlanning"), forge.WithRequestSchema(coordination.PlanningCommand{}), forge.WithResponseSchema(http.StatusOK, "Retained operation acknowledgment", coordination.PlanningCommandResult{}), forge.WithErrorResponses())
+	return group.POST("/commands", a.commandPlanning, a.op("commandPlanning", true), forge.WithRequestSchema(coordination.PlanningCommand{}), forge.WithResponseSchema(http.StatusOK, "Retained operation acknowledgment", coordination.PlanningCommandResult{}), forge.WithErrorResponses())
 }
 
 func (a *API) listPlanning(ctx forge.Context, in *PlanningListRequest) (*[]coordination.PlanningPlanView, error) {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/checkpoint"
@@ -64,7 +65,7 @@ func approvalEngine(t *testing.T, opts ...Option) *Engine {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	}
 	e, err := New(append(base, opts...)...)
 	if err != nil {
@@ -104,19 +105,19 @@ func TestExecuteTool_ApprovalIsPendingNotDenied(t *testing.T) {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome, reason := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
+	result, outcome, wait := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
 	if outcome != outcomePending {
 		t.Fatalf("outcome = %d, want outcomePending (%d); an escalation reported as anything else is a call nobody is asked about", outcome, outcomePending)
 	}
-	if reason != suspension.ReasonApproval {
-		t.Errorf("pending reason = %q, want %q", reason, suspension.ReasonApproval)
+	if wait.reason != suspension.ReasonApproval {
+		t.Errorf("pending reason = %q, want %q", wait.reason, suspension.ReasonApproval)
 	}
 	if result != "" {
 		t.Errorf("executeTool returned %q; nothing ran, so nothing may go back to the model as a result", result)
@@ -144,19 +145,19 @@ func TestExecuteTool_AnOrdinaryDenialIsStillADenial(t *testing.T) {
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) {
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}),
+		WithToolAuthorizer(&recordingAuthorizer{authorizeErr: errors.New("not permitted")}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, outcome, reason := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
+	result, outcome, wait := e.executeTool(context.Background(), cortex.Subject{}, llm.ToolCall{ID: "call-1", Name: def.Name})
 	if outcome != outcomeDenied {
 		t.Fatalf("outcome = %d, want outcomeDenied (%d)", outcome, outcomeDenied)
 	}
-	if reason != "" {
-		t.Errorf("a denial carried the suspend reason %q; nothing is pending", reason)
+	if wait.reason != "" {
+		t.Errorf("a denial carried the suspend reason %q; nothing is pending", wait.reason)
 	}
 	if !strings.Contains(result, "not permitted") {
 		t.Errorf("result = %q, want the denial reason fed back to the model", result)
@@ -452,7 +453,7 @@ func TestRunAgent_AStepPendingForBothReasonsIsRefused(t *testing.T) {
 				WithLLM(&scriptedLLM{toolCalls: tc.calls}),
 				WithExternalTool(ext),
 				WithTool(gated, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
-				WithToolAuthorizer(escalatingAuthorizer{tool: gated.Name}),
+				WithToolAuthorizer(escalatingAuthorizer{tool: gated.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 			)
 			if err != nil {
 				t.Fatalf("New: %v", err)
@@ -521,7 +522,7 @@ func TestResolveCheckpoint_ApprovalRunsTheCallAndFinishesTheRun(t *testing.T) {
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 		WithExtension(tools),
 	)
@@ -613,7 +614,7 @@ func TestResolveCheckpoint_RejectionFailsTheRunWithTheDecisionsReason(t *testing
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(rec),
 	)
 	if err != nil {
@@ -721,7 +722,7 @@ func TestResolveCheckpoint_ApprovalSatisfiesFreshEscalation(t *testing.T) {
 		WithStore(spy),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
-		WithToolAuthorizer(auth),
+		WithToolAuthorizer(auth), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -771,7 +772,7 @@ func TestResolveCheckpoint_AnApprovedExternalCallIsClosedAsAFailure(t *testing.T
 		WithStore(spy),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
 		WithExternalTool(def),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 		WithExtension(tools),
 	)
 	if err != nil {
@@ -831,13 +832,22 @@ func (w *wedgeSpy) UpdateRun(ctx context.Context, r *run.Run) error {
 // pins the order inside the rejection. The suspension goes after the
 // state write, never before: it is the only record of what the run was
 // waiting on, and a delete that landed while the state write failed would
-// throw that away for nothing. The decision is not recorded either, so
-// deciding again is a decision rather than ErrInvalidState against a row
-// claiming a rejection that never happened.
+// throw that away for nothing. The decision is not recorded either, so the
+// checkpoint stays pending rather than claiming a rejection that never
+// happened.
+//
+// The claim did move the run to running, as it does in every store, so
+// the same decision cannot take it again: deciding again is refused. The
+// claim took the rejecting worker's lease with it, and nobody renews that
+// lease, so it lapses and the engine sweep reclaims the run. Continuing it
+// goes back to the state it paused with. The call still needs a decision,
+// so the person is asked again, and the checkpoint whose decision never
+// took effect is closed as superseded.
 func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *testing.T) {
 	base := scopespy.New()
 	spy := &wedgeSpy{Spy: base}
-	e := approvalEngine(t, WithStore(spy))
+	const ttl = 40 * time.Millisecond
+	e := approvalEngine(t, WithStore(spy), WithRunLease(ttl))
 	ctx := cortex.WithScope(context.Background(), approvalScope())
 
 	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
@@ -866,46 +876,85 @@ func TestResolveCheckpoint_ARejectionThatCannotFailTheRunRecordsNoDecision(t *te
 	if stored.State != "pending" {
 		t.Errorf("checkpoint state = %q, want %q; it dropped out of the pending queue over a decision that never took effect", stored.State, "pending")
 	}
-	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); errors.Is(again, cortex.ErrInvalidState) {
-		t.Errorf("deciding again = %v, want the retry the first error invites, not a refusal", again)
+	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Reason: "no"}); !errors.Is(again, cortex.ErrInvalidState) {
+		t.Errorf("deciding again = %v, want ErrInvalidState: the first claim already took the run", again)
+	}
+	held, getErr := base.GetRun(ctx, cps[0].RunID)
+	if getErr != nil {
+		t.Fatalf("reload the run: %v", getErr)
+	}
+	if held.State != run.StateRunning || held.Lease == nil || held.Lease.Owner != e.WorkerID() {
+		t.Errorf("run = %s with lease %v, want running under the rejecting worker's lease", held.State, held.Lease)
+	}
+
+	time.Sleep(3 * ttl)
+	// The spy keeps no expiry index, so this runs the lapsed-lease pass of
+	// the sweep on its own.
+	e.sweepLapsed(context.Background(), time.Now().UTC())
+	reclaimed, getErr := base.GetRun(ctx, cps[0].RunID)
+	if getErr != nil || reclaimed.State != run.StateReclaimable || reclaimed.Reclaims != 1 {
+		t.Fatalf("after the sweep the run = %+v, %v; want reclaimable, reclaimed once", reclaimed, getErr)
+	}
+	again, err := e.ContinueRun(ctx, cps[0].RunID)
+	if err != nil || again.State != run.StatePaused {
+		t.Fatalf("ContinueRun = %+v, %v; want the run paused for a decision again", again, err)
+	}
+	all := base.Checkpoints()
+	if len(all) != 2 {
+		t.Fatalf("%d checkpoints, want the first closed and a second one asking again", len(all))
+	}
+	if first, _ := base.GetCheckpoint(ctx, all[0].ID); first.State != "resolved" || first.Decision == nil || first.Decision.Approved || !strings.Contains(first.Decision.Reason, "superseded") {
+		t.Errorf("first checkpoint = %+v, want closed as superseded", first)
+	}
+	if all[1].State != "pending" {
+		t.Errorf("second checkpoint = %s, want pending", all[1].State)
 	}
 }
 
-// TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending
-// is the approving twin. The checkpoint store has no un-resolve, so a row
-// recorded decided against a run that never continued is a lie no
-// operator can correct and no queue shows them.
-func TestResolveCheckpoint_AnApprovalThatCannotResumeLeavesTheCheckpointPending(t *testing.T) {
+// TestResolveCheckpoint_AnApprovalThatCannotContinueStaysRecorded is the
+// approving twin. The decision is recorded before the run continues, so a
+// continuation that fails after its claim leaves the decision recorded
+// and the run failed. Deciding again is refused rather than a second try
+// at an action the first decision already owned.
+func TestResolveCheckpoint_AnApprovalThatCannotContinueStaysRecorded(t *testing.T) {
 	rec := &checkpointEventRecorder{}
 	spy := scopespy.New()
 	e := approvalEngine(t, WithStore(spy), WithExtension(rec))
 	ctx := cortex.WithScope(context.Background(), approvalScope())
 
-	if _, err := e.RunAgent(ctx, "assistant", "clean up", nil); err != nil {
+	r, err := e.RunAgent(ctx, "assistant", "clean up", nil)
+	if err != nil {
 		t.Fatalf("RunAgent: %v", err)
 	}
 	cps := spy.Checkpoints()
 	if len(cps) != 1 {
 		t.Fatalf("the run wrote %d checkpoints, want 1", len(cps))
 	}
-	// A continuation the resume will refuse, which is the cheapest way to
-	// make the acting half fail after the decision has been made.
+	// A continuation the resume will refuse after its claim, which is the
+	// cheapest way to make the acting half fail once the decision is made.
 	spy.Suspensions()[0].Cont.Config = suspension.RunConfig{}
 
-	err := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
+	err = e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true})
 	if !errors.Is(err, cortex.ErrInvalidContinuation) {
-		t.Fatalf("ResolveCheckpoint on a run that cannot resume = %v, want the resume's own error", err)
+		t.Fatalf("ResolveCheckpoint on a run that cannot continue = %v, want the continuation's own error", err)
 	}
 
 	stored, err := spy.GetCheckpoint(ctx, cps[0].ID)
 	if err != nil {
 		t.Fatalf("reload the checkpoint: %v", err)
 	}
-	if stored.State != "pending" {
-		t.Errorf("checkpoint state = %q, want %q; nothing acted on this decision", stored.State, "pending")
+	if stored.State != "resolved" || stored.Decision == nil || !stored.Decision.Approved {
+		t.Errorf("checkpoint = %+v, want the approval recorded before the run continued", stored)
 	}
-	if got := rec.resolvedEvents(); len(got) != 0 {
-		t.Errorf("OnCheckpointResolved fired %v, want nothing: no decision took effect", got)
+	if got := rec.resolvedEvents(); len(got) != 1 {
+		t.Errorf("OnCheckpointResolved fired %v, want once for the recorded decision", got)
+	}
+	failed, err := spy.GetRun(ctx, r.ID)
+	if err != nil || failed.State != run.StateFailed {
+		t.Fatalf("run after a continuation that failed past its claim = %+v, %v; want failed", failed, err)
+	}
+	if again := e.ResolveCheckpoint(ctx, cps[0].ID, checkpoint.Decision{Approved: true}); !errors.Is(again, cortex.ErrInvalidState) {
+		t.Errorf("deciding again = %v, want ErrInvalidState", again)
 	}
 }
 
@@ -964,7 +1013,7 @@ func TestResume_ExecuteOnAnApprovalSuspensionIsRefused(t *testing.T) {
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1097,7 +1146,7 @@ func TestResolveCheckpoint_ApproveAndRejectRacingOneCheckpointHaveOneWinner(t *t
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1213,7 +1262,7 @@ func TestResolveCheckpoint_ARejectionArrivingMidApprovalCannotStompTheRun(t *tes
 			<-release
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

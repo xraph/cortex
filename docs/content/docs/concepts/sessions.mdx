@@ -3,7 +3,7 @@ title: Sessions
 description: Sessions group an agent's conversation into threads, and how a run picks one.
 ---
 
-Before v1.9.0, an agent had exactly one conversation per scope: every run
+Before v1.7.0, an agent had exactly one conversation per scope: every run
 appended to the same history, with no way to start a second, independent thread. A
 `session.Session` is what splits that history into threads: a session groups the
 conversation messages that belong together, and an agent can hold many of them in
@@ -35,7 +35,7 @@ trust them without recomputing anything from the message rows.
 
 `BackfilledBy` also belongs to cortex, not the host, and lives in its own column
 rather than `Metadata` for exactly that reason: it's the migration version that
-created a session for a pre-v1.9.0 conversation that never had one (see
+created a session for a pre-v1.7.0 conversation that never had one (see
 "Upgrading: message_count on a legacy session" below), empty for every session a
 run creates organically. Keeping it out of `Metadata` means a host overwriting its
 own metadata can never collide with or erase it.

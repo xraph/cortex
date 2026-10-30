@@ -48,6 +48,11 @@ type reactState struct {
 	// resolveSession lazily creates a default session under a create
 	// race and could land on a different one after the pause.
 	sessionID id.SessionID
+
+	// stepRows are step rows a reclaimed run's previous worker already
+	// wrote, by index. The loop reuses one rather than writing a second
+	// row for the same step.
+	stepRows map[int]id.StepID
 }
 
 // continuation snapshots the state for a suspension row. cfg travels
@@ -144,6 +149,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	defer releaseLease(ctx, r.ID)
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
@@ -171,6 +177,12 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
 		ctx = runCtx
+		// A leased run stops here, before its next model call, when the
+		// engine drains or the run is interrupted.
+		if e.handOffDue(ctx, r.ID) {
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -205,8 +217,14 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
+			Metadata:    requestMetadata(r, ag),
 		}
 
+		if interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			stepSpan.finish(stepStopped, nil)
@@ -218,6 +236,23 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			return r, terminalErr
 		}
 		resp, err := e.completeTaskCall(ctx, r, req)
+		if err != nil && interruption(ctx, r.ID) != nil {
+			// The model call ended because the run was interrupted, not
+			// because the provider failed: nothing about it is the run's
+			// outcome.
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			return r, e.leaveRun(ctx, r, &fresh)
+		}
+		if errors.Is(err, llm.ErrContentBlocked) {
+			reported := 0
+			if resp != nil {
+				reported = resp.Usage.TotalTokens
+			}
+			stopErr := e.stopContentBlocked(ctx, r, st, cfg, reported)
+			stepSpan.finish(stepStopped, nil)
+			return r, stopErr
+		}
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			reported := 0
@@ -264,6 +299,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		responseCopy := *resp
 		responseCopy.Content = string(checked)
 		responseCopy.ToolCalls = append([]llm.ToolCall(nil), resp.ToolCalls...)
+		responseCopy.Native = resp.Native.Clone()
 		resp = &responseCopy
 
 		// Record the step.
@@ -280,7 +316,9 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			StartedAt:   &stepStart,
 			CompletedAt: &stepEnd,
 		}
-		if err := e.store.CreateStep(ctx, step); err != nil {
+		if existing, reused := st.stepRows[step.Index]; reused {
+			step.ID = existing
+		} else if err := e.store.CreateStep(ctx, step); err != nil {
 			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
@@ -301,12 +339,17 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 				stepSpan.finish(stepStopped, nil)
 				break
 			}
-			// Append assistant message with tool calls.
+			// Append assistant message with tool calls. Native goes with it
+			// as the provider returned it, even when publication redacted
+			// Content: it is only ever sent back to the model, which gets
+			// equivalent JSON (the client may re-encode it).
 			st.messages = append(st.messages, llm.Message{
 				Role:      "assistant",
 				Content:   resp.Content,
 				ToolCalls: resp.ToolCalls,
+				Native:    resp.Native,
 			})
+			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
 			// Execute each tool call. A call that turns out to be
 			// pending is collected rather than recorded: the whole step
@@ -320,10 +363,22 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			var pending pendingCalls
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range resp.ToolCalls {
+				// A leased run hands off before each dispatch too: the
+				// calls already done are in its progress, the rest are not
+				// started.
+				if e.handOffDue(ctx, r.ID) {
+					stepSpan.finish(stepStopped, nil)
+					return r, e.leaveRun(ctx, r, nil)
+				}
 				tcStart := time.Now().UTC()
-				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
-
-				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(e.announceCall(stepCtx, r.ID, tc), subject, tc, st)
+				if interruption(ctx, r.ID) != nil {
+					// A result that arrives after the interruption is
+					// discarded, so a call that is not retry-safe stays in
+					// Started and is treated as uncertain.
+					stepSpan.finish(stepStopped, nil)
+					return r, e.leaveRun(ctx, r, nil)
+				}
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -337,7 +392,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					// either, and no tool result message: the model must
 					// not see an empty result standing in for a call
 					// that is still outstanding.
-					pending.add(tc, pendingReason)
+					pending.add(tc, wait.reason, wait.ttl, wait.note)
 					continue
 				}
 
@@ -379,6 +434,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					Content:    result,
 					ToolCallID: tc.ID,
 				})
+				e.noteDone(ctx, r.ID, tc.ID, result, "", outcome)
 			}
 
 			if pending.any() {
@@ -400,11 +456,17 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 		finalOutput = resp.Content
 		stopReason = responseReason
 
-		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput, Native: resp.Native})
 		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
 	ctx = runCtx
+	if interruption(ctx, r.ID) != nil {
+		// Interrupted between the last boundary and the end: nothing of
+		// this pass is the run's outcome, and the conversation is not
+		// saved, because the worker that continues the run saves it.
+		return r, e.leaveRun(ctx, r, nil)
+	}
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -418,13 +480,13 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 }
 
 // streamReAct executes an agent using the ReAct reasoning loop with streaming.
-func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent) error {
+func (e *Engine) streamReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides, events chan<- StreamEvent, done func()) error {
 	p, err := e.prepareAgent(ctx, ag, overrides)
 	if err != nil {
 		close(events)
 		return err
 	}
-	return e.streamPrepared(ctx, p, input, preparedOptions(overrides), events)
+	return e.streamPrepared(ctx, p, input, preparedOptions(overrides), events, done)
 }
 
 // continueStreamReAct is continueReAct's streaming twin: same contract,
@@ -442,6 +504,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	}
 	ctx, cancelRun := runDeadline(ctx, cfg)
 	defer cancelRun()
+	defer releaseLease(ctx, r.ID)
 	ctx = withPublicationContext(ctx, ag, r, cfg.Publication)
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	scope := cortex.ScopeFromContext(ctx)
@@ -464,6 +527,12 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	// ReAct loop.
 	for st.stepIndex < cfg.MaxSteps {
 		ctx = runCtx
+		// Same boundary as the synchronous loop.
+		if e.handOffDue(ctx, r.ID) {
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
 		if ctx.Err() != nil {
 			stopReason = run.StopCancelled
 			break
@@ -487,6 +556,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		e.extensions.EmitStepStarted(ctx, r.ID, st.stepIndex)
 
 		stepID := id.NewStepID()
+		if existing, reused := st.stepRows[st.stepIndex]; reused {
+			stepID = existing
+		}
 		if !sendEvent(ctx, events, StreamEvent{Type: EventStep, Data: map[string]any{
 			"step_id": stepID.String(), "index": st.stepIndex, "type": "generation",
 		}}) {
@@ -507,8 +579,15 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			MaxTokens:   cfg.Budget.OutputLimit(cfg.MaxTokens, st.usage),
 			Temperature: cloneTemperature(cfg.Temperature),
 			Tools:       e.executionTools(ctx, subject, cfg, st),
+			Metadata:    requestMetadata(r, ag),
 		}
 
+		if interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
 		if ctx.Err() != nil {
 			e.cancelPublication(ctx, r, st.stepIndex, st.tokensUsed)
 			stepSpan.finish(stepStopped, nil)
@@ -521,6 +600,18 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			return
 		}
 		stream, err := e.streamTaskCall(ctx, r, req)
+		if err != nil && interruption(ctx, r.ID) != nil {
+			stepSpan.finish(stepStopped, nil)
+			fresh := progressCont(r, st, cfg)
+			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+			return
+		}
+		if errors.Is(err, llm.ErrContentBlocked) {
+			terminalErr := e.stopContentBlocked(ctx, r, st, cfg, 0)
+			stepSpan.finish(stepStopped, nil)
+			sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+			return
+		}
 		if err != nil {
 			err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 			st.failedAttempt(0, cfg, r)
@@ -557,12 +648,19 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		var contentBuf string
 		var finishReason string
 		var toolCalls []llm.ToolCall
+		var native *llm.NativeContent
 		totalBytes := 0
 
 		for {
 			select {
 			case <-ctx.Done():
 				_ = stream.Close()
+				if interruption(ctx, r.ID) != nil {
+					stepSpan.finish(stepStopped, nil)
+					fresh := progressCont(r, st, cfg)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+					return
+				}
 				st.failedAttempt(streamReportedTokens(stream), cfg, r)
 				terminalErr := e.finalizeRun(ctx, r, run.Outcome{StopReason: run.StopCancelled, StepCount: st.stepIndex, TokensUsed: st.tokensUsed})
 				failure := ctx.Err()
@@ -580,6 +678,22 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			if errors.Is(err, io.EOF) {
 				break
 			}
+			if err != nil && interruption(ctx, r.ID) != nil {
+				_ = stream.Close()
+				stepSpan.finish(stepStopped, nil)
+				fresh := progressCont(r, st, cfg)
+				sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+				return
+			}
+			if errors.Is(err, llm.ErrContentBlocked) {
+				// Nothing from a blocked stream runs: the tool-call deltas
+				// already read are dropped with it.
+				_ = stream.Close()
+				terminalErr := e.stopContentBlocked(ctx, r, st, cfg, streamReportedTokens(stream))
+				stepSpan.finish(stepStopped, nil)
+				sendEvent(ctx, events, StreamEvent{Type: EventSafetyBlock, Data: map[string]any{"message": terminalErr.Error()}})
+				return
+			}
 			if err != nil {
 				err = e.checkedProviderError(ctx, ag, r, cfg.Publication, err)
 				_ = stream.Close()
@@ -596,6 +710,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			}
 			if chunk.FinishReason != "" {
 				finishReason = chunk.FinishReason
+			}
+			if chunk.Native != nil {
+				native = chunk.Native.Clone()
 			}
 
 			chunkBytes := len(chunk.Content) + len(chunk.FinishReason) + 1
@@ -704,7 +821,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		if u := stream.Usage(); u != nil {
 			step.TokensUsed = u.TotalTokens
 		}
-		if err := e.store.CreateStep(ctx, step); err != nil {
+		if existing, reused := st.stepRows[step.Index]; reused {
+			step.ID = existing
+		} else if err := e.store.CreateStep(ctx, step); err != nil {
 			e.logError("create step", err, log.String("run_id", r.ID.String()))
 		}
 
@@ -729,7 +848,9 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				Role:      "assistant",
 				Content:   contentBuf,
 				ToolCalls: toolCalls,
+				Native:    native,
 			})
+			e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 
 			// Same collect-then-suspend shape as the synchronous
 			// loop: see its comments for why a pending call gets no
@@ -741,16 +862,28 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			var pending pendingCalls
 			stepCtx := pending.collecting(ctx, r.ID)
 			for _, tc := range toolCalls {
+				// Same hand-off boundary as the synchronous loop.
+				if e.handOffDue(ctx, r.ID) {
+					stepSpan.finish(stepStopped, nil)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+					return
+				}
 				tcStart := time.Now().UTC()
-				e.emitToolCalled(ctx, r.ID, tc.Name, tc.Arguments)
+				callCtx := e.announceCall(stepCtx, r.ID, tc, func() {
+					sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
+						"tool_name": publicToolName(ctx, tc.Name),
+						"arguments": publicGenerationText(r, tc.Arguments),
+						"tool_id":   publicGenerationText(r, tc.ID),
+					}})
+				})
 
-				sendEvent(ctx, events, StreamEvent{Type: EventToolCall, Data: map[string]any{
-					"tool_name": publicToolName(ctx, tc.Name),
-					"arguments": publicGenerationText(r, tc.Arguments),
-					"tool_id":   publicGenerationText(r, tc.ID),
-				}})
-
-				result, outcome, pendingReason := e.executePreparedTool(stepCtx, subject, tc, st)
+				result, outcome, wait := e.executePreparedTool(callCtx, subject, tc, st)
+				if interruption(ctx, r.ID) != nil {
+					// Discarded, as in the synchronous loop.
+					stepSpan.finish(stepStopped, nil)
+					sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+					return
+				}
 				if outcome == outcomeUncertain {
 					terminalErr := e.finalizeUncertainEffect(ctx, r, st)
 					stepSpan.finish(stepStopped, cortex.ErrEffectUncertain)
@@ -762,7 +895,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					return
 				}
 				if outcome == outcomePending {
-					pending.add(tc, pendingReason)
+					pending.add(tc, wait.reason, wait.ttl, wait.note)
 					continue
 				}
 
@@ -804,6 +937,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					Content:    result,
 					ToolCallID: tc.ID,
 				})
+				e.noteDone(ctx, r.ID, tc.ID, result, "", outcome)
 			}
 
 			if pending.any() {
@@ -837,11 +971,15 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 		finalOutput = contentBuf
 		stopReason = responseReason
 
-		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput})
+		st.messages = append(st.messages, llm.Message{Role: "assistant", Content: finalOutput, Native: native})
 		stepSpan.finish(finalOutcome(responseReason), nil)
 		break
 	}
 	ctx = runCtx
+	if interruption(ctx, r.ID) != nil {
+		sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, nil))
+		return
+	}
 
 	r.Usage = st.usage
 	e.saveConversation(ctx, ag.ID, st)
@@ -854,6 +992,21 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	}
 
 	sendEvent(ctx, events, outcomeEvent(r, completedAt.Sub(startedAt)))
+}
+
+// sendLeftEvent tells a stream's consumer how a pass that left its run
+// ended: the run's own outcome when it turned out to have ended already
+// (err is nil), otherwise the hand-off or the lost lease.
+func sendLeftEvent(ctx context.Context, events chan<- StreamEvent, r *run.Run, err error) {
+	if err == nil {
+		var duration time.Duration
+		if r.StartedAt != nil && r.CompletedAt != nil {
+			duration = r.CompletedAt.Sub(*r.StartedAt)
+		}
+		sendEvent(ctx, events, outcomeEvent(r, duration))
+		return
+	}
+	sendEvent(ctx, events, runErrorEvent(r, err))
 }
 
 // ──────────────────────────────────────────────────
@@ -890,6 +1043,21 @@ func (e *Engine) saveConversation(ctx context.Context, agentID id.AgentID, st *r
 	}
 }
 
+// requestMetadata labels a model request with the run and agent behind it,
+// for the client's usage records.
+func requestMetadata(r *run.Run, ag *agent.Config) map[string]string {
+	return map[string]string{llm.MetadataRun: r.ID.String(), llm.MetadataAgent: ag.ID.String()}
+}
+
+// stopContentBlocked ends a run whose model call a provider-side guard
+// blocked (llm.ErrContentBlocked): the attempt counts as a step, the run
+// stops with safety_block, and no tool call from the response runs. The
+// guard's reason stays out of the run's error.
+func (e *Engine) stopContentBlocked(ctx context.Context, r *run.Run, st *reactState, cfg resolvedConfig, reported int) error {
+	st.failedAttempt(reported, cfg, r)
+	return e.stopPublication(ctx, r, st, safety.ErrBlocked)
+}
+
 // failRun marks a run as failed and emits the RunFailed hook. The store
 // write is best effort here: the loop's callers have nothing to do with
 // the failure but log it. A caller with cleanup waiting on the state
@@ -911,6 +1079,11 @@ func (e *Engine) failRun(ctx context.Context, r *run.Run, agentID id.AgentID, ru
 func (e *Engine) persistFailure(ctx context.Context, r *run.Run, agentID id.AgentID, runErr error) error {
 	if r.Provenance.VerificationRequired {
 		runErr = closedRequiredError(runErr)
+	}
+	// Same lease check as finalizeRun: a run this worker no longer owns,
+	// or one it was told to hand off, is not failed here.
+	if leave, err := e.settleLease(ctx, r); leave {
+		return err
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -1001,7 +1174,7 @@ func (e *Engine) toolDefinitions(names []string, restricted bool) []llm.Tool {
 	for _, rt := range e.tools {
 		registered = append(registered, rt.def)
 	}
-	registered = append(registered, e.externalTools...)
+	registered = append(registered, e.externalToolDefs()...)
 	if restricted || len(names) > 0 {
 		registered = filterByName(registered, names)
 	}
@@ -1019,8 +1192,8 @@ func (e *Engine) registeredToolNames() []string {
 	for _, rt := range e.tools {
 		out = append(out, rt.def.Name)
 	}
-	for _, t := range e.externalTools {
-		out = append(out, t.Name)
+	for _, ext := range e.externalTools {
+		out = append(out, ext.def.Name)
 	}
 
 	return out
@@ -1078,7 +1251,7 @@ const (
 // Only the plugin event differs. outcomePending is the exception: nothing ran,
 // so there is no result, and the empty string it returns must not be fed back
 // to the model as one.
-func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, suspension.SuspendReason) {
+func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolCall) (string, toolOutcome, pendingWait) {
 	if e.authorizer != nil {
 		if err := e.authorizer.Authorize(ctx, s, tc); err != nil {
 			// ErrRequiresApproval is the authorizer's third answer and it
@@ -1089,23 +1262,50 @@ func (e *Engine) executeTool(ctx context.Context, s cortex.Subject, tc llm.ToolC
 			// approval as the reason. Nothing goes back to the model
 			// either: a denial's error text would tell it the call was
 			// refused when it is only waiting.
+			announced(ctx)
 			if errors.Is(err, cortex.ErrRequiresApproval) {
-				return "", outcomePending, suspension.ReasonApproval
+				return e.approvalWait(ctx, s, tc, err)
 			}
 			e.emitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, err).Error())
-			return jsonResult("error", err.Error()), outcomeDenied, ""
+			return jsonResult("error", err.Error()), outcomeDenied, pendingWait{}
 		}
 	}
 
 	result, outcome, failErr := e.dispatchTool(ctx, s, tc)
-	if outcome == outcomeFailed || outcome == outcomeUncertain {
+	// An interrupted run reports nothing about the call: it stays started,
+	// and the worker that continues the run settles it.
+	if (outcome == outcomeFailed || outcome == outcomeUncertain) && interruption(ctx, s.RunID) == nil {
+		announced(ctx)
 		noteToolFailure(ctx, failErr)
 		e.emitToolFailed(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, failErr))
 	}
 	if outcome == outcomePending {
-		return result, outcome, pendingReason(tc.Name)
+		wait := pendingWait{reason: pendingReason(tc.Name)}
+		if wait.reason == suspension.ReasonExternalTool {
+			wait.ttl = e.externalTTL(tc.Name)
+		}
+		return result, outcome, wait
 	}
-	return result, outcome, ""
+	return result, outcome, pendingWait{}
+}
+
+// approvalWait classifies a call the authorizer escalated. The sentinel
+// alone gives no TTL and no note; ApprovalRequired, found anywhere in the
+// chain, gives both.
+//
+// A negative TTL is a denial, not a pause. It reads as a deadline that
+// has already passed, and pausing on it would open a checkpoint nobody
+// can answer before the sweeper fails the run. Refusing the call instead
+// tells the model, on this step, and fires ToolDenied for the operator.
+func (e *Engine) approvalWait(ctx context.Context, s cortex.Subject, tc llm.ToolCall, err error) (string, toolOutcome, pendingWait) {
+	var approval cortex.ApprovalRequired
+	errors.As(err, &approval)
+	if approval.TTL < 0 {
+		denial := fmt.Errorf("approval TTL is negative (%s), so the call is denied rather than paused past its own deadline", approval.TTL)
+		e.emitToolDenied(ctx, s.RunID, tc.Name, e.checkedToolError(ctx, s, denial).Error())
+		return jsonResult("error", denial.Error()), outcomeDenied, pendingWait{}
+	}
+	return "", outcomePending, pendingWait{reason: suspension.ReasonApproval, ttl: approval.TTL, note: approval.Reason}
 }
 
 // pendingReason says what a pending call is waiting on. External tools
@@ -1133,6 +1333,16 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 	}
 	inv := cortex.Invocation{Subject: s, Call: tc}
 
+	// Progress point 3: a call this engine runs, and that is not
+	// retry-safe, is recorded as started before its handler gets it. A
+	// lost lease stops it here, undispatched.
+	if isBuiltinTool(tc.Name) || e.hasRegisteredTool(tc.Name) {
+		if err := e.noteStarted(ctx, s.RunID, tc); err != nil {
+			return jsonResult("error", err.Error()), outcomeFailed, err
+		}
+		announced(ctx)
+	}
+
 	if result, outcome, handled := e.executeBuiltinTool(ctx, inv); handled {
 		if outcome == outcomeFailed {
 			return result, outcome, fmt.Errorf("builtin tool %q failed", tc.Name)
@@ -1146,6 +1356,10 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 				return "", outcomeUncertain, cortex.ErrEffectUncertain
 			}
 			if err != nil {
+				// A run the handler started was handed off or lost its
+				// lease: that interrupts this run, it is not the call's
+				// result.
+				interruptedByTool(ctx, s.RunID, err)
 				return jsonResult("error", err.Error()), outcomeFailed, err
 			}
 			return out, outcomeCompleted, nil
@@ -1157,8 +1371,8 @@ func (e *Engine) dispatchAuthorizedTool(ctx context.Context, s cortex.Subject, t
 	// same as the first-match-wins rule WithTool already documents.
 	// Nothing runs here: the call has not completed, failed or been
 	// denied, it is waiting on the caller.
-	for _, def := range e.externalTools {
-		if def.Name == tc.Name {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == tc.Name {
 			return "", outcomePending, nil
 		}
 	}
@@ -1184,6 +1398,8 @@ func memoryToLLM(msgs []memory.Message) []llm.Message {
 }
 
 // llmToMemory converts llm messages to memory messages for persistence.
+// It never copies Native: a provider's thinking blocks belong to the run
+// that produced them, and a later run's history goes without them.
 func llmToMemory(msgs []llm.Message) []memory.Message {
 	out := make([]memory.Message, 0, len(msgs))
 	for _, m := range msgs {

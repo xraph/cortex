@@ -140,8 +140,8 @@ func (e *Engine) observedExecutor(name string) (cognitive.ToolKind, bool) {
 			return cognitive.ToolLocal, tool.handler != nil
 		}
 	}
-	for _, def := range e.externalTools {
-		if def.Name == name {
+	for _, ext := range e.externalTools {
+		if ext.def.Name == name {
 			return cognitive.ToolExternal, true
 		}
 	}

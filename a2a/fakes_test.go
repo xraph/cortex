@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -33,6 +34,11 @@ func (f *fakeRunner) RunAgent(_ context.Context, name, input string, _ *cortex.R
 	f.mu.Unlock()
 
 	if err != nil {
+		if errors.Is(err, cortex.ErrRunInterrupted) {
+			// A run that started and was handed off comes back with its
+			// result, as the engine's runner returns it.
+			return &cortex.AgentResult{AgentName: name, RunID: id.NewAgentRunID(), Err: err}, err
+		}
 		return nil, err
 	}
 	switch {

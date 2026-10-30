@@ -17,7 +17,13 @@ import (
 // NewUpdate builds SET from every model field by default, so without this
 // explicit whitelist an UpdateRun issued from a broader (but still
 // scope-matching) context would silently overwrite a row's narrower
-// stored scope.
+// stored scope. principal is absent for the same reason: the codec bytes
+// are written when the run is created, and a resume decodes them to find
+// the run's caller, so no later writer may replace them. reply_route is
+// absent too: the engine writes a directive's reply route when it creates
+// the run, and nothing rewrites it. The lease,
+// readiness, reclaim count and notification time are absent too: they
+// belong to run.ContinuationStore.
 var mutableRunColumns = []string{
 	"revision",
 	"agent_id",
@@ -37,6 +43,11 @@ var mutableRunColumns = []string{
 	"updated_at",
 }
 
+// leaseRunColumns hold a running run's lease. UpdateRun writes them only
+// to clear them, when the run leaves running; HoldLease and the
+// continuation transitions are the only other writers.
+var leaseRunColumns = []string{"lease_owner", "lease_expires_at"}
+
 func (s *Store) CreateRun(ctx context.Context, r *run.Run) error {
 	return (assuranceDriver{store: s}).insertRun(ctx, r, time.Now().UTC())
 }
@@ -53,6 +64,9 @@ func (d assuranceDriver) insertRun(ctx context.Context, r *run.Run, at time.Time
 	m := runToModel(r)
 	m.Revision = 1
 	_, err := d.queries().NewInsert(m).Exec(ctx)
+	if isUniqueViolation(err) {
+		return fmt.Errorf("cortex/sqlite: create run %s: %w: %w", r.ID, cortex.ErrAlreadyExists, err)
+	}
 	if err != nil {
 		return fmt.Errorf("cortex/sqlite: create run: %w", err)
 	}
@@ -101,7 +115,16 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 	m := runToModel(r)
 	m.Revision = next
 	m.UpdatedAt = at
-	q := d.queries().NewUpdate(m).Column(mutableRunColumns...).WherePK().Where("revision = ?", r.Revision)
+	columns := mutableRunColumns
+	if r.State != run.StateRunning {
+		// Only a running run is held. Leaving running releases the lease,
+		// and nothing else UpdateRun does may touch it: a heartbeat moves
+		// the expiry without advancing the revision, so a step write from
+		// the same worker would otherwise wind it back.
+		m.LeaseOwner, m.LeaseExpiresAt = "", nil
+		columns = append(append([]string(nil), mutableRunColumns...), leaseRunColumns...)
+	}
+	q := d.queries().NewUpdate(m).Column(columns...).WherePK().Where("revision = ?", r.Revision)
 	for _, p := range scopePredicates(scope, true) {
 		q = q.Where(p.Column+" = ?", p.Value)
 	}
@@ -118,6 +141,9 @@ func (d assuranceDriver) UpdateRunSnapshot(ctx context.Context, r *run.Run, at t
 	}
 	r.Revision = m.Revision
 	r.UpdatedAt = m.UpdatedAt
+	if r.State != run.StateRunning {
+		r.Lease = nil
+	}
 	return nil
 }
 

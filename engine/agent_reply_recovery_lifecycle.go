@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/coordination"
@@ -121,6 +123,12 @@ func (r *agentReplyRecovery) Recover(ctx context.Context, key id.AgentRunID) err
 	}
 	_, err = r.engine.RecoverAgentReply(ctx, key, pauseID, r.authorize)
 	if errors.Is(err, suspension.ErrResumeAdmissionNotFound) {
+		return nil
+	}
+	if errors.Is(err, cortex.ErrEngineStopping) {
+		// Refused before any claim, so the run is untouched. A later pass,
+		// here after Start or on another worker, recovers it.
+		r.engine.logger.Debug("cortex: agent reply recovery deferred while stopping", log.String("run_id", key.String()))
 		return nil
 	}
 	return err

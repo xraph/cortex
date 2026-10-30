@@ -75,6 +75,7 @@ func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnap
 }
 
 func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *suspension.Suspension, results []ToolResult, st *reactState) error {
+	// The principal on ctx is the run's, restored before the claim.
 	subject := cortex.Subject{Scope: cortex.ScopeFromContext(ctx), Principal: cortex.PrincipalFromContext(ctx), AgentID: r.AgentID, RunID: r.ID}
 	byID := make(map[string]ToolResult, len(results))
 	for _, result := range results {

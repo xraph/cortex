@@ -1,0 +1,98 @@
+---
+title: Typed Tools
+description: Build tools from Go functions, with the argument schema generated and every call validated.
+---
+
+A tool is a definition the model sees plus a handler the engine runs.
+`engine.WithTool` takes both, and you write the JSON Schema by hand. The
+`tool` package writes it for you. You give it a function over a struct, it
+generates the schema from the struct, and it checks every call against that
+schema before your function runs.
+
+## Build a tool
+
+```go
+import "github.com/xraph/cortex/tool"
+
+type ListInput struct {
+    Project string `json:"project" jsonschema:"the project id"`
+    Limit   int    `json:"limit,omitempty"`
+}
+
+type ListOutput struct {
+    Names []string `json:"names"`
+}
+
+eng, err := engine.New(
+    tool.Register("list_services", "List the services in a project.",
+        func(ctx context.Context, inv cortex.Invocation, in ListInput) (ListOutput, error) {
+            return ListOutput{Names: lookup(ctx, inv.Scope, in.Project)}, nil
+        },
+        tool.RetrySafe(),
+    ),
+)
+```
+
+`tool.Register` returns an `engine.Option`. If you want the definition and
+handler separately, call `tool.New`, which returns an `llm.Tool` and an
+`engine.ToolHandler` to pass to `engine.WithTool` yourself. `tool.New` can't
+carry `tool.RetrySafe()` to the engine, so it panics if you pass it; mark
+that tool with `engine.WithToolRetrySafe("name")` instead.
+
+The input type must be a struct. `New` panics at registration if it is not,
+or if the schema cannot be built, because that is a mistake in the program
+and not something a call can cause.
+
+## The generated schema
+
+The schema comes from `github.com/google/jsonschema-go`. Field names come
+from the `json` tag. Fields without `omitempty` are required. The
+`jsonschema` tag sets the property description. The root is a closed
+object, so arguments the struct does not declare are rejected.
+
+`tool.Schema[In]()` returns the same schema as a map, which is handy for a
+golden test. The library is pre-1.0, so pin a snapshot of your important
+schemas and read the diff when you upgrade.
+
+## Validation
+
+Before your function runs, the handler parses the call's arguments (an
+empty string counts as `{}`) and validates them against the schema. A wrong
+type, a missing required field or an unknown property fails the call with
+an error like `tool "list_services": invalid arguments: ...`. The model
+reads that as an ordinary tool failure and can correct itself. Your
+function is not called.
+
+## Results
+
+A `string` result is sent to the model as it is. A `json.RawMessage` is
+also sent as it is. Anything else is marshalled to JSON. An error from your
+function is returned unwrapped, so `errors.Is(err, cortex.ErrEffectUncertain)`
+keeps working.
+
+## Retry safety
+
+`tool.RetrySafe()` is a promise: running this handler a second time after a
+crash does no harm. Either it only reads, or it is idempotent through the
+effect journal. The engine records the promise (`engine.WithToolRetrySafe`,
+which `tool.Register` calls for you) and exposes it through
+`Engine.ToolRetrySafe(name)`. It only matters once you turn leasing on with
+`engine.WithRunLease`, since without leases no run is ever reclaimed.
+Without it, an interrupted call is treated as uncertain. The engine records such a call as started before its handler
+gets it, and if it can't save that record it doesn't run the call at all:
+the run stops there and another replica reclaims it. When a replica
+continues a reclaimed run and finds a call recorded as started with no
+result, it stops the run with `cortex.ErrEffectUncertain` and doesn't run
+the call again. A retry-safe call is never recorded as started, so the
+replica just runs it again.
+
+Do not mark a tool that creates or changes something unless the journal
+makes the repeat harmless.
+
+## Listing tools
+
+`Engine.Tools()` returns every tool the engine can offer, in dispatch order:
+builtins enabled for this engine, then `WithTool` registrations (the first
+per name), then external tools. Each entry carries its `llm.Tool`, its
+`ToolKind` (`builtin`, `registered` or `external`) and whether it is
+retry-safe.

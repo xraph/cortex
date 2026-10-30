@@ -615,11 +615,18 @@ type runModel struct {
 	Provenance         string            `grove:"provenance,type:jsonb"`
 	Budget             string            `grove:"budget,type:jsonb"`
 	Usage              string            `grove:"usage,type:jsonb"`
+	Principal          []byte            `grove:"principal,type:bytea"`
+	ReplyRoute         []byte            `grove:"reply_route,type:bytea"`
+	LeaseOwner         string            `grove:"lease_owner,notnull"`
+	LeaseExpiresAt     *time.Time        `grove:"lease_expires_at"`
+	Ready              *string           `grove:"ready,type:jsonb"`
+	ReclaimCount       int               `grove:"reclaim_count,notnull"`
+	NotifiedAt         *time.Time        `grove:"notified_at"`
 }
 
 func runToModel(r *run.Run) *runModel {
 	l0, l1, l2, extra := scopeColumns(r.Scope)
-	return &runModel{
+	m := &runModel{
 		Provenance: mustJSON(r.Provenance), Usage: mustJSON(r.Usage), Budget: mustJSON(r.Budget),
 		ID:                 r.ID.String(),
 		AgentID:            r.AgentID.String(),
@@ -644,9 +651,15 @@ func runToModel(r *run.Run) *runModel {
 		ScopeL2:            l2,
 		ScopeExtra:         extra,
 		ScopeCanon:         r.Scope.Canonical(),
+		Principal:          r.Principal,
+		ReplyRoute:         r.ReplyRoute,
+		ReclaimCount:       r.Reclaims,
+		NotifiedAt:         r.NotifiedAt,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}
+	m.LeaseOwner, m.LeaseExpiresAt = runstate.LeaseColumns(r.Lease)
+	return m
 }
 
 func runFromModel(m *runModel) (*run.Run, error) {
@@ -686,7 +699,17 @@ func runFromModel(m *runModel) (*run.Run, error) {
 		StartedAt:          m.StartedAt,
 		CompletedAt:        m.CompletedAt,
 		PersonaRef:         m.PersonaRef,
+		Principal:          m.Principal,
+		ReplyRoute:         m.ReplyRoute,
+		Lease:              runstate.LeaseFromColumns(m.LeaseOwner, m.LeaseExpiresAt),
+		Reclaims:           m.ReclaimCount,
+		NotifiedAt:         runstate.UTCTime(m.NotifiedAt),
 	}
+	ready, err := runstate.DecodeReady(m.Ready)
+	if err != nil {
+		return nil, fmt.Errorf("run %s: %w", runID, err)
+	}
+	r.Ready = ready
 	if err := unmarshalField("metadata", m.Metadata, &r.Metadata); err != nil {
 		return nil, err
 	}

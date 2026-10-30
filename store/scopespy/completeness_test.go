@@ -3,6 +3,7 @@ package scopespy
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -11,6 +12,7 @@ import (
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/store"
+	"github.com/xraph/cortex/suspension"
 )
 
 // overriddenMethods probes every method on the store.Store interface by
@@ -125,8 +127,12 @@ func reachedMethods(t *testing.T) map[string]bool {
 
 	const externalToolName = "spy-completeness-external-tool"
 	suspendSpy := New()
+	// Leases off, so the resume makes the plain claim. An engine that
+	// leases runs claims with the lease instead (ClaimSuspensionLeased),
+	// which TestSpy_OverridesLeasedClaims probes.
 	suspendEngine, err := engine.New(
 		engine.WithStore(suspendSpy),
+		engine.WithRunLease(0),
 		engine.WithLLM(ToolCallingLLM(externalToolName)),
 		engine.WithExternalTool(llm.Tool{
 			Name:        externalToolName,
@@ -179,7 +185,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 			llm.Tool{Name: approvalToolName, Description: "test-only tool for approval coverage"},
 			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
-		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("engine.New (approval): %v", err)
@@ -223,7 +229,7 @@ func reachedMethods(t *testing.T) map[string]bool {
 			llm.Tool{Name: cancelToolName, Description: "test-only tool for cancel coverage"},
 			func(_ context.Context, _ cortex.Invocation) (string, error) { return "ok", nil },
 		),
-		engine.WithToolAuthorizer(escalatingAuthorizer{}),
+		engine.WithToolAuthorizer(escalatingAuthorizer{}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("engine.New (cancel): %v", err)
@@ -301,14 +307,104 @@ func TestSpy_OverriddenMethodsMatchWhatTheReactLoopReaches(t *testing.T) {
 		t.Fatal("reachedMethods recorded no calls; this test proves nothing")
 	}
 
+	// The optional capabilities the engine asserts by type are probed by
+	// TestSpy_OverridesContinuationStore and TestSpy_OverridesProgressStore.
+	// A scenario may reach them (an approval continues through
+	// ClaimContinuation), but nothing here has to reach every one of them.
+	capabilities := make(map[string]bool)
+	for _, capability := range []reflect.Type{
+		reflect.TypeOf((*run.ContinuationStore)(nil)).Elem(),
+		reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem(),
+		reflect.TypeOf((*checkpoint.SweepStore)(nil)).Elem(),
+		reflect.TypeOf((*suspension.LeasedClaimStore)(nil)).Elem(),
+	} {
+		for i := 0; i < capability.NumMethod(); i++ {
+			capabilities[capability.Method(i).Name] = true
+		}
+	}
+
 	for name := range reached {
-		if !overridden[name] {
+		if !overridden[name] && !capabilities[name] {
 			t.Errorf("RunAgent or StreamAgent called %q, but Spy doesn't override it (overriddenMethods disagrees with reachedMethods — investigate before trusting either)", name)
 		}
 	}
 	for name := range overridden {
 		if !reached[name] {
 			t.Errorf("Spy overrides %q, but neither RunAgent nor StreamAgent called it in this test — either the override is dead, or reachedMethods needs a scenario that reaches it", name)
+		}
+	}
+}
+
+// TestSpy_OverridesContinuationStore probes every run.ContinuationStore
+// method the way overriddenMethods probes store.Store. The capability is
+// optional, so it is not part of store.Store and the test above cannot
+// see it; an engine that finds the spy implements it will call these
+// methods, and each one has to record its call rather than panic on the
+// embedded nil Store. The two AcrossScopes listings are the sweeper's and
+// run without a scope, so they are probed with none.
+func TestSpy_OverridesContinuationStore(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*run.ContinuationStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesLeasedClaims does the same for suspension.LeasedClaimStore,
+// the claims that take the run's lease with the pause.
+func TestSpy_OverridesLeasedClaims(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*suspension.LeasedClaimStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesCheckpointSweep does the same for checkpoint.SweepStore,
+// the sweeper's listing of pending checkpoints.
+func TestSpy_OverridesCheckpointSweep(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*checkpoint.SweepStore)(nil)).Elem())
+}
+
+// TestSpy_OverridesProgressStore does the same for suspension.ProgressStore,
+// the other optional capability the engine asserts by type.
+func TestSpy_OverridesProgressStore(t *testing.T) {
+	probeCapability(t, reflect.TypeOf((*suspension.ProgressStore)(nil)).Elem())
+}
+
+// probeCapability calls every method of capability on a fresh Spy with zero
+// arguments and checks each one records exactly its own call, with a scope
+// unless it is an AcrossScopes listing.
+func probeCapability(t *testing.T, capability reflect.Type) {
+	t.Helper()
+	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	scoped := cortex.WithScope(context.Background(), cortex.Scope{
+		Levels: []cortex.Level{{Key: "workspace", Value: "ws_x"}},
+	})
+	for i := 0; i < capability.NumMethod(); i++ {
+		name := capability.Method(i).Name
+		acrossScopes := strings.HasSuffix(name, "AcrossScopes")
+		ctx := scoped
+		if acrossScopes {
+			ctx = context.Background()
+		}
+		spy := New()
+		mv := reflect.ValueOf(spy).MethodByName(name)
+		args := make([]reflect.Value, mv.Type().NumIn())
+		for j := range args {
+			if pt := mv.Type().In(j); pt == ctxType {
+				args[j] = reflect.ValueOf(ctx)
+			} else {
+				args[j] = reflect.Zero(pt)
+			}
+		}
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Errorf("Spy.%s fell through to the embedded nil Store: %v", name, recovered)
+				}
+			}()
+			mv.Call(args)
+		}()
+		calls := spy.Calls()
+		if len(calls) != 1 || calls[0].Method != name {
+			t.Errorf("Spy.%s recorded %+v, want exactly one %s call", name, calls, name)
+			continue
+		}
+		if !acrossScopes && calls[0].Scope.IsZero() {
+			t.Errorf("Spy.%s recorded no scope", name)
 		}
 	}
 }

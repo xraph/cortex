@@ -9,7 +9,6 @@ import (
 	"github.com/xraph/cortex/execution"
 	"github.com/xraph/cortex/llm"
 	"github.com/xraph/cortex/run"
-	"github.com/xraph/cortex/suspension"
 )
 
 func runDeadline(ctx context.Context, cfg resolvedConfig) (context.Context, context.CancelFunc) {
@@ -60,16 +59,17 @@ func (e *Engine) executionTools(ctx context.Context, subject cortex.Subject, cfg
 
 // executePreparedTool runs one call the model asked for, under a call tool
 // span.
-func (e *Engine) executePreparedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, suspension.SuspendReason) {
-	return e.traceTool(ctx, tc, func(ctx context.Context) (string, toolOutcome, suspension.SuspendReason) {
+func (e *Engine) executePreparedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, pendingWait) {
+	return e.traceTool(ctx, tc, func(ctx context.Context) (string, toolOutcome, pendingWait) {
 		return e.executeAllowedTool(ctx, subject, tc, st)
 	})
 }
 
-func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, suspension.SuspendReason) {
+func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject, tc llm.ToolCall, st *reactState) (string, toolOutcome, pendingWait) {
 	if err := ctx.Err(); err != nil {
+		announced(ctx)
 		e.emitToolDenied(ctx, subject.RunID, tc.Name, err.Error())
-		return jsonResult("error", err.Error()), outcomeDenied, ""
+		return jsonResult("error", err.Error()), outcomeDenied, pendingWait{}
 	}
 	if st.preparedSnapshot != nil {
 		allowed := false
@@ -81,8 +81,9 @@ func (e *Engine) executeAllowedTool(ctx context.Context, subject cortex.Subject,
 		}
 		if !allowed {
 			message := "tool is outside the prepared allowlist: " + tc.Name
+			announced(ctx)
 			e.emitToolDenied(ctx, subject.RunID, tc.Name, message)
-			return jsonResult("error", message), outcomeDenied, ""
+			return jsonResult("error", message), outcomeDenied, pendingWait{}
 		}
 	}
 	st.usage.ToolCalls++

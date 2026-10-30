@@ -17,7 +17,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 	if err := g.POST("/behaviors", a.createBehavior,
 		forge.WithSummary("Create behavior"),
 		forge.WithDescription("Creates a new condition-triggered behavior pattern."),
-		forge.WithOperationID("createBehavior"),
+		a.op("createBehavior", true),
 		forge.WithRequestSchema(CreateBehaviorRequest{}),
 		forge.WithCreatedResponse(&behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.GET("/behaviors", a.listBehaviors,
 		forge.WithSummary("List behaviors"),
-		forge.WithOperationID("listBehaviors"),
+		a.op("listBehaviors", false),
 		forge.WithRequestSchema(ListBehaviorsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Behavior list", []*behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.GET("/behaviors/:name", a.getBehavior,
 		forge.WithSummary("Get behavior"),
-		forge.WithOperationID("getBehavior"),
+		a.op("getBehavior", false),
 		forge.WithResponseSchema(http.StatusOK, "Behavior details", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.PUT("/behaviors/:name", a.updateBehavior,
 		forge.WithSummary("Update behavior"),
-		forge.WithOperationID("updateBehavior"),
+		a.op("updateBehavior", true),
 		forge.WithRequestSchema(UpdateBehaviorRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated behavior", &behavior.Behavior{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerBehaviorRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/behaviors/:name", a.deleteBehavior,
 		forge.WithSummary("Delete behavior"),
-		forge.WithOperationID("deleteBehavior"),
+		a.op("deleteBehavior", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -105,7 +105,7 @@ func (a *API) createBehavior(ctx forge.Context, req *CreateBehaviorRequest) (*be
 		return nil, fmt.Errorf("create behavior: %w", err)
 	}
 
-	return b, ctx.JSON(http.StatusCreated, b)
+	return nil, ctx.JSON(http.StatusCreated, b)
 }
 
 func (a *API) getBehavior(ctx forge.Context, _ *GetBehaviorRequest) (*behavior.Behavior, error) {
@@ -113,7 +113,7 @@ func (a *API) getBehavior(ctx forge.Context, _ *GetBehaviorRequest) (*behavior.B
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return b, ctx.JSON(http.StatusOK, b)
+	return b, nil
 }
 
 func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) (*ListBehaviorsResponse, error) {
@@ -125,7 +125,7 @@ func (a *API) listBehaviors(ctx forge.Context, req *ListBehaviorsRequest) (*List
 		return nil, fmt.Errorf("list behaviors: %w", err)
 	}
 	resp := &ListBehaviorsResponse{Items: behaviors}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateBehavior(ctx forge.Context, req *UpdateBehaviorRequest) (*behavior.Behavior, error) {
@@ -174,7 +174,7 @@ func (a *API) updateBehavior(ctx forge.Context, req *UpdateBehaviorRequest) (*be
 	if err := a.eng.UpdateBehavior(ctx.Context(), b); err != nil {
 		return nil, fmt.Errorf("update behavior: %w", err)
 	}
-	return b, ctx.JSON(http.StatusOK, b)
+	return b, nil
 }
 
 func (a *API) deleteBehavior(ctx forge.Context, _ *DeleteBehaviorRequest) (*struct{}, error) {

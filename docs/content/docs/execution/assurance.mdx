@@ -21,6 +21,27 @@ Configure the boundary with `engine.WithPublicationPolicy` and install a checker
 
 Checked-segment streaming requires an explicit `safety.IncrementalGate`. An accepted prefix cannot be retracted, so use buffered mode when a rule needs the complete response. Explicitly disabled scanning reports `unscanned`; it does not remove byte limits.
 
+### Streaming Shield-checked segments
+
+The Shield adapter is an incremental gate, so you can stream approved text as the model writes it:
+
+```go
+gate := shieldsafety.New(shieldEngine, shieldsafety.WithApp("loomplane"))
+eng, err := engine.New(
+    engine.WithPublicationGate(gate),
+    engine.WithPublicationPolicy(safety.Policy{
+        Required: true,
+        Mode: safety.ModeCheckedSegments,
+    }),
+)
+```
+
+Here `shieldsafety` is `github.com/xraph/cortex/safety/shield`. Each stream gets its own segment checker, which scans one segment at a time with the agent's Shield profile, the same way the adapter scans a whole answer. A segment ends after a line break, or after `.`, `!` or `?` followed by a space or a line break. A colon doesn't end one, so a line like `password: value` reaches Shield in one piece, key and value together. Text without a segment end is held. Once it reaches the segment limit (2048 bytes by default, set with `shieldsafety.WithSegmentLimit`), it's cut at the last whitespace that doesn't sit next to a `:` or `=`, so a word or a `key = value` pair is never split. A PEM block is held from its `-----BEGIN` line until its matching `-----END` line arrives, and Shield scans the whole block at once. If the END line never comes, the block waits for the end of the stream, and the engine's output limit stops a hold that grows too large. When the stream ends, whatever is left is scanned as the last segment.
+
+A redacted segment goes out redacted. If Shield blocks a segment, or can't scan it (no tenant on the scope, no profile, input over Shield's size limit, a cancelled context), the run stops there. Text already approved stays published, but the blocked segment and anything held behind it never go out. Errors carry Shield's sentinel only, never the text.
+
+Each segment is still scanned on its own. A rule that needs text from two segments won't see it, and a full-message check that runs later can't take back text that already streamed. If you can't accept any partial text published under these rules, use buffered mode.
+
 Content screening covers input, output, retrieved content, tool results and public error text. If screening would rewrite tool arguments, execution stops instead of issuing a changed command. A scanner decision describes content screening only. It cannot certify the answer's factual accuracy.
 
 ### Host rule scanner
@@ -1293,11 +1314,19 @@ existing cancellation or deadline determines its terminal state. Private provide
 errors and unfinished tool messages are not published as results. Required
 verification does not evaluate or publish a candidate from this stop.
 
-Approval remains a separate fact. When an approved action becomes uncertain,
-the engine records the approval after confirming the durable stop, then returns
-the uncertainty error. Repeating the checkpoint decision cannot run the action
-again. If the terminal write fails, the checkpoint remains pending for host audit;
-the claimed suspension still prevents repeated dispatch.
+Approval remains a separate fact. The engine records the approval before the
+run continues: `DecideCheckpoint` (and `ResolveCheckpoint`, which calls it)
+marks the run `ready`, records the decision, and only then does `ContinueRun`
+claim the run and dispatch the action. When the approved action becomes
+uncertain, the decision is already recorded and you get the uncertainty error
+back from the continuation. Repeating the checkpoint decision can't run the
+action again: it returns `cortex.ErrInvalidState`, because the checkpoint is
+resolved. If the terminal write fails, the run is left in `running` from the
+claim, and the claim is what stops a second dispatch. A continuation refused
+before its claim leaves the run `ready` for the next `ContinueRun`.
+
+On a store without `run.ContinuationStore`, `ResolveCheckpoint` keeps the older
+order: it acts first, confirms the durable stop, then records the approval.
 
 Reconcile the retained request through `EffectExecutor.Reconcile` with current
 host authorization. Saving a recovered provider receipt does not resume the run,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/id"
@@ -329,6 +331,15 @@ func (r *preparedTeamRunner) recoverMessageAskers(ctx context.Context) (int, err
 		}
 		result, recoverErr := r.eng.RecoverAgentReply(ctx, key, pauseID, authorize)
 		if errors.Is(recoverErr, suspension.ErrResumeAdmissionNotFound) || errors.Is(recoverErr, suspension.ErrResumeAlreadyStarted) {
+			continue
+		}
+		// ErrRunConflict is a start that lost to the sweep marking the same
+		// admitted run reclaimable. ContinueRun owns the run from there, so
+		// it is skipped like one already started, and the pass goes on to
+		// the parent's other children. Each pass reads the child again, so
+		// the warning is what shows a conflict that keeps coming back.
+		if errors.Is(recoverErr, cortex.ErrRunConflict) {
+			r.eng.logWarn("skip a team member whose recovery start lost to the sweep", recoverErr, log.String("run_id", key.String()))
 			continue
 		}
 		if recoverErr != nil {

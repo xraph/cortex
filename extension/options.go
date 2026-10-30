@@ -4,16 +4,21 @@ import (
 	"github.com/xraph/forge"
 
 	"github.com/xraph/cortex/engine"
+	weaveknowledge "github.com/xraph/cortex/knowledge/weave"
+	nexusllm "github.com/xraph/cortex/llm/nexus"
 	"github.com/xraph/cortex/plugin"
+	shieldsafety "github.com/xraph/cortex/safety/shield"
 	"github.com/xraph/cortex/store"
 )
 
 // ExtOption configures the Cortex Forge extension.
 type ExtOption func(*Extension)
 
-// WithStore sets the composite store.
+// WithStore sets the composite store. It wins over any grove database in
+// the container, and the extension then skips discovering a default one.
 func WithStore(s store.Store) ExtOption {
 	return func(e *Extension) {
+		e.hostStore = true
 		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
 	}
 }
@@ -30,6 +35,47 @@ func WithEngineOption(opt engine.Option) ExtOption {
 	return func(e *Extension) {
 		e.engineOpts = append(e.engineOpts, opt)
 	}
+}
+
+// WithoutAutoAdapters stops the extension from discovering nexus, shield,
+// weave and sentinel in the DI container. Without it, each one found is
+// wired into the engine: nexus as the model client, shield as the safety
+// scanner and the publication gate, weave as the knowledge provider
+// and sentinel as an extension. Use it when the host wires those itself,
+// or wants none of them.
+func WithoutAutoAdapters() ExtOption {
+	return func(e *Extension) { e.noAutoAdapters = true }
+}
+
+// WithNexusOptions configures the nexus adapter the extension wires in when
+// it finds a nexus gateway in the container: nexusllm.WithTenant to map a
+// scope to its nexus tenant, nexusllm.WithProvider, WithMetadata and
+// WithSamplingUnsupported. The adapter keeps its place in the option order,
+// so an engine.WithLLM passed with WithEngineOption still replaces it, and
+// WithoutAutoAdapters still leaves it out.
+func WithNexusOptions(opts ...nexusllm.Option) ExtOption {
+	return func(e *Extension) { e.nexusOpts = append(e.nexusOpts, opts...) }
+}
+
+// WithWeaveOptions configures the weave adapter the extension wires in when
+// it finds a weave engine in the container: weaveknowledge.WithTenant to map
+// a scope to its weave tenant, and weaveknowledge.WithShared to add
+// read-only collections every run may search. The adapter keeps its place in
+// the option order, so an engine.WithKnowledge passed with WithEngineOption
+// still replaces it, and WithoutAutoAdapters still leaves it out.
+func WithWeaveOptions(opts ...weaveknowledge.Option) ExtOption {
+	return func(e *Extension) { e.weaveOpts = append(e.weaveOpts, opts...) }
+}
+
+// WithShieldOptions configures the shield adapter the extension wires in
+// when it finds a shield engine in the container: shieldsafety.WithTenant
+// to map a scope to its shield tenant, shieldsafety.WithApp to name the
+// shield app, and shieldsafety.WithUntrustedSources. The adapter keeps its
+// place in the option order, so an engine.WithSafety or
+// engine.WithPublicationGate passed with WithEngineOption still replaces
+// the matching half of it, and WithoutAutoAdapters still leaves it out.
+func WithShieldOptions(opts ...shieldsafety.Option) ExtOption {
+	return func(e *Extension) { e.shieldOpts = append(e.shieldOpts, opts...) }
 }
 
 // WithConfig sets the extension configuration.

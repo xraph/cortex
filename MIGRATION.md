@@ -159,6 +159,167 @@ The Sentinel UI hook implementation was disconnected in `06ea111`. Its remaining
 
 Earlier ledger rows describe the original migration review and retain their original limits. External production credentials/grants and Sentinel automatic evaluation remain outside the verified local cutover.
 
+# Upgrading from v1.9.0
+
+This is the section to read if you run v1.9.0 today. It covers what changes when you move to v1.10.0, how to run both versions side by side while you roll out, and what to clean up afterwards.
+
+## Behaviour changes
+
+A resumed run now continues under the principal that started it, not the one that resumed it. The engine stores the principal on the run through a `cortex.PrincipalCodec` and decodes it before every resume, continuation and reclaim. The Tool Authorization page in the docs has the details.
+
+`engine.New` fails with `cortex.ErrPrincipalCodecRequired` when you install a `ToolAuthorizer` without `engine.WithPrincipalCodec`. For most hosts the fix is one line:
+
+```go
+engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*Caller]())
+```
+
+Without an authorizer a codec is optional, and resumed runs carry a nil principal.
+
+`ResolveCheckpoint` admits an approval like a run before it records anything, as v1.9.0 did. While the engine drains you get `cortex.ErrEngineStopping`, and under a full `run_concurrency` cap it waits for a slot until your context ends. Either way nothing is recorded, the checkpoint stays pending and the run stays paused, so you can decide again here or on another replica (the REST module answers 503). Once admitted, it records the approval before the run continues. If the continuation fails after it claimed the run, the run is failed. If a check fails for now before the claim (your codec couldn't decode the principal for a moment, say), the run is left `ready` and the error says the decision is recorded and `ContinueRun` finishes the run. That's true with leasing off as well. Deciding again is refused, so an approved call never runs twice. Either call `ContinueRun` for that run when you see that error, or continue `RunReady` runs from a job, as in the plugin further down.
+
+`WithSuspensionTTL(0)` no longer stops the sweeper. Zero now means no default deadline, and the sweeper keeps running for approvals, external tools and agent replies that carry a deadline of their own.
+
+The Forge extension now applies `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature`, `default_reasoning_loop`, `run_concurrency` and `shutdown_timeout`. v1.9.0 read them and ignored them. `run_concurrency` defaults to 0, which is unlimited, so nothing changes until you set it. An engine option you pass with `extension.WithEngineOption` still wins.
+
+`Stop` drains the way v1.9.0 did. From the moment it starts, new runs get `cortex.ErrEngineStopping`, which a host that queues work can treat as "try another worker", and every run already executing runs to its end.
+
+Run leases are new in this release, and they're off unless you turn them on. With the default engine nothing is handed off at `Stop`, no run ever becomes `reclaimable`, and the sweep for lapsed leases has nothing to do. A run whose worker dies stays `running`, as it did in v1.9.0.
+
+Turn leasing on with `engine.WithRunLease(ttl)` only once your host continues runs itself, because nothing in cortex calls `ContinueRun` for you: the engine, the Forge extension and the REST module all leave that to your host. With leasing on, `Stop` hands every leased run off at its next model call or tool dispatch, and its `RunAgent` or `StreamAgent` caller gets `cortex.ErrRunInterrupted`. A run whose worker dies becomes `reclaimable` once its lease lapses. Both wait in `reclaimable` until something calls `ContinueRun`, so you subscribe to `plugin.RunReady` and `plugin.RunReclaimable` and queue a job that calls it:
+
+```go
+type continueJob struct {
+	scope cortex.Scope
+	runID id.AgentRunID
+}
+
+// continuer queues every ready or reclaimable run. Use your own durable
+// queue here; a channel only reaches workers in this process.
+type continuer struct{ jobs chan<- continueJob }
+
+func (continuer) Name() string { return "continue-runs" }
+
+func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
+	c.enqueue(ctx, runID)
+	return nil
+}
+
+func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
+	c.enqueue(ctx, runID)
+	return nil
+}
+
+// enqueue never blocks. A notice it drops comes back: the sweeper tells
+// you again about a run still waiting after WithReadyRenotify.
+func (c continuer) enqueue(ctx context.Context, runID id.AgentRunID) {
+	select {
+	case c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}:
+	default:
+	}
+}
+
+// A worker goroutine, or your queue's consumer, on any replica.
+// ContinueRun runs under the run's own principal.
+go func() {
+	for job := range jobs {
+		ctx := cortex.WithScope(context.Background(), job.scope)
+		if _, err := eng.ContinueRun(ctx, job.runID); err != nil {
+			// Log the run ID. The sweeper tells you about the run again.
+		}
+	}
+}()
+```
+
+Hooks run on the engine's own goroutines (the sweeper, `Stop` handing a run off, the request that decided a checkpoint), so a hook must never block. Hand the job off and return, and call `ContinueRun` from a goroutine or a job queue, never from inside the hook. A hook that blocks on a full channel can hold up `Stop` until its deadline.
+
+Register it with `engine.WithExtension(continuer{jobs: jobs})` next to `engine.WithRunLease(60*time.Second)`, or through `extension.WithEngineOption` under Forge. Sixty seconds suits most hosts.
+
+Once leasing is on, a reclaimed run whose worker died during a tool call runs that call again only when the tool is retry-safe. Any other tool makes the run end `incomplete` with an error matching `cortex.ErrEffectUncertain`, because nobody can tell whether the call did anything. Tools aren't retry-safe unless you say so, so mark the ones that are safe to run twice with `engine.WithToolRetrySafe`, or `tool.RetrySafe()` with `tool.Register`. `tool.New` panics when you hand it `tool.RetrySafe()`, since it has no way to pass the mark to the engine.
+
+The Nexus adapter (`llm/nexus`) now sends every call under a Nexus tenant and refuses one it can't name, with an error matching `cortex.ErrNoScope`. It takes the tenant from `pipeline.WithTenantID` on the context, or from `nexusllm.WithTenant`, whose default is the first scope level's value. Nexus only accepts a tenant ID it has (`tenant_...`), so unless your first scope level holds one, pass a `WithTenant` that maps your scope to it (`extension.WithNexusOptions` under Forge). Calls also drop `temperature` for the Claude 5.5 models, which reject it, and a blocked Nexus guard now ends the run with `safety_block`.
+
+Shield now screens publication even when you pass `engine.WithSafety`. When the Forge extension finds a Shield engine, the adapter goes in as both the safety scanner and the publication gate, so your own scanner only backs `engine.Safety()`. Shield evaluates real profiles now, and a scan with no profile for the run's tenant and app fails closed, so seed your profiles (for example with `presets.InfraAgent().Seed`) before you upgrade or every run stops with `policy_unavailable`. If you don't want Shield at all, pass `extension.WithoutAutoAdapters()`. If you want your own gate, pass `engine.WithPublicationGate(gate)` as well as `engine.WithSafety`.
+
+The Shield tenant is now the scope's first level, not the canonical scope string. v1.9.0 told Shield the tenant was `org=o1` for a run scoped `org=o1`; v1.10.0 tells it `o1`. Profiles you seeded under the old string no longer match. Seed them again under the new tenant, or pass `shieldsafety.WithTenant` (`extension.WithShieldOptions` under Forge) with a function that returns `s.Canonical()` to keep the old keys. The app is unchanged unless you set `shieldsafety.WithApp`.
+
+The Weave adapter (`knowledge/weave`) now reads under the first scope level's value as the Weave tenant, and it overrides any tenant you put on the context with `weave.WithTenant`. Nexus is different: it honours `pipeline.WithTenantID` when you set it. If your Weave collections live under a tenant ID that isn't your first scope value, pass `weaveknowledge.WithTenant` with a function that maps your scope to it, through `extension.WithWeaveOptions` under Forge. A mismatch doesn't fail the run. Retrieval finds nothing under the wrong tenant, and the agent carries on without its knowledge, so check a run's answer against a document you know is there after you upgrade.
+
+An agent's `shield_profile` guardrail is honoured now. v1.9.0 refused any scan that named a profile, so an agent with one never got a decision. Now Shield evaluates that profile, and an agent without one gets Shield's default profile. Check that every profile your agents name exists for their tenant and app, since a missing one fails closed with `shield.ErrNoProfile`. The same goes for an agent that names no profile when Shield has no default profile configured: every scan for it fails closed with `shield.ErrNoProfile` until you set one.
+
+`Migrate` on PostgreSQL waits for the migration lock instead of failing when another replica holds it. Give it a context with a deadline.
+
+The REST module takes an optional `api.Authorizer`. With one installed, `resolveCheckpoint` takes the decider from its `DecidedBy` method and ignores the `decided_by` in the body. `sendAgentMessage` keeps its `from` as whatever the caller says it is.
+
+REST responses now carry one JSON object per body. On most routes v1.9.0 wrote two concatenated objects, so a client that worked around the second one needs to stop.
+
+## New migrations
+
+Migrations `20261101000001` to `20261101000004` are additive and run in the `cortex` group. They add the stored principal, the lease and ready columns on runs, the progress table, and the column that keeps a directive run's reply route out of its metadata. Hosts that migrate centrally need nothing else.
+
+## Rolling out next to v1.9.0
+
+v1.9.0 advances run revisions but holds no leases, and it can't continue, cancel or expire a `ready` or `reclaimable` run. Keep both versions on one database only for the length of a rolling restart.
+
+A run that a v1.9.0 replica is executing never had a lease. v1.10.0 only reclaims runs whose lease lapsed, so it never takes one of those. They finish, or stay where v1.9.0 left them.
+
+Keep at least one upgraded replica running at all times. It owns the sweeper that tells your host again about runs left `ready`, and, with leasing on, reclaims lapsed leases.
+
+If you turn leasing on, turn it on for every engine that shares the store. An engine with leasing off next to one that leases runs would have its runs taken from under it. Lease expiry compares the clock of the worker that wrote the lease with the clock of the replica that sweeps, so keep your replicas' clocks in sync (NTP is enough).
+
+With leasing on, keep v1.9.0's experimental agent-reply and prepared-team recovery off while both versions share the store. A v1.10.0 replica that admits a peer's reply and dies before it starts the run leaves a leased run behind. A v1.9.0 replica running that recovery could start the same run without a lease while the v1.10.0 sweep marks it `reclaimable`, and then both would execute it.
+
+A replica that may continue a run the messaging bus started for an a2a directive needs messaging configured. Without it the replica can't send the answer, and only logs a warning.
+
+Rolling back to v1.9.0 strands `ready` and `reclaimable` runs. Drain them, and any `paused_prepared` ones, first:
+
+```sql
+SELECT id, state FROM cortex_runs WHERE state IN ('ready','reclaimable','paused_prepared');
+```
+
+The same query works on SQLite. On MongoDB use `db.cortex_runs.find({state: {$in: ["ready", "reclaimable", "paused_prepared"]}})`.
+
+## Runs left in running with no lease
+
+A run that was `running` before the upgrade has no lease, so nothing reclaims it. If its worker died, it stays `running` for good. With leasing off, the default, the same goes for every run, exactly as in v1.9.0. List the candidates:
+
+```sql
+SELECT id FROM cortex_runs
+WHERE state = 'running' AND lease_expires_at IS NULL AND updated_at < now() - interval '1 hour';
+```
+
+On SQLite:
+
+```sql
+SELECT id FROM cortex_runs
+WHERE state = 'running' AND lease_expires_at IS NULL AND updated_at < datetime('now', '-1 hour');
+```
+
+On MongoDB:
+
+```js
+db.cortex_runs.find({
+  state: "running",
+  lease_expires_at: null,
+  updated_at: { $lt: new Date(Date.now() - 60 * 60 * 1000) }
+})
+```
+
+Cancel what you find with `engine.CancelRun`, but only once no v1.9.0 replica is still running. A live v1.9.0 run looks exactly the same: running, no lease, quiet for a while.
+
+# Upgrading from v1.8.0
+
+If you skip v1.9.0, read the section above as well. Two more things apply.
+
+Pauses written by v1.8.0 can't be resumed after the upgrade. v1.8.0 writes prepared continuations at schema 1, and this release doesn't accept schema 1. Before you upgrade, let those paused runs finish or cancel them on v1.8.0. Find them with:
+
+```sql
+SELECT run_id FROM cortex_suspensions WHERE COALESCE((continuation->>'schema_version')::int, 0) = 1;
+```
+
+On SQLite use `json_extract(continuation, '$.schema_version') = 1` as the condition. On MongoDB the continuation is a native document whose field names are lowercased with no underscore, so the filter is `{"continuation.schemaversion": 1}`. Don't edit the schema number or the paused row to get past the check.
+
+New pauses are stored as `paused_prepared` at schema 2. v1.8.0 can still claim that state, because both versions match `paused` and `paused_prepared`, but it rejects the continuation, so only upgraded workers resume them. Its sweeper can still expire them at their deadline, which is the intended outcome.
+
 # Run revisions and conditional updates
 
 Built-in stores now assign `run.Run.Revision = 1` when you create a run.

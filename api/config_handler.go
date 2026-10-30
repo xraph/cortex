@@ -24,7 +24,7 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	if err := g.GET("/config", a.getConfig,
 		forge.WithSummary("Get config"),
 		forge.WithDescription("Returns the current engine configuration."),
-		forge.WithOperationID("getConfig"),
+		a.op("getConfig", false),
 		forge.WithResponseSchema(http.StatusOK, "Engine configuration", &cortex.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -34,7 +34,7 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	if err := g.PUT("/config", a.updateConfig,
 		forge.WithSummary("Update config"),
 		forge.WithDescription("Updates engine configuration at runtime. Changes are in-memory only."),
-		forge.WithOperationID("updateConfig"),
+		a.op("updateConfig", true),
 		forge.WithRequestSchema(UpdateConfigRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated configuration", &cortex.Config{}),
 		forge.WithErrorResponses(),
@@ -45,12 +45,12 @@ func (a *API) registerConfigRoutes(router forge.Router) error {
 	return nil
 }
 
-func (a *API) getConfig(ctx forge.Context, _ *struct{}) (*cortex.Config, error) {
+func (a *API) getConfig(_ forge.Context, _ *struct{}) (*cortex.Config, error) {
 	cfg := a.eng.Config()
-	return &cfg, ctx.JSON(http.StatusOK, cfg)
+	return &cfg, nil
 }
 
-func (a *API) updateConfig(ctx forge.Context, req *UpdateConfigRequest) (*cortex.Config, error) {
+func (a *API) updateConfig(_ forge.Context, req *UpdateConfigRequest) (*cortex.Config, error) {
 	update := cortex.Config{
 		DefaultModel:         req.DefaultModel,
 		DefaultMaxSteps:      req.DefaultMaxSteps,
@@ -60,5 +60,5 @@ func (a *API) updateConfig(ctx forge.Context, req *UpdateConfigRequest) (*cortex
 	}
 
 	cfg := a.eng.UpdateConfig(update)
-	return &cfg, ctx.JSON(http.StatusOK, cfg)
+	return &cfg, nil
 }

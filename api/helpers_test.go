@@ -77,3 +77,33 @@ func TestPublicationErrorsHaveSafeHTTPStatus(t *testing.T) {
 		}
 	}
 }
+
+// A replica that is stopping answers 503, so a client retries elsewhere,
+// and a run that was handed off answers 409: it is waiting to be
+// continued, not failed. Neither discloses what it wraps.
+func TestMapStoreError_LifecycleErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{cortex.ErrEngineStopping, http.StatusServiceUnavailable},
+		{fmt.Errorf("private details: %w", cortex.ErrEngineStopping), http.StatusServiceUnavailable},
+		{cortex.ErrRunInterrupted, http.StatusConflict},
+		{fmt.Errorf("private details: %w", cortex.ErrRunInterrupted), http.StatusConflict},
+		// A stop that interrupted a run is about the replica first.
+		{fmt.Errorf("private details: %w: %w", cortex.ErrRunInterrupted, cortex.ErrEngineStopping), http.StatusServiceUnavailable},
+	} {
+		mapped := mapStoreError(tc.err)
+		status, ok := mapped.(statusCoder)
+		if !ok || status.StatusCode() != tc.want {
+			t.Errorf("mapStoreError(%v) = %v, want status %d", tc.err, mapped, tc.want)
+			continue
+		}
+		if strings.Contains(mapped.Error(), "private details") {
+			t.Errorf("mapStoreError(%v) disclosed wrapped details: %v", tc.err, mapped)
+		}
+		if tc.want == http.StatusServiceUnavailable && !strings.Contains(mapped.Error(), "nothing was recorded") {
+			t.Errorf("mapStoreError(%v) = %v, want it to say nothing was recorded", tc.err, mapped)
+		}
+	}
+}

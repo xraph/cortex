@@ -18,7 +18,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/sessions", a.createSession,
 		forge.WithSummary("Create session"),
 		forge.WithDescription("Creates a new conversation session for an agent."),
-		forge.WithOperationID("createSession"),
+		a.op("createSession", true),
 		forge.WithRequestSchema(CreateSessionRequest{}),
 		forge.WithCreatedResponse(&session.Session{}),
 		forge.WithErrorResponses(),
@@ -29,7 +29,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/sessions", a.listSessions,
 		forge.WithSummary("List sessions"),
 		forge.WithDescription("Returns an agent's sessions with optional pagination."),
-		forge.WithOperationID("listSessions"),
+		a.op("listSessions", false),
 		forge.WithRequestSchema(ListSessionsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Session list", []*session.Session{}),
 		forge.WithErrorResponses(),
@@ -44,7 +44,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/sessions/count", a.countSessions,
 		forge.WithSummary("Count sessions"),
 		forge.WithDescription("Returns the number of sessions an agent has."),
-		forge.WithOperationID("countSessions"),
+		a.op("countSessions", false),
 		forge.WithRequestSchema(CountSessionsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Session count", &CountSessionsResponse{}),
 		forge.WithErrorResponses(),
@@ -54,7 +54,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.GET("/agents/:name/sessions/:id", a.getSession,
 		forge.WithSummary("Get session"),
-		forge.WithOperationID("getSession"),
+		a.op("getSession", false),
 		forge.WithResponseSchema(http.StatusOK, "Session details", &session.Session{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -63,7 +63,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.PUT("/agents/:name/sessions/:id", a.updateSession,
 		forge.WithSummary("Update session"),
-		forge.WithOperationID("updateSession"),
+		a.op("updateSession", true),
 		forge.WithRequestSchema(UpdateSessionRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated session", &session.Session{}),
 		forge.WithErrorResponses(),
@@ -73,7 +73,7 @@ func (a *API) registerSessionRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/agents/:name/sessions/:id", a.deleteSession,
 		forge.WithSummary("Delete session"),
-		forge.WithOperationID("deleteSession"),
+		a.op("deleteSession", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -101,7 +101,7 @@ func (a *API) createSession(ctx forge.Context, req *CreateSessionRequest) (*sess
 		return nil, mapStoreError(err)
 	}
 
-	return s, ctx.JSON(http.StatusCreated, s)
+	return nil, ctx.JSON(http.StatusCreated, s)
 }
 
 func (a *API) getSession(ctx forge.Context, req *GetSessionRequest) (*session.Session, error) {
@@ -120,7 +120,7 @@ func (a *API) getSession(ctx forge.Context, req *GetSessionRequest) (*session.Se
 		return nil, mapStoreError(err)
 	}
 
-	return sess, ctx.JSON(http.StatusOK, sess)
+	return sess, nil
 }
 
 func (a *API) listSessions(ctx forge.Context, req *ListSessionsRequest) (*ListSessionsResponse, error) {
@@ -139,7 +139,7 @@ func (a *API) listSessions(ctx forge.Context, req *ListSessionsRequest) (*ListSe
 	}
 
 	resp := &ListSessionsResponse{Items: sessions}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) countSessions(ctx forge.Context, req *CountSessionsRequest) (*CountSessionsResponse, error) {
@@ -156,7 +156,7 @@ func (a *API) countSessions(ctx forge.Context, req *CountSessionsRequest) (*Coun
 	}
 
 	resp := &CountSessionsResponse{Count: count}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateSession(ctx forge.Context, req *UpdateSessionRequest) (*session.Session, error) {
@@ -186,7 +186,7 @@ func (a *API) updateSession(ctx forge.Context, req *UpdateSessionRequest) (*sess
 		return nil, mapStoreError(err)
 	}
 
-	return sess, ctx.JSON(http.StatusOK, sess)
+	return sess, nil
 }
 
 func (a *API) deleteSession(ctx forge.Context, req *DeleteSessionRequest) (*struct{}, error) {

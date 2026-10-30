@@ -11,6 +11,11 @@ import (
 	"github.com/xraph/cortex/safety"
 )
 
+// stoppingMessage is the 503 body for a replica that is shutting down. The
+// engine refuses such a request at admission, before it writes anything,
+// a checkpoint decision included, so retrying elsewhere is safe.
+const stoppingMessage = "cortex: engine is stopping; nothing was recorded, so retry on another replica"
+
 // mapStoreError maps domain errors to Forge HTTP errors.
 func mapStoreError(err error) error {
 	if err == nil {
@@ -20,6 +25,14 @@ func mapStoreError(err error) error {
 		return verificationHTTPError{failure: failure}
 	}
 	switch {
+	case errors.Is(err, cortex.ErrEngineStopping):
+		// This replica is shutting down and refused the request before it
+		// wrote anything; another replica can take it.
+		return forge.NewHTTPError(http.StatusServiceUnavailable, stoppingMessage)
+	case errors.Is(err, cortex.ErrRunInterrupted):
+		// The run was handed off or stopped where it was and waits for
+		// ContinueRun; it did not fail.
+		return forge.NewHTTPError(http.StatusConflict, cortex.ErrRunInterrupted.Error())
 	case errors.Is(err, cortex.ErrRunConflict):
 		return forge.NewHTTPError(http.StatusConflict, cortex.ErrRunConflict.Error())
 	case errors.Is(err, cortex.ErrPreparationUnavailable):
@@ -51,17 +64,32 @@ func mapStoreError(err error) error {
 	return err
 }
 
+// notFoundErrors are the cortex sentinels the module answers with 404.
+var notFoundErrors = []error{
+	cortex.ErrAgentNotFound,
+	cortex.ErrSkillNotFound,
+	cortex.ErrTraitNotFound,
+	cortex.ErrBehaviorNotFound,
+	cortex.ErrPersonaNotFound,
+	cortex.ErrRunNotFound,
+	cortex.ErrCheckpointNotFound,
+	cortex.ErrOrchestrationNotFound,
+	cortex.ErrOrchestrationRunNotFound,
+	cortex.ErrSessionNotFound,
+}
+
 func isNotFound(err error) bool {
-	return errors.Is(err, cortex.ErrAgentNotFound) ||
-		errors.Is(err, cortex.ErrSkillNotFound) ||
-		errors.Is(err, cortex.ErrTraitNotFound) ||
-		errors.Is(err, cortex.ErrBehaviorNotFound) ||
-		errors.Is(err, cortex.ErrPersonaNotFound) ||
-		errors.Is(err, cortex.ErrRunNotFound) ||
-		errors.Is(err, cortex.ErrCheckpointNotFound) ||
-		errors.Is(err, cortex.ErrOrchestrationNotFound) ||
-		errors.Is(err, cortex.ErrOrchestrationRunNotFound) ||
-		errors.Is(err, cortex.ErrSessionNotFound)
+	return notFoundSentinel(err) != nil
+}
+
+// notFoundSentinel is the not-found sentinel err wraps, or nil.
+func notFoundSentinel(err error) error {
+	for _, sentinel := range notFoundErrors {
+		if errors.Is(err, sentinel) {
+			return sentinel
+		}
+	}
+	return nil
 }
 
 func isConflict(err error) bool {

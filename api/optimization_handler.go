@@ -37,7 +37,7 @@ func (a *API) registerOptimizationRoutes(router forge.Router) error {
 		{"/activations", "optimizationActivations", optimizationRead(reader.Activations), operator.ActivationsInput{}, opt.ResourcePage[opt.Activation]{}},
 	}
 	for _, route := range routes {
-		if err := group.GET(route.path, route.handler, forge.WithOperationID(route.name), forge.WithRequestSchema(route.input), forge.WithResponseSchema(http.StatusOK, "Retained optimization records", route.output), forge.WithErrorResponses()); err != nil {
+		if err := group.GET(route.path, route.handler, a.op(route.name, false), forge.WithRequestSchema(route.input), forge.WithResponseSchema(http.StatusOK, "Retained optimization records", route.output), forge.WithErrorResponses()); err != nil {
 			return fmt.Errorf("register optimization route %s: %w", route.name, err)
 		}
 	}

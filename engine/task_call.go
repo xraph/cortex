@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"maps"
 	"sync"
 	"time"
 
@@ -216,6 +217,9 @@ func (e *Engine) completeTaskCall(ctx context.Context, r *run.Run, request *llm.
 	if json.Unmarshal(binding.Payload, &detached) != nil {
 		return nil, cortex.ErrTaskCallUnavailable
 	}
+	// Metadata is kept out of the bound payload; it labels the call and
+	// travels beside it.
+	detached.Metadata = maps.Clone(request.Metadata)
 	callCtx, release, err := e.beginTaskCall(ctx, binding)
 	if err != nil {
 		return nil, err
@@ -249,6 +253,9 @@ func (e *Engine) streamTaskCall(ctx context.Context, r *run.Run, request *llm.Re
 	if json.Unmarshal(binding.Payload, &detached) != nil {
 		return nil, cortex.ErrTaskCallUnavailable
 	}
+	// Metadata is kept out of the bound payload; it labels the call and
+	// travels beside it.
+	detached.Metadata = maps.Clone(request.Metadata)
 	callCtx, release, err := e.beginTaskCall(ctx, binding)
 	if err != nil {
 		return nil, err

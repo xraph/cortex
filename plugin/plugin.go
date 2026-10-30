@@ -14,6 +14,7 @@ import (
 
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/run"
+	"github.com/xraph/cortex/suspension"
 )
 
 // ──────────────────────────────────────────────────
@@ -42,6 +43,39 @@ type RunCompleted interface {
 // RunFailed is called when an agent run fails.
 type RunFailed interface {
 	OnRunFailed(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, err error) error
+}
+
+// RunSuspended is called when a run pauses, for every reason it can:
+// an approval, an external tool, or a reply from another agent. It fires
+// once the run is really paused, so a read of the run from inside the
+// hook shows it paused, and it never fires for a pause that failed.
+//
+// It is the one hook that covers every pause. CheckpointCreated fires
+// only for approvals, and a host that tells people a run is waiting on
+// them needs to hear about the other two as well.
+type RunSuspended interface {
+	OnRunSuspended(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n suspension.Notice) error
+}
+
+// RunReady is called when a paused run becomes ready to continue: a
+// reviewer decided its checkpoint, or a caller supplied its external
+// results. It fires once the ready state is written, with ctx carrying the
+// run's own scope. A host usually answers it by queueing a job that calls
+// engine.ContinueRun, on any replica. The same decision made twice at once
+// can fire it twice; only one ContinueRun wins, and the other is refused
+// with cortex.ErrRunNotContinuable, so a duplicate costs one refused job.
+type RunReady interface {
+	OnRunReady(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReadyNotice) error
+}
+
+// RunReclaimable is called when a running run is left for another worker
+// to take over: its worker released it while shutting down (n.HandOff),
+// or its lease lapsed and the sweeper moved it. It fires once the
+// reclaimable state is written, with ctx carrying the run's own scope. A
+// host usually answers it by queueing a job that calls
+// engine.ContinueRun, on any replica.
+type RunReclaimable interface {
+	OnRunReclaimable(ctx context.Context, agentID id.AgentID, runID id.AgentRunID, n run.ReclaimNotice) error
 }
 
 // ──────────────────────────────────────────────────

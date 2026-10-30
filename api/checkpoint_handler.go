@@ -16,9 +16,9 @@ func (a *API) registerCheckpointRoutes(router forge.Router) error {
 	if err := g.GET("/checkpoints", a.listCheckpoints,
 		forge.WithSummary("List pending checkpoints"),
 		forge.WithDescription("Returns checkpoints awaiting human decision."),
-		forge.WithOperationID("listCheckpoints"),
+		a.op("listCheckpoints", false),
 		forge.WithRequestSchema(ListCheckpointsRequest{}),
-		forge.WithResponseSchema(http.StatusOK, "Checkpoint list", []*checkpoint.Checkpoint{}),
+		forge.WithResponseSchema(http.StatusOK, "Checkpoint list", ListCheckpointsResponse{}),
 		forge.WithErrorResponses(),
 	); err != nil {
 		return fmt.Errorf("register checkpoint routes: %w", err)
@@ -27,7 +27,7 @@ func (a *API) registerCheckpointRoutes(router forge.Router) error {
 	if err := g.POST("/checkpoints/:id/resolve", a.resolveCheckpoint,
 		forge.WithSummary("Resolve checkpoint"),
 		forge.WithDescription("Approves or rejects a pending checkpoint."),
-		forge.WithOperationID("resolveCheckpoint"),
+		a.op("resolveCheckpoint", true),
 		forge.WithRequestSchema(ResolveCheckpointRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
@@ -46,8 +46,18 @@ func (a *API) listCheckpoints(ctx forge.Context, req *ListCheckpointsRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("list checkpoints: %w", err)
 	}
-	resp := &ListCheckpointsResponse{Items: cps}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	resp := newListCheckpointsResponse(cps)
+	return resp, nil
+}
+
+// newListCheckpointsResponse serves checkpoints without the decider's
+// principal bytes, which are the host's and stay in the store.
+func newListCheckpointsResponse(cps []*checkpoint.Checkpoint) *ListCheckpointsResponse {
+	items := make([]*CheckpointResponse, 0, len(cps))
+	for _, cp := range cps {
+		items = append(items, newCheckpointResponse(cp))
+	}
+	return &ListCheckpointsResponse{Items: items}
 }
 
 // Decision values the API accepts on the wire. These are the only two
@@ -95,6 +105,13 @@ func (a *API) resolveCheckpoint(ctx forge.Context, req *ResolveCheckpointRequest
 	}
 
 	decision, err := decisionFromRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	// With an authorizer the decider is whoever the request principal
+	// is, never the name the body asserts. The engine records that same
+	// principal as DecidedByPrincipal from the context.
+	decision.DecidedBy, err = a.decidedBy(ctx.Context(), req.DecidedBy)
 	if err != nil {
 		return nil, err
 	}

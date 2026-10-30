@@ -207,6 +207,14 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 			return nil, execution.ErrBudgetExceeded
 		}
 		record, runErr := r.execute(execCtx, draft)
+		// A child that was handed off, or that another worker holds now,
+		// has not failed: it continues elsewhere. The orchestration treats
+		// it exactly as it treats a paused child: its usage is checked and
+		// the messaging work reconciled, then the orchestration waits.
+		handedOff := record != nil && (errors.Is(runErr, cortex.ErrRunInterrupted) || errors.Is(runErr, cortex.ErrRunLeaseLost))
+		if handedOff {
+			runErr = nil
+		}
 		if usageErr := r.checkUsage(record, allocation); usageErr != nil {
 			runErr = errors.Join(runErr, usageErr)
 		}
@@ -237,7 +245,7 @@ func (r *preparedTeamRunner) ReserveAgent(ctx context.Context, team id.Orchestra
 					}
 				}
 			}
-			if record != nil && record.State == run.StatePaused {
+			if record != nil && childWaiting(record, handedOff) {
 				return &orchestration.AgentResult{AgentName: name, RunID: record.ID, Err: cortex.ErrOrchestrationWaiting}, cortex.ErrOrchestrationWaiting
 			}
 		}
@@ -280,4 +288,18 @@ func (r *preparedTeamRunner) checkUsage(record *run.Run, allocation execution.Re
 	}
 	r.closed.Store(true)
 	return execution.ErrBudgetExceeded
+}
+
+// childWaiting reports whether a child the orchestration ran is still on
+// its way: paused, ready or reclaimable, or, for a child this pass handed
+// off, still running under the worker that took it.
+func childWaiting(child *run.Run, handedOff bool) bool {
+	switch child.State {
+	case run.StatePaused, run.StateReady, run.StateReclaimable:
+		return true
+	case run.StateRunning:
+		return handedOff
+	default:
+		return false
+	}
 }

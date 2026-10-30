@@ -110,7 +110,9 @@ func newEngineWithTools(t *testing.T, authorizer cortex.ToolAuthorizer, tools ..
 	opts = append(opts,
 		WithStore(spy),
 		WithLLM(scopespy.ToolCallingLLM(tools[0].Name)),
-		WithToolAuthorizer(authorizer),
+		// any, because these runs carry whatever principal a test puts on
+		// the context and none of them is resumed.
+		WithToolAuthorizer(authorizer), WithPrincipalCodec(cortex.JSONPrincipalCodec[any]()),
 	)
 	for _, tl := range tools {
 		opts = append(opts, WithTool(tl, func(_ context.Context, _ cortex.Invocation) (string, error) {
@@ -233,7 +235,7 @@ func TestNilAuthorizer_LeavesBothPathsPermissive(t *testing.T) {
 func TestExecuteTool_DispatchesWhenAuthorizerAllows(t *testing.T) {
 	def, h := echoTool()
 	authz := &recordingAuthorizer{visible: []llm.Tool{def}, authorizeErr: nil}
-	e, err := New(WithTool(def, h), WithToolAuthorizer(authz))
+	e, err := New(WithTool(def, h), WithToolAuthorizer(authz), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

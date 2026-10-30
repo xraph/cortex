@@ -19,7 +19,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.POST("/agents", a.createAgent,
 		forge.WithSummary("Create agent"),
 		forge.WithDescription("Creates a new agent with the specified configuration."),
-		forge.WithOperationID("createAgent"),
+		a.op("createAgent", true),
 		forge.WithRequestSchema(CreateAgentRequest{}),
 		forge.WithCreatedResponse(&agent.Config{}),
 		forge.WithErrorResponses(),
@@ -30,7 +30,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.GET("/agents", a.listAgents,
 		forge.WithSummary("List agents"),
 		forge.WithDescription("Returns agents with optional pagination."),
-		forge.WithOperationID("listAgents"),
+		a.op("listAgents", false),
 		forge.WithRequestSchema(ListAgentsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Agent list", []*agent.Config{}),
 		forge.WithErrorResponses(),
@@ -41,7 +41,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name", a.getAgent,
 		forge.WithSummary("Get agent"),
 		forge.WithDescription("Returns details of a specific agent by name."),
-		forge.WithOperationID("getAgent"),
+		a.op("getAgent", false),
 		forge.WithResponseSchema(http.StatusOK, "Agent details", &agent.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -51,7 +51,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.PUT("/agents/:name", a.updateAgent,
 		forge.WithSummary("Update agent"),
 		forge.WithDescription("Updates an existing agent configuration."),
-		forge.WithOperationID("updateAgent"),
+		a.op("updateAgent", true),
 		forge.WithRequestSchema(UpdateAgentRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated agent", &agent.Config{}),
 		forge.WithErrorResponses(),
@@ -62,7 +62,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.DELETE("/agents/:name", a.deleteAgent,
 		forge.WithSummary("Delete agent"),
 		forge.WithDescription("Deletes an agent configuration."),
-		forge.WithOperationID("deleteAgent"),
+		a.op("deleteAgent", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -72,7 +72,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/run", a.runAgent,
 		forge.WithSummary("Run agent"),
 		forge.WithDescription("Executes an agent with the given input and returns the result."),
-		forge.WithOperationID("runAgent"),
+		a.op("runAgent", true),
 		forge.WithRequestSchema(RunAgentRequest{}),
 		forge.WithResponseSchema(http.StatusConflict, "Run did not pass required verification", VerificationFailureResponse{}),
 		forge.WithResponseSchema(http.StatusServiceUnavailable, "Verification unavailable; inspect saved work before retrying", VerificationFailureResponse{}),
@@ -84,7 +84,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/stream", a.streamAgent,
 		forge.WithSummary("Stream agent"),
 		forge.WithDescription("Executes an agent with streaming SSE output."),
-		forge.WithOperationID("streamAgent"),
+		a.op("streamAgent", true),
 		forge.WithRequestSchema(StreamAgentRequest{}),
 		forge.WithResponseSchema(http.StatusConflict, "Run did not pass required verification", VerificationFailureResponse{}),
 		forge.WithResponseSchema(http.StatusServiceUnavailable, "Verification unavailable; inspect saved work before retrying", VerificationFailureResponse{}),
@@ -96,7 +96,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/preview-prompt", a.previewPrompt,
 		forge.WithSummary("Preview prompt"),
 		forge.WithDescription("Returns the computed system prompt for the agent without executing."),
-		forge.WithOperationID("previewPrompt"),
+		a.op("previewPrompt", true),
 		forge.WithResponseSchema(http.StatusOK, "Computed prompt", &PreviewPromptResponse{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -106,7 +106,7 @@ func (a *API) registerAgentRoutes(router forge.Router) error {
 	if err := g.POST("/agents/:name/clone", a.cloneAgent,
 		forge.WithSummary("Clone agent"),
 		forge.WithDescription("Creates an independent copy of an agent with a fresh ID and name."),
-		forge.WithOperationID("cloneAgent"),
+		a.op("cloneAgent", true),
 		forge.WithRequestSchema(CloneAgentRequest{}),
 		forge.WithCreatedResponse(&agent.Config{}),
 		forge.WithErrorResponses(),
@@ -147,7 +147,7 @@ func (a *API) createAgent(ctx forge.Context, req *CreateAgentRequest) (*agent.Co
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	return cfg, ctx.JSON(http.StatusCreated, cfg)
+	return nil, ctx.JSON(http.StatusCreated, cfg)
 }
 
 func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, error) {
@@ -155,7 +155,7 @@ func (a *API) getAgent(ctx forge.Context, _ *GetAgentRequest) (*agent.Config, er
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return cfg, ctx.JSON(http.StatusOK, cfg)
+	return cfg, nil
 }
 
 func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
@@ -167,7 +167,7 @@ func (a *API) listAgents(ctx forge.Context, req *ListAgentsRequest) (*ListAgents
 		return nil, fmt.Errorf("list agents: %w", err)
 	}
 	resp := &ListAgentsResponse{Items: agents}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Config, error) {
@@ -222,7 +222,7 @@ func (a *API) updateAgent(ctx forge.Context, req *UpdateAgentRequest) (*agent.Co
 	if err := a.eng.UpdateAgent(ctx.Context(), cfg); err != nil {
 		return nil, fmt.Errorf("update agent: %w", err)
 	}
-	return cfg, ctx.JSON(http.StatusOK, cfg)
+	return cfg, nil
 }
 
 func (a *API) deleteAgent(ctx forge.Context, _ *DeleteAgentRequest) (*struct{}, error) {
@@ -263,7 +263,7 @@ func (a *API) runAgent(ctx forge.Context, req *RunAgentRequest) (*RunAgentRespon
 		TokensUsed:         r.TokensUsed,
 		DurationMs:         durationMs,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) streamAgent(ctx forge.Context, req *StreamAgentRequest) (*struct{}, error) {
@@ -306,7 +306,7 @@ func (a *API) previewPrompt(ctx forge.Context, _ *PreviewPromptRequest) (*Previe
 	resp := &PreviewPromptResponse{
 		Prompt: prompt,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Config, error) {
@@ -314,7 +314,7 @@ func (a *API) cloneAgent(ctx forge.Context, req *CloneAgentRequest) (*agent.Conf
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return clone, ctx.JSON(http.StatusCreated, clone)
+	return nil, ctx.JSON(http.StatusCreated, clone)
 }
 
 // mapOverrides converts API-layer overrides to engine-layer overrides.

@@ -30,6 +30,7 @@ const (
 	colPersonas             = "cortex_personas"
 	colSessions             = "cortex_sessions"
 	colSuspensions          = "cortex_suspensions"
+	colRunProgress          = "cortex_run_progress"
 	colOverlays             = "cortex_overlays"
 	colOrchestrationConfigs = "cortex_orchestration_configs"
 	colOrchestrationRuns    = "cortex_orchestration_runs"

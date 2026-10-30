@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,6 +74,31 @@ func WithConfig(cfg cortex.Config) Option {
 	}
 }
 
+// WithRunConcurrency caps how many runs execute at once. A run that finds
+// every slot taken waits for one, or for its ctx to end, in which case it
+// returns an error matching ctx.Err() and leaves no run row. Zero, the
+// default, is unlimited; a negative n is an error.
+//
+// It covers RunAgent, StreamAgent, RunPrepared, StreamPrepared, Resume,
+// ResumeStream, ResolveCheckpoint and the resumes the message bus and
+// agent-reply recovery start. A stream holds its slot until its channel
+// closes. A run started from inside an admitted run, on the ctx it was
+// given, shares its parent's slot, so a tool that runs another agent
+// cannot deadlock on a limit of one. Runs started by the experimental task
+// workers, prepared orchestrations and plan replanning are not counted.
+//
+// cortex.Config.RunConcurrency is not read by the engine; the Forge
+// extension applies its run_concurrency setting through this option.
+func WithRunConcurrency(n int) Option {
+	return func(e *Engine) error {
+		if n < 0 {
+			return fmt.Errorf("cortex: run concurrency %d is negative; use 0 for no limit", n)
+		}
+		e.runConcurrency = n
+		return nil
+	}
+}
+
 // WithLLM sets the LLM client for real model execution.
 // When set, RunAgent and StreamAgent use this client instead of mock/echo mode.
 func WithLLM(client llm.Client) Option {
@@ -118,11 +144,138 @@ func WithTool(def llm.Tool, h ToolHandler) Option {
 	}
 }
 
+// WithToolRetrySafe marks registered tools as safe to run again after a
+// crash: they only read, or they are idempotent through the effect
+// journal. Every name must be registered with WithTool by the time New
+// returns, or New fails.
+func WithToolRetrySafe(names ...string) Option {
+	return func(e *Engine) error {
+		e.retrySafeNames = append(e.retrySafeNames, names...)
+		return nil
+	}
+}
+
 // WithToolAuthorizer installs the host's authorization decisions. A nil
-// authorizer, or none at all, allows every tool and every call.
+// authorizer, or none at all, allows every tool and every call. A non-nil
+// one needs WithPrincipalCodec as well, so a resumed run reaches it under
+// the principal that started the run.
 func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 	return func(e *Engine) error {
 		e.authorizer = a
+		return nil
+	}
+}
+
+// WithPrincipalCodec installs the codec that carries a run's principal
+// across a pause. The engine encodes cortex.PrincipalFromContext when it
+// creates a run and stores the bytes with it; every resume decodes them
+// and continues under that principal, not the resumer's. ResolveCheckpoint
+// also encodes the decider's principal into Decision.DecidedByPrincipal.
+//
+// A host that installs a tool authorizer must install one, or New returns
+// cortex.ErrPrincipalCodecRequired: without it, an authorizer would see
+// every resumed run as nobody. Without a codec a resumed run has a nil
+// principal.
+func WithPrincipalCodec(c cortex.PrincipalCodec) Option {
+	return func(e *Engine) error {
+		e.principalCodec = c
+		return nil
+	}
+}
+
+// WithRejectionsReturnToModel makes a rejected approval an error result the
+// model reads, and the run continues. Each pending call is answered with
+// "rejected by <DecidedBy>: <Reason>" and recorded as denied; none of them
+// is dispatched. DecideCheckpoint marks the run ready, exactly as an
+// approval does, and ResolveCheckpoint continues it before returning.
+//
+// Without it, the default, a rejection fails the run with the decider's
+// reason.
+func WithRejectionsReturnToModel() Option {
+	return func(e *Engine) error {
+		e.rejectionsToModel = true
+		return nil
+	}
+}
+
+// WithRunLease turns on run leases and sets how long a worker's lease on a
+// running run lasts before another replica may reclaim the run. The engine
+// renews it every ttl/3 while the run executes and saves the run's
+// progress at each step boundary, so a run whose worker dies or drains is
+// left reclaimable rather than stuck running. A negative ttl fails New.
+//
+// Leasing is off by default (ttl zero): Stop lets admitted runs finish,
+// nothing is handed off and no run becomes reclaimable. Turn it on only
+// when the host continues runs itself. A handed-off or reclaimed run waits
+// in reclaimable until something calls ContinueRun, and nothing in the
+// engine does: subscribe plugin.RunReady and plugin.RunReclaimable and
+// queue a job that calls ContinueRun on the hook's ctx. With leasing on,
+// Stop hands every leased run off at its next model call or tool dispatch
+// and its RunAgent or StreamAgent caller gets cortex.ErrRunInterrupted.
+// A sixty-second ttl suits most hosts.
+//
+// Leasing needs a store that implements both run.ContinuationStore and
+// suspension.ProgressStore. Runs under required verification or a task
+// claim are never leased: coordination owns their recovery.
+//
+// Every engine that shares a store must use the same setting. A worker
+// renewing a lease takes over a running run that has no lease owner, so
+// an engine with leases off sharing runs with one that leases them would
+// have its runs taken from under it.
+func WithRunLease(ttl time.Duration) Option {
+	return func(e *Engine) error {
+		if ttl < 0 {
+			return fmt.Errorf("cortex: run lease %s is negative", ttl)
+		}
+		e.leaseTTL = ttl
+		return nil
+	}
+}
+
+// WithReclaimLimit sets how often a run may be reclaimed after its
+// worker's lease lapsed. A run reclaimed more than n times is failed with
+// cortex.ErrReclaimLimit when it is next continued, without another model
+// call: a run that takes its worker down every time it runs stops there
+// instead of taking the next replica down too. A hand-off at shutdown is
+// not a reclaim and does not count. The default is 3; a negative n fails
+// New.
+func WithReclaimLimit(n int) Option {
+	return func(e *Engine) error {
+		if n < 0 {
+			return fmt.Errorf("cortex: reclaim limit %d is negative", n)
+		}
+		e.reclaimLimit = n
+		return nil
+	}
+}
+
+// WithReadyRenotify sets how long a ready or reclaimable run may wait
+// before the sweeper tells the host again. A host that missed RunReady or
+// RunReclaimable (its process died between the state change and its
+// enqueue, say) hears it again with Renotified set, at most once per d for
+// each run. The default is 5 minutes. Zero turns re-notification off; a
+// negative d fails New.
+func WithReadyRenotify(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d < 0 {
+			return fmt.Errorf("cortex: ready renotify interval %s is negative", d)
+		}
+		e.readyRenotify = d
+		return nil
+	}
+}
+
+// WithWorkerID names this engine as a lease owner. Leases, progress
+// snapshots and hand-offs carry it, so it must be unique among the
+// replicas sharing a store and stable for the life of the process. The
+// default is "<hostname>-<pid>-<6 random hex digits>". An empty id fails
+// New.
+func WithWorkerID(id string) Option {
+	return func(e *Engine) error {
+		if id == "" {
+			return errors.New("cortex: worker id is empty")
+		}
+		e.workerID = id
 		return nil
 	}
 }
@@ -136,24 +289,81 @@ func WithToolAuthorizer(a cortex.ToolAuthorizer) Option {
 // other (executeTool). The only difference is what happens at dispatch:
 // there is no handler to run, so the call becomes pending and the loop
 // stops.
-func WithExternalTool(def llm.Tool) Option {
+//
+// Pass ExternalTTL to give a pause on this tool its own deadline.
+func WithExternalTool(def llm.Tool, opts ...ExternalToolOption) Option {
 	return func(e *Engine) error {
-		e.externalTools = append(e.externalTools, def)
+		t := registeredExternal{def: def}
+		for _, opt := range opts {
+			opt(&t)
+		}
+		if t.ttl < 0 {
+			return fmt.Errorf("cortex: external tool %q TTL %s is negative", def.Name, t.ttl)
+		}
+		e.externalTools = append(e.externalTools, t)
 		return nil
 	}
 }
 
-// WithSuspensionTTL sets how long a suspended run waits for the outside
-// world before the expiry sweeper fails it. It defaults to
-// defaultSuspensionTTL.
+// ExternalToolOption configures one WithExternalTool registration.
+type ExternalToolOption func(*registeredExternal)
+
+// registeredExternal is one WithExternalTool registration, named after
+// registeredTool, its WithTool counterpart.
+type registeredExternal struct {
+	def llm.Tool
+	// ttl is how long a pause on this tool waits, zero for the engine's
+	// suspension TTL.
+	ttl time.Duration
+}
+
+// ExternalTTL sets how long a run paused on this tool waits for its
+// result before the sweeper fails it, in place of the engine's suspension
+// TTL. Zero keeps the engine's. A negative duration is refused, for the
+// same reason WithSuspensionTTL refuses one.
+func ExternalTTL(d time.Duration) ExternalToolOption {
+	return func(t *registeredExternal) { t.ttl = d }
+}
+
+// WithAgentReplyGrace sets how long past an ask's reply-by a run waiting
+// on another agent's answer stays paused before the sweeper fails it. It
+// defaults to defaultAgentReplyGrace.
 //
-// A TTL of zero disables expiry outright: suspensions are written with
-// no deadline, and no sweeper runs. That is the right setting for a host
-// whose pauses are answered by a person on their own schedule and who
-// would rather have a run sit paused for a week than have it failed out
-// from under them. It is not the default, because the failure it
-// prevents is visible and recoverable while the one it allows (a run
-// paused forever on a browser tab somebody closed) is neither.
+// The grace exists because the ask has a deadline of its own, and the
+// message bus answers it first: at reply-by the ask sweep resumes the
+// asking run with a timeout the model can read and react to. The engine's
+// deadline comes later, so its sweep only fails a run the ask sweep never
+// reached, a bus that was down or a resume that failed. Zero puts the two
+// deadlines on one instant, and which sweep wins is then down to timing.
+// A negative duration is refused.
+func WithAgentReplyGrace(d time.Duration) Option {
+	return func(e *Engine) error {
+		if d < 0 {
+			return fmt.Errorf("cortex: agent reply grace %s is negative", d)
+		}
+		e.agentReplyGrace = d
+		return nil
+	}
+}
+
+// WithSuspensionTTL sets the default deadline for a suspended run: how
+// long it waits for the outside world before the expiry sweeper fails it.
+// It defaults to defaultSuspensionTTL.
+//
+// It is a default, not the only deadline. An approval can carry its own
+// (cortex.ApprovalRequired.TTL), an external tool can (ExternalTTL), and
+// a run waiting on another agent follows that ask's reply-by. A
+// suspension expires at the earliest deadline among its pending calls.
+//
+// A TTL of zero means no default deadline: a pending call with no TTL of
+// its own is written with none and never expires. That is the right
+// setting for a host whose pauses are answered by a person on their own
+// schedule and who would rather have a run sit paused for a week than
+// have it failed out from under them. The sweeper still runs, because a
+// call that does carry its own deadline still has to be failed when it
+// passes. Zero is not the default, because the failure it prevents is
+// visible and recoverable while the one it allows (a run paused forever
+// on a browser tab somebody closed) is neither.
 //
 // A negative duration is refused rather than clamped. It reads as an
 // already-passed deadline, so accepting it would have every suspension
@@ -162,7 +372,7 @@ func WithExternalTool(def llm.Tool) Option {
 func WithSuspensionTTL(d time.Duration) Option {
 	return func(e *Engine) error {
 		if d < 0 {
-			return fmt.Errorf("cortex: suspension TTL %s is negative; use 0 to disable expiry", d)
+			return fmt.Errorf("cortex: suspension TTL %s is negative; use 0 for no default deadline", d)
 		}
 		e.suspensionTTL = d
 		return nil
@@ -181,7 +391,7 @@ func WithSuspensionTTL(d time.Duration) Option {
 func WithSuspensionSweepInterval(d time.Duration) Option {
 	return func(e *Engine) error {
 		if d <= 0 {
-			return fmt.Errorf("cortex: suspension sweep interval %s must be positive; use WithSuspensionTTL(0) to switch expiry off", d)
+			return fmt.Errorf("cortex: suspension sweep interval %s must be positive", d)
 		}
 		e.sweepInterval = d
 		return nil

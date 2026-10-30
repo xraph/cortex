@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xraph/cortex"
@@ -76,10 +77,19 @@ func TestCancelRun_LosesToAWriterThatAlreadyClaimedTheRun(t *testing.T) {
 		t.Fatalf("RunAgent: %v", err)
 	}
 
-	// Somebody else takes the run first.
+	// The cancel reads the run while it is still paused, and somebody else
+	// claims it before the cancel's own claim: the cancel's read is the
+	// paused snapshot, the store holds the claimed run.
+	snapshot, err := spy.GetRun(ctx, paused.ID)
+	if err != nil {
+		t.Fatalf("read the paused run: %v", err)
+	}
 	if _, claimErr := spy.ClaimSuspension(ctx, paused.ID); claimErr != nil {
 		t.Fatalf("claim the suspension out from under the cancel: %v", claimErr)
 	}
+	stale := &staleRunReadSpy{Spy: spy}
+	stale.snapshot.Store(snapshot)
+	e = approvalEngine(t, WithStore(stale))
 
 	err = e.CancelRun(ctx, paused.ID)
 	if !errors.Is(err, cortex.ErrNotSuspended) {
@@ -185,4 +195,18 @@ func TestClosePendingCheckpoints_TouchesOnlyItsOwnRun(t *testing.T) {
 	if len(pending) != 1 || pending[0].RunID != second.ID {
 		t.Errorf("pending queue = %+v, want only the run that is still waiting", pending)
 	}
+}
+
+// staleRunReadSpy serves one stale run read when armed: the read a caller
+// made just before another writer moved the run.
+type staleRunReadSpy struct {
+	*scopespy.Spy
+	snapshot atomic.Pointer[run.Run]
+}
+
+func (s *staleRunReadSpy) GetRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	if stale := s.snapshot.Swap(nil); stale != nil && stale.ID == runID {
+		return stale, nil
+	}
+	return s.Spy.GetRun(ctx, runID)
 }

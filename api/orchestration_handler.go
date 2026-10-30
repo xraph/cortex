@@ -17,7 +17,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.POST("/orchestrations", a.createOrchestration,
 		forge.WithSummary("Create orchestration"),
 		forge.WithDescription("Creates a multi-agent orchestration config (strategy + participants + settings)."),
-		forge.WithOperationID("createOrchestration"),
+		a.op("createOrchestration", true),
 		forge.WithRequestSchema(CreateOrchestrationRequest{}),
 		forge.WithCreatedResponse(&orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -27,7 +27,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestrations", a.listOrchestrations,
 		forge.WithSummary("List orchestrations"),
-		forge.WithOperationID("listOrchestrations"),
+		a.op("listOrchestrations", false),
 		forge.WithRequestSchema(ListOrchestrationsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Orchestration list", []*orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -37,7 +37,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestrations/:name", a.getOrchestration,
 		forge.WithSummary("Get orchestration"),
-		forge.WithOperationID("getOrchestration"),
+		a.op("getOrchestration", false),
 		forge.WithResponseSchema(http.StatusOK, "Orchestration details", &orchestration.Config{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -46,7 +46,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.PUT("/orchestrations/:name", a.updateOrchestration,
 		forge.WithSummary("Update orchestration"),
-		forge.WithOperationID("updateOrchestration"),
+		a.op("updateOrchestration", true),
 		forge.WithRequestSchema(UpdateOrchestrationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated orchestration", &orchestration.Config{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.DELETE("/orchestrations/:name", a.deleteOrchestration,
 		forge.WithSummary("Delete orchestration"),
-		forge.WithOperationID("deleteOrchestration"),
+		a.op("deleteOrchestration", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -66,7 +66,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 	if err := g.POST("/orchestrations/:name/run", a.runOrchestration,
 		forge.WithSummary("Run orchestration"),
 		forge.WithDescription("Executes a stored orchestration and returns the run summary."),
-		forge.WithOperationID("runOrchestration"),
+		a.op("runOrchestration", true),
 		forge.WithRequestSchema(RunOrchestrationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run summary", &RunOrchestrationResponse{}),
 		forge.WithErrorResponses(),
@@ -76,7 +76,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestration-runs", a.listOrchestrationRuns,
 		forge.WithSummary("List orchestration runs"),
-		forge.WithOperationID("listOrchestrationRuns"),
+		a.op("listOrchestrationRuns", false),
 		forge.WithRequestSchema(ListOrchestrationRunsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run list", []*orchestration.Run{}),
 		forge.WithErrorResponses(),
@@ -86,7 +86,7 @@ func (a *API) registerOrchestrationRoutes(router forge.Router) error {
 
 	if err := g.GET("/orchestration-runs/:id", a.getOrchestrationRun,
 		forge.WithSummary("Get orchestration run"),
-		forge.WithOperationID("getOrchestrationRun"),
+		a.op("getOrchestrationRun", false),
 		forge.WithResponseSchema(http.StatusOK, "Run details", &orchestration.Run{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -128,7 +128,7 @@ func (a *API) createOrchestration(ctx forge.Context, req *CreateOrchestrationReq
 	if err := a.eng.CreateOrchestration(ctx.Context(), c); err != nil {
 		return nil, fmt.Errorf("create orchestration: %w", err)
 	}
-	return c, ctx.JSON(http.StatusCreated, c)
+	return nil, ctx.JSON(http.StatusCreated, c)
 }
 
 func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*orchestration.Config, error) {
@@ -136,7 +136,7 @@ func (a *API) getOrchestration(ctx forge.Context, _ *GetOrchestrationRequest) (*
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return c, ctx.JSON(http.StatusOK, c)
+	return c, nil
 }
 
 func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsRequest) (*ListOrchestrationsResponse, error) {
@@ -148,7 +148,7 @@ func (a *API) listOrchestrations(ctx forge.Context, req *ListOrchestrationsReque
 		return nil, fmt.Errorf("list orchestrations: %w", err)
 	}
 	resp := &ListOrchestrationsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationRequest) (*orchestration.Config, error) {
@@ -179,7 +179,7 @@ func (a *API) updateOrchestration(ctx forge.Context, req *UpdateOrchestrationReq
 	if err := a.eng.UpdateOrchestration(ctx.Context(), c); err != nil {
 		return nil, fmt.Errorf("update orchestration: %w", err)
 	}
-	return c, ctx.JSON(http.StatusOK, c)
+	return c, nil
 }
 
 func (a *API) deleteOrchestration(ctx forge.Context, _ *DeleteOrchestrationRequest) (*struct{}, error) {
@@ -213,7 +213,7 @@ func (a *API) runOrchestration(ctx forge.Context, req *RunOrchestrationRequest) 
 		Output:     r.Output,
 		DurationMs: durationMs,
 	}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRunsRequest) (*ListOrchestrationRunsResponse, error) {
@@ -226,7 +226,7 @@ func (a *API) listOrchestrationRuns(ctx forge.Context, req *ListOrchestrationRun
 		return nil, fmt.Errorf("list orchestration runs: %w", err)
 	}
 	resp := &ListOrchestrationRunsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunRequest) (*orchestration.Run, error) {
@@ -238,5 +238,5 @@ func (a *API) getOrchestrationRun(ctx forge.Context, _ *GetOrchestrationRunReque
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return r, ctx.JSON(http.StatusOK, r)
+	return r, nil
 }

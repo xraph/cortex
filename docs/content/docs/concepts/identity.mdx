@@ -69,6 +69,22 @@ id.Nil.IsNil() // true
 
 `id.ID` implements `TextMarshaler` and `TextUnmarshaler`. Nil IDs serialize as empty strings.
 
+## Who a run belongs to
+
+A TypeID names an entity. It doesn't say who asked for it. The caller is your
+own principal, which you attach with `cortex.WithPrincipal`, and cortex never
+turns it into an ID.
+
+A run keeps its caller in `run.Run.Principal`: the bytes your
+`cortex.PrincipalCodec` wrote when the run was created. Every store persists
+them and none of them rewrites them, and they never appear in a run's JSON, so
+an API client reading runs can't see them. A resume decodes them and continues
+under that principal, not the resumer's. If you install a tool authorizer you
+must install a codec as well. See
+[Tool Authorization](/docs/concepts/authorization#keeping-the-principal-across-a-pause)
+for how to set one up, and for what a revoked or unavailable principal does to a
+paused run.
+
 ## Prefix reference
 
 | Constant | Prefix | Entity |

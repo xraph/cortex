@@ -56,7 +56,7 @@ func (r *preparedTeamRunner) ObserveRecipient(ctx context.Context, req a2a.Recip
 	}
 	result := a2a.RecipientObservation{RunID: child.ID, AgentName: req.AgentName}
 	switch child.State {
-	case run.StateCreated, run.StateRunning, run.StatePaused:
+	case run.StateCreated, run.StateRunning, run.StatePaused, run.StateReady, run.StateReclaimable:
 		result.State = a2a.RecipientWaiting
 	case run.StateCompleted:
 		switch verificationErr := requiredChildResultError(child); {

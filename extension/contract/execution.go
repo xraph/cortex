@@ -244,6 +244,19 @@ func (s *service) prepareExecution(ctx context.Context, in ExecuteInput) (contex
 	}
 	return ctx, ag, overrides, nil
 }
+
+// knownRunState says whether a runs.list state filter names a state a run
+// can be in. Empty means no filter.
+func knownRunState(s run.State) bool {
+	switch s {
+	case "", run.StateCreated, run.StateRunning, run.StateCompleted, run.StateIncomplete, run.StateFailed,
+		run.StateCancelled, run.StatePaused, run.StateReady, run.StateReclaimable:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 	binds := []func() error{
 		func() error {
@@ -252,7 +265,7 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err := in.normalize(); err != nil {
 					return out, err
 				}
-				if in.State != "" && in.State != "created" && in.State != "running" && in.State != "completed" && in.State != "failed" && in.State != "cancelled" && in.State != "paused" {
+				if !knownRunState(in.State) {
 					return out, bad("Unknown run state")
 				}
 				f := &run.ListFilter{AgentID: in.AgentID, State: in.State, Exact: in.Exact, Limit: in.Limit, Offset: in.Offset}
@@ -282,7 +295,9 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err != nil {
 					return out, err
 				}
-				if out.Run.State == run.StatePaused {
+				// A ready run still has the pause it is about to continue
+				// from, and its pending calls are what the decision covered.
+				if out.Run.State == run.StatePaused || out.Run.State == run.StateReady {
 					sus, susErr := s.deps.Engine.Store().GetSuspension(ctx, v)
 					if susErr != nil && !errors.Is(susErr, cortex.ErrNotSuspended) {
 						return out, susErr
@@ -387,7 +402,7 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if rows == nil {
 					rows = []*checkpoint.Checkpoint{}
 				}
-				return ListOutput[checkpoint.Checkpoint]{rows, n, in.Limit, in.Offset}, err
+				return ListOutput[checkpoint.Checkpoint]{checkpoint.PublicList(rows), n, in.Limit, in.Offset}, err
 			})
 		},
 		func() error {
@@ -396,7 +411,8 @@ func (s *service) bindExecution(d *dispatcher.Dispatcher) error {
 				if err != nil {
 					return nil, bad("Invalid checkpoint ID")
 				}
-				return s.deps.Engine.GetCheckpoint(ctx, v)
+				cp, err := s.deps.Engine.GetCheckpoint(ctx, v)
+				return cp.Public(), err
 			})
 		},
 		func() error {

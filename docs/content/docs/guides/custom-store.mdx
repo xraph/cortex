@@ -37,8 +37,8 @@ type Store interface {
 That's 109 methods across the fourteen sub-interfaces, plus the three lifecycle
 methods.
 
-That number grows. `session.Store` arrived in v1.9.0, `suspension.Store` in
-v1.11.0 and `a2a.Store` with agent messaging, and each time a backend that satisfied the interface last release stopped
+That number grows. `session.Store`, `suspension.Store` and `a2a.Store` all
+arrived in v1.7.0, and each time a backend that satisfied the interface last release stopped
 satisfying it until it implemented the new methods. Check this page against the
 version you are on, and run `store/storetest`'s conformance suite against your
 backend rather than trusting a compile.
@@ -82,6 +82,8 @@ type Store interface {
     ListToolCalls(ctx context.Context, stepID id.StepID) ([]*run.ToolCall, error)
 }
 ```
+
+Two `run.Run` fields are written once and are never serialized: `Principal` (the codec's bytes for the run's caller) and `ReplyRoute` (where a directive run's answer goes, the asker's reply token included). Persist both in `CreateRun`, return them from every read, and leave them alone in `UpdateRun`, even when the run you're handed carries something else. Without `ReplyRoute`, a directive run that's handed off or reclaimed can't send its answer from the replica that finishes it. The `RunPrincipal` and `RunReplyRoute` conformance cases check both.
 
 ### memory.Store (8 methods)
 

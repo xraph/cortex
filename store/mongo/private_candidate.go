@@ -24,6 +24,9 @@ func (d assuranceDriver) SetRunCandidate(ctx context.Context, r *run.Run, at tim
 	filter := scopeFilter(scope, true)
 	filter["_id"], filter["scope_canon"], filter["revision"] = r.ID.String(), scope.Canonical(), r.Revision
 	set := bson.M{"revision": revision, "state": m.State, "stop_reason": m.StopReason, "finish_reason": m.FinishReason, "output": m.Output, "verification_status": m.VerificationStatus, "result_ref": m.ResultRef, "step_count": m.StepCount, "tokens_used": m.TokensUsed, "usage": m.Usage, "completed_at": m.CompletedAt, "updated_at": at}
+	if r.State != run.StateRunning {
+		set["lease_owner"], set["lease_expires_at"] = "", nil
+	}
 	result, err := d.store.mdb.NewUpdate((*runModel)(nil)).Filter(filter).SetUpdate(bson.M{"$set": set}).Exec(ctx)
 	if err != nil {
 		return err

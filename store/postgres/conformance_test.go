@@ -10,6 +10,7 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/store"
 	"github.com/xraph/cortex/store/storetest"
 )
@@ -130,6 +131,21 @@ func TestConformance(t *testing.T) {
 	t.Run("TerminalEventRollback", func(t *testing.T) { storetest.TerminalEventRollback(t, s, assuranceDriver{store: s}) })
 	t.Run("ResultSnapshotBoundaries", func(t *testing.T) { storetest.ResultSnapshotBoundaries(t, s, assuranceDriver{store: s}) })
 	t.Run("VerifiedResultRollback", func(t *testing.T) { storetest.VerifiedResultRollback(t, s, assuranceDriver{store: s}) })
+	t.Run("RunCandidateLease", func(t *testing.T) {
+		if err := truncateConformanceTables(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		storetest.RunCandidateLease(t, s, assuranceDriver{store: s})
+	})
+	t.Run("RunProgressCascade", func(t *testing.T) {
+		if err := truncateConformanceTables(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		storetest.RunProgressCascade(t, s, func(c context.Context, runID id.AgentRunID) error {
+			_, err := s.pgdb.Exec(c, "DELETE FROM cortex_runs WHERE id = $1", runID.String())
+			return err
+		})
+	})
 	t.Run("ScopeInventory", func(t *testing.T) {
 		if err := truncateConformanceTables(ctx, s); err != nil {
 			t.Fatal(err)
@@ -169,6 +185,7 @@ func truncateConformanceTables(ctx context.Context, s *Store) error {
 		cortex_personas,
 		cortex_sessions,
 		cortex_suspensions,
+		cortex_run_progress,
 		cortex_overlays,
 		cortex_orchestration_configs,
 		cortex_orchestration_runs,

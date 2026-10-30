@@ -17,6 +17,7 @@ eng, err := engine.New(
     engine.WithStore(store),
     engine.WithLLM(client),
     engine.WithToolAuthorizer(authorizer),
+    engine.WithPrincipalCodec(codec),
     engine.WithOperationalAwareness(),
 )
 ```

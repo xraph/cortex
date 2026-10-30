@@ -79,7 +79,7 @@ func TestApprovalCheckpoint_IsVisibleThroughTheCheckpointAPI(t *testing.T) {
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -156,7 +156,7 @@ func TestApprovalCheckpoint_RejectionIsVisibleThroughTheCheckpointAPI(t *testing
 			atomic.AddInt32(&ran, 1)
 			return "deleted", nil
 		}),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -295,7 +295,7 @@ func TestResolveCheckpoint_ALoopCreatedCheckpointNamesItsSuspension(t *testing.T
 		WithStore(st),
 		WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "call-1", Name: def.Name, Arguments: "{}"}}}),
 		WithTool(def, func(_ context.Context, _ cortex.Invocation) (string, error) { return "deleted", nil }),
-		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}),
+		WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

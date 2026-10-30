@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/cognitive"
 	"github.com/xraph/cortex/engine"
@@ -134,7 +135,7 @@ func TestOperationalCalibrationDoesNotReadEvidenceWithoutAuthorizationOrPins(t *
 			s := newSQLiteStoreForTest(t)
 			p := &runtimeCalibration{t: t}
 			client := &capabilityClient{requiredToolClient: requiredToolClient{name: engine.ToolOperationalCapabilities}}
-			e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(&capabilityAuthority{denied: denied}), engine.WithOperationalAwareness(engine.OperationalAwarenessConfig{Calibration: p, Policy: cognitive.CalibrationPolicy{MinimumTrials: 50, MaxAge: time.Hour}}))
+			e, err := engine.New(engine.WithStore(s), engine.WithLLM(client), engine.WithToolAuthorizer(&capabilityAuthority{denied: denied}), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithOperationalAwareness(engine.OperationalAwarenessConfig{Calibration: p, Policy: cognitive.CalibrationPolicy{MinimumTrials: 50, MaxAge: time.Hour}}))
 			require.NoError(t, err)
 			ag := &agent.Config{ID: id.NewAgentID(), Name: "calibration"}
 			require.NoError(t, s.Create(ctx, ag))
@@ -163,7 +164,7 @@ func TestOperationalCalibrationUsesLiveVisibilityAndCallerDeadline(t *testing.T)
 		o.Observation.Profile.Binding.Tools = o.Binding.Tools
 		return nil
 	}}
-	e := requiredToolEngine(t, f, client, &requiredToolAuthority{}, engine.WithTool(namedTool("probe"), noopHandler), engine.WithToolAuthorizer(auth), engine.WithOperationalAwareness(engine.OperationalAwarenessConfig{Calibration: provider, Policy: cognitive.CalibrationPolicy{MinimumTrials: 50, MaxAge: time.Hour * 24}}))
+	e := requiredToolEngine(t, f, client, &requiredToolAuthority{}, engine.WithTool(namedTool("probe"), noopHandler), engine.WithToolAuthorizer(auth), engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), engine.WithOperationalAwareness(engine.OperationalAwarenessConfig{Calibration: provider, Policy: cognitive.CalibrationPolicy{MinimumTrials: 50, MaxAge: time.Hour * 24}}))
 	ag, overrides := requiredToolAgent(t, f)
 	overrides.Tools = []string{engine.ToolOperationalCapabilities, "probe"}
 	_, err := e.RunAgent(ctx, ag.Name, "inspect", overrides)

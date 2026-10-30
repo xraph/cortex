@@ -13,6 +13,8 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
 	"github.com/xraph/cortex/run"
 	"github.com/xraph/cortex/suspension"
@@ -25,6 +27,13 @@ const (
 	// that a run abandoned by a closed browser tab does not sit in the
 	// paused list for a quarter.
 	defaultSuspensionTTL = 24 * time.Hour
+
+	// defaultAgentReplyGrace is how long past an ask's reply-by the
+	// engine waits before failing the asking run. The ask sweep resolves
+	// the ask at reply-by and resumes the run with a timeout, and five
+	// minutes is ten of its default ticks, so the engine only fails a
+	// run the bus could not resume.
+	defaultAgentReplyGrace = 5 * time.Minute
 
 	// defaultSweepInterval is how often the sweeper looks. Deadlines are
 	// measured in hours, so a minute of granularity costs one small
@@ -48,13 +57,21 @@ type sweeper struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// checkpointCursor is where the stale checkpoint pass picks up: the
+	// last checkpoint id it looked at, or nil to start from the first.
+	cursorMu         sync.Mutex
+	checkpointCursor id.CheckpointID
 }
 
-// startSweeper launches the expiry loop, unless expiry is off or there
-// is no store to sweep. Calling it twice is a no-op: a second Start on a
-// running engine must not leave two loops failing the same runs.
+// startSweeper launches the expiry loop, unless there is no store to
+// sweep. It runs even with a zero suspension TTL: that only drops the
+// default deadline, and an approval, an external tool or an agent reply
+// can still carry a deadline of its own. Calling it twice is a no-op: a
+// second Start on a running engine must not leave two loops failing the
+// same runs.
 func (e *Engine) startSweeper() {
-	if e.suspensionTTL <= 0 || e.store == nil {
+	if e.store == nil {
 		return
 	}
 
@@ -106,23 +123,36 @@ func (e *Engine) stopSweeper() {
 	<-done
 }
 
-// sweepOnce is one pass: find the suspensions nobody answered in time
-// and fail their runs.
+// sweepOnce is one pass of the sweeper, each part under the run's own
+// scope as it acts on it:
 //
-// One instant is read and then used for both the list and every claim
-// below it. Taking a fresh time.Now per claim would let a row that the
-// list found expired be claimed against a later instant, which is
-// harmless here but would quietly diverge the two halves of a decision
-// that has to agree.
+//   - fail the runs whose suspension nobody answered in time;
+//   - mark reclaimable the running runs whose worker's lease lapsed;
+//   - tell the host again about runs left ready or reclaimable longer than
+//     WithReadyRenotify;
+//   - close pending checkpoints whose run has moved past them.
+//
+// One instant is read and then used for every list and every write below
+// it. Taking a fresh time.Now per write would let a row a list found due
+// be acted on against a later instant, which is harmless here but would
+// quietly diverge the two halves of a decision that has to agree.
 func (e *Engine) sweepOnce(ctx context.Context) {
-	if e.store == nil || e.suspensionTTL <= 0 {
+	if e.store == nil {
 		return
 	}
-
 	now := time.Now().UTC()
-	// The one read in this codebase that deliberately crosses scopes.
+	e.sweepExpired(ctx, now)
+	e.sweepLapsed(ctx, now)
+	e.renotify(ctx, now)
+	e.sweepStaleCheckpoints(ctx, now)
+}
+
+// sweepExpired finds the suspensions nobody answered in time and fails
+// their runs.
+func (e *Engine) sweepExpired(ctx context.Context, now time.Time) {
 	// The sweeper has no request scope and no way to enumerate the ones
-	// that exist, so a scoped list would find nothing at all.
+	// that exist, so a scoped list would find nothing at all: this read,
+	// like the sweeper's other listings, deliberately crosses scopes.
 	expired, err := e.store.ListExpiredAcrossScopes(ctx, now, e.sweepLimit)
 	if err != nil {
 		e.logError("list expired suspensions", err)
@@ -144,6 +174,143 @@ func (e *Engine) sweepOnce(ctx context.Context) {
 	if failed > 0 {
 		e.logError("expire suspensions", firstErr, log.Int("failed", failed), log.Int("batch", len(expired)))
 	}
+}
+
+// sweepLapsed takes every running run whose worker's lease lapsed and
+// marks it reclaimable, then fires RunReclaimable for it. A lease renewed
+// since the list, or a run that left running, is skipped, not an error.
+func (e *Engine) sweepLapsed(ctx context.Context, now time.Time) {
+	if e.continuation == nil {
+		return
+	}
+	lapsed, err := e.continuation.ListLapsedAcrossScopes(ctx, now, e.sweepLimit)
+	if err != nil {
+		e.logError("list runs whose lease lapsed", err)
+		return
+	}
+	failed := 0
+	var firstErr error
+	for _, r := range lapsed {
+		if r.Lease == nil {
+			continue
+		}
+		previous := *r.Lease
+		runCtx := cortex.WithScope(ctx, r.Scope)
+		moved, markErr := e.continuation.MarkReclaimable(runCtx, r.ID, now, "")
+		if errors.Is(markErr, cortex.ErrRunLeased) || errors.Is(markErr, cortex.ErrRunConflict) {
+			continue
+		}
+		if markErr != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = markErr
+			}
+			continue
+		}
+		e.instr.reclaim(reclaimReclaimed)
+		e.announceReclaimable(runCtx, moved, run.ReclaimNotice{PreviousOwner: previous.Owner, LeaseExpiredAt: previous.ExpiresAt, Reclaims: moved.Reclaims})
+	}
+	if failed > 0 {
+		e.logError("mark lapsed runs reclaimable", firstErr, log.Int("failed", failed), log.Int("batch", len(lapsed)))
+	}
+}
+
+// renotify tells the host again about every run left ready or reclaimable
+// since before the WithReadyRenotify period, with Renotified set. Each run
+// is stamped first, so it is repeated at most once per period whatever
+// the hooks do. A run claimed since the list is skipped.
+func (e *Engine) renotify(ctx context.Context, now time.Time) {
+	if e.continuation == nil || e.readyRenotify <= 0 {
+		return
+	}
+	waiting, err := e.continuation.ListContinuableAcrossScopes(ctx, now.Add(-e.readyRenotify), e.sweepLimit)
+	if err != nil {
+		e.logError("list runs waiting to continue", err)
+		return
+	}
+	for _, r := range waiting {
+		runCtx := cortex.WithScope(ctx, r.Scope)
+		if markErr := e.continuation.MarkNotified(runCtx, r.ID, now); markErr != nil {
+			if !errors.Is(markErr, cortex.ErrRunNotContinuable) {
+				e.logWarn("record a repeated run notice", markErr, log.String("run_id", r.ID.String()))
+			}
+			continue
+		}
+		switch r.State {
+		case run.StateReady:
+			notice := run.ReadyNotice{Renotified: true}
+			if r.Ready != nil {
+				notice.Source, notice.CheckpointID, notice.At = r.Ready.Source, r.Ready.CheckpointID, r.Ready.At
+			}
+			e.extensions.EmitRunReady(runCtx, r.AgentID, r.ID, notice)
+		case run.StateReclaimable:
+			e.extensions.EmitRunReclaimable(runCtx, r.AgentID, r.ID, run.ReclaimNotice{LeaseExpiredAt: r.UpdatedAt, Reclaims: r.Reclaims, Renotified: true})
+		}
+	}
+}
+
+// sweepStaleCheckpoints closes pending checkpoints that no decision can
+// act on any more, with the same superseded reason the decide path
+// writes: a checkpoint whose run is waiting on a different pause, and one
+// whose run has no pause at all and has not been written for longer than
+// the grace (a run that ended, or carried on, without its decision being
+// recorded). A run that is merely between a decider's action and its
+// record is written moments before, so the grace leaves it alone.
+//
+// It walks the pending checkpoints a batch per sweep, picking up where the
+// last batch ended, so checkpoints still legitimately waiting on a person
+// cannot keep the rest out of reach. Only the engine's own checkpoints are
+// touched: one a host wrote itself is the host's to close.
+func (e *Engine) sweepStaleCheckpoints(ctx context.Context, now time.Time) {
+	sweep := e.checkpointSweep
+	if sweep == nil || e.continuation == nil {
+		return
+	}
+	e.sweep.cursorMu.Lock()
+	defer e.sweep.cursorMu.Unlock()
+	pending, err := sweep.ListPendingAcrossScopes(ctx, e.sweep.checkpointCursor, e.sweepLimit)
+	if err != nil {
+		e.logError("list pending checkpoints", err)
+		return
+	}
+	if len(pending) < e.sweepLimit {
+		e.sweep.checkpointCursor = id.CheckpointID{}
+	} else {
+		e.sweep.checkpointCursor = pending[len(pending)-1].ID
+	}
+	for _, cp := range pending {
+		if !openedASuspendedRun(cp) {
+			continue
+		}
+		cpCtx := cortex.WithScope(ctx, cp.Scope)
+		if e.checkpointStale(cpCtx, cp, now) {
+			e.closeCheckpoint(cpCtx, cp, supersededReason)
+		}
+	}
+}
+
+// checkpointStale reports whether a decision on cp can no longer act on
+// anything. A read that fails says no: the next sweep looks again.
+func (e *Engine) checkpointStale(ctx context.Context, cp *checkpoint.Checkpoint, now time.Time) bool {
+	r, err := e.store.GetRun(ctx, cp.RunID)
+	if errors.Is(err, cortex.ErrRunNotFound) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	susp, err := e.store.GetSuspension(ctx, cp.RunID)
+	if err == nil {
+		opened, ok := cp.Metadata[checkpointSuspensionKey].(string)
+		return !ok || opened != susp.ID.String()
+	}
+	if !errors.Is(err, cortex.ErrNotSuspended) {
+		return false
+	}
+	if r.State == run.StateReady && r.Ready != nil && r.Ready.CheckpointID == cp.ID {
+		return false
+	}
+	return r.UpdatedAt.Before(now.Add(-e.idleGrace()))
 }
 
 // expireSuspension fails one run whose resumer never came back.
@@ -232,9 +399,19 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 		return expiryError, fmt.Errorf("load the run behind an expired suspension: %w", err)
 	}
 
-	claimed, err := e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
+	// Under the lease when this engine can take it with the claim: a sweep
+	// that dies before its failure write leaves a lease that lapses, not a
+	// running run nobody owns.
+	// The snapshot carries the expiry, so a worker that reclaims the run
+	// after a lost failure write fails it the same way.
+	first := claimSnapshot(susp, nil)
+	first.Ending = &suspension.Ending{Kind: suspension.EndingExpire, Reason: expiredDetail(susp)}
+	claimed, leased, err := e.claimPauseLeased(ctx, snapshot, susp, now, first)
+	if !leased {
+		claimed, err = e.store.ClaimExpiredSuspension(ctx, susp.RunID, now)
+	}
 	if err != nil {
-		if errors.Is(err, cortex.ErrNotSuspended) {
+		if errors.Is(err, cortex.ErrNotSuspended) || errors.Is(err, cortex.ErrRunConflict) {
 			// Somebody else owns this run: it was resumed, decided, or
 			// already swept. Not an error, and nothing to log.
 			dropped, dropErr := e.dropOrphanedSuspension(ctx, susp)
@@ -262,7 +439,9 @@ func (e *Engine) expireOne(ctx context.Context, susp *suspension.Suspension, now
 
 	if err := e.persistFailure(ctx, r, r.AgentID, expiredRunError(susp)); err != nil {
 		// The suspension stays. It is the only record of what the run
-		// was waiting on, and the next sweep will find it again.
+		// was waiting on. A leased claim's lease lapses and the run is
+		// reclaimed, and the expiry its snapshot carries is finished then;
+		// a claim made without one leaves the run for the next sweep.
 		return expiryError, fmt.Errorf("fail expired run %s: %w", susp.RunID, err)
 	}
 
@@ -349,7 +528,7 @@ func isTerminalRunState(s run.State) bool {
 	switch s {
 	case run.StateCompleted, run.StateIncomplete, run.StateFailed, run.StateCancelled:
 		return true
-	case run.StateCreated, run.StateRunning, run.StatePaused:
+	case run.StateCreated, run.StateRunning, run.StatePaused, run.StateReady, run.StateReclaimable:
 		return false
 	default:
 		return false
@@ -361,10 +540,14 @@ func isTerminalRunState(s run.State) bool {
 // the deadline, because "expired" without a time sends whoever reads it
 // looking for a log line to find out when.
 func expiredRunError(susp *suspension.Suspension) error {
+	return fmt.Errorf("%w: %s", cortex.ErrSuspensionExpired, expiredDetail(susp))
+}
+
+// expiredDetail is what expiredRunError says after the sentinel.
+func expiredDetail(susp *suspension.Suspension) string {
 	deadline := "its deadline"
 	if susp.ExpiresAt != nil {
 		deadline = susp.ExpiresAt.Format(time.RFC3339)
 	}
-	return fmt.Errorf("%w: nothing answered the %s pending call(s) by %s",
-		cortex.ErrSuspensionExpired, susp.Reason, deadline)
+	return fmt.Sprintf("nothing answered the %s pending call(s) by %s", susp.Reason, deadline)
 }

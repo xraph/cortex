@@ -73,6 +73,7 @@ jobs:
           - integrations/fabriq
           - integrations/sandbox
           - optimization
+          - mcpbridge
           - a2aremote
           - a2aremote/grpcbind
 

@@ -82,3 +82,34 @@ func TestRequiredSuspensionDetailHidesPrivateCalls(t *testing.T) {
 		t.Fatalf("private pending calls exposed: %+v", out.Suspension)
 	}
 }
+
+// A ready run still has the pause it is about to continue from, and the
+// detail shows its pending calls as it does for a paused run.
+func TestReadyRunDetailShowsItsPause(t *testing.T) {
+	d, s, st := testService(t)
+	p := principal("ready-detail")
+	ctx, err := s.context(context.Background(), p, "manage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "ready", Enabled: true}
+	if err = s.deps.Engine.CreateAgent(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	r := &run.Run{ID: id.NewAgentRunID(), AgentID: ag.ID, State: run.StateReady}
+	if err = st.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	susp := &suspension.Suspension{ID: id.NewSuspensionID(), RunID: r.ID, Reason: suspension.ReasonExternalTool, Pending: []suspension.PendingCall{{ID: "call-1", Name: "probe", Arguments: "{}"}}}
+	if err = st.CreateSuspension(ctx, susp); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := dispatch(t, d, p, "runs.detail", IDInput{ID: r.ID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := decode[RunDetail](t, raw)
+	if out.Suspension == nil || len(out.Suspension.Pending) != 1 || out.Suspension.Pending[0].ID != "call-1" {
+		t.Fatalf("ready run detail suspension = %+v, want its pending call", out.Suspension)
+	}
+}

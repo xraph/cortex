@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/shield/profile"
 	"github.com/xraph/shield/scan"
 	shieldsqlite "github.com/xraph/shield/store/sqlite"
+	"github.com/xraph/weave"
 	"github.com/xraph/weave/collection"
 	weaveengine "github.com/xraph/weave/engine"
 	weaveid "github.com/xraph/weave/id"
@@ -98,7 +99,7 @@ func TestWeaveCatalogWalksAllPagesAndChecksDetailBeforeStats(t *testing.T) {
 			row.ID = foreign
 			row.TenantID = "foreign"
 		}
-		if createErr := st.CreateCollection(ctx, row); createErr != nil {
+		if createErr := st.CreateCollection(weave.WithTenant(ctx, row.TenantID), row); createErr != nil {
 			t.Fatal(createErr)
 		}
 	}

@@ -20,7 +20,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.GET("/runs", a.listRuns,
 		forge.WithSummary("List runs"),
 		forge.WithDescription("Returns agent runs with optional pagination."),
-		forge.WithOperationID("listRuns"),
+		a.op("listRuns", false),
 		forge.WithRequestSchema(ListRunsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Run list", []*run.Run{}),
 		forge.WithErrorResponses(),
@@ -31,7 +31,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.GET("/runs/:id", a.getRun,
 		forge.WithSummary("Get run"),
 		forge.WithDescription("Returns details of a specific run."),
-		forge.WithOperationID("getRun"),
+		a.op("getRun", false),
 		forge.WithResponseSchema(http.StatusOK, "Run details", &run.Run{}),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -41,7 +41,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.GET("/runs/:id/results/:result_id", a.readResultContent,
 		forge.WithSummary("Read screened verified result content"),
 		forge.WithDescription("Checks current content authority, retained verification and publication policy before bounded delivery."),
-		forge.WithOperationID("readResultContent"),
+		a.op("readResultContent", false),
 		forge.WithRequestSchema(ResultContentRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Screened result", verification.ResultContentResponse{}),
 		forge.WithErrorResponses(),
@@ -52,7 +52,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.GET("/runs/:id/events", a.replayRun,
 		forge.WithSummary("Replay public run metadata"),
 		forge.WithDescription("Reads authorized durable events. A 410 page identifies a retention gap and requires a refreshed run snapshot."),
-		forge.WithOperationID("replayRunEvents"),
+		a.op("replayRunEvents", false),
 		forge.WithRequestSchema(ReplayRunRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Public event page", event.ReplayPage{}),
 		forge.WithResponseSchema(http.StatusGone, "Retention gap", event.ReplayPage{}),
@@ -64,7 +64,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.GET("/runs/:id/events/stream", a.streamReplayRun,
 		forge.WithSummary("Subscribe to public run metadata"),
 		forge.WithDescription("Bounded SSE replay with run-bound event IDs, current subscriber authorization and explicit retention gaps."),
-		forge.WithOperationID("streamRunEvents"),
+		a.op("streamRunEvents", false),
 		forge.WithResponseContentTypes("text/event-stream"),
 		forge.WithSSEMessages(map[string]any{"page": event.ReplayPage{}, "heartbeat": event.ReplayPage{}, "gap": event.ReplayPage{}, "error": event.ReplayFailure{}}),
 		forge.WithRequestSchema(ReplayStreamRequest{}),
@@ -76,7 +76,7 @@ func (a *API) registerRunRoutes(router forge.Router) error {
 	if err := g.POST("/runs/:id/cancel", a.cancelRun,
 		forge.WithSummary("Cancel run"),
 		forge.WithDescription("Cancels a running agent execution."),
-		forge.WithOperationID("cancelRun"),
+		a.op("cancelRun", true),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	); err != nil {
@@ -98,7 +98,7 @@ func (a *API) getRun(ctx forge.Context, _ *GetRunRequest) (*run.Run, error) {
 		return nil, mapStoreError(err)
 	}
 	r = run.PublicView(r, a.eng.ResultContentAvailable())
-	return r, ctx.JSON(http.StatusOK, r)
+	return r, nil
 }
 
 func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
@@ -115,7 +115,7 @@ func (a *API) listRuns(ctx forge.Context, req *ListRunsRequest) (*ListRunsRespon
 		publicRuns[i] = run.PublicView(current, a.eng.ResultContentAvailable())
 	}
 	resp := &ListRunsResponse{Items: publicRuns}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) cancelRun(ctx forge.Context, _ *CancelRunRequest) (*struct{}, error) {

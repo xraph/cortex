@@ -20,7 +20,7 @@ func (a *API) registerA2ARoutes(router forge.Router) error {
 	if err := g.GET("/a2a/conversations", a.listA2AConversations,
 		forge.WithSummary("List conversations"),
 		forge.WithDescription("Lists agent-to-agent conversations in the caller's scope."),
-		forge.WithOperationID("listA2AConversations"),
+		a.op("listA2AConversations", false),
 		forge.WithRequestSchema(ListA2AConversationsRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Conversation list", &ListA2AConversationsResponse{}),
 		forge.WithErrorResponses(),
@@ -31,7 +31,7 @@ func (a *API) registerA2ARoutes(router forge.Router) error {
 	if err := g.GET("/a2a/conversations/:id", a.getA2AConversation,
 		forge.WithSummary("Get conversation"),
 		forge.WithDescription("Returns one conversation together with its messages, oldest first."),
-		forge.WithOperationID("getA2AConversation"),
+		a.op("getA2AConversation", false),
 		forge.WithRequestSchema(GetA2AConversationRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Conversation", &A2AConversationResponse{}),
 		forge.WithErrorResponses(),
@@ -42,7 +42,7 @@ func (a *API) registerA2ARoutes(router forge.Router) error {
 	if err := g.GET("/agents/:name/inbox", a.getAgentInbox,
 		forge.WithSummary("Read an agent's inbox"),
 		forge.WithDescription("Returns messages delivered to an agent. Reading marks them read."),
-		forge.WithOperationID("getAgentInbox"),
+		a.op("getAgentInbox", false),
 		forge.WithRequestSchema(AgentInboxRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Inbox", &AgentInboxResponse{}),
 		forge.WithErrorResponses(),
@@ -56,7 +56,7 @@ func (a *API) registerA2ARoutes(router forge.Router) error {
 			"Sends a message from outside a run: an operator answering an agent, or a host "+
 				"injecting work. A reply carrying in_reply_to resumes the run waiting on it, "+
 				"which is how a human answers an agent that asked."),
-		forge.WithOperationID("sendAgentMessage"),
+		a.op("sendAgentMessage", true),
 		forge.WithRequestSchema(SendMessageRequest{}),
 		forge.WithCreatedResponse(&a2a.SendResult{}),
 		forge.WithErrorResponses(),
@@ -77,7 +77,7 @@ func (a *API) listA2AConversations(ctx forge.Context, req *ListA2AConversationsR
 		return nil, mapStoreError(err)
 	}
 	resp := &ListA2AConversationsResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getA2AConversation(ctx forge.Context, _ *GetA2AConversationRequest) (*A2AConversationResponse, error) {
@@ -96,7 +96,7 @@ func (a *API) getA2AConversation(ctx forge.Context, _ *GetA2AConversationRequest
 	}
 
 	resp := &A2AConversationResponse{Conversation: conv, Messages: msgs}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) getAgentInbox(ctx forge.Context, req *AgentInboxRequest) (*AgentInboxResponse, error) {
@@ -114,7 +114,7 @@ func (a *API) getAgentInbox(ctx forge.Context, req *AgentInboxRequest) (*AgentIn
 		return nil, mapStoreError(err)
 	}
 	resp := &AgentInboxResponse{Items: items}
-	return resp, ctx.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (a *API) sendAgentMessage(ctx forge.Context, req *SendMessageRequest) (*a2a.SendResult, error) {
@@ -148,5 +148,5 @@ func (a *API) sendAgentMessage(ctx forge.Context, req *SendMessageRequest) (*a2a
 	if err != nil {
 		return nil, mapStoreError(err)
 	}
-	return res, ctx.JSON(http.StatusCreated, res)
+	return nil, ctx.JSON(http.StatusCreated, res)
 }

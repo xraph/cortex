@@ -191,11 +191,18 @@ func TestAgentReplyResumeAdmissionRecovery(t *testing.T) {
 
 func admittedReplyFixture(t *testing.T, boundary string, options ...Option) (store.Store, context.Context, *run.Run, id.SuspensionID) {
 	t.Helper()
+	return admittedReplyFixtureAs(t, boundary, nil, options...)
+}
+
+// admittedReplyFixtureAs is admittedReplyFixture with the asking run
+// started under principal.
+func admittedReplyFixtureAs(t *testing.T, boundary string, principal any, options ...Option) (store.Store, context.Context, *run.Run, id.SuspensionID) {
+	t.Helper()
 	e, st, ctx := a2aEngine(t, []llm.ToolCall{{ID: "call-1", Name: toolAgentAsk, Arguments: `{"to":"worker","content":"status?"}`}})
 	for _, option := range options {
 		require.NoError(t, option(e))
 	}
-	current, err := e.RunAgent(ctx, "planner", "ask", nil)
+	current, err := e.RunAgent(cortex.WithPrincipal(ctx, principal), "planner", "ask", nil)
 	require.NoError(t, err)
 	paused, err := st.GetSuspension(ctx, current.ID)
 	require.NoError(t, err)
@@ -210,6 +217,9 @@ func admittedReplyFixture(t *testing.T, boundary string, options ...Option) (sto
 	require.True(t, ok)
 	fault := errors.New("injected resume acknowledgment failure")
 	e.store = &resumeAdmissionFaultStore{Store: st, AskResolutionStore: resolutions, VersionedStore: versioned, ResumeAdmissionStore: durable, boundary: boundary, fault: fault}
+	// The engine asserts its optional capabilities from the store it is
+	// given; the faulty store has no leased claims, so its faults are hit.
+	e.leasedClaims, _ = e.store.(suspension.LeasedClaimStore)
 	if boundary == "seal_lost" {
 		e.a2a, err = a2a.NewBus(a2a.BusConfig{Store: e.store, Runner: agentRunnerAdapter{eng: e}, Resumer: a2aResumer{eng: e}, Options: a2a.Options{HopCeiling: 4, Workers: 1}})
 		require.NoError(t, err)

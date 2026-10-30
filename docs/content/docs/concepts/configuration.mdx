@@ -14,12 +14,12 @@ type Config struct {
     DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
     DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
     DefaultReasoningLoop string        // reasoning strategy (default: "react")
-    ShutdownTimeout      time.Duration // default: 30s, not used by the engine
-    RunConcurrency       int           // default: 4, not used by the engine
+    ShutdownTimeout      time.Duration // default: 30s, applied by the Forge extension
+    RunConcurrency       int           // default: 0 (no limit), applied by the Forge extension
 }
 ```
 
-`ShutdownTimeout` and `RunConcurrency` are carried in the struct but nothing reads them yet: runs aren't throttled and `Stop` doesn't time out. `DefaultReasoningLoop` is recorded on each run, but ReAct is the only loop there is.
+`engine.New` doesn't read `ShutdownTimeout` or `RunConcurrency`. The Forge extension does: it bounds `Stop` with `shutdown_timeout` and passes `run_concurrency` to `engine.WithRunConcurrency`. Without the extension, set the cap with `engine.WithRunConcurrency(n)` and put a deadline on the `ctx` you hand `Stop`. `DefaultReasoningLoop` is recorded on each run, but ReAct is the only loop there is.
 
 `DefaultModel` is `smart`, which only means something if your model gateway has an alias with that name. Set a real model here or on each agent.
 
@@ -34,7 +34,7 @@ cortex.DefaultConfig() // returns:
 //     DefaultTemperature:   0.7,
 //     DefaultReasoningLoop: "react",
 //     ShutdownTimeout:      30 * time.Second,
-//     RunConcurrency:       4,
+//     RunConcurrency:       0,
 // }
 ```
 
@@ -70,16 +70,45 @@ A field you leave at zero stays zero. A zero `DefaultMaxSteps` or `DefaultModel`
 | `engine.WithLLM(client)` | Sets the `llm.Client`. Without one, runs echo their input |
 | `engine.WithTool(def, handler)` | Registers a tool the engine runs when the model calls it |
 | `engine.WithExternalTool(def)` | Registers a tool the caller runs; the run suspends until `Resume` |
-| `engine.WithToolAuthorizer(a)` | Installs your `cortex.ToolAuthorizer` |
+| `engine.WithToolAuthorizer(a)` | Installs your `cortex.ToolAuthorizer`. Needs `WithPrincipalCodec` too |
+| `engine.WithPrincipalCodec(c)` | Installs the `cortex.PrincipalCodec` that keeps a run's principal across a pause. See [Tool Authorization](/docs/concepts/authorization#keeping-the-principal-across-a-pause) |
 | `engine.WithSafety(scanner)` | Scans input and output through a `safety.Scanner` |
 | `engine.WithKnowledge(provider)` | Sets the `knowledge.Provider` for skill knowledge and the `knowledge_search` tool |
 | `engine.WithA2A(opts)` | Turns on agent-to-agent messaging |
-| `engine.WithSuspensionTTL(d)` | How long a suspended run waits before it's failed. Zero turns expiry off |
+| `engine.WithToolRetrySafe(names...)` | Marks registered tools as safe to run again after a crash. Every name must already be registered, or `New` fails. A tool that isn't retry-safe and has an unknown outcome stops a reclaimed run with `cortex.ErrEffectUncertain` |
+| `engine.WithRejectionsReturnToModel()` | Sends a rejected approval back to the model as an error result instead of failing the run |
+| `engine.WithSuspensionTTL(d)` | The default deadline for a suspended run, 24 hours unless you change it. Zero means no default deadline; the sweeper still runs for pauses that carry their own |
+| `engine.WithAgentReplyGrace(d)` | How long past an ask's reply-by the engine waits before it fails a run waiting on an agent. Five minutes by default |
 | `engine.WithSuspensionSweepInterval(d)` | How often the expiry sweeper runs |
 | `engine.WithSuspensionSweepLimit(n)` | How many expired suspensions one sweep handles |
+| `engine.WithRunLease(ttl)` | Turns run leases on and sets how long a worker's lease on a running run lasts, renewed every `ttl/3`. Off (zero) by default. Turn it on only when your host continues `RunReady` and `RunReclaimable` runs with `ContinueRun`, since nothing else does. 60 seconds suits most hosts. Every engine sharing a store needs the same setting |
+| `engine.WithWorkerID(id)` | Names this engine as a lease owner. Unique per replica and stable for the process. Defaults to the hostname, pid and a random suffix |
+| `engine.WithReclaimLimit(n)` | How often a run may be reclaimed after a lapsed lease before it's failed with `cortex.ErrReclaimLimit`. Three by default |
+| `engine.WithReadyRenotify(d)` | How long a `ready` or `reclaimable` run waits before the sweeper fires its hook again. Five minutes by default; zero turns it off |
+| `engine.WithRunConcurrency(n)` | Caps how many runs execute at once. Zero, the default, is no limit; a negative `n` fails `New`. See [Run concurrency](#run-concurrency) |
 | `engine.WithExtension(ext)` | Registers a plugin extension |
 | `engine.WithLogger(l)` | Sets the go-utils `log.Logger`. Defaults to a no-op logger; the Forge extension passes the app's logger |
 | `engine.WithMetrics(m)` | Records the engine's metrics on a go-utils metrics sink. Nil, the default, records nothing; the Forge extension passes the app's metrics |
+
+## Run concurrency
+
+```go
+eng, err := engine.New(
+    engine.WithStore(pgStore),
+    engine.WithLLM(client),
+    engine.WithRunConcurrency(8),
+)
+```
+
+With a cap of 8 the ninth run waits for a slot, and only for as long as its `ctx` allows. When the `ctx` ends first you get an error matching `ctx.Err()` (usually `context.DeadlineExceeded`) and no run row is written, so a job runner can put the work back on its queue. `eng.RunConcurrency()` reports the cap.
+
+`RunAgent`, `StreamAgent`, `RunPrepared`, `StreamPrepared`, `Resume`, `ResumeStream`, `ResolveCheckpoint`, `ContinueRun` and `ContinueRunStream` are all counted, as are the resumes the message bus and agent-reply recovery start. A stream keeps its slot until its channel closes. A run started on the `ctx` of a run that already has a slot (a tool calling `RunAgent`, say) shares that slot, which is why a cap of 1 can't deadlock on nested runs. Runs started by the experimental task workers, prepared orchestrations and plan replanning aren't counted against the cap.
+
+`eng.Stop(ctx)` stops admitting first. New runs get `cortex.ErrEngineStopping` and `Stop` waits for the runs already executing. With leasing off, the default, every one of them runs to its end and nothing is handed off. With `engine.WithRunLease` set, a leased run hands itself off at its next model call or tool dispatch: it saves its progress, becomes `reclaimable` for another replica and returns `cortex.ErrRunInterrupted`. If `ctx` ends before the runs are done, `Stop` returns its error and no shutdown hook fires. Leased runs still going are told to hand off then, but `Stop` doesn't wait for them, so a process that exits straight away may leave a few to lapse and be reclaimed by the sweep instead. A run without a lease is left running, so it still records its own result. A run started from inside another run's tool isn't handed off by the drain; it finishes with the call that started it. Call `Stop` again to complete the shutdown. `eng.Start(ctx)` admits runs again.
+
+Leasing is opt-in. `engine.WithRunLease(ttl)` turns it on and sets how long a worker's lease on a running run lasts (renewed every `ttl/3`), and `engine.WithWorkerID(id)` names the worker. A handed-off or reclaimed run then waits in `reclaimable` until something calls `ContinueRun`, and nothing in cortex does. So turn it on only after you subscribe to `plugin.RunReady` and `plugin.RunReclaimable` and queue a job that calls `ContinueRun`; [Runs](/docs/execution/runs#durability-leases-hand-off-and-reclaim) shows the plugin. Every engine sharing a store has to use the same lease setting, and their clocks have to agree, because lease expiry compares the clocks of two machines.
+
+With messaging on, the bus follows the same rule. While `Stop` drains it claims no new deliveries and resolves no new asks, so a queued question or reply stays queued for another replica, or for this one after `Start`, and nobody gets a Failure reply because the engine was stopping. A delivery the bus was already carrying when the drain began finishes, including the resume its reply triggers, and `Stop` waits for it.
 
 ## Agent-level overrides
 
@@ -111,31 +140,137 @@ type Config struct {
     DefaultTemperature   float64       // default: 0.7
     DefaultReasoningLoop string        // default: "react"
     ShutdownTimeout      time.Duration // default: 30s
-    RunConcurrency       int           // default: 4
+    RunConcurrency       int           // default: 0 (no limit)
     GroveDatabase        string        // grove.DB name for DI resolution
     RequireConfig        bool          // fail Register when no config is found; not read from YAML
 }
 ```
 
-The extension doesn't hand `DefaultModel`, `DefaultMaxSteps`, `DefaultMaxTokens`, `DefaultTemperature`, `DefaultReasoningLoop`, `ShutdownTimeout` or `RunConcurrency` to the engine, so in a Forge app they have no effect yet. Pass engine defaults with `extension.WithEngineOption(engine.WithConfig(...))` instead.
+All of these are applied now. The `Default*` fields and `ShutdownTimeout` become the engine's `cortex.Config`, `RunConcurrency` goes to `engine.WithRunConcurrency`, and the extension's `Stop` waits at most `ShutdownTimeout` for runs in flight. An engine option you pass with `extension.WithEngineOption` still wins over all of them, because the host's options are applied last. [Forge Extension](/docs/guides/forge-extension#option-precedence) has the full order.
 
 ### Extension options
 
 | Option | Description |
 |--------|-------------|
-| `extension.WithStore(s)` | Sets the composite store (a Grove database in the container takes precedence) |
+| `extension.WithStore(s)` | Sets the composite store. It wins over a Grove database in the container |
 | `extension.WithGroveDatabase(name)` | Sets the grove.DB to resolve from DI |
 | `extension.WithRoutes(build)` | Mounts a route set, normally `api.New` from the `api` module |
 | `extension.WithBasePath(path)` | Sets the URL prefix |
 | `extension.WithDisableRoutes()` | Skips mounting the route set |
 | `extension.WithDisableMigrate()` | Disables auto-migration |
 | `extension.WithExtension(x)` | Registers a Cortex plugin extension |
-| `extension.WithEngineOption(opt)` | Passes an engine option directly |
+| `extension.WithEngineOption(opt)` | Passes an engine option directly. It overrides the config and the automatic adapters |
+| `extension.WithoutAutoAdapters()` | Skips looking for Nexus, Shield, Weave and Sentinel in the container |
+| `extension.WithNexusOptions(opts...)` | Passes [Nexus adapter options](#nexus-adapter) to the adapter the extension wires in |
+| `extension.WithWeaveOptions(opts...)` | Passes [Weave adapter options](#weave-adapter) to the adapter the extension wires in |
+| `extension.WithShieldOptions(opts...)` | Passes [Shield adapter options](#shield-adapter) to the adapter the extension wires in |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithRequireConfig(bool)` | Requires YAML config to be present |
 | `extension.WithDashboard(deps)` | Supplies the dashboard contract's scope mapping and audit sink |
 
 The extension mounts no routes unless you pass `WithRoutes`. See [Forge Extension](/docs/guides/forge-extension).
+
+## Nexus adapter
+
+`llm/nexus` sends every model call through a [Nexus](https://github.com/xraph/nexus) gateway, and every call goes out under a Nexus tenant. A call that names no tenant fails with an error matching `cortex.ErrNoScope`, and nothing reaches the gateway.
+
+```go
+adapter := nexusllm.New(gw,
+    // Your scope's workspace is not a Nexus tenant ID, so map it.
+    nexusllm.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return lookupNexusTenant(ctx, ws)
+    }),
+    // Send every call to the provider the workspace picked.
+    nexusllm.WithProvider(func(ctx context.Context, s cortex.Scope) string {
+        return "anthropic"
+    }),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithLLM(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Nexus tenant from the context's scope, when the context carries none |
+| `WithProvider(f)` | unset | Names the Nexus provider for the call; `""` leaves the choice to Nexus |
+| `WithMetadata(f)` | one pair per scope level, plus `run` and `agent` | Builds the usage metadata the call is recorded with |
+| `WithSamplingUnsupported(f)` | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` | Says which models get no `temperature` |
+
+The tenant on the context wins. If your middleware already calls `pipeline.WithTenantID` next to `cortex.WithScope`, you don't need `WithTenant` at all. Otherwise the adapter asks your `TenantFunc`. The default, `cortex.RootTenant`, returns the first scope level's value, and that only works when the value is itself a Nexus tenant ID (`tenant_...`), because Nexus refuses any other tenant and any tenant it doesn't have.
+
+Metadata ends up in Nexus's usage records, so you can break spend down by run or agent. The engine puts `run` and `agent` on every request (`llm.MetadataRun`, `llm.MetadataAgent`), and the default adds your scope levels. Whatever `WithMetadata` returns is cut to what Nexus accepts: pairs with a key outside `^[A-Za-z0-9_-]{1,64}$` or a value over 256 bytes are dropped, and only 16 are kept, `run` and `agent` first.
+
+Without `WithProvider`, Nexus routes by alias and then by the providers that list the model. Two providers that both list a model can each get the call, which is how an OpenAI-compatible model id ends up at Anthropic. Set it whenever your host knows which provider a workspace uses.
+
+Claude 5.5 models reject `temperature`, so the adapter drops it for them (it never sends `top_p`). If you call models through Nexus aliases, the adapter only sees the alias, so pass a predicate that knows what each alias points at, or pin concrete model ids for agent runs.
+
+These need no setup:
+
+- Thinking models get their own turns back. The adapter copies the provider's native reply (`llm.NativeContent`, signed thinking blocks included) onto the response, and the engine keeps it on the assistant message it appends. It survives a pause, a hand-off and a reclaim, and goes back to the model on the next call as equivalent JSON, since Nexus re-encodes it. It never goes into conversation memory, so a later run's history has no thinking blocks, and it's never published.
+- A turn whose text your publication gate redacted loses its thinking blocks when it is replayed to the model, because the thinking no longer matches the text. If you want that to be explicit, set the Nexus Anthropic provider's `anthropic.WithThinkingBlockBinding("drop_block")`. The engine still attaches the native content to that turn; the redacted text is what goes with it.
+- The native content holds what the model produced, unredacted. It sits that way at rest in progress snapshots and continuations, so treat those rows like the raw model output when you decide who can read your store.
+- `llm.Request.ToolChoice` is sent in OpenAI's shape (`auto`, `none`, `required`, or one named function). The engine never sets it. Nexus refuses a forced choice on an Anthropic thinking model with `anthropic.ErrForcedToolChoice`, and the adapter hands that error back unchanged.
+- A Nexus guard that blocks a request or a response surfaces as `llm.ErrContentBlocked`, with the guard's `*guard.BlockedError` still reachable through `errors.As`. The engine stops the run with stop reason `safety_block`, and no tool call from that step runs, even one the stream had already started to send.
+
+`nexusllm.New(gw)` works before the gateway starts; calls just fail with `nexus.ErrNotInitialized` until `Initialize` returns. When you only get the gateway later, as with the one Nexus's Forge extension builds, use `nexusllm.NewFunc(func() *nexus.Gateway { return ext.Gateway() })`. Under the Forge extension, pass the same options with `extension.WithNexusOptions`.
+
+## Weave adapter
+
+`knowledge/weave` searches a [Weave](https://github.com/xraph/weave) engine, and every call runs under a Weave tenant taken from the run's scope. A call whose scope names no tenant fails with an error matching both `cortex.ErrNoScope` and `weave.ErrTenantRequired`, and Weave is never asked. The adapter only reads.
+
+```go
+adapter := weaveknowledge.New(eng,
+    // The default is cortex.RootTenant, the first scope level's value.
+    weaveknowledge.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return ws, nil
+    }),
+    // Every run may also search your product docs.
+    weaveknowledge.WithShared(weaveknowledge.SharedCollection{Tenant: "docs", Collection: "product-docs"}),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithKnowledge(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Weave tenant from the run's scope. An empty result is refused like a missing scope |
+| `WithShared(collections...)` | none | Adds read-only collections, each under its own tenant, that every run may also search |
+
+A search that names no collection runs once under the run's tenant and once for each shared collection, then merges the hits by score and keeps the top `TopK` (5 when you set none). A search that names a collection resolves it in the run's tenant, unless it names a shared one, which it reads under that collection's tenant. `ListCollections` returns the run tenant's collections plus the shared ones. A run never sees another tenant's collections, because Weave checks the tenant on every call.
+
+Under the Forge extension, pass the same options with `extension.WithWeaveOptions`.
+
+## Shield adapter
+
+`safety/shield` screens content with a [Shield](https://github.com/xraph/shield) engine. It's a `safety.Scanner` and a `safety.PublicationGate` (an incremental one, so it can [stream checked segments](/docs/execution/assurance#streaming-shield-checked-segments)), and `shieldsafety.EngineOption` installs it as both. Every scan runs under a Shield tenant and app, and evaluates the profile named in the agent's `shield_profile` guardrail (Shield's default profile when the agent names none).
+
+```go
+adapter := shieldsafety.New(eng,
+    // The default is cortex.RootTenant, the first scope level's value.
+    shieldsafety.WithTenant(func(ctx context.Context, s cortex.Scope) (string, error) {
+        ws, _ := s.Get("workspace")
+        return ws, nil
+    }),
+    // Seed your profiles under this app.
+    shieldsafety.WithApp("loomplane"),
+)
+eng, err := engine.New(engine.WithStore(st), engine.WithSafety(adapter), engine.WithPublicationGate(adapter))
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `WithTenant(f)` | `cortex.RootTenant` | Names the Shield tenant from the run's scope. An error or an empty result fails the scan closed |
+| `WithApp(app)` | the scope's `app` level, or the canonical scope | Names the Shield app, which with the tenant picks the profiles |
+| `WithUntrustedSources(sources...)` | `tool_result`, `tool_error`, `retrieval` | Replaces the publication sources whose inbound text Shield treats as untrusted |
+| `WithSegmentLimit(maxBytes)` | 2048 | How much streamed text with no sentence or line end is held before it's cut at a whitespace (never one next to a `:` or `=`), under `safety.ModeCheckedSegments` |
+
+The tenant comes from the scope through your `TenantFunc`. It's never the engine's canonical scope string, so a Shield tenant you seeded as `o1` matches a run scoped `org=o1`.
+
+Inbound text from an untrusted source is quoted. Unless Shield blocks it, the model gets the text wrapped in an `<untrusted_content source="tool_result">` element, with any secrets and instruction-shaped lines already taken out, and the publication status is `redacted`. The outbound pass over the same text isn't marked again, so nothing is quoted twice. Text that is already exactly one Shield quote for its source isn't wrapped again either: its inner text is scanned as untrusted and, when Shield changes nothing, the same bytes come back. That's what lets the engine re-check a prepared run's knowledge before every pass and get the text it stored. A forged or partial wrapper inside retrieved text is quoted like any other text, and Shield escapes the tags in it. A gate result for untrusted text that isn't one quote is refused.
+
+A scan that can't run fails closed. The error matches `safety.ErrUnavailable` and, when Shield said why, one of `shield.ErrTenantRequired`, `shield.ErrNoProfile`, `shield.ErrProfileInvalid`, `shield.ErrInputTooLarge` or `shield.ErrInvalidInput`. Nothing else of Shield's error comes through, so the scanned text, the profile name and the tenant never reach a log or an API error. A result that names no profile is refused as well.
+
+`shieldsafety.NewToolAuthorizer` scans tool calls; [Authorization](/docs/concepts/authorization#layering-shield-under-your-authorizer) covers it. Under the Forge extension, pass the adapter options with `extension.WithShieldOptions`.
 
 ## YAML configuration
 
@@ -149,14 +284,13 @@ extensions:
     disable_migrate: false
     base_path: "/cortex"
     grove_database: "cortex"
-    # Accepted, but not passed to the engine yet:
     default_model: "gpt-4o"
     default_max_steps: 50
     default_max_tokens: 8192
     default_temperature: 0.7
     default_reasoning_loop: "react"
     shutdown_timeout: "30s"
-    run_concurrency: 8
+    run_concurrency: 8  # 0 or unset means no limit
 ```
 
 ### Merge behaviour

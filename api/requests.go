@@ -349,7 +349,10 @@ type ListCheckpointsRequest struct {
 type ResolveCheckpointRequest struct {
 	CheckpointID string `path:"id" description:"Checkpoint ID"`
 	Decision     string `json:"decision" description:"approved or rejected"`
-	DecidedBy    string `json:"decided_by,omitempty"`
+	// DecidedBy is the deciding person as the caller asserts it. With an
+	// Authorizer installed it is ignored and the decider comes from
+	// Authorizer.DecidedBy; without one it is recorded as sent.
+	DecidedBy string `json:"decided_by,omitempty" description:"Deciding person; ignored when the host installs an authorizer"`
 	// Reason is what a rejection puts on the failed run, so whoever finds
 	// the run later reads why a person stopped it rather than a bare
 	// "rejected".
@@ -526,7 +529,7 @@ type AgentInboxRequest struct {
 // is how a person answers an agent that asked a question.
 type SendMessageRequest struct {
 	Name           string `path:"name" description:"Recipient agent name"`
-	From           string `json:"from" description:"Sender name, as it should appear to the recipient"`
+	From           string `json:"from" description:"Sender name, as it should appear to the recipient; caller-asserted, for attribution only, even with an authorizer"`
 	Content        string `json:"content" description:"The message body"`
 	Performative   string `json:"performative,omitempty" description:"FIPA-ACL speech act (default: inform)"`
 	ConversationID string `json:"conversation_id,omitempty" description:"Continue an existing conversation"`

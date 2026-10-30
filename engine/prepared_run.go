@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xraph/cortex"
+	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/evidence"
 	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/internal/telemetry"
@@ -28,12 +29,25 @@ type PreparedRunOptions struct {
 	Purpose             run.ExecutionPurpose
 	Provenance          run.ExecutionProvenance
 	AcceptanceRef       string
+	// RunID pre-assigns the run's id. A run with this id that already
+	// exists returns cortex.ErrAlreadyExists and nothing runs. Zero lets
+	// the engine pick one.
+	RunID id.AgentRunID
+
+	// replyRoute is where the answer goes when the messaging bus started
+	// the run for a directive. The run keeps it in its metadata.
+	replyRoute *a2a.ReplyRoute
 }
 
 // RunPrepared executes a frozen configuration through the normal ReAct loop.
 // A failure after acknowledged creation returns the run alongside the error.
 // PreparedStartError also identifies uncertain creation attempts.
 func (e *Engine) RunPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (r *run.Run, err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	ctx, rt := e.startRun(ctx, modeSync, false)
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -57,36 +71,48 @@ func (e *Engine) runPrepared(ctx context.Context, p *PreparedAgent, input string
 }
 
 // StreamPrepared streams the same prepared execution used by RunPrepared.
+// The run's admission slot is held until the stream's goroutine closes
+// events.
 func (e *Engine) StreamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) (err error) {
+	ctx, done, err := e.admit(ctx)
+	if err != nil {
+		close(events)
+		return err
+	}
 	ctx, rt := e.startRun(ctx, modeStream, false)
 	defer func() {
 		if rec := recover(); rec != nil {
+			done()
 			rt.end(nil, telemetry.ErrPanic)
 			panic(rec)
 		}
 		if err != nil {
+			done()
 			rt.end(nil, err)
 		}
 	}()
-	return e.streamPrepared(ctx, p, input, opts, events)
+	return e.streamPrepared(ctx, p, input, opts, events, done)
 }
 
 // streamPrepared starts the stream's goroutine, which ends the pass's run
-// agent span when it finishes.
-func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent) error {
+// agent span and calls done when it finishes.
+func (e *Engine) streamPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions, events chan<- StreamEvent, done func()) error {
 	ctx, rz, err := e.startPrepared(ctx, p, input, opts)
 	if err != nil {
 		close(events)
 		return err
 	}
-	e.launchPreparedStream(ctx, rz, events)
+	e.launchPreparedStream(ctx, rz, events, done)
 	return nil
 }
 
-func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, events chan<- StreamEvent) {
+// launchPreparedStream runs the stream on its own goroutine, which owns
+// events and calls done just before closing it.
+func (e *Engine) launchPreparedStream(ctx context.Context, rz *resumption, events chan<- StreamEvent, done func()) {
 	rt := runTraceFrom(ctx)
 	go func() {
 		defer close(events)
+		defer done()
 		defer func() {
 			if rec := recover(); rec != nil {
 				rt.end(rz.run, telemetry.ErrPanic)
@@ -136,6 +162,12 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 	if scope.Canonical() != snap.Scope.Canonical() {
 		return nil, nil, fmt.Errorf("cortex: prepared scope mismatch: %w", cortex.ErrInvalidPrepared)
 	}
+	// Before the session is resolved, which can write one: a run whose
+	// principal cannot be kept is refused before anything exists for it.
+	principal, principalErr := e.encodePrincipal(ctx)
+	if principalErr != nil {
+		return nil, nil, principalErr
+	}
 	if verificationErr := e.requireVerification(snap); verificationErr != nil {
 		return nil, nil, verificationErr
 	}
@@ -169,7 +201,8 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 		return nil, nil, fmt.Errorf("cortex: prepared session: %w", err)
 	}
 	now := time.Now().UTC()
-	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget}
+	r := &run.Run{Entity: cortex.NewEntity(), ID: runID, AgentID: snap.Agent.ID, SessionID: sessionID, Scope: scope, State: run.StateRunning, Input: input, StartedAt: &now, PersonaRef: cfg.PersonaRef, Provenance: provenance, Budget: cfg.Budget, Principal: principal}
+	keepReplyRoute(r, opts.replyRoute)
 	safeInput, scanErr := e.checkPublication(ctx, &snap.Agent, r, cfg.Publication, input, "user_input", safety.DirectionInput)
 	if scanErr != nil {
 		return nil, nil, scanErr
@@ -197,7 +230,11 @@ func (e *Engine) prepareRun(ctx context.Context, p *PreparedAgent, input string,
 }
 
 func (e *Engine) startPrepared(ctx context.Context, p *PreparedAgent, input string, opts PreparedRunOptions) (context.Context, *resumption, error) {
-	ctx, draft, err := e.prepareRun(ctx, p, input, opts, id.NewAgentRunID())
+	runID := opts.RunID
+	if runID.IsNil() {
+		runID = id.NewAgentRunID()
+	}
+	ctx, draft, err := e.prepareRun(ctx, p, input, opts, runID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -218,8 +255,16 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 		return ctx, nil, bindingErr
 	}
 	ctx = withTeamCallBinding(ctx, r.ID, snap, r.Provenance, cfg.Budget)
+	leased := e.leasesRun(r)
+	if leased {
+		lease := e.newLease()
+		r.Lease = &lease
+	}
 	if err := e.store.CreateRun(ctx, r); err != nil {
 		return ctx, nil, &PreparedStartError{runID: r.ID, cause: err}
+	}
+	if leased {
+		ctx = e.holdLease(ctx, r)
 	}
 	rz := &resumption{ag: &snap.Agent, cfg: cfg, run: r, startedAt: now}
 	runTraceFrom(ctx).bind(r, cfg.Model)
@@ -248,6 +293,7 @@ func (e *Engine) activatePrepared(ctx context.Context, draft *preparedRunDraft) 
 	st := &reactState{messages: messages, systemPrompt: prompt.Assemble(snap.Sections), sessionID: r.SessionID, newMessagesFrom: len(messages), prepared: draft.prepared, preparedSnapshot: snap, provenance: r.Provenance}
 	st.messages = append(st.messages, llm.Message{Role: "user", Content: input})
 	rz.state = st
+	e.saveBoundary(ctx, r.ID, progressCont(r, st, cfg))
 	return ctx, rz, nil
 }
 
@@ -275,6 +321,8 @@ func preparedOptions(overrides *RunOverrides) PreparedRunOptions {
 	var opts PreparedRunOptions
 	if overrides != nil {
 		opts.SessionID = overrides.SessionID
+		opts.RunID = overrides.RunID
+		opts.replyRoute = overrides.replyRoute
 	}
 	return opts
 }

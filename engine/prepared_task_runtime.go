@@ -78,7 +78,9 @@ func (e *Engine) StreamPreparedTask(ctx context.Context, p *PreparedAgent, reque
 		close(events)
 		return err
 	}
-	e.launchPreparedStream(ctx, rz, events)
+	// Task runs are not admitted under run_concurrency, so there is no
+	// slot to give back.
+	e.launchPreparedStream(ctx, rz, events, func() {})
 	return nil
 }
 

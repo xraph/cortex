@@ -5,7 +5,25 @@
 // types and the concrete provider types.
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"errors"
+)
+
+// ErrContentBlocked reports that a guard in front of the provider refused
+// the request or the response. A client wraps the guard's own error with
+// it, so errors.As still finds that error. The engine ends the run with
+// stop reason safety_block and dispatches no tool call from the response.
+var ErrContentBlocked = errors.New("llm: provider guard blocked the response")
+
+// Keys the engine sets in Request.Metadata.
+const (
+	// MetadataRun is the ID of the run that made the request.
+	MetadataRun = "run"
+	// MetadataAgent is the ID of the agent the run belongs to.
+	MetadataAgent = "agent"
+)
 
 // Client is the interface for sending completion requests to an LLM.
 type Client interface {
@@ -36,6 +54,53 @@ type Request struct {
 
 	// Temperature controls sampling randomness. Nil means provider default.
 	Temperature *float64
+
+	// ToolChoice constrains whether and which tool the model calls. Nil
+	// leaves it to the model. The engine never sets it.
+	ToolChoice *ToolChoice `json:"ToolChoice,omitempty"`
+
+	// Metadata labels the request for the client's usage records, for
+	// example with MetadataRun and MetadataAgent. The engine sets it. It is
+	// kept out of the request's JSON, so request digests do not depend on
+	// it.
+	Metadata map[string]string `json:"-"`
+}
+
+// ToolChoice constrains the model's use of tools.
+type ToolChoice struct {
+	// Mode is "auto", "none", "required" or "function".
+	Mode string
+	// Function names the tool to call when Mode is "function".
+	Function string
+}
+
+// NativeContent is an assistant reply in the provider's own format, such
+// as Anthropic content blocks with their signed thinking. A client sets it
+// on a response, and the engine keeps it on the assistant message it
+// appends and sends it back with the next request, so a thinking model sees
+// its own earlier turns. A client may re-encode the JSON on the way out, so
+// the model gets equivalent content, not necessarily the same bytes. It
+// never goes into conversation memory and is never published. It does hold
+// the model's own, unredacted content in progress snapshots and
+// continuations.
+type NativeContent struct {
+	// Provider names the provider whose format Content is in.
+	Provider string `json:"provider"`
+	// Model is the model that produced the reply.
+	Model string `json:"model"`
+	// Content is the reply's raw content blocks, thinking signatures
+	// included.
+	Content json.RawMessage `json:"content"`
+}
+
+// Clone returns a copy of n that shares no memory with it, or nil for nil.
+func (n *NativeContent) Clone() *NativeContent {
+	if n == nil {
+		return nil
+	}
+	out := *n
+	out.Content = append(json.RawMessage(nil), n.Content...)
+	return &out
 }
 
 // Message is a single message in a conversation.
@@ -51,6 +116,10 @@ type Message struct {
 
 	// ToolCallID identifies which tool call this message is responding to (role=tool).
 	ToolCallID string
+
+	// Native is the provider's own form of an assistant message, carried
+	// back to the model that produced it. Nil for every other message.
+	Native *NativeContent `json:"Native,omitempty"`
 }
 
 // Response is the result of a synchronous completion request.
@@ -69,6 +138,10 @@ type Response struct {
 
 	// FinishReason indicates why generation stopped: "stop", "tool_calls", "length", etc.
 	FinishReason string
+
+	// Native is the reply in the provider's own format, when the client
+	// has it.
+	Native *NativeContent `json:"Native,omitempty"`
 }
 
 // Stream yields incremental chunks from a streaming completion.
@@ -94,6 +167,10 @@ type Chunk struct {
 
 	// FinishReason is set on the final chunk.
 	FinishReason string
+
+	// Native is the whole reply in the provider's own format. A client sets
+	// it on the final chunk only.
+	Native *NativeContent `json:"Native,omitempty"`
 }
 
 // Tool describes a function tool available for the LLM to call.

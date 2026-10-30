@@ -24,15 +24,18 @@ type Extension interface {
 }
 ```
 
-## Available hooks (21 total)
+## Available hooks (24 total)
 
-### Agent lifecycle (3 hooks)
+### Agent lifecycle (6 hooks)
 
 | Interface | Method | When |
 |-----------|--------|------|
 | `RunStarted` | `OnRunStarted(ctx, agentID, runID, input)` | Agent run begins |
 | `RunCompleted` | `OnRunCompleted(ctx, agentID, runID, output, elapsed)` | Run finishes successfully |
 | `RunFailed` | `OnRunFailed(ctx, agentID, runID, err)` | Run terminates with error |
+| `RunSuspended` | `OnRunSuspended(ctx, agentID, runID, notice)` | Run paused, for any reason: approval, external tool or agent reply. Fires after the run is `paused` and after `OnCheckpointCreated`, and before the step's held questions are released to peers |
+| `RunReady` | `OnRunReady(ctx, agentID, runID, notice)` | A decision or the external results are recorded and the run waits for `ContinueRun`. Queue your job here |
+| `RunReclaimable` | `OnRunReclaimable(ctx, agentID, runID, notice)` | A worker handed a run off or its lease lapsed, and the run waits for `ContinueRun` |
 
 ### Reasoning lifecycle (2 hooks)
 

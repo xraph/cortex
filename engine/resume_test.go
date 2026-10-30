@@ -273,7 +273,7 @@ func TestResume_ContinuesUnderTheStoredScopeNotTheResumers(t *testing.T) {
 	var seenClaim bool
 	var checked int
 	for _, c := range spy.Calls()[before:] {
-		if c.Method == "ClaimSuspension" {
+		if c.Method == "ClaimSuspension" || c.Method == "ClaimSuspensionLeased" {
 			seenClaim = true
 			continue
 		}
@@ -354,6 +354,11 @@ type expiredClaimSpy struct {
 }
 
 func (e *expiredClaimSpy) ClaimSuspension(_ context.Context, _ id.AgentRunID) (*suspension.Suspension, error) {
+	return nil, cortex.ErrSuspensionExpired
+}
+
+// ClaimSuspensionLeased is the same claim on an engine that leases runs.
+func (e *expiredClaimSpy) ClaimSuspensionLeased(_ context.Context, _ suspension.LeasedClaim) (*suspension.Suspension, error) {
 	return nil, cortex.ErrSuspensionExpired
 }
 

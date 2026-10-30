@@ -10,9 +10,9 @@ require (
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/stretchr/testify v1.11.1
 	github.com/xraph/cortex v1.8.0
-	github.com/xraph/grove v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
-	golang.org/x/sys v0.48.0
+	github.com/xraph/grove v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
+	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.58.0
 )
 
@@ -50,8 +50,8 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect

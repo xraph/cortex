@@ -235,7 +235,9 @@ func (w *taskReviewRuntime) Observe(ctx context.Context, c coordination.TaskComp
 		if evidence.Digest([]byte(current.Input)) != req.InputDigest || len(current.Provenance.Tools) != 0 || current.Provenance.TaskClaimID != "" || current.Usage.ToolCalls != 0 || current.Provenance.ContextSelection != nil || budget.Validate() != nil || budget.MaxSteps < 1 || budget.MaxSteps > ceiling.MaxSteps || budget.MaxTokens < 1 || budget.MaxTokens > ceiling.MaxTokens || budget.Deadline.IsZero() || budget.Deadline.After(req.Handoff.Deadline) || current.StartedAt == nil || current.StartedAt.Before(frozen.ObservedAt) || current.StartedAt.After(time.Now()) {
 			return nil, coordination.ErrReviewConflict
 		}
-		if current.State == run.StateRunning || current.State == run.StatePaused {
+		// Still in progress, including a review run that was handed off or
+		// is waiting to continue: another worker finishes it.
+		if current.State == run.StateRunning || current.State == run.StatePaused || current.State == run.StateReady || current.State == run.StateReclaimable {
 			return nil, nil
 		}
 		if current.State != run.StateCompleted || current.StopReason != run.StopFinalAnswer || current.CompletedAt == nil || current.CompletedAt.Before(*current.StartedAt) || current.CompletedAt.After(time.Now()) {

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/agent"
@@ -77,5 +78,40 @@ func TestUnsafeSuspensionCannotClaimRun(t *testing.T) {
 	got, err := s.GetRun(ctx, r.ID)
 	if err != nil || got.State != run.StatePaused {
 		t.Fatalf("failed claim changed run: %v %v", got, err)
+	}
+}
+
+// A progress snapshot is keyed by run_id rather than id. One stored under
+// an unsafe scope is reported by the inventory like any other row.
+func TestUnsafeProgressScopeIsReported(t *testing.T) {
+	s := newTestStore(t)
+	ctx := cortex.WithScope(context.Background(), cortex.Scope{Levels: []cortex.Level{{Key: "workspace", Value: "w"}}})
+	ag := &agent.Config{ID: id.NewAgentID(), Name: "progress"}
+	if err := s.Create(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	r := &run.Run{ID: id.NewAgentRunID(), AgentID: ag.ID, State: run.StateRunning, Lease: &run.Lease{Owner: "w1", ExpiresAt: time.Now().Add(time.Minute)}}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveProgress(ctx, &suspension.Progress{RunID: r.ID, Owner: "w1"}); err != nil {
+		t.Fatal(err)
+	}
+	var clean []store.ScopeIssue
+	if err := s.InspectScopes(ctx, func(issue store.ScopeIssue) error { clean = append(clean, issue); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(clean) != 0 {
+		t.Fatalf("a safe snapshot was reported: %+v", clean)
+	}
+	if _, err := s.sdb.Exec(ctx, `UPDATE cortex_run_progress SET scope_extra = '{"region":"hidden"}' WHERE run_id = ?`, r.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	var issues []store.ScopeIssue
+	if err := s.InspectScopes(ctx, func(issue store.ScopeIssue) error { issues = append(issues, issue); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 || issues[0].Resource != "cortex_run_progress" || issues[0].ID != r.ID.String() {
+		t.Fatalf("unsafe snapshot inventory = %+v, want one cortex_run_progress issue for %s", issues, r.ID)
 	}
 }

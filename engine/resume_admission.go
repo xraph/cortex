@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
@@ -14,7 +15,7 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
-func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *suspension.Suspension) (*suspension.Suspension, error) {
+func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *suspension.Suspension, snapshot *run.Run, first *suspension.Progress) (*suspension.Suspension, error) {
 	durable, ok := e.store.(suspension.ResumeAdmissionStore)
 	if !ok {
 		return nil, suspension.ErrResumeAdmissionUnavailable
@@ -30,7 +31,18 @@ func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *su
 		return nil, err
 	}
 	request := suspension.ResumeAdmissionRequest{Scope: paused.Scope, Version: *in.agentReplyVersion, Input: data}
-	admitted, err := durable.AdmitResume(ctx, request)
+	var admitted suspension.ResumeAdmission
+	if claims, leased := e.leasedClaimsFor(snapshot); leased && first != nil {
+		// The admission takes this worker's lease and records the reply as
+		// done with it: an admitter that dies before it starts the resume
+		// leaves a lease that lapses, and the sweep reclaims the run with
+		// the reply, whether or not the host runs reply recovery.
+		lease := e.newLease()
+		first.Owner = lease.Owner
+		admitted, err = claims.AdmitResumeLeased(ctx, request, lease, first)
+	} else {
+		admitted, err = durable.AdmitResume(ctx, request)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -40,11 +52,25 @@ func (e *Engine) admitAgentReply(ctx context.Context, in ResumeInput, paused *su
 	if err := checkResumeRecoveryAuthority(ctx, paused.RunID); err != nil {
 		return nil, err
 	}
-	return startAdmittedResume(ctx, durable, admitted)
+	return e.startAdmittedResume(ctx, durable, admitted, snapshot, first)
 }
 
-func startAdmittedResume(ctx context.Context, durable suspension.ResumeAdmissionStore, admitted suspension.ResumeAdmission) (*suspension.Suspension, error) {
-	started, err := durable.StartResume(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest)
+// startAdmittedResume grants the admitted resume its one execution. When
+// this engine leases the run, the start takes the lease for this worker,
+// from whoever held it since the admission, and writes first (the reply
+// recorded as done) in the same transaction: the one worker allowed to
+// execute the reply is the one holding the run, and a worker that dies
+// right after leaves a lease that lapses and the answer.
+func (e *Engine) startAdmittedResume(ctx context.Context, durable suspension.ResumeAdmissionStore, admitted suspension.ResumeAdmission, snapshot *run.Run, first *suspension.Progress) (*suspension.Suspension, error) {
+	var started suspension.ResumeStart
+	var err error
+	if claims, leased := e.leasedClaimsFor(snapshot); leased && first != nil {
+		lease := e.newLease()
+		first.Owner = lease.Owner
+		started, err = claims.StartResumeLeased(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest, lease, first)
+	} else {
+		started, err = durable.StartResume(ctx, admitted.Request.Version.RunID, admitted.Request.Version.SuspensionID, admitted.RequestDigest)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +116,13 @@ func (e *Engine) checkExecutionCall(ctx context.Context, key id.AgentRunID, prov
 // before every provider/tool call. An existing or ambiguous start cannot be
 // replayed; ErrResumeAlreadyStarted requires inspection and reconciliation.
 // This host API is not exposed as a tool or an unauthenticated transport route.
+//
+// The callback reads the principal on the context it is handed, and that
+// changes once. The checks before the resume reads the run back run under
+// ctx's principal, the recoverer's. The engine then restores the run's own
+// principal, just before it admits or starts the resume, and every later
+// check, including the one before each provider and tool call, runs under
+// the run's principal.
 func (e *Engine) RecoverAgentReply(ctx context.Context, runID id.AgentRunID, key id.SuspensionID, authorize func(context.Context, id.AgentRunID) error) (*run.Run, error) {
 	if authorize == nil || runID.Prefix() != id.PrefixAgentRun || key.Prefix() != id.PrefixSuspension {
 		return nil, suspension.ErrResumeAdmissionUnavailable
@@ -101,7 +134,7 @@ func (e *Engine) RecoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 		return nil, cortex.ErrNoLLM
 	}
 	ctx = context.WithValue(ctx, resumeRecoveryAuthorityKey{}, resumeRecoveryAuthority{runID: runID, authorize: authorize})
-	return e.traceResume(ctx, runID, resumeSourceAgentReply, func(tc context.Context) (*run.Run, error) {
+	return e.traceResume(ctx, runID, resumeSourceLabel(resumeSourceAgentReply), func(tc context.Context) (*run.Run, error) {
 		return e.recoverAgentReply(tc, runID, key)
 	})
 }
@@ -161,15 +194,42 @@ func (e *Engine) recoverAgentReply(ctx context.Context, runID id.AgentRunID, key
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, authErr
 	}
-	paused, err := startAdmittedResume(ctx, durable, admitted)
+	// The run read above is the pre-claim snapshot, and StartResume below
+	// is the claim. claimForResume explains the order.
+	ctx, revoked, err := e.restorePrincipal(ctx, current)
+	if err != nil {
+		return nil, err
+	}
+	// The reply the admission recorded goes into the first snapshot, so the
+	// worker that starts the resume holds the run and its answer at once.
+	// A pause that cannot be read now is a refusal before the start, so
+	// the run is never started without its answer in the snapshot.
+	pending, pendingErr := e.store.GetSuspension(ctx, runID)
+	if pendingErr != nil {
+		// A pause that is gone was most likely deleted by the resume that
+		// already ran, and that is what the caller is told.
+		if _, startErr := durable.GetResumeStart(ctx, runID, key); startErr == nil {
+			return nil, suspension.ErrResumeAlreadyStarted
+		}
+		return nil, fmt.Errorf("load the pause of an admitted reply: %w", pendingErr)
+	}
+	first := claimSnapshot(pending, answeredCalls(pending.Pending, in))
+	paused, err := e.startAdmittedResume(ctx, durable, admitted, current, first)
 	if errors.Is(err, cortex.ErrSuspensionExpired) {
 		return e.expireAdmittedReply(ctx, admitted)
 	}
 	if err != nil {
 		return nil, err
 	}
+	if revoked != nil {
+		return nil, e.failRevokedResume(ctx, current, paused, revoked)
+	}
 	if authErr := checkResumeRecoveryAuthority(ctx, runID); authErr != nil {
 		return nil, e.failResume(ctx, paused.ClaimedRun, paused.ClaimedRun.AgentID, authErr)
+	}
+	ctx, err = e.leaseClaimedResume(ctx, current, paused, first)
+	if err != nil {
+		return nil, err
 	}
 	ctx, ready, err := e.rehydrateResume(ctx, in, resumeSourceAgentReply, paused.ClaimedRun, paused)
 	if err != nil {

@@ -71,6 +71,10 @@ var (
 	ErrBudgetExhausted  = errors.New("cortex: budget exhausted")
 	ErrMaxStepsReached  = errors.New("cortex: maximum steps reached")
 	ErrMaxTokensReached = errors.New("cortex: maximum tokens reached")
+	// ErrEngineStopping refuses a run that would start while Stop drains the
+	// engine. Nothing was written for it; retry on another worker, or after
+	// Start.
+	ErrEngineStopping = errors.New("cortex: engine is stopping")
 
 	// ErrInvalidDelegationPlan rejects a manager plan before worker dispatch.
 	ErrInvalidDelegationPlan = errors.New("cortex: invalid delegation plan")
@@ -99,6 +103,55 @@ var (
 	// sends an operator to raise the budget for a run whose real problem
 	// is a continuation nothing could have resumed.
 	ErrInvalidContinuation = errors.New("cortex: suspension continuation is unusable")
+
+	// Principal errors.
+	//
+	// ErrPrincipalRevoked is what a PrincipalCodec wraps when a run's
+	// identity is permanently gone: the member was removed, the key
+	// revoked. A resume that meets it fails the run with the codec's
+	// reason rather than continuing under nobody or under the resumer.
+	ErrPrincipalRevoked = errors.New("cortex: principal no longer valid")
+	// ErrPrincipalUnavailable means a principal could not be encoded or
+	// decoded right now. A run is not created without its principal, and a
+	// paused run whose principal cannot be decoded stays paused for the
+	// next resume to try again.
+	ErrPrincipalUnavailable = errors.New("cortex: principal unavailable")
+	// ErrPrincipalCodecRequired is returned by engine.New when a tool
+	// authorizer is installed without a principal codec. Without one,
+	// every resumed run would reach the authorizer as nobody.
+	ErrPrincipalCodecRequired = errors.New("cortex: a tool authorizer needs a principal codec so resumed runs keep their principal")
+
+	// Run continuation errors.
+	//
+	// ErrRunNotContinuable is returned when a continuation targets a run
+	// that is not ready or reclaimable: another replica already continued
+	// it, or it never got that far.
+	ErrRunNotContinuable = errors.New("cortex: run is not ready to continue")
+	// ErrRunLeaseLost is returned to a worker whose lease on a running run
+	// is gone: another worker holds it, or the run left running. The
+	// worker must stop writing the run.
+	ErrRunLeaseLost = errors.New("cortex: run lease lost")
+	// ErrRunLeased is returned when a run's lease has not lapsed yet, so
+	// the run still belongs to the worker holding it.
+	ErrRunLeased = errors.New("cortex: run lease is still held")
+	// ErrContinuationUnavailable is returned by the engine calls that make a
+	// run ready or continue one when the store does not implement
+	// run.ContinuationStore.
+	ErrContinuationUnavailable = errors.New("cortex: store cannot hold ready runs")
+	// ErrProgressNotFound is returned when a run has no saved progress
+	// snapshot at the caller's scope.
+	ErrProgressNotFound = errors.New("cortex: run progress not found")
+	// ErrRunInterrupted is returned by a run that its worker handed off
+	// while shutting down. The run is reclaimable, not ended: another
+	// replica continues it from its last saved progress.
+	ErrRunInterrupted = errors.New("cortex: run handed off before it finished")
+	// ErrReclaimLimit fails a run that was reclaimed more often than
+	// engine.WithReclaimLimit allows. A run that takes its worker down every
+	// time it runs is stopped here instead of being handed to the next one.
+	ErrReclaimLimit = errors.New("cortex: run reclaimed too many times")
+	// ErrRunNotRecoverable fails a reclaimed run that left nothing to
+	// continue from: no progress snapshot and no pause it was claimed from.
+	ErrRunNotRecoverable = errors.New("cortex: run has no saved progress to continue from")
 )
 
 // Evidence and verification errors remain independent of execution outcomes.

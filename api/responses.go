@@ -1,10 +1,14 @@
 package api
 
 import (
+	"time"
+
+	"github.com/xraph/cortex"
 	"github.com/xraph/cortex/a2a"
 	"github.com/xraph/cortex/agent"
 	"github.com/xraph/cortex/behavior"
 	"github.com/xraph/cortex/checkpoint"
+	"github.com/xraph/cortex/id"
 	"github.com/xraph/cortex/memory"
 	"github.com/xraph/cortex/orchestration"
 	"github.com/xraph/cortex/persona"
@@ -49,7 +53,54 @@ type ListPersonasResponse struct {
 
 // ListCheckpointsResponse wraps a list of checkpoints.
 type ListCheckpointsResponse struct {
-	Items []*checkpoint.Checkpoint `json:"items"`
+	Items []*CheckpointResponse `json:"items"`
+}
+
+// CheckpointResponse is a checkpoint as the API serves it. It has no
+// field for the decider's principal: the store keeps those codec bytes
+// as the record of who decided, and they are the host's own.
+type CheckpointResponse struct {
+	cortex.Entity
+	ID        id.CheckpointID   `json:"id"`
+	RunID     id.AgentRunID     `json:"run_id"`
+	AgentID   id.AgentID        `json:"agent_id"`
+	Scope     cortex.Scope      `json:"scope"`
+	Reason    string            `json:"reason"`
+	StepIndex int               `json:"step_index"`
+	State     string            `json:"state"`
+	Decision  *DecisionResponse `json:"decision,omitempty"`
+	Metadata  map[string]any    `json:"metadata,omitempty"`
+}
+
+// DecisionResponse is a checkpoint decision as the API serves it.
+type DecisionResponse struct {
+	Approved  bool      `json:"approved"`
+	DecidedBy string    `json:"decided_by,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	DecidedAt time.Time `json:"decided_at"`
+}
+
+// newCheckpointResponse copies cp into its response shape, leaving the
+// decider's principal behind.
+func newCheckpointResponse(cp *checkpoint.Checkpoint) *CheckpointResponse {
+	if cp == nil {
+		return nil
+	}
+	out := &CheckpointResponse{
+		Entity:    cp.Entity,
+		ID:        cp.ID,
+		RunID:     cp.RunID,
+		AgentID:   cp.AgentID,
+		Scope:     cp.Scope,
+		Reason:    cp.Reason,
+		StepIndex: cp.StepIndex,
+		State:     cp.State,
+		Metadata:  cp.Metadata,
+	}
+	if d := cp.Decision; d != nil {
+		out.Decision = &DecisionResponse{Approved: d.Approved, DecidedBy: d.DecidedBy, Reason: d.Reason, DecidedAt: d.DecidedAt}
+	}
+	return out
 }
 
 // ListSessionsResponse wraps a list of sessions.
@@ -62,9 +113,19 @@ type CountSessionsResponse struct {
 	Count int64 `json:"count"`
 }
 
-// ListToolsResponse wraps a list of tools.
+// ListToolsResponse wraps the engine's tool catalog.
 type ListToolsResponse struct {
-	Items []map[string]any `json:"items"`
+	Items []ToolResponse `json:"items"`
+}
+
+// ToolResponse describes one tool in the catalog.
+type ToolResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Kind is where the tool comes from: builtin, registered or external.
+	Kind string `json:"kind" description:"builtin, registered or external"`
+	// RetrySafe is whether the tool may run again after a crash.
+	RetrySafe bool `json:"retry_safe"`
 }
 
 // GetConversationResponse wraps conversation messages.

@@ -74,9 +74,14 @@ func SQL(ctx context.Context, db Queryer, columnsQuery string, visit func(store.
 		if !columns["scope_canon"] {
 			continue
 		}
+		// Most tables are keyed by id. cortex_a2a_pending_asks is keyed by
+		// its reply_with token and cortex_run_progress by its run_id.
 		key := "id"
-		if !columns[key] {
-			key = "reply_with"
+		for _, candidate := range []string{"id", "reply_with", "run_id"} {
+			if columns[candidate] {
+				key = candidate
+				break
+			}
 		}
 		for _, required := range []string{key, "scope_l0", "scope_l1", "scope_l2", "scope_extra"} {
 			if !columns[required] {

@@ -21,7 +21,7 @@ func TestApprovalAtFinalStepRecordsDecisionWithoutRedispatch(t *testing.T) {
 	e, err := New(WithStore(spy), WithLLM(&scriptedLLM{toolCalls: []llm.ToolCall{{ID: "last-call", Name: def.Name, Arguments: `{}`}}}), WithTool(def, func(context.Context, cortex.Invocation) (string, error) {
 		calls.Add(1)
 		return "applied", nil
-	}), WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithExtension(recorder))
+	}), WithToolAuthorizer(escalatingAuthorizer{tool: def.Name}), WithPrincipalCodec(cortex.JSONPrincipalCodec[string]()), WithExtension(recorder))
 	if err != nil {
 		t.Fatal(err)
 	}

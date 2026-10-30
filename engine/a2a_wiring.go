@@ -67,6 +67,7 @@ func (e *Engine) buildA2A() error {
 		Runner:         agentRunnerAdapter{eng: e},
 		Resumer:        a2aResumer{eng: e},
 		Resolver:       a2aResolver{eng: e},
+		Admitter:       a2aAdmitter{eng: e},
 		Hooks:          a2aHooks{eng: e},
 		Options:        e.a2aCfg.opts,
 		Metrics:        e.metrics,
@@ -76,6 +77,16 @@ func (e *Engine) buildA2A() error {
 	}
 	e.a2a = bus
 	return nil
+}
+
+// a2aAdmitter puts the bus's deliveries and ask resolutions under the
+// engine's run admission. While Stop drains, the bus claims nothing new and
+// leaves it queued for another worker; a resume that follows a claim the bus
+// already made still runs, under the ticket taken before the claim.
+type a2aAdmitter struct{ eng *Engine }
+
+func (a a2aAdmitter) AdmitRun(ctx context.Context) (context.Context, func(), error) {
+	return a.eng.admit(ctx)
 }
 
 // A2A returns the message bus, or nil when messaging is off. A host needs

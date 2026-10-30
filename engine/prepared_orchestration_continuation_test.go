@@ -2,7 +2,9 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,4 +175,80 @@ func TestPreparedTeamContinuationRejectsChangedParentInput(t *testing.T) {
 	require.Equal(t, orchestration.StatusWaiting, stored.Status)
 	require.Equal(t, "work", stored.Input)
 	require.Equal(t, 1, f.client.calls)
+}
+
+// A child that is handed off has not failed: the orchestration waits for
+// it, as it waits for a paused child, and the child is left reclaimable.
+func TestPreparedTeamWaitsForAHandedOffChild(t *testing.T) {
+	f := newPreparedTeamFixture(t, orchestration.StrategySequential)
+	refreshPreparedTeam(t, &f, engine.WithRunLease(60*time.Second), engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+		return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
+	}))
+	f.client.complete = func(context.Context, *llm.Request, int) (*llm.Response, error) {
+		return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "probe-call", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil
+	}
+	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	require.Equal(t, orchestration.StatusWaiting, team.Status)
+	handedOff := 0
+	for _, key := range team.AgentRunIDs {
+		child, readErr := f.s.GetRun(f.ctx, key)
+		require.NoError(t, readErr)
+		require.NotEqual(t, run.StateFailed, child.State)
+		if child.State == run.StateReclaimable {
+			handedOff++
+		}
+	}
+	require.Equal(t, 1, handedOff)
+}
+
+// An orchestration whose child was handed off waits for it, and finishes
+// once the child is reclaimed and continued. The child's tool is
+// retry-safe, so the reclaim runs it again.
+func TestPreparedTeamCompletesAfterHandedOffChildContinues(t *testing.T) {
+	f := newPreparedTeamFixture(t, orchestration.StrategySequential)
+	var probes atomic.Int32
+	refreshPreparedTeam(t, &f, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+		if probes.Add(1) == 1 {
+			return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
+		}
+		return "result", nil
+	}), engine.WithToolRetrySafe("probe"), engine.WithRunLease(60*time.Second))
+	f.client.complete = func(_ context.Context, _ *llm.Request, call int) (*llm.Response, error) {
+		if call == 1 {
+			return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "probe-call", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil
+		}
+		return &llm.Response{Content: "answer", FinishReason: "stop", Usage: llm.Usage{TotalTokens: 10}}, nil
+	}
+	team, err := f.e.RunPreparedOrchestration(f.ctx, f.p, "work", engine.PreparedRunOptions{OrchestrationBudget: &f.policy})
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting)
+	require.Equal(t, orchestration.StatusWaiting, team.Status)
+	var handedOff id.AgentRunID
+	for _, key := range team.AgentRunIDs {
+		child, readErr := f.s.GetRun(f.ctx, key)
+		require.NoError(t, readErr)
+		if child.State == run.StateReclaimable {
+			handedOff = key
+		}
+	}
+	require.False(t, handedOff.IsNil(), "no child was handed off")
+
+	waiting, err := f.e.ResumePreparedOrchestration(f.ctx, team.ID)
+	require.ErrorIs(t, err, cortex.ErrOrchestrationWaiting, "a reclaimable child is still on its way")
+	require.Equal(t, orchestration.StatusWaiting, waiting.Status)
+
+	child, err := f.e.ContinueRun(f.ctx, handedOff)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, child.State)
+	require.Equal(t, int32(2), probes.Load())
+	reservationID, err := id.Parse(child.Provenance.OrchestrationReservationID)
+	require.NoError(t, err)
+	reservation, err := f.s.GetReservation(f.ctx, reservationID)
+	require.NoError(t, err)
+	require.NoError(t, f.s.SettleOrchestrationChild(f.ctx, execution.Settlement{ReservationID: reservationID, RequestDigest: reservation.RequestDigest, Usage: execution.ReservationUsage{Actual: execution.Resources{Tokens: int64(child.Usage.Tokens)}, Known: execution.KnownTokens}, Receipt: "host:test-usage"}))
+
+	completed, err := f.e.ResumePreparedOrchestration(f.ctx, team.ID)
+	require.NoError(t, err)
+	require.Equal(t, orchestration.StatusCompleted, completed.Status)
+	require.Contains(t, completed.AgentRunIDs, handedOff)
 }

@@ -4,7 +4,66 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.10.0] - 2026-10-29
+
+v1.9.0 went out on 2026-10-27 and carried the work that was on `main` before this, assured execution included. That part is experimental and stays off unless you turn it on. If you run v1.9.0 today, read "Upgrading from v1.9.0" in `MIGRATION.md` before you roll this out. Coming from v1.8.0, read "Upgrading from v1.8.0" too.
+
+This release lets your host drive a run from outside the request that started it, and, once you turn leasing on, makes a run survive the worker that was running it. It's built on forge v1.13.2, grove v1.10.1, nexus v1.9.1, shield v1.9.1 and weave v1.9.2.
+
+### Added
+
+- Your host can drive a run now. Runs have two new states, `ready` and `reclaimable`. `eng.DecideCheckpoint` records an approval or a rejection, `eng.ProvideResults` records an external tool's results, and both move the run to `ready` and return without calling the model. `eng.ContinueRun` picks the run up later, from a job on any replica. The `plugin.RunReady` and `plugin.RunReclaimable` hooks are where you queue that job, and `WithReadyRenotify` tells you again about a run nobody picked up.
+- Run leases are opt-in. Turn them on with `engine.WithRunLease(ttl)` once your host continues `RunReady` and `RunReclaimable` runs with `ContinueRun`, because nothing in cortex does that for you. On a store that implements `run.ContinuationStore` and `suspension.ProgressStore` (the SQLite, PostgreSQL and MongoDB stores all do), every run then executes under its worker's lease and saves its progress at each step boundary. When a worker dies, the sweeper marks its runs `reclaimable` and `ContinueRun` carries on from the last saved step. A call that was in flight runs again only if the tool is retry-safe. `WithReclaimLimit` and `WithWorkerID` tune it. `MIGRATION.md` and the Runs docs show the plugin that queues the job.
+- `WithRunConcurrency` caps how many runs execute at once in a process. `Stop` refuses new runs with `cortex.ErrEngineStopping` and waits for the ones in flight. With leasing on, it hands leased runs to another replica.
+- Each pause gets its own deadline. `WithSuspensionTTL` is now a default. An approval can carry its own `TTL` and an external tool its own `engine.ExternalTTL`, and a pause expires at the earliest deadline among its calls. `plugin.RunSuspended` fires for every pause with the checkpoint ID and the deadline, so you can tell someone a decision is waiting.
+- `engine.WithPrincipalCodec` stores the principal that started a run, and a resumed, continued or reclaimed run makes its tool calls as that principal. `cortex.JSONPrincipalCodec` is enough for most hosts.
+- The new `tool` package builds a tool from a Go function over a struct: it generates the JSON Schema and validates every call before your function runs. Mark the tools that are safe to run twice with `tool.RetrySafe()` or `engine.WithToolRetrySafe`.
+- The new `mcpbridge` module registers an MCP server's tools as cortex tools, and the ones the server marks read-only are retry-safe. It's a module of its own, so the root never pulls in the MCP SDK.
+- `Migrate` on PostgreSQL takes a lock and waits while another replica migrates, the rescope and session backfill included. Migrations `20261101000001` to `20261101000004` add the stored principal, the lease and ready columns, the progress table and the reply route column.
+- The Forge extension now applies `default_model`, `default_max_steps`, `default_max_tokens`, `default_temperature`, `default_reasoning_loop`, `run_concurrency` and `shutdown_timeout`. `WithNexusOptions`, `WithWeaveOptions` and `WithShieldOptions` configure the adapters it finds, and `WithoutAutoAdapters` skips them.
+- Pass `api.WithAuthorizer` and every REST route asks your `api.Authorizer` before it runs; its `DecidedBy` names the person behind a checkpoint decision. `GET /v1/tools` lists the engine's tool catalog with each tool's retry safety, and `GET /v1/tools/:name/schema` returns one tool's schema.
+- The Nexus adapter sends every call under a Nexus tenant, records your scope, run and agent with its usage, keeps a thinking model's native content between turns and passes tool choice through. The Weave adapter searches only the run's tenant plus the read-only shared collections you list. The Shield adapter evaluates the agent's `shield_profile`, and `shieldsafety.NewToolAuthorizer` scans tool calls under your own authorizer, which always answers first.
+- Set `safety.ModeCheckedSegments` with an incremental gate such as the Shield adapter, and model output streams out in pieces Shield has already checked, so you don't wait for the whole answer. `shieldsafety.WithSegmentLimit` caps how much text with no line break is held before it's cut.
+
+### Opt-in
+
+These stay off until you turn them on: run leasing (`WithRunLease`), checked segments, and every experimental assured-execution service v1.9.0 brought (the verification worker and its recovery, required verification, the context budget, result content, public event replay, prepared-team messaging, task scheduling, agent-reply and orchestration recovery, effect continuation and recovery, reflection and operational awareness). An engine built with just a store and a model starts the suspension sweeper and nothing else. `TestDefaultEngineEnablesNoExperimentalServices` and `TestRunLeaseIsOffByDefault` in `engine` fail if that ever changes.
+
+### Breaking changes
+
+Each of these has a paragraph in `MIGRATION.md`, "Upgrading from v1.9.0", saying what to do.
+
+- `engine.New` fails with `cortex.ErrPrincipalCodecRequired` when you install a `ToolAuthorizer` without `engine.WithPrincipalCodec`.
+- A resumed run makes its tool calls as the principal that started it, not the one that resumed it.
+- `ResolveCheckpoint` records the decision before the run continues. When the continuation fails before it claims the run, the run stays `ready` and the error says `ContinueRun` finishes it. An approval that arrives while the engine drains, or that can't get a run slot, is still refused before anything is recorded, as in v1.9.0.
+- `WithSuspensionTTL(0)` no longer stops the sweeper. It only drops the default deadline.
+- The Forge extension applies the config fields it used to read and ignore.
+- The Nexus adapter refuses a call it can't name a tenant for, with an error matching `cortex.ErrNoScope`.
+- Shield screens publication even when you pass `engine.WithSafety`. It evaluates real profiles and fails closed when there's none for the tenant and app, and it takes the tenant from the scope's first level, not the whole canonical scope.
+- The Weave adapter reads under the scope's first level as the Weave tenant and overrides a tenant on the context. Under the wrong tenant it finds nothing, and the agent answers without its knowledge.
+- `tool.New` panics when you pass it `tool.RetrySafe()`, which it used to drop without a word. Use `tool.Register` or `engine.WithToolRetrySafe`.
+- Pauses v1.8.0 wrote at continuation schema 1 can't be resumed. That one is in "Upgrading from v1.8.0".
+
+### Fixed
+
+- REST handlers no longer write JSON bodies twice. On most routes v1.9.0 sent two concatenated objects in one response, which `json.Unmarshal` and browsers reject.
+- A run the messaging bus starts for a directive keeps its reply route, the asker's reply token included, in a column only the engine reads. It's no longer in the run's metadata, so run JSON, events and REST responses don't carry it.
+- Run JSON and REST responses no longer carry the lease owner, which names the worker's host, and a reclaimed run that stops on an uncertain call says "another worker" in its error. The owner stays in the store.
+- The REST module answers `cortex.ErrEngineStopping` with 503, saying nothing was recorded so your client can retry on another replica, and `cortex.ErrRunInterrupted` with 409. Both were 500.
+
+### Known limits
+
+- Task-run principals: with an authorizer installed, a coordination child that resumes gets a nil principal. Authorize those on `Subject.RunID` and the claim's worker principal ref.
+- A turn whose text your publication gate redacted loses its thinking blocks when it's replayed to the model. The run carries on without that turn's reasoning.
+- `Native` holds the model's unredacted content, and it sits that way at rest in progress snapshots and continuations. No REST route returns it.
+- The Shield segment checker's CPU grows with a long held run of text that has no line break. `MaxOutputBytes` bounds it.
+- Runs under required verification or a task claim hold no lease and are never reclaimed. Their recovery stays with the `coordination` package, and so does an experimental task-claim run that reaches `ready`, which coordination treats as a usage conflict.
+- Lease expiry compares the clocks of two machines, so keep your replicas' clocks in sync if you turn leasing on.
+- `mcpbridge` takes a server's `readOnlyHint` as retry safety. Use `Include` to leave out tools whose hint you don't trust.
+
 ## [1.13.0] - Unreleased
+
+This section shipped as v1.7.0.
 
 Agents can address each other now. Not through a blackboard inside an
 orchestration somebody started, which is what v1.11.0 gave you, but

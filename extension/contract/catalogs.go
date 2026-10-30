@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	shieldengine "github.com/xraph/shield/engine"
 	"github.com/xraph/shield/profile"
 	"github.com/xraph/shield/scan"
+	"github.com/xraph/weave"
 	"github.com/xraph/weave/collection"
 	weaveengine "github.com/xraph/weave/engine"
 	weaveid "github.com/xraph/weave/id"
@@ -130,9 +132,9 @@ func NexusCatalogs(gw *nexus.Gateway, access CatalogAccess) map[string]CatalogQu
 	return map[string]CatalogQuery{"models.list": query, "models.detail": query}
 }
 
-// WeaveCatalogs checks the row's app and tenant before reading its statistics.
-// Released Weave filters are not scoped, so listing walks all pages and exposes
-// only exact matches. A later scoped store can replace this adapter directly.
+// WeaveCatalogs runs every engine call under the scope's tenant and checks the
+// row's app and tenant again before reading its statistics. Listing walks all
+// pages and exposes only exact matches.
 func WeaveCatalogs(eng *weaveengine.Engine, access CatalogAccess) map[string]CatalogQuery {
 	query := func(ctx context.Context, raw map[string]any) (any, error) {
 		scope, err := catalogScope(ctx, "weave", access)
@@ -142,6 +144,7 @@ func WeaveCatalogs(eng *weaveengine.Engine, access CatalogAccess) map[string]Cat
 		if eng == nil {
 			return nil, &dc.Error{Code: dc.CodeUnavailable, Message: "Weave engine is unavailable"}
 		}
+		ctx = weave.WithTenant(ctx, scope.TenantID)
 		in, err := catalogInput(raw)
 		if err != nil {
 			return nil, err
@@ -153,6 +156,9 @@ func WeaveCatalogs(eng *weaveengine.Engine, access CatalogAccess) map[string]Cat
 				return nil, bad("Invalid collection ID")
 			}
 			row, err := eng.GetCollection(ctx, v)
+			if errors.Is(err, weave.ErrCollectionNotFound) {
+				return nil, &dc.Error{Code: dc.CodeNotFound, Message: "Collection was not found in your scope"}
+			}
 			if err != nil {
 				return nil, err
 			}

@@ -38,22 +38,60 @@ type Decision struct {
 ## Lifecycle
 
 1. During a run, a `ToolAuthorizer` escalates a tool call by returning
-   `cortex.ErrRequiresApproval`
-2. The run suspends, and a checkpoint is created with state `pending`
+   `cortex.ErrRequiresApproval`, or `cortex.ApprovalRequired` when it has a
+   reason to give and a deadline of its own
+2. The run suspends, and a checkpoint is created with state `pending`. Its
+   `Reason` names the calls, each with the authorizer's reason when there is
+   one
 3. A human reviews the checkpoint through `Engine.ListPendingCheckpoints` or the
    REST endpoint
 4. The human resolves it with a Decision (approve or reject)
-5. An approval resumes the run and finally dispatches the call. A rejection
-   fails the run, with the decision's `Reason` on `run.Error`
+5. An approval moves the run to `ready`, records the decision, and the run
+   continues and finally dispatches the call. A rejection fails the run, with
+   the decision's `Reason` on `run.Error`
 
 ```
 Run (running) -> Checkpoint created (pending) -> Run (paused)
                                                  |
-                                Decision made -> Run (running) [approved]
-                                              -> Run (failed)  [rejected]
+                                Decision made -> Run (ready) -> Run (running) [approved]
+                                              -> Run (failed)                 [rejected]
 ```
 
-The loop only started creating checkpoints in v1.11.0. Before that the entity,
+`eng.ResolveCheckpoint` does all of it and returns when the run does.
+`eng.DecideCheckpoint` stops at `ready`: it records the decision without
+calling the model, `plugin.RunReady` fires, and you continue the run later with
+`eng.ContinueRun`, typically from a background job:
+
+```go
+if err := eng.DecideCheckpoint(ctx, cpID, checkpoint.Decision{Approved: true, DecidedBy: "ops@example.com"}); err != nil {
+    return err
+}
+// Later, in a job that carries the run's scope:
+r, err := eng.ContinueRun(jobCtx, runID)
+```
+
+With `engine.WithRejectionsReturnToModel()`, a rejection goes through `ready`
+too: the model reads `rejected by <DecidedBy>: <Reason>` as each call's result
+and the run carries on. A decision on a checkpoint whose deadline has passed is
+`cortex.ErrSuspensionExpired`, and the checkpoint stays pending for the sweeper.
+See [Suspension](/docs/concepts/suspension#continuing-from-a-job) for the
+details.
+
+A checkpoint left undecided expires with its run. The deadline is the
+approval's own TTL, or the engine's suspension TTL when it gave none, and once
+it passes the sweeper fails the run and resolves the checkpoint with
+`DecidedBy: "cortex"`. Set the TTL on the approval when one decision needs
+longer than the rest:
+
+```go
+return cortex.ApprovalRequired{Reason: "production deploy", TTL: 7 * 24 * time.Hour}
+```
+
+To tell people a checkpoint is waiting on them, implement
+`plugin.RunSuspended`. It fires once the run is paused, and its `Notice`
+carries the checkpoint ID and the deadline.
+
+The loop only started creating checkpoints in v1.7.0. Before that the entity,
 the store and these endpoints all existed and nothing ever wrote a row. See
 [Suspension](/docs/concepts/suspension) for the mechanism underneath, including
 what an approval hands back to the engine and what happens when nobody answers.
@@ -70,7 +108,12 @@ type Store interface {
 }
 ```
 
-On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint` and `eng.ResolveCheckpoint(ctx, cpID, decision)`. Resolve through the engine, not the store: the engine is what resumes or fails the run.
+`Resolve` writes a decision only on a pending checkpoint. Once one is recorded
+it stays: a second `Resolve` returns an error wrapping `cortex.ErrInvalidState`,
+which is what lets two people deciding at once end up with exactly one record.
+A custom store has to keep that rule.
+
+On the engine, use `eng.ListPendingCheckpoints`, `eng.CountPendingCheckpoints`, `eng.GetCheckpoint`, `eng.ResolveCheckpoint(ctx, cpID, decision)` and `eng.DecideCheckpoint(ctx, cpID, decision)`. Decide through the engine, not the store: the engine is what continues or fails the run.
 
 ### List filter
 
