@@ -437,11 +437,22 @@ func (e *Engine) requireContinuation() error {
 // A store without run.ContinuationStore returns
 // cortex.ErrContinuationUnavailable.
 func (e *Engine) ContinueRun(ctx context.Context, runID id.AgentRunID) (*run.Run, error) {
+	return e.continueRun(ctx, runID, false)
+}
+
+// continueRun is ContinueRun. admitted says the caller already holds the
+// run's admission on ctx (ResolveCheckpoint, which admits before it
+// records the decision), so the run takes no second ticket.
+func (e *Engine) continueRun(ctx context.Context, runID id.AgentRunID, admitted bool) (*run.Run, error) {
 	if err := e.requireContinuation(); err != nil {
 		return nil, err
 	}
+	trace := e.traceResume
+	if admitted {
+		trace = e.traceAdmitted
+	}
 	var ended *run.Run
-	r, err := e.traceResume(ctx, runID, resumeLabelContinue, func(tc context.Context) (*run.Run, error) {
+	r, err := trace(ctx, runID, resumeLabelContinue, func(tc context.Context) (*run.Run, error) {
 		runCtx, rz, done, claimErr := e.claimContinuation(tc, runID)
 		if claimErr != nil {
 			ended = done

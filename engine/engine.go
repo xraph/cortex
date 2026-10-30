@@ -391,8 +391,9 @@ func (e *Engine) Start(ctx context.Context) error {
 // Stop gracefully shuts down the engine.
 //
 // It first drains: from the moment Stop starts, RunAgent, StreamAgent,
-// RunPrepared, StreamPrepared, Resume, ResumeStream and ResolveCheckpoint
-// return cortex.ErrEngineStopping, and Stop waits for the runs already
+// RunPrepared, StreamPrepared, Resume, ResumeStream and a ResolveCheckpoint
+// that would continue a run return cortex.ErrEngineStopping before they
+// write anything, and Stop waits for the runs already
 // executing to finish. A run started from inside one of those (a tool
 // calling RunAgent on the ctx it was given) is still let through, because
 // its parent is one of the runs being waited for. Start admits runs again.
@@ -856,15 +857,24 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 //
 // It is DecideCheckpoint followed by ContinueRun on the caller's
 // goroutine, so the caller waits for the run rather than getting a
-// receipt for one, same as RunAgent. The decision is recorded before the
-// run continues, because the ready state between the two is durable: a
-// continuation that fails leaves the decision recorded and the run either
-// failed (a failure after the claim) or still ready for ContinueRun (a
-// refusal before it, such as cortex.ErrEngineStopping during a deploy).
-// In the second case the error says so: the decision is recorded and
-// ContinueRun finishes the run, which a host that continues RunReady
-// runs does on its own. Repeating the decision then is
-// cortex.ErrInvalidState and never runs the approved action again.
+// receipt for one, same as RunAgent.
+//
+// A decision that continues a run (an approval, or a rejection that goes
+// back to the model) is admitted first, like any run: while Stop drains it
+// returns cortex.ErrEngineStopping, and under a full WithRunConcurrency cap
+// it waits for a slot until ctx ends. Either refusal records nothing, so
+// the checkpoint stays pending and the caller can decide again here or on
+// another replica. The admission is held through the continuation.
+//
+// After that, the decision is recorded before the run continues, because
+// the ready state between the two is durable: a continuation that fails
+// leaves the decision recorded and the run either failed (a failure after
+// the claim) or still ready for ContinueRun (a check that failed for now
+// before the claim, such as a principal the codec could not decode). In
+// the second case the error says so: the decision is recorded and
+// ContinueRun finishes the run, which a host that continues RunReady runs
+// does on its own. Repeating the decision then is cortex.ErrInvalidState
+// and never runs the approved action again.
 //
 // A checkpoint a host wrote itself resolves exactly as it always has,
 // with nothing else touched. Only the loop knows how to pause a run, so
@@ -895,17 +905,45 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 	if e.continuation == nil {
 		return e.resolveInPlace(ctx, cpID, decision)
 	}
+	// A decision that continues a run is admitted before it is recorded,
+	// and keeps that admission through the continuation: a refusal (the
+	// engine draining, no slot before ctx ends) leaves the checkpoint
+	// pending and the run paused, as in v1.9.0, for the caller to take
+	// elsewhere.
+	admitted := e.decisionContinues(ctx, cpID, decision)
+	if admitted {
+		admittedCtx, done, err := e.admit(ctx)
+		if err != nil {
+			return fmt.Errorf("cortex: checkpoint %s: nothing was recorded: %w", cpID, err)
+		}
+		defer done()
+		ctx = admittedCtx
+	}
 	ready, err := e.decideCheckpoint(ctx, cpID, decision)
 	if err != nil || ready == nil {
 		return err
 	}
-	if _, err := e.ContinueRun(ctx, ready.ID); err != nil {
+	if _, err := e.continueRun(ctx, ready.ID, admitted); err != nil {
 		if e.runIsReady(ctx, ready.ID) {
 			return fmt.Errorf("cortex: checkpoint %s: the decision is recorded and run %s is ready; ContinueRun finishes it: %w", cpID, ready.ID, err)
 		}
 		return fmt.Errorf("continue run %s after checkpoint %s: %w", ready.ID, cpID, err)
 	}
 	return nil
+}
+
+// decisionContinues reports whether deciding cpID with d continues a run:
+// an approval, or a rejection that goes back to the model, of a checkpoint
+// the loop opened. A rejection that fails the run, and a checkpoint the
+// host wrote itself, only record, so they need no admission. A checkpoint
+// that cannot be read is treated as one that continues; decideCheckpoint
+// reports the read error itself.
+func (e *Engine) decisionContinues(ctx context.Context, cpID id.CheckpointID, d checkpoint.Decision) bool {
+	if !d.Approved && !e.rejectionsToModel {
+		return false
+	}
+	cp, err := e.store.GetCheckpoint(ctx, cpID)
+	return err != nil || openedASuspendedRun(cp)
 }
 
 // runIsReady reports whether runID is still ready, waiting for ContinueRun.

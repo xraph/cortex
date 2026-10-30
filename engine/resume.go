@@ -143,6 +143,13 @@ func (e *Engine) traceResume(ctx context.Context, runID id.AgentRunID, label str
 		return nil, err
 	}
 	defer done()
+	return e.traceAdmitted(ctx, runID, label, action)
+}
+
+// traceAdmitted is traceResume for a caller that already holds the run's
+// admission on ctx. Admitting again would issue a nested ticket, and a
+// nested run is never handed off when Stop drains.
+func (e *Engine) traceAdmitted(ctx context.Context, runID id.AgentRunID, label string, action func(context.Context) (*run.Run, error)) (r *run.Run, err error) {
 	ctx, rt := e.startRun(ctx, modeSync, true,
 		attribute.String(attrRunID, runID.String()),
 		attribute.String(attrRunResumeSource, label))
