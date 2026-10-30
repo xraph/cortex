@@ -55,7 +55,7 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
           go build ./...
-          go test -race -count=1 -timeout=30m ./...
+          go test -race -count=1 -timeout=60m ./...
 
       - name: Verify sub-modules
         run: |
@@ -75,12 +75,12 @@ jobs:
                   *) packages+=("$package") ;;
                 esac
               done < "$RUNNER_TEMP/cortex-release-optimizer-packages.txt"
-              go test -race -count=1 -timeout=30m "${packages[@]}"
+              go test -race -count=1 -timeout=60m "${packages[@]}"
               for backend in sqlite postgres mongo; do
-                go test -race -count=1 -timeout=30m "./store/$backend"
+                go test -race -count=1 -timeout=60m "./store/$backend"
               done
             else
-              go test -race -count=1 -timeout=30m ./...
+              go test -race -count=1 -timeout=60m ./...
             fi
             popd > /dev/null
             echo "::endgroup::"

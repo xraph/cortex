@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.10.1] - 2026-10-30
+
+Use this one. It's the same code as v1.10.0, but the v1.10.0 release run tagged the root module and then timed out in its race tests before it could tag the sub-modules, so `api/v1.10.0`, `extension/v1.10.0`, `mcpbridge/v1.10.0` and the rest were never published. Everything listed under 1.10.0 below ships here.
+
+### Fixed
+
+- The release workflow gives each race test run 60 minutes, the same as CI coverage. The engine and SQLite packages need about 25 to 30 minutes on a hosted runner, which left no room under the old 30.
+
 ## [1.10.0] - 2026-10-29
 
 v1.9.0 went out on 2026-10-27 and carried the work that was on `main` before this, assured execution included. That part is experimental and stays off unless you turn it on. If you run v1.9.0 today, read "Upgrading from v1.9.0" in `MIGRATION.md` before you roll this out. Coming from v1.8.0, read "Upgrading from v1.8.0" too.
