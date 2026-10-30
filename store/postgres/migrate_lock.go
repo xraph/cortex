@@ -2,9 +2,10 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"math/big"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -123,7 +124,14 @@ func waitForMigrateLock(ctx context.Context, conn driver.DedicatedConn) error {
 // spread out their retries.
 func jitter(d time.Duration) time.Duration {
 	half := d / 2
-	return half + rand.N(half+1) //nolint:gosec // jitter does not need a cryptographic source
+	if half <= 0 {
+		return d
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(half)+1))
+	if err != nil {
+		return d
+	}
+	return half + time.Duration(n.Int64())
 }
 
 // sleepCtx waits for d or until ctx ends, whichever comes first.
