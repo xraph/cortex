@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/xraph/cortex v1.9.0
+	github.com/xraph/cortex v1.10.3
 )
 
 require (

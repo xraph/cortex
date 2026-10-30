@@ -9,7 +9,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/stretchr/testify v1.11.1
-	github.com/xraph/cortex v1.8.0
+	github.com/xraph/cortex v1.10.3
 	github.com/xraph/grove v1.10.1
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
 	golang.org/x/sys v0.49.0
