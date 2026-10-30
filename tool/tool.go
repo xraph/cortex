@@ -14,7 +14,8 @@ type options struct {
 	retrySafe bool
 }
 
-// Option adjusts how New and Register build a tool.
+// Option adjusts how Register builds a tool. RetrySafe is the only one,
+// and New panics when given it, since New cannot carry it to the engine.
 type Option func(*options)
 
 // RetrySafe declares that the handler may be run again after a crash: it
