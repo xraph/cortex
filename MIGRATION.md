@@ -175,7 +175,7 @@ engine.WithPrincipalCodec(cortex.JSONPrincipalCodec[*Caller]())
 
 Without an authorizer a codec is optional, and resumed runs carry a nil principal.
 
-`ResolveCheckpoint` records the approval before the run continues. If the continuation fails after it claimed the run, the run is failed. If it fails before the claim (the engine started stopping during a deploy, or your codec couldn't decode the principal for a moment), the run is left `ready` and the error says the decision is recorded and `ContinueRun` finishes the run. That's true with leasing off as well. Deciding again is refused, so an approved call never runs twice. Either call `ContinueRun` for that run when you see the error, or continue `RunReady` runs from a job, as in the plugin further down.
+`ResolveCheckpoint` admits an approval like a run before it records anything, as v1.9.0 did. While the engine drains you get `cortex.ErrEngineStopping`, and under a full `run_concurrency` cap it waits for a slot until your context ends. Either way nothing is recorded, the checkpoint stays pending and the run stays paused, so you can decide again here or on another replica (the REST module answers 503). Once admitted, it records the approval before the run continues. If the continuation fails after it claimed the run, the run is failed. If a check fails for now before the claim (your codec couldn't decode the principal for a moment, say), the run is left `ready` and the error says the decision is recorded and `ContinueRun` finishes the run. That's true with leasing off as well. Deciding again is refused, so an approved call never runs twice. Either call `ContinueRun` for that run when you see that error, or continue `RunReady` runs from a job, as in the plugin further down.
 
 `WithSuspensionTTL(0)` no longer stops the sweeper. Zero now means no default deadline, and the sweeper keeps running for approvals, external tools and agent replies that carry a deadline of their own.
 
@@ -200,23 +200,37 @@ type continuer struct{ jobs chan<- continueJob }
 func (continuer) Name() string { return "continue-runs" }
 
 func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
-	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	c.enqueue(ctx, runID)
 	return nil
 }
 
 func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
-	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	c.enqueue(ctx, runID)
 	return nil
 }
 
-// On any replica. ContinueRun runs under the run's own principal.
-for job := range jobs {
-	ctx := cortex.WithScope(context.Background(), job.scope)
-	if _, err := eng.ContinueRun(ctx, job.runID); err != nil {
-		// Log the run ID. The sweeper tells you about the run again.
+// enqueue never blocks. A notice it drops comes back: the sweeper tells
+// you again about a run still waiting after WithReadyRenotify.
+func (c continuer) enqueue(ctx context.Context, runID id.AgentRunID) {
+	select {
+	case c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}:
+	default:
 	}
 }
+
+// A worker goroutine, or your queue's consumer, on any replica.
+// ContinueRun runs under the run's own principal.
+go func() {
+	for job := range jobs {
+		ctx := cortex.WithScope(context.Background(), job.scope)
+		if _, err := eng.ContinueRun(ctx, job.runID); err != nil {
+			// Log the run ID. The sweeper tells you about the run again.
+		}
+	}
+}()
 ```
+
+Hooks run on the engine's own goroutines (the sweeper, `Stop` handing a run off, the request that decided a checkpoint), so a hook must never block. Hand the job off and return, and call `ContinueRun` from a goroutine or a job queue, never from inside the hook. A hook that blocks on a full channel can hold up `Stop` until its deadline.
 
 Register it with `engine.WithExtension(continuer{jobs: jobs})` next to `engine.WithRunLease(60*time.Second)`, or through `extension.WithEngineOption` under Forge. Sixty seconds suits most hosts.
 

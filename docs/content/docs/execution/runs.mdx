@@ -112,18 +112,30 @@ type continuer struct{ jobs chan<- continueJob } // your durable queue in produc
 func (continuer) Name() string { return "continue-runs" }
 
 func (c continuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
-    c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+    c.enqueue(ctx, runID)
     return nil
 }
 
 func (c continuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
-    c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+    c.enqueue(ctx, runID)
     return nil
 }
 
-// The job, on whichever replica takes it:
+// enqueue never blocks. A dropped notice comes back with the sweeper's
+// next WithReadyRenotify pass.
+func (c continuer) enqueue(ctx context.Context, runID id.AgentRunID) {
+    select {
+    case c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}:
+    default:
+    }
+}
+
+// The job, in a worker goroutine or your queue's consumer, on whichever
+// replica takes it:
 r, err := eng.ContinueRun(cortex.WithScope(context.Background(), job.scope), job.runID)
 ```
+
+Hooks run on the engine's own goroutines: the sweeper, `Stop` handing a run off, and the request that decided a checkpoint. A hook must never block, so hand the job off and return, and call `ContinueRun` from a goroutine or a job queue. A hook stuck on a full channel can hold `Stop` up until its deadline.
 
 With leasing on, `Stop` hands each leased run off at its next model call or tool dispatch: the run saves its progress, becomes `reclaimable`, fires `RunReclaimable` with `HandOff` set, and its `RunAgent` or `StreamAgent` caller gets `cortex.ErrRunInterrupted`.
 

@@ -35,7 +35,7 @@ Each of these has a paragraph in `MIGRATION.md`, "Upgrading from v1.9.0", saying
 
 - `engine.New` fails with `cortex.ErrPrincipalCodecRequired` when you install a `ToolAuthorizer` without `engine.WithPrincipalCodec`.
 - A resumed run makes its tool calls as the principal that started it, not the one that resumed it.
-- `ResolveCheckpoint` records the decision before the run continues. When the continuation fails before it claims the run, the run stays `ready` and the error says `ContinueRun` finishes it.
+- `ResolveCheckpoint` records the decision before the run continues. When the continuation fails before it claims the run, the run stays `ready` and the error says `ContinueRun` finishes it. An approval that arrives while the engine drains, or that can't get a run slot, is still refused before anything is recorded, as in v1.9.0.
 - `WithSuspensionTTL(0)` no longer stops the sweeper. It only drops the default deadline.
 - The Forge extension applies the config fields it used to read and ignore.
 - The Nexus adapter refuses a call it can't name a tenant for, with an error matching `cortex.ErrNoScope`.
@@ -49,7 +49,7 @@ Each of these has a paragraph in `MIGRATION.md`, "Upgrading from v1.9.0", saying
 - REST handlers no longer write JSON bodies twice. On most routes v1.9.0 sent two concatenated objects in one response, which `json.Unmarshal` and browsers reject.
 - A run the messaging bus starts for a directive keeps its reply route, the asker's reply token included, in a column only the engine reads. It's no longer in the run's metadata, so run JSON, events and REST responses don't carry it.
 - Run JSON and REST responses no longer carry the lease owner, which names the worker's host, and a reclaimed run that stops on an uncertain call says "another worker" in its error. The owner stays in the store.
-- The REST module answers `cortex.ErrEngineStopping` with 503, so your client can retry on another replica, and `cortex.ErrRunInterrupted` with 409. Both were 500.
+- The REST module answers `cortex.ErrEngineStopping` with 503, saying nothing was recorded so your client can retry on another replica, and `cortex.ErrRunInterrupted` with 409. Both were 500.
 
 ### Known limits
 

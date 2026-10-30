@@ -407,10 +407,14 @@ alone: another decider is probably carrying out their decision and is about to
 record it.
 
 Resolving a checkpoint that's already resolved is `cortex.ErrInvalidState`.
-The decision is recorded before the run continues. If the continuation then
-fails, the decision stays recorded and the run is failed (when it failed after
-claiming the run) or still `ready` (when it was refused before), and
-`ContinueRun` can pick a ready run up again. Deciding again is refused, so an
+An approval is admitted like any run before anything is written: while `Stop`
+drains, `ResolveCheckpoint` returns `cortex.ErrEngineStopping`, and under a
+full `WithRunConcurrency` cap it waits for a slot until your `ctx` ends. Either
+refusal records nothing, so the checkpoint stays pending for you to decide
+again. Once admitted, the decision is recorded before the run continues. If
+the continuation then fails, the decision stays recorded and the run is failed
+(when it failed after claiming the run) or still `ready` (when a check failed
+for now before it), and the error says `ContinueRun` finishes it. Deciding again is refused, so an
 approval can never run its action twice. On a store without
 `run.ContinuationStore` the older order applies: the decision is recorded only
 after it has taken effect, and one that couldn't be carried out leaves the

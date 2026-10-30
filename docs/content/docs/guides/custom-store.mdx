@@ -83,6 +83,8 @@ type Store interface {
 }
 ```
 
+Two `run.Run` fields are written once and are never serialized: `Principal` (the codec's bytes for the run's caller) and `ReplyRoute` (where a directive run's answer goes, the asker's reply token included). Persist both in `CreateRun`, return them from every read, and leave them alone in `UpdateRun`, even when the run you're handed carries something else. Without `ReplyRoute`, a directive run that's handed off or reclaimed can't send its answer from the replica that finishes it. The `RunPrincipal` and `RunReplyRoute` conformance cases check both.
+
 ### memory.Store (8 methods)
 
 Conversation methods carry a `SessionID` as well as an agent: messages belong to a thread, not to the agent directly. Working memory is keyed by run instead, and `LoadWorking` returns `cortex.ErrWorkingMemoryNotFound` when the key is absent.
