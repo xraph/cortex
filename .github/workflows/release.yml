@@ -10,6 +10,11 @@ on:
         description: 'Release tag (e.g., v1.0.0)'
         required: true
         type: string
+      skip-tests:
+        description: 'Skip the race tests (downloads, the tidy check and builds still run). Only when CI on main is green for this commit.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -20,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOWORK: 'off'
+      # A tag push always runs the tests; only a manual dispatch can skip them.
+      SKIP_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.skip-tests && 'true' || 'false' }}
 
     steps:
       - name: Checkout
@@ -55,7 +62,11 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
           go build ./...
-          go test -race -count=1 -timeout=60m ./...
+          if [ "$SKIP_TESTS" = "true" ]; then
+            echo "::notice::Skipping the root module's race tests (skip-tests)"
+          else
+            go test -race -count=1 -timeout=60m ./...
+          fi
 
       - name: Verify sub-modules
         run: |
@@ -66,7 +77,9 @@ jobs:
             go mod tidy
             git diff --exit-code go.mod go.sum
             go build ./...
-            if [ "$mod" = "optimization" ]; then
+            if [ "$SKIP_TESTS" = "true" ]; then
+              echo "::notice::Skipping $mod's race tests (skip-tests)"
+            elif [ "$mod" = "optimization" ]; then
               go list ./... > "$RUNNER_TEMP/cortex-release-optimizer-packages.txt"
               packages=()
               while IFS= read -r package; do

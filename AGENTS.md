@@ -178,10 +178,12 @@ You release by dispatching the workflow. Never push a tag by hand.
 2. Wait for CI on `main` to go green: `gh run list --workflow ci.yml --branch main --limit 1`.
 3. `gh workflow run release.yml --ref main -f tag=vX.Y.Z`
 
+If CI on `main` already passed for that exact commit, you can add `-f skip-tests=true`. The release then skips its race tests but still downloads, checks `go mod tidy` and builds every module. A release started by pushing a tag always runs the tests.
+
 `.github/workflows/release.yml` runs these steps:
 
 1. It tags `main` with the input as `github-actions[bot]` and pushes the tag. Nothing checks the input before that push (`pin-submodules.sh` validates it two steps later), so type the leading `v`.
-2. It verifies the root with `go mod download`, a `go mod tidy` diff, `go build ./...` and `go test -race -count=1 ./...`, then does the same in `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization` and `mcpbridge`.
+2. It verifies the root with `go mod download`, a `go mod tidy` diff, `go build ./...` and `go test -race -count=1 ./...` (the tests are left out with `skip-tests`), then does the same in `api`, `sentinel`, `extension`, `integrations/fabriq`, `integrations/sandbox`, `optimization` and `mcpbridge`.
 3. It runs `scripts/pin-submodules.sh vX.Y.Z`. The script validates the version, then uses `go mod edit -require` to point every `github.com/xraph/cortex...` require in those seven `go.mod` files at the new tag, and it fails the run if it finds a cortex require still at `v0.0.0` (a `v0.0.0-...` pseudo-version counts).
 4. It commits the seven `go.mod` files as `chore: pin sub-modules to vX.Y.Z`, tags that commit `api/vX.Y.Z`, `sentinel/vX.Y.Z`, `extension/vX.Y.Z`, `integrations/fabriq/vX.Y.Z`, `integrations/sandbox/vX.Y.Z`, `optimization/vX.Y.Z` and `mcpbridge/vX.Y.Z` (skipping any that already exist), pushes the tags and runs `git reset --hard HEAD~1`.
 5. In a throwaway module it runs `go get github.com/xraph/cortex/<mod>@vX.Y.Z` against `proxy.golang.org` for each of the seven, so a tag that can't resolve fails the run.
