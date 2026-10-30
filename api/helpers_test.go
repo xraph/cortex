@@ -102,5 +102,8 @@ func TestMapStoreError_LifecycleErrors(t *testing.T) {
 		if strings.Contains(mapped.Error(), "private details") {
 			t.Errorf("mapStoreError(%v) disclosed wrapped details: %v", tc.err, mapped)
 		}
+		if tc.want == http.StatusServiceUnavailable && !strings.Contains(mapped.Error(), "nothing was recorded") {
+			t.Errorf("mapStoreError(%v) = %v, want it to say nothing was recorded", tc.err, mapped)
+		}
 	}
 }

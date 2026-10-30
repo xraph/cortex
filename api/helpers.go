@@ -11,6 +11,11 @@ import (
 	"github.com/xraph/cortex/safety"
 )
 
+// stoppingMessage is the 503 body for a replica that is shutting down. The
+// engine refuses such a request at admission, before it writes anything,
+// a checkpoint decision included, so retrying elsewhere is safe.
+const stoppingMessage = "cortex: engine is stopping; nothing was recorded, so retry on another replica"
+
 // mapStoreError maps domain errors to Forge HTTP errors.
 func mapStoreError(err error) error {
 	if err == nil {
@@ -21,8 +26,9 @@ func mapStoreError(err error) error {
 	}
 	switch {
 	case errors.Is(err, cortex.ErrEngineStopping):
-		// This replica is shutting down; another one can take the request.
-		return forge.NewHTTPError(http.StatusServiceUnavailable, cortex.ErrEngineStopping.Error())
+		// This replica is shutting down and refused the request before it
+		// wrote anything; another replica can take it.
+		return forge.NewHTTPError(http.StatusServiceUnavailable, stoppingMessage)
 	case errors.Is(err, cortex.ErrRunInterrupted):
 		// The run was handed off or stopped where it was and waits for
 		// ContinueRun; it did not fail.
