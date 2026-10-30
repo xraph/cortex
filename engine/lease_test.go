@@ -578,13 +578,22 @@ type continueJob struct {
 func (*runContinuer) Name() string { return "run-continuer" }
 
 func (c *runContinuer) OnRunReady(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReadyNotice) error {
-	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	c.enqueue(ctx, runID)
 	return nil
 }
 
 func (c *runContinuer) OnRunReclaimable(ctx context.Context, _ id.AgentID, runID id.AgentRunID, _ run.ReclaimNotice) error {
-	c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}
+	c.enqueue(ctx, runID)
 	return nil
+}
+
+// enqueue never blocks: hooks run on the engine's own goroutines, Stop's
+// hand-off among them. A dropped notice comes back with the sweeper.
+func (c *runContinuer) enqueue(ctx context.Context, runID id.AgentRunID) {
+	select {
+	case c.jobs <- continueJob{scope: cortex.ScopeFromContext(ctx), runID: runID}:
+	default:
+	}
 }
 
 // With WithRunLease set, Stop hands the run off and another replica's job
