@@ -4,13 +4,14 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [1.10.1] - 2026-10-30
+## [1.10.3] - 2026-10-30
 
-Use this one. It's the same code as v1.10.0, but the v1.10.0 release run tagged the root module and then timed out in its race tests before it could tag the sub-modules, so `api/v1.10.0`, `extension/v1.10.0`, `mcpbridge/v1.10.0` and the rest were never published. Everything listed under 1.10.0 below ships here.
+Use this one. It's the same Go code as v1.10.0. The v1.10.0, v1.10.1 and v1.10.2 release runs tagged the root module but none of the sub-modules, so `api`, `extension`, `mcpbridge` and the rest only exist at v1.10.3. Pin the root and every sub-module you use at v1.10.3. Everything listed under 1.10.0 below ships here.
 
-### Fixed
+### Changed
 
 - The release workflow gives each race test run 60 minutes, the same as CI coverage. The engine and SQLite packages need about 25 to 30 minutes on a hosted runner, which left no room under the old 30.
+- A manual release can skip its race tests with `-f skip-tests=true`. It still checks `go mod tidy` and builds every module. Use it only when CI on `main` passed for the commit you're tagging.
 
 ## [1.10.0] - 2026-10-29
 
