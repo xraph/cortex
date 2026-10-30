@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -52,7 +53,7 @@ func TestContinuedAndResumedRunsHoldLeases(t *testing.T) {
 			ctx := cortex.WithScope(context.Background(), approvalScope())
 			st := newApprovalStore(ctx, t)
 			probe := &leaseProbe{st: st}
-			f := buildContinueFixture(ctx, t, st, []llm.ToolCall{first}, WithTool(probeTool(), probe.handler))
+			f := buildContinueFixture(ctx, t, st, []llm.ToolCall{first}, WithTool(probeTool(), probe.handler), WithRunLease(60*time.Second))
 			f.model.then = [][]llm.ToolCall{{{ID: "call-2", Name: probeTool().Name, Arguments: `{}`}}}
 			f.overrides = &RunOverrides{MaxSteps: 5}
 			paused, cp := f.pause(t)

@@ -231,7 +231,22 @@ type leaseFixture struct {
 	runs  sync.WaitGroup
 }
 
+// newLeaseFixture builds an engine that leases its runs for testLease,
+// since leasing is off by default. A test passes its own WithRunLease in
+// opts to change that, the later option winning.
 func newLeaseFixture(t *testing.T, model *leaseLLM, opts ...engine.Option) *leaseFixture {
+	t.Helper()
+	return buildLeaseFixture(t, model, append([]engine.Option{engine.WithRunLease(testLease)}, opts...))
+}
+
+// newDefaultFixture is newLeaseFixture on the engine's own lease setting,
+// which is off.
+func newDefaultFixture(t *testing.T, model *leaseLLM, opts ...engine.Option) *leaseFixture {
+	t.Helper()
+	return buildLeaseFixture(t, model, opts)
+}
+
+func buildLeaseFixture(t *testing.T, model *leaseLLM, opts []engine.Option) *leaseFixture {
 	t.Helper()
 	st := &progressSpy{Store: openSQLiteStoreForTest(t, filepath.Join(t.TempDir(), "lease.db")+"?_pragma=busy_timeout(10000)")}
 	f := &leaseFixture{store: st, model: model, hooks: &lifecycleRecorder{}}
@@ -245,6 +260,9 @@ func newLeaseFixture(t *testing.T, model *leaseLLM, opts ...engine.Option) *leas
 	f.eng = eng
 	return f
 }
+
+// testLease is the lease ttl the lease tests turn leasing on with.
+const testLease = 60 * time.Second
 
 func (f *leaseFixture) start() <-chan runOutcome {
 	done := make(chan runOutcome, 1)

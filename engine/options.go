@@ -198,12 +198,21 @@ func WithRejectionsReturnToModel() Option {
 	}
 }
 
-// WithRunLease sets how long a worker's lease on a running run lasts
-// before another replica may reclaim the run. The engine renews it every
-// ttl/3 while the run executes and saves the run's progress at each step
-// boundary, so a run whose worker dies or drains is left reclaimable
-// rather than stuck running. The default is 60 seconds. Zero turns off
-// leases, progress snapshots and reclaiming; a negative ttl fails New.
+// WithRunLease turns on run leases and sets how long a worker's lease on a
+// running run lasts before another replica may reclaim the run. The engine
+// renews it every ttl/3 while the run executes and saves the run's
+// progress at each step boundary, so a run whose worker dies or drains is
+// left reclaimable rather than stuck running. A negative ttl fails New.
+//
+// Leasing is off by default (ttl zero): Stop lets admitted runs finish,
+// nothing is handed off and no run becomes reclaimable. Turn it on only
+// when the host continues runs itself. A handed-off or reclaimed run waits
+// in reclaimable until something calls ContinueRun, and nothing in the
+// engine does: subscribe plugin.RunReady and plugin.RunReclaimable and
+// queue a job that calls ContinueRun on the hook's ctx. With leasing on,
+// Stop hands every leased run off at its next model call or tool dispatch
+// and its RunAgent or StreamAgent caller gets cortex.ErrRunInterrupted.
+// A sixty-second ttl suits most hosts.
 //
 // Leasing needs a store that implements both run.ContinuationStore and
 // suspension.ProgressStore. Runs under required verification or a task

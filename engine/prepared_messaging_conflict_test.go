@@ -90,7 +90,7 @@ func (s *conflictOnceStore) counts() (conflicts, starts int) {
 }
 
 func deadAdmitterOptions() []engine.Option {
-	return []engine.Option{engine.WithA2A(a2a.Options{}), engine.WithPreparedTeamMessaging(allowPreparedMessaging()), engine.WithExternalTool(llm.Tool{Name: "await"})}
+	return []engine.Option{engine.WithRunLease(60 * time.Second), engine.WithA2A(a2a.Options{}), engine.WithPreparedTeamMessaging(allowPreparedMessaging()), engine.WithExternalTool(llm.Tool{Name: "await"})}
 }
 
 // TestPreparedTeamDeadAdmitterWorker is entered only by the killed child.

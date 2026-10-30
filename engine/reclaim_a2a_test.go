@@ -99,7 +99,7 @@ func TestReclaimAfterARecordedReplyDoesNotAskAgain(t *testing.T) {
 	waitSignal(t, st.admitted, "the claim of the planner's reply")
 	waitLeaseLapsed(t, st, paused)
 
-	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"), WithRunLease(60*time.Second))
 	replica.sweepLapsed(context.Background(), time.Now().UTC())
 	continued, err := replica.ContinueRun(ctx, paused.ID)
 	if err != nil || continued.State != run.StateCompleted {
@@ -147,7 +147,7 @@ func TestHandedOffDirectiveAnswersFromTheReplicaThatFinishesIt(t *testing.T) {
 	st := newApprovalStore(ctx, t)
 	model := newDrainingLLM(true)
 	t.Cleanup(model.letGo)
-	stopping := newDrainingEngine(ctx, t, st, model, true)
+	stopping := newDrainingEngine(ctx, t, st, model, true, WithRunLease(60*time.Second))
 
 	paused, err := stopping.RunAgent(ctx, "planner", "find out how the worker is doing", nil)
 	if err != nil || paused.State != run.StatePaused {
@@ -182,7 +182,7 @@ func TestHandedOffDirectiveAnswersFromTheReplicaThatFinishesIt(t *testing.T) {
 	}
 
 	model.letGo()
-	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"), WithRunLease(60*time.Second))
 	finished, err := replica.ContinueRun(ctx, workers[0].ID)
 	if err != nil || finished.State != run.StateCompleted {
 		t.Fatalf("ContinueRun of the worker = %+v, %v; want completed", finished, err)
@@ -218,7 +218,7 @@ func TestAdmitterThatDiesBeforeItsStartIsReclaimed(t *testing.T) {
 	waitSignal(t, st.admitted, "the admission of the planner's reply")
 	waitLeaseLapsed(t, st, paused)
 
-	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"), WithRunLease(60*time.Second))
 	replica.sweepLapsed(context.Background(), time.Now().UTC())
 	continued, err := replica.ContinueRun(ctx, paused.ID)
 	if err != nil || continued.State != run.StateCompleted || !strings.Contains(continued.Output, "all clear") {
@@ -259,7 +259,7 @@ func TestLostCancelOfAPeerQuestionDoesNotAskAgain(t *testing.T) {
 	}
 	waitLeaseLapsed(t, st, paused)
 
-	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"), WithRunLease(60*time.Second))
 	replica.sweepLapsed(context.Background(), time.Now().UTC())
 	ended, err := replica.ContinueRun(ctx, paused.ID)
 	if !errors.Is(err, cortex.ErrRunAlreadyDone) || ended == nil || ended.State != run.StateCancelled {
@@ -307,7 +307,7 @@ func TestLostExpiryOfAPeerQuestionDoesNotAskAgain(t *testing.T) {
 	}
 	waitLeaseLapsed(t, st, paused)
 
-	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"))
+	replica := newDrainingEngine(ctx, t, st, model, false, WithWorkerID("replica"), WithRunLease(60*time.Second))
 	replica.sweepLapsed(context.Background(), time.Now().UTC())
 	ended, err := replica.ContinueRun(ctx, paused.ID)
 	if !errors.Is(err, cortex.ErrSuspensionExpired) || ended == nil || ended.State != run.StateFailed {

@@ -397,6 +397,9 @@ func (e *Engine) Start(ctx context.Context) error {
 // calling RunAgent on the ctx it was given) is still let through, because
 // its parent is one of the runs being waited for. Start admits runs again.
 //
+// With leasing off, the default, every admitted run runs to its end while
+// Stop drains, as it always has, and nothing is handed off.
+//
 // A leased run (WithRunLease) does not run to the end while Stop drains.
 // At its next boundary, before a model call or a tool dispatch, it saves
 // its progress, becomes reclaimable under this worker's lease, fires
@@ -857,8 +860,11 @@ func (e *Engine) CountPendingCheckpoints(ctx context.Context, filter *checkpoint
 // run continues, because the ready state between the two is durable: a
 // continuation that fails leaves the decision recorded and the run either
 // failed (a failure after the claim) or still ready for ContinueRun (a
-// refusal before it). Repeating the decision then is cortex.ErrInvalidState
-// and never runs the approved action again.
+// refusal before it, such as cortex.ErrEngineStopping during a deploy).
+// In the second case the error says so: the decision is recorded and
+// ContinueRun finishes the run, which a host that continues RunReady
+// runs does on its own. Repeating the decision then is
+// cortex.ErrInvalidState and never runs the approved action again.
 //
 // A checkpoint a host wrote itself resolves exactly as it always has,
 // with nothing else touched. Only the loop knows how to pause a run, so
@@ -894,9 +900,22 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 		return err
 	}
 	if _, err := e.ContinueRun(ctx, ready.ID); err != nil {
+		if e.runIsReady(ctx, ready.ID) {
+			return fmt.Errorf("cortex: checkpoint %s: the decision is recorded and run %s is ready; ContinueRun finishes it: %w", cpID, ready.ID, err)
+		}
 		return fmt.Errorf("continue run %s after checkpoint %s: %w", ready.ID, cpID, err)
 	}
 	return nil
+}
+
+// runIsReady reports whether runID is still ready, waiting for ContinueRun.
+// It reads on a context free of the caller's cancellation, since the
+// caller's context may be what stopped the continuation.
+func (e *Engine) runIsReady(ctx context.Context, runID id.AgentRunID) bool {
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseWriteTimeout)
+	defer cancel()
+	current, err := e.store.GetRun(readCtx, runID)
+	return err == nil && current != nil && current.State == run.StateReady
 }
 
 // resolveInPlace is ResolveCheckpoint for a store that cannot hold a ready

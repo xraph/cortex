@@ -130,7 +130,7 @@ func TestA2AReplyDuringDrainResumesAsker(t *testing.T) {
 		assertNoStoppingFailure(a2aScope(), t, st, planner)
 	})
 	t.Run("leased", func(t *testing.T) {
-		st, planner := replyDuringDrain(t)
+		st, planner := replyDuringDrain(t, WithRunLease(60*time.Second))
 		assertNoStoppingFailure(a2aScope(), t, st, planner)
 		if _, err := st.(suspension.ProgressStore).GetProgress(a2aScope(), planner); !errors.Is(err, cortex.ErrProgressNotFound) {
 			t.Fatalf("GetProgress of the completed planner = %v, want ErrProgressNotFound", err)

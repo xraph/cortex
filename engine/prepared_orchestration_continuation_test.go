@@ -181,7 +181,7 @@ func TestPreparedTeamContinuationRejectsChangedParentInput(t *testing.T) {
 // it, as it waits for a paused child, and the child is left reclaimable.
 func TestPreparedTeamWaitsForAHandedOffChild(t *testing.T) {
 	f := newPreparedTeamFixture(t, orchestration.StrategySequential)
-	refreshPreparedTeam(t, &f, engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
+	refreshPreparedTeam(t, &f, engine.WithRunLease(60*time.Second), engine.WithTool(llm.Tool{Name: "probe"}, func(context.Context, cortex.Invocation) (string, error) {
 		return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
 	}))
 	f.client.complete = func(context.Context, *llm.Request, int) (*llm.Response, error) {
@@ -213,7 +213,7 @@ func TestPreparedTeamCompletesAfterHandedOffChildContinues(t *testing.T) {
 			return "", fmt.Errorf("nested run: %w", cortex.ErrRunInterrupted)
 		}
 		return "result", nil
-	}), engine.WithToolRetrySafe("probe"))
+	}), engine.WithToolRetrySafe("probe"), engine.WithRunLease(60*time.Second))
 	f.client.complete = func(_ context.Context, _ *llm.Request, call int) (*llm.Response, error) {
 		if call == 1 {
 			return &llm.Response{ToolCalls: []llm.ToolCall{{ID: "probe-call", Name: "probe", Arguments: "{}"}}, FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 10}}, nil

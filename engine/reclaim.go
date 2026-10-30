@@ -49,14 +49,18 @@ const (
 // behind says, on the decide path and in the sweep.
 const supersededReason = "superseded: the run is no longer waiting on the pause this checkpoint was opened for"
 
+// idleGraceWithoutLease is idleGrace on an engine that leases nothing.
+const idleGraceWithoutLease = 2 * time.Minute
+
 // idleGrace is how long a checkpoint may sit pending on a run that has
 // moved past it before the sweep closes it: twice the lease ttl, far
-// longer than a decider takes between its write and its record.
+// longer than a decider takes between its write and its record, or
+// idleGraceWithoutLease with leases off.
 func (e *Engine) idleGrace() time.Duration {
 	if e.leaseTTL > 0 {
 		return 2 * e.leaseTTL
 	}
-	return 2 * defaultRunLease
+	return idleGraceWithoutLease
 }
 
 // leaseLapsed reports whether r is running under a lease that expired at

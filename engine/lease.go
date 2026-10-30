@@ -20,8 +20,11 @@ import (
 	"github.com/xraph/cortex/suspension"
 )
 
-// defaultRunLease is how long a lease lasts when WithRunLease is not set.
-const defaultRunLease = 60 * time.Second
+// defaultRunLease is the lease ttl when WithRunLease is not set: zero,
+// which leaves leasing off. Leasing is opt-in because a leased run that is
+// handed off or reclaimed waits for the host to call ContinueRun, and only
+// a host that wired RunReady and RunReclaimable to a job does.
+const defaultRunLease time.Duration = 0
 
 // leaseWriteTimeout bounds the store writes a lease makes on a context
 // that no longer carries the run's cancellation.

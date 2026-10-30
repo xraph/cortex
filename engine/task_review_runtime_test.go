@@ -320,7 +320,7 @@ func TestTaskReviewRuntimeHandedOffReviewIsPending(t *testing.T) {
 	// The fixture's store hides the lease capabilities; this one keeps them,
 	// as a host's real store would.
 	leased := &leasedReviewStore{reviewRuntimeStore: s, ContinuationStore: backend, ProgressStore: backend}
-	e, err := engine.New(engine.WithStore(leased), engine.WithLLM(client))
+	e, err := engine.New(engine.WithStore(leased), engine.WithLLM(client), engine.WithRunLease(60*time.Second))
 	require.NoError(t, err)
 	worker, err := e.NewTaskReviewRuntime(cfg)
 	require.NoError(t, err)
