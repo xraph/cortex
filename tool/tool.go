@@ -20,6 +20,10 @@ type Option func(*options)
 // RetrySafe declares that the handler may be run again after a crash: it
 // only reads, or it is idempotent through the effect journal. Without it
 // the engine treats an interrupted call as uncertain.
+//
+// Only Register can act on it, because only Register reaches the engine.
+// New panics when given it; mark a tool built with New by passing
+// engine.WithToolRetrySafe with its name alongside engine.WithTool.
 func RetrySafe() Option {
 	return func(o *options) { o.retrySafe = true }
 }
@@ -34,8 +38,16 @@ func RetrySafe() Option {
 // An Out of string or json.RawMessage is returned as is. Anything else is
 // marshalled to JSON. fn's own error is returned unwrapped, so
 // cortex.ErrEffectUncertain still matches with errors.Is.
+//
+// New panics when given RetrySafe: a definition and a handler cannot carry
+// the mark to the engine, and dropping it silently would leave a tool the
+// host thinks is retry-safe stopping runs as uncertain after a crash. Use
+// Register, or engine.WithToolRetrySafe(name).
 func New[In, Out any](name, description string, fn func(ctx context.Context, inv cortex.Invocation, in In) (Out, error), opts ...Option) (llm.Tool, engine.ToolHandler) {
-	def, handler, _ := build(name, description, fn, opts)
+	def, handler, o := build(name, description, fn, opts)
+	if o.retrySafe {
+		panic(fmt.Sprintf("tool %q: New cannot mark a tool retry-safe; use tool.Register, or engine.WithToolRetrySafe(%q) with engine.WithTool", name, name))
+	}
 	return def, handler
 }
 

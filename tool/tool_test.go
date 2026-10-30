@@ -135,6 +135,31 @@ func TestNewPanicsWhenInputIsNotAStruct(t *testing.T) {
 	tool.New("x", "bad", func(context.Context, cortex.Invocation, string) (string, error) { return "", nil })
 }
 
+// New cannot hand the retry-safe mark to the engine, so it refuses it
+// rather than dropping it; Register, which can, honours it.
+func TestNewRefusesRetrySafe(t *testing.T) {
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("New accepted RetrySafe and dropped it")
+			}
+			if msg := fmt.Sprint(r); !strings.Contains(msg, `tool "list": New cannot mark a tool retry-safe`) || !strings.Contains(msg, `engine.WithToolRetrySafe("list")`) {
+				t.Errorf("panic = %q", msg)
+			}
+		}()
+		tool.New("list", "list things", listFn, tool.RetrySafe())
+	}()
+
+	eng, err := engine.New(tool.Register("list", "list things", listFn, tool.RetrySafe()))
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	if !eng.ToolRetrySafe("list") {
+		t.Error("Register dropped RetrySafe")
+	}
+}
+
 func TestHandlerValidatesArguments(t *testing.T) {
 	calls := 0
 	_, h := tool.New("list", "list", func(ctx context.Context, inv cortex.Invocation, in listInput) (listOutput, error) {
