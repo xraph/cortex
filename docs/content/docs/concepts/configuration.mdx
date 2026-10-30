@@ -262,7 +262,7 @@ eng, err := engine.New(engine.WithStore(st), engine.WithSafety(adapter), engine.
 | `WithTenant(f)` | `cortex.RootTenant` | Names the Shield tenant from the run's scope. An error or an empty result fails the scan closed |
 | `WithApp(app)` | the scope's `app` level, or the canonical scope | Names the Shield app, which with the tenant picks the profiles |
 | `WithUntrustedSources(sources...)` | `tool_result`, `tool_error`, `retrieval` | Replaces the publication sources whose inbound text Shield treats as untrusted |
-| `WithSegmentLimit(maxBytes)` | 2048 | How much streamed text with no sentence or line end is held before it's cut at its last whitespace, under `safety.ModeCheckedSegments` |
+| `WithSegmentLimit(maxBytes)` | 2048 | How much streamed text with no sentence or line end is held before it's cut at a whitespace (never one next to a `:` or `=`), under `safety.ModeCheckedSegments` |
 
 The tenant comes from the scope through your `TenantFunc`. It's never the engine's canonical scope string, so a Shield tenant you seeded as `o1` matches a run scoped `org=o1`.
 
