@@ -153,7 +153,8 @@ func boundaryEnd(pending string) int {
 // sit between a key and its value, or zero. Shield finds an assignment as
 // a key, blanks, ':' or '=' (or ":=", "=>"), blanks, then the value, so a
 // cut in the blanks on either side of the operator would scan the key and
-// the value apart.
+// the value apart. Blanks at the very end of pending are not a cut either,
+// since the operator after them may be in the next chunk.
 func limitEnd(pending string) int {
 	for i := len(pending) - 1; i >= 0; i-- {
 		if strings.IndexByte(" \t\n\r\v\f", pending[i]) < 0 {
@@ -165,6 +166,11 @@ func limitEnd(pending string) int {
 		}
 		for after < len(pending) && isBlank(pending[after]) {
 			after++
+		}
+		// Blanks that run to the end of pending may sit before an
+		// operator that hasn't arrived yet.
+		if after == len(pending) {
+			continue
 		}
 		if before >= 0 && strings.IndexByte(":=>", pending[before]) >= 0 {
 			continue

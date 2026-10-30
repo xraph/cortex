@@ -86,7 +86,7 @@ func TestSegmentLimitCutKeepsAssignmentsWhole(t *testing.T) {
 	ctx := scoped(testTenant)
 	// A run over the limit with no sentence or line end, whose last
 	// whitespace sits inside an assignment.
-	for _, prefix := range []string{"password: Hun", "password = Hun", "password =Hun", "password:\tHun"} {
+	for _, prefix := range []string{"password: Hun", "password = Hun", "password =Hun", "password:\tHun", "password ", "password\t ", `"password" `} {
 		pending := strings.Repeat("words go here ", 5) + prefix
 		decision, consumed, err := newChecker(ctx, t, a, presets.InfraAgentOutput).CheckSegment(ctx, pending, false)
 		if err != nil {
@@ -94,6 +94,36 @@ func TestSegmentLimitCutKeepsAssignmentsWhole(t *testing.T) {
 		}
 		if want := len(pending) - len(prefix); consumed != want || strings.Contains(decision.Text, "password") {
 			t.Fatalf("%q: consumed %d, text %q; want %d, cut before the key", prefix, consumed, decision.Text, want)
+		}
+	}
+}
+
+func TestSegmentLimitCutWaitsForTheOperator(t *testing.T) {
+	eng, _ := seededEngine(t)
+	const limit = 64
+	a := New(eng, WithApp(testApp), WithSegmentLimit(limit))
+	ctx := scoped(testTenant)
+	pairs := []struct{ pair, value string }{
+		{"password = Hunter2-prod-Pass", "Hunter2-prod-Pass"},
+		{"DB_PASSWORD =Hunter2-prod-Pass", "Hunter2-prod-Pass"},
+		{`"password" : "Hunter2-prod-Pass"`, "Hunter2-prod-Pass"},
+	}
+	// A line with no sentence or line end before the pair, padded so the
+	// limit is crossed at every byte around the key's blank.
+	words := strings.Repeat("words go here ", 10)
+	for _, p := range pairs {
+		for pad := limit - 24; pad <= limit+4; pad++ {
+			text := words[:pad] + " " + p.pair + "\n"
+			whole := wholeMessage(ctx, t, a, presets.InfraAgentOutput, text)
+			if strings.Contains(whole, p.value) {
+				t.Fatalf("the whole message kept the value: %q", whole)
+			}
+			for size := 1; size <= 4; size++ {
+				got := streamSegments(ctx, t, a, presets.InfraAgentOutput, text, size)
+				if got != whole || strings.Contains(got, p.value) {
+					t.Fatalf("%q, pad %d, chunks of %d: streamed %q, the whole message publishes %q", p.pair, pad, size, got, whole)
+				}
+			}
 		}
 	}
 }

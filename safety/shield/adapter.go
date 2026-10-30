@@ -107,8 +107,9 @@ func WithUntrustedSources(sources ...string) Option {
 
 // WithSegmentLimit sets how many bytes of streamed model output a segment
 // checker holds before it cuts a run of text with no sentence or line end
-// at a whitespace, never one next to a ':' or '='. The default is 2048. A value of zero or less
-// keeps the default. See NewSegmentChecker.
+// at a whitespace, never one next to an assignment operator. The default
+// is 2048. A value of zero or less keeps the default. See
+// NewSegmentChecker.
 func WithSegmentLimit(maxBytes int) Option {
 	return func(a *Adapter) {
 		if maxBytes > 0 {
