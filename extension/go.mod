@@ -15,10 +15,10 @@ require (
 	github.com/xraph/go-utils v1.5.0
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
-	github.com/xraph/nexus v1.9.1
+	github.com/xraph/nexus v1.9.2
 	github.com/xraph/shield v1.10.0
-	github.com/xraph/vessel v1.0.4
-	github.com/xraph/weave v1.9.2
+	github.com/xraph/vessel v1.0.5
+	github.com/xraph/weave v1.9.3
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 )

@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Every module now builds on grove v1.10.2 (with its `mongodriver`, `pgdriver`, `sqlitedriver`, `kv` and `kv/drivers/redisdriver`) and shield v1.10.0. Nexus stays at v1.9.1 and weave at v1.9.2.
+- Every module now builds on grove v1.10.2 (with its `mongodriver`, `pgdriver`, `sqlitedriver`, `kv` and `kv/drivers/redisdriver`) shield v1.10.0, nexus v1.9.2, weave v1.9.3 and vessel v1.0.5, on forge v1.13.2. Those are the latest releases of each.
 - With shield v1.10.0, the `InfraAgentOutput` preset blocks model output that holds a credential (an API key, token, private key or password) where it used to redact the value. With checked segments on, a streamed reply stops at the segment that holds it, and nothing of the credential goes out. Personal data such as email addresses is still redacted. If you seed shield's `InfraAgent` preset, expect `safety.ErrBlocked` where you used to see `[GITHUB_TOKEN_1]`.
 
 ### Fixed

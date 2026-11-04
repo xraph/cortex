@@ -39,8 +39,8 @@ github.com/xraph/grove/drivers/sqlitedriver v1.10.2 h1:YLB9bGSxJnIquPN31etQGtrCW
 github.com/xraph/grove/drivers/sqlitedriver v1.10.2/go.mod h1:UlTGQQRp7VD4Rjj8HN6XjW1TMZl0iSNI4LApoQnChYQ=
 github.com/xraph/shield v1.10.0 h1:dEDMNb0zxxfBi+x6807Z66WemrssuutTjlBu0rRM4mY=
 github.com/xraph/shield v1.10.0/go.mod h1:Di9E0kQ9AL/e/Fps6/DFc+npZJqCK9aIW9jcx064hb8=
-github.com/xraph/vessel v1.0.4 h1:YVG80hm7bAKTwogwLXZMlp46tMHHJThUcvCUOWao9Yk=
-github.com/xraph/vessel v1.0.4/go.mod h1:5hgrMbuczxu2kRIM3iVJ3wPSb6HOvbMhV4nkRFaPNqs=
+github.com/xraph/vessel v1.0.5 h1:4In3UmIJzOrym5+FXE/uvm1jR+gofUqVmEjKjjgE3gw=
+github.com/xraph/vessel v1.0.5/go.mod h1:5hgrMbuczxu2kRIM3iVJ3wPSb6HOvbMhV4nkRFaPNqs=
 go.jetify.com/typeid/v2 v2.0.0-alpha.3 h1:T6RPx6bNl10lp0JN2Xz/XcgLZWSlVmL58Xqy9cgTCcc=
 go.jetify.com/typeid/v2 v2.0.0-alpha.3/go.mod h1:zfD1ZDHDJNgXZANsO9jDOD81XRRQ0zAOnDBEHmIV/Gw=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

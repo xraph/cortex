@@ -14,10 +14,10 @@ require (
 	github.com/xraph/grove/drivers/mongodriver v1.10.2
 	github.com/xraph/grove/drivers/pgdriver v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
-	github.com/xraph/nexus v1.9.1
+	github.com/xraph/nexus v1.9.2
 	github.com/xraph/shield v1.10.0
-	github.com/xraph/vessel v1.0.4
-	github.com/xraph/weave v1.9.2
+	github.com/xraph/vessel v1.0.5
+	github.com/xraph/weave v1.9.3
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
 	go.mongodb.org/mongo-driver/v2 v2.8.2
 	go.opentelemetry.io/otel v1.45.0
