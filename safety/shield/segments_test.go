@@ -130,17 +130,28 @@ func TestFinalConsumesEverything(t *testing.T) {
 	}
 }
 
-func TestSegmentRedactsSecrets(t *testing.T) {
+func TestSegmentRedactsPersonalData(t *testing.T) {
+	eng, _ := seededEngine(t)
+	a := New(eng, WithApp(testApp))
+	ctx := scoped(testTenant)
+	const pending = "Write to ops@acme-corp.io for access.\n"
+	decision, consumed, err := newChecker(ctx, t, a, presets.InfraAgentOutput).CheckSegment(ctx, pending, false)
+	if err != nil {
+		t.Fatalf("CheckSegment: %v", err)
+	}
+	if consumed != len(pending) || decision.Status != safety.StatusRedacted || strings.Contains(decision.Text, "ops@acme-corp.io") {
+		t.Fatalf("consumed %d, decision %+v; want the whole line redacted", consumed, decision)
+	}
+}
+
+func TestSegmentBlocksOutboundSecrets(t *testing.T) {
 	eng, _ := seededEngine(t)
 	a := New(eng, WithApp(testApp))
 	ctx := scoped(testTenant)
 	const pending = "Your key is AKIAIOSFODNN7EXAMPLE.\n"
 	decision, consumed, err := newChecker(ctx, t, a, presets.InfraAgentOutput).CheckSegment(ctx, pending, false)
-	if err != nil {
-		t.Fatalf("CheckSegment: %v", err)
-	}
-	if consumed != len(pending) || decision.Status != safety.StatusRedacted || strings.Contains(decision.Text, "AKIAIOSFODNN7EXAMPLE") {
-		t.Fatalf("consumed %d, decision %+v; want the whole line redacted", consumed, decision)
+	if !errors.Is(err, safety.ErrBlocked) || consumed != 0 || decision.Text != "" {
+		t.Fatalf("consumed %d, decision %+v, err %v; want safety.ErrBlocked and no text", consumed, decision, err)
 	}
 }
 

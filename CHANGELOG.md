@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Every module now builds on grove v1.10.2 (with its `mongodriver`, `pgdriver`, `sqlitedriver`, `kv` and `kv/drivers/redisdriver`) shield v1.10.0, nexus v1.9.2, weave v1.9.3 and vessel v1.0.5, on forge v1.13.2. Those are the latest releases of each.
+- With shield v1.10.0, the `InfraAgentOutput` preset blocks model output that holds a credential (an API key, token, private key or password) where it used to redact the value. With checked segments on, a streamed reply stops at the segment that holds it, and nothing of the credential goes out. Personal data such as email addresses is still redacted. If you seed shield's `InfraAgent` preset, expect `safety.ErrBlocked` where you used to see `[GITHUB_TOKEN_1]`.
+
+### Fixed
+
+- The Weave adapter reads a collection that doesn't exist yet as no results. You used to get `weave.ErrCollectionNotFound` back from `Retrieve` when you named a collection nobody had ingested into, and a search that named no collection failed outright when one of your `WithShared` collections was missing, so a run couldn't read its own tenant's documents until the shared docs had their first ingest. Now a missing collection contributes nothing and the others still answer, and `ListCollections` leaves a missing shared collection out. Other errors still fail the call, and a collection ID the run's tenant doesn't have is still refused. The adapter still never writes: whatever ingests into a collection creates it.
+
 ## [1.10.3] - 2026-10-30
 
 Use this one. It's the same Go code as v1.10.0. The v1.10.0, v1.10.1 and v1.10.2 release runs tagged the root module but none of the sub-modules, so `api`, `extension`, `mcpbridge` and the rest only exist at v1.10.3. Pin the root and every sub-module you use at v1.10.3. Everything listed under 1.10.0 below ships here.

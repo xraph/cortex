@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/weave/collection"
 	"github.com/xraph/weave/embedder"
 	weaveengine "github.com/xraph/weave/engine"
+	weaveid "github.com/xraph/weave/id"
 	memstore "github.com/xraph/weave/store/memory"
 	memvec "github.com/xraph/weave/vectorstore/memory"
 )
@@ -209,4 +210,67 @@ func TestOtherTenantsCollectionIDIsRefused(t *testing.T) {
 	got, err = a.Retrieve(scoped("o2"), "restart the secret worker", &knowledge.RetrieveParams{Collection: foreign, TopK: 10})
 	require.NoError(t, err)
 	require.Contains(t, joined(got), "secret")
+}
+
+func TestMissingCollectionNameFindsNothing(t *testing.T) {
+	f := newFixture(t)
+	a := weaveknowledge.New(f.eng)
+
+	// A collection nobody has made yet reads as no results, not a failure.
+	got, err := a.Retrieve(scoped("o1"), "restart the worker", &knowledge.RetrieveParams{Collection: "not-yet", TopK: 10})
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	// So does a tenant with no collections at all.
+	got, err = a.Retrieve(scoped("o3"), "restart the worker", &knowledge.RetrieveParams{TopK: 10})
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+func TestMissingSharedCollectionContributesNothing(t *testing.T) {
+	f := newFixture(t)
+	a := weaveknowledge.New(f.eng, weaveknowledge.WithShared(
+		weaveknowledge.SharedCollection{Tenant: "docs", Collection: "not-yet"},
+		weaveknowledge.SharedCollection{Tenant: "docs", Collection: weaveid.NewCollectionID().String()},
+		weaveknowledge.SharedCollection{Tenant: "docs", Collection: "loomplane-docs"},
+	))
+
+	// The run's own tenant and the shared collection that exists still
+	// answer.
+	got, err := a.Retrieve(scoped("o1"), "restart the worker", &knowledge.RetrieveParams{TopK: 10})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Contains(t, joined(got), "payments")
+	require.Contains(t, joined(got), "dashboard")
+
+	// Naming the missing shared collection finds nothing.
+	got, err = a.Retrieve(scoped("o1"), "restart the worker", &knowledge.RetrieveParams{Collection: "not-yet", TopK: 10})
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	// Listing leaves the missing ones out.
+	cols, err := a.ListCollections(scoped("o1"))
+	require.NoError(t, err)
+	ids := make([]string, len(cols))
+	for i, c := range cols {
+		ids[i] = c.ID
+	}
+	require.ElementsMatch(t, []string{f.cols["o1/runbooks"], f.cols["docs/loomplane-docs"]}, ids)
+}
+
+func TestWorkspaceSearchBeforeSharedDocsExist(t *testing.T) {
+	f := newFixture(t)
+	// The shared docs collection's tenant has nothing yet: its first
+	// ingest hasn't run.
+	a := weaveknowledge.New(f.eng, weaveknowledge.WithShared(weaveknowledge.SharedCollection{Tenant: "fresh-docs", Collection: "loomplane-docs"}))
+
+	got, err := a.Retrieve(scoped("o1"), "restart the worker", &knowledge.RetrieveParams{TopK: 10})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Contains(t, got[0].Content, "payments")
+
+	cols, err := a.ListCollections(scoped("o1"))
+	require.NoError(t, err)
+	require.Len(t, cols, 1)
+	require.Equal(t, f.cols["o1/runbooks"], cols[0].ID)
 }

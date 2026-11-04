@@ -238,6 +238,8 @@ eng, err := engine.New(engine.WithStore(st), engine.WithKnowledge(adapter))
 
 A search that names no collection runs once under the run's tenant and once for each shared collection, then merges the hits by score and keeps the top `TopK` (5 when you set none). A search that names a collection resolves it in the run's tenant, unless it names a shared one, which it reads under that collection's tenant. `ListCollections` returns the run tenant's collections plus the shared ones. A run never sees another tenant's collections, because Weave checks the tenant on every call.
 
+A collection that doesn't exist yet reads as no results, so you can wire a shared collection before its first ingest. Naming a missing collection returns nothing and no error. In a search that names no collection, a missing shared collection adds nothing and the rest still answer, and `ListCollections` leaves it out. The adapter never creates a collection: whatever ingests into it does.
+
 Under the Forge extension, pass the same options with `extension.WithWeaveOptions`.
 
 ## Shield adapter

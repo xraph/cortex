@@ -15,7 +15,7 @@ require (
 	github.com/xraph/cortex/integrations/fabriq v0.0.0-20260827002006-bb2528ddd778
 	github.com/xraph/fabriq v1.10.0
 	github.com/xraph/fabriq/core v1.10.0
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.1
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
 )
 
 require (
@@ -23,6 +23,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	gonum.org/v1/gonum v0.17.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
@@ -117,12 +118,12 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xraph/cortex/optimization v0.0.0-20261025141439-37b94d6cbe98
 	github.com/xraph/go-utils v1.5.0 // indirect
-	github.com/xraph/grove v1.10.1
-	github.com/xraph/grove/drivers/pgdriver v1.10.1 // indirect
-	github.com/xraph/grove/kv v1.10.0 // indirect
-	github.com/xraph/grove/kv/drivers/redisdriver v1.10.0 // indirect
+	github.com/xraph/grove v1.10.2
+	github.com/xraph/grove/drivers/pgdriver v1.10.2 // indirect
+	github.com/xraph/grove/kv v1.10.2 // indirect
+	github.com/xraph/grove/kv/drivers/redisdriver v1.10.2 // indirect
 	github.com/xraph/trove v1.8.1 // indirect
-	github.com/xraph/vessel v1.0.4 // indirect
+	github.com/xraph/vessel v1.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
