@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- The Weave adapter reads a collection that doesn't exist yet as no results. You used to get `weave.ErrCollectionNotFound` back from `Retrieve` when you named a collection nobody had ingested into, and a search that named no collection failed outright when one of your `WithShared` collections was missing, so a run couldn't read its own tenant's documents until the shared docs had their first ingest. Now a missing collection contributes nothing and the others still answer, and `ListCollections` leaves a missing shared collection out. Other errors still fail the call, and a collection ID the run's tenant doesn't have is still refused. The adapter still never writes: whatever ingests into a collection creates it.
+
 ## [1.10.3] - 2026-10-30
 
 Use this one. It's the same Go code as v1.10.0. The v1.10.0, v1.10.1 and v1.10.2 release runs tagged the root module but none of the sub-modules, so `api`, `extension`, `mcpbridge` and the rest only exist at v1.10.3. Pin the root and every sub-module you use at v1.10.3. Everything listed under 1.10.0 below ships here.

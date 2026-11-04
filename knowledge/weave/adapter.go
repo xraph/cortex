@@ -4,6 +4,11 @@
 // cortex.TenantFunc, so a run only ever reads its own tenant's collections
 // plus the shared ones the host lists. The adapter never writes, and a call
 // whose scope names no tenant fails before weave is asked anything.
+//
+// A collection named that doesn't exist yet, the run's or a shared one,
+// reads as no results rather than an error, and in a search over several
+// collections a missing one contributes nothing while the others still
+// answer. Creating collections stays with whatever ingests into them.
 package weave
 
 import (
@@ -117,7 +122,10 @@ func (a *Adapter) sharedNamed(nameOrID string) (SharedCollection, bool) {
 	return SharedCollection{}, false
 }
 
-// Retrieve performs a semantic search and returns scored chunks.
+// Retrieve performs a semantic search and returns scored chunks. A
+// collection named that doesn't exist yet returns no chunks and no error. A
+// search that names no collection leaves out any shared collection weave
+// can't find, and still returns the rest.
 func (a *Adapter) Retrieve(ctx context.Context, query string, params *knowledge.RetrieveParams) ([]knowledge.ScoredChunk, error) {
 	tenant, err := a.runTenant(ctx)
 	if err != nil {
@@ -149,6 +157,10 @@ func (a *Adapter) Retrieve(ctx context.Context, query string, params *knowledge.
 	}
 	for _, s := range a.shared {
 		part, partErr := a.retrieveIn(ctx, s.Tenant, query, s.Collection, params, topK)
+		if errors.Is(partErr, weave.ErrCollectionNotFound) {
+			// Not made yet, or gone: it has nothing to add.
+			continue
+		}
 		if partErr != nil {
 			return nil, partErr
 		}
@@ -162,7 +174,10 @@ func (a *Adapter) Retrieve(ctx context.Context, query string, params *knowledge.
 }
 
 // retrieveIn runs one weave retrieval under tenant, restricted to collection
-// (a name or ID in that tenant) when it is not empty.
+// (a name or ID in that tenant) when it is not empty. A name with no
+// collection behind it returns no chunks and no error. An ID is passed to
+// weave as is, which refuses one the tenant doesn't have with
+// weave.ErrCollectionNotFound.
 func (a *Adapter) retrieveIn(ctx context.Context, tenant, query, collectionRef string, params *knowledge.RetrieveParams, topK int) ([]knowledge.ScoredChunk, error) {
 	ctx = weave.WithTenant(ctx, tenant)
 
@@ -175,6 +190,9 @@ func (a *Adapter) retrieveIn(ctx context.Context, tenant, query, collectionRef s
 	}
 	if collectionRef != "" {
 		colID, err := a.resolveCollection(ctx, collectionRef)
+		if errors.Is(err, weave.ErrCollectionNotFound) {
+			return []knowledge.ScoredChunk{}, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("weave: resolve collection %q: %w", collectionRef, err)
 		}
@@ -204,7 +222,8 @@ func (a *Adapter) retrieveIn(ctx context.Context, tenant, query, collectionRef s
 }
 
 // ListCollections returns the run tenant's collections and the configured
-// shared ones, with statistics, each read under its own tenant.
+// shared ones, with statistics, each read under its own tenant. A shared
+// collection weave can't find is left out.
 func (a *Adapter) ListCollections(ctx context.Context) ([]knowledge.CollectionInfo, error) {
 	tenant, err := a.runTenant(ctx)
 	if err != nil {
@@ -227,6 +246,9 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]knowledge.CollectionIn
 	for _, s := range a.shared {
 		sctx := weave.WithTenant(ctx, s.Tenant)
 		colID, resolveErr := a.resolveCollection(sctx, s.Collection)
+		if errors.Is(resolveErr, weave.ErrCollectionNotFound) {
+			continue
+		}
 		if resolveErr != nil {
 			return nil, fmt.Errorf("weave: resolve shared collection %q: %w", s.Collection, resolveErr)
 		}
@@ -234,6 +256,9 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]knowledge.CollectionIn
 			continue
 		}
 		col, getErr := a.engine.GetCollection(sctx, colID)
+		if errors.Is(getErr, weave.ErrCollectionNotFound) {
+			continue
+		}
 		if getErr != nil {
 			return nil, fmt.Errorf("weave: get shared collection %q: %w", s.Collection, getErr)
 		}
