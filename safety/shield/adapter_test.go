@@ -280,14 +280,16 @@ func TestRedactedOutputIsReturned(t *testing.T) {
 	eng, _ := seededEngine(t)
 	a := New(eng, WithApp(testApp))
 	ctx := scoped(testTenant)
-	token := githubToken()
-	body := "The job used token " + token + " to push."
+	// The output profile redacts personal data. A credential blocks it
+	// instead, which TestOutboundCredentialBlocks covers.
+	const email = "ops@acme-corp.io"
+	body := "Contact " + email + " for access."
 
 	got, err := a.ScanOutput(ctx, &safety.ScanRequest{Content: body, ProfileName: presets.InfraAgentOutput})
 	if err != nil {
 		t.Fatalf("ScanOutput: %v", err)
 	}
-	if got.Decision != safety.DecisionRedact || !strings.Contains(got.Redacted, "[GITHUB_TOKEN_1]") || strings.Contains(got.Redacted, token) {
+	if got.Decision != safety.DecisionRedact || !strings.Contains(got.Redacted, "[EMAIL_1]") || strings.Contains(got.Redacted, email) {
 		t.Fatalf("decision %s, redacted %q", got.Decision, got.Redacted)
 	}
 
@@ -300,6 +302,30 @@ func TestRedactedOutputIsReturned(t *testing.T) {
 	}
 	if decision.Status != safety.StatusRedacted || decision.Text != got.Redacted {
 		t.Fatalf("Check = %+v, want the redacted text with status redacted", decision)
+	}
+}
+
+func TestOutboundCredentialBlocks(t *testing.T) {
+	eng, _ := seededEngine(t)
+	a := New(eng, WithApp(testApp))
+	ctx := scoped(testTenant)
+	token := githubToken()
+	body := "The job used token " + token + " to push."
+
+	got, err := a.ScanOutput(ctx, &safety.ScanRequest{Content: body, ProfileName: presets.InfraAgentOutput})
+	if err != nil {
+		t.Fatalf("ScanOutput: %v", err)
+	}
+	if got.Decision != safety.DecisionBlock || strings.Contains(got.Redacted, token) {
+		t.Fatalf("decision %s, redacted %q", got.Decision, got.Redacted)
+	}
+
+	decision, err := a.Check(ctx, safety.PublicationRequest{
+		ScanRequest: safety.ScanRequest{Content: body, Direction: safety.DirectionOutput, ProfileName: presets.InfraAgentOutput},
+		Source:      "model_output",
+	})
+	if !errors.Is(err, safety.ErrBlocked) || strings.Contains(decision.Text, token) {
+		t.Fatalf("Check = %+v, %v; want safety.ErrBlocked and no token", decision, err)
 	}
 }
 

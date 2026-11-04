@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -20,8 +21,9 @@ import (
 // streamSegments drives a fresh segment checker the way the engine does:
 // it appends text in chunks of size bytes, checks the pending text, drops
 // what was consumed and publishes the decision's text, then settles the
-// rest with a final check. It returns everything published.
-func streamSegments(ctx context.Context, t *testing.T, a *Adapter, profile, text string, size int) string {
+// rest with a final check. It returns everything published, and stops at
+// the first check that fails, returning its error.
+func streamSegments(ctx context.Context, t *testing.T, a *Adapter, profile, text string, size int) (string, error) {
 	t.Helper()
 	c := newChecker(ctx, t, a, profile)
 	var published strings.Builder
@@ -30,30 +32,49 @@ func streamSegments(ctx context.Context, t *testing.T, a *Adapter, profile, text
 		pending += text[i:min(i+size, len(text))]
 		decision, consumed, err := c.CheckSegment(ctx, pending, false)
 		if err != nil {
-			t.Fatalf("CheckSegment: %v", err)
+			return published.String(), err
 		}
 		pending = pending[consumed:]
 		published.WriteString(decision.Text)
 	}
 	decision, consumed, err := c.CheckSegment(ctx, pending, true)
-	if err != nil || consumed != len(pending) {
-		t.Fatalf("final CheckSegment: consumed %d of %d, err %v", consumed, len(pending), err)
+	if err != nil {
+		return published.String(), err
+	}
+	if consumed != len(pending) {
+		t.Fatalf("final CheckSegment: consumed %d of %d", consumed, len(pending))
 	}
 	published.WriteString(decision.Text)
-	return published.String()
+	return published.String(), nil
 }
 
-// wholeMessage returns what Check publishes for text as one model output.
-func wholeMessage(ctx context.Context, t *testing.T, a *Adapter, profile, text string) string {
+// requireBlockedWhole fails unless Check blocks text as one model output.
+// The output profile blocks a credential rather than redacting it.
+func requireBlockedWhole(ctx context.Context, t *testing.T, a *Adapter, profile, text string) {
 	t.Helper()
 	decision, err := a.Check(ctx, safety.PublicationRequest{
 		ScanRequest: safety.ScanRequest{Content: text, Direction: safety.DirectionOutput, ProfileName: profile},
 		Source:      "model_output",
 	})
-	if err != nil {
-		t.Fatalf("Check: %v", err)
+	if !errors.Is(err, safety.ErrBlocked) || decision.Text != "" {
+		t.Fatalf("the whole message: %+v, %v; want safety.ErrBlocked", decision, err)
 	}
-	return decision.Text
+}
+
+// requireBlockedBefore fails unless the stream was blocked and published
+// only text that comes before secret, so no piece of it went out.
+func requireBlockedBefore(t *testing.T, published string, err error, text, secret string) {
+	t.Helper()
+	if !errors.Is(err, safety.ErrBlocked) {
+		t.Fatalf("published %q, err %v; want safety.ErrBlocked", published, err)
+	}
+	at := strings.Index(text, secret)
+	if at < 0 {
+		t.Fatalf("%q is not in the text", secret)
+	}
+	if !strings.HasPrefix(text, published) || len(published) > at {
+		t.Fatalf("published %q, past the start of %q", published, secret)
+	}
 }
 
 func TestSegmentKeepsAssignmentsWhole(t *testing.T) {
@@ -65,16 +86,11 @@ func TestSegmentKeepsAssignmentsWhole(t *testing.T) {
 		{"The api_key: qz81mXv02LpTa\n", "qz81mXv02LpTa"},
 	}
 	for _, tc := range cases {
-		whole := wholeMessage(ctx, t, a, presets.InfraAgentOutput, tc.text)
-		if strings.Contains(whole, tc.value) {
-			t.Fatalf("the whole message kept %q: %q", tc.value, whole)
-		}
+		requireBlockedWhole(ctx, t, a, presets.InfraAgentOutput, tc.text)
 		for _, size := range []int{1, 3, 4} {
 			t.Run(fmt.Sprintf("%q/%d", tc.text, size), func(t *testing.T) {
-				got := streamSegments(ctx, t, a, presets.InfraAgentOutput, tc.text, size)
-				if got != whole || strings.Contains(got, tc.value) {
-					t.Fatalf("streamed %q, the whole message publishes %q", got, whole)
-				}
+				got, err := streamSegments(ctx, t, a, presets.InfraAgentOutput, tc.text, size)
+				requireBlockedBefore(t, got, err, tc.text, tc.value)
 			})
 		}
 	}
@@ -114,15 +130,12 @@ func TestSegmentLimitCutWaitsForTheOperator(t *testing.T) {
 	for _, p := range pairs {
 		for pad := limit - 24; pad <= limit+4; pad++ {
 			text := words[:pad] + " " + p.pair + "\n"
-			whole := wholeMessage(ctx, t, a, presets.InfraAgentOutput, text)
-			if strings.Contains(whole, p.value) {
-				t.Fatalf("the whole message kept the value: %q", whole)
-			}
+			requireBlockedWhole(ctx, t, a, presets.InfraAgentOutput, text)
 			for size := 1; size <= 4; size++ {
-				got := streamSegments(ctx, t, a, presets.InfraAgentOutput, text, size)
-				if got != whole || strings.Contains(got, p.value) {
-					t.Fatalf("%q, pad %d, chunks of %d: streamed %q, the whole message publishes %q", p.pair, pad, size, got, whole)
-				}
+				t.Run(fmt.Sprintf("%s/%d/%d", p.pair, pad, size), func(t *testing.T) {
+					got, err := streamSegments(ctx, t, a, presets.InfraAgentOutput, text, size)
+					requireBlockedBefore(t, got, err, text, p.value)
+				})
 			}
 		}
 	}
@@ -163,16 +176,6 @@ func privateKeyPEM(t *testing.T, kind string) string {
 	return string(pem.EncodeToMemory(block))
 }
 
-// requireNoKeyLine fails when published holds any line of key.
-func requireNoKeyLine(t *testing.T, published, key string) {
-	t.Helper()
-	for _, line := range strings.Split(key, "\n") {
-		if line != "" && strings.Contains(published, line) {
-			t.Fatalf("published a line of the key: %q", line)
-		}
-	}
-}
-
 func TestSegmentHoldsPrivateKeysWhole(t *testing.T) {
 	eng, _ := seededEngine(t)
 	a := New(eng, WithApp(testApp))
@@ -187,13 +190,9 @@ func TestSegmentHoldsPrivateKeysWhole(t *testing.T) {
 				for range runs {
 					key := privateKeyPEM(t, kind)
 					text := "Here is the key you asked for.\n" + key + "Keep it out of the repo.\n"
-					whole := wholeMessage(ctx, t, a, presets.InfraAgentOutput, text)
-					requireNoKeyLine(t, whole, key)
-					got := streamSegments(ctx, t, a, presets.InfraAgentOutput, text, size)
-					requireNoKeyLine(t, got, key)
-					if got != whole {
-						t.Fatalf("streamed %q, the whole message publishes %q", got, whole)
-					}
+					requireBlockedWhole(ctx, t, a, presets.InfraAgentOutput, text)
+					got, err := streamSegments(ctx, t, a, presets.InfraAgentOutput, text, size)
+					requireBlockedBefore(t, got, err, text, key)
 				}
 			})
 		}

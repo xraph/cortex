@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Every module now builds on grove v1.10.2 (with its `mongodriver`, `pgdriver`, `sqlitedriver`, `kv` and `kv/drivers/redisdriver`) and shield v1.10.0. Nexus stays at v1.9.1 and weave at v1.9.2.
+- With shield v1.10.0, the `InfraAgentOutput` preset blocks model output that holds a credential (an API key, token, private key or password) where it used to redact the value. With checked segments on, a streamed reply stops at the segment that holds it, and nothing of the credential goes out. Personal data such as email addresses is still redacted. If you seed shield's `InfraAgent` preset, expect `safety.ErrBlocked` where you used to see `[GITHUB_TOKEN_1]`.
+
 ### Fixed
 
 - The Weave adapter reads a collection that doesn't exist yet as no results. You used to get `weave.ErrCollectionNotFound` back from `Retrieve` when you named a collection nobody had ingested into, and a search that named no collection failed outright when one of your `WithShared` collections was missing, so a run couldn't read its own tenant's documents until the shared docs had their first ingest. Now a missing collection contributes nothing and the others still answer, and `ListCollections` leaves a missing shared collection out. Other errors still fail the call, and a collection ID the run's tenant doesn't have is still refused. The adapter still never writes: whatever ingests into a collection creates it.
