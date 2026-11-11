@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,7 +70,8 @@ func TestIndependentClaimsIgnoreHostIsolationDefault(t *testing.T) {
 	}
 	query := dsn.Query()
 	query.Set("default_transaction_isolation", "repeatable read")
-	dsn.RawQuery = query.Encode()
+	// pgx v5.12 no longer reads "+" in a DSN query as a space, so escape it.
+	dsn.RawQuery = strings.ReplaceAll(query.Encode(), "+", "%20")
 	firstDB := openDatabase(t, dsn.String())
 	first, second := New(firstDB), New(openDatabase(t, dsn.String()))
 	ctx := context.Background()
