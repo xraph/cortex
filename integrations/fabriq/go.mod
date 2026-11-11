@@ -6,12 +6,14 @@ replace github.com/xraph/cortex => ../../
 
 require (
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
-	github.com/xraph/fabriq/core v1.10.0
+	github.com/xraph/fabriq/core v1.10.2
 	github.com/xraph/go-utils v1.5.0
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
 	github.com/xraph/vessel v1.0.5
 )
+
+require go.opentelemetry.io/otel/log v1.47.0 // indirect
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -28,9 +30,9 @@ require (
 	github.com/xraph/cortex/optimization v0.0.0-20261025141439-37b94d6cbe98
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
