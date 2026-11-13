@@ -740,6 +740,11 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 // exception to completed or failed: the call was refused by a person, so
 // it emits ToolDenied, the event an authorizer's refusal emits.
 func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, in ResumeInput, st *reactState, cfg resolvedConfig) error {
+	if len(susp.Pending) == 0 {
+		// A deferred model call: nothing to record, the loop makes the
+		// call next.
+		return nil
+	}
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	byID := make(map[string]ToolResult, len(in.ToolResults))
 	for _, res := range in.ToolResults {
@@ -1014,6 +1019,15 @@ func checkResumeAuthority(reason suspension.SuspendReason, source resumeSource) 
 			return nil
 		}
 		return fmt.Errorf("%w: this run is waiting on another agent's reply, which only the messaging bus can deliver", ErrNotAgentReplyResumable)
+
+	case suspension.ReasonDeferredModelCall:
+		// Nothing outside the engine has a result to give a deferred
+		// model call. The run continues when its checkpoint is decided,
+		// and then it makes the call itself.
+		if source == resumeSourceApproval {
+			return nil
+		}
+		return fmt.Errorf("%w: this run is waiting to make a model call it deferred, so decide its checkpoint rather than resuming the run", cortex.ErrDeferModelCall)
 
 	default:
 		return nil

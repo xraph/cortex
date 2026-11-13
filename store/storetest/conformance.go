@@ -2054,6 +2054,38 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 	})
 
+	// A deferred model call pauses a run with no pending calls. The row
+	// reads back with its reason and an empty pending list, and a claim
+	// takes it like any other pause.
+	t.Run("SuspensionWithoutPendingCalls", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_deferred_model_call")
+		r := mustPauseRun(t, s, ctx)
+		susp := newSuspension(r.ID)
+		susp.Reason = suspension.ReasonDeferredModelCall
+		susp.Pending = nil
+		if err := s.CreateSuspension(ctx, susp); err != nil {
+			t.Fatalf("create suspension: %v", err)
+		}
+		got, err := s.GetSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("get suspension: %v", err)
+		}
+		if got.Reason != suspension.ReasonDeferredModelCall || len(got.Pending) != 0 {
+			t.Fatalf("suspension read back as (%q, %+v), want (%q, no pending calls)", got.Reason, got.Pending, suspension.ReasonDeferredModelCall)
+		}
+		if got.Cont.StepIndex != susp.Cont.StepIndex || len(got.Cont.Messages) != 1 {
+			t.Fatalf("continuation read back as %+v, want %+v", got.Cont, susp.Cont)
+		}
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("claim suspension: %v", err)
+		}
+		if claimed.ID != susp.ID || len(claimed.Pending) != 0 {
+			t.Fatalf("claimed %+v, want suspension %s with no pending calls", claimed, susp.ID)
+		}
+	})
+
 	// A decision's amended arguments are stored with it and read back
 	// the same JSON values (jsonb re-spaces them), whichever backend holds the checkpoint.
 	t.Run("CheckpointDecisionAmendedArguments", func(t *testing.T) {

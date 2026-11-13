@@ -9,6 +9,23 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
+// MetadataKind is the metadata key that names what a checkpoint the engine
+// opened is waiting on. It is set to KindDeferredModelCall on a checkpoint
+// opened for a deferred model call, and absent on a tool approval.
+const MetadataKind = "kind"
+
+// KindDeferredModelCall is the MetadataKind of a checkpoint opened because
+// the model client deferred a call (cortex.DeferredModelCall). Such a
+// checkpoint has no pending tool calls. An approval continues the run with
+// the same model call; a rejection stops the run with the decision's
+// reason. A decision that carries Calls or AmendedArguments is refused
+// with cortex.ErrInvalidDecision.
+const KindDeferredModelCall = "deferred_model_call"
+
+// MetadataDeferralKind is the metadata key that carries
+// cortex.DeferredModelCall.Kind on a deferred model call's checkpoint.
+const MetadataDeferralKind = "deferral_kind"
+
 // Decision represents the resolution of a checkpoint.
 type Decision struct {
 	Approved  bool      `json:"approved"`

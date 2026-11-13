@@ -38,6 +38,12 @@ const (
 	// sent. The messaging bus resumes these, off its own correlation
 	// ledger; nobody else may.
 	ReasonAgentReply SuspendReason = "agent_reply"
+	// ReasonDeferredModelCall means the model client deferred the run's
+	// next model call (cortex.DeferredModelCall). The suspension has no
+	// pending calls, its continuation is the state from before that call,
+	// and only a decision on its checkpoint continues it, by making the
+	// same call.
+	ReasonDeferredModelCall SuspendReason = "deferred_model_call"
 )
 
 // PendingCall is one tool call awaiting a result from outside the engine.
@@ -72,7 +78,7 @@ type Notice struct {
 	// ExpiresAt is the suspension's deadline, nil when it has none.
 	ExpiresAt *time.Time
 	// CheckpointID is the checkpoint a person decides. It is zero unless
-	// Reason is ReasonApproval.
+	// Reason is ReasonApproval or ReasonDeferredModelCall.
 	CheckpointID id.CheckpointID
 	Scope        cortex.Scope
 }

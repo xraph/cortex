@@ -987,10 +987,10 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 		if bindErr != nil {
 			return bindErr
 		}
-		if err := checkCalls(susp.Pending, decision); err != nil {
+		if err := checkDecision(susp, decision); err != nil {
 			return err
 		}
-		if decision.Approved || e.rejectionsToModel {
+		if decision.Approved || (e.rejectionsToModel && !isDeferredModelCall(susp)) {
 			if err := e.resumeDecided(ctx, cp, susp, decision); err != nil {
 				uncertain := errors.Is(err, cortex.ErrEffectUncertain)
 				exhausted := errors.Is(err, cortex.ErrMaxStepsReached)
@@ -1012,7 +1012,7 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 				}
 				executionErr = err
 			}
-		} else if err := e.failRejected(ctx, cp, susp, decision); err != nil {
+		} else if err := e.endRejected(ctx, cp, susp, decision); err != nil {
 			return err
 		}
 	}
@@ -1121,7 +1121,7 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, bo
 		return fmt.Errorf("load run for rejected checkpoint: %w", err)
 	}
 
-	susp, err := e.claimRejected(ctx, cp, bound, snapshot)
+	susp, err := e.claimRejected(ctx, cp, bound, snapshot, nil)
 	if err != nil {
 		return fmt.Errorf("claim suspension for rejected checkpoint %s: %w", cp.ID, err)
 	}
@@ -1155,13 +1155,17 @@ func (e *Engine) failRejected(ctx context.Context, cp *checkpoint.Checkpoint, bo
 
 // claimRejected claims the pause a rejection answers. With a versioned
 // store the claim takes bound and nothing else; a run waiting on another
-// pause is cortex.ErrInvalidState.
-func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, snapshot *run.Run) (*suspension.Suspension, error) {
+// pause is cortex.ErrInvalidState. ending, when set, goes on the leased
+// claim's snapshot, so a worker that reclaims the run after a lost write
+// finishes that ending instead of continuing the run.
+func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, snapshot *run.Run, ending *suspension.Ending) (*suspension.Suspension, error) {
 	// A claim that takes the lease leaves a lease that lapses if the
 	// failure below is never written, and the run is reclaimed from the
 	// state it paused with: the person is asked again.
 	if bound != nil {
-		if susp, leased, err := e.claimPauseLeased(ctx, snapshot, bound, time.Time{}, claimSnapshot(bound, nil)); leased {
+		first := claimSnapshot(bound, nil)
+		first.Ending = ending
+		if susp, leased, err := e.claimPauseLeased(ctx, snapshot, bound, time.Time{}, first); leased {
 			return e.rejectedClaimResult(ctx, cp, bound, susp, err)
 		}
 	}
@@ -1176,6 +1180,59 @@ func (e *Engine) claimRejected(ctx context.Context, cp *checkpoint.Checkpoint, b
 		return e.store.ClaimSuspension(ctx, cp.RunID)
 	}
 	return e.rejectedClaimResult(ctx, cp, bound, susp, err)
+}
+
+// endRejected ends the run behind a rejected checkpoint when the rejection
+// leaves nothing to continue: a deferred model call is stopped, any other
+// pause is failed.
+func (e *Engine) endRejected(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, decision checkpoint.Decision) error {
+	if isDeferredModelCall(bound) {
+		return e.stopDeferred(ctx, cp, bound, decision)
+	}
+	return e.failRejected(ctx, cp, bound, decision)
+}
+
+// stopDeferred ends a run whose deferred model call was rejected, which is
+// how a host stops a run that waits on one: the run is cancelled, with the
+// decider's reason as its error, and the pause is dropped. The deferred
+// call is never made.
+//
+// It claims the pause the way failRejected does, so a decision racing
+// another one, or a cancel, is refused rather than written over it. A
+// leased claim records the cancel on its snapshot, so a worker that
+// reclaims the run after a lost write finishes the cancel rather than
+// making the call. The checkpoint is left for the caller to record the
+// decision on.
+func (e *Engine) stopDeferred(ctx context.Context, cp *checkpoint.Checkpoint, bound *suspension.Suspension, decision checkpoint.Decision) error {
+	snapshot, err := e.store.GetRun(ctx, cp.RunID)
+	if err != nil {
+		return fmt.Errorf("load run for rejected checkpoint: %w", err)
+	}
+	susp, err := e.claimRejected(ctx, cp, bound, snapshot, &suspension.Ending{Kind: suspension.EndingCancel})
+	if err != nil {
+		return fmt.Errorf("claim suspension for rejected checkpoint %s: %w", cp.ID, err)
+	}
+	ctx = cortex.WithScope(ctx, susp.Scope)
+	r := e.claimedRun(ctx, cp.RunID, snapshot, susp.ClaimedRun)
+
+	reason := decision.Reason
+	if reason == "" {
+		reason = "no reason given"
+	}
+	r.State = run.StateCancelled
+	r.StopReason = run.StopCancelled
+	r.Error = "stopped while its model call was deferred: " + reason
+	completedAt := time.Now().UTC()
+	r.CompletedAt = &completedAt
+	if err := e.persistRun(context.WithoutCancel(ctx), r); err != nil {
+		// The suspension and the checkpoint stay, as in failRejected.
+		return fmt.Errorf("stop run %s: %w", cp.RunID, err)
+	}
+	e.emitTerminalOutcome(context.WithoutCancel(ctx), r)
+	if err := e.store.DeleteSuspension(ctx, cp.RunID); err != nil && !errors.Is(err, cortex.ErrNotSuspended) {
+		e.logError("delete suspension of a stopped run", err, log.String("run_id", cp.RunID.String()))
+	}
+	return nil
 }
 
 // rejectedClaimResult maps a pinned rejection claim's refusal: a run

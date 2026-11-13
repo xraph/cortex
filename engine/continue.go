@@ -80,11 +80,11 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if err != nil {
 		return nil, err
 	}
-	if err := checkCalls(susp.Pending, d); err != nil {
+	if err := checkDecision(susp, d); err != nil {
 		return nil, err
 	}
-	if !d.Approved && !e.rejectionsToModel {
-		if rejectErr := e.failRejected(ctx, cp, susp, d); rejectErr != nil {
+	if !d.Approved && (!e.rejectionsToModel || isDeferredModelCall(susp)) {
+		if rejectErr := e.endRejected(ctx, cp, susp, d); rejectErr != nil {
 			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.runMovedOn(ctx, cp) {
 				return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
 			}
@@ -427,6 +427,20 @@ func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) (Res
 		}
 	}
 	return in, nil
+}
+
+// checkDecision reports whether d can answer susp. A deferred model call
+// has no tool calls, so a decision on it approves or rejects it as a whole:
+// one with Calls or amended arguments is cortex.ErrInvalidDecision. Any
+// other pause is checked by checkCalls.
+func checkDecision(susp *suspension.Suspension, d checkpoint.Decision) error {
+	if isDeferredModelCall(susp) {
+		if len(d.Calls) > 0 || len(d.AmendedArguments) > 0 {
+			return fmt.Errorf("%w: a deferred model call has no tool calls to decide or amend, so approve or reject it as a whole", cortex.ErrInvalidDecision)
+		}
+		return nil
+	}
+	return checkCalls(susp.Pending, d)
 }
 
 // checkCalls reports whether d.Calls names exactly the pending calls, once
