@@ -2100,7 +2100,12 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			t.Fatalf("calls = %+v, want 2 entries", got3.Decision.Calls)
 		}
 		c1, c2 := got3.Decision.Calls["call-1"], got3.Decision.Calls["call-2"]
-		if !c1.Approved || string(c1.AmendedArguments) != `{"to":"b"}` || c2.Approved || c2.Reason != "wrong recipient" || len(c2.AmendedArguments) != 0 {
+		// jsonb re-spaces JSON, so compare the objects, not the bytes.
+		var c1Args map[string]any
+		if err := json.Unmarshal(c1.AmendedArguments, &c1Args); err != nil || !reflect.DeepEqual(c1Args, map[string]any{"to": "b"}) {
+			t.Fatalf("call-1 amended arguments = %s (%v), want {\"to\":\"b\"}", c1.AmendedArguments, err)
+		}
+		if !c1.Approved || c2.Approved || c2.Reason != "wrong recipient" || len(c2.AmendedArguments) != 0 {
 			t.Fatalf("calls read back as %+v, want %+v", got3.Decision.Calls, perCall)
 		}
 
