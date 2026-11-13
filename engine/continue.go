@@ -91,7 +91,10 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if !d.Approved {
 		source = run.ReadyRejection
 	}
-	in := decisionInput(susp.Pending, d)
+	in, err := decisionInput(susp.Pending, d)
+	if err != nil {
+		return nil, err
+	}
 	if _, previewErr := e.previewResume(ctx, cp.RunID, in, resumeSourceApproval, susp, nil); previewErr != nil {
 		return nil, previewErr
 	}
@@ -205,6 +208,12 @@ func (e *Engine) openDecision(ctx context.Context, cpID id.CheckpointID, d check
 		return nil, d, fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
 	}
 	d.DecidedByPrincipal = decidedBy
+	if err := checkArgumentsObject(d.AmendedArguments); err != nil {
+		return nil, d, fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
+	}
+	if !d.Approved {
+		d.AmendedArguments = nil
+	}
 	return cp, d, nil
 }
 
@@ -292,16 +301,31 @@ func (e *Engine) recordedAs(ctx context.Context, cp *checkpoint.Checkpoint, d ch
 // approval asks the engine to execute each one, since the calls were
 // stopped before dispatch. A rejection answers each one with an error the
 // model reads.
-func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) ResumeInput {
+//
+// Amended arguments belong to one call, so an approval that carries them
+// is refused with cortex.ErrInvalidDecision unless exactly one call is
+// pending.
+func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) (ResumeInput, error) {
 	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(pending)), rejected: !d.Approved}
+	if d.Approved && len(d.AmendedArguments) > 0 && len(pending) != 1 {
+		return in, fmt.Errorf("%w: amended arguments need exactly one pending call, found %d", cortex.ErrInvalidDecision, len(pending))
+	}
 	for _, p := range pending {
 		if d.Approved {
-			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true})
+			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: d.AmendedArguments, AmendedBy: amendedBy(d)})
 		} else {
 			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Error: rejectionMessage(d)})
 		}
 	}
-	return in
+	return in, nil
+}
+
+// amendedBy names who edited a call's arguments, or "" when nobody did.
+func amendedBy(d checkpoint.Decision) string {
+	if len(d.AmendedArguments) == 0 {
+		return ""
+	}
+	return d.DecidedBy
 }
 
 // rejectionMessage is the error a rejected call returns to the model.

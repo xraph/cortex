@@ -8,8 +8,10 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -2049,6 +2051,49 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 		if err := s.Resolve(ctx, id.NewCheckpointID(), checkpoint.Decision{Approved: true}); !errors.Is(err, cortex.ErrCheckpointNotFound) {
 			t.Errorf("Resolve of a missing checkpoint = %v, want ErrCheckpointNotFound", err)
+		}
+	})
+
+	// A decision's amended arguments are stored with it and read back
+	// byte for byte, whichever backend holds the checkpoint.
+	t.Run("CheckpointDecisionAmendedArguments", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_amended_arguments")
+		r := mustCreateRun(t, s, ctx)
+		cp := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		amended := json.RawMessage(`{"to":"b","cc":["c","d"],"n":2}`)
+		if err := s.Resolve(ctx, cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", AmendedArguments: amended}); err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		got, err := s.GetCheckpoint(ctx, cp.ID)
+		if err != nil {
+			t.Fatalf("reload checkpoint: %v", err)
+		}
+		if got.Decision == nil {
+			t.Fatal("reloaded checkpoint has no decision")
+		}
+		var want, have map[string]any
+		if err := json.Unmarshal(amended, &want); err != nil {
+			t.Fatalf("decode want: %v", err)
+		}
+		if err := json.Unmarshal(got.Decision.AmendedArguments, &have); err != nil {
+			t.Fatalf("decode amended arguments %q: %v", got.Decision.AmendedArguments, err)
+		}
+		if !reflect.DeepEqual(want, have) {
+			t.Fatalf("amended arguments = %s, want %s", got.Decision.AmendedArguments, amended)
+		}
+
+		// A decision without them reads back without them.
+		cp2 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		if err := s.Resolve(ctx, cp2.ID, checkpoint.Decision{Approved: true}); err != nil {
+			t.Fatalf("Resolve without arguments: %v", err)
+		}
+		got2, err := s.GetCheckpoint(ctx, cp2.ID)
+		if err != nil || got2.Decision == nil {
+			t.Fatalf("reload second checkpoint: %v", err)
+		}
+		if len(got2.Decision.AmendedArguments) != 0 {
+			t.Fatalf("amended arguments = %s, want none", got2.Decision.AmendedArguments)
 		}
 	})
 

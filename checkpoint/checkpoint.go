@@ -2,6 +2,7 @@
 package checkpoint
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/xraph/cortex"
@@ -23,6 +24,14 @@ type Decision struct {
 	// Anything that serves a checkpoint to a reader goes through
 	// Checkpoint.Public, which drops it.
 	DecidedByPrincipal []byte `json:"decided_by_principal,omitempty"`
+	// AmendedArguments, on an approval, are the arguments the suspended
+	// call runs with instead of the model's. They replace the whole
+	// argument object, nothing is merged. They must be a JSON object, and
+	// the suspension must hold exactly one pending call, or the decision
+	// is refused with cortex.ErrInvalidDecision. The engine does not
+	// validate them against the tool's schema; that is the caller's job.
+	// A rejection ignores them and does not record them.
+	AmendedArguments json.RawMessage `json:"amended_arguments,omitempty"`
 }
 
 // Checkpoint represents a point where a run pauses for approval.

@@ -1064,7 +1064,11 @@ func (e *Engine) resumeDecided(ctx context.Context, cp *checkpoint.Checkpoint, s
 	// resume rather than Resume: this is the one caller allowed to say a
 	// checkpoint decided these calls, and it says so having just read a
 	// pending checkpoint for this run.
-	if _, err := e.resume(ctx, cp.RunID, decisionInput(susp.Pending, decision), resumeSourceApproval); err != nil {
+	in, err := decisionInput(susp.Pending, decision)
+	if err != nil {
+		return err
+	}
+	if _, err := e.resume(ctx, cp.RunID, in, resumeSourceApproval); err != nil {
 		return fmt.Errorf("resume decided run %s: %w", cp.RunID, err)
 	}
 	return nil

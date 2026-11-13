@@ -82,7 +82,8 @@ func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *su
 		byID[result.ToolCallID] = result
 	}
 	for _, pending := range susp.Pending {
-		if !byID[pending.ID].Execute {
+		result := byID[pending.ID]
+		if !result.Execute {
 			continue
 		}
 		if !susp.Cont.Config.Budget.Deadline.IsZero() && !time.Now().Before(susp.Cont.Config.Budget.Deadline) {
@@ -91,7 +92,7 @@ func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *su
 		if st.preparedSnapshot != nil && len(filterByName(st.preparedSnapshot.Tools, []string{pending.Name})) == 0 {
 			return fmt.Errorf("cortex: resumed tool is outside prepared allowlist: %w", cortex.ErrInvalidContinuation)
 		}
-		if err := e.authorizeResumedTool(ctx, subject, llm.ToolCall{ID: pending.ID, Name: pending.Name, Arguments: pending.Arguments}, susp.Reason == suspension.ReasonApproval); err != nil {
+		if err := e.authorizeResumedTool(ctx, subject, llm.ToolCall{ID: pending.ID, Name: pending.Name, Arguments: resumedArguments(pending, result)}, susp.Reason == suspension.ReasonApproval); err != nil {
 			return err
 		}
 	}

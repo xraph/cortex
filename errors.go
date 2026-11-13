@@ -228,3 +228,8 @@ var (
 	ErrAssignmentNotFound     = errors.New("cortex: assignment not found")
 	ErrAssignmentUnavailable  = errors.New("cortex: assignment transaction unavailable")
 )
+
+// ErrInvalidDecision is returned when a checkpoint decision is malformed:
+// its amended arguments are not a JSON object, or it amends a suspension
+// that holds more than one pending call.
+var ErrInvalidDecision = errors.New("cortex: invalid checkpoint decision")
