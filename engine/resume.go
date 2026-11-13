@@ -110,6 +110,9 @@ type resumption struct {
 // or a rebuilt message list are three different ways to corrupt a run
 // that looked fine at the call site and went wrong several turns later.
 func (e *Engine) Resume(ctx context.Context, runID id.AgentRunID, in ResumeInput) (*run.Run, error) {
+	if err := refuseDecisionFields(in.ToolResults); err != nil {
+		return nil, err
+	}
 	return e.resume(ctx, runID, in, resumeSourcePublic)
 }
 
@@ -186,6 +189,10 @@ func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeIn
 // when execution completes, same as StreamAgent's, and the run's admission
 // slot is held until then.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
+	if err := refuseDecisionFields(in.ToolResults); err != nil {
+		close(events)
+		return err
+	}
 	ctx, done, err := e.admit(ctx)
 	if err != nil {
 		close(events)
@@ -845,6 +852,19 @@ func resumedArguments(p suspension.PendingCall, res ToolResult) string {
 		return string(res.Arguments)
 	}
 	return p.Arguments
+}
+
+// refuseDecisionFields refuses results that carry what only a checkpoint
+// decision may set: edited arguments, who edited them, and the mark of a
+// reviewer's denial. A public caller must not be able to have an ordinary
+// tool error recorded and emitted as a person's rejection.
+func refuseDecisionFields(results []ToolResult) error {
+	for _, r := range results {
+		if r.Rejected || r.AmendedBy != "" || len(r.Arguments) > 0 {
+			return fmt.Errorf("%w: arguments and denials are set by a checkpoint decision, not by a caller's results", cortex.ErrInvalidDecision)
+		}
+	}
+	return nil
 }
 
 // checkArgumentsObject reports whether amended arguments, when there are

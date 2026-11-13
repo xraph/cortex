@@ -2055,7 +2055,7 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 	})
 
 	// A decision's amended arguments are stored with it and read back
-	// byte for byte, whichever backend holds the checkpoint.
+	// the same JSON values (jsonb re-spaces them), whichever backend holds the checkpoint.
 	t.Run("CheckpointDecisionAmendedArguments", func(t *testing.T) {
 		s := newStore(t)
 		ctx := ctxWithScope("ws_amended_arguments")

@@ -230,6 +230,10 @@ var (
 )
 
 // ErrInvalidDecision is returned when a checkpoint decision is malformed:
-// its amended arguments are not a JSON object, or it amends a suspension
-// that holds more than one pending call.
+// its amended arguments (on the decision or on one call) are not a JSON
+// object; it amends the whole decision's arguments on a suspension that
+// holds more than one pending call; its Calls miss a pending call, name a
+// call that is not pending, or sit beside a top-level amendment. It is also
+// returned when a caller's own results carry what only a decision may set
+// (edited arguments or the mark of a reviewer's denial).
 var ErrInvalidDecision = errors.New("cortex: invalid checkpoint decision")
