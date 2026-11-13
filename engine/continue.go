@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -75,6 +77,9 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	}
 	susp, err := e.boundSuspension(ctx, cp, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkCalls(susp.Pending, d); err != nil {
 		return nil, err
 	}
 	if !d.Approved && !e.rejectionsToModel {
@@ -211,6 +216,15 @@ func (e *Engine) openDecision(ctx context.Context, cpID id.CheckpointID, d check
 	if err := checkArgumentsObject(d.AmendedArguments); err != nil {
 		return nil, d, fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
 	}
+	if len(d.Calls) > 0 {
+		d = settleCalls(d)
+		for callID, cd := range d.Calls {
+			if err := checkArgumentsObject(cd.AmendedArguments); err != nil {
+				return nil, d, fmt.Errorf("resolve checkpoint %s: call %q: %w", cpID, callID, err)
+			}
+		}
+		return cp, d, nil
+	}
 	if !d.Approved {
 		d.AmendedArguments = nil
 	}
@@ -304,15 +318,31 @@ func (e *Engine) recordedAs(ctx context.Context, cp *checkpoint.Checkpoint, d ch
 //
 // Amended arguments belong to one call, so an approval that carries them
 // is refused with cortex.ErrInvalidDecision unless exactly one call is
-// pending.
+// pending. A decision with Calls decides each call on its own instead.
 func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) (ResumeInput, error) {
 	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(pending)), rejected: !d.Approved}
+	if len(d.Calls) > 0 {
+		if err := checkCalls(pending, d); err != nil {
+			return in, err
+		}
+		in.rejected = false
+		for _, p := range pending {
+			cd := d.Calls[p.ID]
+			if cd.Approved {
+				in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: cd.AmendedArguments, AmendedBy: amendedBy(d.DecidedBy, cd.AmendedArguments)})
+			} else {
+				in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Error: rejectionMessage(checkpoint.Decision{DecidedBy: d.DecidedBy, Reason: cd.Reason}), Rejected: true})
+			}
+		}
+		in.rejected = !d.Approved
+		return in, nil
+	}
 	if d.Approved && len(d.AmendedArguments) > 0 && len(pending) != 1 {
 		return in, fmt.Errorf("%w: amended arguments need exactly one pending call, found %d", cortex.ErrInvalidDecision, len(pending))
 	}
 	for _, p := range pending {
 		if d.Approved {
-			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: d.AmendedArguments, AmendedBy: amendedBy(d)})
+			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: d.AmendedArguments, AmendedBy: amendedBy(d.DecidedBy, d.AmendedArguments)})
 		} else {
 			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Error: rejectionMessage(d)})
 		}
@@ -320,12 +350,36 @@ func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) (Res
 	return in, nil
 }
 
+// checkCalls reports whether d.Calls names exactly the pending calls, once
+// each, and nothing else.
+func checkCalls(pending []suspension.PendingCall, d checkpoint.Decision) error {
+	if len(d.Calls) == 0 {
+		return nil
+	}
+	if len(d.AmendedArguments) > 0 {
+		return fmt.Errorf("%w: amend arguments per call in Calls, not on the decision", cortex.ErrInvalidDecision)
+	}
+	known := make(map[string]bool, len(pending))
+	for _, p := range pending {
+		known[p.ID] = true
+		if _, ok := d.Calls[p.ID]; !ok {
+			return fmt.Errorf("%w: no decision for pending call %q", cortex.ErrInvalidDecision, p.ID)
+		}
+	}
+	for callID := range d.Calls {
+		if !known[callID] {
+			return fmt.Errorf("%w: call %q is not pending", cortex.ErrInvalidDecision, callID)
+		}
+	}
+	return nil
+}
+
 // amendedBy names who edited a call's arguments, or "" when nobody did.
-func amendedBy(d checkpoint.Decision) string {
-	if len(d.AmendedArguments) == 0 {
+func amendedBy(decidedBy string, amended json.RawMessage) string {
+	if len(amended) == 0 {
 		return ""
 	}
-	return d.DecidedBy
+	return decidedBy
 }
 
 // rejectionMessage is the error a rejected call returns to the model.
@@ -755,4 +809,36 @@ func readyInput(ready *run.Readiness) (ResumeInput, resumeSource, error) {
 	default:
 		return in, resumeSourcePublic, fmt.Errorf("unknown ready source %q: %w", ready.Source, cortex.ErrInvalidContinuation)
 	}
+}
+
+// settleCalls derives what a per-call decision means as a whole. It is
+// approved when any call is, and a rejected call keeps no edit. When every
+// call is rejected and the caller gave no reason, the reasons stand in for
+// it, since a run that fails on the rejection reads the decision's Reason.
+// d.Calls is copied, never changed in place.
+func settleCalls(d checkpoint.Decision) checkpoint.Decision {
+	calls := make(map[string]checkpoint.CallDecision, len(d.Calls))
+	ids := make([]string, 0, len(d.Calls))
+	d.Approved = false
+	for callID, cd := range d.Calls {
+		if cd.Approved {
+			d.Approved = true
+		} else {
+			cd.AmendedArguments = nil
+		}
+		calls[callID] = cd
+		ids = append(ids, callID)
+	}
+	d.Calls = calls
+	if !d.Approved && d.Reason == "" {
+		slices.Sort(ids)
+		reasons := make([]string, 0, len(ids))
+		for _, callID := range ids {
+			if r := calls[callID].Reason; r != "" {
+				reasons = append(reasons, r)
+			}
+		}
+		d.Reason = strings.Join(reasons, "; ")
+	}
+	return d
 }

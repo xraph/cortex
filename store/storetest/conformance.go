@@ -2083,6 +2083,27 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			t.Fatalf("amended arguments = %s, want %s", got.Decision.AmendedArguments, amended)
 		}
 
+		// A per-call decision reads back call by call.
+		cp3 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		perCall := map[string]checkpoint.CallDecision{
+			"call-1": {Approved: true, AmendedArguments: json.RawMessage(`{"to":"b"}`)},
+			"call-2": {Reason: "wrong recipient"},
+		}
+		if err := s.Resolve(ctx, cp3.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", Calls: perCall}); err != nil {
+			t.Fatalf("Resolve with calls: %v", err)
+		}
+		got3, err := s.GetCheckpoint(ctx, cp3.ID)
+		if err != nil || got3.Decision == nil {
+			t.Fatalf("reload third checkpoint: %v", err)
+		}
+		if len(got3.Decision.Calls) != 2 {
+			t.Fatalf("calls = %+v, want 2 entries", got3.Decision.Calls)
+		}
+		c1, c2 := got3.Decision.Calls["call-1"], got3.Decision.Calls["call-2"]
+		if !c1.Approved || string(c1.AmendedArguments) != `{"to":"b"}` || c2.Approved || c2.Reason != "wrong recipient" || len(c2.AmendedArguments) != 0 {
+			t.Fatalf("calls read back as %+v, want %+v", got3.Decision.Calls, perCall)
+		}
+
 		// A decision without them reads back without them.
 		cp2 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
 		if err := s.Resolve(ctx, cp2.ID, checkpoint.Decision{Approved: true}); err != nil {

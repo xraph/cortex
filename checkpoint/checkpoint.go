@@ -32,6 +32,28 @@ type Decision struct {
 	// validate them against the tool's schema; that is the caller's job.
 	// A rejection ignores them and does not record them.
 	AmendedArguments json.RawMessage `json:"amended_arguments,omitempty"`
+	// Calls decides each pending tool call on its own, keyed by the
+	// pending call's id. When it is set, Approved is derived (true when
+	// any call is approved), AmendedArguments must be empty, and every
+	// pending call must have an entry and every entry must name a
+	// pending call, or the decision is refused with
+	// cortex.ErrInvalidDecision. A rejected call's Reason is what the
+	// model reads for that call. When it is empty, Approved and
+	// AmendedArguments decide every pending call together.
+	Calls map[string]CallDecision `json:"calls,omitempty"`
+}
+
+// CallDecision is the outcome of one pending tool call within a Decision.
+type CallDecision struct {
+	// Approved runs the call. A call that is not approved is rejected
+	// and answered with Reason.
+	Approved bool `json:"approved"`
+	// AmendedArguments, on an approved call, replace the whole argument
+	// object the call runs with. They must be a JSON object. A rejected
+	// call ignores them.
+	AmendedArguments json.RawMessage `json:"amended_arguments,omitempty"`
+	// Reason is what the model reads when the call is rejected.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Checkpoint represents a point where a run pauses for approval.

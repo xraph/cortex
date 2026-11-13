@@ -131,3 +131,109 @@ func TestContinueRun_rejectedIgnoresAmendedArguments(t *testing.T) {
 	require.Contains(t, content, "rejected by bob: no")
 	require.Empty(t, f.checkpointState(t, cp.ID).Decision.AmendedArguments, "a rejection must not record an edit")
 }
+
+func newTwoCallFixture(t *testing.T) *continueFixture {
+	t.Helper()
+	ctx := cortexScopeContext()
+	return buildContinueFixture(ctx, t, newApprovalStore(ctx, t), []llm.ToolCall{
+		{ID: "call-1", Name: gatedTool().Name, Arguments: `{"to":"a"}`},
+		{ID: "call-2", Name: gatedTool().Name, Arguments: `{"to":"c"}`},
+	})
+}
+
+func TestContinueRun_perCallDecisionsApproveAmendAndReject(t *testing.T) {
+	f := newTwoCallFixture(t)
+	paused, cp := f.pause(t)
+
+	require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{
+		DecidedBy: "bob",
+		Calls: map[string]checkpoint.CallDecision{
+			"call-1": {Approved: true, AmendedArguments: json.RawMessage(`{"to":"b"}`)},
+			"call-2": {Reason: "wrong recipient"},
+		},
+	}))
+	done, err := f.e.ContinueRun(f.ctx, paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, done.State)
+
+	require.Equal(t, []string{`{"to":"b"}`}, f.seenArguments(), "only the approved call runs, with the amended arguments")
+	var first, second string
+	for _, m := range f.model.lastRequest() {
+		if m.Role != "tool" {
+			continue
+		}
+		switch m.ToolCallID {
+		case "call-1":
+			first = m.Content
+		case "call-2":
+			second = m.Content
+		}
+	}
+	require.Equal(t, "deleted", first)
+	require.Contains(t, second, "rejected by bob: wrong recipient")
+	require.Equal(t, 1, countEvent(f.tools.snapshot(), "completed"))
+	require.Equal(t, 1, countEvent(f.tools.snapshot(), "denied"))
+	require.Zero(t, countEvent(f.tools.snapshot(), "failed"))
+
+	decided := f.checkpointState(t, cp.ID).Decision
+	require.True(t, decided.Approved, "a decision with any approved call is approved")
+	require.Len(t, decided.Calls, 2)
+	require.JSONEq(t, `{"to":"b"}`, string(decided.Calls["call-1"].AmendedArguments))
+	require.Equal(t, "wrong recipient", decided.Calls["call-2"].Reason)
+}
+
+func TestDecideCheckpoint_perCallDecisionsMustNameEveryPendingCall(t *testing.T) {
+	cases := map[string]map[string]checkpoint.CallDecision{
+		"missing call":  {"call-1": {Approved: true}},
+		"unknown call":  {"call-1": {Approved: true}, "call-2": {Approved: true}, "call-9": {Approved: true}},
+		"wrong call id": {"call-1": {Approved: true}, "call-9": {Approved: true}},
+		"amend not obj": {"call-1": {Approved: true, AmendedArguments: json.RawMessage(`[1]`)}, "call-2": {Approved: true}},
+	}
+	for name, calls := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newTwoCallFixture(t)
+			paused, cp := f.pause(t)
+
+			err := f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Calls: calls})
+			require.ErrorIs(t, err, cortex.ErrInvalidDecision)
+			require.Equal(t, "pending", f.checkpointState(t, cp.ID).State)
+			require.Equal(t, run.StatePaused, f.runState(t, paused.ID).State)
+		})
+	}
+}
+
+func TestDecideCheckpoint_perCallDecisionsRefuseTopLevelAmendment(t *testing.T) {
+	f := newTwoCallFixture(t)
+	_, cp := f.pause(t)
+	err := f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{
+		AmendedArguments: json.RawMessage(`{"to":"b"}`),
+		Calls:            map[string]checkpoint.CallDecision{"call-1": {Approved: true}, "call-2": {Approved: true}},
+	})
+	require.ErrorIs(t, err, cortex.ErrInvalidDecision)
+}
+
+func TestDecideCheckpoint_perCallDecisionsAllRejectedFailsRunWithoutOption(t *testing.T) {
+	f := newTwoCallFixture(t)
+	paused, cp := f.pause(t)
+	require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{
+		DecidedBy: "bob",
+		Calls:     map[string]checkpoint.CallDecision{"call-1": {Reason: "no"}, "call-2": {Reason: "no"}},
+	}))
+	require.Equal(t, run.StateFailed, f.runState(t, paused.ID).State)
+	require.Zero(t, f.ran.Load())
+	require.False(t, f.checkpointState(t, cp.ID).Decision.Approved)
+}
+
+func TestResolveCheckpoint_perCallDecisionsContinueTheRun(t *testing.T) {
+	f := newTwoCallFixture(t)
+	paused, cp := f.pause(t)
+	require.NoError(t, f.e.ResolveCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{
+		DecidedBy: "bob",
+		Calls: map[string]checkpoint.CallDecision{
+			"call-1": {Reason: "no"},
+			"call-2": {Approved: true, AmendedArguments: json.RawMessage(`{"to":"z"}`)},
+		},
+	}))
+	require.Equal(t, run.StateCompleted, f.runState(t, paused.ID).State)
+	require.Equal(t, []string{`{"to":"z"}`}, f.seenArguments())
+}

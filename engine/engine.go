@@ -939,6 +939,9 @@ func (e *Engine) ResolveCheckpoint(ctx context.Context, cpID id.CheckpointID, de
 // that cannot be read is treated as one that continues; decideCheckpoint
 // reports the read error itself.
 func (e *Engine) decisionContinues(ctx context.Context, cpID id.CheckpointID, d checkpoint.Decision) bool {
+	if len(d.Calls) > 0 {
+		d = settleCalls(d)
+	}
 	if !d.Approved && !e.rejectionsToModel {
 		return false
 	}
@@ -983,6 +986,9 @@ func (e *Engine) resolveInPlace(ctx context.Context, cpID id.CheckpointID, decis
 		susp, bindErr := e.boundSuspension(ctx, cp, false)
 		if bindErr != nil {
 			return bindErr
+		}
+		if err := checkCalls(susp.Pending, decision); err != nil {
+			return err
 		}
 		if decision.Approved || e.rejectionsToModel {
 			if err := e.resumeDecided(ctx, cp, susp, decision); err != nil {

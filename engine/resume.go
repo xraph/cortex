@@ -65,6 +65,10 @@ type ToolResult struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// AmendedBy says who edited Arguments. It goes on the call's trace.
 	AmendedBy string `json:"amended_by,omitempty"`
+	// Rejected says this one call is a reviewer's rejection going back to
+	// the model, in a decision that approved other calls. It is recorded
+	// as denied rather than failed, as a whole-run rejection is.
+	Rejected bool `json:"rejected,omitempty"`
 }
 
 // ResumeInput is everything a caller supplies to continue a suspended
@@ -815,7 +819,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			source = verification.ToolLocal
 		}
 		switch {
-		case in.rejected && errText != "":
+		case (in.rejected || res.Rejected) && errText != "":
 			outcome, source = outcomeDenied, verification.ToolLocal
 			e.emitToolDenied(ctx, r.ID, p.Name, errText)
 		case errText != "":
