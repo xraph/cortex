@@ -419,3 +419,21 @@ func TestModelCallDeferral_resolvedInPlace(t *testing.T) {
 		require.Equal(t, checkpointStatePending, f.checkpointState(t, cp.ID).State)
 	})
 }
+
+// An empty allowlist and no allowlist freeze to the same tools: a run
+// started with Tools set to an empty slice can be continued, although the
+// continuation stores no tools at all.
+func TestModelCallDeferral_continuesARunWithAnEmptyToolList(t *testing.T) {
+	f := newDeferralFixture(t, map[int]error{1: creditsDeferral()})
+	f.model.responses = nil
+	f.overrides = &RunOverrides{MaxSteps: 5, Tools: []string{}, ToolsRestricted: true}
+	paused, cp := f.pause(t)
+	require.NotNil(t, cp)
+
+	require.NoError(t, f.e.DecideCheckpoint(as(f.ctx, bob), cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "bob"}))
+	done, err := f.e.ContinueRun(f.ctx, paused.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.StateCompleted, done.State)
+	require.Equal(t, "done", done.Output)
+	require.Zero(t, f.lookups.Load())
+}

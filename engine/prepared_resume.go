@@ -59,6 +59,15 @@ func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnap
 		return cortex.ErrInvalidContinuation
 	}
 	cfg.Budget.Deadline = frozen.Budget.Deadline
+	// The continuation drops an empty tool list (omitempty) while the
+	// snapshot keeps it. Both mean no listed tools; ToolsRestricted says
+	// whether that is an explicit allowlist, and it is compared as is.
+	if len(cfg.Tools) == 0 {
+		cfg.Tools = nil
+	}
+	if len(frozen.Tools) == 0 {
+		frozen.Tools = nil
+	}
 	if !reflect.DeepEqual(cfg, frozen) || cont.SystemPrompt != prompt.Assemble(snap.Sections) || r.AgentID != snap.Agent.ID || r.Scope.Canonical() != snap.Scope.Canonical() {
 		return fmt.Errorf("cortex: continuation changed frozen inputs: %w", cortex.ErrInvalidContinuation)
 	}
