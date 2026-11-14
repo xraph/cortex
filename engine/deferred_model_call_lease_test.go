@@ -25,7 +25,7 @@ type deferOnceLLM struct {
 
 func (m *deferOnceLLM) Complete(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	if m.seen.Add(1)-1 == m.at {
-		return nil, cortex.DeferredModelCall{Kind: "credits", Reason: "The workspace is out of AI credits."}
+		return nil, cortex.DeferredModelCallError{Kind: "credits", Reason: "The workspace is out of AI credits."}
 	}
 	return m.leaseLLM.Complete(ctx, req)
 }

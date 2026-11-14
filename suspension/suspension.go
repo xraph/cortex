@@ -39,7 +39,7 @@ const (
 	// ledger; nobody else may.
 	ReasonAgentReply SuspendReason = "agent_reply"
 	// ReasonDeferredModelCall means the model client deferred the run's
-	// next model call (cortex.DeferredModelCall). The suspension has no
+	// next model call (cortex.DeferredModelCallError). The suspension has no
 	// pending calls, its continuation is the state from before that call,
 	// and only a decision on its checkpoint continues it, by making the
 	// same call.

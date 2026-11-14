@@ -239,19 +239,19 @@ var (
 var ErrInvalidDecision = errors.New("cortex: invalid checkpoint decision")
 
 // ErrDeferModelCall is what a model client returns, wrapped or as
-// DeferredModelCall, when it will not make a call right now but may later:
+// DeferredModelCallError, when it will not make a call right now but may later:
 // the workspace is out of AI credits, say. The run pauses before that call
 // with a checkpoint, nothing the run already did is lost, and an approved
 // decision on the checkpoint continues the run by making the same call.
 // Any other model error still fails the run.
 var ErrDeferModelCall = errors.New("cortex: model call deferred")
 
-// DeferredModelCall is ErrDeferModelCall with something to say: why the
+// DeferredModelCallError is ErrDeferModelCall with something to say: why the
 // call waits (Reason, which becomes the checkpoint's reason) and what kind
 // of wait it is (Kind, for example "credits", which the host reads back
 // from the checkpoint's metadata). Return it from llm.Client, bare or
 // wrapped; errors.Is matches it against ErrDeferModelCall.
-type DeferredModelCall struct {
+type DeferredModelCallError struct {
 	// Reason is shown on the checkpoint.
 	Reason string
 	// Kind names what the call waits on. The engine does not interpret
@@ -260,7 +260,7 @@ type DeferredModelCall struct {
 }
 
 // Error says the model call was deferred, and why.
-func (d DeferredModelCall) Error() string {
+func (d DeferredModelCallError) Error() string {
 	if d.Reason == "" {
 		return ErrDeferModelCall.Error()
 	}
@@ -269,6 +269,6 @@ func (d DeferredModelCall) Error() string {
 
 // Is reports a match for ErrDeferModelCall, so code that only knows the
 // sentinel still recognizes a deferral.
-func (d DeferredModelCall) Is(target error) bool {
+func (d DeferredModelCallError) Is(target error) bool {
 	return target == ErrDeferModelCall
 }

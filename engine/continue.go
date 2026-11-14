@@ -80,8 +80,8 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if err != nil {
 		return nil, err
 	}
-	if err := checkDecision(susp, d); err != nil {
-		return nil, err
+	if decideErr := checkDecision(susp, d); decideErr != nil {
+		return nil, decideErr
 	}
 	if !d.Approved && (!e.rejectionsToModel || isDeferredModelCall(susp)) {
 		if rejectErr := e.endRejected(ctx, cp, susp, d); rejectErr != nil {
@@ -944,7 +944,7 @@ func settleCalls(d checkpoint.Decision) checkpoint.Decision {
 // from the results its run was made ready with, for a record that was lost.
 // A single call is recorded the top-level way, several are recorded in
 // Calls, where a rejection keeps the reason the model was given.
-func decisionFromResults(ready *run.Readiness) (json.RawMessage, map[string]checkpoint.CallDecision) {
+func decisionFromResults(ready *run.Readiness) (amended json.RawMessage, calls map[string]checkpoint.CallDecision) {
 	var results []ToolResult
 	if json.Unmarshal(ready.Results, &results) != nil {
 		return nil, nil
@@ -966,7 +966,7 @@ func decisionFromResults(ready *run.Readiness) (json.RawMessage, map[string]chec
 		by = "a reviewer"
 	}
 	prefix := "rejected by " + by + ": "
-	calls := make(map[string]checkpoint.CallDecision, len(results))
+	calls = make(map[string]checkpoint.CallDecision, len(results))
 	for _, res := range results {
 		if res.Execute {
 			calls[res.ToolCallID] = checkpoint.CallDecision{Approved: true, AmendedArguments: res.Arguments}

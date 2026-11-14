@@ -91,7 +91,7 @@ func lookupTool() llm.Tool {
 }
 
 func creditsDeferral() error {
-	return cortex.DeferredModelCall{Kind: "credits", Reason: "The workspace is out of AI credits."}
+	return cortex.DeferredModelCallError{Kind: "credits", Reason: "The workspace is out of AI credits."}
 }
 
 // deferralFixture is a continueFixture whose model calls the lookup tool
@@ -118,13 +118,14 @@ func deferralFixtureOn(ctx context.Context, t *testing.T, st store.Store, deferA
 		}},
 		deferAt: deferAt,
 	}}
-	base := []Option{
+	base := make([]Option, 0, 2+len(opts))
+	base = append(base,
 		WithLLM(df.model),
 		WithTool(lookupTool(), func(context.Context, cortex.Invocation) (string, error) {
 			df.lookups.Add(1)
 			return "found", nil
 		}),
-	}
+	)
 	df.continueFixture = buildContinueFixture(ctx, t, st, nil, append(base, opts...)...)
 	df.overrides = &RunOverrides{MaxSteps: 5}
 	return df
@@ -142,9 +143,9 @@ func straightRun(t *testing.T) (*run.Run, *deferralFixture) {
 }
 
 func TestDeferredModelCall_isTheSentinel(t *testing.T) {
-	err := fmt.Errorf("meter: %w", cortex.DeferredModelCall{Kind: "credits", Reason: "out of credits"})
+	err := fmt.Errorf("meter: %w", cortex.DeferredModelCallError{Kind: "credits", Reason: "out of credits"})
 	require.ErrorIs(t, err, cortex.ErrDeferModelCall)
-	var deferred cortex.DeferredModelCall
+	var deferred cortex.DeferredModelCallError
 	require.ErrorAs(t, err, &deferred)
 	require.Equal(t, "credits", deferred.Kind)
 	require.Contains(t, err.Error(), "out of credits")

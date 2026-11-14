@@ -2105,10 +2105,10 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			t.Fatal("reloaded checkpoint has no decision")
 		}
 		var want, have map[string]any
-		if err := json.Unmarshal(amended, &want); err != nil {
+		if err = json.Unmarshal(amended, &want); err != nil {
 			t.Fatalf("decode want: %v", err)
 		}
-		if err := json.Unmarshal(got.Decision.AmendedArguments, &have); err != nil {
+		if err = json.Unmarshal(got.Decision.AmendedArguments, &have); err != nil {
 			t.Fatalf("decode amended arguments %q: %v", got.Decision.AmendedArguments, err)
 		}
 		if !reflect.DeepEqual(want, have) {
@@ -2121,7 +2121,7 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 			"call-1": {Approved: true, AmendedArguments: json.RawMessage(`{"to":"b"}`)},
 			"call-2": {Reason: "wrong recipient"},
 		}
-		if err := s.Resolve(ctx, cp3.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", Calls: perCall}); err != nil {
+		if err = s.Resolve(ctx, cp3.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", Calls: perCall}); err != nil {
 			t.Fatalf("Resolve with calls: %v", err)
 		}
 		got3, err := s.GetCheckpoint(ctx, cp3.ID)
@@ -2134,8 +2134,8 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		c1, c2 := got3.Decision.Calls["call-1"], got3.Decision.Calls["call-2"]
 		// jsonb re-spaces JSON, so compare the objects, not the bytes.
 		var c1Args map[string]any
-		if err := json.Unmarshal(c1.AmendedArguments, &c1Args); err != nil || !reflect.DeepEqual(c1Args, map[string]any{"to": "b"}) {
-			t.Fatalf("call-1 amended arguments = %s (%v), want {\"to\":\"b\"}", c1.AmendedArguments, err)
+		if decodeErr := json.Unmarshal(c1.AmendedArguments, &c1Args); decodeErr != nil || !reflect.DeepEqual(c1Args, map[string]any{"to": "b"}) {
+			t.Fatalf("call-1 amended arguments = %s (%v), want {\"to\":\"b\"}", c1.AmendedArguments, decodeErr)
 		}
 		if !c1.Approved || c2.Approved || c2.Reason != "wrong recipient" || len(c2.AmendedArguments) != 0 {
 			t.Fatalf("calls read back as %+v, want %+v", got3.Decision.Calls, perCall)
@@ -2143,8 +2143,8 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 
 		// A decision without them reads back without them.
 		cp2 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
-		if err := s.Resolve(ctx, cp2.ID, checkpoint.Decision{Approved: true}); err != nil {
-			t.Fatalf("Resolve without arguments: %v", err)
+		if resolveErr := s.Resolve(ctx, cp2.ID, checkpoint.Decision{Approved: true}); resolveErr != nil {
+			t.Fatalf("Resolve without arguments: %v", resolveErr)
 		}
 		got2, err := s.GetCheckpoint(ctx, cp2.ID)
 		if err != nil || got2.Decision == nil {

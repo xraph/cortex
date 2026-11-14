@@ -189,7 +189,7 @@ func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeIn
 // when execution completes, same as StreamAgent's, and the run's admission
 // slot is held until then.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
-	if err := refuseDecisionFields(in.ToolResults); err != nil {
+	if err = refuseDecisionFields(in.ToolResults); err != nil {
 		close(events)
 		return err
 	}
