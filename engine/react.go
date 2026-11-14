@@ -244,6 +244,18 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 			fresh := progressCont(r, st, cfg)
 			return r, e.leaveRun(ctx, r, &fresh)
 		}
+		if errors.Is(err, cortex.ErrDeferModelCall) {
+			// The client will make this call later, not now: the run
+			// pauses before it, and a decision continues it with the
+			// same call. Nothing is charged for a call that did not run.
+			if _, suspendErr := e.suspendDeferred(ctx, r, st, cfg, err); suspendErr != nil {
+				e.failRun(ctx, r, ag.ID, suspendErr, startedAt)
+				stepSpan.finish(stepError, suspendErr)
+				return nil, fmt.Errorf("suspend run: %w", suspendErr)
+			}
+			stepSpan.finish(stepSuspended, nil)
+			return r, nil
+		}
 		if errors.Is(err, llm.ErrContentBlocked) {
 			reported := 0
 			if resp != nil {
@@ -606,6 +618,11 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 			sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
 			return
 		}
+		if errors.Is(err, cortex.ErrDeferModelCall) {
+			// Same pause as the synchronous loop.
+			e.suspendDeferredStream(ctx, ag, r, st, cfg, err, stepSpan, startedAt, events)
+			return
+		}
 		if errors.Is(err, llm.ErrContentBlocked) {
 			terminalErr := e.stopContentBlocked(ctx, r, st, cfg, 0)
 			stepSpan.finish(stepStopped, nil)
@@ -683,6 +700,16 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 				stepSpan.finish(stepStopped, nil)
 				fresh := progressCont(r, st, cfg)
 				sendLeftEvent(ctx, events, r, e.leaveRun(ctx, r, &fresh))
+				return
+			}
+			if errors.Is(err, cortex.ErrDeferModelCall) && totalBytes == 0 {
+				// A client may defer the call from the stream's first
+				// read rather than from opening it. Nothing of the
+				// response was read, so the run pauses before the call as
+				// it does above. Once a chunk has arrived the call has
+				// run, and a deferral fails the run like any error.
+				_ = stream.Close()
+				e.suspendDeferredStream(ctx, ag, r, st, cfg, err, stepSpan, startedAt, events)
 				return
 			}
 			if errors.Is(err, llm.ErrContentBlocked) {
@@ -992,6 +1019,26 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 	}
 
 	sendEvent(ctx, events, outcomeEvent(r, completedAt.Sub(startedAt)))
+}
+
+// suspendDeferredStream is the streaming loop's pause for a deferred
+// model call: suspendDeferred, and the suspended event that tells the
+// consumer the run paused rather than ended. A pause that cannot be
+// written fails the run.
+func (e *Engine) suspendDeferredStream(ctx context.Context, ag *agent.Config, r *run.Run, st *reactState, cfg resolvedConfig, cause error, stepSpan *stepTrace, startedAt time.Time, events chan<- StreamEvent) {
+	reason, err := e.suspendDeferred(ctx, r, st, cfg, cause)
+	if err != nil {
+		e.failRun(ctx, r, ag.ID, err, startedAt)
+		stepSpan.finish(stepError, err)
+		sendEvent(ctx, events, runErrorEvent(r, err))
+		return
+	}
+	stepSpan.finish(stepSuspended, nil)
+	sendEvent(ctx, events, StreamEvent{Type: EventSuspended, Data: map[string]any{
+		"run_id":  r.ID.String(),
+		"reason":  string(reason),
+		"pending": publicPendingCalls(r, nil),
+	}})
 }
 
 // sendLeftEvent tells a stream's consumer how a pass that left its run

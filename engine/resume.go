@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -58,6 +59,16 @@ type ToolResult struct {
 	// external tool is answered by supplying its result, since the engine
 	// is not the thing that runs it.
 	Execute bool `json:"execute,omitempty"`
+	// Arguments, with Execute, replace the arguments the call was
+	// suspended with: a decider edited them. They must be a JSON object.
+	// Only an approval decision sets them.
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// AmendedBy says who edited Arguments. It goes on the call's trace.
+	AmendedBy string `json:"amended_by,omitempty"`
+	// Rejected says this one call is a reviewer's rejection going back to
+	// the model, in a decision that approved other calls. It is recorded
+	// as denied rather than failed, as a whole-run rejection is.
+	Rejected bool `json:"rejected,omitempty"`
 }
 
 // ResumeInput is everything a caller supplies to continue a suspended
@@ -99,6 +110,9 @@ type resumption struct {
 // or a rebuilt message list are three different ways to corrupt a run
 // that looked fine at the call site and went wrong several turns later.
 func (e *Engine) Resume(ctx context.Context, runID id.AgentRunID, in ResumeInput) (*run.Run, error) {
+	if err := refuseDecisionFields(in.ToolResults); err != nil {
+		return nil, err
+	}
 	return e.resume(ctx, runID, in, resumeSourcePublic)
 }
 
@@ -175,6 +189,10 @@ func (e *Engine) resumeRun(ctx context.Context, runID id.AgentRunID, in ResumeIn
 // when execution completes, same as StreamAgent's, and the run's admission
 // slot is held until then.
 func (e *Engine) ResumeStream(ctx context.Context, runID id.AgentRunID, in ResumeInput, events chan<- StreamEvent) (err error) {
+	if err = refuseDecisionFields(in.ToolResults); err != nil {
+		close(events)
+		return err
+	}
 	ctx, done, err := e.admit(ctx)
 	if err != nil {
 		close(events)
@@ -722,6 +740,11 @@ func (e *Engine) failResume(ctx context.Context, r *run.Run, agentID id.AgentID,
 // exception to completed or failed: the call was refused by a person, so
 // it emits ToolDenied, the event an authorizer's refusal emits.
 func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *run.Run, susp *suspension.Suspension, in ResumeInput, st *reactState, cfg resolvedConfig) error {
+	if len(susp.Pending) == 0 {
+		// A deferred model call: nothing to record, the loop makes the
+		// call next.
+		return nil
+	}
 	ctx = withOperationalRuntime(ctx, r, cfg, st)
 	byID := make(map[string]ToolResult, len(in.ToolResults))
 	for _, res := range in.ToolResults {
@@ -774,6 +797,10 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			}
 		}
 		completedAt := time.Now().UTC()
+		if res.Execute && len(res.Arguments) > 0 {
+			// The model's history says what ran, not what it first asked for.
+			amendMessageArguments(st.messages, p.ID, string(res.Arguments))
+		}
 
 		if !stepID.IsNil() {
 			toolCall := &run.ToolCall{
@@ -782,7 +809,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 				StepID:    stepID,
 				RunID:     r.ID,
 				ToolName:  publicToolName(ctx, p.Name),
-				Arguments: publicGenerationText(r, p.Arguments),
+				Arguments: publicGenerationText(r, resumedArguments(p, res)),
 				Result:    publicGenerationText(r, content),
 				Error:     publicToolErrorText(ctx, errText),
 				// The call really was outstanding from the moment the run
@@ -790,6 +817,9 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 				// hide exactly the latency an external tool introduces.
 				StartedAt:   &startedAt,
 				CompletedAt: &completedAt,
+			}
+			if res.Execute && len(res.Arguments) > 0 {
+				toolCall.Metadata = map[string]any{"arguments_amended": true, "amended_by": res.AmendedBy}
 			}
 			if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
 				e.logError("create resumed tool call", err, log.String("run_id", r.ID.String()))
@@ -801,7 +831,7 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			source = verification.ToolLocal
 		}
 		switch {
-		case in.rejected && errText != "":
+		case (in.rejected || res.Rejected) && errText != "":
 			outcome, source = outcomeDenied, verification.ToolLocal
 			e.emitToolDenied(ctx, r.ID, p.Name, errText)
 		case errText != "":
@@ -816,6 +846,42 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 			ToolCallID: p.ID,
 		})
 		e.noteDone(ctx, r.ID, p.ID, content, errText, outcome)
+	}
+	return nil
+}
+
+// resumedArguments is what an approved call runs with: the arguments a
+// decider amended, if they did, else the ones the model asked for.
+func resumedArguments(p suspension.PendingCall, res ToolResult) string {
+	if res.Execute && len(res.Arguments) > 0 {
+		return string(res.Arguments)
+	}
+	return p.Arguments
+}
+
+// refuseDecisionFields refuses results that carry what only a checkpoint
+// decision may set: edited arguments, who edited them, and the mark of a
+// reviewer's denial. A public caller must not be able to have an ordinary
+// tool error recorded and emitted as a person's rejection.
+func refuseDecisionFields(results []ToolResult) error {
+	for _, r := range results {
+		if r.Rejected || r.AmendedBy != "" || len(r.Arguments) > 0 {
+			return fmt.Errorf("%w: arguments and denials are set by a checkpoint decision, not by a caller's results", cortex.ErrInvalidDecision)
+		}
+	}
+	return nil
+}
+
+// checkArgumentsObject reports whether amended arguments, when there are
+// any, are a JSON object. Validating them against the tool's schema is
+// left to the caller.
+func checkArgumentsObject(args json.RawMessage) error {
+	if len(args) == 0 {
+		return nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(args, &obj); err != nil || obj == nil {
+		return fmt.Errorf("%w: amended arguments must be a JSON object", cortex.ErrInvalidDecision)
 	}
 	return nil
 }
@@ -847,7 +913,7 @@ func (e *Engine) resumedCallResult(ctx context.Context, s cortex.Subject, p susp
 		return jsonResult("error", err.Error()), err.Error(), outcomeFailed
 	}
 
-	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: p.Arguments}
+	call := llm.ToolCall{ID: p.ID, Name: p.Name, Arguments: resumedArguments(p, res)}
 	content, outcome, _ = e.traceTool(ctx, call, func(ctx context.Context) (string, toolOutcome, pendingWait) {
 		out, callOutcome := e.runResumedTool(ctx, s, call, approved, &errText)
 		return out, callOutcome, pendingWait{}
@@ -954,6 +1020,15 @@ func checkResumeAuthority(reason suspension.SuspendReason, source resumeSource) 
 		}
 		return fmt.Errorf("%w: this run is waiting on another agent's reply, which only the messaging bus can deliver", ErrNotAgentReplyResumable)
 
+	case suspension.ReasonDeferredModelCall:
+		// Nothing outside the engine has a result to give a deferred
+		// model call. The run continues when its checkpoint is decided,
+		// and then it makes the call itself.
+		if source == resumeSourceApproval {
+			return nil
+		}
+		return fmt.Errorf("%w: this run is waiting to make a model call it deferred, so decide its checkpoint rather than resuming the run", cortex.ErrDeferModelCall)
+
 	default:
 		return nil
 	}
@@ -977,6 +1052,12 @@ func validateResults(pending []suspension.PendingCall, results []ToolResult) err
 		if !ok {
 			return fmt.Errorf("%w: unexpected result for call id %q", cortex.ErrResultsMismatch, r.ToolCallID)
 		}
+		if len(r.Arguments) > 0 && !r.Execute {
+			return fmt.Errorf("%w: arguments for call id %q without execute", cortex.ErrInvalidDecision, r.ToolCallID)
+		}
+		if err := checkArgumentsObject(r.Arguments); err != nil {
+			return err
+		}
 		if n > 0 {
 			return fmt.Errorf("%w: duplicate result for call id %q", cortex.ErrResultsMismatch, r.ToolCallID)
 		}
@@ -988,4 +1069,17 @@ func validateResults(pending []suspension.PendingCall, results []ToolResult) err
 		}
 	}
 	return nil
+}
+
+// amendMessageArguments rewrites the arguments of the assistant tool call
+// callID in messages, so the conversation the model reads next matches
+// the call that ran.
+func amendMessageArguments(messages []llm.Message, callID, args string) {
+	for i := range messages {
+		for j := range messages[i].ToolCalls {
+			if messages[i].ToolCalls[j].ID == callID {
+				messages[i].ToolCalls[j].Arguments = args
+			}
+		}
+	}
 }

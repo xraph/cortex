@@ -8,8 +8,10 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -2049,6 +2051,107 @@ func testSameIdentifierCrossScope(t *testing.T, newStore func(t *testing.T) stor
 		}
 		if err := s.Resolve(ctx, id.NewCheckpointID(), checkpoint.Decision{Approved: true}); !errors.Is(err, cortex.ErrCheckpointNotFound) {
 			t.Errorf("Resolve of a missing checkpoint = %v, want ErrCheckpointNotFound", err)
+		}
+	})
+
+	// A deferred model call pauses a run with no pending calls. The row
+	// reads back with its reason and an empty pending list, and a claim
+	// takes it like any other pause.
+	t.Run("SuspensionWithoutPendingCalls", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_deferred_model_call")
+		r := mustPauseRun(t, s, ctx)
+		susp := newSuspension(r.ID)
+		susp.Reason = suspension.ReasonDeferredModelCall
+		susp.Pending = nil
+		if err := s.CreateSuspension(ctx, susp); err != nil {
+			t.Fatalf("create suspension: %v", err)
+		}
+		got, err := s.GetSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("get suspension: %v", err)
+		}
+		if got.Reason != suspension.ReasonDeferredModelCall || len(got.Pending) != 0 {
+			t.Fatalf("suspension read back as (%q, %+v), want (%q, no pending calls)", got.Reason, got.Pending, suspension.ReasonDeferredModelCall)
+		}
+		if got.Cont.StepIndex != susp.Cont.StepIndex || len(got.Cont.Messages) != 1 {
+			t.Fatalf("continuation read back as %+v, want %+v", got.Cont, susp.Cont)
+		}
+		claimed, err := s.ClaimSuspension(ctx, r.ID)
+		if err != nil {
+			t.Fatalf("claim suspension: %v", err)
+		}
+		if claimed.ID != susp.ID || len(claimed.Pending) != 0 {
+			t.Fatalf("claimed %+v, want suspension %s with no pending calls", claimed, susp.ID)
+		}
+	})
+
+	// A decision's amended arguments are stored with it and read back
+	// the same JSON values (jsonb re-spaces them), whichever backend holds the checkpoint.
+	t.Run("CheckpointDecisionAmendedArguments", func(t *testing.T) {
+		s := newStore(t)
+		ctx := ctxWithScope("ws_amended_arguments")
+		r := mustCreateRun(t, s, ctx)
+		cp := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		amended := json.RawMessage(`{"to":"b","cc":["c","d"],"n":2}`)
+		if err := s.Resolve(ctx, cp.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", AmendedArguments: amended}); err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		got, err := s.GetCheckpoint(ctx, cp.ID)
+		if err != nil {
+			t.Fatalf("reload checkpoint: %v", err)
+		}
+		if got.Decision == nil {
+			t.Fatal("reloaded checkpoint has no decision")
+		}
+		var want, have map[string]any
+		if err = json.Unmarshal(amended, &want); err != nil {
+			t.Fatalf("decode want: %v", err)
+		}
+		if err = json.Unmarshal(got.Decision.AmendedArguments, &have); err != nil {
+			t.Fatalf("decode amended arguments %q: %v", got.Decision.AmendedArguments, err)
+		}
+		if !reflect.DeepEqual(want, have) {
+			t.Fatalf("amended arguments = %s, want %s", got.Decision.AmendedArguments, amended)
+		}
+
+		// A per-call decision reads back call by call.
+		cp3 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		perCall := map[string]checkpoint.CallDecision{
+			"call-1": {Approved: true, AmendedArguments: json.RawMessage(`{"to":"b"}`)},
+			"call-2": {Reason: "wrong recipient"},
+		}
+		if err = s.Resolve(ctx, cp3.ID, checkpoint.Decision{Approved: true, DecidedBy: "reviewer", Calls: perCall}); err != nil {
+			t.Fatalf("Resolve with calls: %v", err)
+		}
+		got3, err := s.GetCheckpoint(ctx, cp3.ID)
+		if err != nil || got3.Decision == nil {
+			t.Fatalf("reload third checkpoint: %v", err)
+		}
+		if len(got3.Decision.Calls) != 2 {
+			t.Fatalf("calls = %+v, want 2 entries", got3.Decision.Calls)
+		}
+		c1, c2 := got3.Decision.Calls["call-1"], got3.Decision.Calls["call-2"]
+		// jsonb re-spaces JSON, so compare the objects, not the bytes.
+		var c1Args map[string]any
+		if decodeErr := json.Unmarshal(c1.AmendedArguments, &c1Args); decodeErr != nil || !reflect.DeepEqual(c1Args, map[string]any{"to": "b"}) {
+			t.Fatalf("call-1 amended arguments = %s (%v), want {\"to\":\"b\"}", c1.AmendedArguments, decodeErr)
+		}
+		if !c1.Approved || c2.Approved || c2.Reason != "wrong recipient" || len(c2.AmendedArguments) != 0 {
+			t.Fatalf("calls read back as %+v, want %+v", got3.Decision.Calls, perCall)
+		}
+
+		// A decision without them reads back without them.
+		cp2 := mustCreateCheckpoint(t, s, ctx, r.ID, r.AgentID)
+		if resolveErr := s.Resolve(ctx, cp2.ID, checkpoint.Decision{Approved: true}); resolveErr != nil {
+			t.Fatalf("Resolve without arguments: %v", resolveErr)
+		}
+		got2, err := s.GetCheckpoint(ctx, cp2.ID)
+		if err != nil || got2.Decision == nil {
+			t.Fatalf("reload second checkpoint: %v", err)
+		}
+		if len(got2.Decision.AmendedArguments) != 0 {
+			t.Fatalf("amended arguments = %s, want none", got2.Decision.AmendedArguments)
 		}
 	})
 

@@ -549,5 +549,8 @@ func expiredDetail(susp *suspension.Suspension) string {
 	if susp.ExpiresAt != nil {
 		deadline = susp.ExpiresAt.Format(time.RFC3339)
 	}
+	if isDeferredModelCall(susp) {
+		return "nothing continued the deferred model call by " + deadline
+	}
 	return fmt.Sprintf("nothing answered the %s pending call(s) by %s", susp.Reason, deadline)
 }

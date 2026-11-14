@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -77,8 +80,11 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if err != nil {
 		return nil, err
 	}
-	if !d.Approved && !e.rejectionsToModel {
-		if rejectErr := e.failRejected(ctx, cp, susp, d); rejectErr != nil {
+	if decideErr := checkDecision(susp, d); decideErr != nil {
+		return nil, decideErr
+	}
+	if !d.Approved && (!e.rejectionsToModel || isDeferredModelCall(susp)) {
+		if rejectErr := e.endRejected(ctx, cp, susp, d); rejectErr != nil {
 			if errors.Is(rejectErr, cortex.ErrNotSuspended) && e.runMovedOn(ctx, cp) {
 				return nil, fmt.Errorf("resolve checkpoint %s: already decided: %w", cp.ID, cortex.ErrInvalidState)
 			}
@@ -91,7 +97,10 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	if !d.Approved {
 		source = run.ReadyRejection
 	}
-	in := decisionInput(susp.Pending, d)
+	in, err := decisionInput(susp.Pending, d)
+	if err != nil {
+		return nil, err
+	}
 	if _, previewErr := e.previewResume(ctx, cp.RunID, in, resumeSourceApproval, susp, nil); previewErr != nil {
 		return nil, previewErr
 	}
@@ -101,7 +110,7 @@ func (e *Engine) decideCheckpoint(ctx context.Context, cpID id.CheckpointID, d c
 	// that finds the run already ready on this decision did not.
 	marked := err == nil
 	if errors.Is(err, cortex.ErrNotSuspended) {
-		ready, err = e.retriedDecision(ctx, cp, source, err)
+		ready, err = e.retriedDecision(ctx, cp, source, in, d, err)
 	}
 	if err != nil {
 		return nil, err
@@ -205,6 +214,21 @@ func (e *Engine) openDecision(ctx context.Context, cpID id.CheckpointID, d check
 		return nil, d, fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
 	}
 	d.DecidedByPrincipal = decidedBy
+	if err := checkArgumentsObject(d.AmendedArguments); err != nil {
+		return nil, d, fmt.Errorf("resolve checkpoint %s: %w", cpID, err)
+	}
+	if len(d.Calls) > 0 {
+		d = settleCalls(d)
+		for callID, cd := range d.Calls {
+			if err := checkArgumentsObject(cd.AmendedArguments); err != nil {
+				return nil, d, fmt.Errorf("resolve checkpoint %s: call %q: %w", cpID, callID, err)
+			}
+		}
+		return cp, d, nil
+	}
+	if !d.Approved {
+		d.AmendedArguments = nil
+	}
 	return cp, d, nil
 }
 
@@ -228,7 +252,7 @@ func (e *Engine) recordDecision(ctx context.Context, cp *checkpoint.Checkpoint, 
 // Anything else is the refusal MarkReady gave. A checkpoint decided in the
 // meantime is cortex.ErrInvalidState, as it would have been had this call
 // read it a moment later.
-func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint, source run.ReadySource, refused error) (*run.Run, error) {
+func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint, source run.ReadySource, in ResumeInput, d checkpoint.Decision, refused error) (*run.Run, error) {
 	current, err := e.store.GetCheckpoint(ctx, cp.ID)
 	if err != nil {
 		return nil, fmt.Errorf("reload checkpoint %s: %w", cp.ID, err)
@@ -255,6 +279,12 @@ func (e *Engine) retriedDecision(ctx context.Context, cp *checkpoint.Checkpoint,
 		// It stands; this one is too late, exactly as if it had read the
 		// checkpoint after the record.
 		return nil, fmt.Errorf("resolve checkpoint %s: already decided %s: %w", cp.ID, r.Ready.Source, cortex.ErrInvalidState)
+	}
+	if !sameReadyDecision(r.Ready, in, d) {
+		// The run is ready on this kind of decision, but not on this one:
+		// somebody else's edits or per-call outcomes are what will run, and
+		// they stand. A retry is the same decision, nothing less.
+		return nil, fmt.Errorf("resolve checkpoint %s: already decided differently: %w", cp.ID, cortex.ErrInvalidState)
 	}
 	return r, nil
 }
@@ -284,24 +314,165 @@ func (e *Engine) recordedAs(ctx context.Context, cp *checkpoint.Checkpoint, d ch
 	if err != nil || current.Decision == nil {
 		return false
 	}
-	got := current.Decision
-	return got.Approved == d.Approved && got.DecidedBy == d.DecidedBy && bytes.Equal(got.DecidedByPrincipal, d.DecidedByPrincipal)
+	return sameDecision(*current.Decision, d)
+}
+
+// sameDecision reports whether two decisions say the same thing by the
+// same decider: the outcome, who decided, the edited arguments (as JSON,
+// so spacing does not matter) and each call's outcome, edits and reason.
+// A top-level decision and a Calls decision with one entry are the same
+// shape, since a lost record is rebuilt from the run's results and cannot
+// tell which of the two the decider used.
+func sameDecision(a, b checkpoint.Decision) bool {
+	if a.Approved != b.Approved || a.DecidedBy != b.DecidedBy || !bytes.Equal(a.DecidedByPrincipal, b.DecidedByPrincipal) {
+		return false
+	}
+	a, b = flattenSingleCall(a), flattenSingleCall(b)
+	if !sameJSON(a.AmendedArguments, b.AmendedArguments) || len(a.Calls) != len(b.Calls) {
+		return false
+	}
+	for callID, ca := range a.Calls {
+		cb, ok := b.Calls[callID]
+		if !ok || ca.Approved != cb.Approved || ca.Reason != cb.Reason || !sameJSON(ca.AmendedArguments, cb.AmendedArguments) {
+			return false
+		}
+	}
+	return true
+}
+
+// flattenSingleCall turns a Calls decision of one entry into the top-level
+// form, whose outcome it already is.
+func flattenSingleCall(d checkpoint.Decision) checkpoint.Decision {
+	if len(d.Calls) != 1 {
+		return d
+	}
+	for _, cd := range d.Calls {
+		d.Approved, d.AmendedArguments, d.Calls = cd.Approved, cd.AmendedArguments, nil
+	}
+	return d
+}
+
+// sameReadyDecision reports whether the run was made ready on exactly the
+// results in carries, by the same decider. A readiness that cannot be
+// decoded is not the same.
+func sameReadyDecision(ready *run.Readiness, in ResumeInput, d checkpoint.Decision) bool {
+	if ready.DecidedBy != d.DecidedBy || !bytes.Equal(ready.DecidedByPrincipal, d.DecidedByPrincipal) {
+		return false
+	}
+	var have []ToolResult
+	if err := json.Unmarshal(ready.Results, &have); err != nil || len(have) != len(in.ToolResults) {
+		return false
+	}
+	byID := make(map[string]ToolResult, len(have))
+	for _, res := range have {
+		byID[res.ToolCallID] = res
+	}
+	for _, want := range in.ToolResults {
+		got, ok := byID[want.ToolCallID]
+		if !ok || got.Execute != want.Execute || got.Error != want.Error || got.Rejected != want.Rejected || got.AmendedBy != want.AmendedBy || !sameJSON(got.Arguments, want.Arguments) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameJSON reports whether two JSON documents decode to the same value.
+// Two empty ones are the same.
+func sameJSON(a, b json.RawMessage) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	var va, vb any
+	if json.Unmarshal(a, &va) != nil || json.Unmarshal(b, &vb) != nil {
+		return bytes.Equal(a, b)
+	}
+	return reflect.DeepEqual(va, vb)
 }
 
 // decisionInput is what a decision hands back for each pending call. An
 // approval asks the engine to execute each one, since the calls were
 // stopped before dispatch. A rejection answers each one with an error the
 // model reads.
-func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) ResumeInput {
-	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(pending)), rejected: !d.Approved}
+//
+// Amended arguments belong to one call, so an approval that carries them
+// is refused with cortex.ErrInvalidDecision unless exactly one call is
+// pending. A decision with Calls decides each call on its own instead; its
+// callers have already run checkCalls on it, and it needs no other
+// preparation, since the outcome of each call is read from that call.
+func decisionInput(pending []suspension.PendingCall, d checkpoint.Decision) (ResumeInput, error) {
+	in := ResumeInput{ToolResults: make([]ToolResult, 0, len(pending))}
+	if len(d.Calls) > 0 {
+		rejected := true
+		for _, p := range pending {
+			cd := d.Calls[p.ID]
+			if cd.Approved {
+				rejected = false
+				in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: cd.AmendedArguments, AmendedBy: amendedBy(d.DecidedBy, cd.AmendedArguments)})
+			} else {
+				in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Error: rejectionMessage(checkpoint.Decision{DecidedBy: d.DecidedBy, Reason: cd.Reason}), Rejected: true})
+			}
+		}
+		in.rejected = rejected
+		return in, nil
+	}
+	in.rejected = !d.Approved
+	if d.Approved && len(d.AmendedArguments) > 0 && len(pending) != 1 {
+		return in, fmt.Errorf("%w: amended arguments need exactly one pending call, found %d", cortex.ErrInvalidDecision, len(pending))
+	}
 	for _, p := range pending {
 		if d.Approved {
-			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true})
+			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Execute: true, Arguments: d.AmendedArguments, AmendedBy: amendedBy(d.DecidedBy, d.AmendedArguments)})
 		} else {
 			in.ToolResults = append(in.ToolResults, ToolResult{ToolCallID: p.ID, Error: rejectionMessage(d)})
 		}
 	}
-	return in
+	return in, nil
+}
+
+// checkDecision reports whether d can answer susp. A deferred model call
+// has no tool calls, so a decision on it approves or rejects it as a whole:
+// one with Calls or amended arguments is cortex.ErrInvalidDecision. Any
+// other pause is checked by checkCalls.
+func checkDecision(susp *suspension.Suspension, d checkpoint.Decision) error {
+	if isDeferredModelCall(susp) {
+		if len(d.Calls) > 0 || len(d.AmendedArguments) > 0 {
+			return fmt.Errorf("%w: a deferred model call has no tool calls to decide or amend, so approve or reject it as a whole", cortex.ErrInvalidDecision)
+		}
+		return nil
+	}
+	return checkCalls(susp.Pending, d)
+}
+
+// checkCalls reports whether d.Calls names exactly the pending calls, once
+// each, and nothing else.
+func checkCalls(pending []suspension.PendingCall, d checkpoint.Decision) error {
+	if len(d.Calls) == 0 {
+		return nil
+	}
+	if len(d.AmendedArguments) > 0 {
+		return fmt.Errorf("%w: amend arguments per call in Calls, not on the decision", cortex.ErrInvalidDecision)
+	}
+	known := make(map[string]bool, len(pending))
+	for _, p := range pending {
+		known[p.ID] = true
+		if _, ok := d.Calls[p.ID]; !ok {
+			return fmt.Errorf("%w: no decision for pending call %q", cortex.ErrInvalidDecision, p.ID)
+		}
+	}
+	for callID := range d.Calls {
+		if !known[callID] {
+			return fmt.Errorf("%w: call %q is not pending", cortex.ErrInvalidDecision, callID)
+		}
+	}
+	return nil
+}
+
+// amendedBy names who edited a call's arguments, or "" when nobody did.
+func amendedBy(decidedBy string, amended json.RawMessage) string {
+	if len(amended) == 0 {
+		return ""
+	}
+	return decidedBy
 }
 
 // rejectionMessage is the error a rejected call returns to the model.
@@ -333,6 +504,9 @@ func (e *Engine) ProvideResults(ctx context.Context, runID id.AgentRunID, in Res
 		return err
 	}
 	if _, err := cortex.RequireScope(ctx); err != nil {
+		return err
+	}
+	if err := refuseDecisionFields(in.ToolResults); err != nil {
 		return err
 	}
 	in = ResumeInput{ToolResults: in.ToolResults}
@@ -691,6 +865,7 @@ func (e *Engine) recordLostDecision(ctx context.Context, ready *run.Readiness) {
 		Reason:             "recorded when the run continued",
 		DecidedAt:          ready.At,
 	}
+	d.AmendedArguments, d.Calls = decisionFromResults(ready)
 	if d.DecidedBy == "" && len(d.DecidedByPrincipal) == 0 {
 		d.DecidedBy = checkpointDecidedByEngine
 		d.Reason = "the run was continued on this decision, but who made it was not recorded"
@@ -731,4 +906,73 @@ func readyInput(ready *run.Readiness) (ResumeInput, resumeSource, error) {
 	default:
 		return in, resumeSourcePublic, fmt.Errorf("unknown ready source %q: %w", ready.Source, cortex.ErrInvalidContinuation)
 	}
+}
+
+// settleCalls derives what a per-call decision means as a whole. It is
+// approved when any call is, and a rejected call keeps no edit. When every
+// call is rejected and the caller gave no reason, the reasons stand in for
+// it, since a run that fails on the rejection reads the decision's Reason.
+// d.Calls is copied, never changed in place.
+func settleCalls(d checkpoint.Decision) checkpoint.Decision {
+	calls := make(map[string]checkpoint.CallDecision, len(d.Calls))
+	ids := make([]string, 0, len(d.Calls))
+	d.Approved = false
+	for callID, cd := range d.Calls {
+		if cd.Approved {
+			d.Approved = true
+		} else {
+			cd.AmendedArguments = nil
+		}
+		calls[callID] = cd
+		ids = append(ids, callID)
+	}
+	d.Calls = calls
+	if !d.Approved && d.Reason == "" {
+		slices.Sort(ids)
+		reasons := make([]string, 0, len(ids))
+		for _, callID := range ids {
+			if r := calls[callID].Reason; r != "" {
+				reasons = append(reasons, r)
+			}
+		}
+		d.Reason = strings.Join(reasons, "; ")
+	}
+	return d
+}
+
+// decisionFromResults rebuilds what a decision edited and decided per call
+// from the results its run was made ready with, for a record that was lost.
+// A single call is recorded the top-level way, several are recorded in
+// Calls, where a rejection keeps the reason the model was given.
+func decisionFromResults(ready *run.Readiness) (amended json.RawMessage, calls map[string]checkpoint.CallDecision) {
+	var results []ToolResult
+	if json.Unmarshal(ready.Results, &results) != nil {
+		return nil, nil
+	}
+	if len(results) == 1 && !results[0].Rejected {
+		return results[0].Arguments, nil
+	}
+	perCall := false
+	for _, res := range results {
+		if res.Rejected || (res.Execute && len(res.Arguments) > 0) {
+			perCall = true
+		}
+	}
+	if !perCall {
+		return nil, nil
+	}
+	by := ready.DecidedBy
+	if by == "" {
+		by = "a reviewer"
+	}
+	prefix := "rejected by " + by + ": "
+	calls = make(map[string]checkpoint.CallDecision, len(results))
+	for _, res := range results {
+		if res.Execute {
+			calls[res.ToolCallID] = checkpoint.CallDecision{Approved: true, AmendedArguments: res.Arguments}
+			continue
+		}
+		calls[res.ToolCallID] = checkpoint.CallDecision{Reason: strings.TrimPrefix(res.Error, prefix)}
+	}
+	return nil, calls
 }

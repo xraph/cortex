@@ -228,3 +228,47 @@ var (
 	ErrAssignmentNotFound     = errors.New("cortex: assignment not found")
 	ErrAssignmentUnavailable  = errors.New("cortex: assignment transaction unavailable")
 )
+
+// ErrInvalidDecision is returned when a checkpoint decision is malformed:
+// its amended arguments (on the decision or on one call) are not a JSON
+// object; it amends the whole decision's arguments on a suspension that
+// holds more than one pending call; its Calls miss a pending call, name a
+// call that is not pending, or sit beside a top-level amendment. It is also
+// returned when a caller's own results carry what only a decision may set
+// (edited arguments or the mark of a reviewer's denial).
+var ErrInvalidDecision = errors.New("cortex: invalid checkpoint decision")
+
+// ErrDeferModelCall is what a model client returns, wrapped or as
+// DeferredModelCallError, when it will not make a call right now but may later:
+// the workspace is out of AI credits, say. The run pauses before that call
+// with a checkpoint, nothing the run already did is lost, and an approved
+// decision on the checkpoint continues the run by making the same call.
+// Any other model error still fails the run.
+var ErrDeferModelCall = errors.New("cortex: model call deferred")
+
+// DeferredModelCallError is ErrDeferModelCall with something to say: why the
+// call waits (Reason, which becomes the checkpoint's reason) and what kind
+// of wait it is (Kind, for example "credits", which the host reads back
+// from the checkpoint's metadata). Return it from llm.Client, bare or
+// wrapped; errors.Is matches it against ErrDeferModelCall.
+type DeferredModelCallError struct {
+	// Reason is shown on the checkpoint.
+	Reason string
+	// Kind names what the call waits on. The engine does not interpret
+	// it.
+	Kind string
+}
+
+// Error says the model call was deferred, and why.
+func (d DeferredModelCallError) Error() string {
+	if d.Reason == "" {
+		return ErrDeferModelCall.Error()
+	}
+	return ErrDeferModelCall.Error() + ": " + d.Reason
+}
+
+// Is reports a match for ErrDeferModelCall, so code that only knows the
+// sentinel still recognizes a deferral.
+func (d DeferredModelCallError) Is(target error) bool {
+	return target == ErrDeferModelCall
+}

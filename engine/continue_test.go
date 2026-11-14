@@ -136,6 +136,7 @@ type continueFixture struct {
 	mu         sync.Mutex
 	ran        atomic.Int32
 	principals []any
+	args       []string
 }
 
 func newContinueFixture(t *testing.T, opts ...Option) *continueFixture {
@@ -154,6 +155,7 @@ func buildContinueFixture(ctx context.Context, t *testing.T, st store.Store, fir
 			f.ran.Add(1)
 			f.mu.Lock()
 			f.principals = append(f.principals, inv.Principal)
+			f.args = append(f.args, inv.Call.Arguments)
 			f.mu.Unlock()
 			return "deleted", nil
 		}),

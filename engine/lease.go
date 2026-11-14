@@ -308,7 +308,7 @@ func answeredCalls(pending []suspension.PendingCall, in ResumeInput) []suspensio
 			continue
 		}
 		switch {
-		case res.Error != "" && in.rejected:
+		case res.Error != "" && (in.rejected || res.Rejected):
 			done = append(done, suspension.ProgressResult{CallID: p.ID, Content: jsonResult("error", res.Error), Error: res.Error, Outcome: progressOutcome(outcomeDenied)})
 		case res.Error != "":
 			done = append(done, suspension.ProgressResult{CallID: p.ID, Content: jsonResult("error", res.Error), Error: res.Error, Outcome: progressOutcome(outcomeFailed)})

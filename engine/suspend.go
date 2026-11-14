@@ -86,6 +86,11 @@ type pendingCalls struct {
 	// run is the run this step belongs to, and the only one whose asks
 	// it collects.
 	run id.AgentRunID
+
+	// deferred is set, and calls empty, when the step's model call was
+	// deferred by the model client rather than answered: the run waits
+	// before that call, with nothing pending.
+	deferred *cortex.DeferredModelCallError
 }
 
 func (p *pendingCalls) add(tc llm.ToolCall, reason suspension.SuspendReason, ttl time.Duration, note string) {
@@ -134,6 +139,9 @@ func stepPendingCalls(ctx context.Context, runID id.AgentRunID) *pendingCalls {
 // asked the engine to run, three steps away from anything that explains
 // it.
 func (p *pendingCalls) reason() (suspension.SuspendReason, error) {
+	if p.deferred != nil {
+		return suspension.ReasonDeferredModelCall, nil
+	}
 	if len(p.reasons) == 0 {
 		return "", errors.New("suspend was asked for with no pending calls")
 	}
@@ -245,7 +253,7 @@ func (e *Engine) suspendRun(ctx context.Context, r *run.Run, pend pendingCalls, 
 	// decision nobody can see: ListPending never shows it, so nothing
 	// resolves it. Written here, a failed checkpoint write takes the
 	// suspension down with it and the run never reaches paused at all.
-	cp, err := e.createCheckpoint(ctx, r, s, reason)
+	cp, err := e.createCheckpoint(ctx, r, s, reason, pend.deferred)
 	if err != nil {
 		if delErr := e.store.DeleteSuspension(ctx, r.ID); delErr != nil {
 			e.logError("delete suspension after a failed checkpoint write", delErr, log.String("run_id", r.ID.String()))
@@ -378,6 +386,12 @@ func (e *Engine) suspensionDeadline(pend pendingCalls, reason suspension.Suspend
 	}
 
 	var earliest *time.Time
+	if pend.deferred != nil && e.suspensionTTL > 0 {
+		// A deferred model call has no pending call to bring a TTL of its
+		// own, so it waits as long as the engine's suspension TTL allows.
+		due := now.Add(e.suspensionTTL).UTC()
+		earliest = &due
+	}
 	for i, call := range pend.calls {
 		var due time.Time
 		var ttl time.Duration
@@ -418,7 +432,10 @@ func (e *Engine) suspensionDeadline(pend pendingCalls, reason suspension.Suspend
 // answered by the host that registered the tool, not by a person, and a
 // checkpoint queue full of rows no human is meant to decide is a queue
 // people stop reading.
-func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension.Suspension, reason suspension.SuspendReason) (*checkpoint.Checkpoint, error) {
+func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension.Suspension, reason suspension.SuspendReason, deferred *cortex.DeferredModelCallError) (*checkpoint.Checkpoint, error) {
+	if reason == suspension.ReasonDeferredModelCall && deferred != nil {
+		return e.createDeferralCheckpoint(ctx, r, s, *deferred)
+	}
 	if reason != suspension.ReasonApproval {
 		return nil, nil
 	}
@@ -467,4 +484,64 @@ func (e *Engine) createCheckpoint(ctx context.Context, r *run.Run, s *suspension
 	// event with no resolved event ever to match it. suspend emits once
 	// the pause is real.
 	return cp, nil
+}
+
+// deferredCallReason is the checkpoint reason of a deferred model call
+// whose client gave none.
+const deferredCallReason = "the model call was deferred"
+
+// createDeferralCheckpoint opens the checkpoint of a deferred model call:
+// what the host decides on to continue the run (approve, and the same
+// call is made) or to stop it (reject). The checkpoint carries the
+// client's reason, and its metadata names the kind of checkpoint and the
+// kind of wait, so a host can tell it from a tool approval and knows what
+// it waits on.
+func (e *Engine) createDeferralCheckpoint(ctx context.Context, r *run.Run, s *suspension.Suspension, deferred cortex.DeferredModelCallError) (*checkpoint.Checkpoint, error) {
+	reason := deferred.Reason
+	if reason == "" {
+		reason = deferredCallReason
+	}
+	cp := &checkpoint.Checkpoint{
+		Entity:  cortex.NewEntity(),
+		ID:      id.NewCheckpointID(),
+		RunID:   r.ID,
+		AgentID: r.AgentID,
+		Scope:   r.Scope,
+		Reason:  reason,
+		// The deferred call is the next step's, the one the run continues
+		// with.
+		StepIndex: s.Cont.StepIndex,
+		State:     checkpointStatePending,
+		Metadata: map[string]any{
+			checkpointSuspensionKey:         s.ID.String(),
+			checkpoint.MetadataKind:         checkpoint.KindDeferredModelCall,
+			checkpoint.MetadataDeferralKind: deferred.Kind,
+		},
+	}
+	if err := e.store.CreateCheckpoint(ctx, cp); err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+// suspendDeferred pauses a run whose model client deferred the step's
+// model call (cortex.ErrDeferModelCall). The continuation is the state
+// from before that call, so nothing the run already did is repeated when
+// it continues, and the deferred call itself is not counted: it has not
+// run yet. A decision on the checkpoint continues the run, which makes the
+// same call again.
+func (e *Engine) suspendDeferred(ctx context.Context, r *run.Run, st *reactState, cfg resolvedConfig, cause error) (suspension.SuspendReason, error) {
+	var deferred cortex.DeferredModelCallError
+	if !errors.As(cause, &deferred) {
+		// A client that wrapped the bare sentinel said nothing more.
+		deferred = cortex.DeferredModelCallError{}
+	}
+	st.provenance = r.Provenance
+	return e.suspend(ctx, r, pendingCalls{run: r.ID, deferred: &deferred}, st.continuation(cfg))
+}
+
+// isDeferredModelCall reports whether a suspension waits on a deferred
+// model call rather than on tool calls.
+func isDeferredModelCall(susp *suspension.Suspension) bool {
+	return susp != nil && susp.Reason == suspension.ReasonDeferredModelCall
 }

@@ -275,7 +275,7 @@ func purposeLabel(p run.ExecutionPurpose) string {
 
 func suspendReasonLabel(r suspension.SuspendReason) string {
 	switch r {
-	case suspension.ReasonApproval, suspension.ReasonExternalTool, suspension.ReasonAgentReply:
+	case suspension.ReasonApproval, suspension.ReasonExternalTool, suspension.ReasonAgentReply, suspension.ReasonDeferredModelCall:
 		return string(r)
 	default:
 		return labelUnknown

@@ -10,10 +10,10 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/xraph/go-utils v1.5.0
-	github.com/xraph/grove v1.10.2
-	github.com/xraph/grove/drivers/mongodriver v1.10.2
-	github.com/xraph/grove/drivers/pgdriver v1.10.2
-	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
+	github.com/xraph/grove v1.10.3
+	github.com/xraph/grove/drivers/mongodriver v1.10.3
+	github.com/xraph/grove/drivers/pgdriver v1.10.3
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
 	github.com/xraph/nexus v1.9.3
 	github.com/xraph/shield v1.10.2
 	github.com/xraph/vessel v1.0.5

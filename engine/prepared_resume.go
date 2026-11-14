@@ -59,6 +59,15 @@ func validateFrozenContinuation(cont suspension.Continuation, snap *preparedSnap
 		return cortex.ErrInvalidContinuation
 	}
 	cfg.Budget.Deadline = frozen.Budget.Deadline
+	// The continuation drops an empty tool list (omitempty) while the
+	// snapshot keeps it. Both mean no listed tools; ToolsRestricted says
+	// whether that is an explicit allowlist, and it is compared as is.
+	if len(cfg.Tools) == 0 {
+		cfg.Tools = nil
+	}
+	if len(frozen.Tools) == 0 {
+		frozen.Tools = nil
+	}
 	if !reflect.DeepEqual(cfg, frozen) || cont.SystemPrompt != prompt.Assemble(snap.Sections) || r.AgentID != snap.Agent.ID || r.Scope.Canonical() != snap.Scope.Canonical() {
 		return fmt.Errorf("cortex: continuation changed frozen inputs: %w", cortex.ErrInvalidContinuation)
 	}
@@ -82,7 +91,8 @@ func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *su
 		byID[result.ToolCallID] = result
 	}
 	for _, pending := range susp.Pending {
-		if !byID[pending.ID].Execute {
+		result := byID[pending.ID]
+		if !result.Execute {
 			continue
 		}
 		if !susp.Cont.Config.Budget.Deadline.IsZero() && !time.Now().Before(susp.Cont.Config.Budget.Deadline) {
@@ -91,7 +101,7 @@ func (e *Engine) authorizeResumedCalls(ctx context.Context, r *run.Run, susp *su
 		if st.preparedSnapshot != nil && len(filterByName(st.preparedSnapshot.Tools, []string{pending.Name})) == 0 {
 			return fmt.Errorf("cortex: resumed tool is outside prepared allowlist: %w", cortex.ErrInvalidContinuation)
 		}
-		if err := e.authorizeResumedTool(ctx, subject, llm.ToolCall{ID: pending.ID, Name: pending.Name, Arguments: pending.Arguments}, susp.Reason == suspension.ReasonApproval); err != nil {
+		if err := e.authorizeResumedTool(ctx, subject, llm.ToolCall{ID: pending.ID, Name: pending.Name, Arguments: resumedArguments(pending, result)}, susp.Reason == suspension.ReasonApproval); err != nil {
 			return err
 		}
 	}
