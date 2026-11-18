@@ -817,9 +817,14 @@ func (e *Engine) recordResumedCalls(ctx context.Context, ag *agent.Config, r *ru
 				// hide exactly the latency an external tool introduces.
 				StartedAt:   &startedAt,
 				CompletedAt: &completedAt,
+				Metadata:    callMetadata(r, p.ID),
 			}
 			if res.Execute && len(res.Arguments) > 0 {
-				toolCall.Metadata = map[string]any{"arguments_amended": true, "amended_by": res.AmendedBy}
+				if toolCall.Metadata == nil {
+					toolCall.Metadata = map[string]any{}
+				}
+				toolCall.Metadata["arguments_amended"] = true
+				toolCall.Metadata["amended_by"] = res.AmendedBy
 			}
 			if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
 				e.logError("create resumed tool call", err, log.String("run_id", r.ID.String()))

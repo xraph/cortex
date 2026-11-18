@@ -343,6 +343,20 @@ func TestContinueReclaimedRunReplaysOnlyMissingCalls(t *testing.T) {
 	require.Equal(t, "a-result", tools[0].Content)
 	require.Equal(t, "call-b", tools[1].ToolCallID)
 	require.Equal(t, "b-result", tools[1].Content)
+
+	// Both rows name the model's call: a's from the first worker's loop,
+	// b's from the reclaimer's replay.
+	steps, err := f.store.ListSteps(leaseScope(), r.ID)
+	require.NoError(t, err)
+	callIDs := map[string]any{}
+	for _, step := range steps {
+		rows, listErr := f.store.ListToolCalls(leaseScope(), step.ID)
+		require.NoError(t, listErr)
+		for _, row := range rows {
+			callIDs[row.ToolName] = row.Metadata[run.MetadataCallID]
+		}
+	}
+	require.Equal(t, map[string]any{"a": "call-a", "b": "call-b"}, callIDs)
 }
 
 func TestContinueReclaimedRunFailsUncertainDispatch(t *testing.T) {
