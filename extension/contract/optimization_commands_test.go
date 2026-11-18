@@ -220,7 +220,7 @@ func TestOptimizationLifecycleHTTPEnvelopeInvalidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: "optimization.experiments." + action, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: "envelope-key", CSRF: csrf.GenerateToken(), Payload: payload}
+			envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: "optimization.experiments." + action, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: "envelope-key", CSRF: csrf.GenerateTokenFor(transport.CSRFIdentity(p.User)), Payload: payload}
 			for _, invalid := range []struct {
 				name   string
 				mutate func(*dc.Request)
@@ -238,6 +238,8 @@ func TestOptimizationLifecycleHTTPEnvelopeInvalidation(t *testing.T) {
 						t.Fatal(encodeErr)
 					}
 					request := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), p.User), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+					request.Header.Set("Content-Type", "application/json")
+
 					request.Header.Set("Idempotency-Key", "header-cannot-supply-envelope")
 					response := httptest.NewRecorder()
 					handler.ServeHTTP(response, request)
@@ -256,6 +258,8 @@ func TestOptimizationLifecycleHTTPEnvelopeInvalidation(t *testing.T) {
 					t.Fatal(encodeErr)
 				}
 				request := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), p.User), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+				request.Header.Set("Content-Type", "application/json")
+
 				request.Header.Set("Idempotency-Key", "ignored-header")
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)

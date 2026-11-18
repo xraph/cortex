@@ -10,7 +10,7 @@ require (
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
 	github.com/xraph/sentinel v1.10.1
-	github.com/xraph/vessel v1.0.5
+	github.com/xraph/vessel v1.0.7
 )
 
 require (
@@ -97,8 +97,8 @@ require (
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/forge v1.13.6 // indirect
-	github.com/xraph/go-utils v1.5.0 // indirect
+	github.com/xraph/forge v1.14.0 // indirect
+	github.com/xraph/go-utils v1.5.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect

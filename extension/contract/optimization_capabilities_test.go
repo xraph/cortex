@@ -34,6 +34,8 @@ func TestOptimizationCapabilityGrants(t *testing.T) {
 				t.Fatal(e)
 			}
 			httpRequest := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), principal.User), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+			httpRequest.Header.Set("Content-Type", "application/json")
+
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httpRequest)
 			if response.Code != http.StatusOK {

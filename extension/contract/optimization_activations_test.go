@@ -204,7 +204,7 @@ func optimizationHTTPReceipt[O any](t *testing.T, d *dispatcher.Dispatcher, regi
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: intent, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: key, CSRF: csrf.GenerateToken(), Payload: payload}
+	envelope := dc.Request{Envelope: "v1", Contributor: ContributorName, Intent: intent, IntentVersion: 1, Kind: dc.KindCommand, IdempotencyKey: key, CSRF: csrf.GenerateTokenFor(transport.CSRFIdentity(p.User)), Payload: payload}
 	var receipt O
 	for _, valid := range []bool{false, true} {
 		request := envelope
@@ -216,6 +216,8 @@ func optimizationHTTPReceipt[O any](t *testing.T, d *dispatcher.Dispatcher, regi
 			t.Fatal(encodeErr)
 		}
 		httpRequest := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), p.User), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+		httpRequest.Header.Set("Content-Type", "application/json")
+
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httpRequest)
 		if !valid {

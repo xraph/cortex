@@ -8,7 +8,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/cortex/optimization v0.0.0-20261026160546-1b6f6bc9f367
-	github.com/xraph/forge v1.13.6
+	github.com/xraph/forge v1.14.0
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
 )
@@ -91,8 +91,8 @@ require (
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/go-utils v1.5.0 // indirect
-	github.com/xraph/vessel v1.0.5 // indirect
+	github.com/xraph/go-utils v1.5.1 // indirect
+	github.com/xraph/vessel v1.0.7 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect

@@ -54,6 +54,8 @@ func TestOptimizationCatalogContractCurrentAccess(t *testing.T) {
 			t.Fatal(e)
 		}
 		req := httptest.NewRequestWithContext(dashauth.WithUser(context.Background(), principal.User), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		if response.Code != status {
