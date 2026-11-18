@@ -11,14 +11,14 @@ require (
 	github.com/xraph/cortex v1.8.1-0.20261025225257-d0eb82f6ed68
 	github.com/xraph/cortex/optimization v0.0.0-20261026160546-1b6f6bc9f367
 	github.com/xraph/cortex/sentinel v0.0.0-20261026122752-0b00c24b30ca
-	github.com/xraph/forge v1.14.0
+	github.com/xraph/forge v1.14.1
 	github.com/xraph/go-utils v1.5.1
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
-	github.com/xraph/nexus v1.9.4
-	github.com/xraph/shield v1.10.3
-	github.com/xraph/vessel v1.0.7
-	github.com/xraph/weave v1.9.6
+	github.com/xraph/nexus v1.9.5
+	github.com/xraph/shield v1.10.4
+	github.com/xraph/vessel v1.0.8
+	github.com/xraph/weave v1.9.7
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 )
@@ -79,7 +79,7 @@ require (
 	github.com/hashicorp/serf v0.10.4 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.12.0 // indirect
+	github.com/jackc/pgx/v5 v5.13.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
@@ -109,7 +109,7 @@ require (
 	github.com/xraph/confy v1.1.0 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.10.3 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.10.3 // indirect
-	github.com/xraph/sentinel v1.10.2 // indirect
+	github.com/xraph/sentinel v1.10.3 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.10.0 // indirect
@@ -132,10 +132,10 @@ require (
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect

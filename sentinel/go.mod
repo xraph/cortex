@@ -9,8 +9,8 @@ require (
 	github.com/xraph/cortex/optimization v0.0.0-20261026160546-1b6f6bc9f367
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
-	github.com/xraph/sentinel v1.10.2
-	github.com/xraph/vessel v1.0.7
+	github.com/xraph/sentinel v1.10.3
+	github.com/xraph/vessel v1.0.8
 )
 
 require (
@@ -97,7 +97,7 @@ require (
 	github.com/uptrace/bunrouter v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xraph/confy v1.1.0 // indirect
-	github.com/xraph/forge v1.14.0 // indirect
+	github.com/xraph/forge v1.14.1 // indirect
 	github.com/xraph/go-utils v1.5.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -123,7 +123,7 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
