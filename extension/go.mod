@@ -15,10 +15,10 @@ require (
 	github.com/xraph/go-utils v1.5.1
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
-	github.com/xraph/nexus v1.9.3
-	github.com/xraph/shield v1.10.2
+	github.com/xraph/nexus v1.9.4
+	github.com/xraph/shield v1.10.3
 	github.com/xraph/vessel v1.0.7
-	github.com/xraph/weave v1.9.5
+	github.com/xraph/weave v1.9.6
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 )
@@ -109,7 +109,7 @@ require (
 	github.com/xraph/confy v1.1.0 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.10.3 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.10.3 // indirect
-	github.com/xraph/sentinel v1.10.1 // indirect
+	github.com/xraph/sentinel v1.10.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.10.0 // indirect

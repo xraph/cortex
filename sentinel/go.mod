@@ -9,7 +9,7 @@ require (
 	github.com/xraph/cortex/optimization v0.0.0-20261026160546-1b6f6bc9f367
 	github.com/xraph/grove v1.10.3
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.3
-	github.com/xraph/sentinel v1.10.1
+	github.com/xraph/sentinel v1.10.2
 	github.com/xraph/vessel v1.0.7
 )
 
