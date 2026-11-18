@@ -125,6 +125,17 @@ func stateFromContinuation(cont suspension.Continuation) *reactState {
 	}
 }
 
+// callMetadata is a tool call row's metadata naming the model's id for
+// the call, nil when the model gave none. The id is generated text, so a
+// run that requires verification keeps it private like the rest.
+func callMetadata(r *run.Run, callID string) map[string]any {
+	callID = publicGenerationText(r, callID)
+	if callID == "" {
+		return nil
+	}
+	return map[string]any{run.MetadataCallID: callID}
+}
+
 // runReAct executes an agent using the ReAct reasoning loop synchronously.
 func (e *Engine) runReAct(ctx context.Context, ag *agent.Config, input string, overrides *RunOverrides) (*run.Run, error) {
 	p, err := e.prepareAgent(ctx, ag, overrides)
@@ -427,6 +438,7 @@ func (e *Engine) continueReAct(ctx context.Context, ag *agent.Config, cfg resolv
 					Error:       publicToolFailure(ctx, outcome),
 					StartedAt:   &tcStart,
 					CompletedAt: &tcEnd,
+					Metadata:    callMetadata(r, tc.ID),
 				}
 				if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
 					e.logError("create tool call", err, log.String("run_id", r.ID.String()))
@@ -946,6 +958,7 @@ func (e *Engine) continueStreamReAct(ctx context.Context, ag *agent.Config, cfg 
 					Error:       publicToolFailure(ctx, outcome),
 					StartedAt:   &tcStart,
 					CompletedAt: &tcEnd,
+					Metadata:    callMetadata(r, tc.ID),
 				}
 				if err := e.store.CreateToolCall(ctx, toolCall); err != nil {
 					e.logError("create tool call", err, log.String("run_id", r.ID.String()))

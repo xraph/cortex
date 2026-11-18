@@ -7,6 +7,12 @@ import (
 	"github.com/xraph/cortex/id"
 )
 
+// MetadataCallID is the tool call metadata key that holds the model's id
+// for the call (llm.ToolCall.ID, suspension.PendingCall.ID): the id its
+// tool result and an approval decision name it by. It is not unique
+// across a run: a later model response may reuse it.
+const MetadataCallID = "call_id"
+
 // ToolCall represents a single tool invocation within a step.
 type ToolCall struct {
 	cortex.Entity

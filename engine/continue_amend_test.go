@@ -78,6 +78,7 @@ func TestContinueRun_amendedArgumentsReplaceTheModelsArguments(t *testing.T) {
 				require.JSONEq(t, `{"to":"b"}`, call.Arguments)
 				require.Equal(t, true, call.Metadata["arguments_amended"])
 				require.Equal(t, "bob", call.Metadata["amended_by"])
+				require.Equal(t, "call-1", call.Metadata[run.MetadataCallID], "the edit must not drop the call id")
 			}
 		}
 	}

@@ -486,6 +486,7 @@ func (e *Engine) replayStep(ctx context.Context, ag *agent.Config, r *run.Run, s
 				Error:       publicToolFailure(ctx, outcome),
 				StartedAt:   &startedAt,
 				CompletedAt: &completedAt,
+				Metadata:    callMetadata(r, call.ID),
 			}
 			if err := e.store.CreateToolCall(ctx, row); err != nil {
 				e.logError("create replayed tool call", err, log.String("run_id", r.ID.String()))
